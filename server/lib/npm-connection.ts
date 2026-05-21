@@ -79,10 +79,12 @@ export function publicNpmConnection(
   };
 }
 
+const CIPHERTEXT_VERSION_V1 = "v1:";
+
 export async function encryptNpmToken(env: Cloudflare.Env, token: string): Promise<EncryptedToken> {
   const trimmed = token.trim();
   if (trimmed.length < 16) throw new Error("npm token is too short");
-  const key = await encryptionKey(env);
+  const key = await encryptionKey(env, "v1");
   const nonce = crypto.getRandomValues(new Uint8Array(12));
   const ciphertext = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv: nonce },
@@ -90,7 +92,7 @@ export async function encryptNpmToken(env: Cloudflare.Env, token: string): Promi
     new TextEncoder().encode(trimmed),
   );
   return {
-    tokenCiphertext: base64UrlEncode(new Uint8Array(ciphertext)),
+    tokenCiphertext: CIPHERTEXT_VERSION_V1 + base64UrlEncode(new Uint8Array(ciphertext)),
     tokenNonce: base64UrlEncode(nonce),
     tokenFingerprint: await tokenFingerprint(trimmed),
     tokenLast4: trimmed.slice(-4),
@@ -101,13 +103,21 @@ export async function decryptNpmToken(
   env: Cloudflare.Env,
   encrypted: { tokenCiphertext: string; tokenNonce: string },
 ): Promise<string> {
-  const key = await encryptionKey(env);
+  const { version, payload } = splitCiphertext(encrypted.tokenCiphertext);
+  const key = await encryptionKey(env, version);
   const plaintext = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv: base64UrlDecode(encrypted.tokenNonce) },
     key,
-    base64UrlDecode(encrypted.tokenCiphertext),
+    base64UrlDecode(payload),
   );
   return new TextDecoder().decode(plaintext);
+}
+
+function splitCiphertext(value: string): { version: "v0" | "v1"; payload: string } {
+  if (value.startsWith(CIPHERTEXT_VERSION_V1)) {
+    return { version: "v1", payload: value.slice(CIPHERTEXT_VERSION_V1.length) };
+  }
+  return { version: "v0", payload: value };
 }
 
 export async function getOrganizationNpmToken(
@@ -260,11 +270,33 @@ function npmAuthHeaders(token: string, accept: string) {
   };
 }
 
-async function encryptionKey(env: Cloudflare.Env) {
+async function encryptionKey(env: Cloudflare.Env, version: "v0" | "v1") {
   const secret = env.NPM_CONNECTIONS_ENCRYPTION_KEY;
   if (!secret) throw new Error("NPM_CONNECTIONS_ENCRYPTION_KEY is required");
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
-  return crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+  if (secret.length < 32) {
+    throw new Error("NPM_CONNECTIONS_ENCRYPTION_KEY must be at least 32 characters of entropy");
+  }
+  const ikm = new TextEncoder().encode(secret);
+  if (version === "v0") {
+    const digest = await crypto.subtle.digest("SHA-256", ikm);
+    return crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, [
+      "encrypt",
+      "decrypt",
+    ]);
+  }
+  const keyMaterial = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    {
+      name: "HKDF",
+      hash: "SHA-256",
+      salt: new TextEncoder().encode("staged-publish-review:npm-connection:salt:v1"),
+      info: new TextEncoder().encode("aes-gcm-256"),
+    },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
 }
 
 async function tokenFingerprint(token: string) {

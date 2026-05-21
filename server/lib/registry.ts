@@ -4,11 +4,22 @@ export interface RegistryMetadata {
   time?: Record<string, string>;
 }
 
+const NPM_PACKAGE_NAME_RE = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
+
+export function isValidNpmPackageName(name: string): boolean {
+  if (typeof name !== "string") return false;
+  if (name.length === 0 || name.length > 214) return false;
+  return NPM_PACKAGE_NAME_RE.test(name);
+}
+
 export async function fetchPackageMetadata(
   env: Cloudflare.Env,
   name: string,
   options: { npmToken?: string; npmRegistry?: string } = {},
 ): Promise<RegistryMetadata> {
+  if (!isValidNpmPackageName(name)) {
+    throw new Error("invalid package name");
+  }
   const registry = (
     options.npmRegistry ||
     env.NPM_REGISTRY ||

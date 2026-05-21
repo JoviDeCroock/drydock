@@ -14,10 +14,12 @@ export function createAuth(env: Cloudflare.Env) {
   if (!env.BETTER_AUTH_SECRET) throw new Error("BETTER_AUTH_SECRET is required");
 
   const db = createDb(env.DB);
+  const trustedOrigins = env.BETTER_AUTH_URL ? [env.BETTER_AUTH_URL] : [];
   return betterAuth({
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.BETTER_AUTH_URL,
     basePath: "/api/auth",
+    trustedOrigins,
     database: drizzleAdapter(db, {
       provider: "sqlite",
       schema,
@@ -25,6 +27,17 @@ export function createAuth(env: Cloudflare.Env) {
     }) as never,
     emailAndPassword: {
       enabled: true,
+      minPasswordLength: 12,
+      maxPasswordLength: 256,
+    },
+    advanced: {
+      cookiePrefix: "spr",
+      defaultCookieAttributes: {
+        httpOnly: true,
+        secure: true,
+        sameSite: "lax",
+        path: "/",
+      },
     },
   });
 }

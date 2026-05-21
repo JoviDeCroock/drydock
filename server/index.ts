@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { createDb, enforceRateLimit, RateLimitError } from "./db";
 import { createAuth, getAuthSession } from "./lib/auth";
 import {
   classifyScanError,
@@ -57,21 +58,89 @@ app.use("/api/*", async (c, next) => {
   try {
     c.set("auth", createAuth(c.env));
   } catch (err) {
-    return c.json(
-      {
-        error: "auth is not configured",
-        detail: err instanceof Error ? err.message : String(err),
-      },
-      503,
-    );
+    console.error("auth initialization failed", err);
+    return c.json({ error: "auth is not configured" }, 503);
   }
   await next();
+});
+
+const STATE_CHANGING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+app.use("/api/*", async (c, next) => {
+  if (!STATE_CHANGING_METHODS.has(c.req.method)) return next();
+  const expected = c.env.BETTER_AUTH_URL;
+  if (!expected) return next();
+  const expectedOrigin = (() => {
+    try {
+      return new URL(expected).origin;
+    } catch {
+      return null;
+    }
+  })();
+  if (!expectedOrigin) return next();
+  const origin = c.req.header("origin");
+  const referer = c.req.header("referer");
+  const sourceOrigin =
+    origin ||
+    (referer
+      ? (() => {
+          try {
+            return new URL(referer).origin;
+          } catch {
+            return null;
+          }
+        })()
+      : null);
+  if (!sourceOrigin || sourceOrigin !== expectedOrigin) {
+    return c.json({ error: "request origin not allowed" }, 403);
+  }
+  return next();
+});
+
+app.use("/api/auth/*", async (c, next) => {
+  if (c.req.method !== "POST") return next();
+  const path = c.req.path;
+  const limit = authIpLimit(path);
+  if (!limit) return next();
+  const ip =
+    c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
+  if (!ip) return next();
+  try {
+    await enforceRateLimit(createDb(c.env.DB), {
+      key: `auth:${limit.bucket}:${ip}`,
+      limit: limit.max,
+      windowMs: limit.windowMs,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return c.json(
+        { error: "too many authentication attempts", retryAfterSeconds: err.retryAfterSeconds },
+        429,
+        { "retry-after": String(err.retryAfterSeconds) },
+      );
+    }
+    throw err;
+  }
+  return next();
 });
 
 app.all("/api/auth/*", (c) => {
   const auth = c.get("auth");
   return (auth as { handler(request: Request): Promise<Response> }).handler(c.req.raw);
 });
+
+function authIpLimit(path: string): { bucket: string; max: number; windowMs: number } | null {
+  if (path.startsWith("/api/auth/sign-in")) {
+    return { bucket: "sign-in", max: 10, windowMs: 15 * 60 * 1000 };
+  }
+  if (path.startsWith("/api/auth/sign-up")) {
+    return { bucket: "sign-up", max: 5, windowMs: 60 * 60 * 1000 };
+  }
+  if (path.startsWith("/api/auth/forget-password") || path.startsWith("/api/auth/reset-password")) {
+    return { bucket: "password-reset", max: 5, windowMs: 60 * 60 * 1000 };
+  }
+  return null;
+}
 
 app.use("/api/*", async (c, next) => {
   const session = await getAuthSession(c.get("auth"), c.req.raw);

@@ -8,21 +8,26 @@ export interface CachedCompare {
   cachedAt: string;
 }
 
-const CACHE_PREFIX = "compare:v1:";
+const CACHE_PREFIX = "compare:v2:";
 const CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
 
-function cacheKey(packageName: string, version: string): string {
-  return `${CACHE_PREFIX}${packageName}@${version}`;
+export async function computeCompareCacheKey(
+  registryUrl: string,
+  tarballUrl: string,
+): Promise<string> {
+  const data = new TextEncoder().encode(`${registryUrl}|${tarballUrl}`);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `${CACHE_PREFIX}${hex}`;
 }
 
 export async function readCompareCache(
   env: Cloudflare.Env,
-  packageName: string,
-  version: string,
+  key: string,
 ): Promise<CachedCompare | null> {
   if (!env.COMPARE_CACHE) return null;
   try {
-    return await env.COMPARE_CACHE.get<CachedCompare>(cacheKey(packageName, version), "json");
+    return await env.COMPARE_CACHE.get<CachedCompare>(key, "json");
   } catch {
     return null;
   }
@@ -31,34 +36,30 @@ export async function readCompareCache(
 async function writeCompareCache(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
-  packageName: string,
+  key: string,
   payload: CachedCompare,
 ) {
   if (!env.COMPARE_CACHE) return;
-  const write = env.COMPARE_CACHE.put(
-    cacheKey(packageName, payload.version),
-    JSON.stringify(payload),
-    {
-      expirationTtl: CACHE_TTL_SECONDS,
-    },
-  ).catch(() => undefined);
+  const write = env.COMPARE_CACHE.put(key, JSON.stringify(payload), {
+    expirationTtl: CACHE_TTL_SECONDS,
+  }).catch(() => undefined);
   ctx.waitUntil(write);
 }
 
 export async function loadCompare(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
-  packageName: string,
   version: string,
-  options: { tarballUrl: string; npmToken?: string; npmRegistry?: string },
+  options: { tarballUrl: string; registryUrl: string; npmToken?: string },
 ): Promise<CachedCompare> {
-  const cached = await readCompareCache(env, packageName, version);
+  const key = await computeCompareCacheKey(options.registryUrl, options.tarballUrl);
+  const cached = await readCompareCache(env, key);
   if (cached) return cached;
 
   const downloaded = await downloadInSandbox(env, ctx, {
     tarballUrl: options.tarballUrl,
     npmToken: options.npmToken,
-    npmRegistry: options.npmRegistry,
+    npmRegistry: options.registryUrl,
   });
 
   const payload: CachedCompare = {
@@ -67,7 +68,7 @@ export async function loadCompare(
     packageJson: redactJson(downloaded.packageJson ?? null),
     cachedAt: new Date().toISOString(),
   };
-  await writeCompareCache(env, ctx, packageName, payload);
+  await writeCompareCache(env, ctx, key, payload);
   return payload;
 }
 

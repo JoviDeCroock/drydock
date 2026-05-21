@@ -194,6 +194,21 @@ scansRoutes.get("/:id/versions", async (c) => {
 
 const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
 
+function isTarballUrlAllowed(tarballUrl: string, registryUrl: string): boolean {
+  try {
+    const tarball = new URL(tarballUrl);
+    const registry = new URL(registryUrl);
+    return (
+      tarball.origin === registry.origin &&
+      tarball.protocol === "https:" &&
+      tarball.pathname.endsWith(".tgz") &&
+      tarball.pathname.includes("/-/")
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function resolveCompareContext(
   c: import("hono").Context<{ Bindings: Bindings; Variables: Variables }>,
 ) {
@@ -256,10 +271,15 @@ scansRoutes.get("/:id/compare", async (c) => {
   const tarballUrl = metadata?.versions?.[version]?.dist?.tarball;
   if (!tarballUrl) return c.json({ error: "unknown version" }, 404);
 
-  const cached = await loadCompare(c.env, c.executionCtx, packageName, version, {
+  const registryUrl = connection?.registryUrl || c.env.NPM_REGISTRY || "https://registry.npmjs.org";
+  if (!isTarballUrlAllowed(tarballUrl, registryUrl)) {
+    return c.json({ error: "registry returned an unexpected tarball URL" }, 502);
+  }
+
+  const cached = await loadCompare(c.env, c.executionCtx, version, {
     tarballUrl,
+    registryUrl,
     npmToken: connection?.token,
-    npmRegistry: connection?.registryUrl,
   });
 
   return c.json(
@@ -309,10 +329,15 @@ scansRoutes.get("/:id/compare/file", async (c) => {
   const tarballUrl = metadata?.versions?.[version]?.dist?.tarball;
   if (!tarballUrl) return c.json({ error: "unknown version" }, 404);
 
-  const cached = await loadCompare(c.env, c.executionCtx, packageName, version, {
+  const registryUrl = connection?.registryUrl || c.env.NPM_REGISTRY || "https://registry.npmjs.org";
+  if (!isTarballUrlAllowed(tarballUrl, registryUrl)) {
+    return c.json({ error: "registry returned an unexpected tarball URL" }, 502);
+  }
+
+  const cached = await loadCompare(c.env, c.executionCtx, version, {
     tarballUrl,
+    registryUrl,
     npmToken: connection?.token,
-    npmRegistry: connection?.registryUrl,
   });
 
   const file = cached.files.find((entry) => entry.path === path);

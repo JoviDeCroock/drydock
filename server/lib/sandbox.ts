@@ -89,6 +89,21 @@ export async function downloadInSandbox(
   ctx: ExecutionContext,
   options: DownloadOptions,
 ): Promise<DownloadResult> {
+  const registry = options.npmRegistry || env.NPM_REGISTRY || "https://registry.npmjs.org";
+  if (options.tarballUrl) {
+    try {
+      const tarball = new URL(options.tarballUrl);
+      const registryOrigin = new URL(registry).origin;
+      if (tarball.origin !== registryOrigin || tarball.protocol !== "https:") {
+        throw new SandboxError(
+          JSON.stringify({ error: "tarball URL is not allowed by the gateway", status: 400 }),
+        );
+      }
+    } catch (err) {
+      if (err instanceof SandboxError) throw err;
+      throw new SandboxError(JSON.stringify({ error: "invalid tarball URL", status: 400 }));
+    }
+  }
   const sandbox = env.LOADER.load({
     compatibilityDate: "2026-05-20",
     mainModule: "sandbox.js",
@@ -140,24 +155,52 @@ export default {
     const res = await fetch(url, { headers: { accept: "application/octet-stream" } });
     if (!res.ok) return json({ error: "download failed", status: res.status }, 502);
 
+    const maxTarBytes = env.MAX_TAR_BYTES || 26214400;
     const contentLength = Number(res.headers.get("content-length") || "0");
-    if (contentLength > (env.MAX_TAR_BYTES || 26214400)) return json({ error: "tarball too large", status: 413 }, 413);
-    const gzip = await res.arrayBuffer();
-    const tar = await gunzip(gzip);
-    if (tar.byteLength > (env.MAX_TAR_BYTES || 26214400)) return json({ error: "archive expands beyond safety limit", status: 413 }, 413);
-    const files = await readTar(tar, env.MAX_FILES || 250, env.MAX_BYTES_PER_FILE || 65536);
+    if (contentLength > maxTarBytes) return json({ error: "tarball too large", status: 413 }, 413);
+    let tar;
+    try {
+      tar = await gunzipBounded(res.body, maxTarBytes);
+    } catch (err) {
+      const reason = err && err.message === "archive expands beyond safety limit"
+        ? "archive expands beyond safety limit"
+        : "tarball decompression failed";
+      const status = reason === "archive expands beyond safety limit" ? 413 : 400;
+      return json({ error: reason, status }, status);
+    }
+    if (tar.byteLength > maxTarBytes) return json({ error: "archive expands beyond safety limit", status: 413 }, 413);
+    const files = await readTar(tar, env.MAX_FILES || 250, env.MAX_BYTES_PER_FILE || 65536, maxTarBytes);
     const packageJson = parsePackageJson(files);
     return json({ files, packageJson });
   },
 };
 
-async function gunzip(buffer) {
+async function gunzipBounded(body, maxBytes) {
+  if (!body) throw new Error("tarball decompression failed");
   const ds = new DecompressionStream("gzip");
-  const stream = new Response(buffer).body.pipeThrough(ds);
-  return await new Response(stream).arrayBuffer();
+  const reader = body.pipeThrough(ds).getReader();
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      reader.cancel().catch(() => undefined);
+      throw new Error("archive expands beyond safety limit");
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out.buffer;
 }
 
-async function readTar(buffer, maxFiles, maxBytesPerFile) {
+async function readTar(buffer, maxFiles, maxBytesPerFile, maxTarBytes) {
   const bytes = new Uint8Array(buffer);
   const files = [];
   let nextLongName = null;
@@ -172,6 +215,7 @@ async function readTar(buffer, maxFiles, maxBytesPerFile) {
     const sizeText = readString(header, 124, 12).trim() || "0";
     if (!/^[0-7]+$/.test(sizeText)) throw new Error("invalid tar entry size");
     const size = parseInt(sizeText, 8);
+    if (!Number.isFinite(size) || size < 0 || size > maxTarBytes) throw new Error("invalid tar entry size");
     const type = String.fromCharCode(header[156] || 48);
     offset += 512;
     if (offset + size > bytes.length) throw new Error("truncated tar entry");
@@ -179,8 +223,13 @@ async function readTar(buffer, maxFiles, maxBytesPerFile) {
 
     if (type === "x") {
       pax = parsePax(body);
+      if (pax && typeof pax.path === "string" && !isSafePaxPath(pax.path)) {
+        throw new Error("invalid pax path");
+      }
     } else if (type === "L") {
-      nextLongName = readString(body, 0, body.length).replace(/\0+$/, "");
+      const candidate = readString(body, 0, body.length).replace(/\0+$/, "");
+      if (!isSafePaxPath(candidate)) throw new Error("invalid long-name path");
+      nextLongName = candidate;
     } else if (type === "0" || type === "\0") {
       const path = normalizeTarPath(pax?.path || nextLongName || (prefix ? prefix + "/" : "") + rawName);
       if (path) files.push(await summarizeFile(path, body, maxBytesPerFile));
@@ -198,6 +247,10 @@ async function readTar(buffer, maxFiles, maxBytesPerFile) {
     offset += Math.ceil(size / 512) * 512;
   }
   return files;
+}
+
+function isSafePaxPath(value) {
+  return typeof value === "string" && !value.includes("\0") && !value.includes("\\");
 }
 
 async function summarizeFile(path, body, maxBytesPerFile) {
