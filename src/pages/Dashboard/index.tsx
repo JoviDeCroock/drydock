@@ -173,13 +173,13 @@ function RecentReviewsSection({
 }) {
   return (
     <section class="flex flex-col gap-3">
-      <div class="flex items-center justify-between">
-        <SectionLabel class="flex-1">Recent reviews</SectionLabel>
+      <div class="flex items-center gap-3">
+        <SectionLabel class="flex-1 min-w-0">Recent reviews</SectionLabel>
         <Button
           variant="secondary"
           size="sm"
           onClick={() => void scans.refresh()}
-          class="ml-3 shrink-0"
+          class="shrink-0"
           disabled={scans.refreshing.value}
         >
           {scans.refreshing.value ? "Refreshing…" : "Refresh"}
@@ -207,39 +207,39 @@ function WorkspaceSetupPanel({
 }) {
   const connection = npm.connection.value;
   return (
-    <details open={!connection} class="group">
-      <summary class="list-none cursor-pointer rounded-lg border border-border bg-surface px-4 py-3 transition-colors duration-150 ease-out hover:border-border-strong hover:bg-surface-2">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div class="flex flex-col gap-1.5 min-w-0">
-            <SectionLabel>Workspace setup</SectionLabel>
-            <Muted class="text-[13px] m-0">
-              Manage npm access, credential checks, and workspace safety defaults.
-            </Muted>
-            <MonoDetail
-              parts={[
-                <span key="connection">npm {connection ? "connected" : "not connected"}</span>,
-                <span key="evidence">redacted evidence</span>,
-                <span key="approval">human approval</span>,
-              ]}
-            />
+    <Card as="section" class="p-0 overflow-hidden">
+      <details open={!connection} class="group">
+        <summary class="list-none cursor-pointer px-5 py-4 transition-colors duration-150 ease-out hover:bg-surface-2 group-open:border-b group-open:border-border">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-col gap-1.5 min-w-0">
+              <SectionLabel>Workspace setup</SectionLabel>
+              <Muted class="text-[13px] m-0">
+                Manage npm access, credential checks, and workspace safety defaults.
+              </Muted>
+              <MonoDetail
+                parts={[
+                  <span key="connection">npm {connection ? "connected" : "not connected"}</span>,
+                  <span key="evidence">redacted evidence</span>,
+                  <span key="approval">human approval</span>,
+                ]}
+              />
+            </div>
+            <div class="flex flex-wrap items-center justify-end gap-2">
+              <Badge tone={connection ? "ok" : "info"}>
+                {connection ? connection.validationStatus : "connect npm"}
+              </Badge>
+              <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+                <span class="group-open:hidden">show</span>
+                <span class="hidden group-open:inline">hide</span>
+              </span>
+            </div>
           </div>
-          <div class="flex flex-wrap items-center justify-end gap-2">
-            <Badge tone={connection ? "ok" : "info"}>
-              {connection ? connection.validationStatus : "connect npm"}
-            </Badge>
-            <span class="inline-flex items-center justify-center rounded-md border border-border bg-surface-2 px-3 py-1.5 text-[12px] font-medium text-ink group-open:hidden">
-              Open settings
-            </span>
-            <span class="hidden items-center justify-center rounded-md border border-border bg-surface-2 px-3 py-1.5 text-[12px] font-medium text-ink group-open:inline-flex">
-              Hide settings
-            </span>
-          </div>
+        </summary>
+        <div class="p-5">
+          <NpmConnectionCard npm={npm} />
         </div>
-      </summary>
-      <div class="pt-3">
-        <NpmConnectionCard npm={npm} />
-      </div>
-    </details>
+      </details>
+    </Card>
   );
 }
 
@@ -264,7 +264,7 @@ function NpmConnectionCard({
   };
 
   return (
-    <Card class="p-5 flex flex-col gap-4">
+    <div class="flex flex-col gap-5">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div class="flex flex-col gap-1.5">
           <SectionLabel>npm access</SectionLabel>
@@ -303,7 +303,7 @@ function NpmConnectionCard({
       ) : null}
 
       <form
-        class="grid grid-cols-1 lg:grid-cols-[1fr_1fr_1.5fr_auto] gap-3 items-end"
+        class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_auto] gap-3 items-end"
         onSubmit={onSave}
       >
         <Field label="Connection name" for="npmLabel">
@@ -341,7 +341,7 @@ function NpmConnectionCard({
         </Button>
       </form>
 
-      <div class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto_auto] gap-2 items-end">
+      <div class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end">
         <Field label="Stage ID access check" for="validationStageId">
           <Input
             id="validationStageId"
@@ -356,23 +356,15 @@ function NpmConnectionCard({
         </Field>
         <Button
           variant="secondary"
-          size="sm"
           onClick={() => void npm.validate()}
           disabled={busy || !connection}
+          class="shrink-0"
         >
           {status === "validating"
             ? "Checking…"
             : validationStageId.trim()
               ? "Check stage access"
               : "Check npm auth"}
-        </Button>
-        <Button
-          variant="danger"
-          size="sm"
-          onClick={() => void npm.remove()}
-          disabled={busy || !connection}
-        >
-          {status === "deleting" ? "Removing…" : "Disconnect"}
         </Button>
       </div>
 
@@ -382,7 +374,15 @@ function NpmConnectionCard({
       </Muted>
 
       {error ? <Alert tone="critical">{error}</Alert> : null}
-    </Card>
+
+      {connection ? (
+        <div class="flex justify-end border-t border-border pt-4">
+          <Button variant="danger" size="sm" onClick={() => void npm.remove()} disabled={busy}>
+            {status === "deleting" ? "Removing…" : "Disconnect npm"}
+          </Button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
