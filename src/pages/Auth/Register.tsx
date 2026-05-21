@@ -1,6 +1,6 @@
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { useLocation } from "preact-iso";
-import { signIn, signUp } from "../../models/auth";
+import { getSession, signIn, signUp } from "../../models/auth";
 import {
   Alert,
   Button,
@@ -19,6 +19,17 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSession().then((session) => {
+      if (cancelled) return;
+      if (session?.user) location.route("/dashboard", true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const onSubmit = async (event: Event) => {
     event.preventDefault();

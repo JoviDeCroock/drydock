@@ -1,3 +1,6 @@
+import { useEffect } from "preact/hooks";
+import { useSignal } from "@preact/signals";
+import { getSession } from "../../models/auth";
 import {
   Card,
   Eyebrow,
@@ -9,6 +12,19 @@ import {
 } from "../../components";
 
 export default function LandingPage() {
+  const authed = useSignal(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSession().then((session) => {
+      if (cancelled) return;
+      authed.value = Boolean(session?.user);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <PageShell class="gap-10">
       <section class="py-8 md:py-12 border-y border-border flex flex-col gap-5">
@@ -21,10 +37,16 @@ export default function LandingPage() {
           without executing package code or exposing credentials to untrusted package contents.
         </p>
         <div class="flex gap-3 mt-2">
-          <LinkButton href="/register">Create account</LinkButton>
-          <LinkButton href="/login" variant="secondary">
-            Sign in
-          </LinkButton>
+          {authed.value ? (
+            <LinkButton href="/dashboard">Open dashboard</LinkButton>
+          ) : (
+            <>
+              <LinkButton href="/register">Create account</LinkButton>
+              <LinkButton href="/login" variant="secondary">
+                Sign in
+              </LinkButton>
+            </>
+          )}
         </div>
       </section>
 
