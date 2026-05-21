@@ -30,8 +30,6 @@ import {
   PageShell,
   SectionLabel,
   SeverityBar,
-  StatusStrip,
-  StatusStripItem,
   severityTone,
   statusTone,
 } from "../../components";
@@ -194,109 +192,192 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      <LaunchGuardrailStrip hasNpmConnection={Boolean(npmConnection)} />
+      <ReviewRequestCard
+        npmConnection={npmConnection}
+        status={status}
+        stageId={stageId}
+        error={error}
+        onStageIdChange={setStageId}
+        onSubmit={onSubmit}
+      />
 
-      <NpmConnectionCard
+      {result ? <ScanResultView result={result} /> : null}
+
+      <RecentReviewsSection scans={scans} onRefresh={refreshScans} />
+
+      <WorkspaceSetupPanel
         connection={npmConnection}
         token={npmToken}
         label={npmLabel}
         registry={npmRegistry}
         status={connectionStatus}
         error={connectionError}
+        validationStageId={validationStageId}
         onTokenChange={setNpmToken}
         onLabelChange={setNpmLabel}
-        validationStageId={validationStageId}
         onRegistryChange={setNpmRegistry}
         onValidationStageIdChange={setValidationStageId}
         onSave={onSaveNpmConnection}
         onValidate={onValidateNpmConnection}
         onDelete={onDeleteNpmConnection}
       />
-
-      <Card class="p-5 flex flex-col gap-4">
-        <div class="flex flex-wrap items-start justify-between gap-3">
-          <div class="flex flex-col gap-1.5">
-            <SectionLabel>Run review</SectionLabel>
-            <Muted class="text-[13px] max-w-[720px]">
-              Paste the npm stage ID. We'll compare it with the latest published release, flag risky
-              diffs, and save a redacted report you can come back to.
-            </Muted>
-          </div>
-          <Badge tone={status === "scanning" ? "info" : "ok"}>{status === "scanning" ? "running" : "ready"}</Badge>
-        </div>
-        {!npmConnection ? (
-          <Alert tone="info">Connect an organization npm token before reviewing staged packages.</Alert>
-        ) : null}
-        <form class="flex flex-col gap-3" onSubmit={onSubmit}>
-          <Field label="Stage ID" for="stageId">
-            <div class="flex flex-col sm:flex-row gap-2">
-              <Input
-                id="stageId"
-                type="text"
-                value={stageId}
-                placeholder="e.g. acme-pkg-1.2.3-stage-abcdef"
-                onInput={(e) => setStageId((e.target as HTMLInputElement).value)}
-                disabled={status === "scanning"}
-                autoComplete="off"
-                spellcheck={false}
-              />
-              <Button
-                type="submit"
-                disabled={status === "scanning" || !stageId.trim()}
-                class="shrink-0"
-              >
-                {status === "scanning" ? "Reviewing…" : "Review staged publish"}
-              </Button>
-            </div>
-          </Field>
-        </form>
-        {error ? (
-          <div class="mt-3">
-            <Alert tone="critical">{error}</Alert>
-          </div>
-        ) : null}
-      </Card>
-
-      {result ? <ScanResultView result={result} /> : null}
-
-      <section class="flex flex-col gap-3">
-        <div class="flex items-center justify-between">
-          <SectionLabel class="flex-1">Recent reviews</SectionLabel>
-          <Button variant="secondary" size="sm" onClick={refreshScans} class="ml-3 shrink-0">
-            Refresh
-          </Button>
-        </div>
-        <Card class="p-0 overflow-hidden">
-          {scans.length ? (
-            <ScanTable scans={scans} />
-          ) : (
-            <div class="p-5">
-              <EmptyLine>No reviews yet. Run one above to start building your release history.</EmptyLine>
-            </div>
-          )}
-        </Card>
-      </section>
     </PageShell>
   );
 }
 
-function LaunchGuardrailStrip({ hasNpmConnection }: { hasNpmConnection: boolean }) {
+function ReviewRequestCard({
+  npmConnection,
+  status,
+  stageId,
+  error,
+  onStageIdChange,
+  onSubmit,
+}: {
+  npmConnection: PublicNpmConnection | null;
+  status: Status;
+  stageId: string;
+  error: string | null;
+  onStageIdChange: (value: string) => void;
+  onSubmit: (event: Event) => void;
+}) {
   return (
-    <StatusStrip>
-      <StatusStripItem
-        label="Private npm access"
-        status={hasNpmConnection ? "connected" : "connect npm"}
-        tone={hasNpmConnection ? "ok" : "info"}
-      >
-        Your token is used only to retrieve release evidence, away from untrusted package contents.
-      </StatusStripItem>
-      <StatusStripItem label="Evidence retention" status="safe default" tone="ok">
-        Reports keep redacted review evidence, not raw release archives.
-      </StatusStripItem>
-      <StatusStripItem label="Approval stays human" status="manual" tone="neutral">
-        Maintainers make the final call in npm with their normal 2FA-protected workflow.
-      </StatusStripItem>
-    </StatusStrip>
+    <Card class="p-5 md:p-6 flex flex-col gap-4 border-accent/40">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div class="flex flex-col gap-1.5">
+          <SectionLabel>Request review</SectionLabel>
+          <Muted class="text-[13px] max-w-[720px]">
+            Paste a staged publish ID. We'll compare it with the latest published release and open the saved report when it is ready.
+          </Muted>
+        </div>
+        <Badge tone={status === "scanning" ? "info" : npmConnection ? "ok" : "info"}>
+          {status === "scanning" ? "running" : npmConnection ? "ready" : "setup needed"}
+        </Badge>
+      </div>
+      {!npmConnection ? (
+        <Alert tone="info">Connect npm access in workspace setup before reviewing staged packages.</Alert>
+      ) : null}
+      <form class="flex flex-col gap-3" onSubmit={onSubmit}>
+        <Field label="Stage ID" for="stageId">
+          <div class="flex flex-col sm:flex-row gap-2">
+            <Input
+              id="stageId"
+              type="text"
+              value={stageId}
+              placeholder="e.g. acme-pkg-1.2.3-stage-abcdef"
+              onInput={(e) => onStageIdChange((e.target as HTMLInputElement).value)}
+              disabled={status === "scanning"}
+              autoComplete="off"
+              spellcheck={false}
+            />
+            <Button
+              type="submit"
+              disabled={status === "scanning" || !stageId.trim() || !npmConnection}
+              class="shrink-0"
+            >
+              {status === "scanning" ? "Reviewing…" : "Review staged publish"}
+            </Button>
+          </div>
+        </Field>
+      </form>
+      {error ? <Alert tone="critical">{error}</Alert> : null}
+    </Card>
+  );
+}
+
+function RecentReviewsSection({ scans, onRefresh }: { scans: ScanListItem[]; onRefresh: () => void }) {
+  return (
+    <section class="flex flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <SectionLabel class="flex-1">Recent reviews</SectionLabel>
+        <Button variant="secondary" size="sm" onClick={onRefresh} class="ml-3 shrink-0">
+          Refresh
+        </Button>
+      </div>
+      <Card class="p-0 overflow-hidden">
+        {scans.length ? (
+          <ScanTable scans={scans} />
+        ) : (
+          <div class="p-5">
+            <EmptyLine>No reviews yet. Request one above to start building your release history.</EmptyLine>
+          </div>
+        )}
+      </Card>
+    </section>
+  );
+}
+
+function WorkspaceSetupPanel({
+  connection,
+  token,
+  label,
+  registry,
+  validationStageId,
+  status,
+  error,
+  onTokenChange,
+  onLabelChange,
+  onRegistryChange,
+  onValidationStageIdChange,
+  onSave,
+  onValidate,
+  onDelete,
+}: {
+  connection: PublicNpmConnection | null;
+  token: string;
+  label: string;
+  registry: string;
+  validationStageId: string;
+  status: "idle" | "saving" | "validating" | "deleting";
+  error: string | null;
+  onTokenChange: (value: string) => void;
+  onLabelChange: (value: string) => void;
+  onRegistryChange: (value: string) => void;
+  onValidationStageIdChange: (value: string) => void;
+  onSave: (event: Event) => void;
+  onValidate: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <details open={!connection} class="group border-y border-border py-3">
+      <summary class="list-none cursor-pointer">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="flex flex-col gap-1.5 min-w-0">
+            <SectionLabel>Workspace setup</SectionLabel>
+            <MonoDetail
+              parts={[
+                <span>npm {connection ? "connected" : "not connected"}</span>,
+                <span>redacted evidence</span>,
+                <span>human approval</span>,
+              ]}
+            />
+          </div>
+          <div class="flex flex-wrap items-center justify-end gap-2">
+            <Badge tone={connection ? "ok" : "info"}>{connection ? connection.validationStatus : "connect npm"}</Badge>
+            <Badge tone="ok">credentials protected</Badge>
+            <span class="font-mono text-[11px] text-ink-subtle group-open:hidden">show settings</span>
+            <span class="font-mono text-[11px] text-ink-subtle hidden group-open:inline">hide settings</span>
+          </div>
+        </div>
+      </summary>
+      <div class="pt-4">
+        <NpmConnectionCard
+          connection={connection}
+          token={token}
+          label={label}
+          registry={registry}
+          status={status}
+          error={error}
+          validationStageId={validationStageId}
+          onTokenChange={onTokenChange}
+          onLabelChange={onLabelChange}
+          onRegistryChange={onRegistryChange}
+          onValidationStageIdChange={onValidationStageIdChange}
+          onSave={onSave}
+          onValidate={onValidate}
+          onDelete={onDelete}
+        />
+      </div>
+    </details>
   );
 }
 
