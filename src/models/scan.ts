@@ -77,7 +77,9 @@ export async function runScan(stageId: string): Promise<ScanResult> {
   });
 }
 
-export async function createScan(stageId: string): Promise<{ scan: ScanListItem; queued: boolean }> {
+export async function createScan(
+  stageId: string,
+): Promise<{ scan: ScanListItem; queued: boolean }> {
   return apiFetch<{ scan: ScanListItem; queued: boolean }>("/api/v1/scans", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -90,7 +92,10 @@ export async function listScans(): Promise<ScanListItem[]> {
   return data.scans;
 }
 
-export async function getScan(id: string, options: { poll?: boolean } = {}): Promise<PersistedScanDetail> {
+export async function getScan(
+  id: string,
+  options: { poll?: boolean } = {},
+): Promise<PersistedScanDetail> {
   const suffix = options.poll ? "?poll=1" : "";
   return apiFetch<PersistedScanDetail>(`/api/v1/scans/${encodeURIComponent(id)}${suffix}`);
 }
@@ -110,7 +115,9 @@ export async function getScanCompareFile(
   path: string,
 ): Promise<ScanCompareFileResponse> {
   const query = `?version=${encodeURIComponent(version)}&path=${encodeURIComponent(path)}`;
-  return apiFetch<ScanCompareFileResponse>(`/api/v1/scans/${encodeURIComponent(id)}/compare/file${query}`);
+  return apiFetch<ScanCompareFileResponse>(
+    `/api/v1/scans/${encodeURIComponent(id)}/compare/file${query}`,
+  );
 }
 
 async function apiFetch<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
@@ -119,7 +126,9 @@ async function apiFetch<T>(input: RequestInfo | URL, init?: RequestInit): Promis
     headers: { accept: "application/json", ...init?.headers },
     ...init,
   });
-  const data = (await res.json().catch(() => null)) as (Partial<T> & { error?: string; detail?: string }) | null;
+  const data = (await res.json().catch(() => null)) as
+    | (Partial<T> & { error?: string; detail?: string })
+    | null;
   if (!res.ok) {
     if (res.status === 401) throw new Error("Please sign in to continue.");
     const detail = typeof data?.detail === "string" ? `: ${data.detail}` : "";

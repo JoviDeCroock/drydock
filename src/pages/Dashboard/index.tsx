@@ -50,7 +50,9 @@ export default function DashboardPage() {
   const [npmLabel, setNpmLabel] = useState("npm registry");
   const [npmRegistry, setNpmRegistry] = useState("https://registry.npmjs.org");
   const [validationStageId, setValidationStageId] = useState("");
-  const [connectionStatus, setConnectionStatus] = useState<"idle" | "saving" | "validating" | "deleting">("idle");
+  const [connectionStatus, setConnectionStatus] = useState<
+    "idle" | "saving" | "validating" | "deleting"
+  >("idle");
   const [connectionError, setConnectionError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -178,8 +180,8 @@ export default function DashboardPage() {
           <Eyebrow>Review workspace</Eyebrow>
           <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Ready for the next release</h1>
           <Muted class="text-[14px] leading-[1.55] m-0">
-            Bring in a staged npm publish, compare it with the live version, and get a focused safety
-            brief before maintainers approve.
+            Bring in a staged npm publish, compare it with the live version, and get a focused
+            safety brief before maintainers approve.
           </Muted>
         </div>
         <div class="flex items-center gap-2.5 bg-surface border border-border rounded-lg pl-3.5 pr-1.5 py-1.5">
@@ -246,7 +248,8 @@ function ReviewRequestCard({
         <div class="flex flex-col gap-1.5">
           <SectionLabel>Request review</SectionLabel>
           <Muted class="text-[13px] max-w-[720px]">
-            Paste a staged publish ID. We'll compare it with the latest published release and open the saved report when it is ready.
+            Paste a staged publish ID. We'll compare it with the latest published release and open
+            the saved report when it is ready.
           </Muted>
         </div>
         <Badge tone={status === "scanning" ? "info" : npmConnection ? "ok" : "info"}>
@@ -254,7 +257,9 @@ function ReviewRequestCard({
         </Badge>
       </div>
       {!npmConnection ? (
-        <Alert tone="info">Connect npm access in workspace setup before reviewing staged packages.</Alert>
+        <Alert tone="info">
+          Connect npm access in workspace setup before reviewing staged packages.
+        </Alert>
       ) : null}
       <form class="flex flex-col gap-3" onSubmit={onSubmit}>
         <Field label="Stage ID" for="stageId">
@@ -284,7 +289,13 @@ function ReviewRequestCard({
   );
 }
 
-function RecentReviewsSection({ scans, onRefresh }: { scans: ScanListItem[]; onRefresh: () => void }) {
+function RecentReviewsSection({
+  scans,
+  onRefresh,
+}: {
+  scans: ScanListItem[];
+  onRefresh: () => void;
+}) {
   return (
     <section class="flex flex-col gap-3">
       <div class="flex items-center justify-between">
@@ -298,7 +309,9 @@ function RecentReviewsSection({ scans, onRefresh }: { scans: ScanListItem[]; onR
           <ScanTable scans={scans} />
         ) : (
           <div class="p-5">
-            <EmptyLine>No reviews yet. Request one above to start building your release history.</EmptyLine>
+            <EmptyLine>
+              No reviews yet. Request one above to start building your release history.
+            </EmptyLine>
           </div>
         )}
       </Card>
@@ -355,7 +368,9 @@ function WorkspaceSetupPanel({
             />
           </div>
           <div class="flex flex-wrap items-center justify-end gap-2">
-            <Badge tone={connection ? "ok" : "info"}>{connection ? connection.validationStatus : "connect npm"}</Badge>
+            <Badge tone={connection ? "ok" : "info"}>
+              {connection ? connection.validationStatus : "connect npm"}
+            </Badge>
             <span class="inline-flex items-center justify-center rounded-md border border-border bg-surface-2 px-3 py-1.5 text-[12px] font-medium text-ink group-open:hidden">
               Open settings
             </span>
@@ -427,12 +442,16 @@ function NpmConnectionCard({
         <div class="flex flex-col gap-1.5">
           <SectionLabel>npm access</SectionLabel>
           <Muted class="text-[13px] max-w-[760px]">
-            Add an organization npm token so reviews can fetch staged packages securely. We encrypt it,
-            hide it after save, and use it only to retrieve release evidence.
+            Add an organization npm token so reviews can fetch staged packages securely. We encrypt
+            it, hide it after save, and use it only to retrieve release evidence.
           </Muted>
         </div>
         {connection ? (
-          <Badge tone={validated ? "ok" : connection.validationStatus === "invalid" ? "critical" : "info"}>
+          <Badge
+            tone={
+              validated ? "ok" : connection.validationStatus === "invalid" ? "critical" : "info"
+            }
+          >
             {connection.validationStatus}
           </Badge>
         ) : (
@@ -445,12 +464,21 @@ function NpmConnectionCard({
           <CompactMetadataRow label="label" value={connection.label} />
           <CompactMetadataRow label="registry" value={connection.registryUrl} />
           <CompactMetadataRow label="token" value={`•••• ${connection.tokenLast4 || "stored"}`} />
-          <CompactMetadataRow label="validated" value={connection.validatedAt ? formatDate(connection.validatedAt) : "not yet"} />
-          <CompactMetadataRow label="last used" value={connection.lastUsedAt ? formatDate(connection.lastUsedAt) : "never"} />
+          <CompactMetadataRow
+            label="validated"
+            value={connection.validatedAt ? formatDate(connection.validatedAt) : "not yet"}
+          />
+          <CompactMetadataRow
+            label="last used"
+            value={connection.lastUsedAt ? formatDate(connection.lastUsedAt) : "never"}
+          />
         </div>
       ) : null}
 
-      <form class="grid grid-cols-1 lg:grid-cols-[1fr_1fr_1.5fr_auto] gap-3 items-end" onSubmit={onSave}>
+      <form
+        class="grid grid-cols-1 lg:grid-cols-[1fr_1fr_1.5fr_auto] gap-3 items-end"
+        onSubmit={onSave}
+      >
         <Field label="Connection name" for="npmLabel">
           <Input
             id="npmLabel"
@@ -500,7 +528,11 @@ function NpmConnectionCard({
           />
         </Field>
         <Button variant="secondary" size="sm" onClick={onValidate} disabled={busy || !connection}>
-          {status === "validating" ? "Checking…" : validationStageId.trim() ? "Check stage access" : "Check npm auth"}
+          {status === "validating"
+            ? "Checking…"
+            : validationStageId.trim()
+              ? "Check stage access"
+              : "Check npm auth"}
         </Button>
         <Button variant="danger" size="sm" onClick={onDelete} disabled={busy || !connection}>
           {status === "deleting" ? "Removing…" : "Disconnect"}
@@ -508,7 +540,8 @@ function NpmConnectionCard({
       </div>
 
       <Muted class="text-xs">
-        Without a stage ID, we confirm the token is accepted by npm. Add a stage ID to prove it can read that staged release; we do not keep the release archive.
+        Without a stage ID, we confirm the token is accepted by npm. Add a stage ID to prove it can
+        read that staged release; we do not keep the release archive.
       </Muted>
 
       {error ? <Alert tone="critical">{error}</Alert> : null}
@@ -549,8 +582,12 @@ function ScanResultView({ result }: { result: ScanResult }) {
         <MonoDetail
           parts={[
             result.package.name || "unknown package",
-            <span>{result.package.previousVersion || "—"} → {result.package.stagedVersion || "—"}</span>,
-            <span>{result.fileCount} {pluralize("file", result.fileCount)}</span>,
+            <span>
+              {result.package.previousVersion || "—"} → {result.package.stagedVersion || "—"}
+            </span>,
+            <span>
+              {result.fileCount} {pluralize("file", result.fileCount)}
+            </span>,
             <span>{changed.length} changed</span>,
           ]}
         />
@@ -616,7 +653,9 @@ function normalizeSeverityKey(value: string | undefined): SeverityKey | null {
 function ResultSection({ title, children }: { title: string; children: ComponentChildren }) {
   return (
     <section class="flex flex-col gap-3">
-      <h2 class="text-[13px] font-medium uppercase tracking-[0.08em] text-ink-muted m-0">{title}</h2>
+      <h2 class="text-[13px] font-medium uppercase tracking-[0.08em] text-ink-muted m-0">
+        {title}
+      </h2>
       {children}
     </section>
   );

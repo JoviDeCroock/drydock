@@ -35,9 +35,13 @@ async function writeCompareCache(
   payload: CachedCompare,
 ) {
   if (!env.COMPARE_CACHE) return;
-  const write = env.COMPARE_CACHE.put(cacheKey(packageName, payload.version), JSON.stringify(payload), {
-    expirationTtl: CACHE_TTL_SECONDS,
-  }).catch(() => undefined);
+  const write = env.COMPARE_CACHE.put(
+    cacheKey(packageName, payload.version),
+    JSON.stringify(payload),
+    {
+      expirationTtl: CACHE_TTL_SECONDS,
+    },
+  ).catch(() => undefined);
   ctx.waitUntil(write);
 }
 

@@ -28,10 +28,7 @@ export function Alert({
         className,
       )}
     >
-      <span
-        class="w-4 h-4 rounded-full bg-current shrink-0 mt-0.5 opacity-90"
-        aria-hidden
-      />
+      <span class="w-4 h-4 rounded-full bg-current shrink-0 mt-0.5 opacity-90" aria-hidden />
       <div class="text-ink flex-1">{children}</div>
     </div>
   );

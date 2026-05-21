@@ -50,7 +50,9 @@ export function SeverityBar({
     return (
       <div class={cn("flex flex-col gap-3", className)}>
         <div class="flex flex-wrap items-center gap-3">
-          <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">{label}</span>
+          <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+            {label}
+          </span>
           <span class="font-mono text-[11px] text-ink-subtle">{emptyLabel}</span>
         </div>
         <div class="h-2 rounded bg-surface-2" aria-hidden />
@@ -73,7 +75,9 @@ export function SeverityBar({
   return (
     <div class={cn("flex flex-col gap-3", className)}>
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">{label}</span>
+        <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+          {label}
+        </span>
         <span class="font-mono text-[11px] text-ink-subtle">{total} total</span>
       </div>
       <div

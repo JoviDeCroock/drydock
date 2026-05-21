@@ -36,7 +36,10 @@ npmConnectionRoutes.post("/", async (c) => {
     registryUrl?: unknown;
   };
   const token = typeof body.token === "string" ? body.token.trim() : "";
-  const label = typeof body.label === "string" && body.label.trim() ? body.label.trim().slice(0, 80) : "npm registry";
+  const label =
+    typeof body.label === "string" && body.label.trim()
+      ? body.label.trim().slice(0, 80)
+      : "npm registry";
   if (!token) return c.json({ error: "npm token is required" }, 400);
 
   let registryUrl: string;
@@ -50,7 +53,11 @@ npmConnectionRoutes.post("/", async (c) => {
     const db = createDb(c.env.DB);
     const session = c.get("authSession");
     const organizationId = await ensurePersonalOrganization(db, session);
-    await enforceRateLimit(db, { key: `npm-connection:save:${organizationId}`, limit: 20, windowMs: 60 * 60 * 1000 });
+    await enforceRateLimit(db, {
+      key: `npm-connection:save:${organizationId}`,
+      limit: 20,
+      windowMs: 60 * 60 * 1000,
+    });
     const encrypted = await encryptNpmToken(c.env, token);
     const connection = await upsertNpmConnection(db, {
       organizationId,
@@ -75,25 +82,36 @@ npmConnectionRoutes.post("/", async (c) => {
   } catch (err) {
     if (err instanceof RateLimitError) {
       return c.json(
-        { error: "npm connection save rate limit exceeded", retryAfterSeconds: err.retryAfterSeconds },
+        {
+          error: "npm connection save rate limit exceeded",
+          retryAfterSeconds: err.retryAfterSeconds,
+        },
         429,
         { "retry-after": String(err.retryAfterSeconds) },
       );
     }
-    return c.json({ error: err instanceof Error ? err.message : "failed to store npm connection" }, 400);
+    return c.json(
+      { error: err instanceof Error ? err.message : "failed to store npm connection" },
+      400,
+    );
   }
 });
 
 npmConnectionRoutes.post("/validate", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { stageId?: unknown };
-  const stageId = typeof body.stageId === "string" && body.stageId.trim() ? body.stageId.trim() : undefined;
+  const stageId =
+    typeof body.stageId === "string" && body.stageId.trim() ? body.stageId.trim() : undefined;
   if (stageId && !STAGE_ID_RE.test(stageId)) return c.json({ error: "invalid stageId" }, 400);
 
   try {
     const db = createDb(c.env.DB);
     const session = c.get("authSession");
     const organizationId = await ensurePersonalOrganization(db, session);
-    await enforceRateLimit(db, { key: `npm-connection:validate:${organizationId}`, limit: 12, windowMs: 10 * 60 * 1000 });
+    await enforceRateLimit(db, {
+      key: `npm-connection:validate:${organizationId}`,
+      limit: 12,
+      windowMs: 10 * 60 * 1000,
+    });
 
     const connection = await getNpmConnection(db, organizationId);
     if (!connection) return c.json({ error: "npm connection is not configured" }, 404);
@@ -127,7 +145,10 @@ npmConnectionRoutes.post("/validate", async (c) => {
         { "retry-after": String(err.retryAfterSeconds) },
       );
     }
-    return c.json({ error: err instanceof Error ? err.message : "failed to validate npm connection" }, 400);
+    return c.json(
+      { error: err instanceof Error ? err.message : "failed to validate npm connection" },
+      400,
+    );
   }
 });
 

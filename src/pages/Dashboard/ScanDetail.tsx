@@ -74,7 +74,9 @@ export default function ScanDetailPage() {
         if (cancelled) return;
         setDetail(data);
         setSelectedPath(
-          data.files.find((file) => file.status !== "unchanged")?.path ?? data.files[0]?.path ?? null,
+          data.files.find((file) => file.status !== "unchanged")?.path ??
+            data.files[0]?.path ??
+            null,
         );
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -95,7 +97,11 @@ export default function ScanDetailPage() {
         setDetail(data);
         setError(null);
         setSelectedPath(
-          (current) => current ?? data.files.find((file) => file.status !== "unchanged")?.path ?? data.files[0]?.path ?? null,
+          (current) =>
+            current ??
+            data.files.find((file) => file.status !== "unchanged")?.path ??
+            data.files[0]?.path ??
+            null,
         );
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -150,7 +156,7 @@ export default function ScanDetailPage() {
 
   const summary = asPersistedSummary(detail?.scan.summaryJson);
   const ai = asAiReview(detail?.scan.aiJson);
-  const compare = selectedVersion ? compareCache[selectedVersion] ?? null : null;
+  const compare = selectedVersion ? (compareCache[selectedVersion] ?? null) : null;
   const isDefaultComparison = selectedVersion === (versions?.defaultPreviousVersion ?? null);
 
   const persistedDiff = summary.diff ?? [];
@@ -171,16 +177,18 @@ export default function ScanDetailPage() {
   }, [detail, compare, isDefaultComparison, persistedDiff]);
 
   const selectedEntry = selectedPath
-    ? diffEntries.find((entry) => entry.path === selectedPath) ?? null
+    ? (diffEntries.find((entry) => entry.path === selectedPath) ?? null)
     : null;
   const stagedFile = selectedPath
-    ? detail?.files.find((file) => file.path === selectedPath) ?? null
+    ? (detail?.files.find((file) => file.path === selectedPath) ?? null)
     : null;
-  const previousFileMeta = selectedPath && compare
-    ? compare.files.find((file) => file.path === selectedPath) ?? null
-    : null;
-  const previousFileKey = selectedVersion && selectedPath ? `${selectedVersion}::${selectedPath}` : null;
-  const previousFile = previousFileKey ? fileContentCache[previousFileKey] ?? null : null;
+  const previousFileMeta =
+    selectedPath && compare
+      ? (compare.files.find((file) => file.path === selectedPath) ?? null)
+      : null;
+  const previousFileKey =
+    selectedVersion && selectedPath ? `${selectedVersion}::${selectedPath}` : null;
+  const previousFile = previousFileKey ? (fileContentCache[previousFileKey] ?? null) : null;
   const hasRuleFindings = Boolean(detail?.findings.length);
   const workbenchGridClass = hasRuleFindings
     ? "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)_320px] gap-4"
@@ -236,10 +244,13 @@ export default function ScanDetailPage() {
       {error ? <Alert tone="critical">{error}</Alert> : null}
       {detail?.scan.status === "pending" || detail?.scan.status === "running" ? (
         <Alert tone="info">
-          Review is {detail.scan.status}. This page refreshes automatically until the report is ready.
+          Review is {detail.scan.status}. This page refreshes automatically until the report is
+          ready.
         </Alert>
       ) : null}
-      {detail?.scan.status === "failed" ? <ScanFailureAlert errorJson={detail.scan.errorJson} /> : null}
+      {detail?.scan.status === "failed" ? (
+        <ScanFailureAlert errorJson={detail.scan.errorJson} />
+      ) : null}
 
       {detail ? (
         <>
@@ -295,7 +306,13 @@ export default function ScanDetailPage() {
                     status={selectedEntry.status}
                     beforeLabel={selectedVersion ? `previous (${selectedVersion})` : "previous"}
                     afterLabel={`staged (${detail.scan.stagedVersion ?? "current"})`}
-                    before={previousFile ? toDiffSide(previousFile) : previousFileMeta ? toDiffSide(previousFileMeta) : null}
+                    before={
+                      previousFile
+                        ? toDiffSide(previousFile)
+                        : previousFileMeta
+                          ? toDiffSide(previousFileMeta)
+                          : null
+                    }
                     after={stagedFile ? scanFileToDiffSide(stagedFile) : null}
                   />
                 </>
@@ -328,9 +345,7 @@ export default function ScanDetailPage() {
   );
 }
 
-function scanFilesToFileRecords(
-  files: PersistedScanDetail["files"],
-): FileRecord[] {
+function scanFilesToFileRecords(files: PersistedScanDetail["files"]): FileRecord[] {
   return files.map((file) => ({
     path: file.path,
     size: file.size ?? 0,
@@ -359,13 +374,20 @@ function toDiffSide(file: FileRecord) {
 }
 
 function ScanFailureAlert({ errorJson }: { errorJson: unknown }) {
-  const error = errorJson && typeof errorJson === "object" ? errorJson as { message?: unknown; detail?: unknown; code?: unknown } : null;
+  const error =
+    errorJson && typeof errorJson === "object"
+      ? (errorJson as { message?: unknown; detail?: unknown; code?: unknown })
+      : null;
   return (
     <Alert tone="critical">
       <div class="flex flex-col gap-1">
         <strong>{typeof error?.message === "string" ? error.message : "Review failed."}</strong>
-        {typeof error?.detail === "string" ? <span class="font-mono text-xs break-all">{error.detail}</span> : null}
-        {typeof error?.code === "string" ? <span class="font-mono text-xs">code: {error.code}</span> : null}
+        {typeof error?.detail === "string" ? (
+          <span class="font-mono text-xs break-all">{error.detail}</span>
+        ) : null}
+        {typeof error?.code === "string" ? (
+          <span class="font-mono text-xs">code: {error.code}</span>
+        ) : null}
       </div>
     </Alert>
   );
@@ -386,7 +408,9 @@ function ReportOverview({
   aiFindings: AiFinding[];
   diffCount: number;
 }) {
-  const changed = diffCount || summary.diff?.filter((entry) => entry.status !== "unchanged").length ||
+  const changed =
+    diffCount ||
+    summary.diff?.filter((entry) => entry.status !== "unchanged").length ||
     detail.files.filter((file) => file.status !== "unchanged").length;
   const severityCounts = countSeverities([...findings, ...aiFindings]);
   const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
@@ -412,9 +436,13 @@ function ReportOverview({
         parts={[
           detail.scan.status,
           <span>stage {detail.scan.stageId}</span>,
-          <span>{detail.files.length} {pluralize("file", detail.files.length)}</span>,
+          <span>
+            {detail.files.length} {pluralize("file", detail.files.length)}
+          </span>,
           <span>{changed} changed</span>,
-          <span>{summary.report?.version ? `report v${summary.report.version}` : "legacy report"}</span>,
+          <span>
+            {summary.report?.version ? `report v${summary.report.version}` : "legacy report"}
+          </span>,
         ]}
       />
       {findingTotal ? <SeverityBar counts={severityCounts} class="max-w-[520px]" /> : null}
@@ -446,7 +474,13 @@ function normalizeSeverityKey(value: string | undefined): SeverityKey | null {
   }
 }
 
-function PersistedReportSections({ summary, ai }: { summary: PersistedSummary; ai: AiReview | null }) {
+function PersistedReportSections({
+  summary,
+  ai,
+}: {
+  summary: PersistedSummary;
+  ai: AiReview | null;
+}) {
   return (
     <section class="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-6">
       <ReportSection title="Reviewer notes">
@@ -457,10 +491,18 @@ function PersistedReportSections({ summary, ai }: { summary: PersistedSummary; a
               <Badge tone={ai.requiresManualReview ? "medium" : "ok"}>
                 {ai.requiresManualReview ? "manual review" : "no extra review"}
               </Badge>
-              <Badge tone="neutral">{ai.releaseAssessment?.replaceAll("_", " ") || "assessment stored"}</Badge>
+              <Badge tone="neutral">
+                {ai.releaseAssessment?.replaceAll("_", " ") || "assessment stored"}
+              </Badge>
             </div>
-            {ai.summary ? <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{ai.summary}</p> : null}
-            {ai.findings?.length ? <AiFindingList findings={ai.findings} /> : <EmptyLine>No assistant findings.</EmptyLine>}
+            {ai.summary ? (
+              <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{ai.summary}</p>
+            ) : null}
+            {ai.findings?.length ? (
+              <AiFindingList findings={ai.findings} />
+            ) : (
+              <EmptyLine>No assistant findings.</EmptyLine>
+            )}
           </>
         ) : (
           <EmptyLine>No reviewer notes were saved for this review.</EmptyLine>
@@ -471,8 +513,16 @@ function PersistedReportSections({ summary, ai }: { summary: PersistedSummary; a
         {summary.report ? (
           <div class="flex flex-col gap-2 text-[13px]">
             <MetadataRow label="version" value={String(summary.report.version ?? "unknown")} />
-            <MetadataRow label="digest" value={`${summary.report.digestAlgorithm || "sha256"}:${summary.report.digest || "missing"}`} />
-            <MetadataRow label="generated" value={summary.report.generatedAt ? formatDate(summary.report.generatedAt) : "unknown"} />
+            <MetadataRow
+              label="digest"
+              value={`${summary.report.digestAlgorithm || "sha256"}:${summary.report.digest || "missing"}`}
+            />
+            <MetadataRow
+              label="generated"
+              value={
+                summary.report.generatedAt ? formatDate(summary.report.generatedAt) : "unknown"
+              }
+            />
           </div>
         ) : (
           <EmptyLine>This older review does not include a report fingerprint.</EmptyLine>
@@ -490,7 +540,11 @@ function PersistedReportSections({ summary, ai }: { summary: PersistedSummary; a
       </ReportSection>
 
       <ReportSection title="Manifest changes" class="lg:col-span-2">
-        {summary.packageJsonDiff ? <PackageJsonDiffView diff={summary.packageJsonDiff} /> : <EmptyLine>No manifest changes were saved for this review.</EmptyLine>}
+        {summary.packageJsonDiff ? (
+          <PackageJsonDiffView diff={summary.packageJsonDiff} />
+        ) : (
+          <EmptyLine>No manifest changes were saved for this review.</EmptyLine>
+        )}
       </ReportSection>
     </section>
   );
@@ -517,7 +571,11 @@ function AiFindingList({ findings }: { findings: AiFinding[] }) {
   return (
     <ul class="list-none p-0 m-0 flex flex-col gap-2">
       {findings.map((finding, index) => (
-        <FindingCard key={`${finding.file}-${index}`} severity={finding.severity} file={finding.file}>
+        <FindingCard
+          key={`${finding.file}-${index}`}
+          severity={finding.severity}
+          file={finding.file}
+        >
           <FindingRow label="evidence" value={finding.evidence} />
           <FindingRow label="reason" value={finding.reason} />
           <FindingRow label="recommendation" value={finding.recommendation} />
@@ -532,8 +590,14 @@ function PackageJsonDiffView({ diff }: { diff: PackageJsonDiff }) {
     <div class="flex flex-col gap-4">
       <div class="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-2">
         <MetadataRow label="package" value={diff.name || "unknown"} />
-        <MetadataRow label="version" value={`${diff.previousVersion || "—"} → ${diff.stagedVersion || "—"}`} />
-        <MetadataRow label="entrypoints" value={diff.entrypointsChanged ? "changed" : "unchanged"} />
+        <MetadataRow
+          label="version"
+          value={`${diff.previousVersion || "—"} → ${diff.stagedVersion || "—"}`}
+        />
+        <MetadataRow
+          label="entrypoints"
+          value={diff.entrypointsChanged ? "changed" : "unchanged"}
+        />
       </div>
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <ChangeList title="scripts" rows={diff.scripts} />
@@ -548,7 +612,12 @@ function ChangeList({
   rows,
 }: {
   title: string;
-  rows: Array<{ key: string; status: "added" | "removed" | "modified"; previous?: string; staged?: string }>;
+  rows: Array<{
+    key: string;
+    status: "added" | "removed" | "modified";
+    previous?: string;
+    staged?: string;
+  }>;
 }) {
   return (
     <div class="border border-border rounded-lg overflow-hidden">
@@ -558,7 +627,10 @@ function ChangeList({
       {rows.length ? (
         <div class="divide-y divide-border">
           {rows.map((row) => (
-            <div key={`${title}-${row.key}`} class="grid grid-cols-1 md:grid-cols-[120px_minmax(0,1fr)] gap-2 px-3 py-2 text-[13px]">
+            <div
+              key={`${title}-${row.key}`}
+              class="grid grid-cols-1 md:grid-cols-[120px_minmax(0,1fr)] gap-2 px-3 py-2 text-[13px]"
+            >
               <div class="flex items-center gap-2 min-w-0">
                 <Badge tone={statusTone(row.status)}>{row.status}</Badge>
                 <code class="truncate">{row.key}</code>
@@ -570,7 +642,9 @@ function ChangeList({
           ))}
         </div>
       ) : (
-        <div class="px-3 py-3"><EmptyLine>No {title} changes.</EmptyLine></div>
+        <div class="px-3 py-3">
+          <EmptyLine>No {title} changes.</EmptyLine>
+        </div>
       )}
     </div>
   );

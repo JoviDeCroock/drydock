@@ -1,6 +1,12 @@
 import { Hono } from "hono";
 import { createAuth, getAuthSession } from "./lib/auth";
-import { classifyScanError, executeScanJob, MAX_SCAN_JOB_ATTEMPTS, retryDelaySeconds, type ScanQueueMessage } from "./lib/scan-job";
+import {
+  classifyScanError,
+  executeScanJob,
+  MAX_SCAN_JOB_ATTEMPTS,
+  retryDelaySeconds,
+  type ScanQueueMessage,
+} from "./lib/scan-job";
 import { npmConnectionRoutes } from "./routes/npm-connection";
 import { scanRoutes } from "./routes/scan";
 import { scansRoutes } from "./routes/scans";

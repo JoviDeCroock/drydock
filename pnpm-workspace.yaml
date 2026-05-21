@@ -3,9 +3,9 @@ packages:
   - packages/*
 
 allowBuilds:
-  '0': esbuild
-  '1': sharp
-  '2': workerd
+  "0": esbuild
+  "1": sharp
+  "2": workerd
   esbuild: true
   sharp: true
   workerd: true

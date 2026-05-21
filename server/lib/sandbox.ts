@@ -16,16 +16,26 @@ export interface NpmStageGatewayPolicy {
   kind: "staged-tarball" | "published-tarball" | "package-metadata" | "blocked";
 }
 
-export function evaluateNpmStageGatewayRequest(requestUrl: string, method: string, registryUrl: string): NpmStageGatewayPolicy {
+export function evaluateNpmStageGatewayRequest(
+  requestUrl: string,
+  method: string,
+  registryUrl: string,
+): NpmStageGatewayPolicy {
   const url = new URL(requestUrl);
   const registry = new URL(registryUrl || "https://registry.npmjs.org");
   const sameOrigin = url.origin === registry.origin;
   const normalizedMethod = method.toUpperCase();
   const packageMetadataPath = /^\/(?:@[^/]+%2[fF][^/]+|[^/@-][^/]*)$/.test(url.pathname);
   const isStagedTarball =
-    sameOrigin && normalizedMethod === "GET" && url.pathname.startsWith("/-/stage/") && url.pathname.endsWith("/tarball");
+    sameOrigin &&
+    normalizedMethod === "GET" &&
+    url.pathname.startsWith("/-/stage/") &&
+    url.pathname.endsWith("/tarball");
   const isPublishedTarball =
-    sameOrigin && normalizedMethod === "GET" && url.pathname.endsWith(".tgz") && url.pathname.includes("/-/");
+    sameOrigin &&
+    normalizedMethod === "GET" &&
+    url.pathname.endsWith(".tgz") &&
+    url.pathname.includes("/-/");
   const isRegistryMetadata = sameOrigin && normalizedMethod === "GET" && packageMetadataPath;
 
   if (isStagedTarball) return { allowed: true, credentialed: true, kind: "staged-tarball" };
@@ -36,7 +46,8 @@ export function evaluateNpmStageGatewayRequest(requestUrl: string, method: strin
 
 export class NpmStageGateway extends WorkerEntrypoint<Cloudflare.Env, NpmStageGatewayProps> {
   async fetch(request: Request): Promise<Response> {
-    const registry = this.ctx.props.npmRegistry || this.env.NPM_REGISTRY || "https://registry.npmjs.org";
+    const registry =
+      this.ctx.props.npmRegistry || this.env.NPM_REGISTRY || "https://registry.npmjs.org";
     const policy = evaluateNpmStageGatewayRequest(request.url, request.method, registry);
 
     if (!policy.allowed) {
@@ -85,10 +96,17 @@ export async function downloadInSandbox(
     env: {
       NPM_REGISTRY: options.npmRegistry || env.NPM_REGISTRY || "https://registry.npmjs.org",
       MAX_FILES: Math.min(options.maxFiles ?? MAX_FILES, MAX_FILES),
-      MAX_BYTES_PER_FILE: Math.min(options.maxBytesPerFile ?? MAX_BYTES_PER_FILE, MAX_BYTES_PER_FILE),
+      MAX_BYTES_PER_FILE: Math.min(
+        options.maxBytesPerFile ?? MAX_BYTES_PER_FILE,
+        MAX_BYTES_PER_FILE,
+      ),
       MAX_TAR_BYTES,
     },
-    globalOutbound: (ctx as unknown as { exports: { NpmStageGateway(options: { props: NpmStageGatewayProps }): Fetcher } }).exports.NpmStageGateway({
+    globalOutbound: (
+      ctx as unknown as {
+        exports: { NpmStageGateway(options: { props: NpmStageGatewayProps }): Fetcher };
+      }
+    ).exports.NpmStageGateway({
       props: { npmToken: options.npmToken, npmRegistry: options.npmRegistry },
     }),
     limits: { cpuMs: 2_000, subRequests: 4 },

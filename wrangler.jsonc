@@ -1,64 +1,62 @@
 {
-	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "staged-publish-review",
-	"main": "./server/index.ts",
-	"compatibility_date": "2026-05-20",
-	"compatibility_flags": [
-		"nodejs_compat"
-	],
-	"workers_dev": true,
-	"observability": {
-		"logs": {
-			"enabled": true,
-			"invocation_logs": true
-		}
-	},
-	"assets": {
-		"not_found_handling": "single-page-application"
-	},
-	"ai": {
-		"binding": "AI"
-	},
-	"worker_loaders": [
-		{
-			"binding": "LOADER"
-		}
-	],
-	"d1_databases": [
-		{
-			"binding": "DB",
-			"database_name": "staged-publish-review",
-			"database_id": "9c856c2f-51be-4309-a932-103e6a835430",
-			"migrations_dir": "drizzle"
-		}
-	],
-	"kv_namespaces": [
-		{
-			"binding": "COMPARE_CACHE",
-			"id": "b47f398d73b4446fbb4a7be3c4f1081a"
-		}
-	],
-	"queues": {
-		"producers": [
-			{
-				"binding": "SCAN_QUEUE",
-				"queue": "staged-publish-review-scans"
-			}
-		],
-		"consumers": [
-			{
-				"queue": "staged-publish-review-scans",
-				"max_batch_size": 1,
-				"max_batch_timeout": 5,
-				"max_retries": 3,
-				"dead_letter_queue": "staged-publish-review-scans-dlq"
-			}
-		]
-	},
-	"vars": {
-		"BETTER_AUTH_URL": "https://staged-publish-review.decroockjovi.workers.dev",
-		"AI_MODEL": "@cf/moonshotai/kimi-k2.5",
-		"AI_CACHE_AFFINITY": "staged-publish-review-release-reviewer-v1",
-		"NPM_REGISTRY": "https://registry.npmjs.org"
-	}
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "staged-publish-review",
+  "main": "./server/index.ts",
+  "compatibility_date": "2026-05-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true,
+    },
+  },
+  "assets": {
+    "not_found_handling": "single-page-application",
+  },
+  "ai": {
+    "binding": "AI",
+  },
+  "worker_loaders": [
+    {
+      "binding": "LOADER",
+    },
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "staged-publish-review",
+      "database_id": "9c856c2f-51be-4309-a932-103e6a835430",
+      "migrations_dir": "drizzle",
+    },
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "COMPARE_CACHE",
+      "id": "b47f398d73b4446fbb4a7be3c4f1081a",
+    },
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "SCAN_QUEUE",
+        "queue": "staged-publish-review-scans",
+      },
+    ],
+    "consumers": [
+      {
+        "queue": "staged-publish-review-scans",
+        "max_batch_size": 1,
+        "max_batch_timeout": 5,
+        "max_retries": 3,
+        "dead_letter_queue": "staged-publish-review-scans-dlq",
+      },
+    ],
+  },
+  "vars": {
+    "BETTER_AUTH_URL": "https://staged-publish-review.decroockjovi.workers.dev",
+    "AI_MODEL": "@cf/moonshotai/kimi-k2.5",
+    "AI_CACHE_AFFINITY": "staged-publish-review-release-reviewer-v1",
+    "NPM_REGISTRY": "https://registry.npmjs.org",
+  },
 }

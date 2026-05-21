@@ -9,7 +9,11 @@ export async function fetchPackageMetadata(
   name: string,
   options: { npmToken?: string; npmRegistry?: string } = {},
 ): Promise<RegistryMetadata> {
-  const registry = (options.npmRegistry || env.NPM_REGISTRY || "https://registry.npmjs.org").replace(/\/$/, "");
+  const registry = (
+    options.npmRegistry ||
+    env.NPM_REGISTRY ||
+    "https://registry.npmjs.org"
+  ).replace(/\/$/, "");
   const headers = new Headers({ accept: "application/json" });
   if (options.npmToken) headers.set("authorization", `Bearer ${options.npmToken}`);
   const res = await fetch(`${registry}/${encodeURIComponent(name).replace(/^%40/, "@")}`, {

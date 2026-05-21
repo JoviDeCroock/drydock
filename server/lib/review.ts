@@ -48,8 +48,14 @@ const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/npm_[A-Za-z0-9]{20,}/g, "[REDACTED_NPM_TOKEN]"],
   [/gh[pousr]_[A-Za-z0-9_]{20,}/g, "[REDACTED_GITHUB_TOKEN]"],
   [/AKIA[0-9A-Z]{16}/g, "[REDACTED_AWS_ACCESS_KEY]"],
-  [/-----BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----/g, "[REDACTED_PRIVATE_KEY]"],
-  [/((?:secret|token|password|passwd|pwd|api[_-]?key)\s*=\s*)['\"]?[^'\"\s]{12,}/gi, "$1[REDACTED_SECRET]"],
+  [
+    /-----BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----/g,
+    "[REDACTED_PRIVATE_KEY]",
+  ],
+  [
+    /((?:secret|token|password|passwd|pwd|api[_-]?key)\s*=\s*)['"]?[^'"\s]{12,}/gi,
+    "$1[REDACTED_SECRET]",
+  ],
 ];
 
 export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = []): Finding[] {
@@ -62,7 +68,10 @@ export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = [
     const changed = diffByPath.get(file.path)?.status;
     const changedPrefix = changed && changed !== "unchanged" ? `new/changed ${changed} file: ` : "";
 
-    if (p.endsWith("package.json") && /"(preinstall|install|postinstall|prepare)"\s*:/.test(sample)) {
+    if (
+      p.endsWith("package.json") &&
+      /"(preinstall|install|postinstall|prepare)"\s*:/.test(sample)
+    ) {
       const pkg = safeJson(sample) as PackageJsonSummary | null;
       const scripts = pkg?.scripts || {};
       for (const script of LIFECYCLE_SCRIPTS) {
@@ -76,7 +85,11 @@ export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = [
         }
       }
     }
-    if (/\b(child_process|execSync|execFileSync|spawn\(|spawnSync\(|curl\s|wget\s|nc\s|bash\s+-c|powershell\s)/.test(sample)) {
+    if (
+      /\b(child_process|execSync|execFileSync|spawn\(|spawnSync\(|curl\s|wget\s|nc\s|bash\s+-c|powershell\s)/.test(
+        sample,
+      )
+    ) {
       findings.push({
         severity: "high",
         file: file.path,
@@ -84,12 +97,17 @@ export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = [
         reason: "package may execute arbitrary commands",
       });
     }
-    if (/\b(require\(["'](?:node:)?(?:http|https|net|dns)["']\)|from\s+["'](?:node:)?(?:http|https|net|dns)["']|fetch\s*\(|XMLHttpRequest|axios\s*\.)/.test(sample)) {
+    if (
+      /\b(require\(["'](?:node:)?(?:http|https|net|dns)["']\)|from\s+["'](?:node:)?(?:http|https|net|dns)["']|fetch\s*\(|XMLHttpRequest|axios\s*\.)/.test(
+        sample,
+      )
+    ) {
       findings.push({
         severity: changed === "added" ? "high" : "medium",
         file: file.path,
         evidence: `${changedPrefix}network-capable code path`,
-        reason: "unexpected network access in package code can be used for exfiltration or staged payload retrieval",
+        reason:
+          "unexpected network access in package code can be used for exfiltration or staged payload retrieval",
       });
     }
     if (
@@ -106,7 +124,9 @@ export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = [
         reason: "common malware and obfuscation technique",
       });
     }
-    if (/\b(process\.env|npm_config_|NPM_TOKEN|GITHUB_TOKEN|AWS_SECRET|PRIVATE_KEY)\b/.test(sample)) {
+    if (
+      /\b(process\.env|npm_config_|NPM_TOKEN|GITHUB_TOKEN|AWS_SECRET|PRIVATE_KEY)\b/.test(sample)
+    ) {
       findings.push({
         severity: changed === "added" ? "high" : "medium",
         file: file.path,
@@ -135,7 +155,8 @@ export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = [
         severity: "high",
         file: file.path,
         evidence: "native, wasm, or executable artifact",
-        reason: "native binaries are hard to audit and can execute outside JavaScript policy checks",
+        reason:
+          "native binaries are hard to audit and can execute outside JavaScript policy checks",
       });
     }
   }
@@ -162,7 +183,10 @@ export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = [
   return findings;
 }
 
-export function createPackageDiff(previousFiles: FileRecord[], stagedFiles: FileRecord[]): DiffEntry[] {
+export function createPackageDiff(
+  previousFiles: FileRecord[],
+  stagedFiles: FileRecord[],
+): DiffEntry[] {
   const previous = new Map(previousFiles.map((file) => [file.path, file]));
   const staged = new Map(stagedFiles.map((file) => [file.path, file]));
   const paths = [...new Set([...previous.keys(), ...staged.keys()])].sort();
@@ -170,8 +194,22 @@ export function createPackageDiff(previousFiles: FileRecord[], stagedFiles: File
   return paths.map((path) => {
     const before = previous.get(path);
     const after = staged.get(path);
-    if (!before && after) return { path, status: "added", stagedSize: after.size, stagedSha256: after.sha256, flags: after.flags };
-    if (before && !after) return { path, status: "removed", previousSize: before.size, previousSha256: before.sha256, flags: before.flags };
+    if (!before && after)
+      return {
+        path,
+        status: "added",
+        stagedSize: after.size,
+        stagedSha256: after.sha256,
+        flags: after.flags,
+      };
+    if (before && !after)
+      return {
+        path,
+        status: "removed",
+        previousSize: before.size,
+        previousSha256: before.sha256,
+        flags: before.flags,
+      };
     if (before && after && before.sha256 !== after.sha256) {
       return {
         path,
@@ -201,8 +239,16 @@ export function summarizePackageJsonDiff(
 ) {
   const changedScripts = diffObject(previousPkg?.scripts || {}, stagedPkg?.scripts || {});
   const changedDependencies = diffObject(
-    { ...(previousPkg?.dependencies || {}), ...(previousPkg?.optionalDependencies || {}), ...(previousPkg?.peerDependencies || {}) },
-    { ...(stagedPkg?.dependencies || {}), ...(stagedPkg?.optionalDependencies || {}), ...(stagedPkg?.peerDependencies || {}) },
+    {
+      ...previousPkg?.dependencies,
+      ...previousPkg?.optionalDependencies,
+      ...previousPkg?.peerDependencies,
+    },
+    {
+      ...stagedPkg?.dependencies,
+      ...stagedPkg?.optionalDependencies,
+      ...stagedPkg?.peerDependencies,
+    },
   );
   return {
     name: stagedPkg?.name || previousPkg?.name || null,
@@ -211,8 +257,20 @@ export function summarizePackageJsonDiff(
     scripts: changedScripts,
     dependencies: changedDependencies,
     entrypointsChanged:
-      JSON.stringify([previousPkg?.bin, previousPkg?.main, previousPkg?.module, previousPkg?.types, previousPkg?.exports]) !==
-      JSON.stringify([stagedPkg?.bin, stagedPkg?.main, stagedPkg?.module, stagedPkg?.types, stagedPkg?.exports]),
+      JSON.stringify([
+        previousPkg?.bin,
+        previousPkg?.main,
+        previousPkg?.module,
+        previousPkg?.types,
+        previousPkg?.exports,
+      ]) !==
+      JSON.stringify([
+        stagedPkg?.bin,
+        stagedPkg?.main,
+        stagedPkg?.module,
+        stagedPkg?.types,
+        stagedPkg?.exports,
+      ]),
   };
 }
 
@@ -231,11 +289,16 @@ export function combineRisk(...risks: Array<RiskLevel | null | undefined>): Risk
 }
 
 export function normalizeRisk(value: unknown): RiskLevel {
-  return value === "critical" || value === "high" || value === "medium" || value === "low" ? value : "medium";
+  return value === "critical" || value === "high" || value === "medium" || value === "low"
+    ? value
+    : "medium";
 }
 
 export function redactText(text: string): string {
-  return SECRET_PATTERNS.reduce((out, [pattern, replacement]) => out.replace(pattern, replacement), text);
+  return SECRET_PATTERNS.reduce(
+    (out, [pattern, replacement]) => out.replace(pattern, replacement),
+    text,
+  );
 }
 
 function containsSecretLikeText(text: string): boolean {
@@ -265,18 +328,27 @@ export function redactJson<T>(value: T): T {
   if (Array.isArray(value)) return value.map((item) => redactJson(item)) as T;
   if (value && typeof value === "object") {
     return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, nested]) => [key, redactJson(nested)]),
+      Object.entries(value as Record<string, unknown>).map(([key, nested]) => [
+        key,
+        redactJson(nested),
+      ]),
     ) as T;
   }
   return value;
 }
 
 function diffObject(before: Record<string, string>, after: Record<string, string>) {
-  const out: Array<{ key: string; status: "added" | "removed" | "modified"; previous?: string; staged?: string }> = [];
+  const out: Array<{
+    key: string;
+    status: "added" | "removed" | "modified";
+    previous?: string;
+    staged?: string;
+  }> = [];
   for (const key of [...new Set([...Object.keys(before), ...Object.keys(after)])].sort()) {
     if (!(key in before)) out.push({ key, status: "added", staged: after[key] });
     else if (!(key in after)) out.push({ key, status: "removed", previous: before[key] });
-    else if (before[key] !== after[key]) out.push({ key, status: "modified", previous: before[key], staged: after[key] });
+    else if (before[key] !== after[key])
+      out.push({ key, status: "modified", previous: before[key], staged: after[key] });
   }
   return out;
 }

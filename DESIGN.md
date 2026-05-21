@@ -25,16 +25,16 @@ Source of truth for visual decisions in this repo. Read this before changing fon
 
 ### Scale
 
-| Role | Size | Weight | Letter-spacing | Line-height |
-|---|---|---|---|---|
-| Display 1 (hero) | 44–56px | 600 | -0.03em | 1.05 |
-| Display 2 | 32px | 600 | -0.02em | 1.15 |
-| Heading 1 | 24px | 600 | -0.015em | 1.25 |
-| Heading 2 | 18px | 500 | -0.01em | 1.35 |
-| Body | 14px | 400 | 0 | 1.55 |
-| Body sm | 13px | 400 | 0 | 1.5 |
-| Mono code | 13px | 400/500 | 0 | 1.5 |
-| Mono label | 11px (uppercase) | 500 | 0.1em | 1.4 |
+| Role             | Size             | Weight  | Letter-spacing | Line-height |
+| ---------------- | ---------------- | ------- | -------------- | ----------- |
+| Display 1 (hero) | 44–56px          | 600     | -0.03em        | 1.05        |
+| Display 2        | 32px             | 600     | -0.02em        | 1.15        |
+| Heading 1        | 24px             | 600     | -0.015em       | 1.25        |
+| Heading 2        | 18px             | 500     | -0.01em        | 1.35        |
+| Body             | 14px             | 400     | 0              | 1.55        |
+| Body sm          | 13px             | 400     | 0              | 1.5         |
+| Mono code        | 13px             | 400/500 | 0              | 1.5         |
+| Mono label       | 11px (uppercase) | 500     | 0.1em          | 1.4         |
 
 ## Color
 
@@ -42,49 +42,49 @@ Source of truth for visual decisions in this repo. Read this before changing fon
 
 ### Light mode (default surface)
 
-| Token | Hex | Usage |
-|---|---|---|
-| `--bg` | `#fafaf9` | Page background (warm paper-ish) |
-| `--bg-elev` | `#ffffff` | Cards, inputs |
-| `--bg-elev-2` | `#f4f4f5` | Secondary surfaces, button-secondary |
-| `--border` | `#e7e5e4` | Default borders |
-| `--border-strong` | `#d6d3d1` | Hover borders, dividers |
-| `--fg` | `#18181b` | Primary text |
-| `--fg-muted` | `#57534e` | Secondary text |
-| `--fg-subtle` | `#a8a29e` | Tertiary text, labels |
+| Token             | Hex       | Usage                                |
+| ----------------- | --------- | ------------------------------------ |
+| `--bg`            | `#fafaf9` | Page background (warm paper-ish)     |
+| `--bg-elev`       | `#ffffff` | Cards, inputs                        |
+| `--bg-elev-2`     | `#f4f4f5` | Secondary surfaces, button-secondary |
+| `--border`        | `#e7e5e4` | Default borders                      |
+| `--border-strong` | `#d6d3d1` | Hover borders, dividers              |
+| `--fg`            | `#18181b` | Primary text                         |
+| `--fg-muted`      | `#57534e` | Secondary text                       |
+| `--fg-subtle`     | `#a8a29e` | Tertiary text, labels                |
 
 ### Dark mode
 
-| Token | Hex | Usage |
-|---|---|---|
-| `--bg` | `#0a0a0a` | Page background |
-| `--bg-elev` | `#141414` | Cards |
-| `--bg-elev-2` | `#1c1c1c` | Secondary surfaces |
-| `--border` | `#27272a` | Default borders |
-| `--border-strong` | `#3f3f46` | Hover borders |
-| `--fg` | `#fafafa` | Primary text |
-| `--fg-muted` | `#a1a1aa` | Secondary text |
-| `--fg-subtle` | `#71717a` | Tertiary text |
+| Token             | Hex       | Usage              |
+| ----------------- | --------- | ------------------ |
+| `--bg`            | `#0a0a0a` | Page background    |
+| `--bg-elev`       | `#141414` | Cards              |
+| `--bg-elev-2`     | `#1c1c1c` | Secondary surfaces |
+| `--border`        | `#27272a` | Default borders    |
+| `--border-strong` | `#3f3f46` | Hover borders      |
+| `--fg`            | `#fafafa` | Primary text       |
+| `--fg-muted`      | `#a1a1aa` | Secondary text     |
+| `--fg-subtle`     | `#71717a` | Tertiary text      |
 
 ### Accent (brand action)
 
-| Token | Light | Dark | Usage |
-|---|---|---|---|
-| `--accent` | `#ea580c` (orange-600) | `#fb923c` (orange-400) | Primary buttons, focus rings, active nav, brand mark |
-| `--accent-hover` | `#c2410c` | `#fdba74` | Hover state |
-| `--accent-soft` | `#fff7ed` | `rgba(251, 146, 60, 0.12)` | Focus ring background, soft fills |
-| `--accent-on` | `#ffffff` | `#18181b` | Text on accent background |
+| Token            | Light                  | Dark                       | Usage                                                |
+| ---------------- | ---------------------- | -------------------------- | ---------------------------------------------------- |
+| `--accent`       | `#ea580c` (orange-600) | `#fb923c` (orange-400)     | Primary buttons, focus rings, active nav, brand mark |
+| `--accent-hover` | `#c2410c`              | `#fdba74`                  | Hover state                                          |
+| `--accent-soft`  | `#fff7ed`              | `rgba(251, 146, 60, 0.12)` | Focus ring background, soft fills                    |
+| `--accent-on`    | `#ffffff`              | `#18181b`                  | Text on accent background                            |
 
-**Why orange, not purple:** Every peer security tool (Socket, Snyk, Aikido) leans on violet. Orange differentiates without sacrificing the "caution / pre-flight" connotation. It is *not* a severity color — severity stays red/amber/blue/green.
+**Why orange, not purple:** Every peer security tool (Socket, Snyk, Aikido) leans on violet. Orange differentiates without sacrificing the "caution / pre-flight" connotation. It is _not_ a severity color — severity stays red/amber/blue/green.
 
 ### Severity (semantic)
 
-| Token | Light | Dark | Soft (light / dark) | Usage |
-|---|---|---|---|---|
-| `--danger` | `#dc2626` | `#f87171` | `#fee2e2` / `rgba(239, 68, 68, 0.14)` | Critical, High |
-| `--warn` | `#d97706` | `#fbbf24` | `#fef3c7` / `rgba(251, 191, 36, 0.14)` | Medium |
-| `--info` | `#2563eb` | `#60a5fa` | `#dbeafe` / `rgba(96, 165, 250, 0.14)` | Low, Info |
-| `--ok` | `#16a34a` | `#4ade80` | `#dcfce7` / `rgba(74, 222, 128, 0.14)` | Passed, no findings |
+| Token      | Light     | Dark      | Soft (light / dark)                    | Usage               |
+| ---------- | --------- | --------- | -------------------------------------- | ------------------- |
+| `--danger` | `#dc2626` | `#f87171` | `#fee2e2` / `rgba(239, 68, 68, 0.14)`  | Critical, High      |
+| `--warn`   | `#d97706` | `#fbbf24` | `#fef3c7` / `rgba(251, 191, 36, 0.14)` | Medium              |
+| `--info`   | `#2563eb` | `#60a5fa` | `#dbeafe` / `rgba(96, 165, 250, 0.14)` | Low, Info           |
+| `--ok`     | `#16a34a` | `#4ade80` | `#dcfce7` / `rgba(74, 222, 128, 0.14)` | Passed, no findings |
 
 **Rule:** Severity colors are reserved for severity meaning. Never use red for a decorative accent, never use the orange accent to flag a finding. Color = signal.
 
@@ -112,7 +112,7 @@ Don't naively invert. Surfaces darken (true neutrals, no warm tint), accent + se
 
 ## Marketing surfaces
 
-The marketing landing page sits on the same primitives as the app. The system *relaxes* in a few specific places and *stays disciplined* everywhere else.
+The marketing landing page sits on the same primitives as the app. The system _relaxes_ in a few specific places and _stays disciplined_ everywhere else.
 
 ### Where it relaxes
 
@@ -137,17 +137,17 @@ Three short Card panels in a row, each containing:
 - One sentence of body copy, `13px / --fg-muted / 1.55`.
 - `min-height: 112px` so the three cards align even when copy lengths differ.
 
-This pattern is used both on the dashboard (above the scan form) *and* as the headline-supporting unit on marketing pages. Visitors landing on the dashboard feel oriented because the same primitive carries.
+This pattern is used both on the dashboard (above the scan form) _and_ as the headline-supporting unit on marketing pages. Visitors landing on the dashboard feel oriented because the same primitive carries.
 
 ### Canonical widths
 
-| Surface | Max width |
-|---|---|
-| Hero headline | `760px` |
-| Hero subhead | `620px` |
-| Marketing content column | `880px` |
-| App content | `1160px` |
-| Report body (document-shaped) | `880px` |
+| Surface                       | Max width |
+| ----------------------------- | --------- |
+| Hero headline                 | `760px`   |
+| Hero subhead                  | `620px`   |
+| Marketing content column      | `880px`   |
+| App content                   | `1160px`  |
+| Report body (document-shaped) | `880px`   |
 
 Do not introduce additional content widths.
 
@@ -157,16 +157,16 @@ The system is typography-first. It communicates through type, severity color, an
 
 ### Allowed glyphs
 
-| Glyph | Role | Used in |
-|---|---|---|
-| `▸` | Collapsed folder | FileTree |
-| `▾` | Expanded folder | FileTree (when needed) |
-| `→` | Relation / flow | `previous → staged` captions, VersionPicker |
-| `←` | Back link | Page header back-links |
-| `·` | Metadata separator | Mono detail line |
-| `✓` | Passed / connected | Inline status |
-| `✕` | Failed / disconnected | Inline status |
-| `•` | Badge dot | `Badge dot` prop |
+| Glyph | Role                  | Used in                                     |
+| ----- | --------------------- | ------------------------------------------- |
+| `▸`   | Collapsed folder      | FileTree                                    |
+| `▾`   | Expanded folder       | FileTree (when needed)                      |
+| `→`   | Relation / flow       | `previous → staged` captions, VersionPicker |
+| `←`   | Back link             | Page header back-links                      |
+| `·`   | Metadata separator    | Mono detail line                            |
+| `✓`   | Passed / connected    | Inline status                               |
+| `✕`   | Failed / disconnected | Inline status                               |
+| `•`   | Badge dot             | `Badge dot` prop                            |
 
 ### Glyph treatment
 
@@ -181,7 +181,7 @@ When a state needs a visual cue without a full Badge, use a `6px round span` wit
 
 ### The Alert disc
 
-Alerts include a `16px filled circle` in the alert's color. This is a *colored disc*, not an icon. It is the only exception to "no shapes." Do not introduce other filled shapes (squares, triangles, rings) anywhere in the system.
+Alerts include a `16px filled circle` in the alert's color. This is a _colored disc_, not an icon. It is the only exception to "no shapes." Do not introduce other filled shapes (squares, triangles, rings) anywhere in the system.
 
 ## Data visualization
 
@@ -215,16 +215,16 @@ Charts use **solid** severity tokens. Soft severity tokens are reserved for row 
 
 ## States
 
-Five patterns, picked by *what the user can do next*.
+Five patterns, picked by _what the user can do next_.
 
-| State | Trigger | Pattern | Visual |
-|---|---|---|---|
-| **Empty** | No data, action lives elsewhere | `Muted` line inside the parent Card's padding. One sentence. No CTA inside the message. | `text-[13px] / --fg-muted / 1.55` |
-| **Loading inline** | Transient, next to a control | `Muted` line, mono | `text-[12px] / --fg-muted / mono`, trailing `…` (em-dash + ellipsis, not `...`) |
-| **Loading full** | Transient, full card or full page | `Muted` line, body type, pulsing counter for progress | `text-[14px] / --fg-muted` |
-| **Async system** | Resolves on its own, FYI not error | `Alert tone="info"` | Used for "scan running, page will refresh." Never for plain loading. |
-| **Error — recoverable** | Page still works | `Alert tone="warn"` | Used for "couldn't load comparison version" where the rest of the page works. |
-| **Error — blocking** | Action can't complete | `Alert tone="critical"` | Failed scan, auth error. Body may include `mono 12px` detail + a `code:` line. |
+| State                   | Trigger                            | Pattern                                                                                 | Visual                                                                          |
+| ----------------------- | ---------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| **Empty**               | No data, action lives elsewhere    | `Muted` line inside the parent Card's padding. One sentence. No CTA inside the message. | `text-[13px] / --fg-muted / 1.55`                                               |
+| **Loading inline**      | Transient, next to a control       | `Muted` line, mono                                                                      | `text-[12px] / --fg-muted / mono`, trailing `…` (em-dash + ellipsis, not `...`) |
+| **Loading full**        | Transient, full card or full page  | `Muted` line, body type, pulsing counter for progress                                   | `text-[14px] / --fg-muted`                                                      |
+| **Async system**        | Resolves on its own, FYI not error | `Alert tone="info"`                                                                     | Used for "scan running, page will refresh." Never for plain loading.            |
+| **Error — recoverable** | Page still works                   | `Alert tone="warn"`                                                                     | Used for "couldn't load comparison version" where the rest of the page works.   |
+| **Error — blocking**    | Action can't complete              | `Alert tone="critical"`                                                                 | Failed scan, auth error. Body may include `mono 12px` detail + a `code:` line.  |
 
 ### Copy rules for state messages
 
@@ -256,7 +256,7 @@ No spinners anywhere in the system. Long-running operations show a pulsing mono 
 - **Inputs:** 6px radius, `--bg` background (intentionally lighter than the card it sits on for affordance), focus ring is a 3px `--accent-soft` halo + accent border. No inner shadow, no glow.
 - **Section labels:** A small mono uppercase label with a trailing rule. Replaces the SaaS-default H1/H2 stack with something more document-shaped.
 - **Mono detail line:** Many surfaces have a one-line mono caption directly under the title (`scan_01HXY... · 2026-05-21 · 17 files`). This is the system's signature treatment — treat it like a generated metadata line, not a subtitle.
-- **Alerts:** 6px radius, 1px colored border, soft background fill, the indicator is a 16px filled disc in the alert's color (a *colored disc*, not an icon — see Iconography). Inline strong-tag retains body color.
+- **Alerts:** 6px radius, 1px colored border, soft background fill, the indicator is a 16px filled disc in the alert's color (a _colored disc_, not an icon — see Iconography). Inline strong-tag retains body color.
 
 ### DiffView
 
@@ -311,14 +311,14 @@ The canonical "labeled control with metadata" row pattern. Re-use this compositi
 
 ## Decisions Log
 
-| Date | Decision | Rationale |
-|---|---|---|
-| 2026-05-21 | Initial design system created via `/design-consultation`. | Replaces ad-hoc `src/style.css` palette. Moves brand off the SaaS-default violet, makes Geist + Geist Mono official, and locks severity semantics so they cannot drift. |
-| 2026-05-21 | Accent: orange `#ea580c` over violet. | Differentiates from Socket/Snyk/Aikido violet convergence; preserves "caution / pre-flight" semantics; non-overlapping with severity colors. |
-| 2026-05-21 | Light is the default surface; dark is first-class via `prefers-color-scheme`. | Auto-mode chosen by user. Both modes must be designed, not derived. |
-| 2026-05-21 | Squarish badges (3px), not pills. | Echoes terminal/document feel. Pill badges read as SaaS-generic. |
-| 2026-05-21 | Specced DiffView, FileTree, VersionPicker. | New components shipped without DESIGN.md coverage; locked in mono-label conventions, severity-soft row fills, native `<select>` for version picking, and document-shaped tree styling so future contributors don't drift. |
-| 2026-05-21 | Marketing surfaces extend the system; status strip is the canonical headline unit. | Same primitives as the app, with hero-only relaxations (17px subhead, wider section gaps, accent-tinted eyebrow). Status strip carries from dashboard to marketing so visitors stay oriented. |
-| 2026-05-21 | Zero SVG icons; text glyphs only. | Risk taken deliberately: type and severity color carry identity. Allowed-glyph list closes the gap so contributors have a clear alternative to reaching for an icon library. The Alert disc is the only exception. |
-| 2026-05-21 | One chart pattern (severity stacked bar) for v1; sparkline reserved for future. | Avoids dashboard fatigue and keeps the product document-shaped. Solid severity tokens belong to charts; soft tokens stay for rows/Badges/Alerts — color = signal, never mixed roles. |
-| 2026-05-21 | State patterns codified (empty / loading inline / loading full / async / recoverable / blocking). | Per-page improvisation removed: mono sizes, copy rules, and trigger conditions now explicit. No spinners, no skeleton bones — `Muted` lines and pulsing counters only. |
+| Date       | Decision                                                                                          | Rationale                                                                                                                                                                                                                 |
+| ---------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-05-21 | Initial design system created via `/design-consultation`.                                         | Replaces ad-hoc `src/style.css` palette. Moves brand off the SaaS-default violet, makes Geist + Geist Mono official, and locks severity semantics so they cannot drift.                                                   |
+| 2026-05-21 | Accent: orange `#ea580c` over violet.                                                             | Differentiates from Socket/Snyk/Aikido violet convergence; preserves "caution / pre-flight" semantics; non-overlapping with severity colors.                                                                              |
+| 2026-05-21 | Light is the default surface; dark is first-class via `prefers-color-scheme`.                     | Auto-mode chosen by user. Both modes must be designed, not derived.                                                                                                                                                       |
+| 2026-05-21 | Squarish badges (3px), not pills.                                                                 | Echoes terminal/document feel. Pill badges read as SaaS-generic.                                                                                                                                                          |
+| 2026-05-21 | Specced DiffView, FileTree, VersionPicker.                                                        | New components shipped without DESIGN.md coverage; locked in mono-label conventions, severity-soft row fills, native `<select>` for version picking, and document-shaped tree styling so future contributors don't drift. |
+| 2026-05-21 | Marketing surfaces extend the system; status strip is the canonical headline unit.                | Same primitives as the app, with hero-only relaxations (17px subhead, wider section gaps, accent-tinted eyebrow). Status strip carries from dashboard to marketing so visitors stay oriented.                             |
+| 2026-05-21 | Zero SVG icons; text glyphs only.                                                                 | Risk taken deliberately: type and severity color carry identity. Allowed-glyph list closes the gap so contributors have a clear alternative to reaching for an icon library. The Alert disc is the only exception.        |
+| 2026-05-21 | One chart pattern (severity stacked bar) for v1; sparkline reserved for future.                   | Avoids dashboard fatigue and keeps the product document-shaped. Solid severity tokens belong to charts; soft tokens stay for rows/Badges/Alerts — color = signal, never mixed roles.                                      |
+| 2026-05-21 | State patterns codified (empty / loading inline / loading full / async / recoverable / blocking). | Per-page improvisation removed: mono sizes, copy rules, and trigger conditions now explicit. No spinners, no skeleton bones — `Muted` lines and pulsing counters only.                                                    |

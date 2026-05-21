@@ -11,9 +11,7 @@ export function Card({
   as?: "section" | "article" | "div" | "aside";
 }) {
   return (
-    <As class={cn("bg-surface border border-border rounded-lg p-6", className)}>
-      {children}
-    </As>
+    <As class={cn("bg-surface border border-border rounded-lg p-6", className)}>{children}</As>
   );
 }
 

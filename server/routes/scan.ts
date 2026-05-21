@@ -30,11 +30,18 @@ scanRoutes.post("/", async (c) => {
     const db = createDb(c.env.DB);
     const session = c.get("authSession");
     const organizationId = await ensurePersonalOrganization(db, session);
-    await enforceRateLimit(db, { key: `scan:${organizationId}`, limit: 10, windowMs: 60 * 60 * 1000 });
+    await enforceRateLimit(db, {
+      key: `scan:${organizationId}`,
+      limit: 10,
+      windowMs: 60 * 60 * 1000,
+    });
 
     const npmConnection = await getNpmConnection(db, organizationId);
     if (!npmConnection) {
-      return c.json({ error: "Connect an organization npm token before scanning staged publishes." }, 400);
+      return c.json(
+        { error: "Connect an organization npm token before scanning staged publishes." },
+        400,
+      );
     }
 
     const scanId = crypto.randomUUID();
@@ -61,7 +68,10 @@ scanRoutes.post("/", async (c) => {
       );
     }
     if (err instanceof SandboxError) {
-      return c.json({ error: "Could not download or inspect the staged tarball.", detail: err.detail }, 502);
+      return c.json(
+        { error: "Could not download or inspect the staged tarball.", detail: err.detail },
+        502,
+      );
     }
     throw err;
   }

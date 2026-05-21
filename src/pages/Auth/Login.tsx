@@ -1,16 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { useLocation } from "preact-iso";
 import { getSession, signIn } from "../../models/auth";
-import {
-  Alert,
-  Button,
-  Card,
-  Eyebrow,
-  Field,
-  Input,
-  PageShell,
-  Muted,
-} from "../../components";
+import { Alert, Button, Card, Eyebrow, Field, Input, PageShell, Muted } from "../../components";
 
 export default function LoginPage() {
   const location = useLocation();
@@ -49,7 +40,9 @@ export default function LoginPage() {
       <Card class="flex flex-col gap-4">
         <Eyebrow>Welcome back</Eyebrow>
         <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Sign in</h1>
-        <Muted class="text-[13px] m-0">Sign in to review staged releases and revisit saved reports.</Muted>
+        <Muted class="text-[13px] m-0">
+          Sign in to review staged releases and revisit saved reports.
+        </Muted>
 
         <form class="flex flex-col gap-4 mt-2" onSubmit={onSubmit}>
           <Field label="Email" for="login-email">

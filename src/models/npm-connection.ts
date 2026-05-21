@@ -40,11 +40,14 @@ export async function saveNpmConnection(input: {
   label?: string;
   registryUrl?: string;
 }): Promise<PublicNpmConnection | null> {
-  const data = await apiFetch<{ connection: PublicNpmConnection | null }>("/api/v1/npm-connection", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  });
+  const data = await apiFetch<{ connection: PublicNpmConnection | null }>(
+    "/api/v1/npm-connection",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
   return data.connection;
 }
 
@@ -69,7 +72,9 @@ async function apiFetch<T>(input: RequestInfo | URL, init?: RequestInit): Promis
     headers: { accept: "application/json", ...init?.headers },
     ...init,
   });
-  const data = (await res.json().catch(() => null)) as (Partial<T> & { error?: string; detail?: string }) | null;
+  const data = (await res.json().catch(() => null)) as
+    | (Partial<T> & { error?: string; detail?: string })
+    | null;
   if (!res.ok) {
     if (res.status === 401) throw new Error("Please sign in to continue.");
     const detail = typeof data?.detail === "string" ? `: ${data.detail}` : "";

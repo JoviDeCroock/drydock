@@ -10,17 +10,31 @@ describe("npm stage gateway policy", () => {
   const registry = "https://registry.npmjs.org";
 
   test("allows only expected credentialed npm GET endpoints", () => {
-    expect(evaluateNpmStageGatewayRequest("https://registry.npmjs.org/-/stage/stage-123/tarball", "GET", registry)).toMatchObject({
+    expect(
+      evaluateNpmStageGatewayRequest(
+        "https://registry.npmjs.org/-/stage/stage-123/tarball",
+        "GET",
+        registry,
+      ),
+    ).toMatchObject({
       allowed: true,
       credentialed: true,
       kind: "staged-tarball",
     });
-    expect(evaluateNpmStageGatewayRequest("https://registry.npmjs.org/@scope%2fpkg", "GET", registry)).toMatchObject({
+    expect(
+      evaluateNpmStageGatewayRequest("https://registry.npmjs.org/@scope%2fpkg", "GET", registry),
+    ).toMatchObject({
       allowed: true,
       credentialed: true,
       kind: "package-metadata",
     });
-    expect(evaluateNpmStageGatewayRequest("https://registry.npmjs.org/pkg/-/pkg-1.2.3.tgz", "GET", registry)).toMatchObject({
+    expect(
+      evaluateNpmStageGatewayRequest(
+        "https://registry.npmjs.org/pkg/-/pkg-1.2.3.tgz",
+        "GET",
+        registry,
+      ),
+    ).toMatchObject({
       allowed: true,
       credentialed: true,
       kind: "published-tarball",

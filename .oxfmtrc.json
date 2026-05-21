@@ -11,6 +11,8 @@
   "ignorePatterns": [
     "dist/**",
     ".wrangler/**",
+    ".claude/**",
+    ".agents/**",
     "drizzle/**",
     "node_modules/**",
     "pnpm-lock.yaml",

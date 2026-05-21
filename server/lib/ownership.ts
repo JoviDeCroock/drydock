@@ -5,6 +5,9 @@ export function personalOrganizationId(userId: string) {
   return `${PERSONAL_ORGANIZATION_PREFIX}${userId}`;
 }
 
-export function scanBelongsToOrganization(scan: { organizationId?: string | null }, organizationId: string) {
+export function scanBelongsToOrganization(
+  scan: { organizationId?: string | null },
+  organizationId: string,
+) {
   return Boolean(organizationId) && scan.organizationId === organizationId;
 }

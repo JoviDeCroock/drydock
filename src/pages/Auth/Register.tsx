@@ -1,16 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { useLocation } from "preact-iso";
 import { getSession, signIn, signUp } from "../../models/auth";
-import {
-  Alert,
-  Button,
-  Card,
-  Eyebrow,
-  Field,
-  Input,
-  PageShell,
-  Muted,
-} from "../../components";
+import { Alert, Button, Card, Eyebrow, Field, Input, PageShell, Muted } from "../../components";
 
 export default function RegisterPage() {
   const location = useLocation();
