@@ -97,6 +97,8 @@ Worker non-secret vars and bindings:
 | `AI_MODEL` | `wrangler.jsonc` `vars` | Workers AI model ID. Defaults to `@cf/moonshotai/kimi-k2.5`. |
 | `AI_CACHE_AFFINITY` | `wrangler.jsonc` `vars` | Stable `x-session-affinity` value for Cloudflare Workers AI prefix caching. |
 | `AI`, `LOADER`, `DB` | `wrangler.jsonc` bindings | Cloudflare Workers AI, Dynamic Worker loader, and required D1 database binding. |
+| `SCAN_QUEUE` | `wrangler.jsonc` Queue binding | Optional in local dev; production async scan queue. Configure retry/DLQ policy before private beta. |
+| `COMPARE_CACHE` | `wrangler.jsonc` KV binding | Cache for parsed published package versions used by alternate-version compare views. |
 
 Generate the Better Auth secret with either command:
 
@@ -130,6 +132,15 @@ curl http://localhost:5173/api/v1/scans
 
 # Read status/report detail for a persisted scan
 curl http://localhost:5173/api/v1/scans/<scan-id>
+
+# List published versions that can be compared against the staged release
+curl http://localhost:5173/api/v1/scans/<scan-id>/versions
+
+# Compare the staged release to another published version
+curl 'http://localhost:5173/api/v1/scans/<scan-id>/compare?version=<version>'
+
+# Fetch one prior-version file sample for the diff workbench
+curl 'http://localhost:5173/api/v1/scans/<scan-id>/compare/file?version=<version>&path=<path>'
 ```
 
 `POST /api/v1/scans` uses Cloudflare Queues when `SCAN_QUEUE` is bound. In local environments without the queue binding it schedules the same job with `executionCtx.waitUntil()` and stores `pending`/`running`/`complete`/`failed` status in D1.
@@ -201,8 +212,13 @@ Never write SQL migrations by hand; update `server/db/schema.ts` and generate mi
    pnpm wrangler secret put NPM_CONNECTIONS_ENCRYPTION_KEY
    ```
 
-3. Create the scan queue if needed (`pnpm wrangler queues create staged-publish-review-scans`), set the real D1 `database_id` and production `BETTER_AUTH_URL` in `wrangler.jsonc`, then apply migrations.
-4. Build + deploy:
+3. Create production resources and replace placeholder IDs in `wrangler.jsonc`:
+   - D1 database: `pnpm wrangler d1 create staged-publish-review`
+   - Scan queue: `pnpm wrangler queues create staged-publish-review-scans`
+   - Compare cache KV namespace: `pnpm wrangler kv namespace create COMPARE_CACHE`
+   - Before private beta, also configure a queue retry policy and dead-letter queue.
+4. Set the real D1 `database_id`, KV namespace `id`, and production `BETTER_AUTH_URL`, then apply migrations.
+5. Build + deploy:
 
    ```sh
    pnpm build

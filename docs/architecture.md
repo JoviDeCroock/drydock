@@ -26,7 +26,7 @@ Dynamic Worker sandbox
   └─ returns bounded file metadata + text samples
 ```
 
-Current implementation runs the scan synchronously in `POST /api/v1/scan`, but the scan orchestration lives in `server/lib/scan-pipeline.ts` so it can be reused by a future Queue consumer. The production target is a queued lifecycle where `POST /api/v1/scans` creates a scan, a Queue consumer runs the pipeline, and the UI reads status/report data from `GET /api/v1/scans/:id`.
+Scan orchestration lives in `server/lib/scan-pipeline.ts` and is shared by both entrypoints. The product path is the queued/background lifecycle: `POST /api/v1/scans` creates a scan, a Queue consumer or local `waitUntil()` job runs the pipeline, and the UI reads status/report data from `GET /api/v1/scans/:id`. `POST /api/v1/scan` remains only as a synchronous compatibility shim during the migration.
 
 ## Trust boundaries
 

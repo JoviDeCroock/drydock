@@ -12,9 +12,30 @@ This roadmap converts the current staged-publish sandbox into a SaaS product whi
 - Raw tarballs are not retained by default.
 - Signed reports are prepared for but not launched yet.
 
+## Current cut line
+
+The prototype-to-product foundation is mostly in place: authenticated organization-scoped scans, encrypted organization npm connections, async-capable scan jobs, persisted report metadata, and a text-only release diff workbench exist. The next roadmap iteration should optimize for **safe private beta**, not breadth.
+
+Private beta blockers:
+
+- Queue retries, dead-letter visibility, and idempotent scan execution.
+- Tenant-boundary, sandbox-gateway, and archive-parser regression tests.
+- Structured user-safe scan errors and operator-visible failure metrics.
+- Signup/credential abuse controls for an invite-only beta.
+- Report deletion plus a documented retention policy for persisted redacted evidence.
+- Production deploy checklist covering D1 migrations, Queues, KV, secrets, and incident response.
+
+Not private-beta blockers unless customer evidence demands them:
+
+- Team RBAC beyond personal organizations.
+- Public signed reports.
+- Raw tarball retention.
+- Deep native/binary malware analysis.
+- Automated npm publish approval, which remains intentionally out of scope.
+
 ## Phase 1 — Product baseline
 
-Status: documentation in progress.
+Status: implemented; keep docs updated as product decisions change.
 
 Goals:
 
@@ -37,12 +58,12 @@ Exit criteria:
 
 ## Phase 2 — Scan pipeline extraction
 
-Status: implemented for the synchronous route; ready to be reused by a Queue consumer.
+Status: implemented and reused by the synchronous compatibility route plus queue/background execution.
 
 Goals:
 
 - Make scan execution reusable outside the synchronous route.
-- Prepare for Queues without changing user-visible behavior yet.
+- Support Queues/background execution without duplicating scan orchestration.
 
 Completed:
 
@@ -58,7 +79,7 @@ Remaining follow-up:
 Exit criteria:
 
 - The route handler is thin.
-- The same pipeline can be called by an HTTP route or Queue consumer.
+- The same pipeline can be called by an HTTP route or Queue/background consumer.
 - No behavior regressions in current tests/typecheck.
 
 ## Phase 3 — Per-organization npm connections
@@ -97,7 +118,7 @@ Exit criteria:
 
 ## Phase 4 — Async scans with Cloudflare Queues
 
-Status: foundation implemented; production queue resource must be created/configured before deploy.
+Status: foundation implemented and `wrangler.jsonc` declares producer/consumer bindings; production queue and retry/DLQ behavior still need deployment validation.
 
 Goals:
 
@@ -107,6 +128,7 @@ Goals:
 Completed:
 
 - Added Queue producer/consumer binding shape for `SCAN_QUEUE`.
+- Declared the `staged-publish-review-scans` producer/consumer in `wrangler.jsonc` with single-message batches.
 - Added queue consumer that executes scan jobs without putting npm token material in the queue payload.
 - Added local queue-less execution: when no queue binding is present, `POST /api/v1/scans` creates the D1 row and schedules work with `executionCtx.waitUntil()`.
 - Added scan status lifecycle:
@@ -127,9 +149,11 @@ Completed:
 
 Remaining tasks:
 
-- Create the production queue resource (`staged-publish-review-scans`) and verify deploy-time binding.
+- Create the production queue resource (`staged-publish-review-scans`) and a dead-letter queue; verify deploy-time bindings in the target Cloudflare account.
+- Configure explicit consumer retry limits, backoff expectations, and dead-letter routing in Wrangler.
 - Fix queue retry semantics so transient worker/AI/npm failures are retried instead of only logged.
-- Add retry/dead-letter policy once expected package and AI failure modes are observed.
+- Classify terminal failures that should not retry, such as invalid stage IDs, missing organization npm connections, authorization failures, and malformed package archives.
+- Ensure retries are idempotent: a repeated job for the same scan ID should not duplicate files, findings, or audit events.
 - Add operator-visible scan duration/failure metrics.
 
 Exit criteria:
@@ -140,7 +164,7 @@ Exit criteria:
 
 ## Phase 5 — Durable report workbench
 
-Status: partially implemented for persisted scan detail; canonical report digest metadata now exists for newly completed scans.
+Status: persisted scan detail and the release diff workbench are implemented; report grouping/timeline polish remains.
 
 Goals:
 
@@ -160,13 +184,20 @@ Completed:
 - Render changed-file diff metadata as a first-class persisted section.
 - Keep file explorer text-only with escaped safe previews.
 - Poll running scans without emitting repeated `scan.viewed` audit events.
+- Added a release diff workbench with version picker, file tree, unified text diff, and risk-signal rail.
+- Added authenticated compare endpoints for published versions:
+  - `GET /api/v1/scans/:id/versions`
+  - `GET /api/v1/scans/:id/compare?version=...`
+  - `GET /api/v1/scans/:id/compare/file?version=...&path=...`
+- Added `COMPARE_CACHE` KV support so published-version parsing is amortized across scan detail views.
 
 Remaining tasks:
 
 - Group deterministic and AI findings by severity/source.
 - Group scan lifecycle events into a human-readable timeline.
 - Use `completed_at` more visibly in list/detail metadata.
-- Continue improving file explorer ergonomics while preserving safe text-only rendering.
+- Add file search/filter and a changed-files-first default while preserving safe text-only rendering.
+- Configure the production `COMPARE_CACHE` KV namespace and decide its TTL/eviction expectations.
 
 Exit criteria:
 
@@ -176,6 +207,8 @@ Exit criteria:
 
 ## Phase 6 — R2 derived artifacts
 
+Status: not started. R2 is not required for private beta if D1 deletion/retention for current redacted samples is implemented, but it becomes important for larger reports, exports, and future signing.
+
 Goals:
 
 - Move larger report artifacts out of D1.
@@ -183,15 +216,15 @@ Goals:
 
 Tasks:
 
-- Add R2 binding.
+- Add R2 binding and production bucket provisioning docs.
 - Store derived/redacted artifacts:
   - canonical report JSON;
   - manifest JSON;
   - redacted changed-file samples;
   - diff JSON.
 - Store R2 object references in D1.
-- Add retention cleanup strategy.
-- Document object key format and access rules.
+- Add retention cleanup strategy and deletion workflow that removes both D1 metadata and R2 objects.
+- Document object key format, access rules, and expected object sizes.
 
 Default policy:
 
@@ -207,7 +240,7 @@ Exit criteria:
 
 ## Phase 7 — Production hardening
 
-Status: partially implemented in the synchronous path; operational metrics/alerts and async failure handling still pending.
+Status: partially implemented across the product path; operational metrics/alerts, async failure handling, and broader regression coverage still pending.
 
 Goals:
 
@@ -230,8 +263,9 @@ Remaining tasks:
 - Add archive parser fuzz/regression tests and deeper archive-bomb protections.
 - Add line numbers to deterministic findings where possible.
 - Add deterministic rule IDs and versions.
-- Add metrics/logging for scan durations, failures, AI failures, and npm failures.
+- Add metrics/logging for scan durations, queue retries/exhaustion, failures, AI failures, and npm failures.
 - Add D1/R2 retention controls for persisted redacted text samples and derived artifacts.
+- Verify production bindings for `SCAN_QUEUE`, dead-letter queue, `COMPARE_CACHE`, D1, Workers AI, and Dynamic Workers.
 - Add deployment checklist and incident-response notes.
 
 Exit criteria:
@@ -253,19 +287,34 @@ Goals:
 - Make the current SaaS safe to operate for invited users.
 - Close the most important reliability, abuse, and data-retention gaps.
 
-Tasks:
+Gate tasks:
+
+Reliability and operations:
 
 - Fix Queue retry/DLQ semantics so transient scan failures retry and exhausted jobs are visible to operators.
 - Add explicit Cloudflare Queue retry policy and dead-letter queue configuration.
 - Ensure scan execution is idempotent across retries.
-- Add cross-organization tests for scan detail/list access and npm connection isolation.
+- Add structured scan error taxonomy with user-safe messages and operator-facing details.
+- Add metrics/logs for scan duration, queue retries/exhaustion, npm fetch failures, AI failures, archive parser failures, and rate-limit events.
+
+Security boundaries:
+
+- Add cross-organization tests for scan detail/list/compare access and npm connection isolation.
 - Add sandbox gateway tests that prove credentials are only attached to allowed npm registry requests.
 - Add tar parser regression tests for traversal paths, absolute paths, PAX paths, GNU long names, links, truncation, huge file counts, and archive-size caps.
+- Investigate build output to ensure local `.dev.vars` secrets are never included in deployable or public artifacts.
+
+Abuse and data lifecycle:
+
 - Add invite-only or allowlist mode for private beta signups.
 - Add auth abuse controls: email verification, Turnstile or equivalent, and endpoint-specific rate limits.
 - Add scan/report deletion and a documented default retention policy for persisted text samples.
-- Investigate build output to ensure local `.dev.vars` secrets are never included in deployable or public artifacts.
 - Add deployment and incident-response checklists.
+
+Nice-to-have before widening beta:
+
+- Add basic AI model routing from [`docs/cost-model.md`](./cost-model.md): cheaper default triage, Kimi escalation for risky or ambiguous scans.
+- Add first-run onboarding copy for least-privilege npm token setup.
 
 Exit criteria:
 
@@ -289,10 +338,10 @@ Tasks:
 - Add human-readable report export, initially HTML; PDF can follow if needed.
 - Add report digest tests for stable canonical ordering and evidence changes.
 - Store scanner version, deterministic rules version, prompt version, model/provider metadata, and report schema version.
-- Add a report provenance section: package name, staged version, previous version, stage ID, generated timestamp, artifact digests, and review limitations.
+- Add a report provenance section: package name, staged version, previous version, selected comparison version, stage ID, generated timestamp, artifact digests, and review limitations.
 - Add deterministic finding rule IDs and versions.
 - Add AI failure states that preserve deterministic findings when AI is unavailable.
-- Store AI latency and provider/model metadata where available.
+- Store AI latency and provider/model metadata where available, including whether the default model or escalation model reviewed the scan.
 - Keep signed/public report URLs deferred, but design exports so signing can wrap the same canonical artifact later.
 
 Exit criteria:
@@ -309,6 +358,11 @@ Goals:
 
 - Turn scan detail from a technical result page into a release decision cockpit.
 - Help maintainers decide whether to manually approve an npm staged publish.
+
+Completed foundation:
+
+- Release diff workbench with version selection, file tree, unified text diff, and risk signals.
+- Persisted report sections for reviewer notes, report fingerprint, package.json diff, and manifest changes.
 
 Tasks:
 
@@ -328,7 +382,35 @@ Exit criteria:
 - Failure and recovery paths are clear.
 - The UI reinforces that approval remains manual outside the product.
 
-### Phase 11 — Team and commercial readiness
+### Phase 11 — Proactive stage monitoring and email notifications
+
+Priority: high after the manual scan flow is reliable.
+
+Goals:
+
+- Let maintainers opt in to automatic discovery of new npm staged publishes.
+- Reuse the existing queued scan pipeline so newly discovered stages are scanned without the user pasting a stage ID.
+- Notify the right user when an automatic scan finishes or fails, while keeping npm approval manual and outside the product.
+
+Tasks:
+
+- Confirm npm staged-publish list/view APIs can enumerate new stages with organization-owned credentials, and document the minimum token capabilities required.
+- Add organization/package monitoring settings for opt-in scopes/packages, notification recipients, and notification preferences.
+- Add a scheduled discovery job, likely Cloudflare Cron-triggered, that polls for new staged publishes per npm connection.
+- Deduplicate discovered stage IDs in D1 and enqueue scan jobs idempotently so retries or repeated polls do not create duplicate automatic scans.
+- Reuse the existing scan lifecycle and persisted report surface for automatic scans.
+- Add an email notification provider and safe templates for scan complete, high-risk scan complete, and scan failed states, each linking back to the persisted report.
+- Add audit events and operator metrics for stage discovered, automatic scan queued, notification sent, and notification failed.
+- Add UI for enabling/disabling monitoring and showing last discovery/notification status.
+
+Exit criteria:
+
+- An opted-in organization automatically scans new staged publishes without manually pasting a stage ID.
+- Each discovered stage is scanned at most once per organization unless a user explicitly retries it.
+- Users receive an email with a link to the persisted scan report when the automatic scan reaches a terminal state.
+- The product still makes clear that npm approval remains manual outside the product.
+
+### Phase 12 — Team and commercial readiness
 
 Priority: medium after private beta proves value.
 
@@ -356,7 +438,7 @@ Exit criteria:
 - Usage, billing, and audit data are visible to customers and operators.
 - Support can diagnose common tenant issues without direct database access.
 
-### Phase 12 — Security-product defensibility
+### Phase 13 — Security-product defensibility
 
 Priority: ongoing.
 
@@ -393,4 +475,10 @@ Exit criteria:
 
 ## Suggested next implementation slice
 
-Start Phase 8 by finishing Phase 4/7 reliability hardening: define retryable versus permanent scan failures, wire Cloudflare Queue retry/DLQ behavior accordingly, add operator-visible metrics for scan duration, npm fetch failures, AI failures, and queue exhaustion, then add the cross-organization and sandbox gateway tests that lock down SaaS tenant boundaries.
+Do Phase 8 in three small slices:
+
+1. **Queue reliability:** add scan error classes, classify retryable vs terminal failures, make `queue()` retry transient failures, configure the dead-letter queue, and make scan persistence idempotent for repeated scan IDs.
+2. **Boundary tests:** add cross-organization tests for list/detail/compare routes, sandbox gateway credential-injection tests, and archive parser regression fixtures.
+3. **Private beta operations:** configure production Queues/KV/D1/secrets, add metrics/logging for scan duration and failure classes, add invite-only signup protection, and document deployment + incident response.
+
+After those land, improve maintainer UX by grouping findings and adding the lifecycle timeline before broadening beta access.
