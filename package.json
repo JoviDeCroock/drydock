@@ -16,7 +16,9 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply staged-publish-review --local",
     "db:migrate:remote": "wrangler d1 migrations apply staged-publish-review --remote",
-    "test": "vitest run",
+    "test": "vitest run --config vitest.config.ts && vitest run --config vitest.workers.config.ts",
+    "test:node": "vitest run --config vitest.config.ts",
+    "test:workers": "vitest run --config vitest.workers.config.ts",
     "verify": "pnpm run lint && pnpm run format:check && pnpm run typecheck && pnpm run test",
     "prepare": "git config core.hooksPath .githooks"
   },
@@ -31,6 +33,7 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.33.2",
+    "@cloudflare/vitest-pool-workers": "^0.16.7",
     "@cloudflare/workers-types": "^4.20260520.0",
     "@preact/eslint-plugin-signals": "^0.2.0",
     "@preact/preset-vite": "^2.10.5",
