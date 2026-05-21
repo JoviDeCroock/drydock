@@ -1,5 +1,6 @@
 import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
 import { getSession } from "../../models/auth";
 import {
   Card,
@@ -37,16 +38,19 @@ export default function LandingPage() {
           without executing package code or exposing credentials to untrusted package contents.
         </p>
         <div class="flex gap-3 mt-2">
-          {authed.value ? (
+          <Show
+            when={authed}
+            fallback={
+              <>
+                <LinkButton href="/register">Create account</LinkButton>
+                <LinkButton href="/login" variant="secondary">
+                  Sign in
+                </LinkButton>
+              </>
+            }
+          >
             <LinkButton href="/dashboard">Open dashboard</LinkButton>
-          ) : (
-            <>
-              <LinkButton href="/register">Create account</LinkButton>
-              <LinkButton href="/login" variant="secondary">
-                Sign in
-              </LinkButton>
-            </>
-          )}
+          </Show>
         </div>
       </section>
 
