@@ -28,6 +28,8 @@
 - Styling is Tailwind CSS v4 via `@tailwindcss/vite`. Design tokens (colors, fonts, shadows) are declared in `src/style.css` with `@theme`, light/dark modes overridden via `prefers-color-scheme`. Reach for primitives in `src/components/` (`Button`, `Input`, `Field`, `Badge`, `Alert`, `Card`, `PageShell`, `Eyebrow`, etc.) before writing one-off classes. No CSS-in-JS.
 - **Read [`DESIGN.md`](DESIGN.md) before making any visual or UI decision.** It is the source of truth for fonts, colors, spacing, iconography (text glyphs only — no SVG icons), data viz (severity stacked bar only), state patterns, and marketing-surface rules. Do not deviate without explicit user approval. Anti-patterns there are not suggestions — they're prohibitions.
 - We use `preact`, `preact-iso`, and `signals`.
+- `useState` and `useReducer` are banned (oxlint `no-restricted-imports` enforces it). Component-local state goes through `useSignal`/`useComputed` or `createModel`/`useModel`. See `docs/tooling.md` and the skills under `.claude/skills/preact-signals-*`.
+- Lint with `pnpm run lint` (oxlint) and format with `pnpm run format` (oxfmt). Configs live in `.oxlintrc.json` and `.oxfmtrc.json`.
 - Never write SQL migrations by hand; use `pnpm db:generate` to create migrations from `server/db/schema.ts`.
 - Before you start work read up on `docs/`, when you are done working update `docs/` with relevant information
 - WE NEVER USE `preact/compat`
@@ -37,5 +39,7 @@
 - `npm run dev` — Vite dev server with the Cloudflare plugin running the Worker locally at `http://localhost:5173`.
 - `npm run build` — Build the UI bundle into `dist/`.
 - `npm run typecheck` — `tsc --noEmit`.
+- `npm run lint` / `npm run lint:fix` — oxlint over `src/`, `server/`, `test/`. Use `:fix` to apply autofixes.
+- `npm run format` / `npm run format:check` — oxfmt write / check-only.
 - `npm run test` — Vitest logic suite.
 - `npm run db:generate` — Drizzle migration from `server/db/schema.ts`.

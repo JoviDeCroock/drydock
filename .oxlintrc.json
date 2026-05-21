@@ -1,0 +1,54 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import", "react", "promise"],
+  "jsPlugins": ["@preact/eslint-plugin-signals"],
+  "categories": {
+    "correctness": "error"
+  },
+  "env": {
+    "builtin": true,
+    "browser": true,
+    "node": true,
+    "worker": true,
+    "es2022": true
+  },
+  "settings": {
+    "react": {
+      "version": "18",
+      "pragma": "h",
+      "pragmaFrag": "Fragment"
+    }
+  },
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "preact/hooks",
+            "importNames": ["useState", "useReducer"],
+            "message": "useState/useReducer are banned. Migrate to @preact/signals (useSignal, useComputed) or createModel/useModel — see the preact-signals-models-utils skill."
+          },
+          {
+            "name": "react",
+            "importNames": ["useState", "useReducer"],
+            "message": "useState/useReducer are banned. Migrate to @preact/signals (useSignal, useComputed) or createModel/useModel — see the preact-signals-models-utils skill."
+          }
+        ]
+      }
+    ],
+    "@preact/signals/no-signal-write-in-computed": "error",
+    "@preact/signals/no-value-after-await": "error",
+    "@preact/signals/no-signal-truthiness": "warn",
+    "@preact/signals/no-signal-in-component-body": "error",
+    "@preact/signals/no-conditional-value-read": "error"
+  },
+  "ignorePatterns": [
+    "dist/**",
+    ".wrangler/**",
+    "drizzle/**",
+    "node_modules/**",
+    "worker-configuration.d.ts",
+    "**/*.d.ts"
+  ]
+}
