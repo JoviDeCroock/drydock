@@ -120,7 +120,13 @@ export function FileTree({
   return (
     <ul class="list-none p-0 m-0">
       {tree.map((node) => (
-        <TreeNode key={node.path} node={node} depth={0} selectedPath={selectedPath} onSelect={onSelect} />
+        <TreeNode
+          key={node.path}
+          node={node}
+          depth={0}
+          selectedPath={selectedPath}
+          onSelect={onSelect}
+        />
       ))}
     </ul>
   );
@@ -162,7 +168,13 @@ function TreeNode({
           </summary>
           <ul class="list-none p-0 m-0">
             {node.children.map((child) => (
-              <TreeNode key={child.path} node={child} depth={depth + 1} selectedPath={selectedPath} onSelect={onSelect} />
+              <TreeNode
+                key={child.path}
+                node={child}
+                depth={depth + 1}
+                selectedPath={selectedPath}
+                onSelect={onSelect}
+              />
             ))}
           </ul>
         </details>
@@ -183,7 +195,9 @@ function TreeNode({
         )}
         style={{ paddingLeft: `${8 + depth * 14}px` }}
       >
-        <span class={cn("flex-1 truncate", isSelected ? "text-ink" : statusToText(node.status))}>{node.name}</span>
+        <span class={cn("flex-1 truncate", isSelected ? "text-ink" : statusToText(node.status))}>
+          {node.name}
+        </span>
         {node.status !== "unchanged" ? (
           <Badge tone={statusToTone(node.status)}>{node.status}</Badge>
         ) : null}

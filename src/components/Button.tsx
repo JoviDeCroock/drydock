@@ -19,8 +19,7 @@ const base =
 
 const variantStyles: Record<ButtonVariant, string> = {
   primary: "bg-accent text-accent-on hover:bg-accent-hover",
-  secondary:
-    "bg-surface-2 text-ink border-border hover:border-border-strong",
+  secondary: "bg-surface-2 text-ink border-border hover:border-border-strong",
   ghost: "bg-transparent text-ink-muted hover:bg-surface-2 hover:text-ink",
   danger: "bg-danger text-white hover:brightness-95",
 };
@@ -39,7 +38,11 @@ export function Button({
   ...props
 }: ButtonProps) {
   return (
-    <button type={type} class={cn(base, variantStyles[variant], sizeStyles[size], className)} {...props}>
+    <button
+      type={type}
+      class={cn(base, variantStyles[variant], sizeStyles[size], className)}
+      {...props}
+    >
       {children}
     </button>
   );
@@ -53,7 +56,10 @@ export function LinkButton({
   ...props
 }: AnchorProps) {
   return (
-    <a class={cn(base, "no-underline", variantStyles[variant], sizeStyles[size], className)} {...props}>
+    <a
+      class={cn(base, "no-underline", variantStyles[variant], sizeStyles[size], className)}
+      {...props}
+    >
       {children}
     </a>
   );

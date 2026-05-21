@@ -1,7 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
-import { getSession } from "../../models/auth";
+import { sessionModel } from "../../models/auth";
 import {
   Card,
   Eyebrow,
@@ -17,7 +17,7 @@ export default function LandingPage() {
 
   useEffect(() => {
     let cancelled = false;
-    getSession().then((session) => {
+    void sessionModel.load().then((session) => {
       if (cancelled) return;
       authed.value = Boolean(session?.user);
     });
@@ -34,8 +34,9 @@ export default function LandingPage() {
           Catch risky changes before a staged package goes live.
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-          Review what changed, spot suspicious release behavior, and leave with a clear safety report —
-          without executing package code or exposing credentials to untrusted package contents.
+          Review what changed, spot suspicious release behavior, and leave with a clear safety
+          report — without executing package code or exposing credentials to untrusted package
+          contents.
         </p>
         <div class="flex gap-3 mt-2">
           <Show
@@ -56,7 +57,8 @@ export default function LandingPage() {
 
       <StatusStrip>
         <StatusStripItem label="credentials" status="scoped" tone="ok">
-          Your npm token is used only to fetch staged release evidence, never exposed to package contents.
+          Your npm token is used only to fetch staged release evidence, never exposed to package
+          contents.
         </StatusStripItem>
         <StatusStripItem label="retention" status="redacted" tone="ok">
           Reports keep redacted review evidence, not raw release archives.
@@ -70,16 +72,16 @@ export default function LandingPage() {
         <SectionLabel>How it protects releases</SectionLabel>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Feature title="Credentials stay protected">
-            Connect npm once. Reviews can fetch staged releases without exposing your token to untrusted
-            package contents.
+            Connect npm once. Reviews can fetch staged releases without exposing your token to
+            untrusted package contents.
           </Feature>
           <Feature title="Changes take center stage">
-            See the release delta that matters: scripts, dependencies, entrypoints, new files, binaries,
-            and suspicious code paths.
+            See the release delta that matters: scripts, dependencies, entrypoints, new files,
+            binaries, and suspicious code paths.
           </Feature>
           <Feature title="Assistant that knows its place">
-            The reviewer treats package contents as evidence, not instructions — adding context without
-            overriding hard safety signals.
+            The reviewer treats package contents as evidence, not instructions — adding context
+            without overriding hard safety signals.
           </Feature>
         </div>
       </section>

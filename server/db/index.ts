@@ -1,7 +1,16 @@
 import { drizzle } from "drizzle-orm/d1";
 import { and, desc, eq, lt, sql } from "drizzle-orm";
 import * as schema from "./schema";
-import { npmConnections, organizationMembers, organizations, rateLimits, scanEvents, scanFiles, scanFindings, scans } from "./schema";
+import {
+  npmConnections,
+  organizationMembers,
+  organizations,
+  rateLimits,
+  scanEvents,
+  scanFiles,
+  scanFindings,
+  scans,
+} from "./schema";
 import { personalOrganizationId } from "../lib/ownership";
 import type { DiffEntry, FileRecord, Finding, PackageJsonSummary } from "../lib/review";
 
@@ -85,22 +94,28 @@ export async function ensurePersonalOrganization(db: AppDb, session: WorkspaceSe
   const now = new Date();
   const name = session.name || session.email || "Personal workspace";
 
-  await db.insert(organizations).values({
-    id: organizationId,
-    name,
-    ownerUserId: session.userId,
-    createdAt: now,
-    updatedAt: now,
-  }).onConflictDoNothing();
+  await db
+    .insert(organizations)
+    .values({
+      id: organizationId,
+      name,
+      ownerUserId: session.userId,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoNothing();
 
-  await db.insert(organizationMembers).values({
-    id: `member:${organizationId}:${session.userId}`,
-    organizationId,
-    userId: session.userId,
-    role: "owner",
-    createdAt: now,
-    updatedAt: now,
-  }).onConflictDoNothing();
+  await db
+    .insert(organizationMembers)
+    .values({
+      id: `member:${organizationId}:${session.userId}`,
+      organizationId,
+      userId: session.userId,
+      role: "owner",
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoNothing();
 
   return organizationId;
 }
@@ -112,18 +127,21 @@ export async function enforceRateLimit(db: AppDb, input: RateLimitInput) {
   const expiresAt = new Date((bucket + 1) * input.windowMs);
   const now = new Date(nowMs);
 
-  await db.insert(rateLimits).values({
-    key,
-    count: 1,
-    expiresAt,
-    updatedAt: now,
-  }).onConflictDoUpdate({
-    target: rateLimits.key,
-    set: {
-      count: sql`${rateLimits.count} + 1`,
+  await db
+    .insert(rateLimits)
+    .values({
+      key,
+      count: 1,
+      expiresAt,
       updatedAt: now,
-    },
-  });
+    })
+    .onConflictDoUpdate({
+      target: rateLimits.key,
+      set: {
+        count: sql`${rateLimits.count} + 1`,
+        updatedAt: now,
+      },
+    });
 
   const [entry] = await db.select().from(rateLimits).where(eq(rateLimits.key, key)).limit(1);
   if (Math.random() < 0.01) {
@@ -163,7 +181,8 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
 
 export async function markScanRunning(db: AppDb, scanId: string, organizationId: string) {
   const now = new Date();
-  await db.update(scans)
+  await db
+    .update(scans)
     .set({ status: "running", startedAt: now, updatedAt: now })
     .where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)));
 }
@@ -174,7 +193,8 @@ export async function markScanFailed(
   organizationId: string,
   error: { message: string; code?: string; detail?: string },
 ) {
-  await db.update(scans)
+  await db
+    .update(scans)
     .set({
       status: "failed",
       risk: "unknown",
@@ -207,23 +227,26 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     updatedAt: now,
   };
 
-  await db.insert(scans).values(scanValues).onConflictDoUpdate({
-    target: scans.id,
-    set: {
-      packageName: scanValues.packageName,
-      stagedVersion: scanValues.stagedVersion,
-      previousVersion: scanValues.previousVersion,
-      risk: scanValues.risk,
-      status: scanValues.status,
-      summaryJson: scanValues.summaryJson,
-      aiJson: scanValues.aiJson,
-      errorJson: scanValues.errorJson,
-      reportVersion: scanValues.reportVersion,
-      reportDigest: scanValues.reportDigest,
-      completedAt: scanValues.completedAt,
-      updatedAt: now,
-    },
-  });
+  await db
+    .insert(scans)
+    .values(scanValues)
+    .onConflictDoUpdate({
+      target: scans.id,
+      set: {
+        packageName: scanValues.packageName,
+        stagedVersion: scanValues.stagedVersion,
+        previousVersion: scanValues.previousVersion,
+        risk: scanValues.risk,
+        status: scanValues.status,
+        summaryJson: scanValues.summaryJson,
+        aiJson: scanValues.aiJson,
+        errorJson: scanValues.errorJson,
+        reportVersion: scanValues.reportVersion,
+        reportDigest: scanValues.reportDigest,
+        completedAt: scanValues.completedAt,
+        updatedAt: now,
+      },
+    });
 
   await db.delete(scanFiles).where(eq(scanFiles.scanId, input.id));
   await db.delete(scanFindings).where(eq(scanFindings.scanId, input.id));
@@ -316,21 +339,24 @@ export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) 
     updatedAt: now,
   };
 
-  await db.insert(npmConnections).values(values).onConflictDoUpdate({
-    target: npmConnections.organizationId,
-    set: {
-      registryUrl: values.registryUrl,
-      label: values.label,
-      tokenCiphertext: values.tokenCiphertext,
-      tokenNonce: values.tokenNonce,
-      tokenFingerprint: values.tokenFingerprint,
-      tokenLast4: values.tokenLast4,
-      validationStatus: values.validationStatus,
-      capabilitiesJson: values.capabilitiesJson,
-      validatedAt: values.validatedAt,
-      updatedAt: now,
-    },
-  });
+  await db
+    .insert(npmConnections)
+    .values(values)
+    .onConflictDoUpdate({
+      target: npmConnections.organizationId,
+      set: {
+        registryUrl: values.registryUrl,
+        label: values.label,
+        tokenCiphertext: values.tokenCiphertext,
+        tokenNonce: values.tokenNonce,
+        tokenFingerprint: values.tokenFingerprint,
+        tokenLast4: values.tokenLast4,
+        validationStatus: values.validationStatus,
+        capabilitiesJson: values.capabilitiesJson,
+        validatedAt: values.validatedAt,
+        updatedAt: now,
+      },
+    });
 
   return getNpmConnection(db, input.organizationId);
 }
@@ -344,8 +370,12 @@ export async function getNpmConnection(db: AppDb, organizationId: string) {
   return connection ?? null;
 }
 
-export async function updateNpmConnectionValidation(db: AppDb, input: NpmConnectionValidationInput) {
-  await db.update(npmConnections)
+export async function updateNpmConnectionValidation(
+  db: AppDb,
+  input: NpmConnectionValidationInput,
+) {
+  await db
+    .update(npmConnections)
     .set({
       validationStatus: input.validationStatus,
       capabilitiesJson: input.capabilities ?? null,
@@ -357,7 +387,8 @@ export async function updateNpmConnectionValidation(db: AppDb, input: NpmConnect
 }
 
 export async function markNpmConnectionUsed(db: AppDb, organizationId: string) {
-  await db.update(npmConnections)
+  await db
+    .update(npmConnections)
     .set({ lastUsedAt: new Date(), updatedAt: new Date() })
     .where(eq(npmConnections.organizationId, organizationId));
 }

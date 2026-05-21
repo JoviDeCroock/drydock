@@ -19,8 +19,18 @@ export interface PackageJsonDiff {
   name: string | null;
   previousVersion: string | null;
   stagedVersion: string | null;
-  scripts: Array<{ key: string; status: "added" | "removed" | "modified"; previous?: string; staged?: string }>;
-  dependencies: Array<{ key: string; status: "added" | "removed" | "modified"; previous?: string; staged?: string }>;
+  scripts: Array<{
+    key: string;
+    status: "added" | "removed" | "modified";
+    previous?: string;
+    staged?: string;
+  }>;
+  dependencies: Array<{
+    key: string;
+    status: "added" | "removed" | "modified";
+    previous?: string;
+    staged?: string;
+  }>;
   entrypointsChanged: boolean;
 }
 

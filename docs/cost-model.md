@@ -6,35 +6,35 @@ Order-of-magnitude estimates for running staged-publish-review on Cloudflare. Nu
 
 A single scan exercises the full pipeline (staged tarball download, previous-version tarball download, deterministic findings, AI review, persistence).
 
-| Component | Approx per scan | Notes |
-|---|---|---|
-| Worker requests | ~5 | `POST /scans` + queue producer + queue consumer + 2 sandbox spins (staged + previous) |
-| Worker CPU-ms | ~3,000 | Dominated by tar parse + sha256 hashing in the sandbox |
-| D1 row writes | ~150 | one scans row + N scan_files + M scan_findings |
+| Component         | Approx per scan          | Notes                                                                                           |
+| ----------------- | ------------------------ | ----------------------------------------------------------------------------------------------- |
+| Worker requests   | ~5                       | `POST /scans` + queue producer + queue consumer + 2 sandbox spins (staged + previous)           |
+| Worker CPU-ms     | ~3,000                   | Dominated by tar parse + sha256 hashing in the sandbox                                          |
+| D1 row writes     | ~150                     | one scans row + N scan_files + M scan_findings                                                  |
 | Workers AI tokens | ~20k input / ~500 output | Only changed files are sent in; static safety preamble is prompt-cached via `AI_CACHE_AFFINITY` |
-| KV write | 1 | Previous-version parsed payload cached in `COMPARE_CACHE` |
-| Queue operations | 2 | Enqueue + consume |
+| KV write          | 1                        | Previous-version parsed payload cached in `COMPARE_CACHE`                                       |
+| Queue operations  | 2                        | Enqueue + consume                                                                               |
 
 ## Per scan-detail view
 
 Viewing a finished scan and re-diffing against alternate versions.
 
-| Component | Approx per view | Notes |
-|---|---|---|
-| Worker requests | 3–8 | `GET /scans/:id` + `/versions` + `/compare` + N × `/compare/file` |
-| D1 reads | ~5 | scan + files + findings + ownership checks |
-| KV reads | 1–5 | One per `/compare` metadata fetch, one per file opened |
+| Component           | Approx per view   | Notes                                                                                    |
+| ------------------- | ----------------- | ---------------------------------------------------------------------------------------- |
+| Worker requests     | 3–8               | `GET /scans/:id` + `/versions` + `/compare` + N × `/compare/file`                        |
+| D1 reads            | ~5                | scan + files + findings + ownership checks                                               |
+| KV reads            | 1–5               | One per `/compare` metadata fetch, one per file opened                                   |
 | Sandbox invocations | 0 cached / 1 cold | After the first global viewer of `package@version`, all subsequent compares are KV reads |
 
 The sandbox cost for re-diff is amortized across every viewer of the same `package@version` thanks to the KV cache added in [`compare-cache.ts`](../server/lib/compare-cache.ts).
 
 ## Scenario rollups
 
-| Scale | Scans/mo | Detail views/mo | Workers + D1 + KV + Queues | Workers AI | **Total/mo** |
-|---|---|---|---|---|---|
-| Small team (~5 users) | 200 | ~1,000 | ~$5 base | ~$3 | **~$8** |
-| Growth SaaS (~100 customers) | 5,000 | ~25,000 | ~$10 | ~$65 | **~$75** |
-| Heavy use | 50,000 | ~250,000 | ~$15 | ~$650 | **~$665** |
+| Scale                        | Scans/mo | Detail views/mo | Workers + D1 + KV + Queues | Workers AI | **Total/mo** |
+| ---------------------------- | -------- | --------------- | -------------------------- | ---------- | ------------ |
+| Small team (~5 users)        | 200      | ~1,000          | ~$5 base                   | ~$3        | **~$8**      |
+| Growth SaaS (~100 customers) | 5,000    | ~25,000         | ~$10                       | ~$65       | **~$75**     |
+| Heavy use                    | 50,000   | ~250,000        | ~$15                       | ~$650      | **~$665**    |
 
 Workers AI is ~90% of the variable cost at every scale above the smallest tier.
 

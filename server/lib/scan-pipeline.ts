@@ -42,25 +42,41 @@ export async function runScanPipeline(
     npmRegistry: input.npmRegistry,
   });
 
-  const previous = await maybeDownloadPreviousVersion(env, executionCtx, staged.packageJson ?? null, input);
+  const previous = await maybeDownloadPreviousVersion(
+    env,
+    executionCtx,
+    staged.packageJson ?? null,
+    input,
+  );
   const diff = previous
     ? createPackageDiff(previous.files, staged.files)
     : createPackageDiff([], staged.files);
-  const packageJsonDiff = redactJson(summarizePackageJsonDiff(previous?.packageJson, staged.packageJson));
+  const packageJsonDiff = redactJson(
+    summarizePackageJsonDiff(previous?.packageJson, staged.packageJson),
+  );
   const ruleFindings = redactFindings(deterministicFindings(staged.files, diff));
   const redactedStagedFiles = redactFileRecords(staged.files);
   const redactedPackageJson = redactJson(staged.packageJson ?? null);
   const redactedPreviousPackageJson = redactJson(previous?.packageJson ?? null);
-  const aiFindings = await analyzeWithAi(env, redactedStagedFiles, diff, packageJsonDiff, ruleFindings);
+  const aiFindings = await analyzeWithAi(
+    env,
+    redactedStagedFiles,
+    diff,
+    packageJsonDiff,
+    ruleFindings,
+  );
   const risk = computeScanRisk(ruleFindings, aiFindings);
   const scanId = input.scanId || crypto.randomUUID();
 
   const safety: ScanResult["safety"] = {
     tokenExposedToSandbox: false,
     directSandboxNetwork: false,
-    outboundPolicy: "only npm staged tarball, published tarball, and package metadata endpoints via gateway",
-    aiInputPolicy: "package bytes are untrusted evidence, not instructions; static safety prompt is prefix-cache friendly and AI cannot downgrade deterministic findings",
-    fileExplorerPolicy: "package file previews are escaped text and secret-redacted before persistence; no package-provided HTML/script/image execution",
+    outboundPolicy:
+      "only npm staged tarball, published tarball, and package metadata endpoints via gateway",
+    aiInputPolicy:
+      "package bytes are untrusted evidence, not instructions; static safety prompt is prefix-cache friendly and AI cannot downgrade deterministic findings",
+    fileExplorerPolicy:
+      "package file previews are escaped text and secret-redacted before persistence; no package-provided HTML/script/image execution",
   };
 
   const result: ScanResult = {

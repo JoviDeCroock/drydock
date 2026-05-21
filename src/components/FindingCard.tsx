@@ -14,7 +14,12 @@ export function FindingCard({
   class?: string;
 }) {
   return (
-    <li class={cn("bg-surface border border-border rounded-lg px-4 py-3 flex flex-col gap-2", className)}>
+    <li
+      class={cn(
+        "bg-surface border border-border rounded-lg px-4 py-3 flex flex-col gap-2",
+        className,
+      )}
+    >
       <div class="flex items-center gap-2.5 min-w-0">
         <Badge tone={severityTone(severity)} dot>
           {severity}
@@ -26,13 +31,7 @@ export function FindingCard({
   );
 }
 
-export function FindingRow({
-  label,
-  value,
-}: {
-  label: string;
-  value: ComponentChildren;
-}) {
+export function FindingRow({ label, value }: { label: string; value: ComponentChildren }) {
   return (
     <div>
       <span class="text-ink-subtle font-mono text-[11px] uppercase tracking-[0.08em] mr-1.5">

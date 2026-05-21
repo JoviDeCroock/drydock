@@ -13,7 +13,12 @@ export type AiReviewStatus = "complete" | "invalid" | "unavailable";
 export interface AiReview {
   status: AiReviewStatus;
   risk: RiskLevel;
-  releaseAssessment: "nothing_unusual" | "review_recommended" | "suspicious" | "blocked" | "not_assessed";
+  releaseAssessment:
+    | "nothing_unusual"
+    | "review_recommended"
+    | "suspicious"
+    | "blocked"
+    | "not_assessed";
   summary: string;
   findings: AiFinding[];
   requiresManualReview: boolean;
@@ -60,7 +65,10 @@ const FINDING_SCHEMA = {
   type: "object",
   properties: {
     risk: { type: "string", enum: ["low", "medium", "high", "critical"] },
-    releaseAssessment: { type: "string", enum: ["nothing_unusual", "review_recommended", "suspicious", "blocked"] },
+    releaseAssessment: {
+      type: "string",
+      enum: ["nothing_unusual", "review_recommended", "suspicious", "blocked"],
+    },
     summary: { type: "string" },
     findings: {
       type: "array",
@@ -89,7 +97,9 @@ export async function analyzeWithAi(
   ruleFindings: Finding[],
 ): Promise<AiReview> {
   const compactFiles = files
-    .filter((file) => diff.some((entry) => entry.path === file.path && entry.status !== "unchanged"))
+    .filter((file) =>
+      diff.some((entry) => entry.path === file.path && entry.status !== "unchanged"),
+    )
     .slice(0, 80)
     .map((file) => ({
       path: file.path,
@@ -123,7 +133,8 @@ export async function analyzeWithAi(
       },
       {
         extraHeaders: {
-          "x-session-affinity": env.AI_CACHE_AFFINITY || "staged-publish-review-release-reviewer-v1",
+          "x-session-affinity":
+            env.AI_CACHE_AFFINITY || "staged-publish-review-release-reviewer-v1",
         },
       },
     );
@@ -146,7 +157,10 @@ function normalizeAiResponse(result: unknown): AiReview {
     try {
       return normalizeParsedReview(JSON.parse(response));
     } catch {
-      return fallbackReview("invalid", "AI returned non-JSON output; deterministic scanner result is authoritative.");
+      return fallbackReview(
+        "invalid",
+        "AI returned non-JSON output; deterministic scanner result is authoritative.",
+      );
     }
   }
   return normalizeParsedReview(response);
@@ -154,7 +168,10 @@ function normalizeAiResponse(result: unknown): AiReview {
 
 function normalizeParsedReview(value: unknown): AiReview {
   if (!value || typeof value !== "object") {
-    return fallbackReview("invalid", "AI returned an empty or invalid review; deterministic scanner result is authoritative.");
+    return fallbackReview(
+      "invalid",
+      "AI returned an empty or invalid review; deterministic scanner result is authoritative.",
+    );
   }
   const review = value as Partial<AiReview>;
   const missing: string[] = [];
@@ -162,7 +179,8 @@ function normalizeParsedReview(value: unknown): AiReview {
   const releaseAssessment = normalizeReleaseAssessment(review.releaseAssessment);
   const summary = typeof review.summary === "string" ? review.summary : null;
   const findings = Array.isArray(review.findings) ? review.findings : null;
-  const requiresManualReview = typeof review.requiresManualReview === "boolean" ? review.requiresManualReview : null;
+  const requiresManualReview =
+    typeof review.requiresManualReview === "boolean" ? review.requiresManualReview : null;
 
   if (!risk) missing.push("risk");
   if (!releaseAssessment) missing.push("releaseAssessment");
@@ -170,7 +188,14 @@ function normalizeParsedReview(value: unknown): AiReview {
   if (!findings) missing.push("findings");
   if (requiresManualReview === null) missing.push("requiresManualReview");
 
-  if (missing.length || !risk || !releaseAssessment || summary === null || findings === null || requiresManualReview === null) {
+  if (
+    missing.length ||
+    !risk ||
+    !releaseAssessment ||
+    summary === null ||
+    findings === null ||
+    requiresManualReview === null
+  ) {
     return fallbackReview(
       "invalid",
       `AI review was incomplete (${missing.join(", ")}); deterministic scanner result is authoritative.`,
@@ -202,8 +227,13 @@ function isRiskLevel(value: unknown): value is RiskLevel {
   return value === "critical" || value === "high" || value === "medium" || value === "low";
 }
 
-function normalizeReleaseAssessment(value: unknown): Exclude<AiReview["releaseAssessment"], "not_assessed"> | null {
-  return value === "nothing_unusual" || value === "review_recommended" || value === "suspicious" || value === "blocked"
+function normalizeReleaseAssessment(
+  value: unknown,
+): Exclude<AiReview["releaseAssessment"], "not_assessed"> | null {
+  return value === "nothing_unusual" ||
+    value === "review_recommended" ||
+    value === "suspicious" ||
+    value === "blocked"
     ? value
     : null;
 }

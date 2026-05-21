@@ -9,7 +9,9 @@ const { SandboxError } = await import("../server/lib/sandbox.ts");
 
 describe("scan job retry classification", () => {
   test("retries transient sandbox download failures", () => {
-    const safe = classifyScanError(new SandboxError(JSON.stringify({ error: "download failed", status: 503 })));
+    const safe = classifyScanError(
+      new SandboxError(JSON.stringify({ error: "download failed", status: 503 })),
+    );
 
     expect(safe).toMatchObject({
       code: "sandbox_download_transient",
@@ -18,11 +20,19 @@ describe("scan job retry classification", () => {
   });
 
   test("does not retry credential and missing-stage sandbox failures", () => {
-    expect(classifyScanError(new Error("Connect an organization npm token before scanning staged publishes."))).toMatchObject({
+    expect(
+      classifyScanError(
+        new Error("Connect an organization npm token before scanning staged publishes."),
+      ),
+    ).toMatchObject({
       code: "npm_connection_missing",
       retryable: false,
     });
-    expect(classifyScanError(new SandboxError(JSON.stringify({ error: "download failed", status: 403 })))).toMatchObject({
+    expect(
+      classifyScanError(
+        new SandboxError(JSON.stringify({ error: "download failed", status: 403 })),
+      ),
+    ).toMatchObject({
       code: "staged_tarball_unavailable",
       retryable: false,
     });

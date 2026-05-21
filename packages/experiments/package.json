@@ -2,19 +2,7 @@
   "name": "@pracht/experiments",
   "version": "0.1.1",
   "description": "Small publish/staged-publish package used to exercise Staged Publish Review.",
-  "type": "module",
   "license": "MIT",
-  "engines": {
-    "node": ">=18"
-  },
-  "sideEffects": false,
-  "exports": {
-    ".": {
-      "types": "./index.d.ts",
-      "default": "./index.js"
-    },
-    "./package.json": "./package.json"
-  },
   "bin": {
     "pracht-experiments": "./cli.js"
   },
@@ -26,12 +14,24 @@
     "index.d.ts",
     "index.js"
   ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "pack:dry-run": "npm pack --dry-run",
     "publish:public": "npm publish --access public",
     "stage:publish": "npm stage publish --access public"
   },
-  "publishConfig": {
-    "access": "public"
+  "engines": {
+    "node": ">=18"
   }
 }

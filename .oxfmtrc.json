@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 100,
+  "semi": true,
+  "singleQuote": false,
+  "jsxSingleQuote": false,
+  "trailingComma": "all",
+  "arrowParens": "always",
+  "bracketSpacing": true,
+  "endOfLine": "lf",
+  "ignorePatterns": [
+    "dist/**",
+    ".wrangler/**",
+    ".claude/**",
+    ".agents/**",
+    "drizzle/**",
+    "node_modules/**",
+    "pnpm-lock.yaml",
+    "**/*.d.ts"
+  ]
+}

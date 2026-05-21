@@ -71,8 +71,12 @@ export function DiffView({ path, status, before, after, beforeLabel, afterLabel 
         {binary ? <Badge tone="neutral">binary</Badge> : null}
       </div>
       <div class="font-mono text-[11px] text-ink-subtle flex flex-wrap gap-3">
-        <span>{beforeLabel}: {formatSize(before?.size ?? null)}</span>
-        <span>{afterLabel}: {formatSize(after?.size ?? null)}</span>
+        <span>
+          {beforeLabel}: {formatSize(before?.size ?? null)}
+        </span>
+        <span>
+          {afterLabel}: {formatSize(after?.size ?? null)}
+        </span>
       </div>
       <DiffBody
         path={path}
@@ -123,7 +127,13 @@ function DiffBody({
     if (!afterSample && !beforeSample) {
       return <Muted class="text-[13px]">No preview stored for this file.</Muted>;
     }
-    return <SingleSidedView label={afterLabel || beforeLabel} tone="unchanged" text={afterSample || beforeSample} />;
+    return (
+      <SingleSidedView
+        label={afterLabel || beforeLabel}
+        tone="unchanged"
+        text={afterSample || beforeSample}
+      />
+    );
   }
   if (!beforeSample && !afterSample) {
     return <Muted class="text-[13px]">No text samples available to diff.</Muted>;
@@ -156,12 +166,7 @@ function DiffBody({
 }
 
 function DiffRow({ row }: { row: Row }) {
-  const bg =
-    row.tone === "added"
-      ? "bg-ok-soft"
-      : row.tone === "removed"
-        ? "bg-danger-soft"
-        : "";
+  const bg = row.tone === "added" ? "bg-ok-soft" : row.tone === "removed" ? "bg-danger-soft" : "";
   const sign = row.tone === "added" ? "+" : row.tone === "removed" ? "-" : " ";
   return (
     <tr class={cn(bg)}>
@@ -186,13 +191,18 @@ function SingleSidedView({
   tone: "added" | "removed" | "unchanged";
   text: string;
 }) {
-  const bg = tone === "added" ? "bg-ok-soft" : tone === "removed" ? "bg-danger-soft" : "bg-surface-2";
+  const bg =
+    tone === "added" ? "bg-ok-soft" : tone === "removed" ? "bg-danger-soft" : "bg-surface-2";
   return (
     <div class="border border-border rounded-md overflow-hidden">
-      <div class={cn("px-3 py-2 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle", bg)}>
+      <div
+        class={cn("px-3 py-2 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle", bg)}
+      >
         {label}
       </div>
-      <pre class="bg-surface-2 m-0 p-3 overflow-auto text-xs leading-[1.55] max-h-[560px]">{text}</pre>
+      <pre class="bg-surface-2 m-0 p-3 overflow-auto text-xs leading-[1.55] max-h-[560px]">
+        {text}
+      </pre>
     </div>
   );
 }

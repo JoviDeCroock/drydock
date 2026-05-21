@@ -58,7 +58,9 @@ export function normalizeRegistryUrl(value: unknown): string {
   return url.toString().replace(/\/$/, "");
 }
 
-export function publicNpmConnection(connection: Awaited<ReturnType<typeof getNpmConnection>>): PublicNpmConnection | null {
+export function publicNpmConnection(
+  connection: Awaited<ReturnType<typeof getNpmConnection>>,
+): PublicNpmConnection | null {
   if (!connection) return null;
   return {
     id: connection.id,
@@ -128,11 +130,17 @@ export async function validateNpmCredential(
   const registry = normalizeRegistryUrl(registryUrl);
   const auth = await validateRegistryAuth(registry, token);
   const stagedList = await validateStagedListAccess(registry, token);
-  const stagedView = options.stageId ? await validateStagedViewAccess(registry, token, options.stageId) : null;
+  const stagedView = options.stageId
+    ? await validateStagedViewAccess(registry, token, options.stageId)
+    : null;
   const stagedTarball = options.stageId
     ? await validateStagedTarballAccess(registry, token, options.stageId)
     : null;
-  const ok = auth.registryAuth && stagedList.stagedListAccess && (stagedView ? stagedView.stagedViewAccess : true) && (stagedTarball ? stagedTarball.stagedTarballAccess : true);
+  const ok =
+    auth.registryAuth &&
+    stagedList.stagedListAccess &&
+    (stagedView ? stagedView.stagedViewAccess : true) &&
+    (stagedTarball ? stagedTarball.stagedTarballAccess : true);
 
   return {
     ok,
@@ -140,8 +148,8 @@ export async function validateNpmCredential(
     capabilities: {
       ...auth,
       ...stagedList,
-      ...(stagedView ?? {}),
-      ...(stagedTarball ?? {}),
+      ...stagedView,
+      ...stagedTarball,
       registryUrl: registry,
     },
   };
@@ -152,14 +160,21 @@ async function validateRegistryAuth(registry: string, token: string) {
     const response = await fetch(`${registry}/-/whoami`, {
       headers: npmAuthHeaders(token, "application/json"),
     });
-    const data = (await response.json().catch(() => null)) as { username?: unknown; error?: unknown } | null;
+    const data = (await response.json().catch(() => null)) as {
+      username?: unknown;
+      error?: unknown;
+    } | null;
     const whoami = typeof data?.username === "string" ? data.username : null;
     const registryAuth = response.ok && Boolean(whoami);
     return {
       registryAuth,
       whoami,
       status: response.status,
-      detail: registryAuth ? undefined : typeof data?.error === "string" ? data.error : response.statusText,
+      detail: registryAuth
+        ? undefined
+        : typeof data?.error === "string"
+          ? data.error
+          : response.statusText,
     };
   } catch (err) {
     return {

@@ -1,28 +1,20 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect } from "preact/hooks";
+import { useSignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
-import { getSession, signIn, signUp } from "../../models/auth";
-import {
-  Alert,
-  Button,
-  Card,
-  Eyebrow,
-  Field,
-  Input,
-  PageShell,
-  Muted,
-} from "../../components";
+import { sessionModel } from "../../models/auth";
+import { Alert, Button, Card, Eyebrow, Field, Input, PageShell, Muted } from "../../components";
 
 export default function RegisterPage() {
   const location = useLocation();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const name = useSignal("");
+  const email = useSignal("");
+  const password = useSignal("");
+  const error = useSignal<string | null>(null);
+  const loading = useSignal(false);
 
   useEffect(() => {
     let cancelled = false;
-    getSession().then((session) => {
+    void sessionModel.load().then((session) => {
       if (cancelled) return;
       if (session?.user) location.route("/dashboard", true);
     });
@@ -33,16 +25,19 @@ export default function RegisterPage() {
 
   const onSubmit = async (event: Event) => {
     event.preventDefault();
-    setLoading(true);
-    setError(null);
+    const submittedName = name.value.trim();
+    const submittedEmail = email.value.trim();
+    const submittedPassword = password.value;
+    loading.value = true;
+    error.value = null;
     try {
-      await signUp(name.trim(), email.trim(), password);
-      await signIn(email.trim(), password).catch(() => undefined);
+      await sessionModel.signUp(submittedName, submittedEmail, submittedPassword);
+      await sessionModel.signIn(submittedEmail, submittedPassword).catch(() => undefined);
       location.route("/dashboard", true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      error.value = err instanceof Error ? err.message : String(err);
     } finally {
-      setLoading(false);
+      loading.value = false;
     }
   };
 
@@ -63,7 +58,7 @@ export default function RegisterPage() {
               value={name}
               autocomplete="name"
               required
-              onInput={(e) => setName((e.target as HTMLInputElement).value)}
+              onInput={(e) => (name.value = (e.target as HTMLInputElement).value)}
             />
           </Field>
           <Field label="Email" for="register-email">
@@ -73,7 +68,7 @@ export default function RegisterPage() {
               value={email}
               autocomplete="email"
               required
-              onInput={(e) => setEmail((e.target as HTMLInputElement).value)}
+              onInput={(e) => (email.value = (e.target as HTMLInputElement).value)}
             />
           </Field>
           <Field label="Password" for="register-password">
@@ -84,14 +79,14 @@ export default function RegisterPage() {
               autocomplete="new-password"
               minlength={8}
               required
-              onInput={(e) => setPassword((e.target as HTMLInputElement).value)}
+              onInput={(e) => (password.value = (e.target as HTMLInputElement).value)}
             />
           </Field>
 
-          {error ? <Alert tone="critical">{error}</Alert> : null}
+          {error.value ? <Alert tone="critical">{error.value}</Alert> : null}
 
-          <Button type="submit" disabled={loading}>
-            {loading ? "Creating…" : "Create account"}
+          <Button type="submit" disabled={loading.value}>
+            {loading.value ? "Creating…" : "Create account"}
           </Button>
         </form>
 

@@ -83,22 +83,22 @@ Local Worker secrets live in `.dev.vars` (copy from `.dev.vars.example`). Do not
 
 Current implementation secrets:
 
-| Name | Required? | Purpose |
-| --- | --- | --- |
-| `BETTER_AUTH_SECRET` | Yes | Better Auth signing/encryption secret for sessions and cookies. Use one unique high-entropy value per environment. Without this, API auth fails closed. |
-| `NPM_CONNECTIONS_ENCRYPTION_KEY` | Yes | Dedicated secret key material used to encrypt per-organization npm connection tokens. Do not reuse `BETTER_AUTH_SECRET`. |
+| Name                             | Required? | Purpose                                                                                                                                                 |
+| -------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BETTER_AUTH_SECRET`             | Yes       | Better Auth signing/encryption secret for sessions and cookies. Use one unique high-entropy value per environment. Without this, API auth fails closed. |
+| `NPM_CONNECTIONS_ENCRYPTION_KEY` | Yes       | Dedicated secret key material used to encrypt per-organization npm connection tokens. Do not reuse `BETTER_AUTH_SECRET`.                                |
 
 Worker non-secret vars and bindings:
 
-| Name | Where | Purpose |
-| --- | --- | --- |
-| `BETTER_AUTH_URL` | `.dev.vars` locally; Wrangler var in production | Canonical app origin for Better Auth, for example `http://localhost:5173` locally or your deployed Worker URL. Not a secret. |
-| `NPM_REGISTRY` | `wrangler.jsonc` `vars` | npm registry base URL. Defaults to `https://registry.npmjs.org`. |
-| `AI_MODEL` | `wrangler.jsonc` `vars` | Workers AI model ID. Defaults to `@cf/moonshotai/kimi-k2.5`. |
-| `AI_CACHE_AFFINITY` | `wrangler.jsonc` `vars` | Stable `x-session-affinity` value for Cloudflare Workers AI prefix caching. |
-| `AI`, `LOADER`, `DB` | `wrangler.jsonc` bindings | Cloudflare Workers AI, Dynamic Worker loader, and required D1 database binding. |
-| `SCAN_QUEUE` | `wrangler.jsonc` Queue binding | Optional in local dev; production async scan queue. Configure retry/DLQ policy before private beta. |
-| `COMPARE_CACHE` | `wrangler.jsonc` KV binding | Cache for parsed published package versions used by alternate-version compare views. |
+| Name                 | Where                                           | Purpose                                                                                                                      |
+| -------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `BETTER_AUTH_URL`    | `.dev.vars` locally; Wrangler var in production | Canonical app origin for Better Auth, for example `http://localhost:5173` locally or your deployed Worker URL. Not a secret. |
+| `NPM_REGISTRY`       | `wrangler.jsonc` `vars`                         | npm registry base URL. Defaults to `https://registry.npmjs.org`.                                                             |
+| `AI_MODEL`           | `wrangler.jsonc` `vars`                         | Workers AI model ID. Defaults to `@cf/moonshotai/kimi-k2.5`.                                                                 |
+| `AI_CACHE_AFFINITY`  | `wrangler.jsonc` `vars`                         | Stable `x-session-affinity` value for Cloudflare Workers AI prefix caching.                                                  |
+| `AI`, `LOADER`, `DB` | `wrangler.jsonc` bindings                       | Cloudflare Workers AI, Dynamic Worker loader, and required D1 database binding.                                              |
+| `SCAN_QUEUE`         | `wrangler.jsonc` Queue binding                  | Optional in local dev; production async scan queue. Configure retry/DLQ policy before private beta.                          |
+| `COMPARE_CACHE`      | `wrangler.jsonc` KV binding                     | Cache for parsed published package versions used by alternate-version compare views.                                         |
 
 Generate the Better Auth secret with either command:
 

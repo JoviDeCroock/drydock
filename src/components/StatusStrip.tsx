@@ -12,16 +12,8 @@ export function StatusStrip({
   cols?: 2 | 3 | 4;
 }) {
   const colsClass =
-    cols === 2
-      ? "md:grid-cols-2"
-      : cols === 4
-        ? "md:grid-cols-2 lg:grid-cols-4"
-        : "md:grid-cols-3";
-  return (
-    <section class={cn("grid grid-cols-1 gap-3", colsClass, className)}>
-      {children}
-    </section>
-  );
+    cols === 2 ? "md:grid-cols-2" : cols === 4 ? "md:grid-cols-2 lg:grid-cols-4" : "md:grid-cols-3";
+  return <section class={cn("grid grid-cols-1 gap-3", colsClass, className)}>{children}</section>;
 }
 
 export function StatusStripItem({
@@ -45,7 +37,9 @@ export function StatusStripItem({
       )}
     >
       <div class="flex items-center justify-between gap-3">
-        <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">{label}</span>
+        <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+          {label}
+        </span>
         <Badge tone={tone}>{status}</Badge>
       </div>
       {children ? <p class="m-0 text-[13px] leading-[1.55] text-ink-muted">{children}</p> : null}
