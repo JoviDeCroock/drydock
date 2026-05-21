@@ -33,8 +33,9 @@
 		}
 	],
 	"vars": {
-		"AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-		"NPM_REGISTRY": "https://registry.npmjs.org",
-		"AUTH_REQUIRED": "false"
+    "BETTER_AUTH_URL": "https://staged-publish-review.decroockjovi.workers.dev",
+		"AI_MODEL": "@cf/moonshotai/kimi-k2.5",
+		"AI_CACHE_AFFINITY": "stage-shield-release-reviewer-v1",
+		"NPM_REGISTRY": "https://registry.npmjs.org"
 	}
 }
