@@ -1,11 +1,12 @@
-import type { Auth } from "./lib/auth";
+import type { Auth, AuthSession } from "./lib/auth";
 import type { AiReview } from "./lib/ai-review";
-import type { DiffEntry, Finding, PackageJsonSummary } from "./lib/review";
+import type { DiffEntry, Finding, PackageJsonSummary, RiskLevel } from "./lib/review";
 
 export type Bindings = Cloudflare.Env;
 
 export type Variables = {
   auth: Auth;
+  authSession: AuthSession;
 };
 
 export interface ScanInput {
@@ -38,7 +39,7 @@ export interface ScanResult {
   diff: DiffEntry[];
   ruleFindings: Finding[];
   aiFindings: AiReview;
-  risk: "low" | "medium" | "high" | "critical";
+  risk: RiskLevel;
   safety: {
     tokenExposedToSandbox: boolean;
     directSandboxNetwork: boolean;

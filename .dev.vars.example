@@ -1,0 +1,18 @@
+# Local Worker secrets and environment overrides.
+# Copy to .dev.vars for `pnpm dev`; do not commit .dev.vars.
+
+# Required. Better Auth signs/encrypts sessions and every non-auth API endpoint requires a session.
+# Generate with: node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
+BETTER_AUTH_SECRET=replace-with-a-random-32-byte-secret
+
+# Canonical app origin used by Better Auth. For local dev this matches Vite's default URL.
+BETTER_AUTH_URL=http://localhost:5173
+
+# Required to download npm staged tarballs that require registry authentication.
+# Use the least-privileged npm token that can read the staged publish under review.
+NPM_TOKEN=npm_replace_with_token
+
+# Optional local overrides for non-secret vars that are also defined in wrangler.jsonc.
+# NPM_REGISTRY=https://registry.npmjs.org
+# AI_MODEL=@cf/moonshotai/kimi-k2.5
+# AI_CACHE_AFFINITY=staged-publish-review-release-reviewer-v1

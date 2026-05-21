@@ -1,3 +1,5 @@
+export type RiskLevel = "low" | "medium" | "high" | "critical";
+
 export interface FileRecord {
   path: string;
   size: number;
@@ -40,6 +42,15 @@ export interface DiffEntry {
 }
 
 const LIFECYCLE_SCRIPTS = ["preinstall", "install", "postinstall", "prepare"];
+const RISK_RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2, critical: 3 };
+
+const SECRET_PATTERNS: Array<[RegExp, string]> = [
+  [/npm_[A-Za-z0-9]{20,}/g, "[REDACTED_NPM_TOKEN]"],
+  [/gh[pousr]_[A-Za-z0-9_]{20,}/g, "[REDACTED_GITHUB_TOKEN]"],
+  [/AKIA[0-9A-Z]{16}/g, "[REDACTED_AWS_ACCESS_KEY]"],
+  [/-----BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----/g, "[REDACTED_PRIVATE_KEY]"],
+  [/((?:secret|token|password|passwd|pwd|api[_-]?key)\s*=\s*)['\"]?[^'\"\s]{12,}/gi, "$1[REDACTED_SECRET]"],
+];
 
 export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = []): Finding[] {
   const findings: Finding[] = [];
@@ -65,12 +76,20 @@ export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = [
         }
       }
     }
-    if (/\b(child_process|execSync|spawn\(|curl\s|wget\s|nc\s|bash\s+-c)\b/.test(sample)) {
+    if (/\b(child_process|execSync|execFileSync|spawn\(|spawnSync\(|curl\s|wget\s|nc\s|bash\s+-c|powershell\s)/.test(sample)) {
       findings.push({
         severity: "high",
         file: file.path,
         evidence: `${changedPrefix}process or shell execution`,
         reason: "package may execute arbitrary commands",
+      });
+    }
+    if (/\b(require\(["'](?:node:)?(?:http|https|net|dns)["']\)|from\s+["'](?:node:)?(?:http|https|net|dns)["']|fetch\s*\(|XMLHttpRequest|axios\s*\.)/.test(sample)) {
+      findings.push({
+        severity: changed === "added" ? "high" : "medium",
+        file: file.path,
+        evidence: `${changedPrefix}network-capable code path`,
+        reason: "unexpected network access in package code can be used for exfiltration or staged payload retrieval",
       });
     }
     if (
@@ -95,6 +114,14 @@ export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = [
         reason: "package may read credentials from the install environment",
       });
     }
+    if (/\.npmrc|\.env|id_rsa|id_ed25519/i.test(file.path) || containsSecretLikeText(sample)) {
+      findings.push({
+        severity: changed === "added" ? "critical" : "high",
+        file: file.path,
+        evidence: `${changedPrefix}secret-looking file or content`,
+        reason: "published artifacts should not include credentials or private material",
+      });
+    }
     if (file.flags.includes("binary") && file.size > 1024 * 1024) {
       findings.push({
         severity: changed === "added" ? "high" : "info",
@@ -103,11 +130,11 @@ export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = [
         reason: "large binary should be reviewed manually",
       });
     }
-    if (/\.(node|dll|so|dylib|exe)$/i.test(file.path)) {
+    if (/\.(node|dll|so|dylib|exe|wasm)$/i.test(file.path)) {
       findings.push({
         severity: "high",
         file: file.path,
-        evidence: "native or executable artifact",
+        evidence: "native, wasm, or executable artifact",
         reason: "native binaries are hard to audit and can execute outside JavaScript policy checks",
       });
     }
@@ -189,11 +216,59 @@ export function summarizePackageJsonDiff(
   };
 }
 
-export function computeRisk(findings: Finding[]) {
+export function computeRisk(findings: Finding[]): RiskLevel {
   if (findings.some((f) => f.severity === "critical")) return "critical";
   if (findings.some((f) => f.severity === "high")) return "high";
   if (findings.some((f) => f.severity === "medium")) return "medium";
   return "low";
+}
+
+export function combineRisk(...risks: Array<RiskLevel | null | undefined>): RiskLevel {
+  return risks.reduce<RiskLevel>((highest, risk) => {
+    if (!risk) return highest;
+    return RISK_RANK[risk] > RISK_RANK[highest] ? risk : highest;
+  }, "low");
+}
+
+export function normalizeRisk(value: unknown): RiskLevel {
+  return value === "critical" || value === "high" || value === "medium" || value === "low" ? value : "medium";
+}
+
+export function redactText(text: string): string {
+  return SECRET_PATTERNS.reduce((out, [pattern, replacement]) => out.replace(pattern, replacement), text);
+}
+
+function containsSecretLikeText(text: string): boolean {
+  return SECRET_PATTERNS.some(([pattern]) => {
+    pattern.lastIndex = 0;
+    return pattern.test(text);
+  });
+}
+
+export function redactFileRecords(files: FileRecord[]): FileRecord[] {
+  return files.map((file) => ({
+    ...file,
+    textSample: file.textSample ? redactText(file.textSample) : file.textSample,
+  }));
+}
+
+export function redactFindings(findings: Finding[]): Finding[] {
+  return findings.map((finding) => ({
+    ...finding,
+    evidence: redactText(finding.evidence),
+    reason: redactText(finding.reason),
+  }));
+}
+
+export function redactJson<T>(value: T): T {
+  if (typeof value === "string") return redactText(value) as T;
+  if (Array.isArray(value)) return value.map((item) => redactJson(item)) as T;
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, nested]) => [key, redactJson(nested)]),
+    ) as T;
+  }
+  return value;
 }
 
 function diffObject(before: Record<string, string>, after: Record<string, string>) {

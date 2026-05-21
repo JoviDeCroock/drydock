@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { createAuth, isAuthenticated } from "./lib/auth";
+import { createAuth, getAuthSession } from "./lib/auth";
 import { scanRoutes } from "./routes/scan";
 import { scansRoutes } from "./routes/scans";
 import type { Bindings, Variables } from "./types";
@@ -46,35 +46,51 @@ app.use("*", async (c, next) => {
 });
 
 app.use("/api/*", async (c, next) => {
-  c.set("auth", createAuth(c.env));
-  await next();
-});
-
-app.on(["GET", "POST"], "/api/auth/*", (c) => {
-  const auth = c.get("auth");
-  if (!auth) return c.json({ error: "auth database is not configured" }, 503);
-  return (auth as { handler(request: Request): Promise<Response> }).handler(c.req.raw);
-});
-
-app.use("/api/v1/*", async (c, next) => {
-  if (c.env.AUTH_REQUIRED === "true") {
-    const authed = await isAuthenticated(c.get("auth"), c.req.raw);
-    if (!authed) return c.json({ error: "unauthorized" }, 401);
+  try {
+    c.set("auth", createAuth(c.env));
+  } catch (err) {
+    return c.json(
+      {
+        error: "auth is not configured",
+        detail: err instanceof Error ? err.message : String(err),
+      },
+      503,
+    );
   }
   await next();
 });
 
-app.get("/api/health", (c) => c.json({ ok: true, auth: Boolean(c.get("auth")), db: Boolean(c.env.DB) }));
+app.all("/api/auth/*", (c) => {
+  const auth = c.get("auth");
+  return (auth as { handler(request: Request): Promise<Response> }).handler(c.req.raw);
+});
+
+app.use("/api/*", async (c, next) => {
+  const session = await getAuthSession(c.get("auth"), c.req.raw);
+  if (!session) return c.json({ error: "unauthorized" }, 401);
+  c.set("authSession", session);
+  await next();
+});
+
+app.get("/api/health", (c) =>
+  c.json({
+    ok: true,
+    auth: true,
+    db: true,
+    userId: c.get("authSession").userId,
+  }),
+);
 
 app.get("/api", (c) =>
   c.json({
-    name: "staged-publish-sandbox-prototype",
+    name: "staged-publish-review",
     endpoints: {
       scan: "POST /api/v1/scan { stageId }",
       scans: "GET /api/v1/scans",
       scanDetail: "GET /api/v1/scans/:id",
       health: "GET /api/health",
     },
+    auth: "Better Auth is required for every non-auth API endpoint.",
     note: "Cloudflare Workers cannot spawn the npm CLI. This prototype performs the npm stage download equivalent inside a Dynamic Worker by fetching the staged tarball through a locked-down gateway.",
   }),
 );

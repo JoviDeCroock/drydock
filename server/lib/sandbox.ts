@@ -26,7 +26,7 @@ export class NpmStageGateway extends WorkerEntrypoint<Cloudflare.Env> {
     const token = this.env.NPM_TOKEN;
     const forwarded = new Request(request);
     if (token && isStagedTarball) forwarded.headers.set("authorization", `Bearer ${token}`);
-    forwarded.headers.set("user-agent", "staged-publish-sandbox-prototype/0.2");
+    forwarded.headers.set("user-agent", "staged-publish-review/0.3");
 
     return fetch(forwarded);
   }

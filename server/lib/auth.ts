@@ -3,12 +3,21 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { createDb } from "../db";
 import * as schema from "../db/schema";
 
+export interface AuthSession {
+  userId: string;
+  email?: string;
+  name?: string;
+}
+
 export function createAuth(env: Cloudflare.Env) {
-  if (!env.DB) return null;
+  if (!env.DB) throw new Error("DB binding is required for Better Auth");
+  if (!env.BETTER_AUTH_SECRET) throw new Error("BETTER_AUTH_SECRET is required");
+
   const db = createDb(env.DB);
   return betterAuth({
-    secret: env.BETTER_AUTH_SECRET || "dev-only-change-me",
+    secret: env.BETTER_AUTH_SECRET,
     baseURL: env.BETTER_AUTH_URL,
+    basePath: "/api/auth",
     database: drizzleAdapter(db, {
       provider: "sqlite",
       schema,
@@ -22,14 +31,35 @@ export function createAuth(env: Cloudflare.Env) {
 
 export type Auth = ReturnType<typeof createAuth>;
 
-export async function isAuthenticated(auth: Auth, request: Request) {
-  if (!auth) return false;
+export async function getAuthSession(auth: Auth, request: Request): Promise<AuthSession | null> {
   try {
-    const session = await (
+    const data = await (
       auth.api as { getSession(args: { headers: Headers }): Promise<unknown> }
     ).getSession({ headers: request.headers });
-    return Boolean(session);
+
+    const session = normalizeSession(data);
+    return session?.userId ? session : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+export async function isAuthenticated(auth: Auth, request: Request) {
+  return Boolean(await getAuthSession(auth, request));
+}
+
+function normalizeSession(data: unknown): AuthSession | null {
+  if (!data || typeof data !== "object") return null;
+  const root = data as {
+    userId?: unknown;
+    session?: { userId?: unknown };
+    user?: { id?: unknown; email?: unknown; name?: unknown };
+  };
+  const userId = root.user?.id ?? root.session?.userId ?? root.userId;
+  if (typeof userId !== "string" || !userId) return null;
+  return {
+    userId,
+    email: typeof root.user?.email === "string" ? root.user.email : undefined,
+    name: typeof root.user?.name === "string" ? root.user.name : undefined,
+  };
 }

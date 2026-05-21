@@ -23,6 +23,9 @@ importers:
       preact:
         specifier: ^10.29.2
         version: 10.29.2
+      preact-iso:
+        specifier: ^2.12.0
+        version: 2.12.0(preact-render-to-string@6.7.0(preact@10.29.2))(preact@10.29.2)
     devDependencies:
       '@cloudflare/vite-plugin':
         specifier: ^1.33.2
@@ -1687,6 +1690,17 @@ packages:
     resolution: {integrity: sha512-FfR8sjd4em2T6fb3I2MwAJU7HWVMr9zba+enmQeeWFfCbm+UOC/0X4DS8XtpUTMwWMGbjKYP7xjfNekzyGmB3A==}
     engines: {node: ^10 || ^12 || >=14}
 
+  preact-iso@2.12.0:
+    resolution: {integrity: sha512-k0Y44UONBJ1zBXXCBhJRAa5O4ww8a5FHdLD6l21IxcnsTmDBto4n7KPQAH6xqegsKDMX4SuJ02qItiUlciIlZQ==}
+    peerDependencies:
+      preact: '>=10 || >= 11.0.0-0'
+      preact-render-to-string: '>=6.4.0'
+
+  preact-render-to-string@6.7.0:
+    resolution: {integrity: sha512-Z4WR8fmLMRpdYqJ9i7vrlXSsSrxVJydwrkEXHapexfARbWfGb7vGcnvNQnIzN0cXciMVOlz/XLoiMCi9gUsy9Q==}
+    peerDependencies:
+      preact: '>=10 || >= 11.0.0-0'
+
   preact@10.29.2:
     resolution: {integrity: sha512-7tNmwg/7mzzAoB/8kSg6Hl37JraAZw3Z3A0JSY7VXlZwo82Xn0G7wKbNNs2qoF4ZEEsQGTwDAroNdqKs1ofJxQ==}
 
@@ -3050,6 +3064,15 @@ snapshots:
       nanoid: 3.3.12
       picocolors: 1.1.1
       source-map-js: 1.2.1
+
+  preact-iso@2.12.0(preact-render-to-string@6.7.0(preact@10.29.2))(preact@10.29.2):
+    dependencies:
+      preact: 10.29.2
+      preact-render-to-string: 6.7.0(preact@10.29.2)
+
+  preact-render-to-string@6.7.0(preact@10.29.2):
+    dependencies:
+      preact: 10.29.2
 
   preact@10.29.2: {}
 

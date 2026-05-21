@@ -3,9 +3,14 @@ import { analyzeWithAi } from "../lib/ai-review";
 import { createDb, persistScan } from "../db";
 import { fetchPackageMetadata, pickPreviousVersion } from "../lib/registry";
 import {
+  combineRisk,
   computeRisk,
   createPackageDiff,
   deterministicFindings,
+  normalizeRisk,
+  redactFileRecords,
+  redactFindings,
+  redactJson,
   summarizePackageJsonDiff,
   type PackageJsonSummary,
 } from "../lib/review";
@@ -38,10 +43,17 @@ scanRoutes.post("/", async (c) => {
     const diff = previous
       ? createPackageDiff(previous.files, staged.files)
       : createPackageDiff([], staged.files);
-    const packageJsonDiff = summarizePackageJsonDiff(previous?.packageJson, staged.packageJson);
-    const ruleFindings = deterministicFindings(staged.files, diff);
-    const aiFindings = await analyzeWithAi(c.env, staged.files, diff, packageJsonDiff, ruleFindings);
-    const risk = computeRisk(ruleFindings);
+    const packageJsonDiff = redactJson(summarizePackageJsonDiff(previous?.packageJson, staged.packageJson));
+    const ruleFindings = redactFindings(deterministicFindings(staged.files, diff));
+    const redactedStagedFiles = redactFileRecords(staged.files);
+    const redactedPackageJson = redactJson(staged.packageJson ?? null);
+    const redactedPreviousPackageJson = redactJson(previous?.packageJson ?? null);
+    const aiFindings = await analyzeWithAi(c.env, redactedStagedFiles, diff, packageJsonDiff, ruleFindings);
+    const risk = combineRisk(
+      computeRisk(ruleFindings),
+      normalizeRisk(aiFindings.risk),
+      aiFindings.requiresManualReview ? "medium" : "low",
+    );
     const scanId = crypto.randomUUID();
 
     const result: ScanResult = {
@@ -54,7 +66,7 @@ scanRoutes.post("/", async (c) => {
       },
       fileCount: staged.files.length,
       previousFileCount: previous?.files.length ?? 0,
-      packageJson: staged.packageJson ?? null,
+      packageJson: redactedPackageJson,
       packageJsonDiff,
       diff,
       ruleFindings,
@@ -64,26 +76,24 @@ scanRoutes.post("/", async (c) => {
         tokenExposedToSandbox: false,
         directSandboxNetwork: false,
         outboundPolicy: "only npm staged tarball, published tarball, and package metadata endpoints via gateway",
-        aiInputPolicy: "package bytes are untrusted evidence, not instructions; JSON schema output only",
-        fileExplorerPolicy: "package file previews are escaped text; no package-provided HTML/script/image execution",
+        aiInputPolicy: "package bytes are untrusted evidence, not instructions; static safety prompt is prefix-cache friendly and AI cannot downgrade deterministic findings",
+        fileExplorerPolicy: "package file previews are escaped text and secret-redacted before persistence; no package-provided HTML/script/image execution",
       },
     };
 
-    if (c.env.DB) {
-      await persistScan(createDb(c.env.DB), {
-        id: scanId,
-        stageId: input.stageId,
-        packageJson: staged.packageJson,
-        previousPackageJson: previous?.packageJson,
-        risk,
-        status: "complete",
-        summary: { packageJsonDiff, diff, safety: result.safety },
-        ai: aiFindings,
-        files: staged.files,
-        diff,
-        findings: ruleFindings,
-      });
-    }
+    await persistScan(createDb(c.env.DB), {
+      id: scanId,
+      stageId: input.stageId,
+      packageJson: redactedPackageJson,
+      previousPackageJson: redactedPreviousPackageJson,
+      risk,
+      status: "complete",
+      summary: { packageJsonDiff, diff, safety: result.safety },
+      ai: aiFindings,
+      files: redactedStagedFiles,
+      diff,
+      findings: ruleFindings,
+    });
 
     return c.json(result);
   } catch (err) {
