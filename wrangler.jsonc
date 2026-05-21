@@ -35,7 +35,7 @@
 	"kv_namespaces": [
 		{
 			"binding": "COMPARE_CACHE",
-			"id": "REPLACE_WITH_KV_NAMESPACE_ID"
+			"id": "b47f398d73b4446fbb4a7be3c4f1081a"
 		}
 	],
 	"queues": {
