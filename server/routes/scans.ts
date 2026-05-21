@@ -130,12 +130,16 @@ scansRoutes.get("/:id/versions", async (c) => {
     });
   }
 
+  let connection: Awaited<ReturnType<typeof getOrganizationNpmToken>> = null;
   try {
-    await enforceRateLimit(db, {
-      key: `compare-versions:${session.userId}`,
-      limit: 60,
-      windowMs: 60 * 1000,
-    });
+    [, connection] = await Promise.all([
+      enforceRateLimit(db, {
+        key: `compare-versions:${session.userId}`,
+        limit: 60,
+        windowMs: 60 * 1000,
+      }),
+      getOrganizationNpmToken(db, c.env, organizationId).catch(() => null),
+    ]);
   } catch (err) {
     if (err instanceof RateLimitError) {
       return c.json(
@@ -147,7 +151,6 @@ scansRoutes.get("/:id/versions", async (c) => {
     throw err;
   }
 
-  const connection = await getOrganizationNpmToken(db, c.env, organizationId).catch(() => null);
   const metadata = await fetchPackageMetadata(c.env, scan.scan.packageName, {
     npmToken: connection?.token,
     npmRegistry: connection?.registryUrl,
@@ -225,12 +228,16 @@ scansRoutes.get("/:id/compare", async (c) => {
   if ("error" in ctx) return ctx.error;
   const { version, db, session, packageName } = ctx;
 
+  let connection: Awaited<ReturnType<typeof getOrganizationNpmToken>> = null;
   try {
-    await enforceRateLimit(db, {
-      key: `compare-fetch:${session.userId}`,
-      limit: 30,
-      windowMs: 60 * 1000,
-    });
+    [, connection] = await Promise.all([
+      enforceRateLimit(db, {
+        key: `compare-fetch:${session.userId}`,
+        limit: 30,
+        windowMs: 60 * 1000,
+      }),
+      getOrganizationNpmToken(db, c.env, ctx.organizationId).catch(() => null),
+    ]);
   } catch (err) {
     if (err instanceof RateLimitError) {
       return c.json(
@@ -242,7 +249,6 @@ scansRoutes.get("/:id/compare", async (c) => {
     throw err;
   }
 
-  const connection = await getOrganizationNpmToken(db, c.env, ctx.organizationId).catch(() => null);
   const metadata = await fetchPackageMetadata(c.env, packageName, {
     npmToken: connection?.token,
     npmRegistry: connection?.registryUrl,
@@ -275,12 +281,16 @@ scansRoutes.get("/:id/compare/file", async (c) => {
   const path = c.req.query("path") || "";
   if (!path) return c.json({ error: "path is required" }, 400);
 
+  let connection: Awaited<ReturnType<typeof getOrganizationNpmToken>> = null;
   try {
-    await enforceRateLimit(db, {
-      key: `compare-file:${session.userId}`,
-      limit: 240,
-      windowMs: 60 * 1000,
-    });
+    [, connection] = await Promise.all([
+      enforceRateLimit(db, {
+        key: `compare-file:${session.userId}`,
+        limit: 240,
+        windowMs: 60 * 1000,
+      }),
+      getOrganizationNpmToken(db, c.env, ctx.organizationId).catch(() => null),
+    ]);
   } catch (err) {
     if (err instanceof RateLimitError) {
       return c.json(
@@ -292,7 +302,6 @@ scansRoutes.get("/:id/compare/file", async (c) => {
     throw err;
   }
 
-  const connection = await getOrganizationNpmToken(db, c.env, ctx.organizationId).catch(() => null);
   const metadata = await fetchPackageMetadata(c.env, packageName, {
     npmToken: connection?.token,
     npmRegistry: connection?.registryUrl,

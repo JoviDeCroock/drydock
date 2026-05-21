@@ -41,14 +41,16 @@ export async function executeScanJob(
   options: ExecuteScanJobOptions = {},
 ) {
   const session: WorkspaceSession = { userId: message.actorUserId };
-  await markScanRunning(db, message.scanId, message.organizationId);
-  await recordScanEvent(db, {
-    organizationId: message.organizationId,
-    actorUserId: message.actorUserId,
-    scanId: message.scanId,
-    type: "scan.started",
-    metadata: { stageId: message.stageId, attempt: options.attempt ?? 1 },
-  });
+  await Promise.all([
+    markScanRunning(db, message.scanId, message.organizationId),
+    recordScanEvent(db, {
+      organizationId: message.organizationId,
+      actorUserId: message.actorUserId,
+      scanId: message.scanId,
+      type: "scan.started",
+      metadata: { stageId: message.stageId, attempt: options.attempt ?? 1 },
+    }),
+  ]);
 
   try {
     const npmConnection = await getNpmConnection(db, message.organizationId);
@@ -56,19 +58,21 @@ export async function executeScanJob(
       throw new Error("Connect an organization npm token before scanning staged publishes.");
     }
 
-    const orgNpmToken = await decryptNpmToken(env, npmConnection);
-    await markNpmConnectionUsed(db, message.organizationId);
-    await recordScanEvent(db, {
-      organizationId: message.organizationId,
-      actorUserId: message.actorUserId,
-      scanId: message.scanId,
-      type: "npm_connection.used",
-      metadata: {
-        stageId: message.stageId,
-        registryUrl: npmConnection.registryUrl,
-        tokenFingerprint: npmConnection.tokenFingerprint,
-      },
-    });
+    const [orgNpmToken] = await Promise.all([
+      decryptNpmToken(env, npmConnection),
+      markNpmConnectionUsed(db, message.organizationId),
+      recordScanEvent(db, {
+        organizationId: message.organizationId,
+        actorUserId: message.actorUserId,
+        scanId: message.scanId,
+        type: "npm_connection.used",
+        metadata: {
+          stageId: message.stageId,
+          registryUrl: npmConnection.registryUrl,
+          tokenFingerprint: npmConnection.tokenFingerprint,
+        },
+      }),
+    ]);
 
     return await runScanPipeline(
       { env, executionCtx, db, session },
@@ -85,14 +89,16 @@ export async function executeScanJob(
   } catch (err) {
     const safe = classifyScanError(err);
     if (!safe.retryable || options.finalAttempt) {
-      await markScanFailed(db, message.scanId, message.organizationId, safe);
-      await recordScanEvent(db, {
-        organizationId: message.organizationId,
-        actorUserId: message.actorUserId,
-        scanId: message.scanId,
-        type: "scan.failed",
-        metadata: { stageId: message.stageId, attempt: options.attempt ?? 1, error: safe },
-      });
+      await Promise.all([
+        markScanFailed(db, message.scanId, message.organizationId, safe),
+        recordScanEvent(db, {
+          organizationId: message.organizationId,
+          actorUserId: message.actorUserId,
+          scanId: message.scanId,
+          type: "scan.failed",
+          metadata: { stageId: message.stageId, attempt: options.attempt ?? 1, error: safe },
+        }),
+      ]);
     } else {
       await recordScanEvent(db, {
         organizationId: message.organizationId,

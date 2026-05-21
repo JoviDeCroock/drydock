@@ -53,30 +53,33 @@ npmConnectionRoutes.post("/", async (c) => {
     const db = createDb(c.env.DB);
     const session = c.get("authSession");
     const organizationId = await ensurePersonalOrganization(db, session);
-    await enforceRateLimit(db, {
-      key: `npm-connection:save:${organizationId}`,
-      limit: 20,
-      windowMs: 60 * 60 * 1000,
-    });
-    const encrypted = await encryptNpmToken(c.env, token);
-    const connection = await upsertNpmConnection(db, {
-      organizationId,
-      registryUrl,
-      label,
-      createdByUserId: session.userId,
-      ...encrypted,
-    });
-
-    await recordScanEvent(db, {
-      organizationId,
-      actorUserId: session.userId,
-      type: "npm_connection.upserted",
-      metadata: {
+    const [, encrypted] = await Promise.all([
+      enforceRateLimit(db, {
+        key: `npm-connection:save:${organizationId}`,
+        limit: 20,
+        windowMs: 60 * 60 * 1000,
+      }),
+      encryptNpmToken(c.env, token),
+    ]);
+    const [connection] = await Promise.all([
+      upsertNpmConnection(db, {
+        organizationId,
         registryUrl,
         label,
-        tokenFingerprint: encrypted.tokenFingerprint,
-      },
-    });
+        createdByUserId: session.userId,
+        ...encrypted,
+      }),
+      recordScanEvent(db, {
+        organizationId,
+        actorUserId: session.userId,
+        type: "npm_connection.upserted",
+        metadata: {
+          registryUrl,
+          label,
+          tokenFingerprint: encrypted.tokenFingerprint,
+        },
+      }),
+    ]);
 
     return c.json({ connection: publicNpmConnection(connection) });
   } catch (err) {
@@ -118,23 +121,24 @@ npmConnectionRoutes.post("/validate", async (c) => {
 
     const token = await decryptNpmToken(c.env, connection);
     const validation = await validateNpmCredential(connection.registryUrl, token, { stageId });
-    const updated = await updateNpmConnectionValidation(db, {
-      organizationId,
-      validationStatus: validation.status,
-      capabilities: validation.capabilities,
-      validatedAt: validation.ok ? new Date() : null,
-    });
-
-    await recordScanEvent(db, {
-      organizationId,
-      actorUserId: session.userId,
-      type: "npm_connection.validated",
-      metadata: {
-        ok: validation.ok,
-        status: validation.status,
+    const [updated] = await Promise.all([
+      updateNpmConnectionValidation(db, {
+        organizationId,
+        validationStatus: validation.status,
         capabilities: validation.capabilities,
-      },
-    });
+        validatedAt: validation.ok ? new Date() : null,
+      }),
+      recordScanEvent(db, {
+        organizationId,
+        actorUserId: session.userId,
+        type: "npm_connection.validated",
+        metadata: {
+          ok: validation.ok,
+          status: validation.status,
+          capabilities: validation.capabilities,
+        },
+      }),
+    ]);
 
     return c.json({ validation, connection: publicNpmConnection(updated) });
   } catch (err) {
@@ -157,18 +161,20 @@ npmConnectionRoutes.delete("/", async (c) => {
   const session = c.get("authSession");
   const organizationId = await ensurePersonalOrganization(db, session);
   const existing = await getNpmConnection(db, organizationId);
-  await deleteNpmConnection(db, organizationId);
-  if (existing) {
-    await recordScanEvent(db, {
-      organizationId,
-      actorUserId: session.userId,
-      type: "npm_connection.deleted",
-      metadata: {
-        registryUrl: existing.registryUrl,
-        label: existing.label,
-        tokenFingerprint: existing.tokenFingerprint,
-      },
-    });
-  }
+  await Promise.all([
+    deleteNpmConnection(db, organizationId),
+    existing
+      ? recordScanEvent(db, {
+          organizationId,
+          actorUserId: session.userId,
+          type: "npm_connection.deleted",
+          metadata: {
+            registryUrl: existing.registryUrl,
+            label: existing.label,
+            tokenFingerprint: existing.tokenFingerprint,
+          },
+        })
+      : Promise.resolve(),
+  ]);
   return c.json({ ok: true });
 });

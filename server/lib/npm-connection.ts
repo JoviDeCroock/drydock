@@ -128,14 +128,16 @@ export async function validateNpmCredential(
   options: { stageId?: string } = {},
 ): Promise<NpmCredentialValidation> {
   const registry = normalizeRegistryUrl(registryUrl);
-  const auth = await validateRegistryAuth(registry, token);
-  const stagedList = await validateStagedListAccess(registry, token);
-  const stagedView = options.stageId
-    ? await validateStagedViewAccess(registry, token, options.stageId)
-    : null;
-  const stagedTarball = options.stageId
-    ? await validateStagedTarballAccess(registry, token, options.stageId)
-    : null;
+  const [auth, stagedList, stagedView, stagedTarball] = await Promise.all([
+    validateRegistryAuth(registry, token),
+    validateStagedListAccess(registry, token),
+    options.stageId
+      ? validateStagedViewAccess(registry, token, options.stageId)
+      : Promise.resolve(null),
+    options.stageId
+      ? validateStagedTarballAccess(registry, token, options.stageId)
+      : Promise.resolve(null),
+  ]);
   const ok =
     auth.registryAuth &&
     stagedList.stagedListAccess &&
