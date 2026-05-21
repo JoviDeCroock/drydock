@@ -1,5 +1,5 @@
 {
-  "name": "staged-publish-sandbox-prototype",
+  "name": "staged-publish-review",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,8 +10,8 @@
     "cf-typegen": "wrangler types --env-interface CloudflareBindings",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
-    "db:migrate:local": "wrangler d1 migrations apply staged-publish-sandbox-prototype --local",
-    "db:migrate:remote": "wrangler d1 migrations apply staged-publish-sandbox-prototype --remote",
+    "db:migrate:local": "wrangler d1 migrations apply staged-publish-review --local",
+    "db:migrate:remote": "wrangler d1 migrations apply staged-publish-review --remote",
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {

@@ -1,38 +1,45 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "staged-publish-sandbox-prototype",
-  "main": "./server/index.ts",
-  "compatibility_date": "2026-05-20",
-  "compatibility_flags": ["nodejs_compat"],
-  "workers_dev": true,
-  "observability": {
-    "logs": {
-      "enabled": true,
-      "invocation_logs": true
-    }
-  },
-  "assets": {
-    "not_found_handling": "single-page-application"
-  },
-  "ai": {
-    "binding": "AI"
-  },
-  "worker_loaders": [
-    {
-      "binding": "LOADER"
-    }
-  ],
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "staged-publish-sandbox-prototype",
-      "database_id": "00000000-0000-0000-0000-000000000000",
-      "migrations_dir": "drizzle"
-    }
-  ],
-  "vars": {
-    "AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-    "NPM_REGISTRY": "https://registry.npmjs.org",
-    "AUTH_REQUIRED": "false"
-  }
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "staged-publish-sandbox-prototype",
+	"main": "./server/index.ts",
+	"compatibility_date": "2026-05-20",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"workers_dev": true,
+	"observability": {
+		"logs": {
+			"enabled": true,
+			"invocation_logs": true
+		}
+	},
+	"assets": {
+		"not_found_handling": "single-page-application"
+	},
+	"ai": {
+		"binding": "AI"
+	},
+	"worker_loaders": [
+		{
+			"binding": "LOADER"
+		}
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "staged-publish-review",
+			"database_id": "00000000-0000-0000-0000-000000000000",
+			"migrations_dir": "drizzle"
+		},
+		{
+			"binding": "staged_publish_review",
+			"database_name": "staged-publish-review",
+			"database_id": "9c856c2f-51be-4309-a932-103e6a835430"
+		}
+	],
+	"vars": {
+		"AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+		"NPM_REGISTRY": "https://registry.npmjs.org",
+		"AUTH_REQUIRED": "false"
+	}
 }
