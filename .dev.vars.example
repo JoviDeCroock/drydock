@@ -8,9 +8,16 @@ BETTER_AUTH_SECRET=replace-with-a-random-32-byte-secret
 # Canonical app origin used by Better Auth. For local dev this matches Vite's default URL.
 BETTER_AUTH_URL=http://localhost:5173
 
-# Required to download npm staged tarballs that require registry authentication.
-# Use the least-privileged npm token that can read the staged publish under review.
+# Optional but recommended for SaaS-style local testing. Encrypts per-organization npm connections.
+# If omitted, BETTER_AUTH_SECRET is used as the key source.
+NPM_CONNECTIONS_ENCRYPTION_KEY=replace-with-a-random-32-byte-secret
+
+# Local/development fallback to download npm staged tarballs without configuring an org connection.
+# SaaS production should use encrypted per-organization npm connections instead.
 NPM_TOKEN=npm_replace_with_token
+
+# Production hardening: set to true in SaaS deploys to require an org npm connection before scanning.
+# REQUIRE_ORG_NPM_CONNECTION=true
 
 # Optional local overrides for non-secret vars that are also defined in wrangler.jsonc.
 # NPM_REGISTRY=https://registry.npmjs.org

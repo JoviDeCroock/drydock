@@ -3,11 +3,17 @@ import type { FileRecord, PackageJsonSummary } from "./review";
 
 const MAX_FILES = 250;
 const MAX_BYTES_PER_FILE = 64 * 1024;
+const MAX_TAR_BYTES = 25 * 1024 * 1024;
 
-export class NpmStageGateway extends WorkerEntrypoint<Cloudflare.Env> {
+interface NpmStageGatewayProps {
+  npmToken?: string;
+  npmRegistry?: string;
+}
+
+export class NpmStageGateway extends WorkerEntrypoint<Cloudflare.Env, NpmStageGatewayProps> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    const registry = new URL(this.env.NPM_REGISTRY || "https://registry.npmjs.org");
+    const registry = new URL(this.ctx.props.npmRegistry || this.env.NPM_REGISTRY || "https://registry.npmjs.org");
 
     const sameOrigin = url.origin === registry.origin;
     const isStagedTarball =
@@ -23,9 +29,11 @@ export class NpmStageGateway extends WorkerEntrypoint<Cloudflare.Env> {
       return new Response("blocked by stage gateway", { status: 403 });
     }
 
-    const token = this.env.NPM_TOKEN;
+    const token = this.ctx.props.npmToken || this.env.NPM_TOKEN;
     const forwarded = new Request(request);
-    if (token && isStagedTarball) forwarded.headers.set("authorization", `Bearer ${token}`);
+    if (token && (isStagedTarball || isPublishedTarball || isRegistryMetadata)) {
+      forwarded.headers.set("authorization", `Bearer ${token}`);
+    }
     forwarded.headers.set("user-agent", "staged-publish-review/0.3");
 
     return fetch(forwarded);
@@ -42,6 +50,8 @@ export interface DownloadOptions {
   tarballUrl?: string;
   maxFiles?: number;
   maxBytesPerFile?: number;
+  npmToken?: string;
+  npmRegistry?: string;
 }
 
 export class SandboxError extends Error {
@@ -61,11 +71,14 @@ export async function downloadInSandbox(
     mainModule: "sandbox.js",
     modules: { "sandbox.js": sandboxSource() },
     env: {
-      NPM_REGISTRY: env.NPM_REGISTRY || "https://registry.npmjs.org",
+      NPM_REGISTRY: options.npmRegistry || env.NPM_REGISTRY || "https://registry.npmjs.org",
       MAX_FILES: Math.min(options.maxFiles ?? MAX_FILES, MAX_FILES),
       MAX_BYTES_PER_FILE: Math.min(options.maxBytesPerFile ?? MAX_BYTES_PER_FILE, MAX_BYTES_PER_FILE),
+      MAX_TAR_BYTES,
     },
-    globalOutbound: (ctx as unknown as { exports: { NpmStageGateway(): Fetcher } }).exports.NpmStageGateway(),
+    globalOutbound: (ctx as unknown as { exports: { NpmStageGateway(options: { props: NpmStageGatewayProps }): Fetcher } }).exports.NpmStageGateway({
+      props: { npmToken: options.npmToken, npmRegistry: options.npmRegistry },
+    }),
     limits: { cpuMs: 2_000, subRequests: 4 },
   });
 
@@ -95,10 +108,13 @@ export default {
     const registry = env.NPM_REGISTRY || "https://registry.npmjs.org";
     const url = tarballUrl || registry.replace(/\/$/, "") + "/-/stage/" + encodeURIComponent(stageId) + "/tarball";
     const res = await fetch(url, { headers: { accept: "application/octet-stream" } });
-    if (!res.ok) return json({ error: "download failed", status: res.status, body: await res.text() }, 502);
+    if (!res.ok) return json({ error: "download failed", status: res.status }, 502);
 
+    const contentLength = Number(res.headers.get("content-length") || "0");
+    if (contentLength > (env.MAX_TAR_BYTES || 26214400)) return json({ error: "tarball too large", status: 413 }, 413);
     const gzip = await res.arrayBuffer();
     const tar = await gunzip(gzip);
+    if (tar.byteLength > (env.MAX_TAR_BYTES || 26214400)) return json({ error: "archive expands beyond safety limit", status: 413 }, 413);
     const files = await readTar(tar, env.MAX_FILES || 250, env.MAX_BYTES_PER_FILE || 65536);
     const packageJson = parsePackageJson(files);
     return json({ files, packageJson });
@@ -114,17 +130,41 @@ async function gunzip(buffer) {
 async function readTar(buffer, maxFiles, maxBytesPerFile) {
   const bytes = new Uint8Array(buffer);
   const files = [];
+  let nextLongName = null;
+  let pax = null;
+
   for (let offset = 0; offset + 512 <= bytes.length && files.length < maxFiles;) {
     const header = bytes.subarray(offset, offset + 512);
     if (header.every((b) => b === 0)) break;
-    const name = readString(header, 0, 100);
+
+    const rawName = readString(header, 0, 100);
     const prefix = readString(header, 345, 155);
-    const path = (prefix ? prefix + "/" : "") + name;
-    const size = parseInt(readString(header, 124, 12).trim() || "0", 8);
+    const sizeText = readString(header, 124, 12).trim() || "0";
+    if (!/^[0-7]+$/.test(sizeText)) throw new Error("invalid tar entry size");
+    const size = parseInt(sizeText, 8);
     const type = String.fromCharCode(header[156] || 48);
     offset += 512;
+    if (offset + size > bytes.length) throw new Error("truncated tar entry");
     const body = bytes.subarray(offset, offset + size);
-    if (type === "0" || type === "\0") files.push(await summarizeFile(path, body, maxBytesPerFile));
+
+    if (type === "x") {
+      pax = parsePax(body);
+    } else if (type === "L") {
+      nextLongName = readString(body, 0, body.length).replace(/\0+$/, "");
+    } else if (type === "0" || type === "\0") {
+      const path = normalizeTarPath(pax?.path || nextLongName || (prefix ? prefix + "/" : "") + rawName);
+      if (path) files.push(await summarizeFile(path, body, maxBytesPerFile));
+      nextLongName = null;
+      pax = null;
+    } else if (type === "1" || type === "2") {
+      // Hardlinks and symlinks are not extracted. They are skipped so link targets cannot escape the package tree.
+      nextLongName = null;
+      pax = null;
+    } else if (type !== "L") {
+      nextLongName = null;
+      pax = null;
+    }
+
     offset += Math.ceil(size / 512) * 512;
   }
   return files;
@@ -136,7 +176,35 @@ async function summarizeFile(path, body, maxBytesPerFile) {
   const sample = body.subarray(0, Math.min(body.length, maxBytesPerFile));
   const text = decodeText(sample);
   if (!text) flags.push("binary");
-  return { path: path.replace(/^package\//, ""), size: body.length, sha256: await sha256(body), flags, ...(text ? { textSample: text } : {}) };
+  return { path, size: body.length, sha256: await sha256(body), flags, ...(text ? { textSample: text } : {}) };
+}
+
+function normalizeTarPath(rawPath) {
+  if (!rawPath || rawPath.includes("\0") || rawPath.includes("\\")) return null;
+  let path = rawPath.replace(/^\/+/, "").replace(/^package\//, "");
+  if (!path || path.startsWith("../") || path.includes("/../") || /^[A-Za-z]:/.test(path)) return null;
+  const parts = path.split("/").filter(Boolean);
+  if (!parts.length || parts.some((part) => part === "." || part === "..")) return null;
+  path = parts.join("/");
+  if (path.length > 512) return null;
+  return path;
+}
+
+function parsePax(body) {
+  const text = decodeText(body.subarray(0, Math.min(body.length, 8192)));
+  const out = {};
+  let index = 0;
+  while (index < text.length) {
+    const space = text.indexOf(" ", index);
+    if (space === -1) break;
+    const length = Number(text.slice(index, space));
+    if (!Number.isFinite(length) || length <= 0) break;
+    const record = text.slice(space + 1, index + length).replace(/\n$/, "");
+    const equals = record.indexOf("=");
+    if (equals > 0) out[record.slice(0, equals)] = record.slice(equals + 1);
+    index += length;
+  }
+  return out;
 }
 
 function parsePackageJson(files) {

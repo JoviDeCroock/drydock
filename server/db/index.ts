@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/d1";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, lt, sql } from "drizzle-orm";
 import * as schema from "./schema";
-import { organizationMembers, organizations, scanEvents, scanFiles, scanFindings, scans } from "./schema";
+import { npmConnections, organizationMembers, organizations, rateLimits, scanEvents, scanFiles, scanFindings, scans } from "./schema";
 import { personalOrganizationId } from "../lib/ownership";
 import type { DiffEntry, FileRecord, Finding, PackageJsonSummary } from "../lib/review";
 
@@ -37,6 +37,37 @@ export interface AuditEventInput {
   metadata?: unknown;
 }
 
+export interface NpmConnectionInput {
+  organizationId: string;
+  registryUrl: string;
+  label: string;
+  tokenCiphertext: string;
+  tokenNonce: string;
+  tokenFingerprint: string;
+  tokenLast4?: string | null;
+  createdByUserId: string;
+}
+
+export interface NpmConnectionValidationInput {
+  organizationId: string;
+  validationStatus: "valid" | "invalid" | "unvalidated";
+  capabilities?: unknown;
+  validatedAt?: Date | null;
+}
+
+export interface RateLimitInput {
+  key: string;
+  limit: number;
+  windowMs: number;
+}
+
+export class RateLimitError extends Error {
+  constructor(public retryAfterSeconds: number) {
+    super("rate limit exceeded");
+    this.name = "RateLimitError";
+  }
+}
+
 export function createDb(d1: D1Database) {
   return drizzle(d1, { schema });
 }
@@ -64,6 +95,35 @@ export async function ensurePersonalOrganization(db: AppDb, session: WorkspaceSe
   }).onConflictDoNothing();
 
   return organizationId;
+}
+
+export async function enforceRateLimit(db: AppDb, input: RateLimitInput) {
+  const nowMs = Date.now();
+  const bucket = Math.floor(nowMs / input.windowMs);
+  const key = `${input.key}:${bucket}`;
+  const expiresAt = new Date((bucket + 1) * input.windowMs);
+  const now = new Date(nowMs);
+
+  await db.insert(rateLimits).values({
+    key,
+    count: 1,
+    expiresAt,
+    updatedAt: now,
+  }).onConflictDoUpdate({
+    target: rateLimits.key,
+    set: {
+      count: sql`${rateLimits.count} + 1`,
+      updatedAt: now,
+    },
+  });
+
+  const [entry] = await db.select().from(rateLimits).where(eq(rateLimits.key, key)).limit(1);
+  if (Math.random() < 0.01) {
+    await db.delete(rateLimits).where(lt(rateLimits.expiresAt, new Date(nowMs - input.windowMs)));
+  }
+  if ((entry?.count ?? 0) > input.limit) {
+    throw new RateLimitError(Math.max(1, Math.ceil((expiresAt.getTime() - nowMs) / 1000)));
+  }
 }
 
 export async function recordScanEvent(db: AppDb, input: AuditEventInput) {
@@ -146,4 +206,74 @@ export async function getScan(db: AppDb, id: string, organizationId: string) {
   const files = await db.select().from(scanFiles).where(eq(scanFiles.scanId, id));
   const findings = await db.select().from(scanFindings).where(eq(scanFindings.scanId, id));
   return { scan, files, findings };
+}
+
+export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) {
+  const now = new Date();
+  const values = {
+    id: crypto.randomUUID(),
+    organizationId: input.organizationId,
+    registryUrl: input.registryUrl,
+    label: input.label,
+    tokenCiphertext: input.tokenCiphertext,
+    tokenNonce: input.tokenNonce,
+    tokenFingerprint: input.tokenFingerprint,
+    tokenLast4: input.tokenLast4 || null,
+    validationStatus: "unvalidated",
+    capabilitiesJson: null,
+    validatedAt: null,
+    lastUsedAt: null,
+    createdByUserId: input.createdByUserId,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await db.insert(npmConnections).values(values).onConflictDoUpdate({
+    target: npmConnections.organizationId,
+    set: {
+      registryUrl: values.registryUrl,
+      label: values.label,
+      tokenCiphertext: values.tokenCiphertext,
+      tokenNonce: values.tokenNonce,
+      tokenFingerprint: values.tokenFingerprint,
+      tokenLast4: values.tokenLast4,
+      validationStatus: values.validationStatus,
+      capabilitiesJson: values.capabilitiesJson,
+      validatedAt: values.validatedAt,
+      updatedAt: now,
+    },
+  });
+
+  return getNpmConnection(db, input.organizationId);
+}
+
+export async function getNpmConnection(db: AppDb, organizationId: string) {
+  const [connection] = await db
+    .select()
+    .from(npmConnections)
+    .where(eq(npmConnections.organizationId, organizationId))
+    .limit(1);
+  return connection ?? null;
+}
+
+export async function updateNpmConnectionValidation(db: AppDb, input: NpmConnectionValidationInput) {
+  await db.update(npmConnections)
+    .set({
+      validationStatus: input.validationStatus,
+      capabilitiesJson: input.capabilities ?? null,
+      validatedAt: input.validatedAt ?? null,
+      updatedAt: new Date(),
+    })
+    .where(eq(npmConnections.organizationId, input.organizationId));
+  return getNpmConnection(db, input.organizationId);
+}
+
+export async function markNpmConnectionUsed(db: AppDb, organizationId: string) {
+  await db.update(npmConnections)
+    .set({ lastUsedAt: new Date(), updatedAt: new Date() })
+    .where(eq(npmConnections.organizationId, organizationId));
+}
+
+export async function deleteNpmConnection(db: AppDb, organizationId: string) {
+  await db.delete(npmConnections).where(eq(npmConnections.organizationId, organizationId));
 }

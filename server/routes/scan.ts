@@ -1,21 +1,17 @@
 import { Hono } from "hono";
-import { analyzeWithAi } from "../lib/ai-review";
-import { createDb, ensurePersonalOrganization, persistScan, recordScanEvent } from "../db";
-import { fetchPackageMetadata, pickPreviousVersion } from "../lib/registry";
 import {
-  combineRisk,
-  computeRisk,
-  createPackageDiff,
-  deterministicFindings,
-  normalizeRisk,
-  redactFileRecords,
-  redactFindings,
-  redactJson,
-  summarizePackageJsonDiff,
-  type PackageJsonSummary,
-} from "../lib/review";
-import { downloadInSandbox, SandboxError } from "../lib/sandbox";
-import type { Bindings, ScanInput, ScanResult, Variables } from "../types";
+  RateLimitError,
+  createDb,
+  enforceRateLimit,
+  ensurePersonalOrganization,
+  getNpmConnection,
+  markNpmConnectionUsed,
+  recordScanEvent,
+} from "../db";
+import { decryptNpmToken } from "../lib/npm-connection";
+import { runScanPipeline } from "../lib/scan-pipeline";
+import { SandboxError } from "../lib/sandbox";
+import type { Bindings, ScanInput, Variables } from "../types";
 
 const STAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,160}$/;
 
@@ -36,108 +32,49 @@ scanRoutes.post("/", async (c) => {
     const db = createDb(c.env.DB);
     const session = c.get("authSession");
     const organizationId = await ensurePersonalOrganization(db, session);
+    await enforceRateLimit(db, { key: `scan:${organizationId}`, limit: 10, windowMs: 60 * 60 * 1000 });
 
-    const staged = await downloadInSandbox(c.env, c.executionCtx, {
-      stageId: input.stageId,
-      maxFiles: input.maxFiles,
-      maxBytesPerFile: input.maxBytesPerFile,
-    });
+    const npmConnection = await getNpmConnection(db, organizationId);
+    if (!npmConnection && c.env.REQUIRE_ORG_NPM_CONNECTION === "true") {
+      return c.json({ error: "Connect an organization npm token before scanning staged publishes." }, 400);
+    }
+    const orgNpmToken = npmConnection ? await decryptNpmToken(c.env, npmConnection) : undefined;
+    if (npmConnection) {
+      await markNpmConnectionUsed(db, organizationId);
+      await recordScanEvent(db, {
+        organizationId,
+        actorUserId: session.userId,
+        type: "npm_connection.used",
+        metadata: {
+          stageId: input.stageId,
+          registryUrl: npmConnection.registryUrl,
+          tokenFingerprint: npmConnection.tokenFingerprint,
+        },
+      });
+    }
 
-    const previous = await maybeDownloadPreviousVersion(c.env, c.executionCtx, staged.packageJson ?? null, input);
-    const diff = previous
-      ? createPackageDiff(previous.files, staged.files)
-      : createPackageDiff([], staged.files);
-    const packageJsonDiff = redactJson(summarizePackageJsonDiff(previous?.packageJson, staged.packageJson));
-    const ruleFindings = redactFindings(deterministicFindings(staged.files, diff));
-    const redactedStagedFiles = redactFileRecords(staged.files);
-    const redactedPackageJson = redactJson(staged.packageJson ?? null);
-    const redactedPreviousPackageJson = redactJson(previous?.packageJson ?? null);
-    const aiFindings = await analyzeWithAi(c.env, redactedStagedFiles, diff, packageJsonDiff, ruleFindings);
-    const risk = combineRisk(
-      computeRisk(ruleFindings),
-      normalizeRisk(aiFindings.risk),
-      aiFindings.requiresManualReview ? "medium" : "low",
+    const result = await runScanPipeline(
+      { env: c.env, executionCtx: c.executionCtx, db, session },
+      {
+        ...input,
+        organizationId,
+        npmToken: orgNpmToken,
+        npmRegistry: npmConnection?.registryUrl,
+      },
     );
-    const scanId = crypto.randomUUID();
-
-    const result: ScanResult = {
-      id: scanId,
-      stageId: input.stageId,
-      package: {
-        name: staged.packageJson?.name ?? null,
-        stagedVersion: staged.packageJson?.version ?? null,
-        previousVersion: previous?.packageJson?.version ?? null,
-      },
-      fileCount: staged.files.length,
-      previousFileCount: previous?.files.length ?? 0,
-      packageJson: redactedPackageJson,
-      packageJsonDiff,
-      diff,
-      ruleFindings,
-      aiFindings,
-      risk,
-      safety: {
-        tokenExposedToSandbox: false,
-        directSandboxNetwork: false,
-        outboundPolicy: "only npm staged tarball, published tarball, and package metadata endpoints via gateway",
-        aiInputPolicy: "package bytes are untrusted evidence, not instructions; static safety prompt is prefix-cache friendly and AI cannot downgrade deterministic findings",
-        fileExplorerPolicy: "package file previews are escaped text and secret-redacted before persistence; no package-provided HTML/script/image execution",
-      },
-    };
-
-    await persistScan(db, {
-      id: scanId,
-      stageId: input.stageId,
-      organizationId,
-      ownerUserId: session.userId,
-      packageJson: redactedPackageJson,
-      previousPackageJson: redactedPreviousPackageJson,
-      risk,
-      status: "complete",
-      summary: { packageJsonDiff, diff, safety: result.safety },
-      ai: aiFindings,
-      files: redactedStagedFiles,
-      diff,
-      findings: ruleFindings,
-    });
-
-    await recordScanEvent(db, {
-      organizationId,
-      actorUserId: session.userId,
-      scanId,
-      type: "scan.completed",
-      metadata: {
-        stageId: input.stageId,
-        packageName: result.package.name,
-        stagedVersion: result.package.stagedVersion,
-        risk,
-      },
-    });
 
     return c.json(result);
   } catch (err) {
+    if (err instanceof RateLimitError) {
+      return c.json(
+        { error: "scan rate limit exceeded", retryAfterSeconds: err.retryAfterSeconds },
+        429,
+        { "retry-after": String(err.retryAfterSeconds) },
+      );
+    }
     if (err instanceof SandboxError) {
-      return c.json({ error: "sandbox download failed", detail: err.detail }, 502);
+      return c.json({ error: "Could not download or inspect the staged tarball.", detail: err.detail }, 502);
     }
     throw err;
   }
 });
-
-async function maybeDownloadPreviousVersion(
-  env: Cloudflare.Env,
-  ctx: ExecutionContext,
-  pkg: PackageJsonSummary | null,
-  input: ScanInput,
-) {
-  if (!pkg?.name || !pkg.version) return null;
-  const metadata = await fetchPackageMetadata(env, pkg.name).catch(() => null);
-  if (!metadata) return null;
-  const version = pickPreviousVersion(metadata, pkg.version);
-  const tarballUrl = version ? metadata.versions?.[version]?.dist?.tarball : null;
-  if (!version || !tarballUrl) return null;
-  return downloadInSandbox(env, ctx, {
-    tarballUrl,
-    maxFiles: input.maxFiles,
-    maxBytesPerFile: input.maxBytesPerFile,
-  });
-}

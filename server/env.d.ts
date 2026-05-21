@@ -8,6 +8,8 @@ declare global {
       DB: D1Database;
       NPM_REGISTRY: string;
       NPM_TOKEN?: string;
+      NPM_CONNECTIONS_ENCRYPTION_KEY?: string;
+      REQUIRE_ORG_NPM_CONNECTION?: string;
       BETTER_AUTH_SECRET: string;
       BETTER_AUTH_URL?: string;
       AUTH_REQUIRED?: string;

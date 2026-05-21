@@ -15,6 +15,20 @@
       "when": 1779351009234,
       "tag": "0001_org-ownership",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1779352148453,
+      "tag": "0002_round_stryfe",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1779353064481,
+      "tag": "0003_bent_cammi",
+      "breakpoints": true
     }
   ]
 }

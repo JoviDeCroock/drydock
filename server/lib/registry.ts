@@ -1,7 +1,13 @@
-export async function fetchPackageMetadata(env: Cloudflare.Env, name: string) {
-  const registry = (env.NPM_REGISTRY || "https://registry.npmjs.org").replace(/\/$/, "");
+export async function fetchPackageMetadata(
+  env: Cloudflare.Env,
+  name: string,
+  options: { npmToken?: string; npmRegistry?: string } = {},
+) {
+  const registry = (options.npmRegistry || env.NPM_REGISTRY || "https://registry.npmjs.org").replace(/\/$/, "");
+  const headers = new Headers({ accept: "application/json" });
+  if (options.npmToken) headers.set("authorization", `Bearer ${options.npmToken}`);
   const res = await fetch(`${registry}/${encodeURIComponent(name).replace(/^%40/, "@")}`, {
-    headers: { accept: "application/json" },
+    headers,
   });
   if (!res.ok) throw new Error(`metadata fetch failed: ${res.status}`);
   return (await res.json()) as { versions?: Record<string, { dist?: { tarball?: string } }> };

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { createAuth, getAuthSession } from "./lib/auth";
+import { npmConnectionRoutes } from "./routes/npm-connection";
 import { scanRoutes } from "./routes/scan";
 import { scansRoutes } from "./routes/scans";
 import type { Bindings, Variables } from "./types";
@@ -88,13 +89,15 @@ app.get("/api", (c) =>
       scan: "POST /api/v1/scan { stageId }",
       scans: "GET /api/v1/scans",
       scanDetail: "GET /api/v1/scans/:id",
+      npmConnection: "GET/POST/DELETE /api/v1/npm-connection; POST /api/v1/npm-connection/validate",
       health: "GET /api/health",
     },
     auth: "Better Auth is required for every non-auth API endpoint.",
-    note: "Cloudflare Workers cannot spawn the npm CLI. This prototype performs the npm stage download equivalent inside a Dynamic Worker by fetching the staged tarball through a locked-down gateway.",
+    note: "Cloudflare Workers cannot spawn the npm CLI. This service performs the npm stage download equivalent inside a Dynamic Worker by fetching the staged tarball through a locked-down gateway.",
   }),
 );
 
+app.route("/api/v1/npm-connection", npmConnectionRoutes);
 app.route("/api/v1/scan", scanRoutes);
 app.route("/api/v1/scans", scansRoutes);
 

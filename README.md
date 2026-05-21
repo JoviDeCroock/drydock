@@ -1,12 +1,27 @@
-# Staged publish sandbox prototype
+# Staged Publish Review
 
-Cloudflare Worker + Preact UI prototype for reviewing an npm staged publish before approval. The Hono worker is co-located with the UI and bundled by Vite + the Cloudflare plugin.
+Cloudflare-first SaaS for reviewing npm staged publishes before a maintainer approves them. The product downloads a staged npm tarball through a sandboxed boundary, compares it to the currently published package, runs deterministic supply-chain checks, asks Cloudflare Workers AI for constrained triage, and persists a human-readable review report.
 
-## What this proves
+The approval step remains outside this product: maintainers approve with `npm stage approve <stage-id>` or npmjs.com, including npm's required 2FA challenge.
+
+## Product direction
+
+This repository is moving from prototype to real product. The current implementation already proves the core sandbox/review flow; the product direction is:
+
+- **SaaS, organization-scoped.** Scans belong to an organization boundary. RBAC is intentionally deferred for the first production slice, but the data model should keep organization ownership explicit.
+- **Per-organization npm credentials.** Production SaaS should not use a deployment-wide npm token. Each organization will connect its own npm credential, scoped as narrowly as npm permits, and the credential will only be used by the gateway that talks to npm.
+- **Manual publish approval.** The product reviews and explains a staged publish. It does not run `npm stage approve`, does not bypass npm 2FA, and does not become the final publisher.
+- **Workers AI in production.** Cloudflare Workers AI is the production AI provider for now. AI findings are advisory and cannot downgrade deterministic findings.
+- **Safe artifact defaults.** Do not retain raw tarballs by default in SaaS. Persist redacted summaries, manifests, diffs, findings, and report metadata. Raw artifact retention may become an explicit short-TTL organization setting later.
+- **Signed reports later.** Prepare report data to be canonical and signable, but do not launch public signed report generation yet.
+
+See [`docs/architecture.md`](docs/architecture.md), [`docs/security-model.md`](docs/security-model.md), and [`docs/production-roadmap.md`](docs/production-roadmap.md) for the production plan.
+
+## Current capabilities
 
 - Every non-auth `/api/*` endpoint requires a Better Auth session backed by Drizzle + Cloudflare D1.
-- The Worker exposes authenticated `POST /api/v1/scan { stageId }` and spins up a fresh Dynamic Worker for the risky package-download/parsing step.
-- The Dynamic Worker fetches the staged tarball through a locked-down gateway; it never receives the npm token.
+- The Worker exposes authenticated scan APIs and spins up a fresh Dynamic Worker for risky package-download/parsing work.
+- The Dynamic Worker fetches staged tarballs through a locked-down gateway; it never receives the npm token.
 - Direct sandbox egress is intercepted. Only expected npm registry endpoints are allowed:
   - staged tarball: `https://registry.npmjs.org/-/stage/<stage-id>/tarball`
   - package metadata JSON
@@ -19,11 +34,18 @@ Cloudflare Worker + Preact UI prototype for reviewing an npm staged publish befo
 - Persisted scans are scoped to the authenticated user's personal organization, and scan completion/view actions are recorded as audit events.
 - `/`, `/login`, `/register`, `/dashboard`, and `/dashboard/scans/:id` are routed with `preact-iso` and lazy-loaded page modules.
 
-## Important constraint
+## npm staged publishing boundary
 
-Cloudflare Workers/Dynamic Workers cannot spawn a shell or run the literal `npm stage download` CLI command. This prototype uses the same staged-tarball download boundary from inside the Dynamic Worker via `fetch()`, behind an egress gateway that injects npm auth outside the sandbox.
+Cloudflare Workers/Dynamic Workers cannot spawn a shell or run the literal `npm stage download` CLI command. This product uses the same staged-tarball download boundary from inside the Dynamic Worker via `fetch()`, behind an egress gateway that injects npm auth outside the sandbox.
 
-If we need to test the literal CLI command, that belongs in a separate container/VM runner. For Cloudflare, this fetch-based shape is safer and closer to the runtime we can actually deploy.
+npm staged publishing has an explicit manual approval step:
+
+- `npm stage publish` submits a package to staging and can be used from CI/trusted publishing flows.
+- `npm stage download <stage-id>` lets maintainers inspect the staged tarball.
+- `npm stage approve <stage-id>` publishes the staged package and requires 2FA.
+- Trusted publishing/OIDC supports publishing and staged publishing, but npm's interactive stage review/approve operations still require maintainer authentication/proof of presence.
+
+That makes this product a review workbench, not an approval bot.
 
 ## Layout
 
@@ -38,6 +60,7 @@ src/           Preact UI served as static assets by the worker
   pages/       Landing, Auth login/register, Dashboard, persisted scan detail
   models/      Fetch wrappers that talk to /api/* (re-use server types)
 drizzle/       D1 migrations generated from server/db/schema.ts
+docs/          Architecture, security, roadmap, and UI implementation notes
 test/          node --test for pure logic
 ```
 
@@ -56,18 +79,20 @@ The Vite dev server runs the Worker locally and serves the UI at the same origin
 
 Local Worker secrets live in `.dev.vars` (copy from `.dev.vars.example`). Do not commit `.dev.vars`. Production secrets should be set with `pnpm wrangler secret put <NAME>`.
 
-Worker secrets:
+Current implementation secrets:
 
 | Name | Required? | Purpose |
 | --- | --- | --- |
 | `BETTER_AUTH_SECRET` | Yes | Better Auth signing/encryption secret for sessions and cookies. Use one unique high-entropy value per environment. Without this, API auth fails closed. |
-| `NPM_TOKEN` | Required for authenticated staged-publish downloads | npm registry token attached only by `NpmStageGateway` when fetching `/-/stage/<stage-id>/tarball`; it is not passed into the sandbox worker. |
+| `NPM_CONNECTIONS_ENCRYPTION_KEY` | Recommended for SaaS | Secret key material used to encrypt per-organization npm connection tokens. If omitted, `BETTER_AUTH_SECRET` is used as a fallback key source. |
+| `NPM_TOKEN` | Local/dev fallback | npm registry token attached only by `NpmStageGateway` for allowed npm registry endpoints; it is not passed into the sandbox worker. SaaS production should use encrypted per-organization npm connections instead. |
 
 Worker non-secret vars and bindings:
 
 | Name | Where | Purpose |
 | --- | --- | --- |
 | `BETTER_AUTH_URL` | `.dev.vars` locally; Wrangler var in production | Canonical app origin for Better Auth, for example `http://localhost:5173` locally or your deployed Worker URL. Not a secret. |
+| `REQUIRE_ORG_NPM_CONNECTION` | Wrangler var or `.dev.vars` | Set to `true` in production to reject scans until the current organization has an encrypted npm connection. |
 | `NPM_REGISTRY` | `wrangler.jsonc` `vars` | npm registry base URL. Defaults to `https://registry.npmjs.org`. |
 | `AI_MODEL` | `wrangler.jsonc` `vars` | Workers AI model ID. Defaults to `@cf/moonshotai/kimi-k2.5`. |
 | `AI_CACHE_AFFINITY` | `wrangler.jsonc` `vars` | Stable `x-session-affinity` value for Cloudflare Workers AI prefix caching. |
@@ -87,6 +112,8 @@ Keep the value stable within an environment; rotating it invalidates existing au
 
 All endpoints below require an authenticated Better Auth session. Use the UI or Better Auth endpoints under `/api/auth/*` to sign in first.
 
+Current synchronous scan API:
+
 ```sh
 # Run a scan
 curl -X POST http://localhost:5173/api/v1/scan \
@@ -100,20 +127,52 @@ curl http://localhost:5173/api/v1/scans
 curl http://localhost:5173/api/v1/scans/<scan-id>
 ```
 
-Response includes:
+Target production API shape:
+
+- `POST /api/v1/scans` creates a queued scan and returns a scan ID.
+- `GET /api/v1/scans` lists scans for the current organization.
+- `GET /api/v1/scans/:id` returns scan status, findings, artifacts, and report data.
+Implemented npm connection API:
+
+```sh
+# Read public metadata for the current organization's npm connection
+curl http://localhost:5173/api/v1/npm-connection
+
+# Store or rotate the current organization's encrypted npm connection
+curl -X POST http://localhost:5173/api/v1/npm-connection \
+  -H 'content-type: application/json' \
+  -d '{"token":"npm_...","label":"maintainer token","registryUrl":"https://registry.npmjs.org"}'
+
+# Validate the stored credential with npm's registry auth endpoint
+curl -X POST http://localhost:5173/api/v1/npm-connection/validate
+
+# Optionally also validate staged-tarball access for a real stage ID
+curl -X POST http://localhost:5173/api/v1/npm-connection/validate \
+  -H 'content-type: application/json' \
+  -d '{"stageId":"<stage-id>"}'
+
+# Remove the stored connection
+curl -X DELETE http://localhost:5173/api/v1/npm-connection
+```
+
+Target production API additions:
+
+- `POST /api/v1/npm-connection/validate` validates registry auth by default and staged-tarball access when a `stageId` is supplied. Further npm list/view capability checks should be added once the exact staged-review endpoint permissions are confirmed.
+
+Scan response/report data includes:
 
 - `id`, package name, staged version, previous version
 - `fileCount` and `previousFileCount`
 - `packageJsonDiff`
 - file-level `diff`
 - deterministic `ruleFindings`
-- Kimi K2.5 `aiFindings`
+- Workers AI `aiFindings`
 - combined `risk`
 - safety posture metadata
 
 ## Database
 
-Schema is defined in `server/db/schema.ts`. SQL migrations live in `drizzle/` and should be generated with Drizzle Kit. Scans are now owned by an organization/user boundary (`organizations`, `organization_members`, `scans.organization_id`, `scans.owner_user_id`) and audit events are stored in `scan_events`.
+Schema is defined in `server/db/schema.ts`. SQL migrations live in `drizzle/` and should be generated with Drizzle Kit. Scans are owned by an organization/user boundary (`organizations`, `organization_members`, `scans.organization_id`, `scans.owner_user_id`), audit events are stored in `scan_events`, npm credentials in `npm_connections`, and lightweight abuse buckets in `rate_limits`.
 
 ```sh
 pnpm db:generate
@@ -127,6 +186,8 @@ pnpm wrangler d1 create staged-publish-review
 pnpm db:migrate:remote
 ```
 
+Never write SQL migrations by hand; update `server/db/schema.ts` and generate migrations with Drizzle Kit.
+
 ## Deploy notes
 
 1. Use Node `22.14.0+` locally for Wrangler parity with npm staged publishing tooling.
@@ -134,8 +195,11 @@ pnpm db:migrate:remote
 
    ```sh
    pnpm install
-   pnpm wrangler secret put NPM_TOKEN
    pnpm wrangler secret put BETTER_AUTH_SECRET
+   pnpm wrangler secret put NPM_CONNECTIONS_ENCRYPTION_KEY
+   # set REQUIRE_ORG_NPM_CONNECTION=true in production vars
+   # optional local/self-host fallback only; SaaS production should use per-org encrypted npm connections instead
+   pnpm wrangler secret put NPM_TOKEN
    ```
 
 3. Set the real D1 `database_id` and production `BETTER_AUTH_URL` in `wrangler.jsonc`, then apply migrations.
@@ -146,9 +210,9 @@ pnpm db:migrate:remote
    pnpm deploy
    ```
 
-## Threat model
+## Security posture summary
 
-Defended:
+Defended today:
 
 - Unauthenticated access to all non-auth API endpoints.
 - Malicious package content trying to prompt-inject the AI reviewer.
@@ -156,20 +220,23 @@ Defended:
 - NPM token exposure to sandbox code.
 - Huge packages overwhelming AI context; samples are bounded.
 - Risky changes hiding in large package output; the file diff and package metadata diff are first-class review objects.
+- Cross-user scan reads through personal-organization scoping.
+- Basic D1-backed rate limits for scan creation and npm credential save/validation.
 
-Not defended in this spike:
+Product requirements before SaaS launch:
+
+- Async scan jobs with retryable failure states.
+- Durable report rendering from persisted data.
+- Expanded abuse controls and operator metrics.
+- Safer artifact storage in R2 for derived/redacted artifacts.
+- Clear token validation and rotation flows.
+- More complete audit events.
+
+Not defended/implemented yet:
 
 - Literal `npm stage download` CLI execution inside Workers; Workers cannot spawn CLI processes.
+- Production-grade team RBAC.
+- Public signed reports.
 - Perfect malware detection. This is triage, not a proof of safety.
-- Deep binary analysis. Large/binary/native files are flagged for manual review.
-- Full npm CLI auth edge cases around staged publish permissions.
-- Production-grade RBAC, rate limiting, async queues, and R2 artifact retention. The current build has personal-organization scan scoping and a basic scan audit event table, but not full team RBAC yet.
-
-## Recommendation for the real build
-
-- Keep this product centered on "what changed in this staged publish?" rather than generic package scanning.
-- Add R2 storage for original tarballs and extracted artifacts.
-- Move scanning to Cloudflare Queues for large packages and retryable work.
-- Add line-level side-by-side diffs for text files.
-- Add signed review URLs and organization/team RBAC through Better Auth.
-- Keep final `npm stage approve <stage-id>` out of automation; it should remain a maintainer 2FA step.
+- Deep binary/native analysis. Large/binary/native files are flagged for manual review.
+- Raw tarball evidence retention. This is intentionally not a default SaaS behavior.

@@ -89,6 +89,36 @@ export const scanEvents = sqliteTable("scan_events", {
   scanIdx: index("scan_events_scan_idx").on(table.scanId),
 }));
 
+export const rateLimits = sqliteTable("rate_limits", {
+  key: text("key").primaryKey(),
+  count: integer("count").notNull().default(0),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+}, (table) => ({
+  expiresIdx: index("rate_limits_expires_idx").on(table.expiresAt),
+}));
+
+export const npmConnections = sqliteTable("npm_connections", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  registryUrl: text("registry_url").notNull(),
+  label: text("label").notNull(),
+  tokenCiphertext: text("token_ciphertext").notNull(),
+  tokenNonce: text("token_nonce").notNull(),
+  tokenFingerprint: text("token_fingerprint").notNull(),
+  tokenLast4: text("token_last4"),
+  validationStatus: text("validation_status").notNull().default("unvalidated"),
+  capabilitiesJson: text("capabilities_json", { mode: "json" }),
+  validatedAt: integer("validated_at", { mode: "timestamp_ms" }),
+  lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+  createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+}, (table) => ({
+  orgUniqueIdx: uniqueIndex("npm_connections_org_unique_idx").on(table.organizationId),
+  fingerprintIdx: index("npm_connections_fingerprint_idx").on(table.tokenFingerprint),
+}));
+
 export const session = sqliteTable("session", {
   id: text("id").primaryKey(),
   expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),

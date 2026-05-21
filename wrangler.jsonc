@@ -36,6 +36,7 @@
 		"BETTER_AUTH_URL": "https://staged-publish-review.decroockjovi.workers.dev",
 		"AI_MODEL": "@cf/moonshotai/kimi-k2.5",
 		"AI_CACHE_AFFINITY": "staged-publish-review-release-reviewer-v1",
-		"NPM_REGISTRY": "https://registry.npmjs.org"
+		"NPM_REGISTRY": "https://registry.npmjs.org",
+		"REQUIRE_ORG_NPM_CONNECTION": "true"
 	}
 }
