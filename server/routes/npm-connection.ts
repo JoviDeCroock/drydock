@@ -93,10 +93,8 @@ npmConnectionRoutes.post("/", async (c) => {
         { "retry-after": String(err.retryAfterSeconds) },
       );
     }
-    return c.json(
-      { error: err instanceof Error ? err.message : "failed to store npm connection" },
-      400,
-    );
+    console.error("npm connection upsert failed", err);
+    return c.json({ error: "failed to store npm connection" }, 400);
   }
 });
 
@@ -149,10 +147,8 @@ npmConnectionRoutes.post("/validate", async (c) => {
         { "retry-after": String(err.retryAfterSeconds) },
       );
     }
-    return c.json(
-      { error: err instanceof Error ? err.message : "failed to validate npm connection" },
-      400,
-    );
+    console.error("npm connection validation failed", err);
+    return c.json({ error: "failed to validate npm connection" }, 400);
   }
 });
 

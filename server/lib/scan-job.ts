@@ -24,7 +24,6 @@ export const MAX_SCAN_JOB_ATTEMPTS = 3;
 export interface SafeScanError {
   code: string;
   message: string;
-  detail?: string;
   retryable: boolean;
 }
 
@@ -118,7 +117,6 @@ export function classifyScanError(err: unknown): SafeScanError {
     return {
       code: sandbox.code,
       message: sandbox.message,
-      detail: err.detail,
       retryable: sandbox.retryable,
     };
   }
@@ -130,10 +128,10 @@ export function classifyScanError(err: unknown): SafeScanError {
       retryable: false,
     };
   }
+  console.error("scan job failed", err);
   return {
     code: "scan_failed",
     message: "The scan failed before a report could be generated.",
-    detail: message,
     retryable: true,
   };
 }

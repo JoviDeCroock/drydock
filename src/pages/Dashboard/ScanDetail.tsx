@@ -326,15 +326,12 @@ function toDiffSide(file: FileRecord) {
 function ScanFailureAlert({ errorJson }: { errorJson: unknown }) {
   const error =
     errorJson && typeof errorJson === "object"
-      ? (errorJson as { message?: unknown; detail?: unknown; code?: unknown })
+      ? (errorJson as { message?: unknown; code?: unknown })
       : null;
   return (
     <Alert tone="critical">
       <div class="flex flex-col gap-1">
         <strong>{typeof error?.message === "string" ? error.message : "Review failed."}</strong>
-        {typeof error?.detail === "string" ? (
-          <span class="font-mono text-xs break-all">{error.detail}</span>
-        ) : null}
         {typeof error?.code === "string" ? (
           <span class="font-mono text-xs">code: {error.code}</span>
         ) : null}

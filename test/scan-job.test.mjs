@@ -8,7 +8,7 @@ const { classifyScanError, retryDelaySeconds } = await import("../server/lib/sca
 const { SandboxError } = await import("../server/lib/sandbox.ts");
 
 describe("scan job retry classification", () => {
-  test("retries transient sandbox download failures", () => {
+  test("retries transient sandbox download failures and does not leak raw detail", () => {
     const safe = classifyScanError(
       new SandboxError(JSON.stringify({ error: "download failed", status: 503 })),
     );
@@ -17,6 +17,17 @@ describe("scan job retry classification", () => {
       code: "sandbox_download_transient",
       retryable: true,
     });
+    expect(safe).not.toHaveProperty("detail");
+  });
+
+  test("does not include raw error messages on generic failures", () => {
+    const safe = classifyScanError(new Error("D1_ERROR: column not found"));
+    expect(safe).toEqual({
+      code: "scan_failed",
+      message: "The scan failed before a report could be generated.",
+      retryable: true,
+    });
+    expect(JSON.stringify(safe)).not.toContain("D1_ERROR");
   });
 
   test("does not retry credential and missing-stage sandbox failures", () => {
