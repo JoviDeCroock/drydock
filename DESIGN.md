@@ -110,6 +110,134 @@ Don't naively invert. Surfaces darken (true neutrals, no warm tint), accent + se
   - `10px` — Mockup/window shells.
   - `999px` — Reserved for true circle elements (avatars, toggle handles). Avoid for badges.
 
+## Marketing surfaces
+
+The marketing landing page sits on the same primitives as the app. The system *relaxes* in a few specific places and *stays disciplined* everywhere else.
+
+### Where it relaxes
+
+- **Hero headline:** Display 1 scale (`44–56px / 600 / -0.03em / 1.05`). Max-width `760px`.
+- **Hero subhead:** body `17px / leading 1.6`, color `--fg-muted`. Max-width `620px`. This is the only place body type goes above 14px.
+- **Section gap:** marketing pages use `40–64px` between sections (vs. app surfaces' `24–32px`).
+- **Eyebrow:** marketing pages may render the section label as `mono 10px / 0.1em uppercase / --accent` (the only place mono labels use the accent color directly).
+
+### Where it stays disciplined
+
+- No gradients (hero or otherwise). The brand mark is the only saturated orange element above the fold.
+- No icon-in-colored-circle three-column feature grids. Marketing feature rows use the same `Card` primitive: `p-5`, `gap-2`, `h2: 16px / 500 / -0.005em`, body `13px / --fg-muted / 1.55`.
+- No stock-photo or illustrated hero. The hero is type + brand mark + Cards.
+- The accent stays orange. No additional brand colors are added for marketing.
+
+### The status strip (canonical headline-supporting unit)
+
+Three short Card panels in a row, each containing:
+
+- A mono `10px / 0.1em uppercase` label (`credentials`, `retention`, `approval`).
+- A trailing `Badge` (`ok`, `info`, `neutral`) communicating the claim's state.
+- One sentence of body copy, `13px / --fg-muted / 1.55`.
+- `min-height: 112px` so the three cards align even when copy lengths differ.
+
+This pattern is used both on the dashboard (above the scan form) *and* as the headline-supporting unit on marketing pages. Visitors landing on the dashboard feel oriented because the same primitive carries.
+
+### Canonical widths
+
+| Surface | Max width |
+|---|---|
+| Hero headline | `760px` |
+| Hero subhead | `620px` |
+| Marketing content column | `880px` |
+| App content | `1160px` |
+| Report body (document-shaped) | `880px` |
+
+Do not introduce additional content widths.
+
+## Iconography
+
+The system is typography-first. It communicates through type, severity color, and a small allowed set of Unicode glyphs. **No SVG icons.**
+
+### Allowed glyphs
+
+| Glyph | Role | Used in |
+|---|---|---|
+| `▸` | Collapsed folder | FileTree |
+| `▾` | Expanded folder | FileTree (when needed) |
+| `→` | Relation / flow | `previous → staged` captions, VersionPicker |
+| `←` | Back link | Page header back-links |
+| `·` | Metadata separator | Mono detail line |
+| `✓` | Passed / connected | Inline status |
+| `✕` | Failed / disconnected | Inline status |
+| `•` | Badge dot | `Badge dot` prop |
+
+### Glyph treatment
+
+- Rendered in the surrounding font (Geist for body, Geist Mono for mono lines).
+- Color is `--fg-subtle` unless the glyph carries severity meaning, in which case it inherits the severity text color via `currentColor`.
+- Never larger than `1em` of the surrounding text. Glyphs never scale into a "display icon."
+- Glyphs are never decorative. If a glyph would only be visual flourish, remove it.
+
+### Status indicator
+
+When a state needs a visual cue without a full Badge, use a `6px round span` with `background: currentColor` inside an element styled with the target severity text color. This is the `Badge dot` implementation — document it as the only allowed status-indicator shape.
+
+### The Alert disc
+
+Alerts include a `16px filled circle` in the alert's color. This is a *colored disc*, not an icon. It is the only exception to "no shapes." Do not introduce other filled shapes (squares, triangles, rings) anywhere in the system.
+
+## Data visualization
+
+The product surfaces severity counts, file counts, and version metadata. It does not need a charting library — it needs **one** chart pattern, applied consistently.
+
+### Severity distribution (stacked bar)
+
+The only chart in the v1 product.
+
+- **Bar:** single horizontal element, `8px` tall, `4px` radius, `overflow: hidden`. Background `--bg-elev-2`. Max-width `480px` on a centered layout, `100%` of column otherwise.
+- **Segments:** ordered left-to-right `critical → high → medium → low → info → ok`. Segments use the **solid** severity tokens (`--danger`, `--warn`, `--info`, `--ok`). The two danger-tier segments use `--danger` with `high` at `opacity: 0.78` so they're distinguishable. The two info-tier segments use `--info` with `info` at `opacity: 0.5`.
+- **Widths:** percentage of total findings; zero buckets render `width: 0` (collapsed, not visible).
+- **Total label:** mono `11px / --fg-subtle`, sits to the right of the bar (`findings by severity` mono-label on the left, `N total` on the right).
+- **Legend:** mono `10px / 0.1em uppercase / --fg-subtle`, one entry per non-zero bucket, `8px×8px` square swatch + `severity · count`. No axis, no grid, no tooltip.
+
+### Count tiles (already in code as `SummaryCard`)
+
+- Wrapper: `--surface` background, `1px --border`, `8px` radius, `12px 14px` padding, vertical `4px` gap.
+- Label: mono `10px / 0.1em uppercase / --fg-subtle`.
+- Value: either `body 14px / --fg` (sentence-like values) or mono `13px / --fg` (identifiers) or `18px / 500 / -0.01em` (when the value is a number presented as a metric).
+- Tone variants: `danger`, `warn`, `ok` tint **only the value**, never the label or border.
+
+### Forbidden chart types (v1)
+
+- Pie, donut, line chart, area chart, scatter, radar, sankey.
+- If activity-over-time becomes necessary, the only allowed form is a sparkline: a thin SVG path in `--accent` against `--bg-elev`, no axis, no labels, embedded inside a SummaryCard. Anything beyond a sparkline requires an explicit DESIGN.md update first.
+
+### Color rule
+
+Charts use **solid** severity tokens. Soft severity tokens are reserved for row fills (DiffView), Badges, and Alerts. Never mix the two roles. Do not introduce decorative chart palettes.
+
+## States
+
+Five patterns, picked by *what the user can do next*.
+
+| State | Trigger | Pattern | Visual |
+|---|---|---|---|
+| **Empty** | No data, action lives elsewhere | `Muted` line inside the parent Card's padding. One sentence. No CTA inside the message. | `text-[13px] / --fg-muted / 1.55` |
+| **Loading inline** | Transient, next to a control | `Muted` line, mono | `text-[12px] / --fg-muted / mono`, trailing `…` (em-dash + ellipsis, not `...`) |
+| **Loading full** | Transient, full card or full page | `Muted` line, body type, pulsing counter for progress | `text-[14px] / --fg-muted` |
+| **Async system** | Resolves on its own, FYI not error | `Alert tone="info"` | Used for "scan running, page will refresh." Never for plain loading. |
+| **Error — recoverable** | Page still works | `Alert tone="warn"` | Used for "couldn't load comparison version" where the rest of the page works. |
+| **Error — blocking** | Action can't complete | `Alert tone="critical"` | Failed scan, auth error. Body may include `mono 12px` detail + a `code:` line. |
+
+### Copy rules for state messages
+
+- One sentence per state. No paragraphs.
+- Capitalize first letter; period at the end.
+- Loading messages end with `…` (the Unicode ellipsis), not `...`.
+- Empty messages describe the current state. They do not promise action ("we'll show…") and do not contain a CTA — actions live elsewhere on the page.
+- Error messages name what failed before what to do; debugging detail is on the second line in mono, not inline in the sentence.
+
+### Progress
+
+No spinners anywhere in the system. Long-running operations show a pulsing mono counter or a single line of mono text that updates in place. Skeleton-bone placeholders are deprecated — show a `Muted` loading line instead.
+
 ## Motion
 
 - **Approach:** Minimal-functional. Animation supports comprehension; it does not entertain.
@@ -128,7 +256,42 @@ Don't naively invert. Surfaces darken (true neutrals, no warm tint), accent + se
 - **Inputs:** 6px radius, `--bg` background (intentionally lighter than the card it sits on for affordance), focus ring is a 3px `--accent-soft` halo + accent border. No inner shadow, no glow.
 - **Section labels:** A small mono uppercase label with a trailing rule. Replaces the SaaS-default H1/H2 stack with something more document-shaped.
 - **Mono detail line:** Many surfaces have a one-line mono caption directly under the title (`scan_01HXY... · 2026-05-21 · 17 files`). This is the system's signature treatment — treat it like a generated metadata line, not a subtitle.
-- **Alerts:** 6px radius, 1px colored border, soft background fill, the icon is a 16px filled circle in the alert's color. Inline strong-tag retains body color.
+- **Alerts:** 6px radius, 1px colored border, soft background fill, the indicator is a 16px filled disc in the alert's color (a *colored disc*, not an icon — see Iconography). Inline strong-tag retains body color.
+
+### DiffView
+
+Split-view diff inside an 8px-radius border shell.
+
+- **Header strip:** `bg-surface-2`, mono `10px / 0.1em uppercase / ink-subtle`. Before label left-aligned, after label right-aligned.
+- **Body:** monospace `12px / 1.55`. Two gutters of `44px` each (line numbers, right-aligned, `ink-subtle`, right divider border). Sign column `20px`. Text column wraps with `whitespace-pre-wrap break-words`.
+- **Row backgrounds:** added → `--ok-soft`. Removed → `--danger-soft`. Unchanged → transparent. Soft severity tokens only (never solid).
+- **Scroll:** body capped at `560px` max-height then scrolls. Header stays outside the scroll region.
+- **Single-sided modes:** added-only / removed-only / unchanged-only collapse to a single labeled `<pre>` pane that reuses the header strip styling and the matching soft fill.
+- **Binary / missing sample:** muted explainer line (`text-[13px]`), never a placeholder graphic. Truncation and binary flags surface as neutral Badges next to the path.
+
+### FileTree
+
+Document-shaped tree, rendered with `<details>` + `<ul>`, not a custom widget.
+
+- **Type:** Geist Mono `13px`.
+- **Indent:** `8px base + 14px per depth`. Indent is expressed as `padding-left` so the hover/selection background reaches the leftmost edge.
+- **Folder marker:** the text glyph `▸` (collapsed) or `▾` (expanded), `10px / ink-subtle`. Files do not get a marker.
+- **Auto-expand:** folders open by default when `status ≠ unchanged` and `depth < 2`.
+- **Name color follows aggregate status:** `added → text-ok`, `removed → text-danger`, `modified → text-warn`, `mixed → text-accent`, `unchanged → text-ink-muted`. Selected file overrides to `text-ink`.
+- **Selected file:** `bg-surface-2` row with `text-ink`. Border-radius `4px` on the row so the selection sits inside the tree padding.
+- **Trailing Badge:** present only when `status ≠ unchanged`. Folder badges use the aggregated status.
+- **Truncation:** `truncate` on the name span only; the trailing Badge stays visible.
+
+### VersionPicker
+
+The canonical "labeled control with metadata" row pattern. Re-use this composition any time a control needs a mono label prefix and a mono result caption.
+
+- **Layout:** `flex flex-wrap items-center gap-3`.
+- **Prefix label:** mono `10px / 0.1em uppercase / ink-subtle` reading "Compare against" (or analogous noun phrase).
+- **Control:** native `<select>` — never a custom combobox. `border + 6px radius`, font-mono `13px`, `min-w 200px`, padding `8px 12px`. Focus state is the standard 3px `--accent-soft` halo + accent border (matches `Input`).
+- **Result caption:** mono `11px / ink-muted` reading `→ staged X.Y.Z`. The `→` is the canonical relation glyph.
+- **Tag chips:** `Badge tone="info"` for dist-tags. Multiple tags wrap on the same line.
+- **Disabled:** `opacity-60 cursor-not-allowed`, no fade transitions.
 
 ## Anti-patterns — do not introduce
 
@@ -139,6 +302,12 @@ Don't naively invert. Surfaces darken (true neutrals, no warm tint), accent + se
 - "AI" / "AI-powered" badges as decorative flourish.
 - Stock-photo hero treatments.
 - Decorative use of severity colors (red as accent, etc.). Color = signal here.
+- **SVG icons.** The system uses text glyphs (see Iconography). If you reach for an icon library, stop and find the typographic solution instead.
+- **Spinners.** Loading is a mono line, optionally with a pulsing counter. No rotating glyphs.
+- **Skeleton bones.** A `Muted` loading line replaces the placeholder content shape.
+- **Chart variants.** Pie, donut, line, area, scatter, radar, sankey. The only chart in v1 is the severity stacked bar (and a future sparkline if needed).
+- **Custom comboboxes.** Native `<select>` is the canonical control for picking from a list (see VersionPicker).
+- **CTAs inside empty-state messages.** The action lives elsewhere on the page; the empty message only describes state.
 
 ## Decisions Log
 
@@ -148,3 +317,8 @@ Don't naively invert. Surfaces darken (true neutrals, no warm tint), accent + se
 | 2026-05-21 | Accent: orange `#ea580c` over violet. | Differentiates from Socket/Snyk/Aikido violet convergence; preserves "caution / pre-flight" semantics; non-overlapping with severity colors. |
 | 2026-05-21 | Light is the default surface; dark is first-class via `prefers-color-scheme`. | Auto-mode chosen by user. Both modes must be designed, not derived. |
 | 2026-05-21 | Squarish badges (3px), not pills. | Echoes terminal/document feel. Pill badges read as SaaS-generic. |
+| 2026-05-21 | Specced DiffView, FileTree, VersionPicker. | New components shipped without DESIGN.md coverage; locked in mono-label conventions, severity-soft row fills, native `<select>` for version picking, and document-shaped tree styling so future contributors don't drift. |
+| 2026-05-21 | Marketing surfaces extend the system; status strip is the canonical headline unit. | Same primitives as the app, with hero-only relaxations (17px subhead, wider section gaps, accent-tinted eyebrow). Status strip carries from dashboard to marketing so visitors stay oriented. |
+| 2026-05-21 | Zero SVG icons; text glyphs only. | Risk taken deliberately: type and severity color carry identity. Allowed-glyph list closes the gap so contributors have a clear alternative to reaching for an icon library. The Alert disc is the only exception. |
+| 2026-05-21 | One chart pattern (severity stacked bar) for v1; sparkline reserved for future. | Avoids dashboard fatigue and keeps the product document-shaped. Solid severity tokens belong to charts; soft tokens stay for rows/Badges/Alerts — color = signal, never mixed roles. |
+| 2026-05-21 | State patterns codified (empty / loading inline / loading full / async / recoverable / blocking). | Per-page improvisation removed: mono sizes, copy rules, and trigger conditions now explicit. No spinners, no skeleton bones — `Muted` lines and pulsing counters only. |

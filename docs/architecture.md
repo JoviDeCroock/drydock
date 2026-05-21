@@ -71,7 +71,7 @@ It should:
 - record token-use audit events at the parent layer;
 - keep the sandbox ignorant of credentials.
 
-Current code supports encrypted per-organization npm connections and still falls back to a deployment-level `NPM_TOKEN` for local/development use when no organization connection exists. SaaS deployments should set `REQUIRE_ORG_NPM_CONNECTION=true` so scans require the current organization to connect its own credential.
+Current code supports encrypted per-organization npm connections only. Scans require the current organization to connect its own credential before any npm staged-package fetch occurs.
 
 ## Scan pipeline
 
@@ -92,13 +92,16 @@ Current high-level flow:
 9. Workers AI reviews changed files only with a static prompt-injection-resistant system prompt.
 10. Parent Worker combines deterministic and AI risk, persists the scan, records audit events, and returns/report renders the result.
 
-Production target flow:
+Current async-capable flow:
 
-1. `POST /api/v1/scans` creates a `pending` scan and enqueues work.
-2. Queue consumer marks scan `running` and executes the scan pipeline.
-3. Pipeline stores derived/redacted artifacts and report data.
-4. Queue consumer marks scan `complete` or `failed` with a structured error.
-5. UI polls `GET /api/v1/scans/:id` until terminal state.
+1. `POST /api/v1/scans` creates a `pending` scan and returns the scan ID.
+2. If `SCAN_QUEUE` is bound, the parent Worker sends a token-free scan job message to Cloudflare Queues; otherwise local/dev falls back to `executionCtx.waitUntil()`.
+3. Queue/background execution marks the scan `running`, resolves the organization's encrypted npm connection, and executes the scan pipeline.
+4. Pipeline stores derived/redacted report data and marks the scan `complete`.
+5. Failures are persisted as `failed` with structured `error_json`.
+6. UI polls `GET /api/v1/scans/:id` until terminal state.
+
+`POST /api/v1/scan` remains a synchronous compatibility route while the product moves to the persisted report surface.
 
 ## Data stores
 
@@ -108,7 +111,7 @@ D1 stores canonical application state:
 
 - Better Auth users/sessions/accounts;
 - organizations and organization members;
-- scan rows and status;
+- scan rows, lifecycle status, timestamps, structured errors, and report digest metadata;
 - scan file manifests;
 - findings;
 - audit events;
@@ -137,9 +140,13 @@ Workers AI is the production AI provider for now. The AI reviewer:
 - sees changed files only;
 - sees redacted bounded text samples;
 - receives deterministic findings as authoritative evidence;
+- treats every package-derived string as hostile evidence, not instructions;
+- explicitly checks npm supply-chain hazards such as lifecycle scripts, added dependencies whose own postinstall/install hooks are not visible in the staged tarball, entrypoint changes, credential access, network/process execution, obfuscation, and native artifacts;
 - must return schema-constrained JSON;
-- can raise risk or add context;
+- can raise risk or add context only when the returned review is complete, schema-valid, and includes findings or an explicit manual-review flag;
 - cannot approve a release or downgrade deterministic findings.
+
+If the AI response is unavailable, malformed, or incomplete, the scan records that assistant review status separately as `unavailable` or `invalid`. That fallback does **not** raise package risk by itself; the deterministic scanner remains authoritative and the UI should show the AI review as not assessed rather than treating parser/model failure as evidence of suspicious package behavior.
 
 ## Organization model
 
@@ -177,12 +184,17 @@ Credential validation is empirical where possible: it checks registry auth throu
 
 Reports should become canonical data objects even before public signing launches.
 
-Prepare for:
+Implemented foundation:
 
-- `report_version`;
-- `report_digest` over canonical report JSON;
+- newly completed scans store report metadata inside `summary_json.report`;
+- `digest` is SHA-256 over stable canonical report JSON built from redacted scan evidence;
+- persisted scan detail renders report version, digest, package diff, AI review, and safety posture.
+
+Prepare next for:
+
+- dedicated `report_version` / `report_digest` columns if queryability becomes important;
 - `completed_at`;
-- immutable report payload snapshots;
+- immutable report payload snapshots in R2;
 - future `scan_report_signatures` rows signed by a user.
 
 Do not expose public signed report generation until the report payload is stable and access controls are ready.
@@ -191,13 +203,8 @@ Do not expose public signed report generation until the report payload is stable
 
 Current API:
 
-- `POST /api/v1/scan` — synchronous scan;
-- `GET /api/v1/scans` — list scans;
-- `GET /api/v1/scans/:id` — persisted scan detail.
-
-Target API:
-
-- `POST /api/v1/scans` — create queued scan;
+- `POST /api/v1/scans` — create queued/background scan;
+- `POST /api/v1/scan` — synchronous compatibility scan;
 - `GET /api/v1/scans` — list organization scans;
 - `GET /api/v1/scans/:id` — scan status/report detail;
 - `GET /api/v1/npm-connection` — read connection metadata;

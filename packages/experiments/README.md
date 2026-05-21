@@ -1,0 +1,43 @@
+# @pracht/experiments
+
+Small public npm package used to exercise Staged Publish Review with real published and staged artifacts.
+
+It intentionally has:
+
+- no runtime dependencies;
+- no install lifecycle scripts;
+- a tiny ESM entrypoint;
+- a tiny CLI binary;
+- a narrow `files` allowlist so package contents are predictable.
+
+## Publish the baseline package
+
+From this directory:
+
+```sh
+npm login
+npm run pack:dry-run
+npm run publish:public
+```
+
+The first publish creates the previous-version artifact that the review app can diff future staged publishes against.
+
+## Create a staged publish for review
+
+This requires an npm CLI version that supports `npm stage` commands.
+
+Make a small change, bump the version, then stage the package:
+
+```sh
+npm version patch --no-git-tag-version
+npm run pack:dry-run
+npm run stage:publish
+```
+
+Copy the stage ID printed by npm into Staged Publish Review. Approval remains manual and outside the app:
+
+```sh
+npm stage approve <stage-id>
+```
+
+If the staged artifact was only for testing, discard it instead of approving it.

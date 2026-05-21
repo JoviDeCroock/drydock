@@ -41,7 +41,7 @@ export default function RegisterPage() {
         <Eyebrow>Get started</Eyebrow>
         <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Create account</h1>
         <Muted class="text-[13px] m-0">
-          Register with Better Auth to run and review staged-publish scans.
+          Create your review workspace, connect npm, and start checking staged releases.
         </Muted>
 
         <form class="flex flex-col gap-4 mt-2" onSubmit={onSubmit}>
@@ -85,7 +85,7 @@ export default function RegisterPage() {
         </form>
 
         <p class="text-[13px] text-ink-muted m-0">
-          Already registered? <a href="/login">Sign in</a>
+          Already have an account? <a href="/login">Sign in</a>
         </p>
       </Card>
     </PageShell>

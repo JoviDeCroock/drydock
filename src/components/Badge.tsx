@@ -2,7 +2,7 @@ import type { ComponentChildren } from "preact";
 import { cn } from "./cn";
 
 export type Severity = "critical" | "high" | "medium" | "low" | "info" | "ok";
-export type Status = "added" | "removed" | "modified" | "unchanged";
+export type Status = "added" | "removed" | "modified" | "unchanged" | "mixed";
 export type BadgeTone = Severity | Status | "neutral";
 
 const toneStyles: Record<BadgeTone, string> = {
@@ -15,6 +15,7 @@ const toneStyles: Record<BadgeTone, string> = {
   added: "bg-ok-soft text-ok",
   removed: "bg-danger-soft text-danger",
   modified: "bg-warn-soft text-warn",
+  mixed: "bg-accent-soft text-accent",
   unchanged: "bg-surface-2 text-ink-muted",
   neutral: "bg-surface-2 text-ink-muted",
 };
@@ -64,6 +65,7 @@ export function statusTone(status: string): BadgeTone {
     case "removed":
     case "modified":
     case "unchanged":
+    case "mixed":
       return status as Status;
     default:
       return "neutral";

@@ -32,11 +32,31 @@
 			"migrations_dir": "drizzle"
 		}
 	],
+	"kv_namespaces": [
+		{
+			"binding": "COMPARE_CACHE",
+			"id": "REPLACE_WITH_KV_NAMESPACE_ID"
+		}
+	],
+	"queues": {
+		"producers": [
+			{
+				"binding": "SCAN_QUEUE",
+				"queue": "staged-publish-review-scans"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "staged-publish-review-scans",
+				"max_batch_size": 1,
+				"max_batch_timeout": 5
+			}
+		]
+	},
 	"vars": {
 		"BETTER_AUTH_URL": "https://staged-publish-review.decroockjovi.workers.dev",
 		"AI_MODEL": "@cf/moonshotai/kimi-k2.5",
 		"AI_CACHE_AFFINITY": "staged-publish-review-release-reviewer-v1",
-		"NPM_REGISTRY": "https://registry.npmjs.org",
-		"REQUIRE_ORG_NPM_CONNECTION": "true"
+		"NPM_REGISTRY": "https://registry.npmjs.org"
 	}
 }

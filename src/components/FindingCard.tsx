@@ -1,0 +1,44 @@
+import type { ComponentChildren } from "preact";
+import { Badge, severityTone } from "./Badge";
+import { cn } from "./cn";
+
+export function FindingCard({
+  severity,
+  file,
+  children,
+  class: className,
+}: {
+  severity: string;
+  file: string;
+  children: ComponentChildren;
+  class?: string;
+}) {
+  return (
+    <li class={cn("bg-surface border border-border rounded-lg px-4 py-3 flex flex-col gap-2", className)}>
+      <div class="flex items-center gap-2.5 min-w-0">
+        <Badge tone={severityTone(severity)} dot>
+          {severity}
+        </Badge>
+        <code class="text-[13px] text-ink-muted truncate">{file}</code>
+      </div>
+      <div class="text-[13px] leading-[1.55] flex flex-col gap-0.5">{children}</div>
+    </li>
+  );
+}
+
+export function FindingRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: ComponentChildren;
+}) {
+  return (
+    <div>
+      <span class="text-ink-subtle font-mono text-[11px] uppercase tracking-[0.08em] mr-1.5">
+        {label}:
+      </span>
+      <span>{value}</span>
+    </div>
+  );
+}

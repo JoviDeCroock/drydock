@@ -1,8 +1,81 @@
 import { Hono } from "hono";
-import { createDb, ensurePersonalOrganization, getScan, listScans, recordScanEvent } from "../db";
-import type { Bindings, Variables } from "../types";
+import {
+  RateLimitError,
+  createDb,
+  createScanJob,
+  enforceRateLimit,
+  ensurePersonalOrganization,
+  getNpmConnection,
+  getScan,
+  listScans,
+  recordScanEvent,
+} from "../db";
+import { loadCompare, stripTextSamples } from "../lib/compare-cache";
+import { getOrganizationNpmToken } from "../lib/npm-connection";
+import { compareSemver, fetchPackageMetadata, pickPreviousVersion } from "../lib/registry";
+import { executeScanJob, type ScanQueueMessage } from "../lib/scan-job";
+import type { Bindings, ScanInput, Variables } from "../types";
+
+const STAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,160}$/;
 
 export const scansRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+scansRoutes.post("/", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as Partial<ScanInput>;
+  const input: ScanInput = {
+    stageId: String(body.stageId || ""),
+    maxFiles: body.maxFiles,
+    maxBytesPerFile: body.maxBytesPerFile,
+  };
+  if (!STAGE_ID_RE.test(input.stageId)) return c.json({ error: "invalid stageId" }, 400);
+
+  try {
+    const db = createDb(c.env.DB);
+    const session = c.get("authSession");
+    const organizationId = await ensurePersonalOrganization(db, session);
+    await enforceRateLimit(db, { key: `scan:${organizationId}`, limit: 10, windowMs: 60 * 60 * 1000 });
+
+    const npmConnection = await getNpmConnection(db, organizationId);
+    if (!npmConnection) {
+      return c.json({ error: "Connect an organization npm token before scanning staged publishes." }, 400);
+    }
+
+    const scanId = crypto.randomUUID();
+    const detail = await createScanJob(db, {
+      id: scanId,
+      stageId: input.stageId,
+      organizationId,
+      ownerUserId: session.userId,
+    });
+    if (!detail) return c.json({ error: "failed to create scan" }, 500);
+    const message: ScanQueueMessage = { ...input, scanId, organizationId, actorUserId: session.userId };
+
+    await recordScanEvent(db, {
+      organizationId,
+      actorUserId: session.userId,
+      scanId,
+      type: c.env.SCAN_QUEUE ? "scan.queued" : "scan.backgrounded",
+      metadata: { stageId: input.stageId },
+    });
+
+    if (c.env.SCAN_QUEUE) {
+      await c.env.SCAN_QUEUE.send(message);
+    } else {
+      c.executionCtx.waitUntil(executeScanJob(c.env, c.executionCtx, message, db));
+    }
+
+    return c.json({ scan: detail?.scan, queued: Boolean(c.env.SCAN_QUEUE) }, 202);
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return c.json(
+        { error: "scan rate limit exceeded", retryAfterSeconds: err.retryAfterSeconds },
+        429,
+        { "retry-after": String(err.retryAfterSeconds) },
+      );
+    }
+    throw err;
+  }
+});
 
 scansRoutes.get("/", async (c) => {
   const db = createDb(c.env.DB);
@@ -16,12 +89,202 @@ scansRoutes.get("/:id", async (c) => {
   const organizationId = await ensurePersonalOrganization(db, session);
   const scan = await getScan(db, c.req.param("id"), organizationId);
   if (!scan) return c.json({ error: "not found" }, 404);
-  await recordScanEvent(db, {
-    organizationId,
-    actorUserId: session.userId,
-    scanId: scan.scan.id,
-    type: "scan.viewed",
-    metadata: { stageId: scan.scan.stageId },
-  });
+  if (c.req.query("poll") !== "1") {
+    await recordScanEvent(db, {
+      organizationId,
+      actorUserId: session.userId,
+      scanId: scan.scan.id,
+      type: "scan.viewed",
+      metadata: { stageId: scan.scan.stageId },
+    });
+  }
   return c.json(scan);
+});
+
+scansRoutes.get("/:id/versions", async (c) => {
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = await ensurePersonalOrganization(db, session);
+  const scan = await getScan(db, c.req.param("id"), organizationId);
+  if (!scan) return c.json({ error: "not found" }, 404);
+  if (!scan.scan.packageName) {
+    return c.json({
+      packageName: null,
+      stagedVersion: scan.scan.stagedVersion ?? null,
+      defaultPreviousVersion: scan.scan.previousVersion ?? null,
+      versions: [],
+    });
+  }
+
+  try {
+    await enforceRateLimit(db, {
+      key: `compare-versions:${session.userId}`,
+      limit: 60,
+      windowMs: 60 * 1000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return c.json(
+        { error: "rate limit exceeded", retryAfterSeconds: err.retryAfterSeconds },
+        429,
+        { "retry-after": String(err.retryAfterSeconds) },
+      );
+    }
+    throw err;
+  }
+
+  const connection = await getOrganizationNpmToken(db, c.env, organizationId).catch(() => null);
+  const metadata = await fetchPackageMetadata(c.env, scan.scan.packageName, {
+    npmToken: connection?.token,
+    npmRegistry: connection?.registryUrl,
+  }).catch(() => null);
+  if (!metadata) {
+    return c.json({
+      packageName: scan.scan.packageName,
+      stagedVersion: scan.scan.stagedVersion ?? null,
+      defaultPreviousVersion: scan.scan.previousVersion ?? null,
+      versions: [],
+    });
+  }
+
+  const tagsByVersion = new Map<string, string[]>();
+  for (const [tag, version] of Object.entries(metadata["dist-tags"] ?? {})) {
+    if (!version) continue;
+    const list = tagsByVersion.get(version) ?? [];
+    list.push(tag);
+    tagsByVersion.set(version, list);
+  }
+  const times = metadata.time ?? {};
+  const stagedVersion = scan.scan.stagedVersion ?? null;
+  const versions = Object.keys(metadata.versions ?? {})
+    .filter((version) => version !== stagedVersion)
+    .sort((a, b) => compareSemver(b, a))
+    .map((version) => ({
+      version,
+      distTags: (tagsByVersion.get(version) ?? []).sort(),
+      publishedAt: typeof times[version] === "string" ? times[version] : undefined,
+    }));
+
+  return c.json({
+    packageName: scan.scan.packageName,
+    stagedVersion,
+    defaultPreviousVersion: scan.scan.previousVersion ?? (stagedVersion ? pickPreviousVersion(metadata, stagedVersion) : null),
+    versions,
+  });
+});
+
+const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
+
+async function resolveCompareContext(c: import("hono").Context<{ Bindings: Bindings; Variables: Variables }>) {
+  const version = c.req.query("version") || "";
+  if (!version) return { error: c.json({ error: "version is required" }, 400) } as const;
+  if (!VERSION_RE.test(version)) return { error: c.json({ error: "invalid version" }, 400) } as const;
+
+  const scanId = c.req.param("id") ?? "";
+  if (!scanId) return { error: c.json({ error: "missing scan id" }, 400) } as const;
+
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = await ensurePersonalOrganization(db, session);
+  const scan = await getScan(db, scanId, organizationId);
+  if (!scan) return { error: c.json({ error: "not found" }, 404) } as const;
+  if (!scan.scan.packageName) return { error: c.json({ error: "scan has no package name" }, 400) } as const;
+
+  return { version, db, session, organizationId, scan, packageName: scan.scan.packageName } as const;
+}
+
+scansRoutes.get("/:id/compare", async (c) => {
+  const ctx = await resolveCompareContext(c);
+  if ("error" in ctx) return ctx.error;
+  const { version, db, session, packageName } = ctx;
+
+  try {
+    await enforceRateLimit(db, {
+      key: `compare-fetch:${session.userId}`,
+      limit: 30,
+      windowMs: 60 * 1000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return c.json(
+        { error: "rate limit exceeded", retryAfterSeconds: err.retryAfterSeconds },
+        429,
+        { "retry-after": String(err.retryAfterSeconds) },
+      );
+    }
+    throw err;
+  }
+
+  const connection = await getOrganizationNpmToken(db, c.env, ctx.organizationId).catch(() => null);
+  const metadata = await fetchPackageMetadata(c.env, packageName, {
+    npmToken: connection?.token,
+    npmRegistry: connection?.registryUrl,
+  }).catch(() => null);
+  const tarballUrl = metadata?.versions?.[version]?.dist?.tarball;
+  if (!tarballUrl) return c.json({ error: "unknown version" }, 404);
+
+  const cached = await loadCompare(c.env, c.executionCtx, packageName, version, {
+    tarballUrl,
+    npmToken: connection?.token,
+    npmRegistry: connection?.registryUrl,
+  });
+
+  return c.json(
+    {
+      version: cached.version,
+      files: stripTextSamples(cached.files),
+      packageJson: cached.packageJson,
+      cachedAt: cached.cachedAt,
+    },
+    200,
+    { "cache-control": "private, max-age=300" },
+  );
+});
+
+scansRoutes.get("/:id/compare/file", async (c) => {
+  const ctx = await resolveCompareContext(c);
+  if ("error" in ctx) return ctx.error;
+  const { version, db, session, packageName } = ctx;
+  const path = c.req.query("path") || "";
+  if (!path) return c.json({ error: "path is required" }, 400);
+
+  try {
+    await enforceRateLimit(db, {
+      key: `compare-file:${session.userId}`,
+      limit: 240,
+      windowMs: 60 * 1000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return c.json(
+        { error: "rate limit exceeded", retryAfterSeconds: err.retryAfterSeconds },
+        429,
+        { "retry-after": String(err.retryAfterSeconds) },
+      );
+    }
+    throw err;
+  }
+
+  const connection = await getOrganizationNpmToken(db, c.env, ctx.organizationId).catch(() => null);
+  const metadata = await fetchPackageMetadata(c.env, packageName, {
+    npmToken: connection?.token,
+    npmRegistry: connection?.registryUrl,
+  }).catch(() => null);
+  const tarballUrl = metadata?.versions?.[version]?.dist?.tarball;
+  if (!tarballUrl) return c.json({ error: "unknown version" }, 404);
+
+  const cached = await loadCompare(c.env, c.executionCtx, packageName, version, {
+    tarballUrl,
+    npmToken: connection?.token,
+    npmRegistry: connection?.registryUrl,
+  });
+
+  const file = cached.files.find((entry) => entry.path === path);
+  if (!file) return c.json({ error: "file not found in version" }, 404);
+
+  return c.json(
+    { version: cached.version, file },
+    200,
+    { "cache-control": "private, max-age=300" },
+  );
 });

@@ -118,7 +118,7 @@ npmConnectionRoutes.post("/validate", async (c) => {
       },
     });
 
-    return c.json({ validation, connection: publicNpmConnection(updated) }, validation.ok ? 200 : 400);
+    return c.json({ validation, connection: publicNpmConnection(updated) });
   } catch (err) {
     if (err instanceof RateLimitError) {
       return c.json(

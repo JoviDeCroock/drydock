@@ -30,18 +30,38 @@ Reach for these before writing one-off classes:
 | `Button`, `LinkButton` | Primary / secondary / ghost / danger; sizes `sm` and `md`. |
 | `Input` | Text input with focus ring driven by `--color-accent-soft`. |
 | `Field`, `Label` | Mono uppercase label paired with an input. |
-| `Badge` | Severity (`critical`/`high`/`medium`/`low`/`info`/`ok`) and status (`added`/`removed`/`modified`/`unchanged`) tones. Squarish (3px radius) — pill badges are deprecated. Use `severityTone()` / `statusTone()` helpers to map raw strings safely. |
+| `Badge` | Severity (`critical`/`high`/`medium`/`low`/`info`/`ok`) and status (`added`/`removed`/`modified`/`unchanged`/`mixed`) tones. Squarish (3px radius) — pill badges are deprecated. Use `severityTone()` / `statusTone()` helpers to map raw strings safely. The `mixed` status tone uses the accent color and represents folders whose descendants span multiple change states. |
 | `Alert` | Banner with tone-coded border + soft fill, used for inline errors and notices. |
 | `Card`, `SummaryCard` | Bordered surfaces. `SummaryCard` is the small label-over-mono-value tile used in scan summaries. |
 | `PageShell` | Top-level `<main>` wrapper with width (`wide` / `narrow`) and the standard padding. |
 | `Eyebrow`, `SectionLabel`, `MonoLine`, `Muted` | Typographic helpers — mono uppercase eyebrows, mono labels with a trailing rule, the signature mono detail line, and a muted text helper. |
+| `FileTree` | Recursive folder/file tree built from `DiffEntry[]`. Folders aggregate their descendant statuses: all added → green, all removed → red, all unchanged → neutral, anything else → `mixed` (accent orange). Files render as clickable buttons; selection is owned by the parent. |
+| `DiffView` | Unified before/after view. Uses the `diff` package's `diffLines` to compute hunks; rows are rendered as escaped text only (no `dangerouslySetInnerHTML`). Handles single-sided cases (added / removed) and falls back to a `Muted` placeholder for binary or missing samples. |
+| `VersionPicker` | Native `<select>` styled with the form tokens. Lists published versions, each with optional dist-tag chips, and marks the scan's default comparison. |
 | `cn()` | Tiny class-name joiner. Falsy values are dropped. |
+
+## Product copy voice
+
+- Favor maintainer outcomes over implementation mechanics: “review staged releases”, “release evidence”, “safety report”, and “risky changes” read better than route names, storage layers, model names, or Worker internals.
+- Keep security promises concrete but user-facing. Say tokens are encrypted, hidden after save, and used only to retrieve release evidence; avoid naming internal gateways/sandboxes unless the screen is explicitly technical.
+- Reserve implementation-specific labels such as D1, Dynamic Worker, Workers AI, Drizzle, and model names for docs, logs, or developer-facing diagnostics.
+- Use “review” for the product workflow and “scan” only where it refers to API objects, code, or existing technical data models.
 
 ## Component prop conventions
 
 - Always type `class?: string` explicitly (do not spread Preact's `Signalish<string>` into `cn`).
 - Variants are string unions, not booleans (e.g. `variant: "primary" | "secondary"`), to keep call sites readable.
 - New primitives go in `src/components/`, are re-exported from `src/components/index.ts`, and prefer composition over configuration sprawl.
+
+## Release diff workbench
+
+The scan detail page (`src/pages/Dashboard/ScanDetail.tsx`) hosts the release diff workbench. The layout is:
+
+1. A `VersionPicker` inside a `Card`. Default selection is `defaultPreviousVersion` returned by `GET /api/v1/scans/:id/versions` — the version the scan was originally diffed against. Switching the picker triggers an on-demand fetch of that version's tarball via `GET /api/v1/scans/:id/compare?version=...`. Results are cached per version in component state so toggling between two versions does not re-spin the sandbox Worker.
+2. A 3-column grid: `FileTree` (left, 300px), `DiffView` (center), risk signals (right, 320px). The tree is built from either the persisted `summary.diff` (for the default comparison) or from `createPackageDiff(compare.files, stagedFiles)` recomputed client-side when the user picks a non-default version.
+3. The unchanged `PersistedReportSections` (reviewer notes, fingerprint, manifest changes) follow. The old "Changed files" table was retired — that information is now available in the tree.
+
+The `compare` endpoint re-parses the chosen prior tarball inside the existing `downloadInSandbox()` Dynamic Worker (i.e. through `NpmStageGateway`) so the trust boundary in [`security-model.md`](./security-model.md) is preserved. Returned file samples are redacted with the same helpers used at scan time. No schema or scan-pipeline changes are involved — the feature is a read-through view on top of existing data.
 
 ## Anti-patterns
 

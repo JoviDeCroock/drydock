@@ -2,14 +2,12 @@ import { Hono } from "hono";
 import {
   RateLimitError,
   createDb,
+  createScanJob,
   enforceRateLimit,
   ensurePersonalOrganization,
   getNpmConnection,
-  markNpmConnectionUsed,
-  recordScanEvent,
 } from "../db";
-import { decryptNpmToken } from "../lib/npm-connection";
-import { runScanPipeline } from "../lib/scan-pipeline";
+import { executeScanJob } from "../lib/scan-job";
 import { SandboxError } from "../lib/sandbox";
 import type { Bindings, ScanInput, Variables } from "../types";
 
@@ -35,32 +33,22 @@ scanRoutes.post("/", async (c) => {
     await enforceRateLimit(db, { key: `scan:${organizationId}`, limit: 10, windowMs: 60 * 60 * 1000 });
 
     const npmConnection = await getNpmConnection(db, organizationId);
-    if (!npmConnection && c.env.REQUIRE_ORG_NPM_CONNECTION === "true") {
+    if (!npmConnection) {
       return c.json({ error: "Connect an organization npm token before scanning staged publishes." }, 400);
     }
-    const orgNpmToken = npmConnection ? await decryptNpmToken(c.env, npmConnection) : undefined;
-    if (npmConnection) {
-      await markNpmConnectionUsed(db, organizationId);
-      await recordScanEvent(db, {
-        organizationId,
-        actorUserId: session.userId,
-        type: "npm_connection.used",
-        metadata: {
-          stageId: input.stageId,
-          registryUrl: npmConnection.registryUrl,
-          tokenFingerprint: npmConnection.tokenFingerprint,
-        },
-      });
-    }
 
-    const result = await runScanPipeline(
-      { env: c.env, executionCtx: c.executionCtx, db, session },
-      {
-        ...input,
-        organizationId,
-        npmToken: orgNpmToken,
-        npmRegistry: npmConnection?.registryUrl,
-      },
+    const scanId = crypto.randomUUID();
+    await createScanJob(db, {
+      id: scanId,
+      stageId: input.stageId,
+      organizationId,
+      ownerUserId: session.userId,
+    });
+    const result = await executeScanJob(
+      c.env,
+      c.executionCtx,
+      { ...input, scanId, organizationId, actorUserId: session.userId },
+      db,
     );
 
     return c.json(result);

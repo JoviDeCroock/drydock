@@ -206,8 +206,8 @@ function npmAuthHeadersRecord(token: string, accept: string): Record<string, str
 }
 
 async function encryptionKey(env: Cloudflare.Env) {
-  const secret = env.NPM_CONNECTIONS_ENCRYPTION_KEY || env.BETTER_AUTH_SECRET;
-  if (!secret) throw new Error("NPM_CONNECTIONS_ENCRYPTION_KEY or BETTER_AUTH_SECRET is required");
+  const secret = env.NPM_CONNECTIONS_ENCRYPTION_KEY;
+  if (!secret) throw new Error("NPM_CONNECTIONS_ENCRYPTION_KEY is required");
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
   return crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
 }

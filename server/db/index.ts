@@ -27,6 +27,14 @@ export interface PersistedScanInput {
   files: FileRecord[];
   diff: DiffEntry[];
   findings: Finding[];
+  report?: { version: number; digest: string };
+}
+
+export interface CreateScanJobInput {
+  id: string;
+  stageId: string;
+  organizationId: string;
+  ownerUserId: string;
 }
 
 export interface AuditEventInput {
@@ -138,9 +146,48 @@ export async function recordScanEvent(db: AppDb, input: AuditEventInput) {
   });
 }
 
-export async function persistScan(db: AppDb, input: PersistedScanInput) {
+export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
   const now = new Date();
   await db.insert(scans).values({
+    id: input.id,
+    stageId: input.stageId,
+    organizationId: input.organizationId,
+    ownerUserId: input.ownerUserId,
+    risk: "unknown",
+    status: "pending",
+    createdAt: now,
+    updatedAt: now,
+  });
+  return getScan(db, input.id, input.organizationId);
+}
+
+export async function markScanRunning(db: AppDb, scanId: string, organizationId: string) {
+  const now = new Date();
+  await db.update(scans)
+    .set({ status: "running", startedAt: now, updatedAt: now })
+    .where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)));
+}
+
+export async function markScanFailed(
+  db: AppDb,
+  scanId: string,
+  organizationId: string,
+  error: { message: string; code?: string; detail?: string },
+) {
+  await db.update(scans)
+    .set({
+      status: "failed",
+      risk: "unknown",
+      errorJson: error,
+      completedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)));
+}
+
+export async function persistScan(db: AppDb, input: PersistedScanInput) {
+  const now = new Date();
+  const scanValues = {
     id: input.id,
     stageId: input.stageId,
     organizationId: input.organizationId,
@@ -152,9 +199,34 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     status: input.status,
     summaryJson: input.summary,
     aiJson: input.ai,
+    errorJson: null,
+    reportVersion: input.report?.version ?? null,
+    reportDigest: input.report?.digest ?? null,
+    completedAt: now,
     createdAt: now,
     updatedAt: now,
+  };
+
+  await db.insert(scans).values(scanValues).onConflictDoUpdate({
+    target: scans.id,
+    set: {
+      packageName: scanValues.packageName,
+      stagedVersion: scanValues.stagedVersion,
+      previousVersion: scanValues.previousVersion,
+      risk: scanValues.risk,
+      status: scanValues.status,
+      summaryJson: scanValues.summaryJson,
+      aiJson: scanValues.aiJson,
+      errorJson: scanValues.errorJson,
+      reportVersion: scanValues.reportVersion,
+      reportDigest: scanValues.reportDigest,
+      completedAt: scanValues.completedAt,
+      updatedAt: now,
+    },
   });
+
+  await db.delete(scanFiles).where(eq(scanFiles.scanId, input.id));
+  await db.delete(scanFindings).where(eq(scanFindings.scanId, input.id));
 
   const diffByPath = new Map(input.diff.map((entry) => [entry.path, entry]));
   const rows = input.files.map((file) => {
@@ -189,7 +261,23 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
 
 export async function listScans(db: AppDb, organizationId: string) {
   return db
-    .select()
+    .select({
+      id: scans.id,
+      stageId: scans.stageId,
+      organizationId: scans.organizationId,
+      ownerUserId: scans.ownerUserId,
+      packageName: scans.packageName,
+      stagedVersion: scans.stagedVersion,
+      previousVersion: scans.previousVersion,
+      risk: scans.risk,
+      status: scans.status,
+      reportVersion: scans.reportVersion,
+      reportDigest: scans.reportDigest,
+      startedAt: scans.startedAt,
+      completedAt: scans.completedAt,
+      createdAt: scans.createdAt,
+      updatedAt: scans.updatedAt,
+    })
     .from(scans)
     .where(eq(scans.organizationId, organizationId))
     .orderBy(desc(scans.createdAt))

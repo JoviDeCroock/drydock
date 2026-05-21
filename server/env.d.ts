@@ -6,10 +6,10 @@ declare global {
       AI_CACHE_AFFINITY?: string;
       LOADER: WorkerLoader;
       DB: D1Database;
+      COMPARE_CACHE?: KVNamespace;
+      SCAN_QUEUE?: Queue<import("./lib/scan-job").ScanQueueMessage>;
       NPM_REGISTRY: string;
-      NPM_TOKEN?: string;
       NPM_CONNECTIONS_ENCRYPTION_KEY?: string;
-      REQUIRE_ORG_NPM_CONNECTION?: string;
       BETTER_AUTH_SECRET: string;
       BETTER_AUTH_URL?: string;
       AUTH_REQUIRED?: string;

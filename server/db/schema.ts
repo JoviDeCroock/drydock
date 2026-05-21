@@ -44,6 +44,11 @@ export const scans = sqliteTable("scans", {
   status: text("status").notNull().default("pending"),
   summaryJson: text("summary_json", { mode: "json" }),
   aiJson: text("ai_json", { mode: "json" }),
+  errorJson: text("error_json", { mode: "json" }),
+  reportVersion: integer("report_version"),
+  reportDigest: text("report_digest"),
+  startedAt: integer("started_at", { mode: "timestamp_ms" }),
+  completedAt: integer("completed_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 }, (table) => ({

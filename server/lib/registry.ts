@@ -1,8 +1,14 @@
+export interface RegistryMetadata {
+  versions?: Record<string, { dist?: { tarball?: string } }>;
+  "dist-tags"?: Record<string, string>;
+  time?: Record<string, string>;
+}
+
 export async function fetchPackageMetadata(
   env: Cloudflare.Env,
   name: string,
   options: { npmToken?: string; npmRegistry?: string } = {},
-) {
+): Promise<RegistryMetadata> {
   const registry = (options.npmRegistry || env.NPM_REGISTRY || "https://registry.npmjs.org").replace(/\/$/, "");
   const headers = new Headers({ accept: "application/json" });
   if (options.npmToken) headers.set("authorization", `Bearer ${options.npmToken}`);
@@ -10,7 +16,7 @@ export async function fetchPackageMetadata(
     headers,
   });
   if (!res.ok) throw new Error(`metadata fetch failed: ${res.status}`);
-  return (await res.json()) as { versions?: Record<string, { dist?: { tarball?: string } }> };
+  return (await res.json()) as RegistryMetadata;
 }
 
 export function pickPreviousVersion(
@@ -24,7 +30,7 @@ export function pickPreviousVersion(
   return versions.at(-1) || null;
 }
 
-function compareSemver(a: string, b: string) {
+export function compareSemver(a: string, b: string) {
   const pa = a.split(/[.-]/).map((part) => Number(part) || 0);
   const pb = b.split(/[.-]/).map((part) => Number(part) || 0);
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {

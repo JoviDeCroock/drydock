@@ -2,21 +2,20 @@ import { persistScan, recordScanEvent, type AppDb, type WorkspaceSession } from 
 import { analyzeWithAi } from "./ai-review";
 import { fetchPackageMetadata, pickPreviousVersion } from "./registry";
 import {
-  combineRisk,
-  computeRisk,
   createPackageDiff,
   deterministicFindings,
-  normalizeRisk,
   redactFileRecords,
   redactFindings,
   redactJson,
   summarizePackageJsonDiff,
   type PackageJsonSummary,
 } from "./review";
+import { computeScanRisk } from "./risk";
 import { downloadInSandbox } from "./sandbox";
 import type { ScanInput, ScanResult } from "../types";
 
 export interface ScanPipelineOptions extends ScanInput {
+  scanId?: string;
   organizationId: string;
   npmToken?: string;
   npmRegistry?: string;
@@ -53,12 +52,16 @@ export async function runScanPipeline(
   const redactedPackageJson = redactJson(staged.packageJson ?? null);
   const redactedPreviousPackageJson = redactJson(previous?.packageJson ?? null);
   const aiFindings = await analyzeWithAi(env, redactedStagedFiles, diff, packageJsonDiff, ruleFindings);
-  const risk = combineRisk(
-    computeRisk(ruleFindings),
-    normalizeRisk(aiFindings.risk),
-    aiFindings.requiresManualReview ? "medium" : "low",
-  );
-  const scanId = crypto.randomUUID();
+  const risk = computeScanRisk(ruleFindings, aiFindings);
+  const scanId = input.scanId || crypto.randomUUID();
+
+  const safety: ScanResult["safety"] = {
+    tokenExposedToSandbox: false,
+    directSandboxNetwork: false,
+    outboundPolicy: "only npm staged tarball, published tarball, and package metadata endpoints via gateway",
+    aiInputPolicy: "package bytes are untrusted evidence, not instructions; static safety prompt is prefix-cache friendly and AI cannot downgrade deterministic findings",
+    fileExplorerPolicy: "package file previews are escaped text and secret-redacted before persistence; no package-provided HTML/script/image execution",
+  };
 
   const result: ScanResult = {
     id: scanId,
@@ -76,14 +79,24 @@ export async function runScanPipeline(
     ruleFindings,
     aiFindings,
     risk,
-    safety: {
-      tokenExposedToSandbox: false,
-      directSandboxNetwork: false,
-      outboundPolicy: "only npm staged tarball, published tarball, and package metadata endpoints via gateway",
-      aiInputPolicy: "package bytes are untrusted evidence, not instructions; static safety prompt is prefix-cache friendly and AI cannot downgrade deterministic findings",
-      fileExplorerPolicy: "package file previews are escaped text and secret-redacted before persistence; no package-provided HTML/script/image execution",
-    },
+    safety,
   };
+
+  const reportPayload = {
+    version: 1,
+    stageId: input.stageId,
+    package: result.package,
+    fileCount: result.fileCount,
+    previousFileCount: result.previousFileCount,
+    packageJson: redactedPackageJson,
+    packageJsonDiff,
+    diff,
+    ruleFindings,
+    aiFindings,
+    risk,
+    safety,
+  };
+  const reportDigest = await sha256Hex(stableJson(reportPayload));
 
   await persistScan(db, {
     id: scanId,
@@ -94,11 +107,22 @@ export async function runScanPipeline(
     previousPackageJson: redactedPreviousPackageJson,
     risk,
     status: "complete",
-    summary: { packageJsonDiff, diff, safety: result.safety },
+    summary: {
+      report: {
+        version: reportPayload.version,
+        digest: reportDigest,
+        digestAlgorithm: "sha256",
+        generatedAt: new Date().toISOString(),
+      },
+      packageJsonDiff,
+      diff,
+      safety: result.safety,
+    },
     ai: aiFindings,
     files: redactedStagedFiles,
     diff,
     findings: ruleFindings,
+    report: { version: reportPayload.version, digest: reportDigest },
   });
 
   await recordScanEvent(db, {
@@ -115,6 +139,20 @@ export async function runScanPipeline(
   });
 
   return result;
+}
+
+async function sha256Hex(value: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b));
+  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
 }
 
 async function maybeDownloadPreviousVersion(

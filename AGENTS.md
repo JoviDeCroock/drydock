@@ -17,7 +17,7 @@
   - `pages/` — landing, login/register, dashboard, persisted scan detail.
   - `models/` — fetch wrappers for Better Auth and scan APIs. Scan models re-use types from `server/`.
 - `drizzle/` — D1 migrations.
-- `test/` — `node --test` runners for pure logic (no Worker runtime).
+- `test/` — Vitest specs for pure logic (no Worker runtime).
 
 ## Conventions
 
@@ -26,13 +26,16 @@
 - The Dynamic Worker has `globalOutbound` set to `NpmStageGateway`. The gateway is the only path through which the npm token is attached (and only for the staged tarball endpoint).
 - D1 is required because Better Auth is always required for non-auth API endpoints.
 - Styling is Tailwind CSS v4 via `@tailwindcss/vite`. Design tokens (colors, fonts, shadows) are declared in `src/style.css` with `@theme`, light/dark modes overridden via `prefers-color-scheme`. Reach for primitives in `src/components/` (`Button`, `Input`, `Field`, `Badge`, `Alert`, `Card`, `PageShell`, `Eyebrow`, etc.) before writing one-off classes. No CSS-in-JS.
+- **Read [`DESIGN.md`](DESIGN.md) before making any visual or UI decision.** It is the source of truth for fonts, colors, spacing, iconography (text glyphs only — no SVG icons), data viz (severity stacked bar only), state patterns, and marketing-surface rules. Do not deviate without explicit user approval. Anti-patterns there are not suggestions — they're prohibitions.
 - We use `preact`, `preact-iso`, and `signals`.
 - Never write SQL migrations by hand; use `pnpm db:generate` to create migrations from `server/db/schema.ts`.
 - Before you start work read up on `docs/`, when you are done working update `docs/` with relevant information
+- WE NEVER USE `preact/compat`
 
 ## Scripts
 
 - `npm run dev` — Vite dev server with the Cloudflare plugin running the Worker locally at `http://localhost:5173`.
 - `npm run build` — Build the UI bundle into `dist/`.
 - `npm run typecheck` — `tsc --noEmit`.
+- `npm run test` — Vitest logic suite.
 - `npm run db:generate` — Drizzle migration from `server/db/schema.ts`.

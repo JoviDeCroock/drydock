@@ -9,7 +9,7 @@ import {
   validateNpmConnection,
   type PublicNpmConnection,
 } from "../../models/npm-connection";
-import { listScans, runScan, type ScanListItem } from "../../models/scan";
+import { createScan, listScans, type ScanListItem } from "../../models/scan";
 import type { DiffEntry, Finding } from "../../../server/lib/review";
 import type { AiFinding } from "../../../server/lib/ai-review";
 import type { ScanResult } from "../../../server/types";
@@ -18,16 +18,24 @@ import {
   Badge,
   Button,
   Card,
+  EmptyLine,
   Eyebrow,
   Field,
+  FindingCard,
+  FindingRow,
   Input,
+  LoadingLine,
   Muted,
   PageShell,
   SectionLabel,
+  SeverityBar,
+  StatusStrip,
+  StatusStripItem,
   SummaryCard,
   severityTone,
   statusTone,
 } from "../../components";
+import type { SeverityCounts, SeverityKey } from "../../components";
 
 type Status = "idle" | "checking" | "scanning" | "done" | "error";
 
@@ -81,7 +89,7 @@ export default function DashboardPage() {
         setNpmRegistry(connection.registryUrl);
       }
     } catch {
-      // A local fallback NPM_TOKEN may still make scans usable.
+      // Keep the dashboard usable; scan creation will enforce org npm connection requirements.
     }
   }
 
@@ -140,10 +148,10 @@ export default function DashboardPage() {
     setError(null);
     setResult(null);
     try {
-      const data = await runScan(stageId.trim());
-      setResult(data);
+      const data = await createScan(stageId.trim());
       setStatus("done");
       await refreshScans();
+      location.route(`/dashboard/scans/${encodeURIComponent(data.scan.id)}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setStatus("error");
@@ -159,7 +167,7 @@ export default function DashboardPage() {
     return (
       <PageShell width="narrow">
         <Card>
-          <Muted>Checking session…</Muted>
+          <LoadingLine>Opening workspace</LoadingLine>
         </Card>
       </PageShell>
     );
@@ -169,11 +177,11 @@ export default function DashboardPage() {
     <PageShell>
       <header class="flex flex-wrap gap-4 items-start justify-between">
         <div class="flex flex-col gap-2 max-w-[640px]">
-          <Eyebrow>Authenticated dashboard</Eyebrow>
-          <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Staged Publish Review</h1>
+          <Eyebrow>Review workspace</Eyebrow>
+          <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Ready for the next release</h1>
           <Muted class="text-[14px] leading-[1.55] m-0">
-            Review npm staged packages through a sandboxed Dynamic Worker, deterministic release checks,
-            previous-version diffs, and Kimi K2.5 triage.
+            Bring in a staged npm publish, compare it with the live version, and get a focused safety
+            brief before maintainers approve.
           </Muted>
         </div>
         <div class="flex items-center gap-2.5 bg-surface border border-border rounded-full pl-3.5 pr-1.5 py-1.5">
@@ -210,13 +218,14 @@ export default function DashboardPage() {
           <div class="flex flex-col gap-1.5">
             <SectionLabel>Run review</SectionLabel>
             <Muted class="text-[13px] max-w-[720px]">
-              Paste a stage ID from npm staged publish. The scan downloads evidence through the gateway, compares against the previous published version, and persists a redacted report.
+              Paste the npm stage ID. We'll compare it with the latest published release, flag risky
+              diffs, and save a redacted report you can come back to.
             </Muted>
           </div>
           <Badge tone={status === "scanning" ? "info" : "ok"}>{status === "scanning" ? "running" : "ready"}</Badge>
         </div>
         {!npmConnection ? (
-          <Alert tone="info">Connect an organization npm token first for production SaaS scans. Local/dev deployments may still use the fallback worker secret.</Alert>
+          <Alert tone="info">Connect an organization npm token before reviewing staged packages.</Alert>
         ) : null}
         <form class="flex flex-col gap-3" onSubmit={onSubmit}>
           <Field label="Stage ID" for="stageId">
@@ -236,7 +245,7 @@ export default function DashboardPage() {
                 disabled={status === "scanning" || !stageId.trim()}
                 class="shrink-0"
               >
-                {status === "scanning" ? "Scanning…" : "Scan staged publish"}
+                {status === "scanning" ? "Reviewing…" : "Review staged publish"}
               </Button>
             </div>
           </Field>
@@ -252,7 +261,7 @@ export default function DashboardPage() {
 
       <section class="flex flex-col gap-3">
         <div class="flex items-center justify-between">
-          <SectionLabel class="flex-1">Recent scans</SectionLabel>
+          <SectionLabel class="flex-1">Recent reviews</SectionLabel>
           <Button variant="secondary" size="sm" onClick={refreshScans} class="ml-3 shrink-0">
             Refresh
           </Button>
@@ -262,7 +271,7 @@ export default function DashboardPage() {
             <ScanTable scans={scans} />
           ) : (
             <div class="p-5">
-              <Muted>No persisted scans yet.</Muted>
+              <EmptyLine>No reviews yet. Run one above to start building your release history.</EmptyLine>
             </div>
           )}
         </Card>
@@ -273,43 +282,21 @@ export default function DashboardPage() {
 
 function LaunchGuardrailStrip({ hasNpmConnection }: { hasNpmConnection: boolean }) {
   return (
-    <section class="grid grid-cols-1 md:grid-cols-3 gap-3">
-      <GuardrailCard
-        label="Credential boundary"
-        status={hasNpmConnection ? "configured" : "setup needed"}
+    <StatusStrip>
+      <StatusStripItem
+        label="Private npm access"
+        status={hasNpmConnection ? "connected" : "connect npm"}
         tone={hasNpmConnection ? "ok" : "info"}
       >
-        npm auth is injected by the outbound Worker, never inside the sandbox.
-      </GuardrailCard>
-      <GuardrailCard label="Artifact retention" status="safe default" tone="ok">
-        Raw tarballs are not retained; reports store bounded redacted evidence.
-      </GuardrailCard>
-      <GuardrailCard label="Approval model" status="manual" tone="neutral">
-        Maintainers still approve in npm with their normal 2FA-protected workflow.
-      </GuardrailCard>
-    </section>
-  );
-}
-
-function GuardrailCard({
-  label,
-  status,
-  tone,
-  children,
-}: {
-  label: string;
-  status: string;
-  tone: "ok" | "info" | "neutral";
-  children: ComponentChildren;
-}) {
-  return (
-    <Card class="p-4 flex flex-col gap-2 min-h-[118px]">
-      <div class="flex items-center justify-between gap-3">
-        <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">{label}</span>
-        <Badge tone={tone}>{status}</Badge>
-      </div>
-      <p class="m-0 text-[13px] leading-[1.55] text-ink-muted">{children}</p>
-    </Card>
+        Your token is used only to retrieve release evidence, away from untrusted package contents.
+      </StatusStripItem>
+      <StatusStripItem label="Evidence retention" status="safe default" tone="ok">
+        Reports keep redacted review evidence, not raw release archives.
+      </StatusStripItem>
+      <StatusStripItem label="Approval stays human" status="manual" tone="neutral">
+        Maintainers make the final call in npm with their normal 2FA-protected workflow.
+      </StatusStripItem>
+    </StatusStrip>
   );
 }
 
@@ -351,10 +338,10 @@ function NpmConnectionCard({
     <Card class="p-5 flex flex-col gap-4">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div class="flex flex-col gap-1.5">
-          <SectionLabel>npm connection</SectionLabel>
+          <SectionLabel>npm access</SectionLabel>
           <Muted class="text-[13px] max-w-[760px]">
-            Store an organization-scoped npm token for staged-package downloads. The token is encrypted,
-            never shown again, and injected only by the outbound gateway outside the sandbox.
+            Add an organization npm token so reviews can fetch staged packages securely. We encrypt it,
+            hide it after save, and use it only to retrieve release evidence.
           </Muted>
         </div>
         {connection ? (
@@ -362,7 +349,7 @@ function NpmConnectionCard({
             {connection.validationStatus}
           </Badge>
         ) : (
-          <Badge tone="info">not configured</Badge>
+          <Badge tone="info">not connected</Badge>
         )}
       </div>
 
@@ -377,7 +364,7 @@ function NpmConnectionCard({
       ) : null}
 
       <form class="grid grid-cols-1 lg:grid-cols-[1fr_1fr_1.5fr_auto] gap-3 items-end" onSubmit={onSave}>
-        <Field label="Label" for="npmLabel">
+        <Field label="Connection name" for="npmLabel">
           <Input
             id="npmLabel"
             type="text"
@@ -386,7 +373,7 @@ function NpmConnectionCard({
             disabled={busy}
           />
         </Field>
-        <Field label="Registry URL" for="npmRegistry">
+        <Field label="Registry" for="npmRegistry">
           <Input
             id="npmRegistry"
             type="url"
@@ -400,7 +387,7 @@ function NpmConnectionCard({
             id="npmToken"
             type="password"
             value={token}
-            placeholder={connection ? "Paste to rotate token" : "npm_..."}
+            placeholder={connection ? "Paste a new token to rotate" : "npm_..."}
             onInput={(e) => onTokenChange((e.target as HTMLInputElement).value)}
             disabled={busy}
             autoComplete="off"
@@ -413,12 +400,12 @@ function NpmConnectionCard({
       </form>
 
       <div class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto_auto] gap-2 items-end">
-        <Field label="Optional stage ID validation" for="validationStageId">
+        <Field label="Stage ID access check" for="validationStageId">
           <Input
             id="validationStageId"
             type="text"
             value={validationStageId}
-            placeholder="Check staged tarball access for a real stage ID"
+            placeholder="Paste a real stage ID to confirm package access"
             onInput={(e) => onValidationStageIdChange((e.target as HTMLInputElement).value)}
             disabled={busy || !connection}
             autoComplete="off"
@@ -426,15 +413,15 @@ function NpmConnectionCard({
           />
         </Field>
         <Button variant="secondary" size="sm" onClick={onValidate} disabled={busy || !connection}>
-          {status === "validating" ? "Validating…" : validationStageId.trim() ? "Validate stage access" : "Validate auth"}
+          {status === "validating" ? "Checking…" : validationStageId.trim() ? "Check stage access" : "Check npm auth"}
         </Button>
         <Button variant="danger" size="sm" onClick={onDelete} disabled={busy || !connection}>
-          {status === "deleting" ? "Removing…" : "Remove connection"}
+          {status === "deleting" ? "Removing…" : "Disconnect"}
         </Button>
       </div>
 
       <Muted class="text-xs">
-        Without a stage ID, validation checks npm registry auth. With a stage ID, it also verifies staged-tarball access without retaining the tarball.
+        Without a stage ID, we confirm the token is accepted by npm. Add a stage ID to prove it can read that staged release; we do not keep the release archive.
       </Muted>
 
       {error ? <Alert tone="critical">{error}</Alert> : null}
@@ -446,56 +433,85 @@ function ScanResultView({ result }: { result: ScanResult }) {
   const ai = result.aiFindings;
   const changed = result.diff.filter((entry) => entry.status !== "unchanged");
   const riskTone = result.risk === "high" || result.risk === "critical" ? "danger" : "default";
+  const severityCounts = countSeverities([...result.ruleFindings, ...ai.findings]);
 
   return (
     <section class="flex flex-col gap-5">
-      <SectionLabel>Scan result</SectionLabel>
+      <SectionLabel>Review result</SectionLabel>
 
       <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <SummaryCard label="package">{result.package.name || "unknown"}</SummaryCard>
         <SummaryCard label="version">
           {result.package.previousVersion || "—"} → {result.package.stagedVersion || "—"}
         </SummaryCard>
-        <SummaryCard label="risk" tone={riskTone}>
+        <SummaryCard label="risk" tone={riskTone} value="metric">
           {result.risk}
         </SummaryCard>
-        <SummaryCard label="files">
-          {result.fileCount} ({changed.length} changed)
+        <SummaryCard label="files" value="metric">
+          {result.fileCount}
         </SummaryCard>
-        <SummaryCard label="AI assessment">{ai.releaseAssessment.replaceAll("_", " ")}</SummaryCard>
-        <SummaryCard label="manual review">{ai.requiresManualReview ? "yes" : "no"}</SummaryCard>
+        <SummaryCard label="assistant take" value="sentence">{ai.releaseAssessment.replaceAll("_", " ")}</SummaryCard>
+        <SummaryCard label="needs review" value="sentence">{ai.requiresManualReview ? "yes" : "no"}</SummaryCard>
       </div>
 
+      <Card class="p-5">
+        <SeverityBar counts={severityCounts} />
+      </Card>
+
       {ai.summary ? (
-        <div class="bg-surface border-l-[3px] border-accent rounded-md px-4 py-3 leading-[1.55]">
+        <div class="bg-surface border border-border border-l-[3px] border-l-accent rounded-lg px-4 py-3 text-[13px] leading-[1.55]">
           {ai.summary}
         </div>
       ) : null}
 
-      <ResultSection title={`Deterministic findings (${result.ruleFindings.length})`}>
+      <ResultSection title={`Rule findings (${result.ruleFindings.length})`}>
         <RuleFindingList findings={result.ruleFindings} />
       </ResultSection>
 
-      <ResultSection title={`AI findings (${ai.findings.length})`}>
+      <ResultSection title={`Assistant findings (${ai.findings.length})`}>
         <AiFindingList findings={ai.findings} />
       </ResultSection>
 
-      <ResultSection title={`Changed files (${changed.length})`}>
+      <ResultSection title={`Release changes (${changed.length})`}>
         <DiffList entries={changed} />
       </ResultSection>
 
       <Card as="div" class="p-0">
         <details class="group">
           <summary class="cursor-pointer text-[13px] text-ink-muted px-4 py-3 list-none">
-            Safety posture
+            Safety model
           </summary>
-          <pre class="bg-surface-2 rounded-md mx-4 mb-4 p-3 overflow-x-auto text-xs leading-[1.5]">
+          <pre class="bg-surface-2 rounded-lg mx-4 mb-4 p-3 overflow-x-auto text-xs leading-[1.5]">
             {JSON.stringify(result.safety, null, 2)}
           </pre>
         </details>
       </Card>
     </section>
   );
+}
+
+function countSeverities(findings: Array<{ severity?: string }>): SeverityCounts {
+  const counts: SeverityCounts = {};
+  for (const finding of findings) {
+    const key = normalizeSeverityKey(finding.severity);
+    if (!key) continue;
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function normalizeSeverityKey(value: string | undefined): SeverityKey | null {
+  switch (value) {
+    case "critical":
+    case "high":
+    case "medium":
+    case "low":
+    case "info":
+    case "ok":
+      return value;
+    default:
+      return null;
+  }
 }
 
 function ResultSection({ title, children }: { title: string; children: ComponentChildren }) {
@@ -557,75 +573,42 @@ function Td({ children, class: className }: { children: ComponentChildren; class
 }
 
 function RuleFindingList({ findings }: { findings: Finding[] }) {
-  if (!findings.length) return <Muted class="text-[13px]">No deterministic findings.</Muted>;
+  if (!findings.length) return <EmptyLine>No rule findings.</EmptyLine>;
   return (
     <ul class="list-none p-0 m-0 flex flex-col gap-2">
       {findings.map((f, i) => (
-        <FindingItem key={`${f.file}-${i}`} severity={f.severity} file={f.file}>
+        <FindingCard key={`${f.file}-${i}`} severity={f.severity} file={f.file}>
           <FindingRow label="evidence" value={f.evidence} />
           <FindingRow label="reason" value={f.reason} />
-        </FindingItem>
+        </FindingCard>
       ))}
     </ul>
   );
 }
 
 function AiFindingList({ findings }: { findings: AiFinding[] }) {
-  if (!findings.length) return <Muted class="text-[13px]">No AI findings.</Muted>;
+  if (!findings.length) return <EmptyLine>No assistant findings.</EmptyLine>;
   return (
     <ul class="list-none p-0 m-0 flex flex-col gap-2">
       {findings.map((f, i) => (
-        <FindingItem key={`${f.file}-${i}`} severity={f.severity} file={f.file}>
+        <FindingCard key={`${f.file}-${i}`} severity={f.severity} file={f.file}>
           <FindingRow label="evidence" value={f.evidence} />
           <FindingRow label="reason" value={f.reason} />
           <FindingRow label="recommendation" value={f.recommendation} />
-        </FindingItem>
+        </FindingCard>
       ))}
     </ul>
   );
 }
 
-export function FindingItem({
-  severity,
-  file,
-  children,
-}: {
-  severity: string;
-  file: string;
-  children: ComponentChildren;
-}) {
-  return (
-    <li class="bg-surface border border-border rounded-md px-4 py-3 flex flex-col gap-2">
-      <div class="flex items-center gap-2.5">
-        <Badge tone={severityTone(severity)} dot>
-          {severity}
-        </Badge>
-        <code class="text-[13px] text-ink-muted">{file}</code>
-      </div>
-      <div class="text-[13px] leading-[1.55] flex flex-col gap-0.5">{children}</div>
-    </li>
-  );
-}
-
-export function FindingRow({ label, value }: { label: string; value: ComponentChildren }) {
-  return (
-    <div>
-      <span class="text-ink-subtle font-mono text-[11px] uppercase tracking-[0.08em] mr-1.5">
-        {label}:
-      </span>
-      <span>{value}</span>
-    </div>
-  );
-}
-
 function DiffList({ entries }: { entries: DiffEntry[] }) {
-  if (!entries.length) return <Muted class="text-[13px]">No changes detected.</Muted>;
+  if (!entries.length) return <EmptyLine>No changes detected.</EmptyLine>;
   return (
     <ul class="list-none p-0 m-0 flex flex-col gap-1">
       {entries.map((entry) => (
         <li
           key={entry.path}
-          class="grid grid-cols-[auto_1fr_auto] gap-3 items-center bg-surface border border-border rounded-md px-3 py-2 text-[13px] font-mono"
+          class="grid grid-cols-[auto_1fr_auto] gap-3 items-center bg-surface border border-border rounded-lg px-3 py-2 text-[13px] font-mono"
         >
           <Badge tone={statusTone(entry.status)}>{entry.status}</Badge>
           <span class="truncate">{entry.path}</span>

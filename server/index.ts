@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { createAuth, getAuthSession } from "./lib/auth";
+import { executeScanJob, type ScanQueueMessage } from "./lib/scan-job";
 import { npmConnectionRoutes } from "./routes/npm-connection";
 import { scanRoutes } from "./routes/scan";
 import { scansRoutes } from "./routes/scans";
@@ -86,7 +87,8 @@ app.get("/api", (c) =>
   c.json({
     name: "staged-publish-review",
     endpoints: {
-      scan: "POST /api/v1/scan { stageId }",
+      createScan: "POST /api/v1/scans { stageId }",
+      compatibilityScan: "POST /api/v1/scan { stageId }",
       scans: "GET /api/v1/scans",
       scanDetail: "GET /api/v1/scans/:id",
       npmConnection: "GET/POST/DELETE /api/v1/npm-connection; POST /api/v1/npm-connection/validate",
@@ -103,4 +105,15 @@ app.route("/api/v1/scans", scansRoutes);
 
 app.notFound((c) => c.json({ error: "not found" }, 404));
 
-export default app;
+export default {
+  fetch: app.fetch,
+  async queue(batch: MessageBatch<ScanQueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
+    for (const message of batch.messages) {
+      try {
+        await executeScanJob(env, ctx, message.body);
+      } catch (err) {
+        console.error("scan queue job failed", err);
+      }
+    }
+  },
+};

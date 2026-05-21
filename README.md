@@ -15,7 +15,7 @@ This repository is moving from prototype to real product. The current implementa
 - **Safe artifact defaults.** Do not retain raw tarballs by default in SaaS. Persist redacted summaries, manifests, diffs, findings, and report metadata. Raw artifact retention may become an explicit short-TTL organization setting later.
 - **Signed reports later.** Prepare report data to be canonical and signable, but do not launch public signed report generation yet.
 
-See [`docs/architecture.md`](docs/architecture.md), [`docs/security-model.md`](docs/security-model.md), and [`docs/production-roadmap.md`](docs/production-roadmap.md) for the production plan.
+See [`docs/architecture.md`](docs/architecture.md), [`docs/security-model.md`](docs/security-model.md), [`docs/production-roadmap.md`](docs/production-roadmap.md), [`docs/cost-model.md`](docs/cost-model.md), and [`docs/test-package.md`](docs/test-package.md) for the production plan, budget napkin math, and staged-publish test package.
 
 ## Current capabilities
 
@@ -61,7 +61,8 @@ src/           Preact UI served as static assets by the worker
   models/      Fetch wrappers that talk to /api/* (re-use server types)
 drizzle/       D1 migrations generated from server/db/schema.ts
 docs/          Architecture, security, roadmap, and UI implementation notes
-test/          node --test for pure logic
+test/          Vitest specs for pure logic
+packages/      Publishable test packages, including @pracht/experiments
 ```
 
 ## Develop
@@ -70,6 +71,7 @@ test/          node --test for pure logic
 pnpm install
 cp .dev.vars.example .dev.vars
 # edit .dev.vars with local secrets
+pnpm test         # Vitest logic suite
 pnpm dev          # vite + cloudflare plugin, http://localhost:5173
 ```
 
@@ -84,15 +86,13 @@ Current implementation secrets:
 | Name | Required? | Purpose |
 | --- | --- | --- |
 | `BETTER_AUTH_SECRET` | Yes | Better Auth signing/encryption secret for sessions and cookies. Use one unique high-entropy value per environment. Without this, API auth fails closed. |
-| `NPM_CONNECTIONS_ENCRYPTION_KEY` | Recommended for SaaS | Secret key material used to encrypt per-organization npm connection tokens. If omitted, `BETTER_AUTH_SECRET` is used as a fallback key source. |
-| `NPM_TOKEN` | Local/dev fallback | npm registry token attached only by `NpmStageGateway` for allowed npm registry endpoints; it is not passed into the sandbox worker. SaaS production should use encrypted per-organization npm connections instead. |
+| `NPM_CONNECTIONS_ENCRYPTION_KEY` | Yes | Dedicated secret key material used to encrypt per-organization npm connection tokens. Do not reuse `BETTER_AUTH_SECRET`. |
 
 Worker non-secret vars and bindings:
 
 | Name | Where | Purpose |
 | --- | --- | --- |
 | `BETTER_AUTH_URL` | `.dev.vars` locally; Wrangler var in production | Canonical app origin for Better Auth, for example `http://localhost:5173` locally or your deployed Worker URL. Not a secret. |
-| `REQUIRE_ORG_NPM_CONNECTION` | Wrangler var or `.dev.vars` | Set to `true` in production to reject scans until the current organization has an encrypted npm connection. |
 | `NPM_REGISTRY` | `wrangler.jsonc` `vars` | npm registry base URL. Defaults to `https://registry.npmjs.org`. |
 | `AI_MODEL` | `wrangler.jsonc` `vars` | Workers AI model ID. Defaults to `@cf/moonshotai/kimi-k2.5`. |
 | `AI_CACHE_AFFINITY` | `wrangler.jsonc` `vars` | Stable `x-session-affinity` value for Cloudflare Workers AI prefix caching. |
@@ -112,10 +112,15 @@ Keep the value stable within an environment; rotating it invalidates existing au
 
 All endpoints below require an authenticated Better Auth session. Use the UI or Better Auth endpoints under `/api/auth/*` to sign in first.
 
-Current synchronous scan API:
+Current scan API:
 
 ```sh
-# Run a scan
+# Create a queued/background scan and return immediately with a scan ID
+curl -X POST http://localhost:5173/api/v1/scans \
+  -H 'content-type: application/json' \
+  -d '{"stageId":"<stage-id>"}'
+
+# Compatibility path: run a scan synchronously and return the report payload
 curl -X POST http://localhost:5173/api/v1/scan \
   -H 'content-type: application/json' \
   -d '{"stageId":"<stage-id>"}'
@@ -123,15 +128,12 @@ curl -X POST http://localhost:5173/api/v1/scan \
 # List persisted scans
 curl http://localhost:5173/api/v1/scans
 
-# Read a persisted scan
+# Read status/report detail for a persisted scan
 curl http://localhost:5173/api/v1/scans/<scan-id>
 ```
 
-Target production API shape:
+`POST /api/v1/scans` uses Cloudflare Queues when `SCAN_QUEUE` is bound. In local environments without the queue binding it schedules the same job with `executionCtx.waitUntil()` and stores `pending`/`running`/`complete`/`failed` status in D1.
 
-- `POST /api/v1/scans` creates a queued scan and returns a scan ID.
-- `GET /api/v1/scans` lists scans for the current organization.
-- `GET /api/v1/scans/:id` returns scan status, findings, artifacts, and report data.
 Implemented npm connection API:
 
 ```sh
@@ -197,12 +199,9 @@ Never write SQL migrations by hand; update `server/db/schema.ts` and generate mi
    pnpm install
    pnpm wrangler secret put BETTER_AUTH_SECRET
    pnpm wrangler secret put NPM_CONNECTIONS_ENCRYPTION_KEY
-   # set REQUIRE_ORG_NPM_CONNECTION=true in production vars
-   # optional local/self-host fallback only; SaaS production should use per-org encrypted npm connections instead
-   pnpm wrangler secret put NPM_TOKEN
    ```
 
-3. Set the real D1 `database_id` and production `BETTER_AUTH_URL` in `wrangler.jsonc`, then apply migrations.
+3. Create the scan queue if needed (`pnpm wrangler queues create staged-publish-review-scans`), set the real D1 `database_id` and production `BETTER_AUTH_URL` in `wrangler.jsonc`, then apply migrations.
 4. Build + deploy:
 
    ```sh

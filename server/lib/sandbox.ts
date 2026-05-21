@@ -16,24 +16,21 @@ export class NpmStageGateway extends WorkerEntrypoint<Cloudflare.Env, NpmStageGa
     const registry = new URL(this.ctx.props.npmRegistry || this.env.NPM_REGISTRY || "https://registry.npmjs.org");
 
     const sameOrigin = url.origin === registry.origin;
+    const method = request.method.toUpperCase();
+    const packageMetadataPath = /^\/(?:@[^/]+%2[fF][^/]+|[^/@-][^/]*)$/.test(url.pathname);
     const isStagedTarball =
-      sameOrigin && url.pathname.startsWith("/-/stage/") && url.pathname.endsWith("/tarball");
+      sameOrigin && method === "GET" && url.pathname.startsWith("/-/stage/") && url.pathname.endsWith("/tarball");
     const isPublishedTarball =
-      sameOrigin && url.pathname.endsWith(".tgz") && url.pathname.includes("/-/");
-    const isRegistryMetadata =
-      sameOrigin &&
-      !url.pathname.includes("/-/stage/") &&
-      request.headers.get("accept")?.includes("application/json");
+      sameOrigin && method === "GET" && url.pathname.endsWith(".tgz") && url.pathname.includes("/-/");
+    const isRegistryMetadata = sameOrigin && method === "GET" && packageMetadataPath;
 
     if (!isStagedTarball && !isPublishedTarball && !isRegistryMetadata) {
       return new Response("blocked by stage gateway", { status: 403 });
     }
 
-    const token = this.ctx.props.npmToken || this.env.NPM_TOKEN;
+    const token = this.ctx.props.npmToken;
     const forwarded = new Request(request);
-    if (token && (isStagedTarball || isPublishedTarball || isRegistryMetadata)) {
-      forwarded.headers.set("authorization", `Bearer ${token}`);
-    }
+    if (token) forwarded.headers.set("authorization", `Bearer ${token}`);
     forwarded.headers.set("user-agent", "staged-publish-review/0.3");
 
     return fetch(forwarded);

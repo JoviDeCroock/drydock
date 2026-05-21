@@ -38,7 +38,7 @@ export default function LoginPage() {
       <Card class="flex flex-col gap-4">
         <Eyebrow>Welcome back</Eyebrow>
         <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Sign in</h1>
-        <Muted class="text-[13px] m-0">All review APIs require a Better Auth session.</Muted>
+        <Muted class="text-[13px] m-0">Sign in to review staged releases and revisit saved reports.</Muted>
 
         <form class="flex flex-col gap-4 mt-2" onSubmit={onSubmit}>
           <Field label="Email" for="login-email">
@@ -70,7 +70,7 @@ export default function LoginPage() {
         </form>
 
         <p class="text-[13px] text-ink-muted m-0">
-          No account yet? <a href="/register">Register</a>
+          New here? <a href="/register">Create an account</a>
         </p>
       </Card>
     </PageShell>
