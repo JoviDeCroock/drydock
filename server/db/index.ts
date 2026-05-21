@@ -1,5 +1,5 @@
 import { drizzle } from "drizzle-orm/d1";
-import { and, desc, eq, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import * as schema from "./schema";
 import {
   npmConnections,
@@ -179,12 +179,22 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
   return getScan(db, input.id, input.organizationId);
 }
 
-export async function markScanRunning(db: AppDb, scanId: string, organizationId: string) {
+const NON_TERMINAL_STATUSES = ["pending", "running"] as const;
+
+export async function claimScanForRun(db: AppDb, scanId: string, organizationId: string) {
   const now = new Date();
-  await db
+  const claimed = await db
     .update(scans)
     .set({ status: "running", startedAt: now, updatedAt: now })
-    .where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)));
+    .where(
+      and(
+        eq(scans.id, scanId),
+        eq(scans.organizationId, organizationId),
+        inArray(scans.status, [...NON_TERMINAL_STATUSES]),
+      ),
+    )
+    .returning({ id: scans.id, status: scans.status });
+  return claimed.length > 0;
 }
 
 export async function markScanFailed(
@@ -202,7 +212,13 @@ export async function markScanFailed(
       completedAt: new Date(),
       updatedAt: new Date(),
     })
-    .where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)));
+    .where(
+      and(
+        eq(scans.id, scanId),
+        eq(scans.organizationId, organizationId),
+        inArray(scans.status, [...NON_TERMINAL_STATUSES]),
+      ),
+    );
 }
 
 export async function persistScan(db: AppDb, input: PersistedScanInput) {
@@ -227,26 +243,40 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     updatedAt: now,
   };
 
-  await db
-    .insert(scans)
-    .values(scanValues)
-    .onConflictDoUpdate({
-      target: scans.id,
-      set: {
-        packageName: scanValues.packageName,
-        stagedVersion: scanValues.stagedVersion,
-        previousVersion: scanValues.previousVersion,
-        risk: scanValues.risk,
-        status: scanValues.status,
-        summaryJson: scanValues.summaryJson,
-        aiJson: scanValues.aiJson,
-        errorJson: scanValues.errorJson,
-        reportVersion: scanValues.reportVersion,
-        reportDigest: scanValues.reportDigest,
-        completedAt: scanValues.completedAt,
-        updatedAt: now,
-      },
-    });
+  const updated = await db
+    .update(scans)
+    .set({
+      packageName: scanValues.packageName,
+      stagedVersion: scanValues.stagedVersion,
+      previousVersion: scanValues.previousVersion,
+      risk: scanValues.risk,
+      status: scanValues.status,
+      summaryJson: scanValues.summaryJson,
+      aiJson: scanValues.aiJson,
+      errorJson: scanValues.errorJson,
+      reportVersion: scanValues.reportVersion,
+      reportDigest: scanValues.reportDigest,
+      completedAt: scanValues.completedAt,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(scans.id, input.id),
+        eq(scans.organizationId, input.organizationId),
+        inArray(scans.status, [...NON_TERMINAL_STATUSES]),
+      ),
+    )
+    .returning({ id: scans.id });
+
+  if (updated.length === 0) {
+    const [existing] = await db
+      .select({ id: scans.id, status: scans.status, reportDigest: scans.reportDigest })
+      .from(scans)
+      .where(and(eq(scans.id, input.id), eq(scans.organizationId, input.organizationId)))
+      .limit(1);
+    if (existing) return { persisted: false, reason: "already_terminal" as const };
+    await db.insert(scans).values(scanValues).onConflictDoNothing({ target: scans.id });
+  }
 
   await Promise.all([
     db.delete(scanFiles).where(eq(scanFiles.scanId, input.id)),
@@ -284,6 +314,8 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
         )
       : Promise.resolve(),
   ]);
+
+  return { persisted: true as const };
 }
 
 export async function listScans(db: AppDb, organizationId: string) {

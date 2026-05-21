@@ -1,9 +1,9 @@
 import {
+  claimScanForRun,
   createDb,
   getNpmConnection,
   markNpmConnectionUsed,
   markScanFailed,
-  markScanRunning,
   recordScanEvent,
   type AppDb,
   type WorkspaceSession,
@@ -40,16 +40,21 @@ export async function executeScanJob(
   options: ExecuteScanJobOptions = {},
 ) {
   const session: WorkspaceSession = { userId: message.actorUserId };
-  await Promise.all([
-    markScanRunning(db, message.scanId, message.organizationId),
-    recordScanEvent(db, {
-      organizationId: message.organizationId,
-      actorUserId: message.actorUserId,
+  const claimed = await claimScanForRun(db, message.scanId, message.organizationId);
+  if (!claimed) {
+    console.warn("scan queue job skipped: scan already terminal", {
       scanId: message.scanId,
-      type: "scan.started",
-      metadata: { stageId: message.stageId, attempt: options.attempt ?? 1 },
-    }),
-  ]);
+      attempt: options.attempt ?? 1,
+    });
+    return null;
+  }
+  await recordScanEvent(db, {
+    organizationId: message.organizationId,
+    actorUserId: message.actorUserId,
+    scanId: message.scanId,
+    type: "scan.started",
+    metadata: { stageId: message.stageId, attempt: options.attempt ?? 1 },
+  });
 
   try {
     const npmConnection = await getNpmConnection(db, message.organizationId);

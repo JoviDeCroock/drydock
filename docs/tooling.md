@@ -8,13 +8,16 @@
 
 ## Scripts
 
-| Command                 | What it does                                           |
-| ----------------------- | ------------------------------------------------------ |
-| `pnpm run lint`         | Run oxlint over the repo. Exit non-zero on errors.     |
-| `pnpm run lint:fix`     | Apply oxlint autofixes.                                |
-| `pnpm run format`       | Rewrite files with oxfmt.                              |
-| `pnpm run format:check` | Report files that would change without writing.        |
-| `pnpm run verify`       | Run lint + format check + typecheck + tests, in order. |
+| Command                 | What it does                                                                                            |
+| ----------------------- | ------------------------------------------------------------------------------------------------------- |
+| `pnpm run lint`         | Run oxlint over the repo. Exit non-zero on errors.                                                      |
+| `pnpm run lint:fix`     | Apply oxlint autofixes.                                                                                 |
+| `pnpm run format`       | Rewrite files with oxfmt.                                                                               |
+| `pnpm run format:check` | Report files that would change without writing.                                                         |
+| `pnpm run test`         | Node logic tests (`test/**`) plus D1-backed worker tests (`test/workers/**`) via `vitest-pool-workers`. |
+| `pnpm run test:node`    | Just the node logic suite.                                                                              |
+| `pnpm run test:workers` | Just the worker suite (Miniflare D1 from `wrangler.test.jsonc` + `drizzle/`).                           |
+| `pnpm run verify`       | Run lint + format check + typecheck + tests, in order.                                                  |
 
 `pnpm lint` (the shorthand without `run`) can collide with workspace forwarding or shell wrappers — always use `pnpm run lint`.
 

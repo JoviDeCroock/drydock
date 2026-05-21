@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "staged-publish-review-test",
+  "main": "server/index.ts",
+  "compatibility_date": "2026-05-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "BETTER_AUTH_SECRET": "test-secret-that-is-long-enough-for-better-auth",
+    "BETTER_AUTH_URL": "http://example.com",
+    "AI_MODEL": "@cf/test/noop",
+    "AI_CACHE_AFFINITY": "staged-publish-review-test",
+    "NPM_REGISTRY": "https://registry.npmjs.org",
+    "NPM_CONNECTIONS_ENCRYPTION_KEY": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "staged-publish-review-test",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "drizzle",
+    },
+  ],
+}
