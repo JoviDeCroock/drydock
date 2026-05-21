@@ -25,13 +25,13 @@ import {
   FindingRow,
   Input,
   LoadingLine,
+  MonoDetail,
   Muted,
   PageShell,
   SectionLabel,
   SeverityBar,
   StatusStrip,
   StatusStripItem,
-  SummaryCard,
   severityTone,
   statusTone,
 } from "../../components";
@@ -184,7 +184,7 @@ export default function DashboardPage() {
             brief before maintainers approve.
           </Muted>
         </div>
-        <div class="flex items-center gap-2.5 bg-surface border border-border rounded-full pl-3.5 pr-1.5 py-1.5">
+        <div class="flex items-center gap-2.5 bg-surface border border-border rounded-lg pl-3.5 pr-1.5 py-1.5">
           <span class="font-mono text-xs text-ink-muted">
             {session?.user.email || session?.user.name || "signed in"}
           </span>
@@ -354,12 +354,12 @@ function NpmConnectionCard({
       </div>
 
       {connection ? (
-        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
-          <SummaryCard label="label">{connection.label}</SummaryCard>
-          <SummaryCard label="registry">{connection.registryUrl}</SummaryCard>
-          <SummaryCard label="token">•••• {connection.tokenLast4 || "stored"}</SummaryCard>
-          <SummaryCard label="validated">{connection.validatedAt ? formatDate(connection.validatedAt) : "not yet"}</SummaryCard>
-          <SummaryCard label="last used">{connection.lastUsedAt ? formatDate(connection.lastUsedAt) : "never"}</SummaryCard>
+        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-x-6 gap-y-2 border-y border-border py-3">
+          <CompactMetadataRow label="label" value={connection.label} />
+          <CompactMetadataRow label="registry" value={connection.registryUrl} />
+          <CompactMetadataRow label="token" value={`•••• ${connection.tokenLast4 || "stored"}`} />
+          <CompactMetadataRow label="validated" value={connection.validatedAt ? formatDate(connection.validatedAt) : "not yet"} />
+          <CompactMetadataRow label="last used" value={connection.lastUsedAt ? formatDate(connection.lastUsedAt) : "never"} />
         </div>
       ) : null}
 
@@ -429,34 +429,46 @@ function NpmConnectionCard({
   );
 }
 
+function CompactMetadataRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div class="grid grid-cols-[92px_minmax(0,1fr)] gap-3 text-[13px] min-w-0">
+      <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">{label}</span>
+      <code class="text-xs text-ink-muted break-all">{value}</code>
+    </div>
+  );
+}
+
 function ScanResultView({ result }: { result: ScanResult }) {
   const ai = result.aiFindings;
   const changed = result.diff.filter((entry) => entry.status !== "unchanged");
-  const riskTone = result.risk === "high" || result.risk === "critical" ? "danger" : "default";
   const severityCounts = countSeverities([...result.ruleFindings, ...ai.findings]);
+  const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
 
   return (
     <section class="flex flex-col gap-5">
       <SectionLabel>Review result</SectionLabel>
 
-      <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <SummaryCard label="package">{result.package.name || "unknown"}</SummaryCard>
-        <SummaryCard label="version">
-          {result.package.previousVersion || "—"} → {result.package.stagedVersion || "—"}
-        </SummaryCard>
-        <SummaryCard label="risk" tone={riskTone} value="metric">
-          {result.risk}
-        </SummaryCard>
-        <SummaryCard label="files" value="metric">
-          {result.fileCount}
-        </SummaryCard>
-        <SummaryCard label="assistant take" value="sentence">{ai.releaseAssessment.replaceAll("_", " ")}</SummaryCard>
-        <SummaryCard label="needs review" value="sentence">{ai.requiresManualReview ? "yes" : "no"}</SummaryCard>
+      <div class="flex flex-col gap-3 border-y border-border py-4">
+        <div class="flex flex-wrap items-center gap-2">
+          <Badge tone={severityTone(result.risk)}>{result.risk}</Badge>
+          <Badge tone={ai.requiresManualReview ? "medium" : "ok"}>
+            {ai.requiresManualReview ? "manual review" : "no extra review"}
+          </Badge>
+          <Badge tone={findingTotal ? "medium" : "ok"}>
+            {findingTotal ? `${findingTotal} ${pluralize("finding", findingTotal)}` : "no findings"}
+          </Badge>
+          <Badge tone="neutral">{ai.releaseAssessment.replaceAll("_", " ")}</Badge>
+        </div>
+        <MonoDetail
+          parts={[
+            result.package.name || "unknown package",
+            <span>{result.package.previousVersion || "—"} → {result.package.stagedVersion || "—"}</span>,
+            <span>{result.fileCount} {pluralize("file", result.fileCount)}</span>,
+            <span>{changed.length} changed</span>,
+          ]}
+        />
+        {findingTotal ? <SeverityBar counts={severityCounts} class="max-w-[520px]" /> : null}
       </div>
-
-      <Card class="p-5">
-        <SeverityBar counts={severityCounts} />
-      </Card>
 
       {ai.summary ? (
         <div class="bg-surface border border-border border-l-[3px] border-l-accent rounded-lg px-4 py-3 text-[13px] leading-[1.55]">
@@ -619,6 +631,10 @@ function DiffList({ entries }: { entries: DiffEntry[] }) {
       ))}
     </ul>
   );
+}
+
+function pluralize(word: string, count: number) {
+  return count === 1 ? word : `${word}s`;
 }
 
 function formatDate(value: ScanListItem["createdAt"]) {

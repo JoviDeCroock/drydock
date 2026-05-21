@@ -55,13 +55,23 @@ Reach for these before writing one-off classes:
 
 ## Release diff workbench
 
-The scan detail page (`src/pages/Dashboard/ScanDetail.tsx`) hosts the release diff workbench. The layout is:
+The scan detail page (`src/pages/Dashboard/ScanDetail.tsx`) hosts the release diff workbench. The layout is intentionally document-shaped rather than dashboard-card-heavy:
 
-1. A `VersionPicker` inside a `Card`. Default selection is `defaultPreviousVersion` returned by `GET /api/v1/scans/:id/versions` — the version the scan was originally diffed against. Switching the picker triggers an on-demand fetch of that version's tarball via `GET /api/v1/scans/:id/compare?version=...`. Results are cached per version in component state so toggling between two versions does not re-spin the sandbox Worker.
-2. A 3-column grid: `FileTree` (left, 300px), `DiffView` (center), risk signals (right, 320px). The tree is built from either the persisted `summary.diff` (for the default comparison) or from `createPackageDiff(compare.files, stagedFiles)` recomputed client-side when the user picks a non-default version.
-3. The unchanged `PersistedReportSections` (reviewer notes, fingerprint, manifest changes) follow. The old "Changed files" table was retired — that information is now available in the tree.
+1. The report summary is a compact badge row plus mono metadata line. Summary tiles are avoided here so status, stage ID, file counts, assistant assessment, and report version do not compete with the diff.
+2. A `VersionPicker` sits in a simple bordered toolbar. Default selection is `defaultPreviousVersion` returned by `GET /api/v1/scans/:id/versions` — the version the scan was originally diffed against. Switching the picker triggers an on-demand fetch of that version's tarball via `GET /api/v1/scans/:id/compare?version=...`. Results are cached per version in component state so toggling between two versions does not re-spin the sandbox Worker.
+3. The main workbench is `FileTree` (left, 300px) + `DiffView` (center). The risk-signals column appears only when deterministic findings exist; otherwise the diff expands to use the available width and "no findings" is represented in the compact summary badges. The tree is built from either the persisted `summary.diff` (for the default comparison) or from `createPackageDiff(compare.files, stagedFiles)` recomputed client-side when the user picks a non-default version.
+4. Persisted report sections (reviewer notes, fingerprint, manifest changes) follow as section-label blocks, not cards. The old "Changed files" table was retired — that information is now available in the tree.
 
 The `compare` endpoint re-parses the chosen prior tarball inside the existing `downloadInSandbox()` Dynamic Worker (i.e. through `NpmStageGateway`) so the trust boundary in [`security-model.md`](./security-model.md) is preserved. Returned file samples are redacted with the same helpers used at scan time. No schema or scan-pipeline changes are involved — the feature is a read-through view on top of existing data.
+
+## Surface-density guidance
+
+Use cards for interactive containment and lists that need table-like edges. Prefer section labels, mono detail lines, and `border-y` separators for read-only metadata. In particular:
+
+- Saved scan reports and immediate review results use badge rows + mono metadata instead of grids of `SummaryCard`s.
+- Empty findings do not get full bordered panels; represent them as compact badges or `EmptyLine`s inside an existing section.
+- Connection metadata is displayed as compact label/value rows, while the editable credential form remains inside a card.
+- Marketing hero copy is unboxed; feature claims use cards below the headline.
 
 ## Anti-patterns
 

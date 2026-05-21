@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { useLocation, useRoute } from "preact-iso";
 import { getSession } from "../../models/auth";
@@ -27,7 +28,6 @@ import {
   PageShell,
   SectionLabel,
   SeverityBar,
-  SummaryCard,
   VersionPicker,
   severityTone,
   statusTone,
@@ -181,6 +181,10 @@ export default function ScanDetailPage() {
     : null;
   const previousFileKey = selectedVersion && selectedPath ? `${selectedVersion}::${selectedPath}` : null;
   const previousFile = previousFileKey ? fileContentCache[previousFileKey] ?? null : null;
+  const hasRuleFindings = Boolean(detail?.findings.length);
+  const workbenchGridClass = hasRuleFindings
+    ? "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)_320px] gap-4"
+    : "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-4";
 
   useEffect(() => {
     if (!previousFileKey || !selectedVersion || !selectedPath) return;
@@ -249,7 +253,7 @@ export default function ScanDetailPage() {
           />
 
           {versions ? (
-            <Card class="p-4 flex flex-col gap-2">
+            <div class="flex flex-col gap-2 border-y border-border py-3">
               <VersionPicker
                 options={versions.versions}
                 selected={selectedVersion}
@@ -262,10 +266,10 @@ export default function ScanDetailPage() {
                 <LoadingLine size="inline">Fetching {selectedVersion} via sandbox</LoadingLine>
               ) : null}
               {compareError ? <Alert tone="warn">{compareError}</Alert> : null}
-            </Card>
+            </div>
           ) : null}
 
-          <section class="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)_320px] gap-4">
+          <section class={workbenchGridClass}>
             <Card as="aside" class="p-0 overflow-hidden flex flex-col min-h-0">
               <div class="px-4 py-3 border-b border-border">
                 <SectionLabel>Release tree</SectionLabel>
@@ -302,9 +306,9 @@ export default function ScanDetailPage() {
               )}
             </Card>
 
-            <Card as="aside" class="p-5 flex flex-col gap-3">
-              <SectionLabel>Risk signals</SectionLabel>
-              {detail.findings.length ? (
+            {hasRuleFindings ? (
+              <Card as="aside" class="p-5 flex flex-col gap-3">
+                <SectionLabel>Risk signals</SectionLabel>
                 <ul class="list-none p-0 m-0 flex flex-col gap-2">
                   {detail.findings.map((finding) => (
                     <FindingCard key={finding.id} severity={finding.severity} file={finding.file}>
@@ -313,10 +317,8 @@ export default function ScanDetailPage() {
                     </FindingCard>
                   ))}
                 </ul>
-              ) : (
-                <EmptyLine>No rule findings.</EmptyLine>
-              )}
-            </Card>
+              </Card>
+            ) : null}
           </section>
 
           <PersistedReportSections summary={summary} ai={ai} />
@@ -387,26 +389,35 @@ function ReportOverview({
   const changed = diffCount || summary.diff?.filter((entry) => entry.status !== "unchanged").length ||
     detail.files.filter((file) => file.status !== "unchanged").length;
   const severityCounts = countSeverities([...findings, ...aiFindings]);
+  const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
+  const assistantTake = ai?.releaseAssessment?.replaceAll("_", " ") || "assessment missing";
+
   return (
-    <section class="flex flex-col gap-4">
-      <div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
-        <SummaryCard label="status" value="sentence">{detail.scan.status}</SummaryCard>
-        <SummaryCard label="stage ID">{detail.scan.stageId}</SummaryCard>
-        <SummaryCard
-          label="risk"
-          value="metric"
-          tone={detail.scan.risk === "high" || detail.scan.risk === "critical" ? "danger" : "default"}
-        >
-          {detail.scan.risk}
-        </SummaryCard>
-        <SummaryCard label="files" value="metric">{detail.files.length}</SummaryCard>
-        <SummaryCard label="changed" value="metric">{changed}</SummaryCard>
-        <SummaryCard label="assistant take" value="sentence">{ai?.releaseAssessment?.replaceAll("_", " ") || "saved"}</SummaryCard>
-        <SummaryCard label="report">{summary.report?.version ? `v${summary.report.version}` : "legacy"}</SummaryCard>
+    <section class="flex flex-col gap-3 border-y border-border py-4">
+      <div class="flex flex-wrap items-center gap-2">
+        <Badge tone={severityTone(detail.scan.risk)}>{detail.scan.risk}</Badge>
+        {ai ? (
+          <Badge tone={ai.requiresManualReview ? "medium" : "ok"}>
+            {ai.requiresManualReview ? "manual review" : "no extra review"}
+          </Badge>
+        ) : (
+          <Badge tone="neutral">assistant unavailable</Badge>
+        )}
+        <Badge tone={findingTotal ? "medium" : "ok"}>
+          {findingTotal ? `${findingTotal} ${pluralize("finding", findingTotal)}` : "no findings"}
+        </Badge>
+        <Badge tone="neutral">{assistantTake}</Badge>
       </div>
-      <Card class="p-4">
-        <SeverityBar counts={severityCounts} />
-      </Card>
+      <MonoDetail
+        parts={[
+          detail.scan.status,
+          <span>stage {detail.scan.stageId}</span>,
+          <span>{detail.files.length} {pluralize("file", detail.files.length)}</span>,
+          <span>{changed} changed</span>,
+          <span>{summary.report?.version ? `report v${summary.report.version}` : "legacy report"}</span>,
+        ]}
+      />
+      {findingTotal ? <SeverityBar counts={severityCounts} class="max-w-[520px]" /> : null}
     </section>
   );
 }
@@ -437,9 +448,8 @@ function normalizeSeverityKey(value: string | undefined): SeverityKey | null {
 
 function PersistedReportSections({ summary, ai }: { summary: PersistedSummary; ai: AiReview | null }) {
   return (
-    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <Card class="p-5 flex flex-col gap-3">
-        <SectionLabel>Reviewer notes</SectionLabel>
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-6">
+      <ReportSection title="Reviewer notes">
         {ai ? (
           <>
             <div class="flex flex-wrap gap-2">
@@ -455,10 +465,9 @@ function PersistedReportSections({ summary, ai }: { summary: PersistedSummary; a
         ) : (
           <EmptyLine>No reviewer notes were saved for this review.</EmptyLine>
         )}
-      </Card>
+      </ReportSection>
 
-      <Card class="p-5 flex flex-col gap-3">
-        <SectionLabel>Report fingerprint</SectionLabel>
+      <ReportSection title="Report fingerprint">
         {summary.report ? (
           <div class="flex flex-col gap-2 text-[13px]">
             <MetadataRow label="version" value={String(summary.report.version ?? "unknown")} />
@@ -469,7 +478,7 @@ function PersistedReportSections({ summary, ai }: { summary: PersistedSummary; a
           <EmptyLine>This older review does not include a report fingerprint.</EmptyLine>
         )}
         {summary.safety ? (
-          <details class="group mt-2">
+          <details class="group mt-1">
             <summary class="cursor-pointer font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle list-none">
               Safety model
             </summary>
@@ -478,12 +487,28 @@ function PersistedReportSections({ summary, ai }: { summary: PersistedSummary; a
             </pre>
           </details>
         ) : null}
-      </Card>
+      </ReportSection>
 
-      <Card class="p-5 flex flex-col gap-3 lg:col-span-2">
-        <SectionLabel>Manifest changes</SectionLabel>
+      <ReportSection title="Manifest changes" class="lg:col-span-2">
         {summary.packageJsonDiff ? <PackageJsonDiffView diff={summary.packageJsonDiff} /> : <EmptyLine>No manifest changes were saved for this review.</EmptyLine>}
-      </Card>
+      </ReportSection>
+    </section>
+  );
+}
+
+function ReportSection({
+  title,
+  children,
+  class: className,
+}: {
+  title: string;
+  children: ComponentChildren;
+  class?: string;
+}) {
+  return (
+    <section class={`flex flex-col gap-3 min-w-0 ${className || ""}`}>
+      <SectionLabel>{title}</SectionLabel>
+      {children}
     </section>
   );
 }
@@ -504,12 +529,16 @@ function AiFindingList({ findings }: { findings: AiFinding[] }) {
 
 function PackageJsonDiffView({ diff }: { diff: PackageJsonDiff }) {
   return (
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
-      <SummaryCard label="package">{diff.name || "unknown"}</SummaryCard>
-      <SummaryCard label="version">{diff.previousVersion || "—"} → {diff.stagedVersion || "—"}</SummaryCard>
-      <SummaryCard label="entrypoints" value="sentence">{diff.entrypointsChanged ? "changed" : "unchanged"}</SummaryCard>
-      <ChangeList title="scripts" rows={diff.scripts} />
-      <ChangeList title="dependencies" rows={diff.dependencies} />
+    <div class="flex flex-col gap-4">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-2">
+        <MetadataRow label="package" value={diff.name || "unknown"} />
+        <MetadataRow label="version" value={`${diff.previousVersion || "—"} → ${diff.stagedVersion || "—"}`} />
+        <MetadataRow label="entrypoints" value={diff.entrypointsChanged ? "changed" : "unchanged"} />
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <ChangeList title="scripts" rows={diff.scripts} />
+        <ChangeList title="dependencies" rows={diff.dependencies} />
+      </div>
     </div>
   );
 }
@@ -522,7 +551,7 @@ function ChangeList({
   rows: Array<{ key: string; status: "added" | "removed" | "modified"; previous?: string; staged?: string }>;
 }) {
   return (
-    <div class="lg:col-span-3 border border-border rounded-lg overflow-hidden">
+    <div class="border border-border rounded-lg overflow-hidden">
       <div class="px-3 py-2 bg-surface-2 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
         {title} ({rows.length})
       </div>
@@ -554,6 +583,10 @@ function MetadataRow({ label, value }: { label: string; value: string }) {
       <code class="text-xs text-ink-muted break-all">{value}</code>
     </div>
   );
+}
+
+function pluralize(word: string, count: number) {
+  return count === 1 ? word : `${word}s`;
 }
 
 function formatDate(value: string | number | Date) {

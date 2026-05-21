@@ -11,7 +11,7 @@ import {
 export default function LandingPage() {
   return (
     <PageShell class="gap-10">
-      <Card class="p-10 md:p-14 flex flex-col gap-5">
+      <section class="py-8 md:py-12 border-y border-border flex flex-col gap-5">
         <Eyebrow tone="accent">Release confidence for npm maintainers</Eyebrow>
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
           Catch risky changes before a staged package goes live.
@@ -26,7 +26,7 @@ export default function LandingPage() {
             Sign in
           </LinkButton>
         </div>
-      </Card>
+      </section>
 
       <StatusStrip>
         <StatusStripItem label="credentials" status="scoped" tone="ok">
