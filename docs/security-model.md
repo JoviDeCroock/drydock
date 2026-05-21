@@ -179,7 +179,7 @@ Do not expose signed report URLs until access controls, report canonicalization,
 ## Known gaps
 
 - Per-organization encrypted npm connections exist, and validation can check staged-tarball access when supplied a real stage ID; npm list/view capability checks still need confirmation before launch.
-- Queue-backed scan foundation exists, but the production queue resource, retry/dead-letter policy, and operational metrics still need deployment validation.
+- Queue-backed scan retry/dead-letter behavior exists in code and Wrangler config, but production queue resources and operational metrics still need deployment validation.
 - Persisted detail UI now renders core report data, but finding grouping and lifecycle timelines still need polish.
 - Tar parsing now rejects traversal paths, skips symlinks/hardlinks, handles long-name/PAX paths, and caps expanded size, but it still needs deeper archive-bomb fuzzing before broad public launch.
 - Basic D1-backed rate limits exist for scans and credential operations; production should add metrics, alerts, and edge/IP-based abuse controls.

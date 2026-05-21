@@ -61,7 +61,7 @@ scansRoutes.post("/", async (c) => {
     if (c.env.SCAN_QUEUE) {
       await c.env.SCAN_QUEUE.send(message);
     } else {
-      c.executionCtx.waitUntil(executeScanJob(c.env, c.executionCtx, message, db));
+      c.executionCtx.waitUntil(executeScanJob(c.env, c.executionCtx, message, db, { finalAttempt: true }));
     }
 
     return c.json({ scan: detail?.scan, queued: Boolean(c.env.SCAN_QUEUE) }, 202);

@@ -10,27 +10,42 @@ interface NpmStageGatewayProps {
   npmRegistry?: string;
 }
 
+export interface NpmStageGatewayPolicy {
+  allowed: boolean;
+  credentialed: boolean;
+  kind: "staged-tarball" | "published-tarball" | "package-metadata" | "blocked";
+}
+
+export function evaluateNpmStageGatewayRequest(requestUrl: string, method: string, registryUrl: string): NpmStageGatewayPolicy {
+  const url = new URL(requestUrl);
+  const registry = new URL(registryUrl || "https://registry.npmjs.org");
+  const sameOrigin = url.origin === registry.origin;
+  const normalizedMethod = method.toUpperCase();
+  const packageMetadataPath = /^\/(?:@[^/]+%2[fF][^/]+|[^/@-][^/]*)$/.test(url.pathname);
+  const isStagedTarball =
+    sameOrigin && normalizedMethod === "GET" && url.pathname.startsWith("/-/stage/") && url.pathname.endsWith("/tarball");
+  const isPublishedTarball =
+    sameOrigin && normalizedMethod === "GET" && url.pathname.endsWith(".tgz") && url.pathname.includes("/-/");
+  const isRegistryMetadata = sameOrigin && normalizedMethod === "GET" && packageMetadataPath;
+
+  if (isStagedTarball) return { allowed: true, credentialed: true, kind: "staged-tarball" };
+  if (isPublishedTarball) return { allowed: true, credentialed: true, kind: "published-tarball" };
+  if (isRegistryMetadata) return { allowed: true, credentialed: true, kind: "package-metadata" };
+  return { allowed: false, credentialed: false, kind: "blocked" };
+}
+
 export class NpmStageGateway extends WorkerEntrypoint<Cloudflare.Env, NpmStageGatewayProps> {
   async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    const registry = new URL(this.ctx.props.npmRegistry || this.env.NPM_REGISTRY || "https://registry.npmjs.org");
+    const registry = this.ctx.props.npmRegistry || this.env.NPM_REGISTRY || "https://registry.npmjs.org";
+    const policy = evaluateNpmStageGatewayRequest(request.url, request.method, registry);
 
-    const sameOrigin = url.origin === registry.origin;
-    const method = request.method.toUpperCase();
-    const packageMetadataPath = /^\/(?:@[^/]+%2[fF][^/]+|[^/@-][^/]*)$/.test(url.pathname);
-    const isStagedTarball =
-      sameOrigin && method === "GET" && url.pathname.startsWith("/-/stage/") && url.pathname.endsWith("/tarball");
-    const isPublishedTarball =
-      sameOrigin && method === "GET" && url.pathname.endsWith(".tgz") && url.pathname.includes("/-/");
-    const isRegistryMetadata = sameOrigin && method === "GET" && packageMetadataPath;
-
-    if (!isStagedTarball && !isPublishedTarball && !isRegistryMetadata) {
+    if (!policy.allowed) {
       return new Response("blocked by stage gateway", { status: 403 });
     }
 
     const token = this.ctx.props.npmToken;
     const forwarded = new Request(request);
-    if (token) forwarded.headers.set("authorization", `Bearer ${token}`);
+    if (token && policy.credentialed) forwarded.headers.set("authorization", `Bearer ${token}`);
     forwarded.headers.set("user-agent", "staged-publish-review/0.3");
 
     return fetch(forwarded);

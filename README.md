@@ -215,8 +215,9 @@ Never write SQL migrations by hand; update `server/db/schema.ts` and generate mi
 3. Create production resources and replace placeholder IDs in `wrangler.jsonc`:
    - D1 database: `pnpm wrangler d1 create staged-publish-review`
    - Scan queue: `pnpm wrangler queues create staged-publish-review-scans`
+   - Scan dead-letter queue: `pnpm wrangler queues create staged-publish-review-scans-dlq`
    - Compare cache KV namespace: `pnpm wrangler kv namespace create COMPARE_CACHE`
-   - Before private beta, also configure a queue retry policy and dead-letter queue.
+   - Keep the Queue consumer `max_retries` / `dead_letter_queue` settings in `wrangler.jsonc` aligned with `MAX_SCAN_JOB_ATTEMPTS` in `server/lib/scan-job.ts`.
 4. Set the real D1 `database_id`, KV namespace `id`, and production `BETTER_AUTH_URL`, then apply migrations.
 5. Build + deploy:
 
@@ -240,7 +241,7 @@ Defended today:
 
 Product requirements before SaaS launch:
 
-- Async scan jobs with retryable failure states.
+- Production verification of async scan retry and dead-letter behavior.
 - Durable report rendering from persisted data.
 - Expanded abuse controls and operator metrics.
 - Safer artifact storage in R2 for derived/redacted artifacts.

@@ -31,13 +31,19 @@ export interface NpmCredentialValidation {
   status: "valid" | "invalid";
   capabilities: {
     registryAuth: boolean;
+    stagedListAccess: boolean;
     stagedTarballAccess?: boolean;
+    stagedViewAccess?: boolean;
     whoami?: string | null;
     registryUrl: string;
     stageId?: string;
     status?: number;
+    stagedListStatus?: number;
+    stagedViewStatus?: number;
     stagedTarballStatus?: number;
     detail?: string;
+    stagedListDetail?: string;
+    stagedViewDetail?: string;
     stagedTarballDetail?: string;
   };
 }
@@ -121,16 +127,20 @@ export async function validateNpmCredential(
 ): Promise<NpmCredentialValidation> {
   const registry = normalizeRegistryUrl(registryUrl);
   const auth = await validateRegistryAuth(registry, token);
+  const stagedList = await validateStagedListAccess(registry, token);
+  const stagedView = options.stageId ? await validateStagedViewAccess(registry, token, options.stageId) : null;
   const stagedTarball = options.stageId
     ? await validateStagedTarballAccess(registry, token, options.stageId)
     : null;
-  const ok = auth.registryAuth && (stagedTarball ? stagedTarball.stagedTarballAccess : true);
+  const ok = auth.registryAuth && stagedList.stagedListAccess && (stagedView ? stagedView.stagedViewAccess : true) && (stagedTarball ? stagedTarball.stagedTarballAccess : true);
 
   return {
     ok,
     status: ok ? "valid" : "invalid",
     capabilities: {
       ...auth,
+      ...stagedList,
+      ...(stagedView ?? {}),
       ...(stagedTarball ?? {}),
       registryUrl: registry,
     },
@@ -159,21 +169,53 @@ async function validateRegistryAuth(registry: string, token: string) {
   }
 }
 
+async function validateStagedListAccess(registry: string, token: string) {
+  try {
+    const response = await fetch(`${registry}/-/stage?perPage=1`, {
+      headers: npmAuthHeaders(token, "application/json"),
+    });
+    await response.body?.cancel();
+    return {
+      stagedListAccess: response.ok,
+      stagedListStatus: response.status,
+      stagedListDetail: response.ok ? undefined : response.statusText,
+    };
+  } catch (err) {
+    return {
+      stagedListAccess: false,
+      stagedListDetail: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+async function validateStagedViewAccess(registry: string, token: string, stageId: string) {
+  const url = `${registry}/-/stage/${encodeURIComponent(stageId)}`;
+  try {
+    const response = await fetch(url, {
+      headers: npmAuthHeaders(token, "application/json"),
+    });
+    await response.body?.cancel();
+    return {
+      stageId,
+      stagedViewAccess: response.ok,
+      stagedViewStatus: response.status,
+      stagedViewDetail: response.ok ? undefined : response.statusText,
+    };
+  } catch (err) {
+    return {
+      stageId,
+      stagedViewAccess: false,
+      stagedViewDetail: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 async function validateStagedTarballAccess(registry: string, token: string, stageId: string) {
   const url = `${registry}/-/stage/${encodeURIComponent(stageId)}/tarball`;
   try {
-    const head = await fetch(url, {
-      method: "HEAD",
-      headers: npmAuthHeaders(token, "application/octet-stream"),
-    });
-    if (head.ok) {
-      return { stageId, stagedTarballAccess: true, stagedTarballStatus: head.status };
-    }
-    // Some registry endpoints do not implement HEAD consistently, so fall back to a ranged GET
-    // for any non-OK HEAD response. The body is cancelled immediately after headers arrive.
     const ranged = await fetch(url, {
       headers: {
-        ...npmAuthHeadersRecord(token, "application/octet-stream"),
+        ...npmAuthHeaders(token, "application/octet-stream"),
         range: "bytes=0-0",
       },
     });
@@ -199,10 +241,6 @@ function npmAuthHeaders(token: string, accept: string) {
     authorization: `Bearer ${token}`,
     "user-agent": "staged-publish-review/credential-validation",
   };
-}
-
-function npmAuthHeadersRecord(token: string, accept: string): Record<string, string> {
-  return npmAuthHeaders(token, accept);
 }
 
 async function encryptionKey(env: Cloudflare.Env) {

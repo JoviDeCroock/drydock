@@ -118,7 +118,7 @@ Exit criteria:
 
 ## Phase 4 — Async scans with Cloudflare Queues
 
-Status: foundation implemented and `wrangler.jsonc` declares producer/consumer bindings; production queue and retry/DLQ behavior still need deployment validation.
+Status: retry/DLQ semantics are implemented in code and Wrangler config; production queue resources still need to be created and validated in the target Cloudflare account.
 
 Goals:
 
@@ -130,6 +130,9 @@ Completed:
 - Added Queue producer/consumer binding shape for `SCAN_QUEUE`.
 - Declared the `staged-publish-review-scans` producer/consumer in `wrangler.jsonc` with single-message batches.
 - Added queue consumer that executes scan jobs without putting npm token material in the queue payload.
+- Added retry classification for transient npm/sandbox failures versus terminal credential/archive failures.
+- Added explicit Queue `max_retries` and `dead_letter_queue` config for exhausted transient jobs.
+- Local queue-less execution still persists failed scans immediately because there is no platform retry/DLQ path.
 - Added local queue-less execution: when no queue binding is present, `POST /api/v1/scans` creates the D1 row and schedules work with `executionCtx.waitUntil()`.
 - Added scan status lifecycle:
   - `pending`
@@ -149,11 +152,9 @@ Completed:
 
 Remaining tasks:
 
-- Create the production queue resource (`staged-publish-review-scans`) and a dead-letter queue; verify deploy-time bindings in the target Cloudflare account.
-- Configure explicit consumer retry limits, backoff expectations, and dead-letter routing in Wrangler.
-- Fix queue retry semantics so transient worker/AI/npm failures are retried instead of only logged.
-- Classify terminal failures that should not retry, such as invalid stage IDs, missing organization npm connections, authorization failures, and malformed package archives.
-- Ensure retries are idempotent: a repeated job for the same scan ID should not duplicate files, findings, or audit events.
+- Create the production queue resource (`staged-publish-review-scans`) and dead-letter queue (`staged-publish-review-scans-dlq`); verify deploy-time bindings in the target Cloudflare account.
+- Validate that exhausted retryable failures land in the DLQ in production and are visible to operators.
+- Ensure retries are fully idempotent: a repeated job for the same scan ID should not duplicate audit events, and should not overwrite a completed scan with a later retry.
 - Add operator-visible scan duration/failure metrics.
 
 Exit criteria:
@@ -291,10 +292,9 @@ Gate tasks:
 
 Reliability and operations:
 
-- Fix Queue retry/DLQ semantics so transient scan failures retry and exhausted jobs are visible to operators.
-- Add explicit Cloudflare Queue retry policy and dead-letter queue configuration.
-- Ensure scan execution is idempotent across retries.
-- Add structured scan error taxonomy with user-safe messages and operator-facing details.
+- Verify Queue retry/DLQ semantics in production so transient scan failures retry and exhausted jobs are visible to operators.
+- Ensure scan execution is fully idempotent across retries.
+- Continue expanding the structured scan error taxonomy with user-safe messages and operator-facing details.
 - Add metrics/logs for scan duration, queue retries/exhaustion, npm fetch failures, AI failures, archive parser failures, and rate-limit events.
 
 Security boundaries:

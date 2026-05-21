@@ -98,8 +98,9 @@ Current async-capable flow:
 2. If `SCAN_QUEUE` is bound, the parent Worker sends a token-free scan job message to Cloudflare Queues; otherwise local/dev falls back to `executionCtx.waitUntil()`.
 3. Queue/background execution marks the scan `running`, resolves the organization's encrypted npm connection, and executes the scan pipeline.
 4. Pipeline stores derived/redacted report data and marks the scan `complete`.
-5. Failures are persisted as `failed` with structured `error_json`.
-6. UI polls `GET /api/v1/scans/:id` until terminal state.
+5. Terminal failures are persisted as `failed` with structured `error_json`; transient npm/sandbox failures are retried before they are marked failed.
+6. Exhausted retryable Queue jobs are sent to the configured dead-letter queue for operator review.
+7. UI polls `GET /api/v1/scans/:id` until terminal state.
 
 `POST /api/v1/scan` remains a synchronous compatibility route while the product moves to the persisted report surface.
 
@@ -178,7 +179,7 @@ Implemented `npm_connections` responsibilities:
 - support rotation/removal;
 - emit audit events for add, validate, use, and delete.
 
-Credential validation is empirical where possible: it checks registry auth through `/-/whoami`, and when the user supplies a real stage ID it checks staged-tarball access through the staged tarball endpoint without retaining the tarball. Before launch, add any remaining npm list/view capability checks once the exact endpoint permissions are confirmed. Do not rely solely on broad token labels.
+Credential validation is empirical where possible: it checks registry auth through `/-/whoami`, staged list access through `GET /-/stage?perPage=1`, and when the user supplies a real stage ID it checks staged view plus ranged staged-tarball access without retaining the tarball. Before launch, confirm the least-privilege token shape with real npm tokens. Do not rely solely on broad token labels.
 
 ## Report model and future signing
 

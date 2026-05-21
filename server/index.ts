@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { createAuth, getAuthSession } from "./lib/auth";
-import { executeScanJob, type ScanQueueMessage } from "./lib/scan-job";
+import { classifyScanError, executeScanJob, MAX_SCAN_JOB_ATTEMPTS, retryDelaySeconds, type ScanQueueMessage } from "./lib/scan-job";
 import { npmConnectionRoutes } from "./routes/npm-connection";
 import { scanRoutes } from "./routes/scan";
 import { scansRoutes } from "./routes/scans";
@@ -110,9 +110,29 @@ export default {
   async queue(batch: MessageBatch<ScanQueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
     for (const message of batch.messages) {
       try {
-        await executeScanJob(env, ctx, message.body);
+        await executeScanJob(env, ctx, message.body, undefined, {
+          attempt: message.attempts,
+          finalAttempt: message.attempts >= MAX_SCAN_JOB_ATTEMPTS,
+        });
       } catch (err) {
-        console.error("scan queue job failed", err);
+        const safe = classifyScanError(err);
+        if (safe.retryable && message.attempts < MAX_SCAN_JOB_ATTEMPTS) {
+          message.retry({ delaySeconds: retryDelaySeconds(message.attempts) });
+          console.warn("scan queue job scheduled for retry", {
+            scanId: message.body.scanId,
+            attempt: message.attempts,
+            nextDelaySeconds: retryDelaySeconds(message.attempts),
+            error: safe,
+          });
+        } else {
+          console.error("scan queue job failed", {
+            scanId: message.body.scanId,
+            attempt: message.attempts,
+            exhausted: safe.retryable,
+            error: safe,
+          });
+          if (safe.retryable) throw err;
+        }
       }
     }
   },
