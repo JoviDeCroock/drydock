@@ -13,8 +13,16 @@
       "binding": "LOADER"
     }
   ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "staged-publish-sandbox-prototype",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
   "vars": {
     "AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-    "NPM_REGISTRY": "https://registry.npmjs.org"
+    "NPM_REGISTRY": "https://registry.npmjs.org",
+    "AUTH_REQUIRED": "false"
   }
 }
