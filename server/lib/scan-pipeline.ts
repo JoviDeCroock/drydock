@@ -114,45 +114,46 @@ export async function runScanPipeline(
   };
   const reportDigest = await sha256Hex(stableJson(reportPayload));
 
-  await persistScan(db, {
-    id: scanId,
-    stageId: input.stageId,
-    organizationId: input.organizationId,
-    ownerUserId: session.userId,
-    packageJson: redactedPackageJson,
-    previousPackageJson: redactedPreviousPackageJson,
-    risk,
-    status: "complete",
-    summary: {
-      report: {
-        version: reportPayload.version,
-        digest: reportDigest,
-        digestAlgorithm: "sha256",
-        generatedAt: new Date().toISOString(),
-      },
-      packageJsonDiff,
-      diff,
-      safety: result.safety,
-    },
-    ai: aiFindings,
-    files: redactedStagedFiles,
-    diff,
-    findings: ruleFindings,
-    report: { version: reportPayload.version, digest: reportDigest },
-  });
-
-  await recordScanEvent(db, {
-    organizationId: input.organizationId,
-    actorUserId: session.userId,
-    scanId,
-    type: "scan.completed",
-    metadata: {
+  await Promise.all([
+    persistScan(db, {
+      id: scanId,
       stageId: input.stageId,
-      packageName: result.package.name,
-      stagedVersion: result.package.stagedVersion,
+      organizationId: input.organizationId,
+      ownerUserId: session.userId,
+      packageJson: redactedPackageJson,
+      previousPackageJson: redactedPreviousPackageJson,
       risk,
-    },
-  });
+      status: "complete",
+      summary: {
+        report: {
+          version: reportPayload.version,
+          digest: reportDigest,
+          digestAlgorithm: "sha256",
+          generatedAt: new Date().toISOString(),
+        },
+        packageJsonDiff,
+        diff,
+        safety: result.safety,
+      },
+      ai: aiFindings,
+      files: redactedStagedFiles,
+      diff,
+      findings: ruleFindings,
+      report: { version: reportPayload.version, digest: reportDigest },
+    }),
+    recordScanEvent(db, {
+      organizationId: input.organizationId,
+      actorUserId: session.userId,
+      scanId,
+      type: "scan.completed",
+      metadata: {
+        stageId: input.stageId,
+        packageName: result.package.name,
+        stagedVersion: result.package.stagedVersion,
+        risk,
+      },
+    }),
+  ]);
 
   return result;
 }

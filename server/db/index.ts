@@ -248,8 +248,10 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
       },
     });
 
-  await db.delete(scanFiles).where(eq(scanFiles.scanId, input.id));
-  await db.delete(scanFindings).where(eq(scanFindings.scanId, input.id));
+  await Promise.all([
+    db.delete(scanFiles).where(eq(scanFiles.scanId, input.id)),
+    db.delete(scanFindings).where(eq(scanFindings.scanId, input.id)),
+  ]);
 
   const diffByPath = new Map(input.diff.map((entry) => [entry.path, entry]));
   const rows = input.files.map((file) => {
@@ -265,21 +267,23 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
       textSample: file.textSample || null,
     };
   });
-  if (rows.length) await db.insert(scanFiles).values(rows);
 
-  if (input.findings.length) {
-    await db.insert(scanFindings).values(
-      input.findings.map((finding) => ({
-        id: crypto.randomUUID(),
-        scanId: input.id,
-        severity: finding.severity,
-        file: finding.file,
-        evidence: finding.evidence,
-        reason: finding.reason,
-        source: "rule",
-      })),
-    );
-  }
+  await Promise.all([
+    rows.length ? db.insert(scanFiles).values(rows) : Promise.resolve(),
+    input.findings.length
+      ? db.insert(scanFindings).values(
+          input.findings.map((finding) => ({
+            id: crypto.randomUUID(),
+            scanId: input.id,
+            severity: finding.severity,
+            file: finding.file,
+            evidence: finding.evidence,
+            reason: finding.reason,
+            source: "rule",
+          })),
+        )
+      : Promise.resolve(),
+  ]);
 }
 
 export async function listScans(db: AppDb, organizationId: string) {
@@ -308,14 +312,17 @@ export async function listScans(db: AppDb, organizationId: string) {
 }
 
 export async function getScan(db: AppDb, id: string, organizationId: string) {
-  const [scan] = await db
-    .select()
-    .from(scans)
-    .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
-    .limit(1);
+  const [scanRows, files, findings] = await Promise.all([
+    db
+      .select()
+      .from(scans)
+      .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
+      .limit(1),
+    db.select().from(scanFiles).where(eq(scanFiles.scanId, id)),
+    db.select().from(scanFindings).where(eq(scanFindings.scanId, id)),
+  ]);
+  const scan = scanRows[0];
   if (!scan) return null;
-  const files = await db.select().from(scanFiles).where(eq(scanFiles.scanId, id));
-  const findings = await db.select().from(scanFindings).where(eq(scanFindings.scanId, id));
   return { scan, files, findings };
 }
 
