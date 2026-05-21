@@ -1,14 +1,23 @@
 import { drizzle } from "drizzle-orm/d1";
-import { eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import * as schema from "./schema";
-import { scans, scanFiles, scanFindings } from "./schema";
+import { organizationMembers, organizations, scanEvents, scanFiles, scanFindings, scans } from "./schema";
+import { personalOrganizationId } from "../lib/ownership";
 import type { DiffEntry, FileRecord, Finding, PackageJsonSummary } from "../lib/review";
 
 export type AppDb = ReturnType<typeof drizzle<typeof schema>>;
 
+export interface WorkspaceSession {
+  userId: string;
+  email?: string;
+  name?: string;
+}
+
 export interface PersistedScanInput {
   id: string;
   stageId: string;
+  organizationId: string;
+  ownerUserId: string;
   packageJson?: PackageJsonSummary | null;
   previousPackageJson?: PackageJsonSummary | null;
   risk: string;
@@ -20,8 +29,53 @@ export interface PersistedScanInput {
   findings: Finding[];
 }
 
+export interface AuditEventInput {
+  organizationId: string;
+  actorUserId?: string | null;
+  scanId?: string | null;
+  type: string;
+  metadata?: unknown;
+}
+
 export function createDb(d1: D1Database) {
   return drizzle(d1, { schema });
+}
+
+export async function ensurePersonalOrganization(db: AppDb, session: WorkspaceSession) {
+  const organizationId = personalOrganizationId(session.userId);
+  const now = new Date();
+  const name = session.name || session.email || "Personal workspace";
+
+  await db.insert(organizations).values({
+    id: organizationId,
+    name,
+    ownerUserId: session.userId,
+    createdAt: now,
+    updatedAt: now,
+  }).onConflictDoNothing();
+
+  await db.insert(organizationMembers).values({
+    id: `member:${organizationId}:${session.userId}`,
+    organizationId,
+    userId: session.userId,
+    role: "owner",
+    createdAt: now,
+    updatedAt: now,
+  }).onConflictDoNothing();
+
+  return organizationId;
+}
+
+export async function recordScanEvent(db: AppDb, input: AuditEventInput) {
+  await db.insert(scanEvents).values({
+    id: crypto.randomUUID(),
+    organizationId: input.organizationId,
+    actorUserId: input.actorUserId || null,
+    scanId: input.scanId || null,
+    type: input.type,
+    metadataJson: input.metadata ?? null,
+    createdAt: new Date(),
+  });
 }
 
 export async function persistScan(db: AppDb, input: PersistedScanInput) {
@@ -29,6 +83,8 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
   await db.insert(scans).values({
     id: input.id,
     stageId: input.stageId,
+    organizationId: input.organizationId,
+    ownerUserId: input.ownerUserId,
     packageName: input.packageJson?.name || null,
     stagedVersion: input.packageJson?.version || null,
     previousVersion: input.previousPackageJson?.version || null,
@@ -71,12 +127,21 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
   }
 }
 
-export async function listScans(db: AppDb) {
-  return db.select().from(scans).limit(50);
+export async function listScans(db: AppDb, organizationId: string) {
+  return db
+    .select()
+    .from(scans)
+    .where(eq(scans.organizationId, organizationId))
+    .orderBy(desc(scans.createdAt))
+    .limit(50);
 }
 
-export async function getScan(db: AppDb, id: string) {
-  const [scan] = await db.select().from(scans).where(eq(scans.id, id)).limit(1);
+export async function getScan(db: AppDb, id: string, organizationId: string) {
+  const [scan] = await db
+    .select()
+    .from(scans)
+    .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
+    .limit(1);
   if (!scan) return null;
   const files = await db.select().from(scanFiles).where(eq(scanFiles.scanId, id));
   const findings = await db.select().from(scanFindings).where(eq(scanFindings.scanId, id));

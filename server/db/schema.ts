@@ -1,8 +1,42 @@
-import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+
+export const user = sqliteTable("user", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  email: text("email").notNull().unique(),
+  emailVerified: integer("email_verified", { mode: "boolean" }).notNull().default(false),
+  image: text("image"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const organizations = sqliteTable("organizations", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  ownerUserId: text("owner_user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+}, (table) => ({
+  ownerIdx: index("organizations_owner_idx").on(table.ownerUserId),
+}));
+
+export const organizationMembers = sqliteTable("organization_members", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  role: text("role").notNull().default("owner"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+}, (table) => ({
+  userIdx: index("organization_members_user_idx").on(table.userId),
+  memberUniqueIdx: uniqueIndex("organization_members_org_user_unique_idx").on(table.organizationId, table.userId),
+}));
 
 export const scans = sqliteTable("scans", {
   id: text("id").primaryKey(),
   stageId: text("stage_id").notNull(),
+  organizationId: text("organization_id").references(() => organizations.id, { onDelete: "cascade" }),
+  ownerUserId: text("owner_user_id").references(() => user.id, { onDelete: "set null" }),
   packageName: text("package_name"),
   stagedVersion: text("staged_version"),
   previousVersion: text("previous_version"),
@@ -13,6 +47,8 @@ export const scans = sqliteTable("scans", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 }, (table) => ({
+  orgIdx: index("scans_org_idx").on(table.organizationId),
+  ownerIdx: index("scans_owner_idx").on(table.ownerUserId),
   stageIdx: index("scans_stage_id_idx").on(table.stageId),
   packageIdx: index("scans_package_idx").on(table.packageName),
 }));
@@ -40,15 +76,18 @@ export const scanFindings = sqliteTable("scan_findings", {
   source: text("source").notNull().default("rule"),
 });
 
-export const user = sqliteTable("user", {
+export const scanEvents = sqliteTable("scan_events", {
   id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  email: text("email").notNull().unique(),
-  emailVerified: integer("email_verified", { mode: "boolean" }).notNull().default(false),
-  image: text("image"),
+  organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  actorUserId: text("actor_user_id").references(() => user.id, { onDelete: "set null" }),
+  scanId: text("scan_id").references(() => scans.id, { onDelete: "cascade" }),
+  type: text("type").notNull(),
+  metadataJson: text("metadata_json", { mode: "json" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
-});
+}, (table) => ({
+  orgCreatedIdx: index("scan_events_org_created_idx").on(table.organizationId, table.createdAt),
+  scanIdx: index("scan_events_scan_idx").on(table.scanId),
+}));
 
 export const session = sqliteTable("session", {
   id: text("id").primaryKey(),

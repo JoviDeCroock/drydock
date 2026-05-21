@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { analyzeWithAi } from "../lib/ai-review";
-import { createDb, persistScan } from "../db";
+import { createDb, ensurePersonalOrganization, persistScan, recordScanEvent } from "../db";
 import { fetchPackageMetadata, pickPreviousVersion } from "../lib/registry";
 import {
   combineRisk,
@@ -33,6 +33,10 @@ scanRoutes.post("/", async (c) => {
   }
 
   try {
+    const db = createDb(c.env.DB);
+    const session = c.get("authSession");
+    const organizationId = await ensurePersonalOrganization(db, session);
+
     const staged = await downloadInSandbox(c.env, c.executionCtx, {
       stageId: input.stageId,
       maxFiles: input.maxFiles,
@@ -81,9 +85,11 @@ scanRoutes.post("/", async (c) => {
       },
     };
 
-    await persistScan(createDb(c.env.DB), {
+    await persistScan(db, {
       id: scanId,
       stageId: input.stageId,
+      organizationId,
+      ownerUserId: session.userId,
       packageJson: redactedPackageJson,
       previousPackageJson: redactedPreviousPackageJson,
       risk,
@@ -93,6 +99,19 @@ scanRoutes.post("/", async (c) => {
       files: redactedStagedFiles,
       diff,
       findings: ruleFindings,
+    });
+
+    await recordScanEvent(db, {
+      organizationId,
+      actorUserId: session.userId,
+      scanId,
+      type: "scan.completed",
+      metadata: {
+        stageId: input.stageId,
+        packageName: result.package.name,
+        stagedVersion: result.package.stagedVersion,
+        risk,
+      },
     });
 
     return c.json(result);

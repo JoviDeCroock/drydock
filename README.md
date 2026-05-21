@@ -16,6 +16,7 @@ Cloudflare Worker + Preact UI prototype for reviewing an npm staged publish befo
 - The service diffs the staged tarball against the currently published previous version when package metadata is available.
 - Package files are treated as hostile evidence. The AI prompt explicitly ignores file-contained instructions, output is schema constrained, and AI risk cannot downgrade deterministic findings.
 - Review results are persisted in Cloudflare D1 through Drizzle ORM.
+- Persisted scans are scoped to the authenticated user's personal organization, and scan completion/view actions are recorded as audit events.
 - `/`, `/login`, `/register`, `/dashboard`, and `/dashboard/scans/:id` are routed with `preact-iso` and lazy-loaded page modules.
 
 ## Important constraint
@@ -112,7 +113,7 @@ Response includes:
 
 ## Database
 
-Schema is defined in `server/db/schema.ts`. SQL migrations live in `drizzle/` and should be generated with Drizzle Kit:
+Schema is defined in `server/db/schema.ts`. SQL migrations live in `drizzle/` and should be generated with Drizzle Kit. Scans are now owned by an organization/user boundary (`organizations`, `organization_members`, `scans.organization_id`, `scans.owner_user_id`) and audit events are stored in `scan_events`.
 
 ```sh
 pnpm db:generate
@@ -162,7 +163,7 @@ Not defended in this spike:
 - Perfect malware detection. This is triage, not a proof of safety.
 - Deep binary analysis. Large/binary/native files are flagged for manual review.
 - Full npm CLI auth edge cases around staged publish permissions.
-- Production-grade RBAC, rate limiting, audit logs, async queues, and R2 artifact retention.
+- Production-grade RBAC, rate limiting, async queues, and R2 artifact retention. The current build has personal-organization scan scoping and a basic scan audit event table, but not full team RBAC yet.
 
 ## Recommendation for the real build
 

@@ -3,6 +3,8 @@ import type { ScanResult } from "../../server/types";
 export interface ScanListItem {
   id: string;
   stageId: string;
+  organizationId?: string | null;
+  ownerUserId?: string | null;
   packageName: string | null;
   stagedVersion: string | null;
   previousVersion: string | null;
