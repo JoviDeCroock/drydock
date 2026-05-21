@@ -338,11 +338,14 @@ function WorkspaceSetupPanel({
   onDelete: () => void;
 }) {
   return (
-    <details open={!connection} class="group border-y border-border py-3">
-      <summary class="list-none cursor-pointer">
+    <details open={!connection} class="group">
+      <summary class="list-none cursor-pointer rounded-lg border border-border bg-surface px-4 py-3 transition-colors duration-150 ease-out hover:border-border-strong hover:bg-surface-2">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="flex flex-col gap-1.5 min-w-0">
             <SectionLabel>Workspace setup</SectionLabel>
+            <Muted class="text-[13px] m-0">
+              Manage npm access, credential checks, and workspace safety defaults.
+            </Muted>
             <MonoDetail
               parts={[
                 <span>npm {connection ? "connected" : "not connected"}</span>,
@@ -353,13 +356,16 @@ function WorkspaceSetupPanel({
           </div>
           <div class="flex flex-wrap items-center justify-end gap-2">
             <Badge tone={connection ? "ok" : "info"}>{connection ? connection.validationStatus : "connect npm"}</Badge>
-            <Badge tone="ok">credentials protected</Badge>
-            <span class="font-mono text-[11px] text-ink-subtle group-open:hidden">show settings</span>
-            <span class="font-mono text-[11px] text-ink-subtle hidden group-open:inline">hide settings</span>
+            <span class="inline-flex items-center justify-center rounded-md border border-border bg-surface-2 px-3 py-1.5 text-[12px] font-medium text-ink group-open:hidden">
+              Open settings
+            </span>
+            <span class="hidden items-center justify-center rounded-md border border-border bg-surface-2 px-3 py-1.5 text-[12px] font-medium text-ink group-open:inline-flex">
+              Hide settings
+            </span>
           </div>
         </div>
       </summary>
-      <div class="pt-4">
+      <div class="pt-3">
         <NpmConnectionCard
           connection={connection}
           token={token}

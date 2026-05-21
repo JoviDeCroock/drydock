@@ -71,7 +71,7 @@ Use cards for interactive containment and lists that need table-like edges. Pref
 - Saved scan reports and immediate review results use badge rows + mono metadata instead of grids of `SummaryCard`s.
 - Empty findings do not get full bordered panels; represent them as compact badges or `EmptyLine`s inside an existing section.
 - Dashboard order follows user intent: request a review first, recent reviews second, workspace setup last.
-- Connected workspace setup is collapsed by default; open it only when npm access is missing or the user wants settings.
+- Connected workspace setup is collapsed by default, but the closed row must look clickable and include an explicit “Open settings” affordance.
 - Connection metadata is displayed as compact label/value rows, while the editable credential form remains inside a card.
 - Marketing hero copy is unboxed; feature claims use cards below the headline.
 
