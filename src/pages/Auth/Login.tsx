@@ -1,6 +1,6 @@
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { useLocation } from "preact-iso";
-import { signIn } from "../../models/auth";
+import { getSession, signIn } from "../../models/auth";
 import {
   Alert,
   Button,
@@ -18,6 +18,17 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSession().then((session) => {
+      if (cancelled) return;
+      if (session?.user) location.route("/dashboard", true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const onSubmit = async (event: Event) => {
     event.preventDefault();
