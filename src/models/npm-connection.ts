@@ -1,3 +1,6 @@
+import { computed, createModel, signal } from "@preact/signals";
+import { apiFetch } from "./api";
+
 export interface PublicNpmConnection {
   id: string;
   organizationId: string;
@@ -30,55 +33,121 @@ export interface NpmCredentialValidation {
   };
 }
 
-export async function getNpmConnection(): Promise<PublicNpmConnection | null> {
-  const data = await apiFetch<{ connection: PublicNpmConnection | null }>("/api/v1/npm-connection");
-  return data.connection;
-}
+export type NpmConnectionStatus = "idle" | "saving" | "validating" | "deleting";
 
-export async function saveNpmConnection(input: {
-  token: string;
-  label?: string;
-  registryUrl?: string;
-}): Promise<PublicNpmConnection | null> {
-  const data = await apiFetch<{ connection: PublicNpmConnection | null }>(
-    "/api/v1/npm-connection",
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(input),
+const DEFAULT_LABEL = "npm registry";
+const DEFAULT_REGISTRY = "https://registry.npmjs.org";
+
+export const NpmConnectionModel = createModel(() => {
+  const connection = signal<PublicNpmConnection | null>(null);
+  const loaded = signal(false);
+  const status = signal<NpmConnectionStatus>("idle");
+  const error = signal<string | null>(null);
+
+  const token = signal("");
+  const label = signal(DEFAULT_LABEL);
+  const registry = signal(DEFAULT_REGISTRY);
+  const validationStageId = signal("");
+
+  const busy = computed(() => status.value !== "idle");
+  const isConnected = computed(() => connection.value !== null);
+  const validated = computed(() => connection.value?.validationStatus === "valid");
+
+  return {
+    connection,
+    loaded,
+    status,
+    error,
+    token,
+    label,
+    registry,
+    validationStageId,
+    busy,
+    isConnected,
+    validated,
+
+    async load(): Promise<void> {
+      try {
+        const data = await apiFetch<{ connection: PublicNpmConnection | null }>(
+          "/api/v1/npm-connection",
+        );
+        this.applyConnection(data.connection);
+      } catch {
+        // Keep the dashboard usable; scan creation enforces the requirement.
+      } finally {
+        this.loaded.value = true;
+      }
     },
-  );
-  return data.connection;
-}
 
-export async function validateNpmConnection(stageId?: string): Promise<{
-  validation: NpmCredentialValidation;
-  connection: PublicNpmConnection | null;
-}> {
-  return apiFetch("/api/v1/npm-connection/validate", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ stageId: stageId?.trim() || undefined }),
-  });
-}
+    applyConnection(next: PublicNpmConnection | null) {
+      this.connection.value = next;
+      if (next) {
+        this.label.value = next.label;
+        this.registry.value = next.registryUrl;
+      }
+    },
 
-export async function deleteNpmConnection(): Promise<void> {
-  await apiFetch<{ ok: boolean }>("/api/v1/npm-connection", { method: "DELETE" });
-}
+    async save(): Promise<void> {
+      const trimmedToken = this.token.value.trim();
+      if (!trimmedToken) return;
+      this.status.value = "saving";
+      this.error.value = null;
+      try {
+        const data = await apiFetch<{ connection: PublicNpmConnection | null }>(
+          "/api/v1/npm-connection",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              token: trimmedToken,
+              label: this.label.value.trim() || DEFAULT_LABEL,
+              registryUrl: this.registry.value.trim() || DEFAULT_REGISTRY,
+            }),
+          },
+        );
+        this.applyConnection(data.connection);
+        this.token.value = "";
+      } catch (err) {
+        this.error.value = err instanceof Error ? err.message : String(err);
+      } finally {
+        this.status.value = "idle";
+      }
+    },
 
-async function apiFetch<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
-  const res = await fetch(input, {
-    credentials: "same-origin",
-    headers: { accept: "application/json", ...init?.headers },
-    ...init,
-  });
-  const data = (await res.json().catch(() => null)) as
-    | (Partial<T> & { error?: string; detail?: string })
-    | null;
-  if (!res.ok) {
-    if (res.status === 401) throw new Error("Please sign in to continue.");
-    const detail = typeof data?.detail === "string" ? `: ${data.detail}` : "";
-    throw new Error(`${data?.error || "request failed"}${detail}`);
-  }
-  return data as T;
-}
+    async validate(): Promise<void> {
+      this.status.value = "validating";
+      this.error.value = null;
+      try {
+        const stageId = this.validationStageId.value.trim() || undefined;
+        const data = await apiFetch<{
+          validation: NpmCredentialValidation;
+          connection: PublicNpmConnection | null;
+        }>("/api/v1/npm-connection/validate", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ stageId }),
+        });
+        this.applyConnection(data.connection);
+      } catch (err) {
+        this.error.value = err instanceof Error ? err.message : String(err);
+        await this.load();
+      } finally {
+        this.status.value = "idle";
+      }
+    },
+
+    async remove(): Promise<void> {
+      this.status.value = "deleting";
+      this.error.value = null;
+      try {
+        await apiFetch<{ ok: boolean }>("/api/v1/npm-connection", { method: "DELETE" });
+        this.connection.value = null;
+        this.token.value = "";
+      } catch (err) {
+        this.error.value = err instanceof Error ? err.message : String(err);
+      } finally {
+        this.status.value = "idle";
+      }
+    },
+  };
+});

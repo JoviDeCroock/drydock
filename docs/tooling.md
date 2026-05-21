@@ -8,14 +8,21 @@
 
 ## Scripts
 
-| Command                 | What it does                                       |
-| ----------------------- | -------------------------------------------------- |
-| `pnpm run lint`         | Run oxlint over the repo. Exit non-zero on errors. |
-| `pnpm run lint:fix`     | Apply oxlint autofixes.                            |
-| `pnpm run format`       | Rewrite files with oxfmt.                          |
-| `pnpm run format:check` | Report files that would change without writing.    |
+| Command                 | What it does                                           |
+| ----------------------- | ------------------------------------------------------ |
+| `pnpm run lint`         | Run oxlint over the repo. Exit non-zero on errors.     |
+| `pnpm run lint:fix`     | Apply oxlint autofixes.                                |
+| `pnpm run format`       | Rewrite files with oxfmt.                              |
+| `pnpm run format:check` | Report files that would change without writing.        |
+| `pnpm run verify`       | Run lint + format check + typecheck + tests, in order. |
 
 `pnpm lint` (the shorthand without `run`) can collide with workspace forwarding or shell wrappers — always use `pnpm run lint`.
+
+## Pre-commit hook
+
+`pnpm install` runs a `prepare` script that points `git config core.hooksPath` at `.githooks/`. The `.githooks/pre-commit` script then runs `pnpm run verify`, so every commit on this repo must pass lint + format + typecheck + tests. CI (`.github/workflows/ci.yml`) runs the same `verify` pipeline.
+
+If a commit must skip the hook, pass `git commit --no-verify` — only do that when the gate is broken for reasons unrelated to your change.
 
 ## Banned hooks
 

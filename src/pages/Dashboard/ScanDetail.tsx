@@ -1,16 +1,9 @@
 import type { ComponentChildren } from "preact";
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect } from "preact/hooks";
+import { useComputed, useModel, useSignal, useSignalEffect } from "@preact/signals";
 import { useLocation, useRoute } from "preact-iso";
-import { getSession } from "../../models/auth";
-import {
-  getScan,
-  getScanCompare,
-  getScanCompareFile,
-  getScanVersions,
-  type PersistedScanDetail,
-  type ScanCompareResponse,
-  type ScanVersionsResponse,
-} from "../../models/scan";
+import { sessionModel } from "../../models/auth";
+import { ScanDetailModel, type PersistedScanDetail } from "../../models/scan";
 import type { AiFinding, AiReview } from "../../../server/lib/ai-review";
 import { createPackageDiff, type DiffEntry, type FileRecord } from "../../../server/lib/review";
 import type { PackageJsonDiff, ScanResult } from "../../../server/types";
@@ -50,122 +43,48 @@ export default function ScanDetailPage() {
   const location = useLocation();
   const route = useRoute();
   const id = route.params.id;
-  const [detail, setDetail] = useState<PersistedScanDetail | null>(null);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [versions, setVersions] = useState<ScanVersionsResponse | null>(null);
-  const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
-  const [compareCache, setCompareCache] = useState<Record<string, ScanCompareResponse>>({});
-  const [fileContentCache, setFileContentCache] = useState<Record<string, FileRecord>>({});
-  const [compareLoading, setCompareLoading] = useState(false);
-  const [fileLoading, setFileLoading] = useState(false);
-  const [compareError, setCompareError] = useState<string | null>(null);
+  const model = useModel(() => new ScanDetailModel(id));
+  const sessionChecked = useSignal(false);
 
   useEffect(() => {
     let cancelled = false;
-    getSession().then(async (current) => {
+    void (async () => {
+      const data = await sessionModel.load();
       if (cancelled) return;
-      if (!current) {
+      if (!data) {
         location.route("/login", true);
         return;
       }
-      try {
-        const data = await getScan(id);
-        if (cancelled) return;
-        setDetail(data);
-        setSelectedPath(
-          data.files.find((file) => file.status !== "unchanged")?.path ??
-            data.files[0]?.path ??
-            null,
-        );
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
-      }
-    });
+      sessionChecked.value = true;
+      await model.load();
+    })();
     return () => {
       cancelled = true;
     };
   }, [id]);
 
-  useEffect(() => {
-    if (detail?.scan.status !== "pending" && detail?.scan.status !== "running") return;
-    let cancelled = false;
-    const refresh = async () => {
-      try {
-        const data = await getScan(id, { poll: true });
-        if (cancelled) return;
-        setDetail(data);
-        setError(null);
-        setSelectedPath(
-          (current) =>
-            current ??
-            data.files.find((file) => file.status !== "unchanged")?.path ??
-            data.files[0]?.path ??
-            null,
-        );
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
-      }
-    };
-    const timer = window.setInterval(refresh, 2500);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [detail?.scan.status, id]);
+  // Fetch version metadata as soon as the scan is complete with a package name.
+  useSignalEffect(() => {
+    if (model.status.value !== "complete") return;
+    if (!model.detail.value?.scan.packageName) return;
+    if (model.versions.value) return;
+    void model.loadVersions();
+  });
 
-  useEffect(() => {
-    if (!detail || detail.scan.status !== "complete") return;
-    if (!detail.scan.packageName) return;
-    let cancelled = false;
-    getScanVersions(id)
-      .then((data) => {
-        if (cancelled) return;
-        setVersions(data);
-        setSelectedVersion((current) => current ?? data.defaultPreviousVersion ?? null);
-      })
-      .catch((err) => {
-        if (!cancelled) setCompareError(err instanceof Error ? err.message : String(err));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [id, detail?.scan.status, detail?.scan.packageName]);
+  const summary = useComputed(() => asPersistedSummary(model.detail.value?.scan.summaryJson));
+  const ai = useComputed(() => asAiReview(model.detail.value?.scan.aiJson));
 
-  useEffect(() => {
-    if (!selectedVersion) return;
-    if (compareCache[selectedVersion]) return;
-    let cancelled = false;
-    setCompareLoading(true);
-    setCompareError(null);
-    getScanCompare(id, selectedVersion)
-      .then((data) => {
-        if (cancelled) return;
-        setCompareCache((prev) => ({ ...prev, [selectedVersion]: data }));
-      })
-      .catch((err) => {
-        if (!cancelled) setCompareError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (!cancelled) setCompareLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [id, selectedVersion, compareCache]);
-
-  const summary = asPersistedSummary(detail?.scan.summaryJson);
-  const ai = asAiReview(detail?.scan.aiJson);
-  const compare = selectedVersion ? (compareCache[selectedVersion] ?? null) : null;
-  const isDefaultComparison = selectedVersion === (versions?.defaultPreviousVersion ?? null);
-
-  const persistedDiff = summary.diff ?? [];
-  const diffEntries: DiffEntry[] = useMemo(() => {
+  const diffEntries = useComputed<DiffEntry[]>(() => {
+    const detail = model.detail.value;
+    const compare = model.compare.value;
+    const isDefault = model.isDefaultComparison.value;
+    const persistedSummary = summary.value;
     if (!detail) return [];
-    if (compare && !isDefaultComparison) {
+    if (compare && !isDefault) {
       const stagedRecords = scanFilesToFileRecords(detail.files);
       return createPackageDiff(compare.files, stagedRecords);
     }
+    const persistedDiff = persistedSummary.diff ?? [];
     if (persistedDiff.length) return persistedDiff;
     return detail.files.map((file) => ({
       path: file.path,
@@ -174,48 +93,76 @@ export default function ScanDetailPage() {
       stagedSha256: file.sha256 ?? undefined,
       flags: Array.isArray(file.flagsJson) ? (file.flagsJson as string[]) : [],
     }));
-  }, [detail, compare, isDefaultComparison, persistedDiff]);
+  });
 
-  const selectedEntry = selectedPath
-    ? (diffEntries.find((entry) => entry.path === selectedPath) ?? null)
-    : null;
-  const stagedFile = selectedPath
-    ? (detail?.files.find((file) => file.path === selectedPath) ?? null)
-    : null;
-  const previousFileMeta =
-    selectedPath && compare
-      ? (compare.files.find((file) => file.path === selectedPath) ?? null)
-      : null;
-  const previousFileKey =
-    selectedVersion && selectedPath ? `${selectedVersion}::${selectedPath}` : null;
-  const previousFile = previousFileKey ? (fileContentCache[previousFileKey] ?? null) : null;
+  const selectedEntry = useComputed(() => {
+    const path = model.selectedPath.value;
+    const entries = diffEntries.value;
+    if (!path) return null;
+    return entries.find((entry) => entry.path === path) ?? null;
+  });
+
+  const stagedFile = useComputed(() => {
+    const path = model.selectedPath.value;
+    const detail = model.detail.value;
+    if (!path) return null;
+    return detail?.files.find((file) => file.path === path) ?? null;
+  });
+
+  const previousFileMeta = useComputed(() => {
+    const path = model.selectedPath.value;
+    const compare = model.compare.value;
+    if (!path || !compare) return null;
+    return compare.files.find((file) => file.path === path) ?? null;
+  });
+
+  const previousFileKey = useComputed(() => {
+    const version = model.selectedVersion.value;
+    const path = model.selectedPath.value;
+    return version && path ? `${version}::${path}` : null;
+  });
+
+  const previousFile = useComputed(() => {
+    const key = previousFileKey.value;
+    const cache = model.fileContentCache.value;
+    return key ? (cache[key] ?? null) : null;
+  });
+
+  // Lazy-load the previous file content when the user picks a file + version.
+  useSignalEffect(() => {
+    const key = previousFileKey.value;
+    const cache = model.fileContentCache.value;
+    const meta = previousFileMeta.value;
+    const version = model.selectedVersion.value;
+    const path = model.selectedPath.value;
+    if (!key) return;
+    if (cache[key]) return;
+    if (!meta) return;
+    if (meta.flags?.includes("binary")) return;
+    if (!version || !path) return;
+    void model.loadPreviousFile(version, path);
+  });
+
+  if (!sessionChecked.value) {
+    return (
+      <PageShell>
+        <LoadingLine>Opening review</LoadingLine>
+      </PageShell>
+    );
+  }
+
+  const detail = model.detail.value;
+  const versions = model.versions.value;
+  const error = model.error.value;
+  const compareLoading = model.compareLoading.value;
+  const compareError = model.compareError.value;
+  const fileLoading = model.fileLoading.value;
+  const selectedVersion = model.selectedVersion.value;
+  const compare = model.compare.value;
   const hasRuleFindings = Boolean(detail?.findings.length);
   const workbenchGridClass = hasRuleFindings
     ? "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)_320px] gap-4"
     : "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-4";
-
-  useEffect(() => {
-    if (!previousFileKey || !selectedVersion || !selectedPath) return;
-    if (!previousFileMeta) return;
-    if (fileContentCache[previousFileKey]) return;
-    if (previousFileMeta.flags?.includes("binary")) return;
-    let cancelled = false;
-    setFileLoading(true);
-    getScanCompareFile(id, selectedVersion, selectedPath)
-      .then((data) => {
-        if (cancelled) return;
-        setFileContentCache((prev) => ({ ...prev, [previousFileKey]: data.file }));
-      })
-      .catch((err) => {
-        if (!cancelled) setCompareError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (!cancelled) setFileLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [id, selectedVersion, selectedPath, previousFileKey, previousFileMeta, fileContentCache]);
 
   return (
     <PageShell>
@@ -229,11 +176,13 @@ export default function ScanDetailPage() {
         {detail ? (
           <MonoDetail
             parts={[
-              <span>
+              <span key="version">
                 {detail.scan.previousVersion || "—"} → {detail.scan.stagedVersion || "—"}
               </span>,
-              <Badge tone={severityTone(detail.scan.risk)}>{detail.scan.risk}</Badge>,
-              <span>scan {detail.scan.id.slice(0, 12)}</span>,
+              <Badge key="risk" tone={severityTone(detail.scan.risk)}>
+                {detail.scan.risk}
+              </Badge>,
+              <span key="scan-id">scan {detail.scan.id.slice(0, 12)}</span>,
             ]}
           />
         ) : (
@@ -256,11 +205,11 @@ export default function ScanDetailPage() {
         <>
           <ReportOverview
             detail={detail}
-            summary={summary}
-            ai={ai}
+            summary={summary.value}
+            ai={ai.value}
             findings={detail.findings}
-            aiFindings={ai?.findings ?? []}
-            diffCount={diffEntries.filter((entry) => entry.status !== "unchanged").length}
+            aiFindings={ai.value?.findings ?? []}
+            diffCount={diffEntries.value.filter((entry) => entry.status !== "unchanged").length}
           />
 
           {versions ? (
@@ -270,7 +219,7 @@ export default function ScanDetailPage() {
                 selected={selectedVersion}
                 defaultVersion={versions.defaultPreviousVersion}
                 stagedVersion={versions.stagedVersion}
-                onChange={setSelectedVersion}
+                onChange={(value) => model.selectVersion(value)}
                 disabled={compareLoading}
               />
               {compareLoading ? (
@@ -287,36 +236,37 @@ export default function ScanDetailPage() {
               </div>
               <div class="flex flex-col overflow-y-auto max-h-[640px] py-2">
                 <FileTree
-                  entries={diffEntries}
-                  selectedPath={selectedPath}
-                  onSelect={setSelectedPath}
+                  entries={diffEntries.value}
+                  selectedPath={model.selectedPath.value}
+                  onSelect={(path) => model.selectPath(path)}
                 />
               </div>
             </Card>
 
             <Card class="p-5 flex flex-col gap-3 min-h-0">
               <SectionLabel>File diff</SectionLabel>
-              {selectedEntry && (stagedFile || previousFile || previousFileMeta) ? (
+              {selectedEntry.value &&
+              (stagedFile.value || previousFile.value || previousFileMeta.value) ? (
                 <>
-                  {fileLoading && !previousFile ? (
+                  {fileLoading && !previousFile.value ? (
                     <LoadingLine size="inline">Loading previous content</LoadingLine>
                   ) : null}
                   <DiffView
-                    path={selectedEntry.path}
-                    status={selectedEntry.status}
+                    path={selectedEntry.value.path}
+                    status={selectedEntry.value.status}
                     beforeLabel={selectedVersion ? `previous (${selectedVersion})` : "previous"}
                     afterLabel={`staged (${detail.scan.stagedVersion ?? "current"})`}
                     before={
-                      previousFile
-                        ? toDiffSide(previousFile)
-                        : previousFileMeta
-                          ? toDiffSide(previousFileMeta)
+                      previousFile.value
+                        ? toDiffSide(previousFile.value)
+                        : previousFileMeta.value
+                          ? toDiffSide(previousFileMeta.value)
                           : null
                     }
-                    after={stagedFile ? scanFileToDiffSide(stagedFile) : null}
+                    after={stagedFile.value ? scanFileToDiffSide(stagedFile.value) : null}
                   />
                 </>
-              ) : selectedEntry && !compare && selectedEntry.status !== "unchanged" ? (
+              ) : selectedEntry.value && !compare && selectedEntry.value.status !== "unchanged" ? (
                 <LoadingLine>Loading previous version metadata</LoadingLine>
               ) : (
                 <EmptyLine>Select a file from the tree to diff.</EmptyLine>
@@ -338,7 +288,7 @@ export default function ScanDetailPage() {
             ) : null}
           </section>
 
-          <PersistedReportSections summary={summary} ai={ai} />
+          <PersistedReportSections summary={summary.value} ai={ai.value} />
         </>
       ) : null}
     </PageShell>
@@ -435,12 +385,12 @@ function ReportOverview({
       <MonoDetail
         parts={[
           detail.scan.status,
-          <span>stage {detail.scan.stageId}</span>,
-          <span>
+          <span key="stage">stage {detail.scan.stageId}</span>,
+          <span key="file-count">
             {detail.files.length} {pluralize("file", detail.files.length)}
           </span>,
-          <span>{changed} changed</span>,
-          <span>
+          <span key="changed">{changed} changed</span>,
+          <span key="report-version">
             {summary.report?.version ? `report v${summary.report.version}` : "legacy report"}
           </span>,
         ]}

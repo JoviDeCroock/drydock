@@ -1,7 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
-import { getSession } from "../../models/auth";
+import { sessionModel } from "../../models/auth";
 import {
   Card,
   Eyebrow,
@@ -17,7 +17,7 @@ export default function LandingPage() {
 
   useEffect(() => {
     let cancelled = false;
-    getSession().then((session) => {
+    void sessionModel.load().then((session) => {
       if (cancelled) return;
       authed.value = Boolean(session?.user);
     });

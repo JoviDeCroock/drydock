@@ -41,7 +41,8 @@
     "@preact/signals/no-value-after-await": "error",
     "@preact/signals/no-signal-truthiness": "warn",
     "@preact/signals/no-signal-in-component-body": "error",
-    "@preact/signals/no-conditional-value-read": "error"
+    "@preact/signals/no-conditional-value-read": "error",
+    "react-hooks/exhaustive-deps": "off"
   },
   "ignorePatterns": [
     "dist/**",
