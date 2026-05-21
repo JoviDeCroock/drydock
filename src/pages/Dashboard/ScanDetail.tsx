@@ -2,6 +2,18 @@ import { useEffect, useState } from "preact/hooks";
 import { useLocation, useRoute } from "preact-iso";
 import { getSession } from "../../models/auth";
 import { getScan, type PersistedScanDetail } from "../../models/scan";
+import {
+  Alert,
+  Badge,
+  Card,
+  Muted,
+  PageShell,
+  SectionLabel,
+  cn,
+  severityTone,
+  statusTone,
+} from "../../components";
+import { FindingItem, FindingRow } from "./index";
 
 export default function ScanDetailPage() {
   const location = useLocation();
@@ -23,7 +35,9 @@ export default function ScanDetailPage() {
         const data = await getScan(id);
         if (cancelled) return;
         setDetail(data);
-        setSelectedPath(data.files.find((file) => file.status !== "unchanged")?.path ?? data.files[0]?.path ?? null);
+        setSelectedPath(
+          data.files.find((file) => file.status !== "unchanged")?.path ?? data.files[0]?.path ?? null,
+        );
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
       }
@@ -36,69 +50,93 @@ export default function ScanDetailPage() {
   const selected = detail?.files.find((file) => file.path === selectedPath) ?? null;
 
   return (
-    <main class="page detail-page">
-      <header class="page-header">
-        <a class="back-link" href="/dashboard">← Dashboard</a>
-        <h1>{detail?.scan.packageName || "Scan detail"}</h1>
+    <PageShell>
+      <header class="flex flex-col gap-2">
+        <a href="/dashboard" class="text-[13px] text-ink-muted hover:text-ink no-underline">
+          ← Dashboard
+        </a>
+        <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">
+          {detail?.scan.packageName || "Scan detail"}
+        </h1>
         {detail ? (
-          <p>
-            {detail.scan.previousVersion || "—"} → {detail.scan.stagedVersion || "—"} · <span class={`risk risk-${detail.scan.risk}`}>{detail.scan.risk}</span>
+          <p class="flex items-center gap-2 text-[13px] text-ink-muted m-0">
+            <span class="font-mono">
+              {detail.scan.previousVersion || "—"} → {detail.scan.stagedVersion || "—"}
+            </span>
+            <span>·</span>
+            <Badge tone={severityTone(detail.scan.risk)}>{detail.scan.risk}</Badge>
           </p>
-        ) : <p class="muted">Loading persisted scan…</p>}
+        ) : (
+          <Muted>Loading persisted scan…</Muted>
+        )}
       </header>
 
-      {error ? <div class="banner banner-error">{error}</div> : null}
+      {error ? <Alert tone="critical">{error}</Alert> : null}
 
       {detail ? (
-        <section class="detail-grid">
-          <aside class="panel file-list-panel">
-            <h2>Files</h2>
-            <div class="files">
-              {detail.files.map((file) => (
-                <button
-                  type="button"
-                  key={file.path}
-                  class={selectedPath === file.path ? "selected" : ""}
-                  onClick={() => setSelectedPath(file.path)}
-                >
-                  <span class={`badge status-${file.status}`}>{file.status}</span>
-                  <span>{file.path}</span>
-                </button>
-              ))}
+        <section class="grid grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)_320px] gap-4">
+          <Card as="aside" class="p-0 overflow-hidden flex flex-col min-h-0">
+            <div class="px-4 py-3 border-b border-border">
+              <SectionLabel>Files</SectionLabel>
             </div>
-          </aside>
+            <div class="flex flex-col overflow-y-auto max-h-[640px]">
+              {detail.files.map((file) => {
+                const isSelected = selectedPath === file.path;
+                return (
+                  <button
+                    type="button"
+                    key={file.path}
+                    onClick={() => setSelectedPath(file.path)}
+                    class={cn(
+                      "flex items-center gap-2 text-left px-4 py-2 border-l-2 transition-colors",
+                      "text-[13px] font-mono",
+                      isSelected
+                        ? "bg-surface-2 border-l-accent text-ink"
+                        : "border-l-transparent text-ink-muted hover:bg-surface-2 hover:text-ink",
+                    )}
+                  >
+                    <Badge tone={statusTone(file.status)}>{file.status}</Badge>
+                    <span class="truncate flex-1">{file.path}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </Card>
 
-          <section class="panel preview-panel">
-            <h2>Safe text preview</h2>
+          <Card class="p-5 flex flex-col gap-3">
+            <SectionLabel>Safe text preview</SectionLabel>
             {selected ? (
               <>
-                <p class="muted">{selected.path} · {selected.size ?? 0} bytes · {selected.sha256 || "no hash"}</p>
-                <pre>{selected.textSample || "No text sample stored. Binary, empty, or truncated before preview."}</pre>
+                <p class="font-mono text-xs text-ink-muted m-0 break-all">
+                  {selected.path} · {selected.size ?? 0} bytes · {selected.sha256 || "no hash"}
+                </p>
+                <pre class="bg-surface-2 rounded-md p-3 overflow-x-auto text-xs leading-[1.5] m-0 max-h-[560px] overflow-y-auto">
+                  {selected.textSample ||
+                    "No text sample stored. Binary, empty, or truncated before preview."}
+                </pre>
               </>
-            ) : <p class="muted">Select a file.</p>}
-          </section>
+            ) : (
+              <Muted>Select a file.</Muted>
+            )}
+          </Card>
 
-          <aside class="panel findings-panel">
-            <h2>Findings</h2>
+          <Card as="aside" class="p-5 flex flex-col gap-3">
+            <SectionLabel>Findings</SectionLabel>
             {detail.findings.length ? (
-              <ul class="findings compact">
+              <ul class="list-none p-0 m-0 flex flex-col gap-2">
                 {detail.findings.map((finding) => (
-                  <li key={finding.id} class={`finding sev-${finding.severity}`}>
-                    <div class="finding-head">
-                      <span class={`badge sev-${finding.severity}`}>{finding.severity}</span>
-                      <code>{finding.file}</code>
-                    </div>
-                    <div class="finding-body">
-                      <div><span class="muted">evidence:</span> {finding.evidence}</div>
-                      <div><span class="muted">reason:</span> {finding.reason}</div>
-                    </div>
-                  </li>
+                  <FindingItem key={finding.id} severity={finding.severity} file={finding.file}>
+                    <FindingRow label="evidence" value={finding.evidence} />
+                    <FindingRow label="reason" value={finding.reason} />
+                  </FindingItem>
                 ))}
               </ul>
-            ) : <p class="muted">No deterministic findings.</p>}
-          </aside>
+            ) : (
+              <Muted class="text-[13px]">No deterministic findings.</Muted>
+            )}
+          </Card>
         </section>
       ) : null}
-    </main>
+    </PageShell>
   );
 }

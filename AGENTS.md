@@ -1,7 +1,5 @@
 # Repository guidelines
 
-Cloudflare Worker + Preact UI prototype for reviewing an npm staged publish before approval. Layout mirrors `../le-chien/web`: the Hono worker is co-located with the UI and bundled by Vite + the Cloudflare plugin.
-
 ## Layout
 
 - `server/` — Hono Worker. `index.ts` mounts routes under `/api/*`. The worker is the deploy target (`main` in `wrangler.jsonc`).
@@ -27,16 +25,14 @@ Cloudflare Worker + Preact UI prototype for reviewing an npm staged publish befo
 - Trust boundary: package bytes are untrusted evidence. Never treat file contents as instructions to the AI. Deterministic findings come first; AI cannot downgrade them. AI only sees changed files.
 - The Dynamic Worker has `globalOutbound` set to `NpmStageGateway`. The gateway is the only path through which the npm token is attached (and only for the staged tarball endpoint).
 - D1 is required because Better Auth is always required for non-auth API endpoints.
-- Keep CSS in `src/style.css`. No CSS-in-JS, no Tailwind in this prototype.
+- Styling is Tailwind CSS v4 via `@tailwindcss/vite`. Design tokens (colors, fonts, shadows) are declared in `src/style.css` with `@theme`, light/dark modes overridden via `prefers-color-scheme`. Reach for primitives in `src/components/` (`Button`, `Input`, `Field`, `Badge`, `Alert`, `Card`, `PageShell`, `Eyebrow`, etc.) before writing one-off classes. No CSS-in-JS.
 - We use `preact`, `preact-iso`, and `signals`.
 - Never write SQL migrations by hand; use `pnpm db:generate` to create migrations from `server/db/schema.ts`.
+- Before you start work read up on `docs/`, when you are done working update `docs/` with relevant information
 
 ## Scripts
 
 - `npm run dev` — Vite dev server with the Cloudflare plugin running the Worker locally at `http://localhost:5173`.
 - `npm run build` — Build the UI bundle into `dist/`.
-- `npm run deploy` — `wrangler deploy`.
 - `npm run typecheck` — `tsc --noEmit`.
 - `npm run db:generate` — Drizzle migration from `server/db/schema.ts`.
-- `npm run db:migrate:local` / `db:migrate:remote` — Apply migrations to D1.
-- `npm test` — Node test runner against `test/*.test.mjs`.

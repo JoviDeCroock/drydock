@@ -6,6 +6,21 @@ import { listScans, runScan, type ScanListItem } from "../../models/scan";
 import type { DiffEntry, Finding } from "../../../server/lib/review";
 import type { AiFinding } from "../../../server/lib/ai-review";
 import type { ScanResult } from "../../../server/types";
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Eyebrow,
+  Field,
+  Input,
+  Muted,
+  PageShell,
+  SectionLabel,
+  SummaryCard,
+  severityTone,
+  statusTone,
+} from "../../components";
 
 type Status = "idle" | "checking" | "scanning" | "done" | "error";
 
@@ -66,119 +81,184 @@ export default function DashboardPage() {
   };
 
   if (status === "checking") {
-    return <main class="page"><div class="panel">Checking session…</div></main>;
+    return (
+      <PageShell width="narrow">
+        <Card>
+          <Muted>Checking session…</Muted>
+        </Card>
+      </PageShell>
+    );
   }
 
   return (
-    <main class="page dashboard-page">
-      <header class="page-header dashboard-header">
-        <div>
-          <p class="eyebrow">Authenticated dashboard</p>
-          <h1>Staged Publish Review</h1>
-          <p>
+    <PageShell>
+      <header class="flex flex-wrap gap-4 items-start justify-between">
+        <div class="flex flex-col gap-2 max-w-[640px]">
+          <Eyebrow>Authenticated dashboard</Eyebrow>
+          <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Staged Publish Review</h1>
+          <Muted class="text-[14px] leading-[1.55] m-0">
             Review npm staged packages through a sandboxed Dynamic Worker, deterministic release checks,
             previous-version diffs, and Kimi K2.5 triage.
-          </p>
+          </Muted>
         </div>
-        <div class="account-pill">
-          <span>{session?.user.email || session?.user.name || "signed in"}</span>
-          <button type="button" class="button secondary small" onClick={onSignOut}>Sign out</button>
+        <div class="flex items-center gap-2.5 bg-surface border border-border rounded-full pl-3.5 pr-1.5 py-1.5">
+          <span class="font-mono text-xs text-ink-muted">
+            {session?.user.email || session?.user.name || "signed in"}
+          </span>
+          <Button variant="secondary" size="sm" onClick={onSignOut}>
+            Sign out
+          </Button>
         </div>
       </header>
 
-      <section class="panel">
-        <form class="scan-form" onSubmit={onSubmit}>
-          <label for="stageId">Stage ID</label>
-          <div class="row">
-            <input
-              id="stageId"
-              type="text"
-              value={stageId}
-              placeholder="e.g. acme-pkg-1.2.3-stage-abcdef"
-              onInput={(e) => setStageId((e.target as HTMLInputElement).value)}
-              disabled={status === "scanning"}
-              autoComplete="off"
-              spellcheck={false}
-            />
-            <button type="submit" disabled={status === "scanning" || !stageId.trim()}>
-              {status === "scanning" ? "Scanning…" : "Scan staged publish"}
-            </button>
-          </div>
+      <Card class="p-5">
+        <form class="flex flex-col gap-3" onSubmit={onSubmit}>
+          <Field label="Stage ID" for="stageId">
+            <div class="flex gap-2">
+              <Input
+                id="stageId"
+                type="text"
+                value={stageId}
+                placeholder="e.g. acme-pkg-1.2.3-stage-abcdef"
+                onInput={(e) => setStageId((e.target as HTMLInputElement).value)}
+                disabled={status === "scanning"}
+                autoComplete="off"
+                spellcheck={false}
+              />
+              <Button
+                type="submit"
+                disabled={status === "scanning" || !stageId.trim()}
+                class="shrink-0"
+              >
+                {status === "scanning" ? "Scanning…" : "Scan staged publish"}
+              </Button>
+            </div>
+          </Field>
         </form>
-        {error ? <div class="banner banner-error">{error}</div> : null}
-      </section>
+        {error ? (
+          <div class="mt-3">
+            <Alert tone="critical">{error}</Alert>
+          </div>
+        ) : null}
+      </Card>
 
       {result ? <ScanResultView result={result} /> : null}
 
-      <section class="panel persisted-scans">
-        <div class="section-heading">
-          <h2>Recent scans</h2>
-          <button type="button" class="button secondary small" onClick={refreshScans}>Refresh</button>
+      <section class="flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <SectionLabel class="flex-1">Recent scans</SectionLabel>
+          <Button variant="secondary" size="sm" onClick={refreshScans} class="ml-3 shrink-0">
+            Refresh
+          </Button>
         </div>
-        {scans.length ? <ScanTable scans={scans} /> : <p class="muted">No persisted scans yet.</p>}
+        <Card class="p-0 overflow-hidden">
+          {scans.length ? (
+            <ScanTable scans={scans} />
+          ) : (
+            <div class="p-5">
+              <Muted>No persisted scans yet.</Muted>
+            </div>
+          )}
+        </Card>
       </section>
-    </main>
+    </PageShell>
   );
 }
 
 function ScanResultView({ result }: { result: ScanResult }) {
   const ai = result.aiFindings;
   const changed = result.diff.filter((entry) => entry.status !== "unchanged");
+  const riskTone = result.risk === "high" || result.risk === "critical" ? "danger" : "default";
 
   return (
-    <section class="result panel">
-      <div class="result-summary">
-        <SummaryCell label="package" value={result.package.name || "unknown"} />
-        <SummaryCell
-          label="version"
-          value={`${result.package.previousVersion || "—"} → ${result.package.stagedVersion || "—"}`}
-        />
-        <SummaryCell label="risk" value={<span class={`risk risk-${result.risk}`}>{result.risk}</span>} />
-        <SummaryCell label="files" value={`${result.fileCount} (${changed.length} changed)`} />
-        <SummaryCell label="AI assessment" value={ai.releaseAssessment.replaceAll("_", " ")} />
-        <SummaryCell label="manual review" value={ai.requiresManualReview ? "yes" : "no"} />
+    <section class="flex flex-col gap-5">
+      <SectionLabel>Scan result</SectionLabel>
+
+      <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <SummaryCard label="package">{result.package.name || "unknown"}</SummaryCard>
+        <SummaryCard label="version">
+          {result.package.previousVersion || "—"} → {result.package.stagedVersion || "—"}
+        </SummaryCard>
+        <SummaryCard label="risk" tone={riskTone}>
+          {result.risk}
+        </SummaryCard>
+        <SummaryCard label="files">
+          {result.fileCount} ({changed.length} changed)
+        </SummaryCard>
+        <SummaryCard label="AI assessment">{ai.releaseAssessment.replaceAll("_", " ")}</SummaryCard>
+        <SummaryCard label="manual review">{ai.requiresManualReview ? "yes" : "no"}</SummaryCard>
       </div>
 
-      {ai.summary ? <p class="ai-summary">{ai.summary}</p> : null}
+      {ai.summary ? (
+        <div class="bg-surface border-l-[3px] border-accent rounded-md px-4 py-3 leading-[1.55]">
+          {ai.summary}
+        </div>
+      ) : null}
 
-      <h2>Deterministic findings ({result.ruleFindings.length})</h2>
-      <RuleFindingList findings={result.ruleFindings} />
+      <ResultSection title={`Deterministic findings (${result.ruleFindings.length})`}>
+        <RuleFindingList findings={result.ruleFindings} />
+      </ResultSection>
 
-      <h2>AI findings ({ai.findings.length})</h2>
-      <AiFindingList findings={ai.findings} />
+      <ResultSection title={`AI findings (${ai.findings.length})`}>
+        <AiFindingList findings={ai.findings} />
+      </ResultSection>
 
-      <h2>Changed files ({changed.length})</h2>
-      <DiffList entries={changed} />
+      <ResultSection title={`Changed files (${changed.length})`}>
+        <DiffList entries={changed} />
+      </ResultSection>
 
-      <details class="safety">
-        <summary>Safety posture</summary>
-        <pre>{JSON.stringify(result.safety, null, 2)}</pre>
-      </details>
+      <Card as="div" class="p-0">
+        <details class="group">
+          <summary class="cursor-pointer text-[13px] text-ink-muted px-4 py-3 list-none">
+            Safety posture
+          </summary>
+          <pre class="bg-surface-2 rounded-md mx-4 mb-4 p-3 overflow-x-auto text-xs leading-[1.5]">
+            {JSON.stringify(result.safety, null, 2)}
+          </pre>
+        </details>
+      </Card>
+    </section>
+  );
+}
+
+function ResultSection({ title, children }: { title: string; children: ComponentChildren }) {
+  return (
+    <section class="flex flex-col gap-3">
+      <h2 class="text-[13px] font-medium uppercase tracking-[0.08em] text-ink-muted m-0">{title}</h2>
+      {children}
     </section>
   );
 }
 
 function ScanTable({ scans }: { scans: ScanListItem[] }) {
   return (
-    <div class="table-wrap">
-      <table>
+    <div class="overflow-x-auto">
+      <table class="w-full border-collapse text-[13px]">
         <thead>
-          <tr>
-            <th>Package</th>
-            <th>Version</th>
-            <th>Risk</th>
-            <th>Status</th>
-            <th>Created</th>
+          <tr class="border-b border-border bg-surface-2">
+            <Th>Package</Th>
+            <Th>Version</Th>
+            <Th>Risk</Th>
+            <Th>Status</Th>
+            <Th>Created</Th>
           </tr>
         </thead>
         <tbody>
           {scans.map((scan) => (
-            <tr key={scan.id}>
-              <td><a href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}>{scan.packageName || scan.stageId}</a></td>
-              <td>{scan.previousVersion || "—"} → {scan.stagedVersion || "—"}</td>
-              <td><span class={`risk risk-${scan.risk}`}>{scan.risk}</span></td>
-              <td>{scan.status}</td>
-              <td>{formatDate(scan.createdAt)}</td>
+            <tr key={scan.id} class="border-b border-border last:border-b-0 hover:bg-surface-2">
+              <Td>
+                <a href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}>
+                  {scan.packageName || scan.stageId}
+                </a>
+              </Td>
+              <Td class="font-mono text-xs text-ink-muted">
+                {scan.previousVersion || "—"} → {scan.stagedVersion || "—"}
+              </Td>
+              <Td>
+                <Badge tone={severityTone(scan.risk)}>{scan.risk}</Badge>
+              </Td>
+              <Td class="font-mono text-xs text-ink-muted">{scan.status}</Td>
+              <Td class="font-mono text-xs text-ink-muted">{formatDate(scan.createdAt)}</Td>
             </tr>
           ))}
         </tbody>
@@ -187,65 +267,94 @@ function ScanTable({ scans }: { scans: ScanListItem[] }) {
   );
 }
 
-function SummaryCell({ label, value }: { label: string; value: ComponentChildren }) {
+function Th({ children }: { children: ComponentChildren }) {
   return (
-    <div>
-      <span class="muted">{label}</span>
-      <code>{value}</code>
-    </div>
+    <th class="text-left font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle px-4 py-2.5">
+      {children}
+    </th>
   );
 }
 
+function Td({ children, class: className }: { children: ComponentChildren; class?: string }) {
+  return <td class={`px-4 py-2.5 align-middle ${className || ""}`}>{children}</td>;
+}
+
 function RuleFindingList({ findings }: { findings: Finding[] }) {
-  if (!findings.length) return <p class="muted">No deterministic findings.</p>;
+  if (!findings.length) return <Muted class="text-[13px]">No deterministic findings.</Muted>;
   return (
-    <ul class="findings">
+    <ul class="list-none p-0 m-0 flex flex-col gap-2">
       {findings.map((f, i) => (
-        <li key={`${f.file}-${i}`} class={`finding sev-${f.severity}`}>
-          <div class="finding-head">
-            <span class={`badge sev-${f.severity}`}>{f.severity}</span>
-            <code>{f.file}</code>
-          </div>
-          <div class="finding-body">
-            <div><span class="muted">evidence:</span> {f.evidence}</div>
-            <div><span class="muted">reason:</span> {f.reason}</div>
-          </div>
-        </li>
+        <FindingItem key={`${f.file}-${i}`} severity={f.severity} file={f.file}>
+          <FindingRow label="evidence" value={f.evidence} />
+          <FindingRow label="reason" value={f.reason} />
+        </FindingItem>
       ))}
     </ul>
   );
 }
 
 function AiFindingList({ findings }: { findings: AiFinding[] }) {
-  if (!findings.length) return <p class="muted">No AI findings.</p>;
+  if (!findings.length) return <Muted class="text-[13px]">No AI findings.</Muted>;
   return (
-    <ul class="findings">
+    <ul class="list-none p-0 m-0 flex flex-col gap-2">
       {findings.map((f, i) => (
-        <li key={`${f.file}-${i}`} class={`finding sev-${f.severity}`}>
-          <div class="finding-head">
-            <span class={`badge sev-${f.severity}`}>{f.severity}</span>
-            <code>{f.file}</code>
-          </div>
-          <div class="finding-body">
-            <div><span class="muted">evidence:</span> {f.evidence}</div>
-            <div><span class="muted">reason:</span> {f.reason}</div>
-            <div><span class="muted">recommendation:</span> {f.recommendation}</div>
-          </div>
-        </li>
+        <FindingItem key={`${f.file}-${i}`} severity={f.severity} file={f.file}>
+          <FindingRow label="evidence" value={f.evidence} />
+          <FindingRow label="reason" value={f.reason} />
+          <FindingRow label="recommendation" value={f.recommendation} />
+        </FindingItem>
       ))}
     </ul>
   );
 }
 
-function DiffList({ entries }: { entries: DiffEntry[] }) {
-  if (!entries.length) return <p class="muted">No changes detected.</p>;
+export function FindingItem({
+  severity,
+  file,
+  children,
+}: {
+  severity: string;
+  file: string;
+  children: ComponentChildren;
+}) {
   return (
-    <ul class="diff">
+    <li class="bg-surface border border-border rounded-md px-4 py-3 flex flex-col gap-2">
+      <div class="flex items-center gap-2.5">
+        <Badge tone={severityTone(severity)} dot>
+          {severity}
+        </Badge>
+        <code class="text-[13px] text-ink-muted">{file}</code>
+      </div>
+      <div class="text-[13px] leading-[1.55] flex flex-col gap-0.5">{children}</div>
+    </li>
+  );
+}
+
+export function FindingRow({ label, value }: { label: string; value: ComponentChildren }) {
+  return (
+    <div>
+      <span class="text-ink-subtle font-mono text-[11px] uppercase tracking-[0.08em] mr-1.5">
+        {label}:
+      </span>
+      <span>{value}</span>
+    </div>
+  );
+}
+
+function DiffList({ entries }: { entries: DiffEntry[] }) {
+  if (!entries.length) return <Muted class="text-[13px]">No changes detected.</Muted>;
+  return (
+    <ul class="list-none p-0 m-0 flex flex-col gap-1">
       {entries.map((entry) => (
-        <li key={entry.path} class={`diff-entry status-${entry.status}`}>
-          <span class={`badge status-${entry.status}`}>{entry.status}</span>
-          <code>{entry.path}</code>
-          <span class="muted">{entry.previousSize ?? 0} → {entry.stagedSize ?? 0} bytes</span>
+        <li
+          key={entry.path}
+          class="grid grid-cols-[auto_1fr_auto] gap-3 items-center bg-surface border border-border rounded-md px-3 py-2 text-[13px] font-mono"
+        >
+          <Badge tone={statusTone(entry.status)}>{entry.status}</Badge>
+          <span class="truncate">{entry.path}</span>
+          <span class="text-ink-subtle text-xs">
+            {entry.previousSize ?? 0} → {entry.stagedSize ?? 0} B
+          </span>
         </li>
       ))}
     </ul>

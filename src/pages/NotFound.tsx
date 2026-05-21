@@ -1,12 +1,18 @@
+import { Card, Eyebrow, LinkButton, Muted, PageShell } from "../components";
+
 export default function NotFoundPage() {
   return (
-    <main class="page">
-      <section class="panel">
-        <p class="eyebrow">404</p>
-        <h1>Page not found</h1>
-        <p class="muted">The route you requested does not exist.</p>
-        <a class="button secondary" href="/">Go home</a>
-      </section>
-    </main>
+    <PageShell width="narrow">
+      <Card class="flex flex-col gap-3">
+        <Eyebrow>404</Eyebrow>
+        <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Page not found</h1>
+        <Muted class="text-[13px] m-0">The route you requested does not exist.</Muted>
+        <div class="mt-2">
+          <LinkButton href="/" variant="secondary">
+            Go home
+          </LinkButton>
+        </div>
+      </Card>
+    </PageShell>
   );
 }

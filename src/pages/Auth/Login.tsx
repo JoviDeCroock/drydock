@@ -1,6 +1,16 @@
 import { useState } from "preact/hooks";
 import { useLocation } from "preact-iso";
 import { signIn } from "../../models/auth";
+import {
+  Alert,
+  Button,
+  Card,
+  Eyebrow,
+  Field,
+  Input,
+  PageShell,
+  Muted,
+} from "../../components";
 
 export default function LoginPage() {
   const location = useLocation();
@@ -24,25 +34,45 @@ export default function LoginPage() {
   };
 
   return (
-    <main class="page auth-page">
-      <section class="auth-card">
-        <p class="eyebrow">Welcome back</p>
-        <h1>Sign in</h1>
-        <p class="muted">All review APIs require a Better Auth session.</p>
-        <form class="stack-form" onSubmit={onSubmit}>
-          <label>
-            Email
-            <input type="email" value={email} autocomplete="email" required onInput={(e) => setEmail((e.target as HTMLInputElement).value)} />
-          </label>
-          <label>
-            Password
-            <input type="password" value={password} autocomplete="current-password" required onInput={(e) => setPassword((e.target as HTMLInputElement).value)} />
-          </label>
-          {error ? <div class="banner banner-error">{error}</div> : null}
-          <button type="submit" disabled={loading}>{loading ? "Signing in…" : "Sign in"}</button>
+    <PageShell width="narrow">
+      <Card class="flex flex-col gap-4">
+        <Eyebrow>Welcome back</Eyebrow>
+        <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Sign in</h1>
+        <Muted class="text-[13px] m-0">All review APIs require a Better Auth session.</Muted>
+
+        <form class="flex flex-col gap-4 mt-2" onSubmit={onSubmit}>
+          <Field label="Email" for="login-email">
+            <Input
+              id="login-email"
+              type="email"
+              value={email}
+              autocomplete="email"
+              required
+              onInput={(e) => setEmail((e.target as HTMLInputElement).value)}
+            />
+          </Field>
+          <Field label="Password" for="login-password">
+            <Input
+              id="login-password"
+              type="password"
+              value={password}
+              autocomplete="current-password"
+              required
+              onInput={(e) => setPassword((e.target as HTMLInputElement).value)}
+            />
+          </Field>
+
+          {error ? <Alert tone="critical">{error}</Alert> : null}
+
+          <Button type="submit" disabled={loading}>
+            {loading ? "Signing in…" : "Sign in"}
+          </Button>
         </form>
-        <p class="auth-switch">No account yet? <a href="/register">Register</a></p>
-      </section>
-    </main>
+
+        <p class="text-[13px] text-ink-muted m-0">
+          No account yet? <a href="/register">Register</a>
+        </p>
+      </Card>
+    </PageShell>
   );
 }

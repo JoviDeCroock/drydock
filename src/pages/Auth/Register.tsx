@@ -1,6 +1,16 @@
 import { useState } from "preact/hooks";
 import { useLocation } from "preact-iso";
 import { signIn, signUp } from "../../models/auth";
+import {
+  Alert,
+  Button,
+  Card,
+  Eyebrow,
+  Field,
+  Input,
+  PageShell,
+  Muted,
+} from "../../components";
 
 export default function RegisterPage() {
   const location = useLocation();
@@ -26,29 +36,58 @@ export default function RegisterPage() {
   };
 
   return (
-    <main class="page auth-page">
-      <section class="auth-card">
-        <p class="eyebrow">Get started</p>
-        <h1>Create account</h1>
-        <p class="muted">Register with Better Auth to run and review staged-publish scans.</p>
-        <form class="stack-form" onSubmit={onSubmit}>
-          <label>
-            Name
-            <input type="text" value={name} autocomplete="name" required onInput={(e) => setName((e.target as HTMLInputElement).value)} />
-          </label>
-          <label>
-            Email
-            <input type="email" value={email} autocomplete="email" required onInput={(e) => setEmail((e.target as HTMLInputElement).value)} />
-          </label>
-          <label>
-            Password
-            <input type="password" value={password} autocomplete="new-password" minlength={8} required onInput={(e) => setPassword((e.target as HTMLInputElement).value)} />
-          </label>
-          {error ? <div class="banner banner-error">{error}</div> : null}
-          <button type="submit" disabled={loading}>{loading ? "Creating…" : "Create account"}</button>
+    <PageShell width="narrow">
+      <Card class="flex flex-col gap-4">
+        <Eyebrow>Get started</Eyebrow>
+        <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Create account</h1>
+        <Muted class="text-[13px] m-0">
+          Register with Better Auth to run and review staged-publish scans.
+        </Muted>
+
+        <form class="flex flex-col gap-4 mt-2" onSubmit={onSubmit}>
+          <Field label="Name" for="register-name">
+            <Input
+              id="register-name"
+              type="text"
+              value={name}
+              autocomplete="name"
+              required
+              onInput={(e) => setName((e.target as HTMLInputElement).value)}
+            />
+          </Field>
+          <Field label="Email" for="register-email">
+            <Input
+              id="register-email"
+              type="email"
+              value={email}
+              autocomplete="email"
+              required
+              onInput={(e) => setEmail((e.target as HTMLInputElement).value)}
+            />
+          </Field>
+          <Field label="Password" for="register-password">
+            <Input
+              id="register-password"
+              type="password"
+              value={password}
+              autocomplete="new-password"
+              minlength={8}
+              required
+              onInput={(e) => setPassword((e.target as HTMLInputElement).value)}
+            />
+          </Field>
+
+          {error ? <Alert tone="critical">{error}</Alert> : null}
+
+          <Button type="submit" disabled={loading}>
+            {loading ? "Creating…" : "Create account"}
+          </Button>
         </form>
-        <p class="auth-switch">Already registered? <a href="/login">Sign in</a></p>
-      </section>
-    </main>
+
+        <p class="text-[13px] text-ink-muted m-0">
+          Already registered? <a href="/login">Sign in</a>
+        </p>
+      </Card>
+    </PageShell>
   );
 }
