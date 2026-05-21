@@ -1,0 +1,16 @@
+{
+  "name": "staged-publish-sandbox-prototype",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260520.0",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.51.0"
+  }
+}
