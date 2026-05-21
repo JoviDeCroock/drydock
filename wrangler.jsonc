@@ -28,13 +28,8 @@
 		{
 			"binding": "DB",
 			"database_name": "staged-publish-review",
-			"database_id": "00000000-0000-0000-0000-000000000000",
+			"database_id": "9c856c2f-51be-4309-a932-103e6a835430",
 			"migrations_dir": "drizzle"
-		},
-		{
-			"binding": "staged_publish_review",
-			"database_name": "staged-publish-review",
-			"database_id": "9c856c2f-51be-4309-a932-103e6a835430"
 		}
 	],
 	"vars": {
