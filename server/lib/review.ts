@@ -51,17 +51,27 @@ export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = [
     const changed = diffByPath.get(file.path)?.status;
     const changedPrefix = changed && changed !== "unchanged" ? `new/changed ${changed} file: ` : "";
 
-    if (p.endsWith("package.json") && /\"(preinstall|install|postinstall|prepare)\"\s*:/.test(sample)) {
+    if (p.endsWith("package.json") && /"(preinstall|install|postinstall|prepare)"\s*:/.test(sample)) {
       const pkg = safeJson(sample) as PackageJsonSummary | null;
       const scripts = pkg?.scripts || {};
       for (const script of LIFECYCLE_SCRIPTS) {
         if (scripts[script]) {
-          findings.push({ severity: script === "preinstall" ? "critical" : "high", file: file.path, evidence: `${script}: ${scripts[script]}`, reason: "install lifecycle hooks execute on consumer machines" });
+          findings.push({
+            severity: script === "preinstall" ? "critical" : "high",
+            file: file.path,
+            evidence: `${script}: ${scripts[script]}`,
+            reason: "install lifecycle hooks execute on consumer machines",
+          });
         }
       }
     }
     if (/\b(child_process|execSync|spawn\(|curl\s|wget\s|nc\s|bash\s+-c)\b/.test(sample)) {
-      findings.push({ severity: "high", file: file.path, evidence: `${changedPrefix}process or shell execution`, reason: "package may execute arbitrary commands" });
+      findings.push({
+        severity: "high",
+        file: file.path,
+        evidence: `${changedPrefix}process or shell execution`,
+        reason: "package may execute arbitrary commands",
+      });
     }
     if (
       /\beval\s*\(/.test(sample) ||
@@ -70,25 +80,55 @@ export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = [
       /\batob\s*\(/.test(sample) ||
       /\bBuffer\.from\s*\([^,]+,\s*["']base64["']\s*\)/.test(sample)
     ) {
-      findings.push({ severity: changed === "added" ? "high" : "medium", file: file.path, evidence: `${changedPrefix}dynamic code or obfuscation primitive`, reason: "common malware and obfuscation technique" });
+      findings.push({
+        severity: changed === "added" ? "high" : "medium",
+        file: file.path,
+        evidence: `${changedPrefix}dynamic code or obfuscation primitive`,
+        reason: "common malware and obfuscation technique",
+      });
     }
     if (/\b(process\.env|npm_config_|NPM_TOKEN|GITHUB_TOKEN|AWS_SECRET|PRIVATE_KEY)\b/.test(sample)) {
-      findings.push({ severity: changed === "added" ? "high" : "medium", file: file.path, evidence: `${changedPrefix}secret/environment access`, reason: "package may read credentials from the install environment" });
+      findings.push({
+        severity: changed === "added" ? "high" : "medium",
+        file: file.path,
+        evidence: `${changedPrefix}secret/environment access`,
+        reason: "package may read credentials from the install environment",
+      });
     }
     if (file.flags.includes("binary") && file.size > 1024 * 1024) {
-      findings.push({ severity: changed === "added" ? "high" : "info", file: file.path, evidence: `${file.size} byte binary`, reason: "large binary should be reviewed manually" });
+      findings.push({
+        severity: changed === "added" ? "high" : "info",
+        file: file.path,
+        evidence: `${file.size} byte binary`,
+        reason: "large binary should be reviewed manually",
+      });
     }
     if (/\.(node|dll|so|dylib|exe)$/i.test(file.path)) {
-      findings.push({ severity: "high", file: file.path, evidence: "native or executable artifact", reason: "native binaries are hard to audit and can execute outside JavaScript policy checks" });
+      findings.push({
+        severity: "high",
+        file: file.path,
+        evidence: "native or executable artifact",
+        reason: "native binaries are hard to audit and can execute outside JavaScript policy checks",
+      });
     }
   }
 
   for (const entry of diff) {
     if (entry.status === "added" && /(^|\/)(\.npmrc|\.env|id_rsa|id_ed25519)$/i.test(entry.path)) {
-      findings.push({ severity: "critical", file: entry.path, evidence: "credential-looking file added", reason: "package artifact includes a file name commonly associated with secrets" });
+      findings.push({
+        severity: "critical",
+        file: entry.path,
+        evidence: "credential-looking file added",
+        reason: "package artifact includes a file name commonly associated with secrets",
+      });
     }
     if (entry.status === "added" && entry.stagedSize && entry.stagedSize > 2 * 1024 * 1024) {
-      findings.push({ severity: "medium", file: entry.path, evidence: `${entry.stagedSize} byte new file`, reason: "large new package artifact should be reviewed" });
+      findings.push({
+        severity: "medium",
+        file: entry.path,
+        evidence: `${entry.stagedSize} byte new file`,
+        reason: "large new package artifact should be reviewed",
+      });
     }
   }
 
@@ -106,22 +146,46 @@ export function createPackageDiff(previousFiles: FileRecord[], stagedFiles: File
     if (!before && after) return { path, status: "added", stagedSize: after.size, stagedSha256: after.sha256, flags: after.flags };
     if (before && !after) return { path, status: "removed", previousSize: before.size, previousSha256: before.sha256, flags: before.flags };
     if (before && after && before.sha256 !== after.sha256) {
-      return { path, status: "modified", previousSize: before.size, stagedSize: after.size, previousSha256: before.sha256, stagedSha256: after.sha256, flags: [...new Set([...before.flags, ...after.flags])] };
+      return {
+        path,
+        status: "modified",
+        previousSize: before.size,
+        stagedSize: after.size,
+        previousSha256: before.sha256,
+        stagedSha256: after.sha256,
+        flags: [...new Set([...before.flags, ...after.flags])],
+      };
     }
-    return { path, status: "unchanged", previousSize: before?.size, stagedSize: after?.size, previousSha256: before?.sha256, stagedSha256: after?.sha256, flags: [...new Set([...(before?.flags || []), ...(after?.flags || [])])] };
+    return {
+      path,
+      status: "unchanged",
+      previousSize: before?.size,
+      stagedSize: after?.size,
+      previousSha256: before?.sha256,
+      stagedSha256: after?.sha256,
+      flags: [...new Set([...(before?.flags || []), ...(after?.flags || [])])],
+    };
   });
 }
 
-export function summarizePackageJsonDiff(previousPkg: PackageJsonSummary | null | undefined, stagedPkg: PackageJsonSummary | null | undefined) {
+export function summarizePackageJsonDiff(
+  previousPkg: PackageJsonSummary | null | undefined,
+  stagedPkg: PackageJsonSummary | null | undefined,
+) {
   const changedScripts = diffObject(previousPkg?.scripts || {}, stagedPkg?.scripts || {});
-  const changedDependencies = diffObject({ ...(previousPkg?.dependencies || {}), ...(previousPkg?.optionalDependencies || {}), ...(previousPkg?.peerDependencies || {}) }, { ...(stagedPkg?.dependencies || {}), ...(stagedPkg?.optionalDependencies || {}), ...(stagedPkg?.peerDependencies || {}) });
+  const changedDependencies = diffObject(
+    { ...(previousPkg?.dependencies || {}), ...(previousPkg?.optionalDependencies || {}), ...(previousPkg?.peerDependencies || {}) },
+    { ...(stagedPkg?.dependencies || {}), ...(stagedPkg?.optionalDependencies || {}), ...(stagedPkg?.peerDependencies || {}) },
+  );
   return {
     name: stagedPkg?.name || previousPkg?.name || null,
     previousVersion: previousPkg?.version || null,
     stagedVersion: stagedPkg?.version || null,
     scripts: changedScripts,
     dependencies: changedDependencies,
-    entrypointsChanged: JSON.stringify([previousPkg?.bin, previousPkg?.main, previousPkg?.module, previousPkg?.types, previousPkg?.exports]) !== JSON.stringify([stagedPkg?.bin, stagedPkg?.main, stagedPkg?.module, stagedPkg?.types, stagedPkg?.exports]),
+    entrypointsChanged:
+      JSON.stringify([previousPkg?.bin, previousPkg?.main, previousPkg?.module, previousPkg?.types, previousPkg?.exports]) !==
+      JSON.stringify([stagedPkg?.bin, stagedPkg?.main, stagedPkg?.module, stagedPkg?.types, stagedPkg?.exports]),
   };
 }
 

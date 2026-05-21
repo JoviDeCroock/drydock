@@ -3,20 +3,31 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "tsc --noEmit",
-    "test": "node --test test/*.test.mjs",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "deploy": "wrangler deploy",
-    "dev": "wrangler dev"
-  },
-  "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260520.0",
-    "drizzle-kit": "^0.31.10",
-    "typescript": "^5.9.3",
-    "wrangler": "^4.51.0"
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply staged-publish-sandbox-prototype --local",
+    "db:migrate:remote": "wrangler d1 migrations apply staged-publish-sandbox-prototype --remote",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@preact/signals": "^2.7.0",
     "better-auth": "^1.6.11",
     "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.15",
     "preact": "^10.29.2"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.33.2",
+    "@cloudflare/workers-types": "^4.20260520.0",
+    "@preact/preset-vite": "^2.10.5",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.10",
+    "wrangler": "^4.85.0"
   }
 }

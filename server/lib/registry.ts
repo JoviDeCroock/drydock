@@ -1,0 +1,29 @@
+export async function fetchPackageMetadata(env: Cloudflare.Env, name: string) {
+  const registry = (env.NPM_REGISTRY || "https://registry.npmjs.org").replace(/\/$/, "");
+  const res = await fetch(`${registry}/${encodeURIComponent(name).replace(/^%40/, "@")}`, {
+    headers: { accept: "application/json" },
+  });
+  if (!res.ok) throw new Error(`metadata fetch failed: ${res.status}`);
+  return (await res.json()) as { versions?: Record<string, { dist?: { tarball?: string } }> };
+}
+
+export function pickPreviousVersion(
+  metadata: { versions?: Record<string, unknown> },
+  stagedVersion: string,
+) {
+  const versions = Object.keys(metadata.versions || {}).filter(
+    (version) => version !== stagedVersion && /^\d+\.\d+\.\d+/.test(version),
+  );
+  versions.sort(compareSemver);
+  return versions.at(-1) || null;
+}
+
+function compareSemver(a: string, b: string) {
+  const pa = a.split(/[.-]/).map((part) => Number(part) || 0);
+  const pb = b.split(/[.-]/).map((part) => Number(part) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff) return diff;
+  }
+  return 0;
+}

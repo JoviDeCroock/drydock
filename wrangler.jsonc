@@ -1,10 +1,19 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "staged-publish-sandbox-prototype",
-  "main": "src/index.ts",
+  "main": "./server/index.ts",
   "compatibility_date": "2026-05-20",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  },
+  "assets": {
+    "not_found_handling": "single-page-application"
+  },
   "ai": {
     "binding": "AI"
   },
@@ -17,7 +26,8 @@
     {
       "binding": "DB",
       "database_name": "staged-publish-sandbox-prototype",
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "drizzle"
     }
   ],
   "vars": {

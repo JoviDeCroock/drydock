@@ -1,0 +1,49 @@
+import type { Auth } from "./lib/auth";
+import type { AiReview } from "./lib/ai-review";
+import type { DiffEntry, Finding, PackageJsonSummary } from "./lib/review";
+
+export type Bindings = Cloudflare.Env;
+
+export type Variables = {
+  auth: Auth;
+};
+
+export interface ScanInput {
+  stageId: string;
+  maxFiles?: number;
+  maxBytesPerFile?: number;
+}
+
+export interface PackageJsonDiff {
+  name: string | null;
+  previousVersion: string | null;
+  stagedVersion: string | null;
+  scripts: Array<{ key: string; status: "added" | "removed" | "modified"; previous?: string; staged?: string }>;
+  dependencies: Array<{ key: string; status: "added" | "removed" | "modified"; previous?: string; staged?: string }>;
+  entrypointsChanged: boolean;
+}
+
+export interface ScanResult {
+  id: string;
+  stageId: string;
+  package: {
+    name: string | null;
+    stagedVersion: string | null;
+    previousVersion: string | null;
+  };
+  fileCount: number;
+  previousFileCount: number;
+  packageJson: PackageJsonSummary | null;
+  packageJsonDiff: PackageJsonDiff;
+  diff: DiffEntry[];
+  ruleFindings: Finding[];
+  aiFindings: AiReview;
+  risk: "low" | "medium" | "high" | "critical";
+  safety: {
+    tokenExposedToSandbox: boolean;
+    directSandboxNetwork: boolean;
+    outboundPolicy: string;
+    aiInputPolicy: string;
+    fileExplorerPolicy: string;
+  };
+}

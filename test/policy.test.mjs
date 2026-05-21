@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+// Mirror of server/lib/findings.ts so the policy test stays runtime-free.
 function deterministicFindings(files) {
   const findings = [];
   for (const file of files) {
     const p = file.path.toLowerCase();
     const sample = file.textSample || "";
-    if (p.endsWith("package.json") && /\"(preinstall|install|postinstall|prepare)\"\s*:/.test(sample)) {
+    if (p.endsWith("package.json") && /"(preinstall|install|postinstall|prepare)"\s*:/.test(sample)) {
       findings.push({ severity: "high", file: file.path, evidence: "lifecycle install script", reason: "install hooks execute on consumer machines" });
     }
     if (/\b(child_process|execSync|spawn\(|curl\s|wget\s|nc\s|bash\s+-c)\b/.test(sample)) {

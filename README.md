@@ -1,10 +1,10 @@
 # Staged publish sandbox prototype
 
-Cloudflare Worker prototype for reviewing an npm staged publish before approval.
+Cloudflare Worker + Preact UI prototype for reviewing an npm staged publish before approval. The Hono worker is co-located with the UI and bundled by Vite + the Cloudflare plugin — same shape as `../le-chien/web`.
 
 ## What this proves
 
-- The public Worker accepts a `stageId` and spins up a fresh Dynamic Worker for the risky package-download/parsing step.
+- The public Worker exposes `POST /api/v1/scan { stageId }` and spins up a fresh Dynamic Worker for the risky package-download/parsing step.
 - The Dynamic Worker fetches the staged tarball through a locked-down gateway; it never receives the npm token.
 - Direct sandbox egress is intercepted. Only expected npm registry endpoints are allowed:
   - staged tarball: `https://registry.npmjs.org/-/stage/<stage-id>/tarball`
@@ -14,8 +14,7 @@ Cloudflare Worker prototype for reviewing an npm staged publish before approval.
 - The service diffs the staged tarball against the currently published previous version when package metadata is available.
 - Package files are treated as hostile evidence. The AI prompt explicitly ignores file-contained instructions and the output is schema constrained.
 - Review results can be persisted in Cloudflare D1 through Drizzle ORM.
-- Auth is wired through Better Auth and can be enforced for `/api/*` by setting `AUTH_REQUIRED=true`.
-- `/` serves a small Preact review UI for submitting scans and exploring changed files safely.
+- Auth is wired through Better Auth and can be enforced for `/api/v1/*` by setting `AUTH_REQUIRED=true`.
 
 ## Important constraint
 
@@ -23,61 +22,49 @@ Cloudflare Workers/Dynamic Workers cannot spawn a shell or run the literal `npm 
 
 If we need to test the literal CLI command, that belongs in a separate container/VM runner. For Cloudflare, this fetch-based shape is safer and closer to the runtime we can actually deploy.
 
-## Architecture
+## Layout
 
-```text
-Maintainer browser
-  -> Worker / Preact UI
-  -> Better Auth session check for /api/* when AUTH_REQUIRED=true
-  -> POST /api/scans { stageId }
-  -> Dynamic Worker sandbox downloads staged tarball through gateway
-  -> Parent Worker fetches npm metadata and asks sandbox to parse previous published tarball
-  -> deterministic policy + version diff + Workers AI JSON-mode analysis
-  -> Drizzle ORM persists scan, files, and findings in D1
+```
+server/        Hono worker (deploy target — main in wrangler.jsonc)
+  index.ts     Mounts /api/* routes, applies security headers, gates /api/v1/*
+  routes/      scan.ts (POST), scans.ts (list + detail)
+  lib/         sandbox, review (rules + diff), ai-review, registry, auth
+  db/          Drizzle schema + persistence helpers
+src/           Preact UI served as static assets by the worker
+  pages/Scan/  Scan form + result view (rule findings, AI findings, diff list)
+  models/      Fetch wrappers that talk to /api/* (re-use server types)
+drizzle/       D1 migrations
+index.html     Vite entry
+test/          node --test for pure logic
 ```
 
-Security boundaries:
+## Develop
 
-- `NPM_TOKEN` stays in the parent Worker secret environment.
-- Dynamic Worker receives no token and no broad egress.
-- Gateway only forwards expected npm registry requests.
-- File previews are rendered as escaped text by the app. Package-provided HTML, JS, SVG, and images are not executed.
-- AI sees bounded snippets of changed files and deterministic findings; package contents are hostile evidence, not instructions.
+```sh
+pnpm install
+pnpm dev          # vite + cloudflare plugin, http://localhost:5173
+```
+
+The Vite dev server runs the Worker locally and serves the UI at the same origin, so `fetch("/api/v1/scan")` works without CORS.
 
 ## API
 
-Create and run a scan:
-
 ```sh
-curl -X POST https://<worker>/api/scans \
+# Run a scan
+curl -X POST http://localhost:5173/api/v1/scan \
   -H 'content-type: application/json' \
   -d '{"stageId":"<stage-id>"}'
-```
 
-Legacy route is also kept:
+# List persisted scans (requires D1)
+curl http://localhost:5173/api/v1/scans
 
-```sh
-curl -X POST https://<worker>/scan \
-  -H 'content-type: application/json' \
-  -d '{"stageId":"<stage-id>"}'
-```
-
-List persisted scans:
-
-```sh
-curl https://<worker>/api/scans
-```
-
-Read a persisted scan:
-
-```sh
-curl https://<worker>/api/scans/<scan-id>
+# Read a persisted scan
+curl http://localhost:5173/api/v1/scans/<scan-id>
 ```
 
 Response includes:
 
-- `id`
-- package name, staged version, previous version
+- `id`, package name, staged version, previous version
 - `fileCount` and `previousFileCount`
 - `packageJsonDiff`
 - file-level `diff`
@@ -86,72 +73,35 @@ Response includes:
 - `risk`
 - safety posture metadata
 
-## Web UI
-
-Open `/` after deploy.
-
-The Preact UI supports:
-
-- entering a stage ID
-- running a scan
-- risk summary
-- finding list
-- changed-file list
-- safe text-only preview area
-
-The current UI is intentionally minimal. For production, replace the CDN-style Preact module import with a bundled asset pipeline and add authenticated persisted scan browsing.
-
 ## Database
 
-Schema is defined in:
-
-- `src/db/schema.ts`
-
-Initial SQL migration is in:
-
-- `drizzle/0000_initial.sql`
-
-Tables:
-
-- `scans`
-- `scan_files`
-- `scan_findings`
-- Better Auth tables:
-  - `user`
-  - `session`
-  - `account`
-  - `verification`
+Schema is defined in `server/db/schema.ts`. Initial SQL migration is in `drizzle/0000_initial.sql`.
 
 Create D1 database and apply migration:
 
 ```sh
 pnpm wrangler d1 create staged-publish-sandbox-prototype
 # copy the real database_id into wrangler.jsonc
-pnpm wrangler d1 execute staged-publish-sandbox-prototype --remote --file ./drizzle/0000_initial.sql
+pnpm db:migrate:remote
 ```
 
 ## Deploy notes
 
 1. Use Node `22.14.0+` locally for Wrangler parity with npm staged publishing tooling.
-2. Install dependencies:
+2. Install dependencies and configure secrets:
 
    ```sh
    pnpm install
-   ```
-
-3. Configure secrets:
-
-   ```sh
    pnpm wrangler secret put NPM_TOKEN
    pnpm wrangler secret put BETTER_AUTH_SECRET
    ```
 
-4. Set the real D1 `database_id` in `wrangler.jsonc`.
-5. Apply the D1 migration.
-6. Deploy:
+3. Set the real D1 `database_id` in `wrangler.jsonc` and apply the migration.
+4. Build + deploy:
 
    ```sh
-   pnpm run deploy
+   pnpm build
+   pnpm deploy
    ```
 
 ## Threat model
@@ -162,8 +112,7 @@ Defended:
 - Package parser trying direct Internet egress from the sandbox.
 - NPM token exposure to sandbox code.
 - Huge packages overwhelming AI context; samples are bounded.
-- Browser execution of package-provided HTML/JS/SVG; previews are text-only.
-- Risky changes hiding in large package output; changed files and package metadata diffs are first-class review objects.
+- Risky changes hiding in large package output; the file diff and package metadata diff are first-class review objects.
 
 Not defended in this spike:
 
@@ -185,11 +134,10 @@ Not defended in this spike:
 ### What didn't
 
 - The literal npm CLI command cannot run in a Worker runtime.
-- The Preact UI is a prototype shell; persisted file sample retrieval and side-by-side text diffs still need a production UI pass.
 
 ### Recommendation for the real build
 
-- Keep this product centered on “what changed in this staged publish?” rather than generic package scanning.
+- Keep this product centered on "what changed in this staged publish?" rather than generic package scanning.
 - Add R2 storage for original tarballs and extracted artifacts.
 - Move scanning to Cloudflare Queues for large packages and retryable work.
 - Add line-level side-by-side diffs for text files.

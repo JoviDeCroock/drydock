@@ -1,10 +1,8 @@
 import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
-import { betterAuth } from "better-auth";
-import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import * as schema from "./schema";
 import { scans, scanFiles, scanFindings } from "./schema";
-import type { DiffEntry, FileRecord, Finding, PackageJsonSummary } from "../review";
+import type { DiffEntry, FileRecord, Finding, PackageJsonSummary } from "../lib/review";
 
 export type AppDb = ReturnType<typeof drizzle<typeof schema>>;
 
@@ -24,23 +22,6 @@ export interface PersistedScanInput {
 
 export function createDb(d1: D1Database) {
   return drizzle(d1, { schema });
-}
-
-export function createAuth(env: { DB?: D1Database; BETTER_AUTH_SECRET?: string; BETTER_AUTH_URL?: string }) {
-  if (!env.DB) return null;
-  const db = createDb(env.DB);
-  return betterAuth({
-    secret: env.BETTER_AUTH_SECRET || "dev-only-change-me",
-    baseURL: env.BETTER_AUTH_URL,
-    database: drizzleAdapter(db, {
-      provider: "sqlite",
-      schema,
-      usePlural: false,
-    }) as never,
-    emailAndPassword: {
-      enabled: true,
-    },
-  });
 }
 
 export async function persistScan(db: AppDb, input: PersistedScanInput) {
@@ -76,15 +57,17 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
   if (rows.length) await db.insert(scanFiles).values(rows);
 
   if (input.findings.length) {
-    await db.insert(scanFindings).values(input.findings.map((finding) => ({
-      id: crypto.randomUUID(),
-      scanId: input.id,
-      severity: finding.severity,
-      file: finding.file,
-      evidence: finding.evidence,
-      reason: finding.reason,
-      source: "rule",
-    })));
+    await db.insert(scanFindings).values(
+      input.findings.map((finding) => ({
+        id: crypto.randomUUID(),
+        scanId: input.id,
+        severity: finding.severity,
+        file: finding.file,
+        evidence: finding.evidence,
+        reason: finding.reason,
+        source: "rule",
+      })),
+    );
   }
 }
 
