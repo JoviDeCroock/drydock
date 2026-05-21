@@ -188,8 +188,9 @@ Reports should become canonical data objects even before public signing launches
 Implemented foundation:
 
 - newly completed scans store report metadata inside `summary_json.report`;
-- `digest` is SHA-256 over stable canonical report JSON built from redacted scan evidence;
-- persisted scan detail renders report version, digest, package diff, AI review, and safety posture.
+- `digest` is SHA-256 over stable canonical report JSON built from redacted scan evidence, including the deterministic rules version so digests change when the ruleset changes;
+- each deterministic finding carries `ruleId` and `ruleVersion` (see `DETERMINISTIC_RULES_VERSION` in `server/lib/review.ts`), persisted on `scan_findings.rule_id` / `rule_version`;
+- persisted scan detail renders report version, digest, rules version, package diff, AI review, and safety posture.
 
 Prepare next for:
 

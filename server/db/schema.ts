@@ -110,6 +110,8 @@ export const scanFindings = sqliteTable("scan_findings", {
   evidence: text("evidence").notNull(),
   reason: text("reason").notNull(),
   source: text("source").notNull().default("rule"),
+  ruleId: text("rule_id"),
+  ruleVersion: text("rule_version"),
 });
 
 export const scanEvents = sqliteTable(

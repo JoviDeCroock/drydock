@@ -68,6 +68,8 @@ export interface PersistedScanDetail {
     evidence: string;
     reason: string;
     source: string;
+    ruleId?: string | null;
+    ruleVersion?: string | null;
   }>;
 }
 

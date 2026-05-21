@@ -310,6 +310,8 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
             evidence: finding.evidence,
             reason: finding.reason,
             source: "rule",
+            ruleId: finding.ruleId ?? null,
+            ruleVersion: finding.ruleVersion ?? null,
           })),
         )
       : Promise.resolve(),
