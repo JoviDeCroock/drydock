@@ -412,6 +412,7 @@ function DecisionPanel({
 }) {
   const editing = useSignal(!decision);
   const reasonDraft = useSignal("");
+  const expanded = useSignal(false);
   const saving = status === "saving";
 
   useSignalEffect(() => {
@@ -429,92 +430,110 @@ function DecisionPanel({
   };
 
   const showForm = editing.value || !decision;
+  const isExpanded = expanded.value || Boolean(error);
 
   return (
     <Card class="p-5 flex flex-col gap-4 border-accent/40">
-      <div class="flex flex-wrap items-start justify-between gap-3">
-        <div class="flex flex-col gap-1.5">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="flex flex-wrap items-center gap-3">
           <SectionLabel>Publish decision</SectionLabel>
-          <Muted class="text-[13px] max-w-[640px]">
-            Record whether this staged publish is approved to go live. The decision is part of the
-            audit trail.
-          </Muted>
+          {decision ? (
+            <Badge tone={decision === "publish" ? "ok" : "critical"}>
+              {decision === "publish" ? "approved" : "blocked"}
+            </Badge>
+          ) : (
+            <Badge tone="neutral">undecided</Badge>
+          )}
+          {!isExpanded && decision && decidedAt ? (
+            <span class="font-mono text-[11px] text-ink-subtle">{formatDate(decidedAt)}</span>
+          ) : null}
         </div>
-        {decision ? (
-          <Badge tone={decision === "publish" ? "ok" : "critical"}>
-            {decision === "publish" ? "approved" : "blocked"}
-          </Badge>
-        ) : (
-          <Badge tone="neutral">undecided</Badge>
-        )}
+        <button
+          type="button"
+          onClick={() => (expanded.value = !expanded.value)}
+          class="bg-transparent border-0 p-0 cursor-pointer font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle hover:text-ink"
+          aria-expanded={isExpanded}
+        >
+          {isExpanded ? "Collapse" : "Expand"}
+        </button>
       </div>
 
-      {decision && !editing.value ? (
-        <div class="flex flex-col gap-2">
-          <MonoDetail
-            parts={[
-              <span key="kind">
-                {decision === "publish" ? "approved publish" : "blocked publish"}
-              </span>,
-              <span key="at">{decidedAt ? formatDate(decidedAt) : "just now"}</span>,
-            ]}
-          />
-          {decisionReason ? (
-            <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{decisionReason}</p>
-          ) : null}
-          <div class="flex">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                reasonDraft.value = decisionReason ?? "";
-                editing.value = true;
-              }}
-            >
-              Change decision
-            </Button>
-          </div>
-        </div>
-      ) : null}
+      {isExpanded ? (
+        <>
+          <Muted class="text-[13px] max-w-[640px]">
+            Record whether this staged publish is approved to go live. The decision is part of the
+            audit trail. It doesn't publish or cancel the release on npm — that still requires you
+            to confirm or cancel with 2FA there.
+          </Muted>
 
-      {showForm ? (
-        <div class="flex flex-col gap-3">
-          <Field label="Reason (optional)" for="decisionReason">
-            <Input
-              id="decisionReason"
-              type="text"
-              value={reasonDraft.value}
-              placeholder="e.g. minor patch, no risk signals"
-              onInput={(e) => (reasonDraft.value = (e.target as HTMLInputElement).value)}
-              disabled={saving}
-              maxLength={500}
-              autoComplete="off"
-              spellcheck={false}
-            />
-          </Field>
-          <div class="flex flex-wrap gap-2">
-            <Button onClick={() => submit("publish")} disabled={saving}>
-              {saving ? "Saving…" : "Approve publish"}
-            </Button>
-            <Button variant="danger" onClick={() => submit("no_publish")} disabled={saving}>
-              {saving ? "Saving…" : "Block publish"}
-            </Button>
-            {decision ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  editing.value = false;
-                  reasonDraft.value = "";
-                }}
-                disabled={saving}
-              >
-                Cancel
-              </Button>
-            ) : null}
-          </div>
-          {error ? <Alert tone="critical">{error}</Alert> : null}
-        </div>
+          {decision && !editing.value ? (
+            <div class="flex flex-col gap-2">
+              <MonoDetail
+                parts={[
+                  <span key="kind">
+                    {decision === "publish" ? "approved publish" : "blocked publish"}
+                  </span>,
+                  <span key="at">{decidedAt ? formatDate(decidedAt) : "just now"}</span>,
+                ]}
+              />
+              {decisionReason ? (
+                <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{decisionReason}</p>
+              ) : null}
+              <div class="flex">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    reasonDraft.value = decisionReason ?? "";
+                    editing.value = true;
+                  }}
+                >
+                  Change decision
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          {showForm ? (
+            <div class="flex flex-col gap-3">
+              <Field label="Reason (optional)" for="decisionReason">
+                <Input
+                  id="decisionReason"
+                  type="text"
+                  value={reasonDraft.value}
+                  placeholder="e.g. minor patch, no risk signals"
+                  onInput={(e) => (reasonDraft.value = (e.target as HTMLInputElement).value)}
+                  disabled={saving}
+                  maxLength={500}
+                  autoComplete="off"
+                  spellcheck={false}
+                />
+              </Field>
+              <div class="flex flex-wrap gap-2">
+                <Button onClick={() => submit("publish")} disabled={saving}>
+                  {saving ? "Saving…" : "Approve publish"}
+                </Button>
+                <Button variant="danger" onClick={() => submit("no_publish")} disabled={saving}>
+                  {saving ? "Saving…" : "Block publish"}
+                </Button>
+                {decision ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      editing.value = false;
+                      reasonDraft.value = "";
+                    }}
+                    disabled={saving}
+                  >
+                    Cancel
+                  </Button>
+                ) : null}
+              </div>
+              {error ? <Alert tone="critical">{error}</Alert> : null}
+            </div>
+          ) : null}
+        </>
       ) : null}
     </Card>
   );
