@@ -77,16 +77,8 @@ export default function DashboardPage() {
   const user = sessionModel.user.value;
 
   return (
-    <PageShell>
-      <header class="flex flex-wrap gap-4 items-start justify-between">
-        <div class="flex flex-col gap-2 max-w-[640px]">
-          <Eyebrow>Review workspace</Eyebrow>
-          <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Ready for the next release</h1>
-          <Muted class="text-[14px] leading-[1.55] m-0">
-            Bring in a staged npm publish, compare it with the live version, and get a focused
-            safety brief before maintainers approve.
-          </Muted>
-        </div>
+    <PageShell
+      headerActions={
         <div class="flex items-center gap-2.5 bg-surface border border-border rounded-lg pl-3.5 pr-1.5 py-1.5">
           <span class="font-mono text-xs text-ink-muted">
             {user?.email || user?.name || "signed in"}
@@ -95,6 +87,15 @@ export default function DashboardPage() {
             Sign out
           </Button>
         </div>
+      }
+    >
+      <header class="flex flex-col gap-2 max-w-[640px]">
+        <Eyebrow>Review workspace</Eyebrow>
+        <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Ready for the next release</h1>
+        <Muted class="text-[14px] leading-[1.55] m-0">
+          Bring a staged npm publish into drydock, compare it with the live version, and leave with
+          a focused safety brief before maintainers approve.
+        </Muted>
       </header>
 
       <ReviewRequestCard npm={npm} request={request} onSubmit={onSubmit} />
