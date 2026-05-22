@@ -107,6 +107,9 @@ export default function DashboardPage() {
   const npmLoaded = npm.loaded.value;
   const workspaceLoaded = scansLoaded && npmLoaded;
 
+  const activeOrganization = organizations.active.value;
+  const canManageMembers = Boolean(activeOrganization && !activeOrganization.isPersonal);
+
   return (
     <PageShell
       headerActions={
@@ -118,6 +121,7 @@ export default function DashboardPage() {
             error={organizations.error.value}
             onActivate={onSwitchOrganization}
             onCreate={onCreateOrganization}
+            manageHref={canManageMembers ? "/dashboard/settings" : undefined}
           />
           <UserMenu email={user?.email} name={user?.name} onSignOut={onSignOut} />
         </>

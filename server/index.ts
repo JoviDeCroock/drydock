@@ -23,7 +23,7 @@ import {
   StagedPublishesFetchError,
 } from "./lib/staged-publishes-discovery";
 import { npmConnectionRoutes } from "./routes/npm-connection";
-import { organizationsRoutes } from "./routes/organizations";
+import { invitesRoutes, organizationsRoutes } from "./routes/organizations";
 import { scanRoutes } from "./routes/scan";
 import { scansRoutes } from "./routes/scans";
 import { stagedPublishesRoutes } from "./routes/staged-publishes";
@@ -187,6 +187,11 @@ app.get("/api", (c) =>
       npmConnection: "GET/POST/DELETE /api/v1/npm-connection; POST /api/v1/npm-connection/validate",
       organizations:
         "GET /api/v1/organizations; POST /api/v1/organizations; PATCH /api/v1/organizations/:id",
+      members:
+        "GET /api/v1/organizations/:id/members; DELETE /api/v1/organizations/:id/members/:userId",
+      orgInvites:
+        "GET/POST /api/v1/organizations/:id/invites; DELETE /api/v1/organizations/:id/invites/:inviteId",
+      invites: "GET /api/v1/invites/:token; POST /api/v1/invites/:token/accept",
       health: "GET /api/health",
     },
     auth: "Better Auth is required for every non-auth API endpoint.",
@@ -196,6 +201,7 @@ app.get("/api", (c) =>
 
 app.route("/api/v1/npm-connection", npmConnectionRoutes);
 app.route("/api/v1/organizations", organizationsRoutes);
+app.route("/api/v1/invites", invitesRoutes);
 app.route("/api/v1/scan", scanRoutes);
 app.route("/api/v1/scans", scansRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);

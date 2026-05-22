@@ -15,6 +15,7 @@ interface OrgSwitcherProps {
   error?: string | null;
   onActivate: (id: string) => Promise<unknown> | unknown;
   onCreate: (name: string) => Promise<unknown> | unknown;
+  manageHref?: string;
 }
 
 export function OrgSwitcher({
@@ -24,6 +25,7 @@ export function OrgSwitcher({
   error,
   onActivate,
   onCreate,
+  manageHref,
 }: OrgSwitcherProps) {
   const creating = useSignal(false);
   const draftName = useSignal("");
@@ -92,6 +94,18 @@ export function OrgSwitcher({
           ))
         )}
         <MenuSeparator />
+        {manageHref ? (
+          <>
+            <MenuItem
+              onSelect={() => {
+                window.location.href = manageHref;
+              }}
+            >
+              Manage members →
+            </MenuItem>
+            <MenuSeparator />
+          </>
+        ) : null}
         <MenuItem tone="accent" onSelect={openCreate} disabled={busy}>
           + New organization
         </MenuItem>

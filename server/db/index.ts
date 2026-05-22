@@ -1,8 +1,9 @@
 import { drizzle } from "drizzle-orm/d1";
-import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import * as schema from "./schema";
 import {
   npmConnections,
+  organizationInvites,
   organizationMembers,
   organizations,
   rateLimits,
@@ -12,7 +13,11 @@ import {
   scans,
   user,
 } from "./schema";
-import { personalOrganizationId } from "../lib/ownership";
+import {
+  type OrganizationRole,
+  isPersonalOrganizationId,
+  personalOrganizationId,
+} from "../lib/ownership";
 import {
   annotateFindingsWithDiffStatus,
   computeRisk,
@@ -964,4 +969,270 @@ export async function renameOrganization(db: AppDb, organizationId: string, name
     .update(organizations)
     .set({ name, updatedAt: new Date() })
     .where(eq(organizations.id, organizationId));
+}
+
+export interface OrganizationMembership {
+  organizationId: string;
+  userId: string;
+  role: OrganizationRole;
+}
+
+export async function getOrganizationMembership(
+  db: AppDb,
+  organizationId: string,
+  userId: string,
+): Promise<OrganizationMembership | null> {
+  const [row] = await db
+    .select({
+      organizationId: organizationMembers.organizationId,
+      userId: organizationMembers.userId,
+      role: organizationMembers.role,
+    })
+    .from(organizationMembers)
+    .where(
+      and(
+        eq(organizationMembers.organizationId, organizationId),
+        eq(organizationMembers.userId, userId),
+      ),
+    )
+    .limit(1);
+  if (!row) return null;
+  return {
+    organizationId: row.organizationId,
+    userId: row.userId,
+    role: (row.role === "member" ? "member" : "owner") as OrganizationRole,
+  };
+}
+
+export interface OrganizationMemberRow {
+  userId: string;
+  email: string | null;
+  name: string | null;
+  role: OrganizationRole;
+  joinedAt: Date | string | number;
+  isOwner: boolean;
+}
+
+export async function listOrganizationMembers(
+  db: AppDb,
+  organizationId: string,
+): Promise<OrganizationMemberRow[]> {
+  const [orgRow] = await db
+    .select({ ownerUserId: organizations.ownerUserId })
+    .from(organizations)
+    .where(eq(organizations.id, organizationId))
+    .limit(1);
+  if (!orgRow) return [];
+
+  const rows = await db
+    .select({
+      userId: organizationMembers.userId,
+      role: organizationMembers.role,
+      joinedAt: organizationMembers.createdAt,
+      email: user.email,
+      name: user.name,
+    })
+    .from(organizationMembers)
+    .innerJoin(user, eq(user.id, organizationMembers.userId))
+    .where(eq(organizationMembers.organizationId, organizationId))
+    .orderBy(organizationMembers.createdAt);
+
+  return rows.map((row) => ({
+    userId: row.userId,
+    email: row.email ?? null,
+    name: row.name ?? null,
+    role: (row.role === "member" ? "member" : "owner") as OrganizationRole,
+    joinedAt: row.joinedAt,
+    isOwner: row.userId === orgRow.ownerUserId,
+  }));
+}
+
+export async function removeOrganizationMember(db: AppDb, organizationId: string, userId: string) {
+  await db
+    .delete(organizationMembers)
+    .where(
+      and(
+        eq(organizationMembers.organizationId, organizationId),
+        eq(organizationMembers.userId, userId),
+      ),
+    );
+}
+
+export async function addOrganizationMember(
+  db: AppDb,
+  input: { organizationId: string; userId: string; role: OrganizationRole },
+) {
+  const now = new Date();
+  await db
+    .insert(organizationMembers)
+    .values({
+      id: `member:${input.organizationId}:${input.userId}`,
+      organizationId: input.organizationId,
+      userId: input.userId,
+      role: input.role,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoNothing();
+}
+
+export interface OrganizationInviteRow {
+  id: string;
+  organizationId: string;
+  role: OrganizationRole;
+  email: string | null;
+  status: "pending" | "accepted" | "revoked" | "expired";
+  tokenLast4: string | null;
+  invitedByUserId: string | null;
+  acceptedByUserId: string | null;
+  expiresAt: Date | string | number;
+  acceptedAt: Date | string | number | null;
+  createdAt: Date | string | number;
+  updatedAt: Date | string | number;
+}
+
+function normalizeInviteRow(row: {
+  id: string;
+  organizationId: string;
+  role: string;
+  email: string | null;
+  status: string;
+  tokenLast4: string | null;
+  invitedByUserId: string | null;
+  acceptedByUserId: string | null;
+  expiresAt: Date | string | number;
+  acceptedAt: Date | string | number | null;
+  createdAt: Date | string | number;
+  updatedAt: Date | string | number;
+}): OrganizationInviteRow {
+  return {
+    id: row.id,
+    organizationId: row.organizationId,
+    role: (row.role === "member" ? "member" : "owner") as OrganizationRole,
+    email: row.email,
+    status:
+      row.status === "accepted" || row.status === "revoked" || row.status === "expired"
+        ? row.status
+        : "pending",
+    tokenLast4: row.tokenLast4,
+    invitedByUserId: row.invitedByUserId,
+    acceptedByUserId: row.acceptedByUserId,
+    expiresAt: row.expiresAt,
+    acceptedAt: row.acceptedAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+export async function createOrganizationInvite(
+  db: AppDb,
+  input: {
+    organizationId: string;
+    role: OrganizationRole;
+    email?: string | null;
+    tokenHash: string;
+    tokenLast4: string;
+    invitedByUserId: string;
+    expiresAt: Date;
+  },
+): Promise<OrganizationInviteRow> {
+  if (isPersonalOrganizationId(input.organizationId)) {
+    throw new Error("personal organizations cannot have invites");
+  }
+  const id = crypto.randomUUID();
+  const now = new Date();
+  await db.insert(organizationInvites).values({
+    id,
+    organizationId: input.organizationId,
+    role: input.role,
+    email: input.email ?? null,
+    tokenHash: input.tokenHash,
+    tokenLast4: input.tokenLast4,
+    status: "pending",
+    invitedByUserId: input.invitedByUserId,
+    acceptedByUserId: null,
+    expiresAt: input.expiresAt,
+    acceptedAt: null,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const [row] = await db
+    .select()
+    .from(organizationInvites)
+    .where(eq(organizationInvites.id, id))
+    .limit(1);
+  return normalizeInviteRow(row);
+}
+
+export async function listOrganizationInvites(
+  db: AppDb,
+  organizationId: string,
+): Promise<OrganizationInviteRow[]> {
+  const rows = await db
+    .select()
+    .from(organizationInvites)
+    .where(eq(organizationInvites.organizationId, organizationId))
+    .orderBy(desc(organizationInvites.createdAt));
+  return rows.map(normalizeInviteRow);
+}
+
+export async function getInviteByTokenHash(
+  db: AppDb,
+  tokenHash: string,
+): Promise<OrganizationInviteRow | null> {
+  const [row] = await db
+    .select()
+    .from(organizationInvites)
+    .where(eq(organizationInvites.tokenHash, tokenHash))
+    .limit(1);
+  return row ? normalizeInviteRow(row) : null;
+}
+
+export async function revokeOrganizationInvite(
+  db: AppDb,
+  inviteId: string,
+  organizationId: string,
+): Promise<boolean> {
+  const result = await db
+    .update(organizationInvites)
+    .set({ status: "revoked", updatedAt: new Date() })
+    .where(
+      and(
+        eq(organizationInvites.id, inviteId),
+        eq(organizationInvites.organizationId, organizationId),
+        eq(organizationInvites.status, "pending"),
+      ),
+    )
+    .returning({ id: organizationInvites.id });
+  return result.length > 0;
+}
+
+export async function acceptOrganizationInvite(
+  db: AppDb,
+  input: { invite: OrganizationInviteRow; userId: string },
+): Promise<{ accepted: boolean }> {
+  const now = new Date();
+  const result = await db
+    .update(organizationInvites)
+    .set({
+      status: "accepted",
+      acceptedByUserId: input.userId,
+      acceptedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(organizationInvites.id, input.invite.id),
+        eq(organizationInvites.status, "pending"),
+        gt(organizationInvites.expiresAt, now),
+      ),
+    )
+    .returning({ id: organizationInvites.id });
+  if (result.length === 0) return { accepted: false };
+  await addOrganizationMember(db, {
+    organizationId: input.invite.organizationId,
+    userId: input.userId,
+    role: input.invite.role,
+  });
+  return { accepted: true };
 }

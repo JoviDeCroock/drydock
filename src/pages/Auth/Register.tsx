@@ -2,6 +2,7 @@ import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
 import { sessionModel } from "../../models/auth";
+import { resolveNextPath } from "../../models/next-path";
 import { Alert, Button, Card, Eyebrow, Field, Input, PageShell, Muted } from "../../components";
 
 export default function RegisterPage() {
@@ -12,12 +13,15 @@ export default function RegisterPage() {
   const error = useSignal<string | null>(null);
   const loading = useSignal(false);
 
+  const next = resolveNextPath(location.query?.next);
+
   useEffect(() => {
     let cancelled = false;
-    void sessionModel.load().then((session) => {
+    void (async () => {
+      const session = await sessionModel.load();
       if (cancelled) return;
-      if (session?.user) location.route("/dashboard", true);
-    });
+      if (session?.user) location.route(next, true);
+    })();
     return () => {
       cancelled = true;
     };
@@ -33,7 +37,7 @@ export default function RegisterPage() {
     try {
       await sessionModel.signUp(submittedName, submittedEmail, submittedPassword);
       await sessionModel.signIn(submittedEmail, submittedPassword).catch(() => undefined);
-      location.route("/dashboard", true);
+      location.route(next, true);
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err);
     } finally {

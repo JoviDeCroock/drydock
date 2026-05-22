@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import type { AppDb } from "../db";
 import { ensurePersonalOrganization } from "../db";
 import { organizationMembers } from "../db/schema";
-import { personalOrganizationId } from "./ownership";
+import { type OrganizationRole, personalOrganizationId } from "./ownership";
 import type { Bindings, Variables } from "../types";
 
 export const ACTIVE_ORG_HEADER = "x-organization-id";
@@ -12,11 +12,19 @@ export async function requireActiveOrganization(
   c: Context<{ Bindings: Bindings; Variables: Variables }>,
   db: AppDb,
 ): Promise<string> {
+  const result = await resolveActiveOrganization(c, db);
+  return result.organizationId;
+}
+
+export async function resolveActiveOrganization(
+  c: Context<{ Bindings: Bindings; Variables: Variables }>,
+  db: AppDb,
+): Promise<{ organizationId: string; role: OrganizationRole }> {
   const session = c.get("authSession");
   const requested = c.req.header(ACTIVE_ORG_HEADER)?.trim() || null;
   if (requested) {
     const [membership] = await db
-      .select({ organizationId: organizationMembers.organizationId })
+      .select({ role: organizationMembers.role })
       .from(organizationMembers)
       .where(
         and(
@@ -25,8 +33,13 @@ export async function requireActiveOrganization(
         ),
       )
       .limit(1);
-    if (membership) return requested;
+    if (membership) {
+      return {
+        organizationId: requested,
+        role: (membership.role === "member" ? "member" : "owner") as OrganizationRole,
+      };
+    }
   }
   await ensurePersonalOrganization(db, session);
-  return personalOrganizationId(session.userId);
+  return { organizationId: personalOrganizationId(session.userId), role: "owner" };
 }

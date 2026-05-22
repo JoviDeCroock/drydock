@@ -49,6 +49,36 @@ export const organizationMembers = sqliteTable(
   }),
 );
 
+export const organizationInvites = sqliteTable(
+  "organization_invites",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    email: text("email"),
+    tokenHash: text("token_hash").notNull(),
+    tokenLast4: text("token_last4"),
+    status: text("status").notNull().default("pending"),
+    invitedByUserId: text("invited_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    acceptedByUserId: text("accepted_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    acceptedAt: integer("accepted_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    tokenHashIdx: uniqueIndex("organization_invites_token_hash_unique_idx").on(table.tokenHash),
+    orgStatusIdx: index("organization_invites_org_status_idx").on(
+      table.organizationId,
+      table.status,
+    ),
+  }),
+);
+
 export const scans = sqliteTable(
   "scans",
   {

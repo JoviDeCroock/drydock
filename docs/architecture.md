@@ -197,7 +197,16 @@ Organization-owned resources scope by the active org:
 - future report signatures;
 - future artifact retention settings.
 
-Invitations, team membership, RBAC, deletion, audit-log UI, billing, and quotas are deferred (see Phase 12 in `docs/production-roadmap.md`). Until they ship, every member of an organization is effectively an owner, and route guards must continue to verify membership through `organization_members` rather than trusting client-supplied org ids.
+Membership has two roles, persisted on `organization_members.role`:
+
+- `owner` — full control: rename, invite, remove members, manage the npm connection.
+- `member` — read access plus the ability to request scans on behalf of the organization. Members cannot rotate, validate, or remove the org npm connection (route handlers in `server/routes/npm-connection.ts` enforce this).
+
+The primary owner of an organization (`organizations.owner_user_id`) cannot be removed via the members API.
+
+Invitations are share-link based. An owner generates an invite from `POST /api/v1/organizations/:id/invites`; the server returns a one-time URL containing a random token (`inv_…`). Only the SHA-256 hash of the token is persisted (`organization_invites.token_hash`) — losing the link means cutting a new invite. Invites expire after 7 days, are single-use, and can be revoked by an owner. The invitee accepts by visiting `/invites/:token`, which calls `POST /api/v1/invites/:token/accept`. Personal organizations cannot send invites.
+
+Audit-log UI, deletion, billing, and quotas remain deferred (see Phase 12 in `docs/production-roadmap.md`). Invite/accept/revoke/member-remove all emit `scan_events` rows under the `organization.invite_*` and `organization.member_*` types.
 
 ## npm connection model
 
@@ -252,7 +261,14 @@ Current API:
 - `DELETE /api/v1/npm-connection` — remove connection.
 - `GET /api/v1/organizations` — list the caller's organizations (personal first), each with `npmConnectionConfigured`;
 - `POST /api/v1/organizations` — create a new organization owned by the caller;
-- `PATCH /api/v1/organizations/:id` — rename (owner-only).
+- `PATCH /api/v1/organizations/:id` — rename (owner-only);
+- `GET /api/v1/organizations/:id/members` — list members and the viewer's role;
+- `DELETE /api/v1/organizations/:id/members/:userId` — remove a member (owner-only; cannot remove the primary owner);
+- `GET /api/v1/organizations/:id/invites` — list invites (owner-only);
+- `POST /api/v1/organizations/:id/invites` — create a share-link invite (owner-only) and return the one-time URL;
+- `DELETE /api/v1/organizations/:id/invites/:inviteId` — revoke a pending invite (owner-only);
+- `GET /api/v1/invites/:token` — preview an invite (any signed-in user);
+- `POST /api/v1/invites/:token/accept` — accept an invite and join the org.
 
 All other `/api/v1/*` endpoints honor the `x-organization-id` request header to pick the active org; absent or non-member ids silently fall back to the caller's personal org.
 
