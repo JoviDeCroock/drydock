@@ -159,7 +159,6 @@ export default function ScanDetailPage() {
   const error = model.error.value;
   const compareLoading = model.compareLoading.value;
   const compareError = model.compareError.value;
-  const fileLoading = model.fileLoading.value;
   const selectedVersion = model.selectedVersion.value;
   const compare = model.compare.value;
   const hasRuleFindings = Boolean(detail?.findings.length);
@@ -215,11 +214,11 @@ export default function ScanDetailPage() {
           ) : null}
 
           <section class={workbenchGridClass}>
-            <Card as="aside" class="p-0 overflow-hidden flex flex-col min-h-0">
+            <Card as="aside" class="p-0 overflow-hidden flex flex-col">
               <div class="px-4 py-3 border-b border-border">
                 <SectionLabel>Release tree</SectionLabel>
               </div>
-              <div class="flex flex-col overflow-y-auto max-h-[640px] py-2">
+              <div class="flex flex-col overflow-y-auto h-[640px] py-2">
                 <FileTree
                   entries={diffEntries.value}
                   selectedPath={model.selectedPath.value}
@@ -228,34 +227,17 @@ export default function ScanDetailPage() {
               </div>
             </Card>
 
-            <Card class="p-5 flex flex-col gap-3 min-h-0">
+            <Card class="p-5 flex flex-col gap-3 h-[720px]">
               <SectionLabel>File diff</SectionLabel>
-              {selectedEntry.value &&
-              (stagedFile.value || previousFile.value || previousFileMeta.value) ? (
-                <>
-                  {fileLoading && !previousFile.value ? (
-                    <LoadingLine size="inline">Loading previous content</LoadingLine>
-                  ) : null}
-                  <DiffView
-                    path={selectedEntry.value.path}
-                    status={selectedEntry.value.status}
-                    beforeLabel={selectedVersion ? `previous (${selectedVersion})` : "previous"}
-                    afterLabel={`staged (${detail.scan.stagedVersion ?? "current"})`}
-                    before={
-                      previousFile.value
-                        ? toDiffSide(previousFile.value)
-                        : previousFileMeta.value
-                          ? toDiffSide(previousFileMeta.value)
-                          : null
-                    }
-                    after={stagedFile.value ? scanFileToDiffSide(stagedFile.value) : null}
-                  />
-                </>
-              ) : selectedEntry.value && !compare && selectedEntry.value.status !== "unchanged" ? (
-                <LoadingLine>Loading previous version metadata</LoadingLine>
-              ) : (
-                <EmptyLine>Select a file from the tree to diff.</EmptyLine>
-              )}
+              <DiffWorkbench
+                entry={selectedEntry.value}
+                staged={stagedFile.value}
+                previousMeta={previousFileMeta.value}
+                previousContent={previousFile.value}
+                compareReady={Boolean(compare)}
+                selectedVersion={selectedVersion}
+                stagedVersion={detail.scan.stagedVersion}
+              />
             </Card>
 
             {hasRuleFindings ? (
@@ -310,6 +292,60 @@ function ScanDetailHeader({ detail }: { detail?: PersistedScanDetail | null } = 
         <LoadingLine size="inline">Loading saved review</LoadingLine>
       )}
     </header>
+  );
+}
+
+function DiffWorkbench({
+  entry,
+  staged,
+  previousMeta,
+  previousContent,
+  compareReady,
+  selectedVersion,
+  stagedVersion,
+}: {
+  entry: DiffEntry | null;
+  staged: PersistedScanDetail["files"][number] | null;
+  previousMeta: FileRecord | null;
+  previousContent: FileRecord | null;
+  compareReady: boolean;
+  selectedVersion: string | null;
+  stagedVersion: string | null | undefined;
+}) {
+  if (!entry) {
+    return <EmptyLine>Select a file from the tree to diff.</EmptyLine>;
+  }
+
+  const needsPrevious = entry.status !== "added";
+  const isBinaryPrev = Boolean(previousMeta?.flags?.includes("binary"));
+
+  if (needsPrevious && !compareReady && entry.status !== "unchanged") {
+    return <LoadingLine>Loading previous version metadata</LoadingLine>;
+  }
+
+  if (needsPrevious && previousMeta && !isBinaryPrev && !previousContent) {
+    return <LoadingLine size="inline">Loading file</LoadingLine>;
+  }
+
+  if (!staged && !previousContent && !previousMeta) {
+    return <EmptyLine>No file content available.</EmptyLine>;
+  }
+
+  return (
+    <DiffView
+      path={entry.path}
+      status={entry.status}
+      beforeLabel={selectedVersion ? `previous (${selectedVersion})` : "previous"}
+      afterLabel={`staged (${stagedVersion ?? "current"})`}
+      before={
+        previousContent
+          ? toDiffSide(previousContent)
+          : previousMeta
+            ? toDiffSide(previousMeta)
+            : null
+      }
+      after={staged ? scanFileToDiffSide(staged) : null}
+    />
   );
 }
 

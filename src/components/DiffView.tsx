@@ -152,7 +152,7 @@ function DiffBody({
         <span>{beforeLabel}</span>
         <span>{afterLabel}</span>
       </div>
-      <div class="overflow-auto max-h-[560px]">
+      <div class="overflow-auto h-[560px]">
         <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
           <tbody>
             {rows.map((row, index) => (
@@ -206,7 +206,7 @@ function SingleSidedView({
       >
         {label}
       </div>
-      <div class="overflow-auto max-h-[560px]">
+      <div class="overflow-auto h-[560px]">
         <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
           <tbody>
             {lines.map((line, index) => (
