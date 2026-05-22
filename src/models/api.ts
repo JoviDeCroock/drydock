@@ -1,3 +1,5 @@
+import { ACTIVE_ORG_HEADER, activeOrganizationId } from "./active-organization";
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -10,10 +12,16 @@ export class ApiError extends Error {
 }
 
 export async function apiFetch<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+  const orgId = activeOrganizationId.peek();
+  if (orgId) headers[ACTIVE_ORG_HEADER] = orgId;
   const res = await fetch(input, {
     credentials: "same-origin",
-    headers: { accept: "application/json", ...init?.headers },
     ...init,
+    headers,
   });
   const data = (await res.json().catch(() => null)) as
     | (Partial<T> & { error?: string; detail?: string; message?: string })

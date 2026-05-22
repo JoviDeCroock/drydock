@@ -4,12 +4,12 @@ import {
   createDb,
   createScanJob,
   enforceRateLimit,
-  ensurePersonalOrganization,
   getNpmConnection,
   getScan,
   listScans,
   recordScanEvent,
 } from "../db";
+import { requireActiveOrganization } from "../lib/active-organization";
 import { loadCompare, stripTextSamples } from "../lib/compare-cache";
 import { getOrganizationNpmToken } from "../lib/npm-connection";
 import { compareSemver, fetchPackageMetadata, pickPreviousVersion } from "../lib/registry";
@@ -32,7 +32,7 @@ scansRoutes.post("/", async (c) => {
   try {
     const db = createDb(c.env.DB);
     const session = c.get("authSession");
-    const organizationId = await ensurePersonalOrganization(db, session);
+    const organizationId = await requireActiveOrganization(c, db);
     await enforceRateLimit(db, {
       key: `scan:${organizationId}`,
       limit: 10,
@@ -93,14 +93,14 @@ scansRoutes.post("/", async (c) => {
 
 scansRoutes.get("/", async (c) => {
   const db = createDb(c.env.DB);
-  const organizationId = await ensurePersonalOrganization(db, c.get("authSession"));
+  const organizationId = await requireActiveOrganization(c, db);
   return c.json({ scans: await listScans(db, organizationId) });
 });
 
 scansRoutes.get("/:id", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
-  const organizationId = await ensurePersonalOrganization(db, session);
+  const organizationId = await requireActiveOrganization(c, db);
   const scan = await getScan(db, c.req.param("id"), organizationId);
   if (!scan) return c.json({ error: "not found" }, 404);
   if (c.req.query("poll") !== "1") {
@@ -118,7 +118,7 @@ scansRoutes.get("/:id", async (c) => {
 scansRoutes.get("/:id/versions", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
-  const organizationId = await ensurePersonalOrganization(db, session);
+  const organizationId = await requireActiveOrganization(c, db);
   const scan = await getScan(db, c.req.param("id"), organizationId);
   if (!scan) return c.json({ error: "not found" }, 404);
   if (!scan.scan.packageName) {
@@ -222,7 +222,7 @@ async function resolveCompareContext(
 
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
-  const organizationId = await ensurePersonalOrganization(db, session);
+  const organizationId = await requireActiveOrganization(c, db);
   const scan = await getScan(db, scanId, organizationId);
   if (!scan) return { error: c.json({ error: "not found" }, 404) } as const;
   if (!scan.scan.packageName)

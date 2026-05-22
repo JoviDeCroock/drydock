@@ -4,10 +4,10 @@ import {
   createDb,
   createScanJob,
   enforceRateLimit,
-  ensurePersonalOrganization,
   listExistingScanStageIds,
   recordScanEvent,
 } from "../db";
+import { requireActiveOrganization } from "../lib/active-organization";
 import { getOrganizationNpmToken } from "../lib/npm-connection";
 import { StagedPublishesFetchError, listStagedPublishes } from "../lib/staged-publishes";
 import { executeScanJob, type ScanQueueMessage } from "../lib/scan-job";
@@ -18,7 +18,7 @@ export const stagedPublishesRoutes = new Hono<{ Bindings: Bindings; Variables: V
 stagedPublishesRoutes.post("/scan", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
-  const organizationId = await ensurePersonalOrganization(db, session);
+  const organizationId = await requireActiveOrganization(c, db);
 
   try {
     await enforceRateLimit(db, {

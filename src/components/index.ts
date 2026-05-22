@@ -29,3 +29,4 @@ export { SeverityBar } from "./SeverityBar";
 export type { SeverityCounts, SeverityKey } from "./SeverityBar";
 export { StatusStrip, StatusStripItem } from "./StatusStrip";
 export { FindingCard, FindingRow } from "./FindingCard";
+export { OrgSwitcher } from "./OrgSwitcher";

@@ -4,12 +4,12 @@ import {
   createDb,
   deleteNpmConnection,
   enforceRateLimit,
-  ensurePersonalOrganization,
   getNpmConnection,
   recordScanEvent,
   updateNpmConnectionValidation,
   upsertNpmConnection,
 } from "../db";
+import { requireActiveOrganization } from "../lib/active-organization";
 import {
   decryptNpmToken,
   encryptNpmToken,
@@ -25,7 +25,7 @@ export const npmConnectionRoutes = new Hono<{ Bindings: Bindings; Variables: Var
 
 npmConnectionRoutes.get("/", async (c) => {
   const db = createDb(c.env.DB);
-  const organizationId = await ensurePersonalOrganization(db, c.get("authSession"));
+  const organizationId = await requireActiveOrganization(c, db);
   return c.json({ connection: publicNpmConnection(await getNpmConnection(db, organizationId)) });
 });
 
@@ -52,7 +52,7 @@ npmConnectionRoutes.post("/", async (c) => {
   try {
     const db = createDb(c.env.DB);
     const session = c.get("authSession");
-    const organizationId = await ensurePersonalOrganization(db, session);
+    const organizationId = await requireActiveOrganization(c, db);
     const [, encrypted] = await Promise.all([
       enforceRateLimit(db, {
         key: `npm-connection:save:${organizationId}`,
@@ -107,7 +107,7 @@ npmConnectionRoutes.post("/validate", async (c) => {
   try {
     const db = createDb(c.env.DB);
     const session = c.get("authSession");
-    const organizationId = await ensurePersonalOrganization(db, session);
+    const organizationId = await requireActiveOrganization(c, db);
     await enforceRateLimit(db, {
       key: `npm-connection:validate:${organizationId}`,
       limit: 12,
@@ -155,7 +155,7 @@ npmConnectionRoutes.post("/validate", async (c) => {
 npmConnectionRoutes.delete("/", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
-  const organizationId = await ensurePersonalOrganization(db, session);
+  const organizationId = await requireActiveOrganization(c, db);
   const existing = await getNpmConnection(db, organizationId);
   await Promise.all([
     deleteNpmConnection(db, organizationId),
