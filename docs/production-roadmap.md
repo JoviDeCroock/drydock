@@ -14,24 +14,9 @@ This roadmap converts the current staged-publish sandbox into a SaaS product whi
 
 ## Current cut line
 
-The prototype-to-product foundation is in place: authenticated organization-scoped scans, encrypted organization npm connections, async-capable scan jobs (idempotent across retries), persisted report metadata, and a text-only release diff workbench all exist. The next roadmap iteration should optimize for **safe private beta**, not breadth.
-
-Private beta blockers:
-
-- Operator-visible failure metrics for scan duration, queue retries, and AI/npm failures.
-- Signup/credential abuse controls for an invite-only beta.
-- Report deletion plus a documented retention policy for persisted redacted evidence.
-- Production deploy checklist covering D1 migrations, Queues, KV, secrets, and incident response.
+The prototype-to-product foundation is in place: authenticated organization-scoped scans, encrypted organization npm connections, async-capable scan jobs (idempotent across retries), persisted report metadata, and a text-only release diff workbench all exist. The next roadmap iteration is **multi-organization workspaces**: a single user can create and switch between multiple organizations, each holding its own granular npm token, so maintainers can segment work by npm scope, employer, or client without juggling accounts.
 
 Closed: tenant-boundary, sandbox-gateway, and archive-parser regression tests now have route- and unit-level coverage (`test/workers/cross-org-routes.test.ts`, `test/workers/cross-org-npm-connection.test.ts`, `test/workers/sandbox-gateway-runtime.test.ts`, `test/tar-parser.test.mjs`).
-
-Not private-beta blockers unless customer evidence demands them:
-
-- Team RBAC beyond personal organizations.
-- Public signed reports.
-- Raw tarball retention.
-- Deep native/binary malware analysis.
-- Automated npm publish approval, which remains intentionally out of scope.
 
 ## Phase 3 — Per-organization npm connections (open follow-up)
 
@@ -94,48 +79,37 @@ Exit criteria:
 - Add D1/R2 retention controls for persisted redacted text samples and derived artifacts.
 - Add deployment checklist and incident-response notes.
 
-## Phase 8 — Safe private beta readiness
+## Phase 8 — Multi-organization workspace
 
 Priority: highest.
 
 Goals:
 
-- Make the current SaaS safe to operate for invited users.
-- Close the most important reliability, abuse, and data-retention gaps.
+- One user can own and switch between multiple organizations.
+- Each organization holds its own granular npm token (still one connection per org).
+- All existing org-scoped surfaces (scans, npm connection, reports) follow the user's active organization without UI rework beyond a header switcher.
+- Personal org behavior is preserved: every user gets a deterministic "Personal" org on first signup and is auto-activated into it.
 
-Remaining gate tasks:
+Tasks:
 
-Reliability and operations:
+- Schema: add nullable `active_organization_id` (FK → `organizations.id`, `onDelete: "set null"`) to the `user` table via a Drizzle migration. Keep the `npm_connections` `UNIQUE(organization_id)` index — one token per org stands.
+- Server resolver: `server/lib/active-organization.ts` exporting `requireActiveOrganization(db, session)`. Reads `user.active_organization_id`, verifies membership in `organization_members`, and auto-falls-back to the personal org (creating it via `ensurePersonalOrganization` if missing) when the active id is null or stale.
+- Routes: replace every `ensurePersonalOrganization` call in `routes/scan.ts`, `routes/scans.ts`, `routes/npm-connection.ts` with `requireActiveOrganization`. Keep `ensurePersonalOrganization` as the first-signup bootstrap.
+- New `routes/organizations.ts`:
+  - `GET /api/v1/organizations` — orgs the user belongs to, each with `isActive`, `isPersonal`, `npmConnectionConfigured` flags.
+  - `POST /api/v1/organizations` — create org + owner membership in one transaction; does not auto-activate.
+  - `POST /api/v1/organizations/:id/activate` — membership-gated, updates `user.active_organization_id`, records a scan event.
+  - `PATCH /api/v1/organizations/:id` — owner-only rename.
+- UI: `src/models/organization.ts` (list/create/activate/rename + active-org signal), `OrgSwitcher` dropdown in the dashboard header, and a "Create organization" modal. Existing scan/npm-connection panels become implicitly active-org-scoped via the resolver.
+- Tests: `test/workers/organizations-routes.test.ts` (create / list / activate own / activate other → 403 / rename non-owner → 403). Refresh `cross-org-routes.test.ts` and `cross-org-npm-connection.test.ts` to exercise the active-org switching path rather than the deterministic personal-org ID.
 
-- Verify Queue retry/DLQ semantics in production so transient scan failures retry and exhausted jobs are visible to operators.
-- Continue expanding the structured scan error taxonomy with user-safe messages and operator-facing details.
-- Add metrics/logs for scan duration, queue retries/exhaustion, npm fetch failures, AI failures, archive parser failures, and rate-limit events.
-
-Security boundaries:
-
-- Cross-organization tests for npm connection isolation now cover scan detail/list/compare (`test/workers/cross-org-routes.test.ts`), DB-layer ownership (`test/workers/scan-idempotency.test.ts`), and the npm-connection routes themselves (`test/workers/cross-org-npm-connection.test.ts`).
-- Sandbox gateway runtime credential-injection coverage landed via `test/workers/sandbox-gateway-runtime.test.ts`. Pure-function policy coverage in `test/sandbox-gateway.test.mjs` remains as a fast unit test.
-- Tar parser regression coverage landed via `test/tar-parser.test.mjs` (traversal paths, absolute-path normalization, PAX paths, GNU long names, link skipping, truncation, file-count caps, archive-bomb caps). The pure parser lives in `server/lib/tar-parser.js`; `server/lib/sandbox.ts` concatenates the same function source into the dynamic Worker so the unit-tested code path is the one that runs in the isolated sandbox.
-- Investigate build output to ensure local `.dev.vars` secrets are never included in deployable or public artifacts.
-
-Abuse and data lifecycle:
-
-- Add invite-only or allowlist mode for private beta signups.
-- Add auth abuse controls: email verification, Turnstile or equivalent, and endpoint-specific rate limits.
-- Add scan/report deletion and a documented default retention policy for persisted text samples.
-- Add deployment and incident-response checklists.
-
-Nice-to-have before widening beta:
-
-- ~~Add basic AI model routing from [`docs/cost-model.md`](./cost-model.md): cheaper default triage, Kimi escalation for risky or ambiguous scans.~~ Landed: [`runSelectiveAiReview`](../server/lib/ai-review.ts) routes ordinary releases through `@cf/qwen/qwen3-30b-a3b-fp8` when the AI input fits its context budget and escalates to Kimi (`@cf/moonshotai/kimi-k2.5`) on medium+ deterministic findings, install-lifecycle script changes, dependency/entrypoint changes, missing previous-version comparisons, oversized AI inputs, or when the default reviewer returns suspicious/blocked/manual-review output. The persisted `aiJson` records which model produced each review and why escalation fired.
-- Add first-run onboarding copy for least-privilege npm token setup.
+Out of scope (kept in Phase 12): invitations, RBAC beyond owner, org deletion, audit log UI, billing, quotas.
 
 Exit criteria:
 
-- Operators can see and recover from failed jobs.
-- Public signup cannot be abused trivially.
-- Tenant boundaries and credential boundaries are covered by tests.
-- Persisted report data has clear retention and deletion behavior.
+- A user can create an org, switch to it, attach a different npm token, and run scans scoped to that org without the personal org's data appearing.
+- Cross-org isolation tests pass against the active-org path.
+- Refreshing the page restores the previously-active org.
 
 ## Phase 9 — Trustworthy report artifacts
 
@@ -229,8 +203,7 @@ Goals:
 
 Tasks:
 
-- Add real organization creation and switching.
-- Add multiple npm connections per user/account, scoped through organizations, so maintainers can segment tokens by npm organization, package scope, or release workflow.
+- Add multiple npm connections per organization so maintainers can segment tokens by npm scope, package, or release workflow.
 - Add per-scan npm connection selection and organization-level defaults once multiple connections exist.
 - Add invitations and membership management.
 - Add RBAC after the organization model is stable.
@@ -280,12 +253,9 @@ Exit criteria:
 - Multiple AI provider abstraction.
 - Deep native/binary malware analysis.
 - Automated publish approval, which is intentionally out of scope.
+- Private beta operations gating: production Queues/KV/D1/secrets configuration, scan-duration / failure / retry metrics + logging, invite-only signup with email verification + Turnstile + endpoint rate limits, and a deployment + incident-response checklist. Defer until product surface stabilizes after multi-org and the diff-first review UX land.
+- Scan/report deletion and a documented retention policy for persisted redacted text samples. Defer alongside private beta operations.
 
 ## Suggested next implementation slice
 
-With cross-org coverage extended to the npm-connection routes and the tar parser now unit-tested via a shared module, the security-test baseline for private beta is in place. The next two slices are:
-
-1. **Private beta operations:** configure production Queues/KV/D1/secrets, add metrics/logging for scan duration and failure classes, add invite-only signup protection, and document deployment + incident response.
-2. **Data lifecycle:** ship scan/report deletion plus a documented retention policy for persisted redacted text samples.
-
-After those land, improve maintainer UX by grouping findings (now that rule IDs exist) and adding the lifecycle timeline before broadening beta access.
+Multi-organization workspace (Phase 8) is the next slice — schema migration, active-org resolver, organizations route, dashboard switcher, and refreshed cross-org tests. Once it lands, Phase 10 (maintainer-grade review UX) is next and should be reframed around the diff-first product direction before implementation starts.

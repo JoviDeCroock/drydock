@@ -1,12 +1,6 @@
 import { Hono } from "hono";
-import {
-  RateLimitError,
-  createDb,
-  createScanJob,
-  enforceRateLimit,
-  ensurePersonalOrganization,
-  getNpmConnection,
-} from "../db";
+import { RateLimitError, createDb, createScanJob, enforceRateLimit, getNpmConnection } from "../db";
+import { requireActiveOrganization } from "../lib/active-organization";
 import { executeScanJob } from "../lib/scan-job";
 import { SandboxError } from "../lib/sandbox";
 import type { Bindings, ScanInput, Variables } from "../types";
@@ -29,7 +23,7 @@ scanRoutes.post("/", async (c) => {
   try {
     const db = createDb(c.env.DB);
     const session = c.get("authSession");
-    const organizationId = await ensurePersonalOrganization(db, session);
+    const organizationId = await requireActiveOrganization(db, session);
     await enforceRateLimit(db, {
       key: `scan:${organizationId}`,
       limit: 10,

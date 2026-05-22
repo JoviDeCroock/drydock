@@ -460,3 +460,96 @@ export async function markNpmConnectionUsed(db: AppDb, organizationId: string) {
 export async function deleteNpmConnection(db: AppDb, organizationId: string) {
   await db.delete(npmConnections).where(eq(npmConnections.organizationId, organizationId));
 }
+
+export interface OrganizationListEntry {
+  id: string;
+  name: string;
+  ownerUserId: string;
+  role: string;
+  isPersonal: boolean;
+  isActive: boolean;
+  npmConnectionConfigured: boolean;
+  createdAt: Date | string | number;
+  updatedAt: Date | string | number;
+}
+
+export async function listUserOrganizations(
+  db: AppDb,
+  userId: string,
+  activeOrganizationId: string | null,
+): Promise<OrganizationListEntry[]> {
+  const personalId = personalOrganizationId(userId);
+  const rows = await db
+    .select({
+      id: organizations.id,
+      name: organizations.name,
+      ownerUserId: organizations.ownerUserId,
+      role: organizationMembers.role,
+      createdAt: organizations.createdAt,
+      updatedAt: organizations.updatedAt,
+      npmConnectionId: npmConnections.id,
+    })
+    .from(organizationMembers)
+    .innerJoin(organizations, eq(organizations.id, organizationMembers.organizationId))
+    .leftJoin(npmConnections, eq(npmConnections.organizationId, organizations.id))
+    .where(eq(organizationMembers.userId, userId))
+    .orderBy(desc(organizations.createdAt));
+
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    ownerUserId: row.ownerUserId,
+    role: row.role,
+    isPersonal: row.id === personalId,
+    isActive: row.id === activeOrganizationId,
+    npmConnectionConfigured: Boolean(row.npmConnectionId),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }));
+}
+
+export interface CreateOrganizationInput {
+  ownerUserId: string;
+  name: string;
+}
+
+export async function createOrganization(db: AppDb, input: CreateOrganizationInput) {
+  const id = crypto.randomUUID();
+  const now = new Date();
+  await db.insert(organizations).values({
+    id,
+    name: input.name,
+    ownerUserId: input.ownerUserId,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.insert(organizationMembers).values({
+    id: `member:${id}:${input.ownerUserId}`,
+    organizationId: id,
+    userId: input.ownerUserId,
+    role: "owner",
+    createdAt: now,
+    updatedAt: now,
+  });
+  return id;
+}
+
+export async function isOrganizationOwner(
+  db: AppDb,
+  organizationId: string,
+  userId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: organizations.id })
+    .from(organizations)
+    .where(and(eq(organizations.id, organizationId), eq(organizations.ownerUserId, userId)))
+    .limit(1);
+  return Boolean(row);
+}
+
+export async function renameOrganization(db: AppDb, organizationId: string, name: string) {
+  await db
+    .update(organizations)
+    .set({ name, updatedAt: new Date() })
+    .where(eq(organizations.id, organizationId));
+}

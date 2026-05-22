@@ -80,7 +80,7 @@ Current code supports encrypted per-organization npm connections only. Scans req
 Current high-level flow:
 
 1. User submits a `stageId`.
-2. API validates input and resolves the authenticated user's personal organization.
+2. API validates input and resolves the authenticated user's active organization via `requireActiveOrganization`.
 3. Parent Worker loads the staged tarball in a Dynamic Worker.
 4. Gateway attaches npm auth only for allowed npm registry endpoints.
 5. Sandbox extracts bounded file records and package metadata.
@@ -157,17 +157,17 @@ If the AI response is unavailable, malformed, or incomplete, the scan records th
 
 The product target is SaaS with organization-scoped resources.
 
-Current implementation creates a personal organization per authenticated user. This is acceptable for the first production slice and keeps future team support straightforward.
+Every user gets a deterministic "Personal" organization on first signup (id derived from `personalOrganizationId(userId)`). Users can additionally create and switch between any number of organizations they own. The active organization for a user is persisted on `user.active_organization_id` and resolved per request by `requireActiveOrganization(db, session)` (`server/lib/active-organization.ts`), which verifies membership in `organization_members` and falls back to the personal org when the stored id is null or stale.
 
-Near-term organization-owned resources:
+Organization-owned resources scope by the active org:
 
 - scans;
 - audit events;
-- npm connections;
+- npm connections (one per organization — `UNIQUE(organization_id)` on `npm_connections`);
 - future report signatures;
 - future artifact retention settings.
 
-RBAC is deferred. Until RBAC ships, route guards should continue to enforce organization ownership even if every member is effectively an owner.
+Invitations, team membership, RBAC, deletion, audit-log UI, billing, and quotas are deferred (see Phase 12 in `docs/production-roadmap.md`). Until they ship, every member of an organization is effectively an owner, and route guards must continue to verify membership through `organization_members` rather than trusting client-supplied org ids.
 
 ## npm connection model
 
@@ -218,5 +218,9 @@ Current API:
 - `POST /api/v1/npm-connection` — create/rotate connection;
 - `POST /api/v1/npm-connection/validate` — validate access;
 - `DELETE /api/v1/npm-connection` — remove connection.
+- `GET /api/v1/organizations` — list the caller's organizations, including which one is active and which have an npm token configured;
+- `POST /api/v1/organizations` — create a new organization owned by the caller (does not auto-activate);
+- `POST /api/v1/organizations/:id/activate` — switch the caller's active organization (membership-gated);
+- `PATCH /api/v1/organizations/:id` — rename (owner-only).
 
 Keep `POST /api/v1/scan` only as a compatibility shim during migration.

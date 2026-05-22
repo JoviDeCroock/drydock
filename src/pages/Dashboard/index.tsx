@@ -4,6 +4,7 @@ import { useSignal, useModel, useSignalEffect } from "@preact/signals";
 import { useLocation } from "preact-iso";
 import { sessionModel } from "../../models/auth";
 import { NpmConnectionModel } from "../../models/npm-connection";
+import { OrganizationModel } from "../../models/organization";
 import { ScanListModel, ScanRequestModel, type ScanListItem } from "../../models/scan";
 import { StagedPublishesModel } from "../../models/staged-publishes";
 import {
@@ -18,6 +19,7 @@ import {
   LoadingLine,
   MonoDetail,
   Muted,
+  OrgSwitcher,
   PageShell,
   SectionLabel,
   severityTone,
@@ -27,6 +29,7 @@ export default function DashboardPage() {
   const location = useLocation();
   const scans = useModel(ScanListModel);
   const npm = useModel(NpmConnectionModel);
+  const organizations = useModel(OrganizationModel);
   const request = useModel(ScanRequestModel);
   const stagedPublishes = useModel(StagedPublishesModel);
   const sessionChecked = useSignal(false);
@@ -42,12 +45,29 @@ export default function DashboardPage() {
         return;
       }
       sessionChecked.value = true;
-      await Promise.all([scans.refresh(), npm.load()]);
+      await Promise.all([organizations.load(), scans.refresh(), npm.load()]);
     })();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  const onSwitchOrganization = async (organizationId: string) => {
+    const switched = await organizations.activate(organizationId);
+    if (switched) {
+      await Promise.all([scans.refresh(), npm.load()]);
+    }
+  };
+
+  const onCreateOrganization = async (name: string) => {
+    const created = await organizations.create(name);
+    if (created) {
+      const switched = await organizations.activate(created.id);
+      if (switched) {
+        await Promise.all([scans.refresh(), npm.load()]);
+      }
+    }
+  };
 
   useSignalEffect(() => {
     const checked = sessionChecked.value;
@@ -98,13 +118,23 @@ export default function DashboardPage() {
   return (
     <PageShell
       headerActions={
-        <div class="flex items-center gap-2.5 bg-surface border border-border rounded-lg pl-3.5 pr-1.5 py-1.5">
-          <span class="font-mono text-xs text-ink-muted">
-            {user?.email || user?.name || "signed in"}
-          </span>
-          <Button variant="secondary" size="sm" onClick={onSignOut}>
-            Sign out
-          </Button>
+        <div class="flex flex-col items-end gap-3">
+          <OrgSwitcher
+            organizations={organizations.organizations.value}
+            activeOrganizationId={organizations.activeOrganizationId.value}
+            busy={organizations.busy.value}
+            error={organizations.error.value}
+            onActivate={onSwitchOrganization}
+            onCreate={onCreateOrganization}
+          />
+          <div class="flex items-center gap-2.5 bg-surface border border-border rounded-lg pl-3.5 pr-1.5 py-1.5">
+            <span class="font-mono text-xs text-ink-muted">
+              {user?.email || user?.name || "signed in"}
+            </span>
+            <Button variant="secondary" size="sm" onClick={onSignOut}>
+              Sign out
+            </Button>
+          </div>
         </div>
       }
     >

@@ -9,6 +9,7 @@ import {
   type ScanQueueMessage,
 } from "./lib/scan-job";
 import { npmConnectionRoutes } from "./routes/npm-connection";
+import { organizationsRoutes } from "./routes/organizations";
 import { scanRoutes } from "./routes/scan";
 import { scansRoutes } from "./routes/scans";
 import { stagedPublishesRoutes } from "./routes/staged-publishes";
@@ -169,6 +170,8 @@ app.get("/api", (c) =>
       scanDetail: "GET /api/v1/scans/:id",
       stagedPublishes: "POST /api/v1/staged-publishes/scan",
       npmConnection: "GET/POST/DELETE /api/v1/npm-connection; POST /api/v1/npm-connection/validate",
+      organizations:
+        "GET /api/v1/organizations; POST /api/v1/organizations; POST /api/v1/organizations/:id/activate; PATCH /api/v1/organizations/:id",
       health: "GET /api/health",
     },
     auth: "Better Auth is required for every non-auth API endpoint.",
@@ -177,6 +180,7 @@ app.get("/api", (c) =>
 );
 
 app.route("/api/v1/npm-connection", npmConnectionRoutes);
+app.route("/api/v1/organizations", organizationsRoutes);
 app.route("/api/v1/scan", scanRoutes);
 app.route("/api/v1/scans", scansRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
