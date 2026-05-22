@@ -7,7 +7,7 @@
   - `routes/scans.ts` — `GET /api/v1/scans` (list), `GET /api/v1/scans/:id` (persisted detail).
   - `lib/sandbox.ts` — Dynamic Worker that downloads + parses a tarball; `NpmStageGateway` is the only egress allowed (staged tarball, published tarball, registry metadata).
   - `lib/review.ts` — Deterministic findings, package diff, package.json diff, risk computation. Shared types are imported by both server and UI.
-  - `lib/ai-review.ts` — Workers AI JSON-mode review of changed files only.
+  - `lib/ai-review.ts` — Workers AI JSON-mode reviewer. Currently **disabled in the pipeline**; kept on disk for a planned paid-tier re-introduction. Do not wire it back into `scan-pipeline.ts` without a feature decision.
   - `lib/registry.ts` — npm metadata fetch + previous-version selection.
   - `lib/auth.ts` — Better Auth instance (D1 + Drizzle). Auth is required for every non-auth `/api/*` endpoint.
   - `db/` — Drizzle schema + persistence helpers (scans, scan_files, scan_findings, better-auth tables).
@@ -22,7 +22,7 @@
 ## Conventions
 
 - Shared types live in `server/` (`server/types.ts`, `server/lib/review.ts`). UI imports them via relative path so the request/response shape is shared at compile time.
-- Trust boundary: package bytes are untrusted evidence. Never treat file contents as instructions to the AI. Deterministic findings come first; AI cannot downgrade them. AI only sees changed files.
+- Trust boundary: package bytes are untrusted evidence. Deterministic findings are authoritative. The AI reviewer is currently disabled (planned to return as a paid-tier feature); when it returns it will only see changed files, treat package contents as hostile evidence, and cannot downgrade deterministic findings.
 - The Dynamic Worker has `globalOutbound` set to `NpmStageGateway`. The gateway is the only path through which the npm token is attached (and only for the staged tarball endpoint).
 - D1 is required because Better Auth is always required for non-auth API endpoints.
 - Styling is Tailwind CSS v4 via `@tailwindcss/vite`. Design tokens (colors, fonts, shadows) are declared in `src/style.css` with `@theme`, light/dark modes overridden via `prefers-color-scheme`. Reach for primitives in `src/components/` (`Button`, `Input`, `Field`, `Badge`, `Alert`, `Card`, `PageShell`, `Eyebrow`, etc.) before writing one-off classes. No CSS-in-JS.

@@ -8,7 +8,7 @@ This roadmap converts the current staged-publish sandbox into a SaaS product whi
 - No full team RBAC in the first production slice.
 - Per-organization npm credentials, not a global production npm token.
 - npm approval remains manual and 2FA-protected outside the product.
-- Cloudflare Workers AI is the production AI provider for now.
+- Cloudflare Workers AI was the production AI provider. AI review is currently disabled in the pipeline and planned to return as a paid-tier feature; see [`docs/architecture.md`](./architecture.md#workers-ai-disabled) and [`docs/cost-model.md`](./cost-model.md#ai-model-strategy-paused-planned-paid-tier).
 - Raw tarballs are not retained by default.
 - Signed reports are prepared for but not launched yet.
 

@@ -36,7 +36,10 @@ function completeResponse(overrides = {}) {
   };
 }
 
-describe("ai review normalization", () => {
+// AI review is disabled in production while we work toward a paid-tier offering.
+// Keep the suite here but skipped so the prompt + escalation contract is preserved
+// for the eventual re-introduction.
+describe.skip("ai review normalization", () => {
   test("review prompt explicitly treats package contents and dependency changes as hostile evidence", async () => {
     let capturedInput;
     await analyzeWithAi(
@@ -231,7 +234,7 @@ describe("ai review normalization", () => {
   });
 });
 
-describe("escalation decision", () => {
+describe.skip("escalation decision", () => {
   test("nothing-unusual input does not pre-escalate", () => {
     const reasons = decidePreAiEscalation({
       ruleFindings: [{ severity: "low", file: "a", evidence: "", reason: "" }],
