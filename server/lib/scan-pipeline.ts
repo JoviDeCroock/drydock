@@ -59,6 +59,7 @@ export async function runScanPipeline(
   const redactedStagedFiles = redactFileRecords(staged.files);
   const redactedPackageJson = redactJson(staged.packageJson ?? null);
   const redactedPreviousPackageJson = redactJson(previous?.packageJson ?? null);
+  const scanId = input.scanId || crypto.randomUUID();
   const aiFindings = await runSelectiveAiReview(env, {
     files: redactedStagedFiles,
     diff,
@@ -66,8 +67,18 @@ export async function runScanPipeline(
     ruleFindings,
     previousVersionAvailable: previous !== null,
   });
+  if (aiFindings.escalated) {
+    console.log("ai review escalated to stronger model", {
+      scanId,
+      stageId: input.stageId,
+      organizationId: input.organizationId,
+      packageName: staged.packageJson?.name ?? null,
+      stagedVersion: staged.packageJson?.version ?? null,
+      model: aiFindings.model,
+      reasons: aiFindings.escalationReasons,
+    });
+  }
   const risk = computeScanRisk(ruleFindings, aiFindings);
-  const scanId = input.scanId || crypto.randomUUID();
 
   const safety: ScanResult["safety"] = {
     tokenExposedToSandbox: false,
