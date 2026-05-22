@@ -11,6 +11,7 @@
   "ignorePatterns": [
     "dist/**",
     ".wrangler/**",
+    "**/*.jsonc",
     ".claude/**",
     ".agents/**",
     "drizzle/**",
