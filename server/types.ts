@@ -1,6 +1,14 @@
 import type { Auth, AuthSession } from "./lib/auth";
 import type { AiReview } from "./lib/ai-review";
-import type { DiffEntry, Finding, PackageJsonSummary, RiskLevel } from "./lib/review";
+import type {
+  DiffEntry,
+  Finding,
+  PackageJsonDiff,
+  PackageJsonSummary,
+  RiskLevel,
+} from "./lib/review";
+
+export type { PackageJsonDiff } from "./lib/review";
 
 export type Bindings = Cloudflare.Env;
 
@@ -13,25 +21,6 @@ export interface ScanInput {
   stageId: string;
   maxFiles?: number;
   maxBytesPerFile?: number;
-}
-
-export interface PackageJsonDiff {
-  name: string | null;
-  previousVersion: string | null;
-  stagedVersion: string | null;
-  scripts: Array<{
-    key: string;
-    status: "added" | "removed" | "modified";
-    previous?: string;
-    staged?: string;
-  }>;
-  dependencies: Array<{
-    key: string;
-    status: "added" | "removed" | "modified";
-    previous?: string;
-    staged?: string;
-  }>;
-  entrypointsChanged: boolean;
 }
 
 export interface ScanResult {

@@ -16,5 +16,4 @@ NPM_CONNECTIONS_ENCRYPTION_KEY=replace-with-a-random-32-byte-secret
 
 # Optional local overrides for non-secret vars that are also defined in wrangler.jsonc.
 # NPM_REGISTRY=https://registry.npmjs.org
-# AI_MODEL=@cf/moonshotai/kimi-k2.5
 # AI_CACHE_AFFINITY=staged-publish-review-release-reviewer-v1

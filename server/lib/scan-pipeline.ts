@@ -1,5 +1,5 @@
 import { persistScan, recordScanEvent, type AppDb, type WorkspaceSession } from "../db";
-import { analyzeWithAi } from "./ai-review";
+import { runSelectiveAiReview } from "./ai-review";
 import { fetchPackageMetadata, pickPreviousVersion } from "./registry";
 import {
   createPackageDiff,
@@ -59,13 +59,13 @@ export async function runScanPipeline(
   const redactedStagedFiles = redactFileRecords(staged.files);
   const redactedPackageJson = redactJson(staged.packageJson ?? null);
   const redactedPreviousPackageJson = redactJson(previous?.packageJson ?? null);
-  const aiFindings = await analyzeWithAi(
-    env,
-    redactedStagedFiles,
+  const aiFindings = await runSelectiveAiReview(env, {
+    files: redactedStagedFiles,
     diff,
     packageJsonDiff,
     ruleFindings,
-  );
+    previousVersionAvailable: previous !== null,
+  });
   const risk = computeScanRisk(ruleFindings, aiFindings);
   const scanId = input.scanId || crypto.randomUUID();
 

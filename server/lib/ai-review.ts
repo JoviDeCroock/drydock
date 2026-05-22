@@ -1,4 +1,4 @@
-import type { DiffEntry, FileRecord, Finding, RiskLevel } from "./review";
+import type { DiffEntry, FileRecord, Finding, PackageJsonDiff, RiskLevel } from "./review";
 
 export interface AiFinding {
   severity: "info" | "low" | "medium" | "high" | "critical";
@@ -9,6 +9,11 @@ export interface AiFinding {
 }
 
 export type AiReviewStatus = "complete" | "invalid" | "unavailable";
+
+// Cheaper triage model used for the default AI review pass. See docs/cost-model.md.
+export const DEFAULT_AI_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
+// Stronger reviewer escalated to for risky/ambiguous scans. See docs/cost-model.md.
+export const ESCALATION_AI_MODEL = "@cf/moonshotai/kimi-k2.5";
 
 export interface AiReview {
   status: AiReviewStatus;
@@ -22,6 +27,9 @@ export interface AiReview {
   summary: string;
   findings: AiFinding[];
   requiresManualReview: boolean;
+  model: string | null;
+  escalated: boolean;
+  escalationReasons: string[];
 }
 
 const REVIEWER_SYSTEM_PROMPT = `You are a staged npm release safety reviewer.
@@ -91,16 +99,103 @@ const FINDING_SCHEMA = {
   additionalProperties: false,
 };
 
+const LIFECYCLE_SCRIPT_KEYS = new Set([
+  "preinstall",
+  "install",
+  "postinstall",
+  "prepare",
+  "prepack",
+  "postpack",
+  "publish",
+  "prepublish",
+  "prepublishOnly",
+]);
+
+const RISKY_SEVERITIES = new Set(["medium", "high", "critical"]);
+
+export interface SelectiveAiReviewOptions {
+  files: FileRecord[];
+  diff: DiffEntry[];
+  packageJsonDiff: PackageJsonDiff;
+  ruleFindings: Finding[];
+  previousVersionAvailable: boolean;
+}
+
+export interface PreAiEscalationInput {
+  ruleFindings: Finding[];
+  packageJsonDiff: PackageJsonDiff;
+  previousVersionAvailable: boolean;
+}
+
+export function decidePreAiEscalation(input: PreAiEscalationInput): string[] {
+  const reasons: string[] = [];
+
+  if (input.ruleFindings.some((finding) => RISKY_SEVERITIES.has(finding.severity))) {
+    reasons.push("deterministic finding at medium or higher severity");
+  }
+  if (input.packageJsonDiff.scripts.some((entry) => LIFECYCLE_SCRIPT_KEYS.has(entry.key))) {
+    reasons.push("install-lifecycle script added or modified");
+  }
+  if (input.packageJsonDiff.dependencies.length > 0) {
+    reasons.push("dependency, peer dependency, or optional dependency changed");
+  }
+  if (input.packageJsonDiff.entrypointsChanged) {
+    reasons.push("package entrypoints changed");
+  }
+  if (!input.previousVersionAvailable) {
+    reasons.push("previous-version comparison unavailable");
+  }
+
+  return reasons;
+}
+
+export function decidePostDefaultEscalation(review: AiReview): string[] {
+  const reasons: string[] = [];
+  if (review.status !== "complete") {
+    reasons.push(`default model review ${review.status}`);
+  }
+  if (review.releaseAssessment === "suspicious" || review.releaseAssessment === "blocked") {
+    reasons.push(`default model marked release ${review.releaseAssessment}`);
+  }
+  if (review.status === "complete" && review.requiresManualReview) {
+    reasons.push("default model requested manual review");
+  }
+  return reasons;
+}
+
+export async function runSelectiveAiReview(
+  env: Cloudflare.Env,
+  options: SelectiveAiReviewOptions,
+): Promise<AiReview> {
+  const preReasons = decidePreAiEscalation({
+    ruleFindings: options.ruleFindings,
+    packageJsonDiff: options.packageJsonDiff,
+    previousVersionAvailable: options.previousVersionAvailable,
+  });
+
+  if (preReasons.length > 0) {
+    const escalated = await analyzeWithAi(env, ESCALATION_AI_MODEL, options);
+    return { ...escalated, escalated: true, escalationReasons: preReasons };
+  }
+
+  const defaultReview = await analyzeWithAi(env, DEFAULT_AI_MODEL, options);
+  const postReasons = decidePostDefaultEscalation(defaultReview);
+  if (postReasons.length === 0) {
+    return defaultReview;
+  }
+
+  const escalated = await analyzeWithAi(env, ESCALATION_AI_MODEL, options);
+  return { ...escalated, escalated: true, escalationReasons: postReasons };
+}
+
 export async function analyzeWithAi(
   env: Cloudflare.Env,
-  files: FileRecord[],
-  diff: DiffEntry[],
-  packageJsonDiff: unknown,
-  ruleFindings: Finding[],
+  model: string,
+  options: SelectiveAiReviewOptions,
 ): Promise<AiReview> {
-  const compactFiles = files
+  const compactFiles = options.files
     .filter((file) =>
-      diff.some((entry) => entry.path === file.path && entry.status !== "unchanged"),
+      options.diff.some((entry) => entry.path === file.path && entry.status !== "unchanged"),
     )
     .slice(0, 80)
     .map((file) => ({
@@ -113,7 +208,7 @@ export async function analyzeWithAi(
 
   try {
     const result = await env.AI.run(
-      env.AI_MODEL,
+      model,
       {
         messages: [
           {
@@ -124,9 +219,11 @@ export async function analyzeWithAi(
             role: "user",
             content: JSON.stringify({
               task: "Review this staged npm release. Decide whether the changed release looks ordinary or whether anything is off and should be reviewed before a maintainer manually approves it.",
-              deterministicFindings: ruleFindings,
-              packageJsonDiff,
-              changedFileDiff: diff.filter((entry) => entry.status !== "unchanged").slice(0, 250),
+              deterministicFindings: options.ruleFindings,
+              packageJsonDiff: options.packageJsonDiff,
+              changedFileDiff: options.diff
+                .filter((entry) => entry.status !== "unchanged")
+                .slice(0, 250),
               untrustedChangedPackageFiles: compactFiles,
             }),
           },
@@ -144,28 +241,30 @@ export async function analyzeWithAi(
       },
     );
 
-    return normalizeAiResponse(result);
+    return normalizeAiResponse(model, result);
   } catch (err) {
     return fallbackReview(
+      model,
       "unavailable",
       `Assistant review didn't run: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
 
-function normalizeAiResponse(result: unknown): AiReview {
+function normalizeAiResponse(model: string, result: unknown): AiReview {
   const content = extractContent(result);
   if (typeof content === "string") {
     try {
-      return normalizeParsedReview(JSON.parse(content));
+      return normalizeParsedReview(model, JSON.parse(content));
     } catch {
       return fallbackReview(
+        model,
         "invalid",
         "Assistant returned non-JSON output; review didn't complete.",
       );
     }
   }
-  return normalizeParsedReview(content);
+  return normalizeParsedReview(model, content);
 }
 
 function extractContent(result: unknown): unknown {
@@ -187,9 +286,10 @@ function extractContent(result: unknown): unknown {
   return obj;
 }
 
-function normalizeParsedReview(value: unknown): AiReview {
+function normalizeParsedReview(model: string, value: unknown): AiReview {
   if (!value || typeof value !== "object") {
     return fallbackReview(
+      model,
       "invalid",
       "Assistant returned an empty or invalid review; review didn't complete.",
     );
@@ -218,6 +318,7 @@ function normalizeParsedReview(value: unknown): AiReview {
     requiresManualReview === null
   ) {
     return fallbackReview(
+      model,
       "invalid",
       `Assistant review was incomplete: missing ${missing.join(", ")}.`,
     );
@@ -230,10 +331,17 @@ function normalizeParsedReview(value: unknown): AiReview {
     summary,
     findings,
     requiresManualReview,
+    model,
+    escalated: false,
+    escalationReasons: [],
   };
 }
 
-function fallbackReview(status: Exclude<AiReviewStatus, "complete">, summary: string): AiReview {
+function fallbackReview(
+  model: string,
+  status: Exclude<AiReviewStatus, "complete">,
+  summary: string,
+): AiReview {
   return {
     status,
     risk: "low",
@@ -241,6 +349,9 @@ function fallbackReview(status: Exclude<AiReviewStatus, "complete">, summary: st
     summary,
     findings: [],
     requiresManualReview: false,
+    model,
+    escalated: false,
+    escalationReasons: [],
   };
 }
 
