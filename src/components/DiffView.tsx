@@ -191,18 +191,35 @@ function SingleSidedView({
   tone: "added" | "removed" | "unchanged";
   text: string;
 }) {
-  const bg =
+  const headerBg =
     tone === "added" ? "bg-ok-soft" : tone === "removed" ? "bg-danger-soft" : "bg-surface-2";
+  const rowBg = tone === "added" ? "bg-ok-soft" : tone === "removed" ? "bg-danger-soft" : "";
+  const lines = text.split("\n");
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();
   return (
     <div class="border border-border rounded-md overflow-hidden">
       <div
-        class={cn("px-3 py-2 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle", bg)}
+        class={cn(
+          "px-3 py-2 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle",
+          headerBg,
+        )}
       >
         {label}
       </div>
-      <pre class="bg-surface-2 m-0 p-3 overflow-auto text-xs leading-[1.55] max-h-[560px]">
-        {text}
-      </pre>
+      <div class="overflow-auto max-h-[560px]">
+        <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
+          <tbody>
+            {lines.map((line, index) => (
+              <tr key={index} class={cn(rowBg)}>
+                <td class="px-2 py-[2px] text-ink-subtle select-none w-[44px] text-right border-r border-border align-top">
+                  {index + 1}
+                </td>
+                <td class="px-2 py-[2px] whitespace-pre-wrap break-words align-top">{line}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
