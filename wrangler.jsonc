@@ -55,8 +55,18 @@
 			}
 		]
 	},
+	  "routes": [
+    {
+      "pattern": "drydock.resynapse.dev",
+      "custom_domain": true,
+    },
+    {
+      "pattern": "drydock.resynapse.dev/b/*",
+      "zone_name": "resynapse.dev",
+    },
+  ],
 	"vars": {
-		"BETTER_AUTH_URL": "https://staged-publish-review.decroockjovi.workers.dev",
+		"BETTER_AUTH_URL": "https://drydock.resynapse.dev",
 		"AI_CACHE_AFFINITY": "staged-publish-review-release-reviewer-v1",
 		"NPM_REGISTRY": "https://registry.npmjs.org",
 		"PNPM_VERSION": "11.1.1"
