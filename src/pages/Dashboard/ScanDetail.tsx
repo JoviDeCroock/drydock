@@ -503,6 +503,14 @@ function PersistedReportSections({
 }) {
   return (
     <section class="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-6">
+      <ReportSection title="Manifest changes" class="lg:col-span-2">
+        {summary.packageJsonDiff ? (
+          <PackageJsonDiffView diff={summary.packageJsonDiff} />
+        ) : (
+          <EmptyLine>No manifest changes were saved for this review.</EmptyLine>
+        )}
+      </ReportSection>
+
       {/* eslint-disable-next-line no-constant-binary-expression -- AI review intentionally disabled; JSX preserved for paid-tier re-introduction. */}
       {false && (
         <ReportSection title="Reviewer notes">
@@ -573,14 +581,6 @@ function PersistedReportSections({
           </details>
         ) : null}
       </ReportSection>
-
-      <ReportSection title="Manifest changes" class="lg:col-span-2">
-        {summary.packageJsonDiff ? (
-          <PackageJsonDiffView diff={summary.packageJsonDiff} />
-        ) : (
-          <EmptyLine>No manifest changes were saved for this review.</EmptyLine>
-        )}
-      </ReportSection>
     </section>
   );
 }
@@ -605,7 +605,7 @@ function ReportSection({
 function AiFindingList({ findings }: { findings: AiFinding[] }) {
   return (
     <ul class="list-none p-0 m-0 flex flex-col gap-2">
-      {findings.map((finding, index) => (
+      {sortFindingsBySeverity(findings).map((finding, index) => (
         <FindingCard
           key={`${finding.file}-${index}`}
           severity={finding.severity}
