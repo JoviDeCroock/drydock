@@ -72,6 +72,7 @@ Use cards for interactive containment and lists that need table-like edges. Pref
 - Empty findings do not get full bordered panels; represent them as compact badges or `EmptyLine`s inside an existing section.
 - Dashboard order follows user intent: request a review first, recent reviews second, workspace setup last.
 - Open staged publishes refresh automatically once an npm connection becomes available and clear when npm is disconnected, so first-time setup does not leave a stale loading state.
+- The recent reviews list returns only the newest scan per stage ID; repeated reviews of the same staged publish should not create duplicate dashboard rows.
 - Connected workspace setup is collapsed by default, but the closed row must look clickable and include an explicit “Open settings” affordance.
 - Connection metadata is displayed as compact label/value rows, while the editable credential form remains inside a card.
 - Marketing hero copy is unboxed; feature claims use cards below the headline.

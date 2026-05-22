@@ -1,4 +1,5 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { createDb, createScanJob, ensurePersonalOrganization, persistScan } from "../../server/db";
@@ -28,17 +29,26 @@ async function seedUser(): Promise<SeededUser> {
 }
 
 async function seedCompletedScan(owner: SeededUser, packageName: string) {
+  return seedCompletedScanWithStage(owner, packageName, undefined);
+}
+
+async function seedCompletedScanWithStage(
+  owner: SeededUser,
+  packageName: string,
+  stageIdOverride?: string,
+) {
   const db = createDb(env.DB);
   const scanId = `scan_${crypto.randomUUID()}`;
+  const stageId = stageIdOverride ?? `stage-${scanId.slice(-12)}`;
   await createScanJob(db, {
     id: scanId,
-    stageId: `stage-${scanId.slice(-12)}`,
+    stageId,
     organizationId: owner.organizationId,
     ownerUserId: owner.userId,
   });
   await persistScan(db, {
     id: scanId,
-    stageId: `stage-${scanId.slice(-12)}`,
+    stageId,
     organizationId: owner.organizationId,
     ownerUserId: owner.userId,
     packageJson: { name: packageName, version: "1.2.3" },
@@ -89,6 +99,31 @@ describe("scans routes enforce organization boundaries", () => {
     expect(intruderRes.status).toBe(200);
     const intruderBody = (await intruderRes.json()) as { scans: Array<{ id: string }> };
     expect(intruderBody.scans.map((s) => s.id)).not.toContain(scanId);
+  });
+
+  test("GET /scans returns only the newest scan for each stage id", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const stageId = `stage-${crypto.randomUUID().slice(0, 12)}`;
+    const olderId = await seedCompletedScanWithStage(owner, "@org/retry-package", stageId);
+    const newerId = await seedCompletedScanWithStage(owner, "@org/retry-package", stageId);
+
+    await Promise.all([
+      db
+        .update(schema.scans)
+        .set({ createdAt: new Date(1), updatedAt: new Date(1) })
+        .where(eq(schema.scans.id, olderId)),
+      db
+        .update(schema.scans)
+        .set({ createdAt: new Date(2), updatedAt: new Date(2) })
+        .where(eq(schema.scans.id, newerId)),
+    ]);
+
+    const res = await fetchWithSession(buildTestApp(owner), "/api/v1/scans");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { scans: Array<{ id: string; stageId: string }> };
+    const matching = body.scans.filter((scan) => scan.stageId === stageId);
+    expect(matching.map((scan) => scan.id)).toEqual([newerId]);
   });
 
   test("GET /scans/:id returns 404 for scans owned by another organization", async () => {

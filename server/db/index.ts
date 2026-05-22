@@ -321,7 +321,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
 }
 
 export async function listScans(db: AppDb, organizationId: string) {
-  return db
+  const rows = await db
     .select({
       id: scans.id,
       stageId: scans.stageId,
@@ -342,7 +342,17 @@ export async function listScans(db: AppDb, organizationId: string) {
     .from(scans)
     .where(eq(scans.organizationId, organizationId))
     .orderBy(desc(scans.createdAt))
-    .limit(50);
+    .limit(100);
+
+  const unique: typeof rows = [];
+  const seenStageIds = new Set<string>();
+  for (const row of rows) {
+    if (seenStageIds.has(row.stageId)) continue;
+    seenStageIds.add(row.stageId);
+    unique.push(row);
+    if (unique.length === 50) break;
+  }
+  return unique;
 }
 
 export async function getScan(db: AppDb, id: string, organizationId: string) {
