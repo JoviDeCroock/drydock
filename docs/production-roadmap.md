@@ -18,11 +18,12 @@ The prototype-to-product foundation is in place: authenticated organization-scop
 
 Private beta blockers:
 
-- Tenant-boundary, sandbox-gateway, and archive-parser regression tests.
 - Operator-visible failure metrics for scan duration, queue retries, and AI/npm failures.
 - Signup/credential abuse controls for an invite-only beta.
 - Report deletion plus a documented retention policy for persisted redacted evidence.
 - Production deploy checklist covering D1 migrations, Queues, KV, secrets, and incident response.
+
+Closed: tenant-boundary, sandbox-gateway, and archive-parser regression tests now have route- and unit-level coverage (`test/workers/cross-org-routes.test.ts`, `test/workers/cross-org-npm-connection.test.ts`, `test/workers/sandbox-gateway-runtime.test.ts`, `test/tar-parser.test.mjs`).
 
 Not private-beta blockers unless customer evidence demands them:
 
@@ -112,9 +113,9 @@ Reliability and operations:
 
 Security boundaries:
 
-- Add cross-organization tests for npm connection isolation. (Scan detail/list/compare route-level coverage landed via `test/workers/cross-org-routes.test.ts`; DB-layer assertion landed earlier via `test/workers/scan-idempotency.test.ts`. Still need route-level cross-org coverage for npm-connection endpoints.)
-- Sandbox gateway runtime credential-injection coverage landed via `test/workers/sandbox-gateway-runtime.test.ts`. (Pure-function policy coverage in `test/sandbox-gateway.test.mjs` remains as a fast unit test.)
-- Add tar parser regression tests for traversal paths, absolute paths, PAX paths, GNU long names, links, truncation, huge file counts, and archive-size caps.
+- Cross-organization tests for npm connection isolation now cover scan detail/list/compare (`test/workers/cross-org-routes.test.ts`), DB-layer ownership (`test/workers/scan-idempotency.test.ts`), and the npm-connection routes themselves (`test/workers/cross-org-npm-connection.test.ts`).
+- Sandbox gateway runtime credential-injection coverage landed via `test/workers/sandbox-gateway-runtime.test.ts`. Pure-function policy coverage in `test/sandbox-gateway.test.mjs` remains as a fast unit test.
+- Tar parser regression coverage landed via `test/tar-parser.test.mjs` (traversal paths, absolute-path normalization, PAX paths, GNU long names, link skipping, truncation, file-count caps, archive-bomb caps). The pure parser lives in `server/lib/tar-parser.js`; `server/lib/sandbox.ts` concatenates the same function source into the dynamic Worker so the unit-tested code path is the one that runs in the isolated sandbox.
 - Investigate build output to ensure local `.dev.vars` secrets are never included in deployable or public artifacts.
 
 Abuse and data lifecycle:
@@ -282,9 +283,9 @@ Exit criteria:
 
 ## Suggested next implementation slice
 
-With route-level cross-org coverage, sandbox gateway runtime tests, and deterministic rule IDs landed, the next two slices are:
+With cross-org coverage extended to the npm-connection routes and the tar parser now unit-tested via a shared module, the security-test baseline for private beta is in place. The next two slices are:
 
 1. **Private beta operations:** configure production Queues/KV/D1/secrets, add metrics/logging for scan duration and failure classes, add invite-only signup protection, and document deployment + incident response.
-2. **Remaining boundary tests:** add archive parser regression fixtures (traversal, PAX, GNU long names, links, truncation, archive-bomb caps) and route-level cross-org coverage for npm-connection endpoints.
+2. **Data lifecycle:** ship scan/report deletion plus a documented retention policy for persisted redacted text samples.
 
 After those land, improve maintainer UX by grouping findings (now that rule IDs exist) and adding the lifecycle timeline before broadening beta access.

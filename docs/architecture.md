@@ -59,6 +59,8 @@ The Dynamic Worker handles untrusted package bytes. It:
 
 The sandbox must stay small and boring. Do not add package execution, dependency installation, build steps, import resolution, or rendering.
 
+The dynamic Worker's tar parser is defined in `server/lib/tar-parser.js` and concatenated into the sandbox module by `server/lib/sandbox.ts` via `Function.prototype.toString()`. This keeps the parser code path the one exercised by the unit tests in `test/tar-parser.test.mjs` instead of a sibling string copy that could drift.
+
 ### NpmStageGateway
 
 `NpmStageGateway` is the only component allowed to attach npm authorization. It follows Cloudflare's [outbound Worker pattern for sandbox auth](https://blog.cloudflare.com/sandbox-auth/): the sandbox makes a normal fetch, while a trusted WorkerEntrypoint receives props from the parent Worker and conditionally injects credentials without exposing them to the sandbox.
