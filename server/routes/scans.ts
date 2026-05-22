@@ -1,12 +1,19 @@
 import { Hono } from "hono";
 import {
+  LIST_SCANS_DEFAULT_LIMIT,
+  LIST_SCANS_MAX_LIMIT,
   RateLimitError,
+  SCAN_DECISIONS,
+  SCAN_DECISION_FILTERS,
+  type ScanDecision,
+  type ScanDecisionFilter,
   createDb,
   createScanJob,
   enforceRateLimit,
   getNpmConnection,
   getScan,
   listScans,
+  recordScanDecision,
   recordScanEvent,
 } from "../db";
 import { requireActiveOrganization } from "../lib/active-organization";
@@ -91,10 +98,83 @@ scansRoutes.post("/", async (c) => {
   }
 });
 
+const DECISION_REASON_MAX = 500;
+const DECISION_FILTER_SET = new Set<ScanDecisionFilter>(SCAN_DECISION_FILTERS);
+const DECISION_SET = new Set<ScanDecision>(SCAN_DECISIONS);
+
+function parseListScansCursor(raw: string | undefined) {
+  if (!raw) return null;
+  const sep = raw.indexOf(":");
+  if (sep <= 0) return null;
+  const createdAtMs = Number(raw.slice(0, sep));
+  const id = raw.slice(sep + 1);
+  if (!Number.isFinite(createdAtMs) || !id) return null;
+  return { createdAtMs, id };
+}
+
+function encodeListScansCursor(cursor: { createdAtMs: number; id: string } | null) {
+  return cursor ? `${cursor.createdAtMs}:${cursor.id}` : null;
+}
+
 scansRoutes.get("/", async (c) => {
   const db = createDb(c.env.DB);
   const organizationId = await requireActiveOrganization(c, db);
-  return c.json({ scans: await listScans(db, organizationId) });
+
+  const rawFilter = c.req.query("filter");
+  const decisionFilter: ScanDecisionFilter = DECISION_FILTER_SET.has(
+    rawFilter as ScanDecisionFilter,
+  )
+    ? (rawFilter as ScanDecisionFilter)
+    : "undecided";
+
+  const rawLimit = Number(c.req.query("limit"));
+  const limit = Number.isFinite(rawLimit)
+    ? Math.min(LIST_SCANS_MAX_LIMIT, Math.max(1, Math.floor(rawLimit)))
+    : LIST_SCANS_DEFAULT_LIMIT;
+
+  const cursor = parseListScansCursor(c.req.query("cursor"));
+
+  const result = await listScans(db, organizationId, { cursor, limit, decisionFilter });
+  return c.json({
+    scans: result.scans,
+    nextCursor: encodeListScansCursor(result.nextCursor),
+    filter: decisionFilter,
+    limit,
+  });
+});
+
+scansRoutes.post("/:id/decision", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as Partial<{
+    decision: string;
+    reason: string;
+  }>;
+  if (!DECISION_SET.has(body.decision as ScanDecision)) {
+    return c.json({ error: "decision must be 'publish' or 'no_publish'" }, 400);
+  }
+  const reason = typeof body.reason === "string" ? body.reason : null;
+  if (reason && reason.length > DECISION_REASON_MAX) {
+    return c.json({ error: `reason must be <= ${DECISION_REASON_MAX} characters` }, 400);
+  }
+
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = await requireActiveOrganization(c, db);
+
+  const updated = await recordScanDecision(db, {
+    scanId: c.req.param("id"),
+    organizationId,
+    actorUserId: session.userId,
+    decision: body.decision as ScanDecision,
+    reason,
+  });
+
+  if (!updated) {
+    const existing = await getScan(db, c.req.param("id"), organizationId);
+    if (!existing) return c.json({ error: "not found" }, 404);
+    return c.json({ error: "decision can only be set on completed scans" }, 409);
+  }
+
+  return c.json(updated);
 });
 
 scansRoutes.get("/:id", async (c) => {

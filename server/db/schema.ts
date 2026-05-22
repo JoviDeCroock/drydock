@@ -63,6 +63,12 @@ export const scans = sqliteTable(
     previousVersion: text("previous_version"),
     risk: text("risk").notNull().default("unknown"),
     status: text("status").notNull().default("pending"),
+    decision: text("decision"),
+    decisionReason: text("decision_reason"),
+    decidedByUserId: text("decided_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
     summaryJson: text("summary_json", { mode: "json" }),
     aiJson: text("ai_json", { mode: "json" }),
     errorJson: text("error_json", { mode: "json" }),
@@ -78,6 +84,11 @@ export const scans = sqliteTable(
     ownerIdx: index("scans_owner_idx").on(table.ownerUserId),
     stageIdx: index("scans_stage_id_idx").on(table.stageId),
     packageIdx: index("scans_package_idx").on(table.packageName),
+    orgDecisionCreatedIdx: index("scans_org_decision_created_idx").on(
+      table.organizationId,
+      table.decision,
+      table.createdAt,
+    ),
   }),
 );
 

@@ -22,6 +22,9 @@ export interface ScanCompareFileResponse {
   file: FileRecord;
 }
 
+export type ScanDecision = "publish" | "no_publish";
+export type ScanDecisionFilter = "undecided" | "publish" | "no_publish" | "all";
+
 export interface ScanListItem {
   id: string;
   stageId: string;
@@ -32,6 +35,10 @@ export interface ScanListItem {
   previousVersion: string | null;
   risk: string;
   status: string;
+  decision?: ScanDecision | string | null;
+  decisionReason?: string | null;
+  decidedByUserId?: string | null;
+  decidedAt?: string | number | Date | null;
   reportVersion?: number | null;
   reportDigest?: string | null;
   startedAt?: string | number | Date | null;
@@ -89,9 +96,34 @@ export function createScan(stageId: string): Promise<{ scan: ScanListItem; queue
   });
 }
 
-export async function listScans(): Promise<ScanListItem[]> {
-  const data = await apiFetch<{ scans: ScanListItem[] }>("/api/v1/scans");
-  return data.scans;
+export interface ListScansResponse {
+  scans: ScanListItem[];
+  nextCursor: string | null;
+  filter: ScanDecisionFilter;
+  limit: number;
+}
+
+export function listScans(
+  options: { cursor?: string | null; filter?: ScanDecisionFilter; limit?: number } = {},
+): Promise<ListScansResponse> {
+  const params = new URLSearchParams();
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.filter) params.set("filter", options.filter);
+  if (options.limit) params.set("limit", String(options.limit));
+  const qs = params.toString();
+  return apiFetch<ListScansResponse>(`/api/v1/scans${qs ? `?${qs}` : ""}`);
+}
+
+export function setScanDecision(
+  id: string,
+  decision: ScanDecision,
+  reason: string | null,
+): Promise<PersistedScanDetail> {
+  return apiFetch<PersistedScanDetail>(`/api/v1/scans/${encodeURIComponent(id)}/decision`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ decision, reason }),
+  });
 }
 
 export function getScan(
@@ -126,24 +158,54 @@ export const ScanListModel = createModel(() => {
   const scans = signal<ScanListItem[]>([]);
   const loaded = signal(false);
   const refreshing = signal(false);
+  const loadingMore = signal(false);
+  const filter = signal<ScanDecisionFilter>("undecided");
+  const nextCursor = signal<string | null>(null);
   const error = signal<string | null>(null);
 
   return {
     scans,
     loaded,
     refreshing,
+    loadingMore,
+    filter,
+    nextCursor,
     error,
 
     async refresh(): Promise<void> {
       this.refreshing.value = true;
       try {
-        this.scans.value = await listScans();
+        const data = await listScans({ filter: this.filter.value });
+        this.scans.value = data.scans;
+        this.nextCursor.value = data.nextCursor;
         this.error.value = null;
       } catch (err) {
         this.error.value = err instanceof Error ? err.message : String(err);
       } finally {
         this.loaded.value = true;
         this.refreshing.value = false;
+      }
+    },
+
+    async setFilter(next: ScanDecisionFilter): Promise<void> {
+      if (this.filter.value === next) return;
+      this.filter.value = next;
+      await this.refresh();
+    },
+
+    async loadMore(): Promise<void> {
+      const cursor = this.nextCursor.value;
+      if (!cursor || this.loadingMore.value) return;
+      this.loadingMore.value = true;
+      try {
+        const data = await listScans({ cursor, filter: this.filter.value });
+        this.scans.value = [...this.scans.value, ...data.scans];
+        this.nextCursor.value = data.nextCursor;
+        this.error.value = null;
+      } catch (err) {
+        this.error.value = err instanceof Error ? err.message : String(err);
+      } finally {
+        this.loadingMore.value = false;
       }
     },
   };
@@ -183,6 +245,8 @@ export const ScanRequestModel = createModel(() => {
   };
 });
 
+export type DecisionStatus = "idle" | "saving" | "error";
+
 export const ScanDetailModel = createModel((id: string) => {
   const scanId = signal(id);
   const detail = signal<PersistedScanDetail | null>(null);
@@ -195,6 +259,8 @@ export const ScanDetailModel = createModel((id: string) => {
   const compareLoading = signal(false);
   const fileLoading = signal(false);
   const compareError = signal<string | null>(null);
+  const decisionStatus = signal<DecisionStatus>("idle");
+  const decisionError = signal<string | null>(null);
 
   const status = computed(() => detail.value?.scan.status ?? null);
   const isPolling = computed(() => status.value === "pending" || status.value === "running");
@@ -265,6 +331,8 @@ export const ScanDetailModel = createModel((id: string) => {
     compareLoading,
     fileLoading,
     compareError,
+    decisionStatus,
+    decisionError,
     status,
     isPolling,
     isDefaultComparison,
@@ -305,6 +373,20 @@ export const ScanDetailModel = createModel((id: string) => {
 
     selectVersion(version: string | null) {
       this.selectedVersion.value = version;
+    },
+
+    async setDecision(decision: ScanDecision, reason: string | null): Promise<void> {
+      const id = this.scanId.peek();
+      this.decisionStatus.value = "saving";
+      this.decisionError.value = null;
+      try {
+        const updated = await setScanDecision(id, decision, reason);
+        this.detail.value = updated;
+        this.decisionStatus.value = "idle";
+      } catch (err) {
+        this.decisionError.value = err instanceof Error ? err.message : String(err);
+        this.decisionStatus.value = "error";
+      }
     },
 
     async loadPreviousFile(version: string, path: string): Promise<void> {

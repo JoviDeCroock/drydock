@@ -5,7 +5,12 @@ import { useLocation } from "preact-iso";
 import { sessionModel } from "../../models/auth";
 import { NpmConnectionModel } from "../../models/npm-connection";
 import { OrganizationModel } from "../../models/organization";
-import { ScanListModel, ScanRequestModel, type ScanListItem } from "../../models/scan";
+import {
+  ScanListModel,
+  ScanRequestModel,
+  type ScanDecisionFilter,
+  type ScanListItem,
+} from "../../models/scan";
 import { StagedPublishesModel } from "../../models/staged-publishes";
 import {
   Alert,
@@ -288,19 +293,89 @@ function RecentReviewsSection({
       {discovery && !discoveryError && !discovery.created && !discovery.found ? (
         <Muted class="text-[13px] m-0">No open staged publishes found.</Muted>
       ) : null}
+      <ScanFilterChips
+        active={scans.filter.value}
+        disabled={scans.refreshing.value}
+        onChange={(filter) => void scans.setFilter(filter)}
+      />
       <Card class="p-0 overflow-hidden">
         {scans.scans.value.length ? (
           <ScanTable scans={scans.scans.value} />
         ) : (
           <div class="p-5">
-            <EmptyLine>
-              No reviews yet. Request one above to start building your release history.
-            </EmptyLine>
+            <EmptyLine>{emptyStateMessage(scans.filter.value)}</EmptyLine>
           </div>
         )}
       </Card>
+      {scans.nextCursor.value ? (
+        <div class="flex justify-center pt-1">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void scans.loadMore()}
+            disabled={scans.loadingMore.value}
+          >
+            {scans.loadingMore.value ? "Loading…" : "Load more"}
+          </Button>
+        </div>
+      ) : null}
     </section>
   );
+}
+
+const FILTER_OPTIONS: Array<{ value: ScanDecisionFilter; label: string }> = [
+  { value: "undecided", label: "Undecided" },
+  { value: "publish", label: "Approved" },
+  { value: "no_publish", label: "Blocked" },
+  { value: "all", label: "All" },
+];
+
+function ScanFilterChips({
+  active,
+  disabled,
+  onChange,
+}: {
+  active: ScanDecisionFilter;
+  disabled: boolean;
+  onChange: (filter: ScanDecisionFilter) => void;
+}) {
+  return (
+    <div class="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter reviews by decision">
+      {FILTER_OPTIONS.map((option) => {
+        const isActive = option.value === active;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="tab"
+            aria-selected={isActive}
+            disabled={disabled}
+            onClick={() => onChange(option.value)}
+            class={`font-mono text-[11px] uppercase tracking-[0.08em] px-2.5 py-1.5 rounded-md border transition-colors duration-150 ease-out cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 ${
+              isActive
+                ? "bg-accent text-accent-on border-accent"
+                : "bg-surface-2 text-ink-muted border-border hover:border-border-strong"
+            }`}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function emptyStateMessage(filter: ScanDecisionFilter): string {
+  switch (filter) {
+    case "undecided":
+      return "Nothing waiting on a decision. Switch to All to see decided reviews.";
+    case "publish":
+      return "No reviews approved for publish yet.";
+    case "no_publish":
+      return "No reviews blocked from publish yet.";
+    default:
+      return "No reviews yet. Request one above to start building your release history.";
+  }
 }
 
 function WorkspaceSetupPanel({
@@ -508,6 +583,7 @@ function ScanTable({ scans }: { scans: ScanListItem[] }) {
             <Th>Version</Th>
             <Th>Risk</Th>
             <Th>Status</Th>
+            <Th>Decision</Th>
             <Th>Created</Th>
           </tr>
         </thead>
@@ -526,6 +602,9 @@ function ScanTable({ scans }: { scans: ScanListItem[] }) {
                 <Badge tone={severityTone(scan.risk)}>{scan.risk}</Badge>
               </Td>
               <Td class="font-mono text-xs text-ink-muted">{scan.status}</Td>
+              <Td>
+                <DecisionBadge decision={scan.decision} />
+              </Td>
               <Td class="font-mono text-xs text-ink-muted">{formatDate(scan.createdAt)}</Td>
             </tr>
           ))}
@@ -533,6 +612,12 @@ function ScanTable({ scans }: { scans: ScanListItem[] }) {
       </table>
     </div>
   );
+}
+
+function DecisionBadge({ decision }: { decision?: string | null }) {
+  if (decision === "publish") return <Badge tone="ok">approved</Badge>;
+  if (decision === "no_publish") return <Badge tone="critical">blocked</Badge>;
+  return <Badge tone="neutral">undecided</Badge>;
 }
 
 function Th({ children }: { children: ComponentChildren }) {

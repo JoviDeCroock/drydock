@@ -104,7 +104,7 @@ describe("staged publishes route", () => {
     });
     expect(queue.send).toHaveBeenCalledTimes(1);
     expect(queue.send.mock.calls[0]?.[0]).toMatchObject({ stageId: "stage-new-123" });
-    const scans = await listScans(db, owner.organizationId);
+    const { scans } = await listScans(db, owner.organizationId);
     expect(scans.map((scan) => scan.stageId)).toContain("stage-new-123");
   });
 });

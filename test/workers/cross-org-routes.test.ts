@@ -101,7 +101,7 @@ describe("scans routes enforce organization boundaries", () => {
     expect(intruderBody.scans.map((s) => s.id)).not.toContain(scanId);
   });
 
-  test("GET /scans returns only the newest scan for each stage id", async () => {
+  test("GET /scans lists every scan for a stage id with the newest first", async () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
     const stageId = `stage-${crypto.randomUUID().slice(0, 12)}`;
@@ -119,11 +119,118 @@ describe("scans routes enforce organization boundaries", () => {
         .where(eq(schema.scans.id, newerId)),
     ]);
 
-    const res = await fetchWithSession(buildTestApp(owner), "/api/v1/scans");
+    const res = await fetchWithSession(buildTestApp(owner), "/api/v1/scans?filter=all");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { scans: Array<{ id: string; stageId: string }> };
     const matching = body.scans.filter((scan) => scan.stageId === stageId);
-    expect(matching.map((scan) => scan.id)).toEqual([newerId]);
+    expect(matching.map((scan) => scan.id)).toEqual([newerId, olderId]);
+  });
+
+  test("GET /scans paginates with a cursor and defaults to undecided scans", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      ids.push(await seedCompletedScan(owner, "@org/page-package"));
+    }
+    // Decide the oldest so it should be filtered out of the default view.
+    const decidedId = ids[0]!;
+    await db
+      .update(schema.scans)
+      .set({ decision: "publish", decidedAt: new Date(), updatedAt: new Date() })
+      .where(eq(schema.scans.id, decidedId));
+
+    const firstPage = await fetchWithSession(
+      buildTestApp(owner),
+      "/api/v1/scans?limit=1&filter=undecided",
+    );
+    expect(firstPage.status).toBe(200);
+    const firstBody = (await firstPage.json()) as {
+      scans: Array<{ id: string }>;
+      nextCursor: string | null;
+    };
+    expect(firstBody.scans).toHaveLength(1);
+    expect(firstBody.scans[0]?.id).not.toBe(decidedId);
+    expect(firstBody.nextCursor).toBeTypeOf("string");
+
+    const secondPage = await fetchWithSession(
+      buildTestApp(owner),
+      `/api/v1/scans?limit=1&filter=undecided&cursor=${encodeURIComponent(firstBody.nextCursor!)}`,
+    );
+    const secondBody = (await secondPage.json()) as {
+      scans: Array<{ id: string }>;
+      nextCursor: string | null;
+    };
+    expect(secondBody.scans).toHaveLength(1);
+    expect(secondBody.scans[0]?.id).not.toBe(firstBody.scans[0]?.id);
+    expect(secondBody.scans[0]?.id).not.toBe(decidedId);
+    expect(secondBody.nextCursor).toBeNull();
+  });
+
+  test("POST /scans/:id/decision records a publish decision on completed scans", async () => {
+    const owner = await seedUser();
+    const scanId = await seedCompletedScan(owner, "@org/decide-package");
+
+    const ctx = createExecutionContext();
+    const res = await buildTestApp(owner).fetch(
+      new Request(`http://test.local/api/v1/scans/${scanId}/decision`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: "publish", reason: "minor patch" }),
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      scan: { decision: string; decisionReason: string };
+    };
+    expect(body.scan.decision).toBe("publish");
+    expect(body.scan.decisionReason).toBe("minor patch");
+  });
+
+  test("POST /scans/:id/decision rejects invalid decision values", async () => {
+    const owner = await seedUser();
+    const scanId = await seedCompletedScan(owner, "@org/decide-package");
+
+    const ctx = createExecutionContext();
+    const res = await buildTestApp(owner).fetch(
+      new Request(`http://test.local/api/v1/scans/${scanId}/decision`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: "maybe" }),
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(400);
+  });
+
+  test("POST /scans/:id/decision returns 409 for non-complete scans", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const scanId = `scan_${crypto.randomUUID()}`;
+    await createScanJob(db, {
+      id: scanId,
+      stageId: `stage-${scanId.slice(-12)}`,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+    });
+
+    const ctx = createExecutionContext();
+    const res = await buildTestApp(owner).fetch(
+      new Request(`http://test.local/api/v1/scans/${scanId}/decision`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: "publish" }),
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(409);
   });
 
   test("GET /scans/:id returns 404 for scans owned by another organization", async () => {
