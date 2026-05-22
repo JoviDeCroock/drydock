@@ -15,9 +15,6 @@
 
 /** @typedef {{ path: string, size: number, sha256: string, flags: string[], textSample?: string }} ParsedFile */
 
-// String.fromCharCode(0) avoids embedding a literal NUL byte in this source
-// file, which would not survive every round-trip through tooling.
-const NUL = String.fromCharCode(0);
 export function readString(bytes, start, len) {
   let out = "";
   for (let i = start; i < start + len && bytes[i]; i++) out += String.fromCharCode(bytes[i]);
@@ -33,11 +30,13 @@ export function decodeText(bytes) {
 }
 
 export function isSafePaxPath(value) {
-  return typeof value === "string" && !value.includes(NUL) && !value.includes("\\");
+  const nul = String.fromCharCode(0);
+  return typeof value === "string" && !value.includes(nul) && !value.includes("\\");
 }
 
 export function normalizeTarPath(rawPath) {
-  if (!rawPath || rawPath.includes(NUL) || rawPath.includes("\\")) return null;
+  const nul = String.fromCharCode(0);
+  if (!rawPath || rawPath.includes(nul) || rawPath.includes("\\")) return null;
   let path = rawPath.replace(/^\/+/, "").replace(/^package\//, "");
   if (!path || path.startsWith("../") || path.includes("/../") || /^[A-Za-z]:/.test(path))
     return null;
@@ -86,6 +85,7 @@ export async function summarizeFile(path, body, maxBytesPerFile) {
 }
 
 export async function readTar(buffer, maxFiles, maxBytesPerFile, maxTarBytes) {
+  const nul = String.fromCharCode(0);
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   const files = [];
   let nextLongName = null;
@@ -118,7 +118,7 @@ export async function readTar(buffer, maxFiles, maxBytesPerFile, maxTarBytes) {
       const candidate = readString(body, 0, body.length);
       if (!isSafePaxPath(candidate)) throw new Error("invalid long-name path");
       nextLongName = candidate;
-    } else if (type === "0" || type === NUL) {
+    } else if (type === "0" || type === nul) {
       const path = normalizeTarPath(
         (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName,
       );

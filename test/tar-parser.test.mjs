@@ -357,12 +357,22 @@ describe("rendered sandbox parser source", () => {
     }
   });
 
-  test("concatenated source parses as valid JS containing all dependencies", () => {
+  test("concatenated source parses and runs without module-level dependencies", () => {
     const source = SANDBOX_EXPORT_NAMES.map((name) => tarParser[name].toString()).join("\n\n");
     for (const name of SANDBOX_EXPORT_NAMES) {
       expect(source).toContain(`function ${name}`);
     }
     expect(() => new Function(source)).not.toThrow();
+    const run = new Function(
+      source +
+        `
+return {
+  safe: isSafePaxPath("clean/path.js"),
+  unsafe: isSafePaxPath("nope" + String.fromCharCode(0) + "path"),
+  normalized: normalizeTarPath("package/index.js")
+};`,
+    );
+    expect(run()).toEqual({ safe: true, unsafe: false, normalized: "index.js" });
   });
 });
 
