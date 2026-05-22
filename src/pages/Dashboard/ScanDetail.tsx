@@ -33,6 +33,7 @@ interface PersistedSummary {
     digest?: string;
     digestAlgorithm?: string;
     generatedAt?: string;
+    rulesVersion?: string;
   };
   packageJsonDiff?: PackageJsonDiff;
   diff?: DiffEntry[];
@@ -278,7 +279,12 @@ export default function ScanDetailPage() {
                 <SectionLabel>Risk signals</SectionLabel>
                 <ul class="list-none p-0 m-0 flex flex-col gap-2">
                   {detail.findings.map((finding) => (
-                    <FindingCard key={finding.id} severity={finding.severity} file={finding.file}>
+                    <FindingCard
+                      key={finding.id}
+                      severity={finding.severity}
+                      file={finding.file}
+                      ruleId={finding.ruleId}
+                    >
                       <FindingRow label="evidence" value={finding.evidence} />
                       <FindingRow label="reason" value={finding.reason} />
                     </FindingCard>
@@ -470,6 +476,7 @@ function PersistedReportSections({
                 summary.report.generatedAt ? formatDate(summary.report.generatedAt) : "unknown"
               }
             />
+            <MetadataRow label="rules" value={`v${summary.report.rulesVersion ?? "unknown"}`} />
           </div>
         ) : (
           <EmptyLine>This older review does not include a report fingerprint.</EmptyLine>

@@ -14,7 +14,29 @@ export interface Finding {
   evidence: string;
   reason: string;
   line?: number;
+  ruleId?: string;
+  ruleVersion?: string;
 }
+
+// Bump when deterministic rule semantics, severities, or coverage change in a
+// way that should invalidate cached scan reports. Stored alongside each
+// finding so historical reports can be traced back to the ruleset that
+// produced them.
+export const DETERMINISTIC_RULES_VERSION = "1.0.0";
+
+export const DETERMINISTIC_RULE_IDS = {
+  installScriptPreinstall: "install-script.preinstall",
+  installScript: "install-script.lifecycle",
+  codeProcessExecution: "code.process-execution",
+  codeNetworkAccess: "code.network-access",
+  codeDynamicEvaluation: "code.dynamic-evaluation",
+  codeCredentialAccess: "code.credential-access",
+  fileSecretContent: "file.secret-content",
+  fileLargeBinary: "file.large-binary",
+  fileNativeArtifact: "file.native-artifact",
+  diffCredentialFileAdded: "diff.credential-file-added",
+  diffLargeNewFile: "diff.large-new-file",
+} as const;
 
 export interface PackageJsonSummary {
   name?: string;
@@ -72,6 +94,14 @@ const SECRET_PATTERNS: Array<[RegExp, string]> = [
 export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = []): Finding[] {
   const findings: Finding[] = [];
   const diffByPath = new Map(diff.map((entry) => [entry.path, entry]));
+  const tag = (
+    rule: keyof typeof DETERMINISTIC_RULE_IDS,
+    finding: Omit<Finding, "ruleId" | "ruleVersion">,
+  ): Finding => ({
+    ...finding,
+    ruleId: DETERMINISTIC_RULE_IDS[rule],
+    ruleVersion: DETERMINISTIC_RULES_VERSION,
+  });
 
   for (const file of files) {
     const p = file.path.toLowerCase();
@@ -87,12 +117,14 @@ export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = [
       const scripts = pkg?.scripts || {};
       for (const script of LIFECYCLE_SCRIPTS) {
         if (scripts[script]) {
-          findings.push({
-            severity: script === "preinstall" ? "critical" : "high",
-            file: file.path,
-            evidence: `${script}: ${scripts[script]}`,
-            reason: "install lifecycle hooks execute on consumer machines",
-          });
+          findings.push(
+            tag(script === "preinstall" ? "installScriptPreinstall" : "installScript", {
+              severity: script === "preinstall" ? "critical" : "high",
+              file: file.path,
+              evidence: `${script}: ${scripts[script]}`,
+              reason: "install lifecycle hooks execute on consumer machines",
+            }),
+          );
         }
       }
     }
@@ -101,25 +133,29 @@ export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = [
         sample,
       )
     ) {
-      findings.push({
-        severity: "high",
-        file: file.path,
-        evidence: `${changedPrefix}process or shell execution`,
-        reason: "package may execute arbitrary commands",
-      });
+      findings.push(
+        tag("codeProcessExecution", {
+          severity: "high",
+          file: file.path,
+          evidence: `${changedPrefix}process or shell execution`,
+          reason: "package may execute arbitrary commands",
+        }),
+      );
     }
     if (
       /\b(require\(["'](?:node:)?(?:http|https|net|dns)["']\)|from\s+["'](?:node:)?(?:http|https|net|dns)["']|fetch\s*\(|XMLHttpRequest|axios\s*\.)/.test(
         sample,
       )
     ) {
-      findings.push({
-        severity: changed === "added" ? "high" : "medium",
-        file: file.path,
-        evidence: `${changedPrefix}network-capable code path`,
-        reason:
-          "unexpected network access in package code can be used for exfiltration or staged payload retrieval",
-      });
+      findings.push(
+        tag("codeNetworkAccess", {
+          severity: changed === "added" ? "high" : "medium",
+          file: file.path,
+          evidence: `${changedPrefix}network-capable code path`,
+          reason:
+            "unexpected network access in package code can be used for exfiltration or staged payload retrieval",
+        }),
+      );
     }
     if (
       /\beval\s*\(/.test(sample) ||
@@ -128,66 +164,80 @@ export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = [
       /\batob\s*\(/.test(sample) ||
       /\bBuffer\.from\s*\([^,]+,\s*["']base64["']\s*\)/.test(sample)
     ) {
-      findings.push({
-        severity: changed === "added" ? "high" : "medium",
-        file: file.path,
-        evidence: `${changedPrefix}dynamic code or obfuscation primitive`,
-        reason: "common malware and obfuscation technique",
-      });
+      findings.push(
+        tag("codeDynamicEvaluation", {
+          severity: changed === "added" ? "high" : "medium",
+          file: file.path,
+          evidence: `${changedPrefix}dynamic code or obfuscation primitive`,
+          reason: "common malware and obfuscation technique",
+        }),
+      );
     }
     if (
       /\b(process\.env|npm_config_|NPM_TOKEN|GITHUB_TOKEN|AWS_SECRET|PRIVATE_KEY)\b/.test(sample)
     ) {
-      findings.push({
-        severity: changed === "added" ? "high" : "medium",
-        file: file.path,
-        evidence: `${changedPrefix}secret/environment access`,
-        reason: "package may read credentials from the install environment",
-      });
+      findings.push(
+        tag("codeCredentialAccess", {
+          severity: changed === "added" ? "high" : "medium",
+          file: file.path,
+          evidence: `${changedPrefix}secret/environment access`,
+          reason: "package may read credentials from the install environment",
+        }),
+      );
     }
     if (/\.npmrc|\.env|id_rsa|id_ed25519/i.test(file.path) || containsSecretLikeText(sample)) {
-      findings.push({
-        severity: changed === "added" ? "critical" : "high",
-        file: file.path,
-        evidence: `${changedPrefix}secret-looking file or content`,
-        reason: "published artifacts should not include credentials or private material",
-      });
+      findings.push(
+        tag("fileSecretContent", {
+          severity: changed === "added" ? "critical" : "high",
+          file: file.path,
+          evidence: `${changedPrefix}secret-looking file or content`,
+          reason: "published artifacts should not include credentials or private material",
+        }),
+      );
     }
     if (file.flags.includes("binary") && file.size > 1024 * 1024) {
-      findings.push({
-        severity: changed === "added" ? "high" : "info",
-        file: file.path,
-        evidence: `${file.size} byte binary`,
-        reason: "large binary should be reviewed manually",
-      });
+      findings.push(
+        tag("fileLargeBinary", {
+          severity: changed === "added" ? "high" : "info",
+          file: file.path,
+          evidence: `${file.size} byte binary`,
+          reason: "large binary should be reviewed manually",
+        }),
+      );
     }
     if (/\.(node|dll|so|dylib|exe|wasm)$/i.test(file.path)) {
-      findings.push({
-        severity: "high",
-        file: file.path,
-        evidence: "native, wasm, or executable artifact",
-        reason:
-          "native binaries are hard to audit and can execute outside JavaScript policy checks",
-      });
+      findings.push(
+        tag("fileNativeArtifact", {
+          severity: "high",
+          file: file.path,
+          evidence: "native, wasm, or executable artifact",
+          reason:
+            "native binaries are hard to audit and can execute outside JavaScript policy checks",
+        }),
+      );
     }
   }
 
   for (const entry of diff) {
     if (entry.status === "added" && /(^|\/)(\.npmrc|\.env|id_rsa|id_ed25519)$/i.test(entry.path)) {
-      findings.push({
-        severity: "critical",
-        file: entry.path,
-        evidence: "credential-looking file added",
-        reason: "package artifact includes a file name commonly associated with secrets",
-      });
+      findings.push(
+        tag("diffCredentialFileAdded", {
+          severity: "critical",
+          file: entry.path,
+          evidence: "credential-looking file added",
+          reason: "package artifact includes a file name commonly associated with secrets",
+        }),
+      );
     }
     if (entry.status === "added" && entry.stagedSize && entry.stagedSize > 2 * 1024 * 1024) {
-      findings.push({
-        severity: "medium",
-        file: entry.path,
-        evidence: `${entry.stagedSize} byte new file`,
-        reason: "large new package artifact should be reviewed",
-      });
+      findings.push(
+        tag("diffLargeNewFile", {
+          severity: "medium",
+          file: entry.path,
+          evidence: `${entry.stagedSize} byte new file`,
+          reason: "large new package artifact should be reviewed",
+        }),
+      );
     }
   }
 

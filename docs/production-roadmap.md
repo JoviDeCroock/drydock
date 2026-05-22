@@ -87,10 +87,8 @@ Exit criteria:
 ## Phase 7 — Production hardening (remaining)
 
 - Add structured error classes and user-safe messages across all scan failures.
-- Add cross-organization access tests.
 - Add archive parser fuzz/regression tests and deeper archive-bomb protections.
 - Add line numbers to deterministic findings where possible.
-- Add deterministic rule IDs and versions.
 - Add metrics/logging for scan durations, queue retries/exhaustion, failures, AI failures, and npm failures.
 - Add D1/R2 retention controls for persisted redacted text samples and derived artifacts.
 - Add deployment checklist and incident-response notes.
@@ -114,8 +112,8 @@ Reliability and operations:
 
 Security boundaries:
 
-- Add cross-organization tests for scan detail/list/compare access and npm connection isolation. (DB-layer cross-org assertion landed via `test/workers/scan-idempotency.test.ts`; still need route-level coverage.)
-- Add sandbox gateway tests that prove credentials are only attached to allowed npm registry requests. (Pure-function policy coverage exists; add an end-to-end test that exercises the gateway through the Worker runtime — the `@cloudflare/vitest-pool-workers` harness is now in place.)
+- Add cross-organization tests for npm connection isolation. (Scan detail/list/compare route-level coverage landed via `test/workers/cross-org-routes.test.ts`; DB-layer assertion landed earlier via `test/workers/scan-idempotency.test.ts`. Still need route-level cross-org coverage for npm-connection endpoints.)
+- Sandbox gateway runtime credential-injection coverage landed via `test/workers/sandbox-gateway-runtime.test.ts`. (Pure-function policy coverage in `test/sandbox-gateway.test.mjs` remains as a fast unit test.)
 - Add tar parser regression tests for traversal paths, absolute paths, PAX paths, GNU long names, links, truncation, huge file counts, and archive-size caps.
 - Investigate build output to ensure local `.dev.vars` secrets are never included in deployable or public artifacts.
 
@@ -154,7 +152,6 @@ Tasks:
 - Add report digest tests for stable canonical ordering and evidence changes.
 - Store scanner version, deterministic rules version, prompt version, model/provider metadata, and report schema version.
 - Add a report provenance section: package name, staged version, previous version, selected comparison version, stage ID, generated timestamp, artifact digests, and review limitations.
-- Add deterministic finding rule IDs and versions.
 - Add AI failure states that preserve deterministic findings when AI is unavailable.
 - Store AI latency and provider/model metadata where available, including whether the default model or escalation model reviewed the scan.
 - Keep signed/public report URLs deferred, but design exports so signing can wrap the same canonical artifact later.
@@ -285,9 +282,9 @@ Exit criteria:
 
 ## Suggested next implementation slice
 
-With queue idempotency landed, the next two slices for Phase 8 are:
+With route-level cross-org coverage, sandbox gateway runtime tests, and deterministic rule IDs landed, the next two slices are:
 
-1. **Boundary tests:** add cross-organization tests for list/detail/compare routes, sandbox gateway credential-injection tests at the runtime layer, and archive parser regression fixtures.
-2. **Private beta operations:** configure production Queues/KV/D1/secrets, add metrics/logging for scan duration and failure classes, add invite-only signup protection, and document deployment + incident response.
+1. **Private beta operations:** configure production Queues/KV/D1/secrets, add metrics/logging for scan duration and failure classes, add invite-only signup protection, and document deployment + incident response.
+2. **Remaining boundary tests:** add archive parser regression fixtures (traversal, PAX, GNU long names, links, truncation, archive-bomb caps) and route-level cross-org coverage for npm-connection endpoints.
 
-After those land, improve maintainer UX by grouping findings and adding the lifecycle timeline before broadening beta access.
+After those land, improve maintainer UX by grouping findings (now that rule IDs exist) and adding the lifecycle timeline before broadening beta access.

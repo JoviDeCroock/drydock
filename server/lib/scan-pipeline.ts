@@ -4,6 +4,7 @@ import { fetchPackageMetadata, pickPreviousVersion } from "./registry";
 import {
   createPackageDiff,
   deterministicFindings,
+  DETERMINISTIC_RULES_VERSION,
   redactFileRecords,
   redactFindings,
   redactJson,
@@ -100,6 +101,7 @@ export async function runScanPipeline(
 
   const reportPayload = {
     version: 1,
+    rulesVersion: DETERMINISTIC_RULES_VERSION,
     stageId: input.stageId,
     package: result.package,
     fileCount: result.fileCount,
@@ -129,6 +131,7 @@ export async function runScanPipeline(
         digest: reportDigest,
         digestAlgorithm: "sha256",
         generatedAt: new Date().toISOString(),
+        rulesVersion: reportPayload.rulesVersion,
       },
       packageJsonDiff,
       diff,
