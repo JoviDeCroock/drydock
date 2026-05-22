@@ -1,7 +1,14 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { Hono } from "hono";
 import { describe, expect, test, vi } from "vitest";
-import { createDb, ensurePersonalOrganization, getNpmConnection } from "../../server/db";
+import {
+  createDb,
+  ensurePersonalOrganization,
+  getNpmConnection,
+  listValidNpmConnections,
+  updateNpmConnectionMonitoring,
+  updateNpmConnectionValidation,
+} from "../../server/db";
 import * as schema from "../../server/db/schema";
 import { npmConnectionRoutes } from "../../server/routes/npm-connection";
 import type { Bindings, Variables } from "../../server/types";
@@ -121,6 +128,80 @@ describe("npm-connection routes enforce organization boundaries", () => {
     expect(res.status).toBe(200);
     const connection = await getNpmConnection(db, owner.organizationId);
     expect(connection?.registryUrl).toBe("https://registry.example.com");
+  });
+
+  test("PATCH /npm-connection monitoring only updates the caller's connection", async () => {
+    const owner = await seedUser();
+    const intruder = await seedUser();
+    const db = createDb(env.DB);
+
+    await call(buildTestApp(owner), "POST", "/api/v1/npm-connection", {
+      token: OWNER_TOKEN,
+      label: "owner registry",
+    });
+    await call(buildTestApp(intruder), "POST", "/api/v1/npm-connection", {
+      token: INTRUDER_TOKEN,
+      label: "intruder registry",
+    });
+
+    const res = await call(buildTestApp(intruder), "PATCH", "/api/v1/npm-connection", {
+      stagedPublishesMonitorEnabled: true,
+    });
+    expect(res.status).toBe(200);
+
+    const ownerConnection = await getNpmConnection(db, owner.organizationId);
+    const intruderConnection = await getNpmConnection(db, intruder.organizationId);
+    expect(ownerConnection?.stagedPublishesMonitorEnabled).toBe(false);
+    expect(intruderConnection?.stagedPublishesMonitorEnabled).toBe(true);
+  });
+
+  test("scheduled discovery candidates require validation and explicit monitoring opt-in", async () => {
+    const passive = await seedUser();
+    const monitored = await seedUser();
+    const invalid = await seedUser();
+    const db = createDb(env.DB);
+
+    await call(buildTestApp(passive), "POST", "/api/v1/npm-connection", {
+      token: OWNER_TOKEN,
+      label: "passive registry",
+    });
+    await call(buildTestApp(monitored), "POST", "/api/v1/npm-connection", {
+      token: INTRUDER_TOKEN,
+      label: "monitored registry",
+    });
+    await call(buildTestApp(invalid), "POST", "/api/v1/npm-connection", {
+      token: "npm_invalid_secret_token_BBBBBBB",
+      label: "invalid registry",
+    });
+
+    await Promise.all([
+      updateNpmConnectionValidation(db, {
+        organizationId: passive.organizationId,
+        validationStatus: "valid",
+      }),
+      updateNpmConnectionValidation(db, {
+        organizationId: monitored.organizationId,
+        validationStatus: "valid",
+      }),
+      updateNpmConnectionValidation(db, {
+        organizationId: invalid.organizationId,
+        validationStatus: "invalid",
+      }),
+      updateNpmConnectionMonitoring(db, {
+        organizationId: monitored.organizationId,
+        stagedPublishesMonitorEnabled: true,
+      }),
+      updateNpmConnectionMonitoring(db, {
+        organizationId: invalid.organizationId,
+        stagedPublishesMonitorEnabled: true,
+      }),
+    ]);
+
+    const candidates = await listValidNpmConnections(db);
+    const candidateOrgIds = new Set(candidates.map((connection) => connection.organizationId));
+    expect(candidateOrgIds.has(passive.organizationId)).toBe(false);
+    expect(candidateOrgIds.has(monitored.organizationId)).toBe(true);
+    expect(candidateOrgIds.has(invalid.organizationId)).toBe(false);
   });
 
   test("DELETE /npm-connection only removes the caller's connection", async () => {

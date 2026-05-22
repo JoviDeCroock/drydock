@@ -21,6 +21,7 @@ import {
   Eyebrow,
   Field,
   Input,
+  Label,
   LinkButton,
   LoadingState,
   MonoDetail,
@@ -456,6 +457,7 @@ function NpmConnectionCard({
   const registry = npm.registry.value;
   const validationStageId = npm.validationStageId.value;
   const error = npm.error.value;
+  const monitorEnabled = connection?.stagedPublishesMonitorEnabled ?? false;
 
   const onSave = async (event: Event) => {
     event.preventDefault();
@@ -577,6 +579,36 @@ function NpmConnectionCard({
         Saving runs the npm auth check automatically. Add a stage ID to prove the token can read
         that staged release; we do not keep the release archive.
       </Muted>
+
+      {connection ? (
+        <div class="flex flex-col gap-2 border-y border-border py-3">
+          <Label for="stagedPublishesMonitorEnabled" class="mb-0">
+            Unattended monitoring
+          </Label>
+          <label
+            for="stagedPublishesMonitorEnabled"
+            class="flex flex-col sm:flex-row sm:items-center gap-3 text-[13px] text-ink-muted"
+          >
+            <input
+              id="stagedPublishesMonitorEnabled"
+              type="checkbox"
+              checked={monitorEnabled}
+              disabled={busy || !validated}
+              onChange={(e) =>
+                void npm.setStagedPublishesMonitoring((e.target as HTMLInputElement).checked)
+              }
+              class="size-4 accent-accent shrink-0"
+            />
+            <span>
+              Poll npm every 15 minutes for this connection and queue scans for newly discovered
+              staged publishes.
+            </span>
+          </label>
+          {!validated ? (
+            <Muted class="text-xs">Validate this npm connection before enabling monitoring.</Muted>
+          ) : null}
+        </div>
+      ) : null}
 
       {error ? <Alert tone="critical">{error}</Alert> : null}
 

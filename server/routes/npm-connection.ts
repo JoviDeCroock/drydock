@@ -6,6 +6,7 @@ import {
   enforceRateLimit,
   getNpmConnection,
   recordScanEvent,
+  updateNpmConnectionMonitoring,
   updateNpmConnectionValidation,
   upsertNpmConnection,
 } from "../db";
@@ -179,6 +180,58 @@ npmConnectionRoutes.post("/validate", async (c) => {
     }
     console.error("npm connection validation failed", err);
     return c.json({ error: "failed to validate npm connection" }, 400);
+  }
+});
+
+npmConnectionRoutes.patch("/", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    stagedPublishesMonitorEnabled?: unknown;
+  };
+  if (typeof body.stagedPublishesMonitorEnabled !== "boolean") {
+    return c.json({ error: "stagedPublishesMonitorEnabled must be a boolean" }, 400);
+  }
+
+  try {
+    const db = createDb(c.env.DB);
+    const session = c.get("authSession");
+    const organizationId = await requireActiveOrganization(c, db);
+    await enforceRateLimit(db, {
+      key: `npm-connection:monitoring:${organizationId}`,
+      limit: 30,
+      windowMs: 60 * 60 * 1000,
+    });
+
+    const existing = await getNpmConnection(db, organizationId);
+    if (!existing) return c.json({ error: "npm connection is not configured" }, 404);
+
+    const connection = await updateNpmConnectionMonitoring(db, {
+      organizationId,
+      stagedPublishesMonitorEnabled: body.stagedPublishesMonitorEnabled,
+    });
+
+    await recordScanEvent(db, {
+      organizationId,
+      actorUserId: session.userId,
+      type: "npm_connection.monitoring_updated",
+      metadata: {
+        stagedPublishesMonitorEnabled: body.stagedPublishesMonitorEnabled,
+      },
+    });
+
+    return c.json({ connection: publicNpmConnection(connection) });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return c.json(
+        {
+          error: "npm monitoring update rate limit exceeded",
+          retryAfterSeconds: err.retryAfterSeconds,
+        },
+        429,
+        { "retry-after": String(err.retryAfterSeconds) },
+      );
+    }
+    console.error("npm connection monitoring update failed", err);
+    return c.json({ error: "failed to update npm monitoring" }, 400);
   }
 });
 

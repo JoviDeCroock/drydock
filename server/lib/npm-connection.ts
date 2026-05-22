@@ -18,6 +18,7 @@ export interface PublicNpmConnection {
   tokenFingerprint: string;
   tokenLast4: string | null;
   validationStatus: string;
+  stagedPublishesMonitorEnabled: boolean;
   capabilitiesJson: unknown;
   validatedAt: Date | string | number | null;
   lastUsedAt: Date | string | number | null;
@@ -70,6 +71,7 @@ export function publicNpmConnection(
     tokenFingerprint: connection.tokenFingerprint,
     tokenLast4: connection.tokenLast4,
     validationStatus: connection.validationStatus,
+    stagedPublishesMonitorEnabled: connection.stagedPublishesMonitorEnabled,
     capabilitiesJson: connection.capabilitiesJson,
     validatedAt: connection.validatedAt,
     lastUsedAt: connection.lastUsedAt,

@@ -1,0 +1,1 @@
+ALTER TABLE `npm_connections` ADD `staged_publishes_monitor_enabled` integer DEFAULT false NOT NULL;

@@ -171,6 +171,11 @@ export const npmConnections = sqliteTable(
     tokenFingerprint: text("token_fingerprint").notNull(),
     tokenLast4: text("token_last4"),
     validationStatus: text("validation_status").notNull().default("unvalidated"),
+    stagedPublishesMonitorEnabled: integer("staged_publishes_monitor_enabled", {
+      mode: "boolean",
+    })
+      .notNull()
+      .default(false),
     capabilitiesJson: text("capabilities_json", { mode: "json" }),
     validatedAt: integer("validated_at", { mode: "timestamp_ms" }),
     lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),

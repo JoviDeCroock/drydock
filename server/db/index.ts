@@ -72,6 +72,11 @@ export interface NpmConnectionValidationInput {
   validatedAt?: Date | null;
 }
 
+export interface NpmConnectionMonitoringInput {
+  organizationId: string;
+  stagedPublishesMonitorEnabled: boolean;
+}
+
 export interface RateLimitInput {
   key: string;
   limit: number;
@@ -633,7 +638,15 @@ export async function getNpmConnection(db: AppDb, organizationId: string) {
 }
 
 export async function listValidNpmConnections(db: AppDb) {
-  return db.select().from(npmConnections).where(eq(npmConnections.validationStatus, "valid"));
+  return db
+    .select()
+    .from(npmConnections)
+    .where(
+      and(
+        eq(npmConnections.validationStatus, "valid"),
+        eq(npmConnections.stagedPublishesMonitorEnabled, true),
+      ),
+    );
 }
 
 export async function updateNpmConnectionValidation(
@@ -646,6 +659,20 @@ export async function updateNpmConnectionValidation(
       validationStatus: input.validationStatus,
       capabilitiesJson: input.capabilities ?? null,
       validatedAt: input.validatedAt ?? null,
+      updatedAt: new Date(),
+    })
+    .where(eq(npmConnections.organizationId, input.organizationId));
+  return getNpmConnection(db, input.organizationId);
+}
+
+export async function updateNpmConnectionMonitoring(
+  db: AppDb,
+  input: NpmConnectionMonitoringInput,
+) {
+  await db
+    .update(npmConnections)
+    .set({
+      stagedPublishesMonitorEnabled: input.stagedPublishesMonitorEnabled,
       updatedAt: new Date(),
     })
     .where(eq(npmConnections.organizationId, input.organizationId));

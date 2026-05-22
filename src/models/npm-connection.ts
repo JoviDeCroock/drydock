@@ -9,6 +9,7 @@ export interface PublicNpmConnection {
   tokenFingerprint: string;
   tokenLast4: string | null;
   validationStatus: string;
+  stagedPublishesMonitorEnabled: boolean;
   capabilitiesJson: unknown;
   validatedAt: string | number | Date | null;
   lastUsedAt: string | number | Date | null;
@@ -130,6 +131,27 @@ export const NpmConnectionModel = createModel(() => {
         if (!data.validation.ok) {
           this.error.value = "Npm validation reported invalid access.";
         }
+      } catch (err) {
+        this.error.value = err instanceof Error ? err.message : String(err);
+        await this.load();
+      } finally {
+        this.status.value = "idle";
+      }
+    },
+
+    async setStagedPublishesMonitoring(enabled: boolean): Promise<void> {
+      this.status.value = "validating";
+      this.error.value = null;
+      try {
+        const data = await apiFetch<{ connection: PublicNpmConnection | null }>(
+          "/api/v1/npm-connection",
+          {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ stagedPublishesMonitorEnabled: enabled }),
+          },
+        );
+        this.applyConnection(data.connection);
       } catch (err) {
         this.error.value = err instanceof Error ? err.message : String(err);
         await this.load();

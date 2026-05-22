@@ -175,8 +175,8 @@ Goals:
 Tasks:
 
 - Confirm npm staged-publish list/view APIs can enumerate new stages with organization-owned credentials, and document the minimum token capabilities required.
-- Add organization/package monitoring settings for opt-in scopes/packages, notification recipients, and notification preferences.
-- Add a scheduled discovery job, likely Cloudflare Cron-triggered, that polls for new staged publishes per npm connection.
+- Expand the initial per-connection monitoring opt-in into organization/package monitoring settings for scopes/packages, notification recipients, and notification preferences.
+- A scheduled discovery job now polls for new staged publishes only for validated npm connections with unattended monitoring enabled; add operator metrics and production validation around it.
 - Deduplicate discovered stage IDs in D1 and enqueue scan jobs idempotently so retries or repeated polls do not create duplicate automatic scans.
 - Reuse the existing scan lifecycle and persisted report surface for automatic scans.
 - Add an email notification provider and safe templates for scan complete, high-risk scan complete, and scan failed states, each linking back to the persisted report.

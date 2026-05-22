@@ -158,6 +158,11 @@ curl -X POST http://localhost:5173/api/v1/npm-connection \
 # Validate the stored credential with npm's registry auth endpoint
 curl -X POST http://localhost:5173/api/v1/npm-connection/validate
 
+# Opt this connection into unattended staged-publish monitoring
+curl -X PATCH http://localhost:5173/api/v1/npm-connection \
+  -H 'content-type: application/json' \
+  -d '{"stagedPublishesMonitorEnabled":true}'
+
 # Optionally also validate staged-tarball access for a real stage ID
 curl -X POST http://localhost:5173/api/v1/npm-connection/validate \
   -H 'content-type: application/json' \
