@@ -419,16 +419,18 @@ function ReportOverview({
     <section class="flex flex-col gap-3 border-y border-border py-4">
       <div class="flex flex-wrap items-center gap-2">
         <Badge tone={severityTone(detail.scan.risk)}>{detail.scan.risk}</Badge>
-        {aiComplete ? (
-          <>
-            <Badge tone={ai.requiresManualReview ? "medium" : "ok"}>
-              {ai.requiresManualReview ? "manual review" : "no extra review"}
-            </Badge>
-            <Badge tone="neutral">{ai.releaseAssessment.replaceAll("_", " ")}</Badge>
-          </>
-        ) : (
-          <Badge tone="neutral">assistant unavailable</Badge>
-        )}
+        {/* eslint-disable-next-line no-constant-binary-expression -- AI review intentionally disabled; JSX preserved for paid-tier re-introduction. */}
+        {false &&
+          (aiComplete ? (
+            <>
+              <Badge tone={ai!.requiresManualReview ? "medium" : "ok"}>
+                {ai!.requiresManualReview ? "manual review" : "no extra review"}
+              </Badge>
+              <Badge tone="neutral">{ai!.releaseAssessment.replaceAll("_", " ")}</Badge>
+            </>
+          ) : (
+            <Badge tone="neutral">assistant unavailable</Badge>
+          ))}
         <Badge tone={findingTotal ? "medium" : "ok"}>
           {findingTotal ? `${findingTotal} ${pluralize("finding", findingTotal)}` : "no findings"}
         </Badge>
@@ -484,42 +486,45 @@ function PersistedReportSections({
 }) {
   return (
     <section class="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-6">
-      <ReportSection title="Reviewer notes">
-        {ai ? (
-          ai.status === "complete" ? (
-            <>
-              <div class="flex flex-wrap gap-2">
-                <Badge tone={severityTone(ai.risk)}>{ai.risk}</Badge>
-                <Badge tone={ai.requiresManualReview ? "medium" : "ok"}>
-                  {ai.requiresManualReview ? "manual review" : "no extra review"}
-                </Badge>
-                <Badge tone="neutral">
-                  {ai.releaseAssessment?.replaceAll("_", " ") || "assessment stored"}
-                </Badge>
-              </div>
-              {ai.summary ? (
-                <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{ai.summary}</p>
-              ) : null}
-              {ai.findings?.length ? (
-                <AiFindingList findings={ai.findings} />
-              ) : (
-                <EmptyLine>No assistant findings.</EmptyLine>
-              )}
-            </>
+      {/* eslint-disable-next-line no-constant-binary-expression -- AI review intentionally disabled; JSX preserved for paid-tier re-introduction. */}
+      {false && (
+        <ReportSection title="Reviewer notes">
+          {ai ? (
+            ai!.status === "complete" ? (
+              <>
+                <div class="flex flex-wrap gap-2">
+                  <Badge tone={severityTone(ai!.risk)}>{ai!.risk}</Badge>
+                  <Badge tone={ai!.requiresManualReview ? "medium" : "ok"}>
+                    {ai!.requiresManualReview ? "manual review" : "no extra review"}
+                  </Badge>
+                  <Badge tone="neutral">
+                    {ai!.releaseAssessment?.replaceAll("_", " ") || "assessment stored"}
+                  </Badge>
+                </div>
+                {ai!.summary ? (
+                  <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{ai!.summary}</p>
+                ) : null}
+                {ai!.findings?.length ? (
+                  <AiFindingList findings={ai!.findings} />
+                ) : (
+                  <EmptyLine>No assistant findings.</EmptyLine>
+                )}
+              </>
+            ) : (
+              <>
+                <div class="flex flex-wrap gap-2">
+                  <Badge tone="neutral">assistant unavailable</Badge>
+                </div>
+                {ai!.summary ? (
+                  <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{ai!.summary}</p>
+                ) : null}
+              </>
+            )
           ) : (
-            <>
-              <div class="flex flex-wrap gap-2">
-                <Badge tone="neutral">assistant unavailable</Badge>
-              </div>
-              {ai.summary ? (
-                <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{ai.summary}</p>
-              ) : null}
-            </>
-          )
-        ) : (
-          <EmptyLine>No reviewer notes were saved for this review.</EmptyLine>
-        )}
-      </ReportSection>
+            <EmptyLine>No reviewer notes were saved for this review.</EmptyLine>
+          )}
+        </ReportSection>
+      )}
 
       <ReportSection title="Report fingerprint">
         {summary.report ? (

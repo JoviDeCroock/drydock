@@ -12,7 +12,6 @@ Hono Worker
   ├─ Better Auth session guard
   ├─ organization ownership checks
   ├─ D1 persistence
-  ├─ Workers AI review
   ├─ Dynamic Worker loader
   └─ NpmStageGateway outbound gateway
         │ attaches org npm auth only for allowed npm endpoints
@@ -44,7 +43,6 @@ The parent Worker is the trusted control plane. Route handlers should stay thin;
 - creates and updates scan records;
 - invokes the Dynamic Worker sandbox;
 - computes deterministic findings and risk;
-- calls Workers AI with constrained inputs;
 - persists redacted report data and audit events.
 
 ### Dynamic Worker sandbox
@@ -91,8 +89,7 @@ Current high-level flow:
    - package.json diff;
    - deterministic findings;
    - redacted package/file records.
-9. Workers AI reviews changed files only with a static prompt-injection-resistant system prompt.
-10. Parent Worker combines deterministic and AI risk, persists the scan, records audit events, and returns/report renders the result.
+9. Parent Worker derives risk from deterministic findings, persists the scan, records audit events, and returns/report renders the result. (AI review is disabled — see "Workers AI" below.)
 
 Current async-capable flow:
 
@@ -136,22 +133,22 @@ R2 is the target store for durable derived artifacts:
 
 Raw tarballs should not be retained by default in SaaS. If needed later, make raw retention an explicit organization setting with a short TTL, access logging, and clear warnings.
 
-### Workers AI
+### Workers AI (disabled)
 
-Workers AI is the production AI provider for now. The AI reviewer:
+Workers AI review is currently **disabled in the scan pipeline**. The reviewer module — `server/lib/ai-review.ts`, its two-tier escalation policy (default `@cf/qwen/qwen3-30b-a3b-fp8`, escalation `@cf/moonshotai/kimi-k2.5`), the prompt-injection-resistant system prompt, the JSON schema, and the test suite (skipped) — is kept on disk so it can be re-introduced behind a paid tier without re-engineering the contract.
 
-- sees changed files only;
-- sees redacted bounded text samples;
-- receives deterministic findings as authoritative evidence;
-- treats every package-derived string as hostile evidence, not instructions;
-- explicitly checks npm supply-chain hazards such as lifecycle scripts, added dependencies whose own postinstall/install hooks are not visible in the staged tarball, entrypoint changes, credential access, network/process execution, obfuscation, and native artifacts;
-- must return schema-constrained JSON;
-- can raise risk or add context only when the returned review is complete, schema-valid, and includes findings or an explicit manual-review flag;
-- cannot approve a release or downgrade deterministic findings.
+Scans persist `scan.aiJson = null` while AI review is disabled, and the UI omits the reviewer-notes section entirely. Risk is computed exclusively from deterministic findings.
 
-Model selection is two-tier (see [`docs/cost-model.md`](./cost-model.md) and `runSelectiveAiReview` in [`server/lib/ai-review.ts`](../server/lib/ai-review.ts)). A cheaper default model (`@cf/qwen/qwen3-30b-a3b-fp8`) handles ordinary releases that fit its context budget. The scan escalates to Kimi (`@cf/moonshotai/kimi-k2.5`) when deterministic findings reach medium+, install-lifecycle scripts change, dependencies/peerDeps/optionalDeps change, entrypoints change, the previous-version comparison is unavailable, the estimated AI input exceeds the default model's budget, or the default model returns suspicious/blocked/manual-review/unavailable output. Both tiers reuse the same system prompt and `x-session-affinity` cache key. The persisted `aiJson` records the model that produced the final review, whether escalation occurred, and the trigger reasons.
+When AI review returns it will continue to:
 
-If the AI response is unavailable, malformed, or incomplete, the scan records that assistant review status separately as `unavailable` or `invalid`. That fallback does **not** raise package risk by itself; the deterministic scanner remains authoritative and the UI should show the AI review as not assessed rather than treating parser/model failure as evidence of suspicious package behavior.
+- see changed files only;
+- see redacted bounded text samples;
+- receive deterministic findings as authoritative evidence;
+- treat every package-derived string as hostile evidence, not instructions;
+- explicitly check npm supply-chain hazards such as lifecycle scripts, added dependencies whose own postinstall/install hooks are not visible in the staged tarball, entrypoint changes, credential access, network/process execution, obfuscation, and native artifacts;
+- return schema-constrained JSON;
+- raise risk or add context only when the returned review is complete, schema-valid, and includes findings or an explicit manual-review flag;
+- be unable to approve a release or downgrade deterministic findings.
 
 ## Organization model
 
@@ -196,7 +193,7 @@ Implemented foundation:
 - newly completed scans store report metadata inside `summary_json.report`;
 - `digest` is SHA-256 over stable canonical report JSON built from redacted scan evidence, including the deterministic rules version so digests change when the ruleset changes;
 - each deterministic finding carries `ruleId` and `ruleVersion` (see `DETERMINISTIC_RULES_VERSION` in `server/lib/review.ts`), persisted on `scan_findings.rule_id` / `rule_version`;
-- persisted scan detail renders report version, digest, rules version, package diff, AI review, and safety posture.
+- persisted scan detail renders report version, digest, rules version, package diff, and safety posture (AI review is disabled — see the Workers AI section).
 
 Prepare next for:
 

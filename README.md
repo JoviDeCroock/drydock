@@ -11,7 +11,7 @@ This repository is moving from prototype to real product. The current implementa
 - **SaaS, organization-scoped.** Scans belong to an organization boundary. RBAC is intentionally deferred for the first production slice, but the data model should keep organization ownership explicit.
 - **Per-organization npm credentials.** Production SaaS should not use a deployment-wide npm token. Each organization will connect its own npm credential, scoped as narrowly as npm permits, and the credential will only be used by the gateway that talks to npm.
 - **Manual publish approval.** The product reviews and explains a staged publish. It does not run `npm stage approve`, does not bypass npm 2FA, and does not become the final publisher.
-- **Workers AI in production.** Cloudflare Workers AI is the production AI provider for now. AI findings are advisory and cannot downgrade deterministic findings.
+- **AI review paused.** Cloudflare Workers AI was the production reviewer, but AI review is currently disabled in the pipeline. We plan to re-introduce it as a paid-tier feature; until then, scans rely entirely on deterministic findings. AI findings will remain advisory and unable to downgrade deterministic findings when they return.
 - **Safe artifact defaults.** Do not retain raw tarballs by default in SaaS. Persist redacted summaries, manifests, diffs, findings, and report metadata. Raw artifact retention may become an explicit short-TTL organization setting later.
 - **Signed reports later.** Prepare report data to be canonical and signable, but do not launch public signed report generation yet.
 
@@ -26,10 +26,10 @@ See [`docs/architecture.md`](docs/architecture.md), [`docs/security-model.md`](d
   - staged tarball: `https://registry.npmjs.org/-/stage/<stage-id>/tarball`
   - package metadata JSON
   - published `.tgz` tarballs for previous-version diffing
-- The sandbox gunzips/parses tarballs, returns bounded file metadata and text samples, and the parent Worker runs deterministic checks plus Workers AI JSON-mode review.
-- AI triage runs in two tiers: a cheap default reviewer (`@cf/qwen/qwen3-30b-a3b-fp8`) handles ordinary releases, and Kimi K2.5 (`@cf/moonshotai/kimi-k2.5`) is escalated to when deterministic signals are risky, the staged release is missing a previous version to compare against, or the default reviewer flags the release as suspicious/blocked/manual-review. Both tiers share a static prompt-injection-resistant system prompt and Cloudflare Workers AI prefix caching via `x-session-affinity`.
+- The sandbox gunzips/parses tarballs, returns bounded file metadata and text samples, and the parent Worker runs deterministic checks.
+- AI triage (Workers AI JSON-mode review of changed files only) is **disabled for now**. The reviewer module — including the two-tier escalation policy and prompt-injection-resistant system prompt — lives in `server/lib/ai-review.ts` so it can return behind a paid tier without re-engineering.
 - The service diffs the staged tarball against the currently published previous version when package metadata is available.
-- Package files are treated as hostile evidence. The AI prompt explicitly ignores file-contained instructions, output is schema constrained, and AI risk cannot downgrade deterministic findings.
+- Package files are treated as hostile evidence even with AI disabled — file previews are escaped/redacted before persistence, and the planned AI reviewer will not downgrade deterministic findings when it returns.
 - Review results are persisted in Cloudflare D1 through Drizzle ORM.
 - Persisted scans are scoped to the authenticated user's personal organization, and scan completion/view actions are recorded as audit events.
 - `/`, `/login`, `/register`, `/dashboard`, and `/dashboard/scans/:id` are routed with `preact-iso` and lazy-loaded page modules.
@@ -178,8 +178,7 @@ Scan response/report data includes:
 - `packageJsonDiff`
 - file-level `diff`
 - deterministic `ruleFindings`
-- Workers AI `aiFindings`
-- combined `risk`
+- combined `risk` (deterministic-only while AI review is disabled)
 - safety posture metadata
 
 ## Database
@@ -230,10 +229,9 @@ Never write SQL migrations by hand; update `server/db/schema.ts` and generate mi
 Defended today:
 
 - Unauthenticated access to all non-auth API endpoints.
-- Malicious package content trying to prompt-inject the AI reviewer.
 - Package parser trying direct Internet egress from the sandbox.
 - NPM token exposure to sandbox code.
-- Huge packages overwhelming AI context; samples are bounded.
+- Huge packages overwhelming review surfaces; file samples are bounded.
 - Risky changes hiding in large package output; the file diff and package metadata diff are first-class review objects.
 - Cross-user scan reads through personal-organization scoping.
 - Basic D1-backed rate limits for scan creation and npm credential save/validation.

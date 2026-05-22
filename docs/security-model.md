@@ -34,9 +34,9 @@ The product must not execute package code, install dependencies, run lifecycle s
 
 The Dynamic Worker sandbox must never receive npm token material. Only `NpmStageGateway` may attach npm authorization, and only for allowed npm registry endpoints.
 
-### AI is advisory
+### AI is advisory (and currently disabled)
 
-Workers AI reviews evidence but does not decide approval. Deterministic findings are authoritative and cannot be downgraded by AI output.
+Workers AI review is currently disabled in the pipeline; deterministic findings are the only review signal. The reviewer module is preserved on disk and is planned to return behind a paid tier. When it returns, Workers AI reviews evidence but does not decide approval — deterministic findings remain authoritative and cannot be downgraded by AI output.
 
 ## npm credential posture
 
@@ -75,7 +75,7 @@ Persist by default:
 - bounded redacted text samples;
 - package.json summary and diff;
 - deterministic findings;
-- AI findings;
+- AI findings (paused — persisted as `null` while AI review is disabled);
 - risk summary;
 - safety posture;
 - audit events;
@@ -114,7 +114,9 @@ Blocked:
 
 The gateway compares URL origins against the configured npm registry and attaches credentials only for the minimal endpoint set requiring auth.
 
-## AI prompt-injection posture
+## AI prompt-injection posture (paused)
+
+AI review is disabled today; the posture below documents the contract the reviewer must continue to honor when it returns behind a paid tier.
 
 Workers AI receives a static system prompt that says package contents are hostile evidence only. The only instruction-bearing inputs are the application-owned system prompt and top-level review task. Everything derived from a package is untrusted evidence, including filenames, package.json fields, lifecycle scripts, dependency names/specifiers, README text, comments, source code, diffs, deterministic finding evidence, and changed-file samples.
 

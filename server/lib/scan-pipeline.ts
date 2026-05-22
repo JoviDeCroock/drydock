@@ -1,5 +1,5 @@
 import { persistScan, recordScanEvent, type AppDb, type WorkspaceSession } from "../db";
-import { runSelectiveAiReview } from "./ai-review";
+import { runSelectiveAiReview, type AiReview } from "./ai-review";
 import { fetchPackageMetadata, pickPreviousVersion } from "./registry";
 import {
   createPackageDiff,
@@ -60,23 +60,40 @@ export async function runScanPipeline(
   const redactedPackageJson = redactJson(staged.packageJson ?? null);
   const redactedPreviousPackageJson = redactJson(previous?.packageJson ?? null);
   const scanId = input.scanId || crypto.randomUUID();
-  const aiFindings = await runSelectiveAiReview(env, {
-    files: redactedStagedFiles,
-    diff,
-    packageJsonDiff,
-    ruleFindings,
-    previousVersionAvailable: previous !== null,
-  });
-  if (aiFindings.escalated) {
-    console.log("ai review escalated to stronger model", {
-      scanId,
-      stageId: input.stageId,
-      organizationId: input.organizationId,
-      packageName: staged.packageJson?.name ?? null,
-      stagedVersion: staged.packageJson?.version ?? null,
-      model: aiFindings.model,
-      reasons: aiFindings.escalationReasons,
+  // AI review is disabled while we work toward a paid-tier offering. The call,
+  // escalation logging, and risk wiring below stay intact (gated by `if (false)`)
+  // so the feature can be re-enabled without rebuilding the contract.
+  let aiFindings: AiReview = {
+    status: "unavailable",
+    risk: "low",
+    releaseAssessment: "not_assessed",
+    summary: "AI review is disabled.",
+    findings: [],
+    requiresManualReview: false,
+    model: null,
+    escalated: false,
+    escalationReasons: [],
+  };
+  // eslint-disable-next-line no-constant-condition -- AI review is intentionally disabled; the call below remains wired up for paid-tier re-introduction.
+  if (false) {
+    aiFindings = await runSelectiveAiReview(env, {
+      files: redactedStagedFiles,
+      diff,
+      packageJsonDiff,
+      ruleFindings,
+      previousVersionAvailable: previous !== null,
     });
+    if (aiFindings.escalated) {
+      console.log("ai review escalated to stronger model", {
+        scanId,
+        stageId: input.stageId,
+        organizationId: input.organizationId,
+        packageName: staged.packageJson?.name ?? null,
+        stagedVersion: staged.packageJson?.version ?? null,
+        model: aiFindings.model,
+        reasons: aiFindings.escalationReasons,
+      });
+    }
   }
   const risk = computeScanRisk(ruleFindings, aiFindings);
 
