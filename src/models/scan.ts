@@ -78,6 +78,15 @@ export interface PersistedScanDetail {
     ruleId?: string | null;
     ruleVersion?: string | null;
   }>;
+  events: Array<{
+    id: string;
+    organizationId: string;
+    actorUserId: string | null;
+    scanId: string | null;
+    type: string;
+    metadataJson: unknown;
+    createdAt: string | number | Date;
+  }>;
 }
 
 export function runScan(stageId: string): Promise<ScanResult> {

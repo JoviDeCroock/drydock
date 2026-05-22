@@ -245,6 +245,63 @@ describe("scans routes enforce organization boundaries", () => {
     expect(intruderRes.status).toBe(404);
   });
 
+  test("GET /scans/:id includes scan lifecycle events for the owning organization", async () => {
+    const owner = await seedUser();
+    const scanId = await seedCompletedScan(owner, "@org/timeline-package");
+    const db = createDb(env.DB);
+
+    await db.insert(schema.scanEvents).values([
+      {
+        id: crypto.randomUUID(),
+        organizationId: owner.organizationId,
+        actorUserId: owner.userId,
+        scanId,
+        type: "scan.started",
+        metadataJson: { stageId: "stage-timeline", attempt: 1 },
+        createdAt: new Date(1),
+      },
+      {
+        id: crypto.randomUUID(),
+        organizationId: owner.organizationId,
+        actorUserId: owner.userId,
+        scanId,
+        type: "npm_connection.used",
+        metadataJson: {
+          stageId: "stage-timeline",
+          registryUrl: "https://registry.npmjs.org/",
+          tokenFingerprint: "secret-fingerprint",
+        },
+        createdAt: new Date(2),
+      },
+      {
+        id: crypto.randomUUID(),
+        organizationId: owner.organizationId,
+        actorUserId: owner.userId,
+        scanId,
+        type: "scan.completed",
+        metadataJson: { stageId: "stage-timeline", risk: "low" },
+        createdAt: new Date(3),
+      },
+    ]);
+
+    const res = await fetchWithSession(buildTestApp(owner), `/api/v1/scans/${scanId}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      events: Array<{ type: string; metadataJson: Record<string, unknown> }>;
+    };
+    expect(body.events.map((event) => event.type)).toEqual([
+      "scan.started",
+      "npm_connection.used",
+      "scan.completed",
+    ]);
+    expect(body.events[0].metadataJson).toMatchObject({ stageId: "stage-timeline", attempt: 1 });
+    expect(body.events[1].metadataJson).toMatchObject({
+      stageId: "stage-timeline",
+      registryUrl: "https://registry.npmjs.org/",
+    });
+    expect(body.events[1].metadataJson).not.toHaveProperty("tokenFingerprint");
+  });
+
   test("GET /scans/:id/versions returns 404 for foreign scan ids", async () => {
     const owner = await seedUser();
     const intruder = await seedUser();
