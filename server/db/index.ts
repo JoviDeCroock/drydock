@@ -297,7 +297,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
   ]);
 
   const diffByPath = new Map(input.diff.map((entry) => [entry.path, entry]));
-  const rows = input.files.map((file) => {
+  const fileRows = input.files.map((file) => {
     const entry = diffByPath.get(file.path);
     return {
       id: crypto.randomUUID(),
@@ -310,27 +310,40 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
       textSample: file.textSample || null,
     };
   });
+  const findingRows = input.findings.map((finding) => ({
+    id: crypto.randomUUID(),
+    scanId: input.id,
+    severity: finding.severity,
+    file: finding.file,
+    evidence: finding.evidence,
+    reason: finding.reason,
+    source: "rule",
+    ruleId: finding.ruleId ?? null,
+    ruleVersion: finding.ruleVersion ?? null,
+  }));
 
+  // D1 caps bound parameters at 100 per query, so insert in chunks sized to
+  // each row's column count. Without this, packages with more than ~12 files
+  // silently drop their scan_files rows and the scan-detail view renders as
+  // "No file content available." for every entry.
   await Promise.all([
-    rows.length ? db.insert(scanFiles).values(rows) : Promise.resolve(),
-    input.findings.length
-      ? db.insert(scanFindings).values(
-          input.findings.map((finding) => ({
-            id: crypto.randomUUID(),
-            scanId: input.id,
-            severity: finding.severity,
-            file: finding.file,
-            evidence: finding.evidence,
-            reason: finding.reason,
-            source: "rule",
-            ruleId: finding.ruleId ?? null,
-            ruleVersion: finding.ruleVersion ?? null,
-          })),
-        )
-      : Promise.resolve(),
+    ...chunkForD1(fileRows, 8).map((chunk) => db.insert(scanFiles).values(chunk)),
+    ...chunkForD1(findingRows, 9).map((chunk) => db.insert(scanFindings).values(chunk)),
   ]);
 
   return { persisted: true as const };
+}
+
+const D1_MAX_BOUND_PARAMETERS = 100;
+
+function chunkForD1<T>(rows: T[], columnsPerRow: number): T[][] {
+  if (!rows.length) return [];
+  const chunkSize = Math.max(1, Math.floor(D1_MAX_BOUND_PARAMETERS / columnsPerRow));
+  const chunks: T[][] = [];
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    chunks.push(rows.slice(i, i + chunkSize));
+  }
+  return chunks;
 }
 
 export async function listScans(db: AppDb, organizationId: string) {
