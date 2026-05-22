@@ -367,23 +367,25 @@ function ReportOverview({
     detail.files.filter((file) => file.status !== "unchanged").length;
   const severityCounts = countSeverities([...findings, ...aiFindings]);
   const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
-  const assistantTake = ai?.releaseAssessment?.replaceAll("_", " ") || "assessment missing";
+  const aiComplete = ai?.status === "complete";
 
   return (
     <section class="flex flex-col gap-3 border-y border-border py-4">
       <div class="flex flex-wrap items-center gap-2">
         <Badge tone={severityTone(detail.scan.risk)}>{detail.scan.risk}</Badge>
-        {ai ? (
-          <Badge tone={ai.requiresManualReview ? "medium" : "ok"}>
-            {ai.requiresManualReview ? "manual review" : "no extra review"}
-          </Badge>
+        {aiComplete ? (
+          <>
+            <Badge tone={ai.requiresManualReview ? "medium" : "ok"}>
+              {ai.requiresManualReview ? "manual review" : "no extra review"}
+            </Badge>
+            <Badge tone="neutral">{ai.releaseAssessment.replaceAll("_", " ")}</Badge>
+          </>
         ) : (
           <Badge tone="neutral">assistant unavailable</Badge>
         )}
         <Badge tone={findingTotal ? "medium" : "ok"}>
           {findingTotal ? `${findingTotal} ${pluralize("finding", findingTotal)}` : "no findings"}
         </Badge>
-        <Badge tone="neutral">{assistantTake}</Badge>
       </div>
       <MonoDetail
         parts={[
@@ -438,25 +440,36 @@ function PersistedReportSections({
     <section class="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-6">
       <ReportSection title="Reviewer notes">
         {ai ? (
-          <>
-            <div class="flex flex-wrap gap-2">
-              <Badge tone={severityTone(ai.risk)}>{ai.risk}</Badge>
-              <Badge tone={ai.requiresManualReview ? "medium" : "ok"}>
-                {ai.requiresManualReview ? "manual review" : "no extra review"}
-              </Badge>
-              <Badge tone="neutral">
-                {ai.releaseAssessment?.replaceAll("_", " ") || "assessment stored"}
-              </Badge>
-            </div>
-            {ai.summary ? (
-              <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{ai.summary}</p>
-            ) : null}
-            {ai.findings?.length ? (
-              <AiFindingList findings={ai.findings} />
-            ) : (
-              <EmptyLine>No assistant findings.</EmptyLine>
-            )}
-          </>
+          ai.status === "complete" ? (
+            <>
+              <div class="flex flex-wrap gap-2">
+                <Badge tone={severityTone(ai.risk)}>{ai.risk}</Badge>
+                <Badge tone={ai.requiresManualReview ? "medium" : "ok"}>
+                  {ai.requiresManualReview ? "manual review" : "no extra review"}
+                </Badge>
+                <Badge tone="neutral">
+                  {ai.releaseAssessment?.replaceAll("_", " ") || "assessment stored"}
+                </Badge>
+              </div>
+              {ai.summary ? (
+                <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{ai.summary}</p>
+              ) : null}
+              {ai.findings?.length ? (
+                <AiFindingList findings={ai.findings} />
+              ) : (
+                <EmptyLine>No assistant findings.</EmptyLine>
+              )}
+            </>
+          ) : (
+            <>
+              <div class="flex flex-wrap gap-2">
+                <Badge tone="neutral">assistant unavailable</Badge>
+              </div>
+              {ai.summary ? (
+                <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{ai.summary}</p>
+              ) : null}
+            </>
+          )
         ) : (
           <EmptyLine>No reviewer notes were saved for this review.</EmptyLine>
         )}

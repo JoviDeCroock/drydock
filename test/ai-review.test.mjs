@@ -51,6 +51,10 @@ describe("ai review normalization", () => {
     expect(userPayload.untrustedChangedPackageFiles[0].textSample).toContain(
       "Ignore previous instructions",
     );
+    const schema = capturedInput?.response_format?.json_schema?.schema;
+    expect(capturedInput?.response_format?.json_schema?.strict).toBe(true);
+    expect(schema.additionalProperties).toBe(false);
+    expect(schema.properties.findings.items.additionalProperties).toBe(false);
   });
 
   test("incomplete AI output is not treated as medium package risk", async () => {
@@ -96,6 +100,79 @@ describe("ai review normalization", () => {
 
     expect(ai.status).toBe("complete");
     expect(computeScanRisk([], ai)).toBe("low");
+  });
+
+  test("OpenAI-style choices[0].message.content shape parses as complete", async () => {
+    const aiPayload = {
+      risk: "low",
+      releaseAssessment: "nothing_unusual",
+      summary: "Routine docs change.",
+      findings: [],
+      requiresManualReview: false,
+    };
+    const ai = await analyzeWithAi(
+      {
+        AI_MODEL: "test-model",
+        AI: {
+          run: async () => ({
+            id: "chatcmpl-1",
+            object: "chat.completion",
+            created: 0,
+            model: "test-model",
+            choices: [
+              {
+                index: 0,
+                message: { role: "assistant", content: JSON.stringify(aiPayload), refusal: null },
+                finish_reason: "stop",
+                logprobs: null,
+              },
+            ],
+          }),
+        },
+      },
+      [],
+      [],
+      {},
+      [],
+    );
+
+    expect(ai.status).toBe("complete");
+    expect(ai.risk).toBe("low");
+    expect(ai.releaseAssessment).toBe("nothing_unusual");
+    expect(ai.summary).toBe("Routine docs change.");
+  });
+
+  test("OpenAI-style content with already-parsed object also parses as complete", async () => {
+    const aiPayload = {
+      risk: "medium",
+      releaseAssessment: "review_recommended",
+      summary: "Needs eyes.",
+      findings: [],
+      requiresManualReview: true,
+    };
+    const ai = await analyzeWithAi(
+      {
+        AI_MODEL: "test-model",
+        AI: {
+          run: async () => ({
+            choices: [
+              {
+                index: 0,
+                message: { role: "assistant", content: aiPayload, refusal: null },
+                finish_reason: "stop",
+              },
+            ],
+          }),
+        },
+      },
+      [],
+      [],
+      {},
+      [],
+    );
+
+    expect(ai.status).toBe("complete");
+    expect(ai.requiresManualReview).toBe(true);
   });
 
   test("complete AI output can still raise package risk with evidence", async () => {
