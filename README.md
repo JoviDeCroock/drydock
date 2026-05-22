@@ -27,7 +27,7 @@ See [`docs/architecture.md`](docs/architecture.md), [`docs/security-model.md`](d
   - package metadata JSON
   - published `.tgz` tarballs for previous-version diffing
 - The sandbox gunzips/parses tarballs, returns bounded file metadata and text samples, and the parent Worker runs deterministic checks plus Workers AI JSON-mode review.
-- Kimi K2.5 (`@cf/moonshotai/kimi-k2.5`) performs AI triage with a static prompt-injection-resistant system prompt and Cloudflare Workers AI prefix caching via `x-session-affinity`.
+- AI triage runs in two tiers: a cheap default reviewer (`@cf/qwen/qwen3-30b-a3b-fp8`) handles ordinary releases, and Kimi K2.5 (`@cf/moonshotai/kimi-k2.5`) is escalated to when deterministic signals are risky, the staged release is missing a previous version to compare against, or the default reviewer flags the release as suspicious/blocked/manual-review. Both tiers share a static prompt-injection-resistant system prompt and Cloudflare Workers AI prefix caching via `x-session-affinity`.
 - The service diffs the staged tarball against the currently published previous version when package metadata is available.
 - Package files are treated as hostile evidence. The AI prompt explicitly ignores file-contained instructions, output is schema constrained, and AI risk cannot downgrade deterministic findings.
 - Review results are persisted in Cloudflare D1 through Drizzle ORM.
@@ -94,7 +94,6 @@ Worker non-secret vars and bindings:
 | -------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `BETTER_AUTH_URL`    | `.dev.vars` locally; Wrangler var in production | Canonical app origin for Better Auth, for example `http://localhost:5173` locally or your deployed Worker URL. Not a secret. |
 | `NPM_REGISTRY`       | `wrangler.jsonc` `vars`                         | npm registry base URL. Defaults to `https://registry.npmjs.org`.                                                             |
-| `AI_MODEL`           | `wrangler.jsonc` `vars`                         | Workers AI model ID. Defaults to `@cf/moonshotai/kimi-k2.5`.                                                                 |
 | `AI_CACHE_AFFINITY`  | `wrangler.jsonc` `vars`                         | Stable `x-session-affinity` value for Cloudflare Workers AI prefix caching.                                                  |
 | `AI`, `LOADER`, `DB` | `wrangler.jsonc` bindings                       | Cloudflare Workers AI, Dynamic Worker loader, and required D1 database binding.                                              |
 | `SCAN_QUEUE`         | `wrangler.jsonc` Queue binding                  | Optional in local dev; production async scan queue. Configure retry/DLQ policy before private beta.                          |

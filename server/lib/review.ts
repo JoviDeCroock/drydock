@@ -53,6 +53,22 @@ export interface PackageJsonSummary {
   exports?: unknown;
 }
 
+export interface PackageJsonDiffEntry {
+  key: string;
+  status: "added" | "removed" | "modified";
+  previous?: string;
+  staged?: string;
+}
+
+export interface PackageJsonDiff {
+  name: string | null;
+  previousVersion: string | null;
+  stagedVersion: string | null;
+  scripts: PackageJsonDiffEntry[];
+  dependencies: PackageJsonDiffEntry[];
+  entrypointsChanged: boolean;
+}
+
 export interface DiffEntry {
   path: string;
   status: "added" | "removed" | "modified" | "unchanged";
@@ -297,7 +313,7 @@ export function createPackageDiff(
 export function summarizePackageJsonDiff(
   previousPkg: PackageJsonSummary | null | undefined,
   stagedPkg: PackageJsonSummary | null | undefined,
-) {
+): PackageJsonDiff {
   const changedScripts = diffObject(previousPkg?.scripts || {}, stagedPkg?.scripts || {});
   const changedDependencies = diffObject(
     {
@@ -398,13 +414,11 @@ export function redactJson<T>(value: T): T {
   return value;
 }
 
-function diffObject(before: Record<string, string>, after: Record<string, string>) {
-  const out: Array<{
-    key: string;
-    status: "added" | "removed" | "modified";
-    previous?: string;
-    staged?: string;
-  }> = [];
+function diffObject(
+  before: Record<string, string>,
+  after: Record<string, string>,
+): PackageJsonDiffEntry[] {
+  const out: PackageJsonDiffEntry[] = [];
   for (const key of [...new Set([...Object.keys(before), ...Object.keys(after)])].sort()) {
     if (!(key in before)) out.push({ key, status: "added", staged: after[key] });
     else if (!(key in after)) out.push({ key, status: "removed", previous: before[key] });
