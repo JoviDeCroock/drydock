@@ -1,5 +1,5 @@
 import { drizzle } from "drizzle-orm/d1";
-import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import * as schema from "./schema";
 import {
   npmConnections,
@@ -346,7 +346,72 @@ function chunkForD1<T>(rows: T[], columnsPerRow: number): T[][] {
   return chunks;
 }
 
-export async function listScans(db: AppDb, organizationId: string) {
+export const SCAN_DECISIONS = ["publish", "no_publish"] as const;
+export type ScanDecision = (typeof SCAN_DECISIONS)[number];
+
+export const SCAN_DECISION_FILTERS = ["undecided", "publish", "no_publish", "all"] as const;
+export type ScanDecisionFilter = (typeof SCAN_DECISION_FILTERS)[number];
+
+export interface ListScansOptions {
+  cursor?: { createdAtMs: number; id: string } | null;
+  limit?: number;
+  decisionFilter?: ScanDecisionFilter;
+}
+
+export interface ListScansResult {
+  scans: Array<{
+    id: string;
+    stageId: string;
+    organizationId: string | null;
+    ownerUserId: string | null;
+    packageName: string | null;
+    stagedVersion: string | null;
+    previousVersion: string | null;
+    risk: string;
+    status: string;
+    decision: string | null;
+    decisionReason: string | null;
+    decidedByUserId: string | null;
+    decidedAt: Date | null;
+    reportVersion: number | null;
+    reportDigest: string | null;
+    startedAt: Date | null;
+    completedAt: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }>;
+  nextCursor: { createdAtMs: number; id: string } | null;
+}
+
+export const LIST_SCANS_DEFAULT_LIMIT = 20;
+export const LIST_SCANS_MAX_LIMIT = 100;
+
+export async function listScans(
+  db: AppDb,
+  organizationId: string,
+  options: ListScansOptions = {},
+): Promise<ListScansResult> {
+  const limit = Math.min(
+    LIST_SCANS_MAX_LIMIT,
+    Math.max(1, Math.floor(options.limit ?? LIST_SCANS_DEFAULT_LIMIT)),
+  );
+  const decisionFilter = options.decisionFilter ?? "undecided";
+
+  const conditions = [eq(scans.organizationId, organizationId)];
+  if (decisionFilter === "undecided") conditions.push(isNull(scans.decision));
+  else if (decisionFilter === "publish") conditions.push(eq(scans.decision, "publish"));
+  else if (decisionFilter === "no_publish") conditions.push(eq(scans.decision, "no_publish"));
+
+  if (options.cursor) {
+    const cursorDate = new Date(options.cursor.createdAtMs);
+    conditions.push(
+      or(
+        lt(scans.createdAt, cursorDate),
+        and(eq(scans.createdAt, cursorDate), lt(scans.id, options.cursor.id)),
+      )!,
+    );
+  }
+
   const rows = await db
     .select({
       id: scans.id,
@@ -358,6 +423,10 @@ export async function listScans(db: AppDb, organizationId: string) {
       previousVersion: scans.previousVersion,
       risk: scans.risk,
       status: scans.status,
+      decision: scans.decision,
+      decisionReason: scans.decisionReason,
+      decidedByUserId: scans.decidedByUserId,
+      decidedAt: scans.decidedAt,
       reportVersion: scans.reportVersion,
       reportDigest: scans.reportDigest,
       startedAt: scans.startedAt,
@@ -366,19 +435,59 @@ export async function listScans(db: AppDb, organizationId: string) {
       updatedAt: scans.updatedAt,
     })
     .from(scans)
-    .where(eq(scans.organizationId, organizationId))
-    .orderBy(desc(scans.createdAt))
-    .limit(100);
+    .where(and(...conditions))
+    .orderBy(desc(scans.createdAt), desc(scans.id))
+    .limit(limit + 1);
 
-  const unique: typeof rows = [];
-  const seenStageIds = new Set<string>();
-  for (const row of rows) {
-    if (seenStageIds.has(row.stageId)) continue;
-    seenStageIds.add(row.stageId);
-    unique.push(row);
-    if (unique.length === 50) break;
-  }
-  return unique;
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const last = page[page.length - 1];
+  const nextCursor =
+    hasMore && last ? { createdAtMs: new Date(last.createdAt).getTime(), id: last.id } : null;
+
+  return { scans: page, nextCursor };
+}
+
+export interface RecordScanDecisionInput {
+  scanId: string;
+  organizationId: string;
+  actorUserId: string;
+  decision: ScanDecision;
+  reason?: string | null;
+}
+
+export async function recordScanDecision(db: AppDb, input: RecordScanDecisionInput) {
+  const now = new Date();
+  const reason = input.reason?.trim() ? input.reason.trim() : null;
+  const updated = await db
+    .update(scans)
+    .set({
+      decision: input.decision,
+      decisionReason: reason,
+      decidedByUserId: input.actorUserId,
+      decidedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(scans.id, input.scanId),
+        eq(scans.organizationId, input.organizationId),
+        eq(scans.status, "complete"),
+      ),
+    )
+    .returning({ id: scans.id });
+
+  if (updated.length === 0) return null;
+
+  await recordScanEvent(db, {
+    organizationId: input.organizationId,
+    actorUserId: input.actorUserId,
+    scanId: input.scanId,
+    type: "scan.decided",
+    metadata: { decision: input.decision, reason },
+  });
+
+  return getScan(db, input.scanId, input.organizationId);
 }
 
 export async function getScan(db: AppDb, id: string, organizationId: string) {

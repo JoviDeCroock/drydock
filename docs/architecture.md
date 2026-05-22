@@ -211,8 +211,9 @@ Current API:
 - `POST /api/v1/scans` — create queued/background scan;
 - `POST /api/v1/scan` — synchronous compatibility scan;
 - `POST /api/v1/staged-publishes/scan` — discover open staged publishes and create scans for newly found stage IDs;
-- `GET /api/v1/scans` — list organization scans;
+- `GET /api/v1/scans` — list organization scans. Supports `filter=undecided|publish|no_publish|all` (default `undecided`), `limit` (default 20, max 100), and `cursor` (opaque `<createdAtMs>:<id>` token). Response includes `nextCursor` for the next page; retries are no longer deduplicated by stage id so every scan appears in the timeline;
 - `GET /api/v1/scans/:id` — scan status/report detail;
+- `POST /api/v1/scans/:id/decision` — record a `publish` or `no_publish` decision on a `complete` scan with an optional `reason` (≤500 chars). Returns the updated scan detail and emits a `scan.decided` audit event. Returns 409 if the scan is not yet complete;
 - `GET /api/v1/npm-connection` — read connection metadata;
 - `POST /api/v1/npm-connection` — create/rotate connection;
 - `POST /api/v1/npm-connection/validate` — validate access;
