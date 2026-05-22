@@ -108,6 +108,21 @@ describe("npm-connection routes enforce organization boundaries", () => {
     expect(ownerConnection?.tokenCiphertext).not.toBe(intruderConnection?.tokenCiphertext);
   });
 
+  test("POST /npm-connection accepts custom registries for organization connections", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+
+    const res = await call(buildTestApp(owner), "POST", "/api/v1/npm-connection", {
+      token: OWNER_TOKEN,
+      label: "custom registry",
+      registryUrl: "https://registry.example.com",
+    });
+
+    expect(res.status).toBe(200);
+    const connection = await getNpmConnection(db, owner.organizationId);
+    expect(connection?.registryUrl).toBe("https://registry.example.com");
+  });
+
   test("DELETE /npm-connection only removes the caller's connection", async () => {
     const owner = await seedUser();
     const intruder = await seedUser();

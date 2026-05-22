@@ -61,6 +61,9 @@ export async function executeScanJob(
     if (!npmConnection) {
       throw new Error("Connect an organization npm token before scanning staged publishes.");
     }
+    if (npmConnection.validationStatus !== "valid") {
+      throw new Error("Validate the organization npm token before scanning staged publishes.");
+    }
 
     const [orgNpmToken] = await Promise.all([
       decryptNpmToken(env, npmConnection),
@@ -133,6 +136,13 @@ export function classifyScanError(err: unknown): SafeScanError {
       retryable: false,
     };
   }
+  if (message.includes("Validate the organization npm token")) {
+    return {
+      code: "npm_connection_unvalidated",
+      message: "Validate the organization npm token before scanning staged publishes.",
+      retryable: false,
+    };
+  }
   console.error("scan job failed", err);
   return {
     code: "scan_failed",
@@ -163,6 +173,13 @@ function parseSandboxDetail(detail: string) {
     return {
       code: "archive_too_large",
       message: "The staged tarball exceeded the scanner's safety limits.",
+      retryable: false,
+    };
+  }
+  if (error.includes("too many files")) {
+    return {
+      code: "archive_too_many_files",
+      message: "The staged tarball contains more files than the scanner can safely review.",
       retryable: false,
     };
   }

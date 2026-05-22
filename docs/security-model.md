@@ -62,6 +62,8 @@ Implementation requirements:
 
 Current code has encrypted per-organization npm connections only. SaaS production must configure `NPM_CONNECTIONS_ENCRYPTION_KEY`; scans require an organization-owned npm token.
 
+Scans and staged-publish discovery require the organization npm connection to be validated first. The dashboard automatically runs the baseline npm auth/list validation after token save, and users can still run a stage-ID-specific validation check afterwards. Queued scan workers re-check validation immediately before decrypting and using the current token, so token rotation cannot bypass the validation gate. Custom npm registries are supported for organization npm connections and should be paired with explicit abuse controls in production operations.
+
 ## Package artifact handling
 
 ### Default retention policy
@@ -112,7 +114,7 @@ Blocked:
 - install-time network calls;
 - any request where npm auth would be forwarded to a non-registry origin.
 
-The gateway compares URL origins against the configured npm registry and attaches credentials only for the minimal endpoint set requiring auth.
+The gateway compares URL origins against the configured npm registry and attaches credentials only for the minimal endpoint set requiring auth. Previous-version compare cache entries are scoped by organization so cached private-package evidence is not shared across tenants.
 
 ## AI prompt-injection posture (paused)
 
@@ -149,7 +151,8 @@ Current guardrail:
 
 - every non-auth `/api/*` route requires a Better Auth session;
 - scans are filtered by organization ID;
-- personal organizations are stable per user.
+- personal organizations are stable per user;
+- public sign-up is enabled for launch.
 
 Before SaaS launch:
 
@@ -183,7 +186,7 @@ Do not expose signed report URLs until access controls, report canonicalization,
 - Per-organization encrypted npm connections exist, and validation can check staged-tarball access when supplied a real stage ID; npm list/view capability checks still need confirmation before launch.
 - Queue-backed scan retry/dead-letter behavior exists in code and Wrangler config, but production queue resources and operational metrics still need deployment validation.
 - Persisted detail UI now renders core report data, but finding grouping and lifecycle timelines still need polish.
-- Tar parsing now rejects traversal paths, skips symlinks/hardlinks, handles long-name/PAX paths, and caps expanded size, but it still needs deeper archive-bomb fuzzing before broad public launch.
+- Tar parsing now rejects traversal paths, skips symlinks/hardlinks, handles long-name/PAX paths, caps expanded size, and fails closed when the safe file-count limit is exceeded, but it still needs deeper archive-bomb fuzzing before broad public launch.
 - Basic D1-backed rate limits exist for scans and credential operations; production should add metrics, alerts, and edge/IP-based abuse controls.
 - Team RBAC is deferred.
 - Public signed reports are deferred.

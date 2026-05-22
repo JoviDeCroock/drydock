@@ -191,7 +191,18 @@ export default {
       return json({ error: reason, status }, status);
     }
     if (tar.byteLength > maxTarBytes) return json({ error: "archive expands beyond safety limit", status: 413 }, 413);
-    const files = await readTar(tar, env.MAX_FILES || 250, env.MAX_BYTES_PER_FILE || 65536, maxTarBytes);
+    let files;
+    try {
+      files = await readTar(tar, env.MAX_FILES || 250, env.MAX_BYTES_PER_FILE || 65536, maxTarBytes);
+    } catch (err) {
+      const reason = err && err.message === "archive contains too many files"
+        ? "archive contains too many files"
+        : err && err.message
+          ? err.message
+          : "tarball parse failed";
+      const status = reason === "archive contains too many files" ? 413 : 400;
+      return json({ error: reason, status }, status);
+    }
     const packageJson = parsePackageJson(files);
     return json({ files, packageJson });
   },

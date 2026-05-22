@@ -48,7 +48,6 @@ npmConnectionRoutes.post("/", async (c) => {
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : "invalid registry URL" }, 400);
   }
-
   try {
     const db = createDb(c.env.DB);
     const session = c.get("authSession");

@@ -153,7 +153,7 @@ Tasks:
 - Add a scan lifecycle timeline: queued, download staged tarball, download previous version, parse, deterministic review, AI review, report generated.
 - Add retry failed scan and cancel pending/running scan flows where platform semantics allow it.
 - Improve file explorer ergonomics with search/filter, changed-files-only default, and clearer bounded text sample labeling.
-- Add first-run onboarding: connect npm token, validate it, paste stage ID, review report.
+- Add first-run onboarding: connect npm token, wait for automatic validation, paste stage ID, review report.
 - Add in-app npm token setup guidance with least-privilege recommendations.
 
 Exit criteria:
@@ -251,7 +251,7 @@ Exit criteria:
 - Multiple AI provider abstraction.
 - Deep native/binary malware analysis.
 - Automated publish approval, which is intentionally out of scope.
-- Private beta operations gating: production Queues/KV/D1/secrets configuration, scan-duration / failure / retry metrics + logging, invite-only signup with email verification + Turnstile + endpoint rate limits, and a deployment + incident-response checklist. Defer until product surface stabilizes after multi-org and the diff-first review UX land.
+- Private beta operations gating: production Queues/KV/D1/secrets configuration, scan-duration / failure / retry metrics + logging, email verification + Turnstile, endpoint rate limits, custom-registry abuse controls, and a deployment + incident-response checklist. Defer until product surface stabilizes after multi-org and the diff-first review UX land.
 - Scan/report deletion and a documented retention policy for persisted redacted text samples. Defer alongside private beta operations.
 
 ## Suggested next implementation slice

@@ -191,6 +191,7 @@ function ReviewRequestCard({
   const status = request.status.value;
   const stageId = request.stageId.value;
   const hasConnection = npm.isConnected.value;
+  const hasValidatedConnection = npm.validated.value;
 
   return (
     <Card class="p-5 md:p-6 flex flex-col gap-4 border-accent/40">
@@ -202,13 +203,17 @@ function ReviewRequestCard({
             the saved report when it is ready.
           </Muted>
         </div>
-        <Badge tone={status === "scanning" ? "info" : hasConnection ? "ok" : "info"}>
-          {status === "scanning" ? "running" : hasConnection ? "ready" : "setup needed"}
+        <Badge tone={status === "scanning" ? "info" : hasValidatedConnection ? "ok" : "info"}>
+          {status === "scanning" ? "running" : hasValidatedConnection ? "ready" : "setup needed"}
         </Badge>
       </div>
       {!hasConnection ? (
         <Alert tone="info">
           Connect npm access in workspace setup before reviewing staged packages.
+        </Alert>
+      ) : !hasValidatedConnection ? (
+        <Alert tone="info">
+          Validate npm access in workspace setup before reviewing staged packages.
         </Alert>
       ) : null}
       <form class="flex flex-col gap-3" onSubmit={onSubmit}>
@@ -226,7 +231,7 @@ function ReviewRequestCard({
             />
             <Button
               type="submit"
-              disabled={status === "scanning" || !stageId.trim() || !hasConnection}
+              disabled={status === "scanning" || !stageId.trim() || !hasValidatedConnection}
               class="shrink-0"
             >
               {status === "scanning" ? "Reviewing…" : "Review staged publish"}
@@ -248,7 +253,7 @@ function RecentReviewsSection({
   stagedPublishes: ReturnType<typeof useModel<typeof StagedPublishesModel.prototype>>;
   npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
 }) {
-  const connected = npm.isConnected.value;
+  const ready = npm.validated.value;
   const discovery = stagedPublishes.lastResult.value;
   const discoveryError = stagedPublishes.error.value;
   const discoveryRefreshing = stagedPublishes.refreshing.value;
@@ -268,7 +273,7 @@ function RecentReviewsSection({
             variant="secondary"
             size="sm"
             onClick={() => void onDiscover()}
-            disabled={discoveryRefreshing || !connected}
+            disabled={discoveryRefreshing || !ready}
           >
             {discoveryRefreshing ? "Checking…" : "Check npm"}
           </Button>
@@ -515,7 +520,13 @@ function NpmConnectionCard({
           />
         </Field>
         <Button type="submit" disabled={busy || !token.trim()} class="shrink-0">
-          {status === "saving" ? "Saving…" : connection ? "Rotate" : "Save"}
+          {status === "saving"
+            ? "Saving…"
+            : status === "validating"
+              ? "Checking…"
+              : connection
+                ? "Rotate"
+                : "Save"}
         </Button>
       </form>
 
@@ -547,8 +558,8 @@ function NpmConnectionCard({
       </div>
 
       <Muted class="text-xs">
-        Without a stage ID, we confirm the token is accepted by npm. Add a stage ID to prove it can
-        read that staged release; we do not keep the release archive.
+        Saving runs the npm auth check automatically. Add a stage ID to prove the token can read
+        that staged release; we do not keep the release archive.
       </Muted>
 
       {error ? <Alert tone="critical">{error}</Alert> : null}

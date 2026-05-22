@@ -57,10 +57,30 @@ describe("scan job retry classification", () => {
     });
     expect(
       classifyScanError(
+        new Error("Validate the organization npm token before scanning staged publishes."),
+      ),
+    ).toMatchObject({
+      code: "npm_connection_unvalidated",
+      retryable: false,
+    });
+    expect(
+      classifyScanError(
         new SandboxError(JSON.stringify({ error: "download failed", status: 403 })),
       ),
     ).toMatchObject({
       code: "staged_tarball_unavailable",
+      retryable: false,
+    });
+  });
+
+  test("does not retry archive file-count limit failures", () => {
+    const safe = classifyScanError(
+      new SandboxError(JSON.stringify({ error: "archive contains too many files", status: 413 })),
+    );
+
+    expect(safe).toEqual({
+      code: "archive_too_many_files",
+      message: "The staged tarball contains more files than the scanner can safely review.",
       retryable: false,
     });
   });
@@ -86,6 +106,7 @@ describe("executeScanJob idempotency", () => {
     dbMock.getNpmConnection.mockResolvedValue({
       registryUrl: "https://registry.npmjs.org",
       tokenFingerprint: "fp",
+      validationStatus: "valid",
     });
     npmConnectionMock.decryptNpmToken.mockResolvedValue("npm_token");
     pipelineMock.runScanPipeline.mockResolvedValue({ id: message.scanId });
@@ -135,6 +156,28 @@ describe("executeScanJob idempotency", () => {
       ([, payload]) => payload?.type === "scan.failed",
     );
     expect(failed).toHaveLength(1);
+  });
+
+  test("fails before decrypting when the queued job sees an unvalidated rotated connection", async () => {
+    dbMock.claimScanForRun.mockResolvedValue(true);
+    dbMock.getNpmConnection.mockResolvedValue({
+      registryUrl: "https://registry.npmjs.org",
+      tokenFingerprint: "fp",
+      validationStatus: "unvalidated",
+    });
+
+    await expect(
+      executeScanJob(env, ctx, message, {}, { attempt: 1, finalAttempt: true }),
+    ).rejects.toThrow("Validate the organization npm token");
+
+    expect(npmConnectionMock.decryptNpmToken).not.toHaveBeenCalled();
+    expect(dbMock.markNpmConnectionUsed).not.toHaveBeenCalled();
+    expect(pipelineMock.runScanPipeline).not.toHaveBeenCalled();
+    expect(dbMock.markScanFailed).toHaveBeenCalledWith({}, message.scanId, message.organizationId, {
+      code: "npm_connection_unvalidated",
+      message: "Validate the organization npm token before scanning staged publishes.",
+      retryable: false,
+    });
   });
 
   test("records scan.retryable_failed without marking failed when a retryable error fires before exhaustion", async () => {
