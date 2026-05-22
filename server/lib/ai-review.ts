@@ -82,11 +82,13 @@ const FINDING_SCHEMA = {
           recommendation: { type: "string" },
         },
         required: ["severity", "file", "evidence", "reason", "recommendation"],
+        additionalProperties: false,
       },
     },
     requiresManualReview: { type: "boolean" },
   },
   required: ["risk", "releaseAssessment", "summary", "findings", "requiresManualReview"],
+  additionalProperties: false,
 };
 
 export async function analyzeWithAi(
@@ -129,7 +131,10 @@ export async function analyzeWithAi(
             }),
           },
         ],
-        response_format: { type: "json_schema", json_schema: FINDING_SCHEMA },
+        response_format: {
+          type: "json_schema",
+          json_schema: { name: "release_review", strict: true, schema: FINDING_SCHEMA },
+        },
       },
       {
         extraHeaders: {
@@ -143,34 +148,50 @@ export async function analyzeWithAi(
   } catch (err) {
     return fallbackReview(
       "unavailable",
-      `AI review unavailable; deterministic scanner result is authoritative. ${err instanceof Error ? err.message : String(err)}`,
+      `Assistant review didn't run: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
 
 function normalizeAiResponse(result: unknown): AiReview {
-  const response =
-    typeof result === "object" && result && "response" in result
-      ? (result as { response: unknown }).response
-      : result;
-  if (typeof response === "string") {
+  const content = extractContent(result);
+  if (typeof content === "string") {
     try {
-      return normalizeParsedReview(JSON.parse(response));
+      return normalizeParsedReview(JSON.parse(content));
     } catch {
       return fallbackReview(
         "invalid",
-        "AI returned non-JSON output; deterministic scanner result is authoritative.",
+        "Assistant returned non-JSON output; review didn't complete.",
       );
     }
   }
-  return normalizeParsedReview(response);
+  return normalizeParsedReview(content);
+}
+
+function extractContent(result: unknown): unknown {
+  if (typeof result === "string") return result;
+  if (!result || typeof result !== "object") return result;
+  const obj = result as Record<string, unknown>;
+  const choices = obj.choices;
+  if (Array.isArray(choices) && choices.length > 0) {
+    const first = choices[0];
+    if (first && typeof first === "object") {
+      const message = (first as Record<string, unknown>).message;
+      if (message && typeof message === "object") {
+        const content = (message as Record<string, unknown>).content;
+        if (content !== undefined && content !== null) return content;
+      }
+    }
+  }
+  if ("response" in obj) return obj.response;
+  return obj;
 }
 
 function normalizeParsedReview(value: unknown): AiReview {
   if (!value || typeof value !== "object") {
     return fallbackReview(
       "invalid",
-      "AI returned an empty or invalid review; deterministic scanner result is authoritative.",
+      "Assistant returned an empty or invalid review; review didn't complete.",
     );
   }
   const review = value as Partial<AiReview>;
@@ -198,7 +219,7 @@ function normalizeParsedReview(value: unknown): AiReview {
   ) {
     return fallbackReview(
       "invalid",
-      `AI review was incomplete (${missing.join(", ")}); deterministic scanner result is authoritative.`,
+      `Assistant review was incomplete: missing ${missing.join(", ")}.`,
     );
   }
 
