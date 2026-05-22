@@ -212,12 +212,12 @@ Current API:
 
 - `POST /api/v1/scans` — create queued/background scan;
 - `POST /api/v1/scan` — synchronous compatibility scan;
-- `POST /api/v1/staged-publishes/scan` — discover open staged publishes and create scans for newly found stage IDs;
+- `POST /api/v1/staged-publishes/scan` — discover open staged publishes and create scans for newly found stage IDs (also runs every 15 minutes via the worker's `scheduled` cron trigger for every organization whose npm connection has `validation_status = "valid"`);
 - `GET /api/v1/scans` — list organization scans. Supports `filter=undecided|publish|no_publish|all` (default `undecided`), `limit` (default 20, max 100), and `cursor` (opaque `<createdAtMs>:<id>` token). Response includes `nextCursor` for the next page; retries are no longer deduplicated by stage id so every scan appears in the timeline;
 - `GET /api/v1/scans/:id` — scan status/report detail;
 - `POST /api/v1/scans/:id/decision` — record a `publish` or `no_publish` decision on a `complete` scan with an optional `reason` (≤500 chars). Returns the updated scan detail and emits a `scan.decided` audit event. Returns 409 if the scan is not yet complete;
 - `GET /api/v1/npm-connection` — read connection metadata;
-- `POST /api/v1/npm-connection` — create/rotate connection;
+- `POST /api/v1/npm-connection` — create/rotate connection (auto-validates the token against the registry and persists the result before responding, so users don't need to click "test" to flip the connection into `valid`);
 - `POST /api/v1/npm-connection/validate` — validate access;
 - `DELETE /api/v1/npm-connection` — remove connection.
 - `GET /api/v1/organizations` — list the caller's organizations (personal first), each with `npmConnectionConfigured`;

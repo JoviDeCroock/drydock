@@ -66,6 +66,11 @@
       "zone_name": "resynapse.dev",
     },
   ],
+	"triggers": {
+		"crons": [
+			"*/15 * * * *"
+		]
+	},
 	"vars": {
 		"BETTER_AUTH_URL": "https://drydock.resynapse.dev",
 		"AI_CACHE_AFFINITY": "staged-publish-review-release-reviewer-v1",

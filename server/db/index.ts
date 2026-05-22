@@ -632,6 +632,10 @@ export async function getNpmConnection(db: AppDb, organizationId: string) {
   return connection ?? null;
 }
 
+export async function listValidNpmConnections(db: AppDb) {
+  return db.select().from(npmConnections).where(eq(npmConnections.validationStatus, "valid"));
+}
+
 export async function updateNpmConnectionValidation(
   db: AppDb,
   input: NpmConnectionValidationInput,

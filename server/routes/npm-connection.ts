@@ -16,6 +16,7 @@ import {
   normalizeRegistryUrl,
   publicNpmConnection,
   validateNpmCredential,
+  type NpmCredentialValidation,
 } from "../lib/npm-connection";
 import type { Bindings, Variables } from "../types";
 
@@ -60,7 +61,7 @@ npmConnectionRoutes.post("/", async (c) => {
       }),
       encryptNpmToken(c.env, token),
     ]);
-    const [connection] = await Promise.all([
+    await Promise.all([
       upsertNpmConnection(db, {
         organizationId,
         registryUrl,
@@ -80,7 +81,37 @@ npmConnectionRoutes.post("/", async (c) => {
       }),
     ]);
 
-    return c.json({ connection: publicNpmConnection(connection) });
+    let validation: NpmCredentialValidation | null = null;
+    try {
+      validation = await validateNpmCredential(registryUrl, token);
+    } catch (err) {
+      console.warn("npm connection auto-validation failed", err);
+    }
+
+    const connection = validation
+      ? await updateNpmConnectionValidation(db, {
+          organizationId,
+          validationStatus: validation.status,
+          capabilities: validation.capabilities,
+          validatedAt: validation.ok ? new Date() : null,
+        })
+      : await getNpmConnection(db, organizationId);
+
+    if (validation) {
+      await recordScanEvent(db, {
+        organizationId,
+        actorUserId: session.userId,
+        type: "npm_connection.validated",
+        metadata: {
+          ok: validation.ok,
+          status: validation.status,
+          capabilities: validation.capabilities,
+          source: "auto",
+        },
+      });
+    }
+
+    return c.json({ connection: publicNpmConnection(connection), validation });
   } catch (err) {
     if (err instanceof RateLimitError) {
       return c.json(
