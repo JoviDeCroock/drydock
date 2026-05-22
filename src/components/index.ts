@@ -20,6 +20,7 @@ export {
   LoadingLine,
   EmptyLine,
 } from "./Typography";
+export { IndeterminateBar, LoadingState } from "./Loading";
 export { FileTree } from "./FileTree";
 export { DiffView } from "./DiffView";
 export type { DiffViewProps } from "./DiffView";

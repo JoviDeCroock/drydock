@@ -15,7 +15,7 @@ import {
   Eyebrow,
   Field,
   Input,
-  LoadingLine,
+  LoadingState,
   MonoDetail,
   Muted,
   PageShell,
@@ -85,15 +85,20 @@ export default function DashboardPage() {
 
   if (!sessionChecked.value) {
     return (
-      <PageShell width="narrow">
-        <Card>
-          <LoadingLine>Opening workspace</LoadingLine>
-        </Card>
+      <PageShell>
+        <DashboardHeader />
+        <LoadingState
+          title="Opening workspace"
+          detail="confirming session · fetching recent reviews"
+        />
       </PageShell>
     );
   }
 
   const user = sessionModel.user.value;
+  const scansLoaded = scans.loaded.value;
+  const npmLoaded = npm.loaded.value;
+  const workspaceLoaded = scansLoaded && npmLoaded;
 
   return (
     <PageShell
@@ -108,21 +113,40 @@ export default function DashboardPage() {
         </div>
       }
     >
-      <header class="flex flex-col gap-2 max-w-[640px]">
-        <Eyebrow>Review workspace</Eyebrow>
-        <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Ready for the next release</h1>
-        <Muted class="text-[14px] leading-[1.55] m-0">
-          Bring a staged npm publish into drydock, compare it with the live version, and leave with
-          a focused safety brief before maintainers approve.
-        </Muted>
-      </header>
+      <DashboardHeader />
 
-      <ReviewRequestCard npm={npm} request={request} onSubmit={onSubmit} />
-
-      <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
-
-      <WorkspaceSetupPanel npm={npm} />
+      {workspaceLoaded ? (
+        <>
+          <ReviewRequestCard npm={npm} request={request} onSubmit={onSubmit} />
+          <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
+          <WorkspaceSetupPanel npm={npm} />
+        </>
+      ) : (
+        <LoadingState
+          title="Loading workspace"
+          detail={
+            npmLoaded
+              ? "fetching recent reviews"
+              : scansLoaded
+                ? "checking npm connection"
+                : "fetching recent reviews · checking npm connection"
+          }
+        />
+      )}
     </PageShell>
+  );
+}
+
+function DashboardHeader() {
+  return (
+    <header class="flex flex-col gap-2 max-w-[640px]">
+      <Eyebrow>Review workspace</Eyebrow>
+      <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Ready for the next release</h1>
+      <Muted class="text-[14px] leading-[1.55] m-0">
+        Bring a staged npm publish into drydock, compare it with the live version, and leave with a
+        focused safety brief before maintainers approve.
+      </Muted>
+    </header>
   );
 }
 
