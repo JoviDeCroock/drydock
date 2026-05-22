@@ -84,7 +84,12 @@ export const NpmConnectionModel = createModel(() => {
       if (next) {
         this.label.value = next.label;
         this.registry.value = next.registryUrl;
+      } else {
+        this.label.value = DEFAULT_LABEL;
+        this.registry.value = DEFAULT_REGISTRY;
       }
+      this.token.value = "";
+      this.validationStageId.value = "";
     },
 
     async save(): Promise<void> {

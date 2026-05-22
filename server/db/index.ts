@@ -517,21 +517,23 @@ export interface CreateOrganizationInput {
 export async function createOrganization(db: AppDb, input: CreateOrganizationInput) {
   const id = crypto.randomUUID();
   const now = new Date();
-  await db.insert(organizations).values({
-    id,
-    name: input.name,
-    ownerUserId: input.ownerUserId,
-    createdAt: now,
-    updatedAt: now,
-  });
-  await db.insert(organizationMembers).values({
-    id: `member:${id}:${input.ownerUserId}`,
-    organizationId: id,
-    userId: input.ownerUserId,
-    role: "owner",
-    createdAt: now,
-    updatedAt: now,
-  });
+  await db.batch([
+    db.insert(organizations).values({
+      id,
+      name: input.name,
+      ownerUserId: input.ownerUserId,
+      createdAt: now,
+      updatedAt: now,
+    }),
+    db.insert(organizationMembers).values({
+      id: `member:${id}:${input.ownerUserId}`,
+      organizationId: id,
+      userId: input.ownerUserId,
+      role: "owner",
+      createdAt: now,
+      updatedAt: now,
+    }),
+  ]);
   return id;
 }
 
