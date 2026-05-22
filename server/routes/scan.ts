@@ -23,7 +23,7 @@ scanRoutes.post("/", async (c) => {
   try {
     const db = createDb(c.env.DB);
     const session = c.get("authSession");
-    const organizationId = await requireActiveOrganization(db, session);
+    const organizationId = await requireActiveOrganization(c, db);
     await enforceRateLimit(db, {
       key: `scan:${organizationId}`,
       limit: 10,

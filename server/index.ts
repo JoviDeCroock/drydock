@@ -171,7 +171,7 @@ app.get("/api", (c) =>
       stagedPublishes: "POST /api/v1/staged-publishes/scan",
       npmConnection: "GET/POST/DELETE /api/v1/npm-connection; POST /api/v1/npm-connection/validate",
       organizations:
-        "GET /api/v1/organizations; POST /api/v1/organizations; POST /api/v1/organizations/:id/activate; PATCH /api/v1/organizations/:id",
+        "GET /api/v1/organizations; POST /api/v1/organizations; PATCH /api/v1/organizations/:id",
       health: "GET /api/health",
     },
     auth: "Better Auth is required for every non-auth API endpoint.",

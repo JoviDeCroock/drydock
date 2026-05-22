@@ -87,29 +87,27 @@ Goals:
 
 - One user can own and switch between multiple organizations.
 - Each organization holds its own granular npm token (still one connection per org).
-- All existing org-scoped surfaces (scans, npm connection, reports) follow the user's active organization without UI rework beyond a header switcher.
-- Personal org behavior is preserved: every user gets a deterministic "Personal" org on first signup and is auto-activated into it.
+- All existing org-scoped surfaces (scans, npm connection, reports) follow the active organization without UI rework beyond a header switcher.
+- Personal org behavior is preserved: every user gets a deterministic "Personal" org on first signup and is the default fallback when no org is explicitly selected.
 
 Tasks:
 
-- Schema: add nullable `active_organization_id` (FK → `organizations.id`, `onDelete: "set null"`) to the `user` table via a Drizzle migration. Keep the `npm_connections` `UNIQUE(organization_id)` index — one token per org stands.
-- Server resolver: `server/lib/active-organization.ts` exporting `requireActiveOrganization(db, session)`. Reads `user.active_organization_id`, verifies membership in `organization_members`, and auto-falls-back to the personal org (creating it via `ensurePersonalOrganization` if missing) when the active id is null or stale.
-- Routes: replace every `ensurePersonalOrganization` call in `routes/scan.ts`, `routes/scans.ts`, `routes/npm-connection.ts` with `requireActiveOrganization`. Keep `ensurePersonalOrganization` as the first-signup bootstrap.
+- Server resolver: `server/lib/active-organization.ts` exports `requireActiveOrganization(c, db)`. It reads the `x-organization-id` request header, verifies membership in `organization_members`, and silently falls back to the personal org (creating it via `ensurePersonalOrganization` if missing) when the header is absent or points at a non-member org. No server-side active-org column — switching is per-device.
+- Routes: replace every `ensurePersonalOrganization` call in `routes/scan.ts`, `routes/scans.ts`, `routes/npm-connection.ts`, `routes/staged-publishes.ts` with `requireActiveOrganization`. Keep `ensurePersonalOrganization` as the first-signup bootstrap.
 - New `routes/organizations.ts`:
-  - `GET /api/v1/organizations` — orgs the user belongs to, each with `isActive`, `isPersonal`, `npmConnectionConfigured` flags.
-  - `POST /api/v1/organizations` — create org + owner membership in one transaction; does not auto-activate.
-  - `POST /api/v1/organizations/:id/activate` — membership-gated, updates `user.active_organization_id`, records a scan event.
+  - `GET /api/v1/organizations` — orgs the user belongs to (personal first), each with `isPersonal` and `npmConnectionConfigured`.
+  - `POST /api/v1/organizations` — create org + owner membership in one transaction.
   - `PATCH /api/v1/organizations/:id` — owner-only rename.
-- UI: `src/models/organization.ts` (list/create/activate/rename + active-org signal), `OrgSwitcher` dropdown in the dashboard header, and a "Create organization" modal. Existing scan/npm-connection panels become implicitly active-org-scoped via the resolver.
-- Tests: `test/workers/organizations-routes.test.ts` (create / list / activate own / activate other → 403 / rename non-owner → 403). Refresh `cross-org-routes.test.ts` and `cross-org-npm-connection.test.ts` to exercise the active-org switching path rather than the deterministic personal-org ID.
+- UI: `src/models/active-organization.ts` owns the localStorage-backed `activeOrganizationId` signal. `apiFetch` reads it and attaches `x-organization-id` to every request. `src/models/organization.ts` exposes list/create/activate/rename and auto-selects the first listed org when no stored id is valid. `OrgSwitcher` in the dashboard header is a native `<select>` per DESIGN.md with an inline create form.
+- Tests: `test/workers/organizations-routes.test.ts` covers list (personal-first ordering), create, rename (owner-only → 403), header-scoped npm-connection write, and non-member header fall-back to personal. Existing `cross-org-routes.test.ts` and `cross-org-npm-connection.test.ts` continue to cover the personal-org default path.
 
-Out of scope (kept in Phase 12): invitations, RBAC beyond owner, org deletion, audit log UI, billing, quotas.
+Out of scope (kept in Phase 12): invitations, RBAC beyond owner, org deletion, audit log UI, billing, quotas, cross-device active-org sync.
 
 Exit criteria:
 
-- A user can create an org, switch to it, attach a different npm token, and run scans scoped to that org without the personal org's data appearing.
-- Cross-org isolation tests pass against the active-org path.
-- Refreshing the page restores the previously-active org.
+- A user can create an org, switch to it on a given device, attach a different npm token, and run scans scoped to that org without the personal org's data appearing.
+- Cross-org isolation tests pass against the header-based path.
+- Each device remembers its own active org via localStorage; clearing localStorage falls back to personal.
 
 ## Phase 9 — Trustworthy report artifacts
 

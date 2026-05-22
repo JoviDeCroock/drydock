@@ -1,1 +1,0 @@
-ALTER TABLE `user` ADD `active_organization_id` text;

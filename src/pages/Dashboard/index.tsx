@@ -53,8 +53,7 @@ export default function DashboardPage() {
   }, []);
 
   const onSwitchOrganization = async (organizationId: string) => {
-    const switched = await organizations.activate(organizationId);
-    if (switched) {
+    if (organizations.activate(organizationId)) {
       await Promise.all([scans.refresh(), npm.load()]);
     }
   };
@@ -62,10 +61,7 @@ export default function DashboardPage() {
   const onCreateOrganization = async (name: string) => {
     const created = await organizations.create(name);
     if (created) {
-      const switched = await organizations.activate(created.id);
-      if (switched) {
-        await Promise.all([scans.refresh(), npm.load()]);
-      }
+      await Promise.all([scans.refresh(), npm.load()]);
     }
   };
 

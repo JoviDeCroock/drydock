@@ -1,63 +1,32 @@
+import type { Context } from "hono";
 import { and, eq } from "drizzle-orm";
-import type { AppDb, WorkspaceSession } from "../db";
+import type { AppDb } from "../db";
 import { ensurePersonalOrganization } from "../db";
-import { organizationMembers, user as userTable } from "../db/schema";
+import { organizationMembers } from "../db/schema";
 import { personalOrganizationId } from "./ownership";
+import type { Bindings, Variables } from "../types";
+
+export const ACTIVE_ORG_HEADER = "x-organization-id";
 
 export async function requireActiveOrganization(
+  c: Context<{ Bindings: Bindings; Variables: Variables }>,
   db: AppDb,
-  session: WorkspaceSession,
 ): Promise<string> {
-  const personalId = personalOrganizationId(session.userId);
-  const [row] = await db
-    .select({ activeOrganizationId: userTable.activeOrganizationId })
-    .from(userTable)
-    .where(eq(userTable.id, session.userId))
-    .limit(1);
-
-  const candidate = row?.activeOrganizationId ?? null;
-  if (candidate) {
+  const session = c.get("authSession");
+  const requested = c.req.header(ACTIVE_ORG_HEADER)?.trim() || null;
+  if (requested) {
     const [membership] = await db
       .select({ organizationId: organizationMembers.organizationId })
       .from(organizationMembers)
       .where(
         and(
-          eq(organizationMembers.organizationId, candidate),
+          eq(organizationMembers.organizationId, requested),
           eq(organizationMembers.userId, session.userId),
         ),
       )
       .limit(1);
-    if (membership) return candidate;
+    if (membership) return requested;
   }
-
   await ensurePersonalOrganization(db, session);
-  await db
-    .update(userTable)
-    .set({ activeOrganizationId: personalId, updatedAt: new Date() })
-    .where(eq(userTable.id, session.userId));
-  return personalId;
-}
-
-export async function setActiveOrganization(
-  db: AppDb,
-  session: WorkspaceSession,
-  organizationId: string,
-): Promise<boolean> {
-  const [membership] = await db
-    .select({ organizationId: organizationMembers.organizationId })
-    .from(organizationMembers)
-    .where(
-      and(
-        eq(organizationMembers.organizationId, organizationId),
-        eq(organizationMembers.userId, session.userId),
-      ),
-    )
-    .limit(1);
-  if (!membership) return false;
-
-  await db
-    .update(userTable)
-    .set({ activeOrganizationId: organizationId, updatedAt: new Date() })
-    .where(eq(userTable.id, session.userId));
-  return true;
+  return personalOrganizationId(session.userId);
 }

@@ -1,4 +1,5 @@
 import { computed, createModel, signal } from "@preact/signals";
+import { activeOrganizationId, setActiveOrganizationId } from "./active-organization";
 import { apiFetch } from "./api";
 
 export interface Organization {
@@ -7,38 +8,33 @@ export interface Organization {
   ownerUserId: string;
   role: string;
   isPersonal: boolean;
-  isActive: boolean;
   npmConnectionConfigured: boolean;
   createdAt: string | number | Date;
   updatedAt: string | number | Date;
 }
 
 interface ListResponse {
-  activeOrganizationId: string;
   organizations: Organization[];
 }
 
-export type OrganizationStatus = "idle" | "loading" | "creating" | "activating" | "renaming";
+export type OrganizationStatus = "idle" | "loading" | "creating" | "renaming";
 
 export const OrganizationModel = createModel(() => {
   const organizations = signal<Organization[]>([]);
-  const activeOrganizationId = signal<string | null>(null);
   const loaded = signal(false);
   const status = signal<OrganizationStatus>("idle");
   const error = signal<string | null>(null);
 
-  const active = computed<Organization | null>(
-    () =>
-      organizations.value.find((org) => org.id === activeOrganizationId.value) ??
-      organizations.value.find((org) => org.isActive) ??
-      null,
-  );
+  const active = computed<Organization | null>(() => {
+    const stored = activeOrganizationId.value;
+    const list = organizations.value;
+    if (stored) {
+      const found = list.find((org) => org.id === stored);
+      if (found) return found;
+    }
+    return list[0] ?? null;
+  });
   const busy = computed(() => status.value !== "idle");
-
-  function applyList(data: ListResponse) {
-    organizations.value = data.organizations;
-    activeOrganizationId.value = data.activeOrganizationId;
-  }
 
   return {
     organizations,
@@ -53,7 +49,12 @@ export const OrganizationModel = createModel(() => {
       this.status.value = "loading";
       try {
         const data = await apiFetch<ListResponse>("/api/v1/organizations");
-        applyList(data);
+        this.organizations.value = data.organizations;
+        const stored = activeOrganizationId.peek();
+        const isStoredValid = stored && data.organizations.some((org) => org.id === stored);
+        if (!isStoredValid) {
+          setActiveOrganizationId(data.organizations[0]?.id ?? null);
+        }
         this.error.value = null;
       } catch (err) {
         this.error.value = err instanceof Error ? err.message : String(err);
@@ -81,6 +82,7 @@ export const OrganizationModel = createModel(() => {
           },
         );
         await this.load();
+        setActiveOrganizationId(data.organization.id);
         return this.organizations.value.find((org) => org.id === data.organization.id) ?? null;
       } catch (err) {
         this.error.value = err instanceof Error ? err.message : String(err);
@@ -90,23 +92,14 @@ export const OrganizationModel = createModel(() => {
       }
     },
 
-    async activate(organizationId: string): Promise<boolean> {
-      if (organizationId === this.activeOrganizationId.value) return true;
-      this.status.value = "activating";
-      this.error.value = null;
-      try {
-        await apiFetch<{ activeOrganizationId: string }>(
-          `/api/v1/organizations/${encodeURIComponent(organizationId)}/activate`,
-          { method: "POST" },
-        );
-        await this.load();
-        return true;
-      } catch (err) {
-        this.error.value = err instanceof Error ? err.message : String(err);
+    activate(organizationId: string): boolean {
+      if (!this.organizations.value.some((org) => org.id === organizationId)) {
+        this.error.value = "Unknown organization.";
         return false;
-      } finally {
-        this.status.value = "idle";
       }
+      setActiveOrganizationId(organizationId);
+      this.error.value = null;
+      return true;
     },
 
     async rename(organizationId: string, name: string): Promise<boolean> {

@@ -1,9 +1,9 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { Hono } from "hono";
-import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { createDb, ensurePersonalOrganization, getNpmConnection } from "../../server/db";
 import * as schema from "../../server/db/schema";
+import { ACTIVE_ORG_HEADER } from "../../server/lib/active-organization";
 import { npmConnectionRoutes } from "../../server/routes/npm-connection";
 import { organizationsRoutes } from "../../server/routes/organizations";
 import type { Bindings, Variables } from "../../server/types";
@@ -44,41 +44,48 @@ async function call(
   app: Hono<{ Bindings: Bindings; Variables: Variables }>,
   method: string,
   path: string,
-  body?: unknown,
+  options: { body?: unknown; activeOrganizationId?: string } = {},
 ) {
   const ctx = createExecutionContext();
+  const headers: Record<string, string> = {};
   const init: RequestInit = { method };
-  if (body !== undefined) {
-    init.body = JSON.stringify(body);
-    init.headers = { "content-type": "application/json" };
+  if (options.body !== undefined) {
+    init.body = JSON.stringify(options.body);
+    headers["content-type"] = "application/json";
   }
+  if (options.activeOrganizationId) {
+    headers[ACTIVE_ORG_HEADER] = options.activeOrganizationId;
+  }
+  init.headers = headers;
   const res = await app.fetch(new Request(`http://test.local${path}`, init), env, ctx);
   await waitOnExecutionContext(ctx);
   return res;
 }
 
 describe("organizations routes", () => {
-  test("GET / lists the personal organization on first call and auto-activates it", async () => {
+  test("GET / returns the caller's organizations with the personal one first", async () => {
     const owner = await seedUser();
+    await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
+      body: { name: "secondary" },
+    });
 
     const res = await call(buildTestApp(owner), "GET", "/api/v1/organizations");
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      activeOrganizationId: string;
-      organizations: Array<{ id: string; isPersonal: boolean; isActive: boolean }>;
+      organizations: Array<{ id: string; name: string; isPersonal: boolean }>;
     };
-    expect(body.activeOrganizationId).toBe(owner.personalOrganizationId);
-    expect(body.organizations).toHaveLength(1);
+    expect(body.organizations).toHaveLength(2);
     expect(body.organizations[0]?.isPersonal).toBe(true);
-    expect(body.organizations[0]?.isActive).toBe(true);
+    expect(body.organizations[0]?.id).toBe(owner.personalOrganizationId);
+    expect(body.organizations[1]?.name).toBe("secondary");
   });
 
-  test("POST / creates an org and lists it for the caller only", async () => {
+  test("POST / creates an org visible to the caller but not to others", async () => {
     const owner = await seedUser();
     const stranger = await seedUser();
 
     const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
-      name: "acme-frontend",
+      body: { name: "acme-frontend" },
     });
     expect(create.status).toBe(201);
     const created = (await create.json()) as { organization: { id: string; name: string } };
@@ -100,56 +107,15 @@ describe("organizations routes", () => {
   test("POST / rejects invalid names", async () => {
     const owner = await seedUser();
 
-    const blank = await call(buildTestApp(owner), "POST", "/api/v1/organizations", { name: "  " });
+    const blank = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
+      body: { name: "  " },
+    });
     expect(blank.status).toBe(400);
 
     const garbage = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
-      name: "$bad name!",
+      body: { name: "$bad name!" },
     });
     expect(garbage.status).toBe(400);
-  });
-
-  test("POST /:id/activate sets active org for the caller", async () => {
-    const owner = await seedUser();
-
-    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
-      name: "second-org",
-    });
-    const created = (await create.json()) as { organization: { id: string } };
-
-    const activate = await call(
-      buildTestApp(owner),
-      "POST",
-      `/api/v1/organizations/${created.organization.id}/activate`,
-    );
-    expect(activate.status).toBe(200);
-    const activated = (await activate.json()) as { activeOrganizationId: string };
-    expect(activated.activeOrganizationId).toBe(created.organization.id);
-
-    const list = await call(buildTestApp(owner), "GET", "/api/v1/organizations");
-    const body = (await list.json()) as {
-      activeOrganizationId: string;
-      organizations: Array<{ id: string; isActive: boolean }>;
-    };
-    expect(body.activeOrganizationId).toBe(created.organization.id);
-    expect(body.organizations.find((o) => o.id === created.organization.id)?.isActive).toBe(true);
-  });
-
-  test("POST /:id/activate against another user's org returns 404", async () => {
-    const owner = await seedUser();
-    const stranger = await seedUser();
-
-    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
-      name: "owner-only",
-    });
-    const created = (await create.json()) as { organization: { id: string } };
-
-    const activate = await call(
-      buildTestApp(stranger),
-      "POST",
-      `/api/v1/organizations/${created.organization.id}/activate`,
-    );
-    expect(activate.status).toBe(404);
   });
 
   test("PATCH /:id renames an owned org and rejects non-owners", async () => {
@@ -157,7 +123,7 @@ describe("organizations routes", () => {
     const stranger = await seedUser();
 
     const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
-      name: "old-name",
+      body: { name: "old-name" },
     });
     const created = (await create.json()) as { organization: { id: string } };
 
@@ -165,7 +131,7 @@ describe("organizations routes", () => {
       buildTestApp(owner),
       "PATCH",
       `/api/v1/organizations/${created.organization.id}`,
-      { name: "new-name" },
+      { body: { name: "new-name" } },
     );
     expect(rename.status).toBe(200);
     const renamed = (await rename.json()) as { organization: { name: string } };
@@ -175,38 +141,33 @@ describe("organizations routes", () => {
       buildTestApp(stranger),
       "PATCH",
       `/api/v1/organizations/${created.organization.id}`,
-      { name: "hijack" },
+      { body: { name: "hijack" } },
     );
     expect(intruder.status).toBe(404);
   });
 
-  test("npm-connection follows the active org after switching", async () => {
+  test("x-organization-id header scopes npm-connection writes to that org", async () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
 
     await call(buildTestApp(owner), "POST", "/api/v1/npm-connection", {
-      token: "npm_personal_token_AAAAAAAA",
-      label: "personal",
+      body: { token: "npm_personal_token_AAAAAAAA", label: "personal" },
     });
 
     const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
-      name: "client-work",
+      body: { name: "client-work" },
     });
     const created = (await create.json()) as { organization: { id: string } };
 
-    await call(
-      buildTestApp(owner),
-      "POST",
-      `/api/v1/organizations/${created.organization.id}/activate`,
-    );
-
-    const beforeWrite = await call(buildTestApp(owner), "GET", "/api/v1/npm-connection");
+    const beforeWrite = await call(buildTestApp(owner), "GET", "/api/v1/npm-connection", {
+      activeOrganizationId: created.organization.id,
+    });
     const beforeBody = (await beforeWrite.json()) as { connection: { label: string } | null };
     expect(beforeBody.connection).toBeNull();
 
     await call(buildTestApp(owner), "POST", "/api/v1/npm-connection", {
-      token: "npm_client_token_BBBBBBBB",
-      label: "client",
+      body: { token: "npm_client_token_BBBBBBBB", label: "client" },
+      activeOrganizationId: created.organization.id,
     });
 
     const personalConnection = await getNpmConnection(db, owner.personalOrganizationId);
@@ -216,18 +177,24 @@ describe("organizations routes", () => {
     expect(personalConnection?.tokenCiphertext).not.toBe(clientConnection?.tokenCiphertext);
   });
 
-  test("requireActiveOrganization falls back to personal when the active id is stale", async () => {
+  test("x-organization-id pointing at a non-member org silently falls back to personal", async () => {
     const owner = await seedUser();
-    const db = createDb(env.DB);
+    const stranger = await seedUser();
 
-    await db
-      .update(schema.user)
-      .set({ activeOrganizationId: "org-that-does-not-exist", updatedAt: new Date() })
-      .where(eq(schema.user.id, owner.userId));
+    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
+      body: { name: "owner-private" },
+    });
+    const created = (await create.json()) as { organization: { id: string } };
 
-    const list = await call(buildTestApp(owner), "GET", "/api/v1/organizations");
-    expect(list.status).toBe(200);
-    const body = (await list.json()) as { activeOrganizationId: string };
-    expect(body.activeOrganizationId).toBe(owner.personalOrganizationId);
+    await call(buildTestApp(owner), "POST", "/api/v1/npm-connection", {
+      body: { token: "npm_personal_token_CCCCCCCC", label: "owner personal" },
+    });
+
+    const res = await call(buildTestApp(stranger), "GET", "/api/v1/npm-connection", {
+      activeOrganizationId: created.organization.id,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { connection: unknown };
+    expect(body.connection).toBeNull();
   });
 });

@@ -157,7 +157,9 @@ If the AI response is unavailable, malformed, or incomplete, the scan records th
 
 The product target is SaaS with organization-scoped resources.
 
-Every user gets a deterministic "Personal" organization on first signup (id derived from `personalOrganizationId(userId)`). Users can additionally create and switch between any number of organizations they own. The active organization for a user is persisted on `user.active_organization_id` and resolved per request by `requireActiveOrganization(db, session)` (`server/lib/active-organization.ts`), which verifies membership in `organization_members` and falls back to the personal org when the stored id is null or stale.
+Every user gets a deterministic "Personal" organization on first signup (id derived from `personalOrganizationId(userId)`). Users can additionally create and switch between any number of organizations they own.
+
+Active-organization selection is **client-owned and per-device**: the browser stores the chosen org id in `localStorage` and sends it as the `x-organization-id` header on every API request. The server resolver `requireActiveOrganization(c, db)` in `server/lib/active-organization.ts` reads that header, verifies the caller is a member via `organization_members`, and falls back to the personal org when the header is absent or points at an org the caller does not belong to. There is no server-side "active org" column — switching devices means each device tracks its own active org, which matches how maintainers tend to use separate machines for separate clients.
 
 Organization-owned resources scope by the active org:
 
@@ -218,9 +220,10 @@ Current API:
 - `POST /api/v1/npm-connection` — create/rotate connection;
 - `POST /api/v1/npm-connection/validate` — validate access;
 - `DELETE /api/v1/npm-connection` — remove connection.
-- `GET /api/v1/organizations` — list the caller's organizations, including which one is active and which have an npm token configured;
-- `POST /api/v1/organizations` — create a new organization owned by the caller (does not auto-activate);
-- `POST /api/v1/organizations/:id/activate` — switch the caller's active organization (membership-gated);
+- `GET /api/v1/organizations` — list the caller's organizations (personal first), each with `npmConnectionConfigured`;
+- `POST /api/v1/organizations` — create a new organization owned by the caller;
 - `PATCH /api/v1/organizations/:id` — rename (owner-only).
+
+All other `/api/v1/*` endpoints honor the `x-organization-id` request header to pick the active org; absent or non-member ids silently fall back to the caller's personal org.
 
 Keep `POST /api/v1/scan` only as a compatibility shim during migration.

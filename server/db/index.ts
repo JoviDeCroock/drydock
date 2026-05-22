@@ -467,7 +467,6 @@ export interface OrganizationListEntry {
   ownerUserId: string;
   role: string;
   isPersonal: boolean;
-  isActive: boolean;
   npmConnectionConfigured: boolean;
   createdAt: Date | string | number;
   updatedAt: Date | string | number;
@@ -476,7 +475,6 @@ export interface OrganizationListEntry {
 export async function listUserOrganizations(
   db: AppDb,
   userId: string,
-  activeOrganizationId: string | null,
 ): Promise<OrganizationListEntry[]> {
   const personalId = personalOrganizationId(userId);
   const rows = await db
@@ -492,20 +490,23 @@ export async function listUserOrganizations(
     .from(organizationMembers)
     .innerJoin(organizations, eq(organizations.id, organizationMembers.organizationId))
     .leftJoin(npmConnections, eq(npmConnections.organizationId, organizations.id))
-    .where(eq(organizationMembers.userId, userId))
-    .orderBy(desc(organizations.createdAt));
+    .where(eq(organizationMembers.userId, userId));
 
-  return rows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    ownerUserId: row.ownerUserId,
-    role: row.role,
-    isPersonal: row.id === personalId,
-    isActive: row.id === activeOrganizationId,
-    npmConnectionConfigured: Boolean(row.npmConnectionId),
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-  }));
+  return rows
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      ownerUserId: row.ownerUserId,
+      role: row.role,
+      isPersonal: row.id === personalId,
+      npmConnectionConfigured: Boolean(row.npmConnectionId),
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    }))
+    .sort((a, b) => {
+      if (a.isPersonal !== b.isPersonal) return a.isPersonal ? -1 : 1;
+      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    });
 }
 
 export interface CreateOrganizationInput {

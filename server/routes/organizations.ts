@@ -4,12 +4,12 @@ import {
   createDb,
   createOrganization,
   enforceRateLimit,
+  ensurePersonalOrganization,
   isOrganizationOwner,
   listUserOrganizations,
   recordScanEvent,
   renameOrganization,
 } from "../db";
-import { requireActiveOrganization, setActiveOrganization } from "../lib/active-organization";
 import type { Bindings, Variables } from "../types";
 
 const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} _\-./]{0,79}$/u;
@@ -19,9 +19,9 @@ export const organizationsRoutes = new Hono<{ Bindings: Bindings; Variables: Var
 organizationsRoutes.get("/", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
-  const activeOrganizationId = await requireActiveOrganization(db, session);
-  const organizations = await listUserOrganizations(db, session.userId, activeOrganizationId);
-  return c.json({ activeOrganizationId, organizations });
+  await ensurePersonalOrganization(db, session);
+  const organizations = await listUserOrganizations(db, session.userId);
+  return c.json({ organizations });
 });
 
 organizationsRoutes.post("/", async (c) => {
@@ -65,21 +65,6 @@ organizationsRoutes.post("/", async (c) => {
     console.error("organization create failed", err);
     return c.json({ error: "failed to create organization" }, 500);
   }
-});
-
-organizationsRoutes.post("/:id/activate", async (c) => {
-  const db = createDb(c.env.DB);
-  const session = c.get("authSession");
-  const organizationId = c.req.param("id");
-  const activated = await setActiveOrganization(db, session, organizationId);
-  if (!activated) return c.json({ error: "not found" }, 404);
-  await recordScanEvent(db, {
-    organizationId,
-    actorUserId: session.userId,
-    type: "organization.activated",
-    metadata: {},
-  });
-  return c.json({ activeOrganizationId: organizationId });
 });
 
 organizationsRoutes.patch("/:id", async (c) => {
