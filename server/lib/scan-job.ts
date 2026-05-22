@@ -61,6 +61,9 @@ export async function executeScanJob(
     if (!npmConnection) {
       throw new Error("Connect an organization npm token before scanning staged publishes.");
     }
+    if (npmConnection.validationStatus !== "valid") {
+      throw new Error("Validate the organization npm token before scanning staged publishes.");
+    }
 
     const [orgNpmToken] = await Promise.all([
       decryptNpmToken(env, npmConnection),
@@ -130,6 +133,13 @@ export function classifyScanError(err: unknown): SafeScanError {
     return {
       code: "npm_connection_missing",
       message: "Connect an organization npm token before scanning staged publishes.",
+      retryable: false,
+    };
+  }
+  if (message.includes("Validate the organization npm token")) {
+    return {
+      code: "npm_connection_unvalidated",
+      message: "Validate the organization npm token before scanning staged publishes.",
       retryable: false,
     };
   }
