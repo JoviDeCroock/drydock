@@ -277,13 +277,13 @@ describe("readTar limits and malformed archives", () => {
     await expect(parse(tar)).rejects.toThrow(/invalid tar entry size/);
   });
 
-  test("stops reading once the file-count cap is reached", async () => {
+  test("fails closed when the file-count cap is exceeded", async () => {
     const tar = buildTar(
       Array.from({ length: 12 }, (_, i) => ({ name: `package/f${i}.js`, body: `// ${i}\n` })),
     );
-    const files = await parse(tar, { ...PARSE_LIMITS, maxFiles: 5 });
-    expect(files).toHaveLength(5);
-    expect(files.map((f) => f.path)).toEqual(["f0.js", "f1.js", "f2.js", "f3.js", "f4.js"]);
+    await expect(parse(tar, { ...PARSE_LIMITS, maxFiles: 5 })).rejects.toThrow(
+      /archive contains too many files/,
+    );
   });
 
   test("stops at the end-of-archive marker even with trailing garbage", async () => {

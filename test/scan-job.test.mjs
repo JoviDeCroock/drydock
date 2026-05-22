@@ -65,6 +65,18 @@ describe("scan job retry classification", () => {
     });
   });
 
+  test("does not retry archive file-count limit failures", () => {
+    const safe = classifyScanError(
+      new SandboxError(JSON.stringify({ error: "archive contains too many files", status: 413 })),
+    );
+
+    expect(safe).toEqual({
+      code: "archive_too_many_files",
+      message: "The staged tarball contains more files than the scanner can safely review.",
+      retryable: false,
+    });
+  });
+
   test("uses bounded quadratic retry delays", () => {
     expect(retryDelaySeconds(1)).toBe(5);
     expect(retryDelaySeconds(2)).toBe(20);

@@ -126,6 +126,15 @@ app.use("/api/auth/*", async (c, next) => {
   return next();
 });
 
+app.use("/api/auth/*", async (c, next) => {
+  if (c.req.method === "POST" && c.req.path.startsWith("/api/auth/sign-up")) {
+    if (c.env.PUBLIC_SIGNUPS_ENABLED !== "true") {
+      return c.json({ error: "public signups are disabled" }, 403);
+    }
+  }
+  return next();
+});
+
 app.all("/api/auth/*", (c) => {
   const auth = c.get("auth");
   return (auth as { handler(request: Request): Promise<Response> }).handler(c.req.raw);

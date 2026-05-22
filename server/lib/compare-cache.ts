@@ -8,14 +8,15 @@ export interface CachedCompare {
   cachedAt: string;
 }
 
-const CACHE_PREFIX = "compare:v2:";
+const CACHE_PREFIX = "compare:v3:";
 const CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
 
 export async function computeCompareCacheKey(
   registryUrl: string,
   tarballUrl: string,
+  cacheScope: string,
 ): Promise<string> {
-  const data = new TextEncoder().encode(`${registryUrl}|${tarballUrl}`);
+  const data = new TextEncoder().encode(`${cacheScope}|${registryUrl}|${tarballUrl}`);
   const digest = await crypto.subtle.digest("SHA-256", data);
   const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
   return `${CACHE_PREFIX}${hex}`;
@@ -50,9 +51,13 @@ export async function loadCompare(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
   version: string,
-  options: { tarballUrl: string; registryUrl: string; npmToken?: string },
+  options: { tarballUrl: string; registryUrl: string; npmToken?: string; cacheScope: string },
 ): Promise<CachedCompare> {
-  const key = await computeCompareCacheKey(options.registryUrl, options.tarballUrl);
+  const key = await computeCompareCacheKey(
+    options.registryUrl,
+    options.tarballUrl,
+    options.cacheScope,
+  );
   const cached = await readCompareCache(env, key);
   if (cached) return cached;
 

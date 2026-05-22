@@ -4,6 +4,7 @@ import {
   createDb,
   createScanJob,
   enforceRateLimit,
+  getNpmConnection,
   listExistingScanStageIds,
   recordScanEvent,
 } from "../db";
@@ -40,6 +41,19 @@ stagedPublishesRoutes.post("/scan", async (c) => {
     throw err;
   }
 
+  const savedConnection = await getNpmConnection(db, organizationId);
+  if (!savedConnection) {
+    return c.json(
+      { error: "Connect an organization npm token before discovering staged publishes." },
+      400,
+    );
+  }
+  if (savedConnection.validationStatus !== "valid") {
+    return c.json(
+      { error: "Validate the organization npm token before discovering staged publishes." },
+      400,
+    );
+  }
   const connection = await getOrganizationNpmToken(db, c.env, organizationId);
   if (!connection) {
     return c.json(

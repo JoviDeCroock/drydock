@@ -6,6 +6,7 @@ import {
   createScanJob,
   ensurePersonalOrganization,
   listScans,
+  updateNpmConnectionValidation,
   upsertNpmConnection,
 } from "../../server/db";
 import * as schema from "../../server/db/schema";
@@ -59,6 +60,11 @@ describe("staged publishes route", () => {
       label: "npm registry",
       createdByUserId: owner.userId,
       ...encrypted,
+    });
+    await updateNpmConnectionValidation(db, {
+      organizationId: owner.organizationId,
+      validationStatus: "valid",
+      validatedAt: new Date(),
     });
     await createScanJob(db, {
       id: `scan_${crypto.randomUUID()}`,

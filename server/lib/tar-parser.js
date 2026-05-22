@@ -91,7 +91,7 @@ export async function readTar(buffer, maxFiles, maxBytesPerFile, maxTarBytes) {
   let nextLongName = null;
   let pax = null;
 
-  for (let offset = 0; offset + 512 <= bytes.length && files.length < maxFiles; ) {
+  for (let offset = 0; offset + 512 <= bytes.length; ) {
     const header = bytes.subarray(offset, offset + 512);
     if (header.every((b) => b === 0)) break;
 
@@ -122,7 +122,10 @@ export async function readTar(buffer, maxFiles, maxBytesPerFile, maxTarBytes) {
       const path = normalizeTarPath(
         (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName,
       );
-      if (path) files.push(await summarizeFile(path, body, maxBytesPerFile));
+      if (path) {
+        if (files.length >= maxFiles) throw new Error("archive contains too many files");
+        files.push(await summarizeFile(path, body, maxBytesPerFile));
+      }
       nextLongName = null;
       pax = null;
     } else if (type === "1" || type === "2") {

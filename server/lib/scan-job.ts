@@ -166,6 +166,13 @@ function parseSandboxDetail(detail: string) {
       retryable: false,
     };
   }
+  if (error.includes("too many files")) {
+    return {
+      code: "archive_too_many_files",
+      message: "The staged tarball contains more files than the scanner can safely review.",
+      retryable: false,
+    };
+  }
   if (error.includes("invalid") || error.includes("truncated")) {
     return {
       code: "archive_invalid",

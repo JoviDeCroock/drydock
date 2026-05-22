@@ -11,10 +11,11 @@ export const scanRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>
 
 scanRoutes.post("/", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as Partial<ScanInput>;
+  if (body.maxFiles !== undefined || body.maxBytesPerFile !== undefined) {
+    return c.json({ error: "scan limits are controlled by the server" }, 400);
+  }
   const input: ScanInput = {
     stageId: String(body.stageId || ""),
-    maxFiles: body.maxFiles,
-    maxBytesPerFile: body.maxBytesPerFile,
   };
   if (!STAGE_ID_RE.test(input.stageId)) {
     return c.json({ error: "invalid stageId" }, 400);
@@ -34,6 +35,12 @@ scanRoutes.post("/", async (c) => {
     if (!npmConnection) {
       return c.json(
         { error: "Connect an organization npm token before scanning staged publishes." },
+        400,
+      );
+    }
+    if (npmConnection.validationStatus !== "valid") {
+      return c.json(
+        { error: "Validate the organization npm token before scanning staged publishes." },
         400,
       );
     }
