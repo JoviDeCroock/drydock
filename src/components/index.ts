@@ -10,6 +10,7 @@ export type { AlertTone } from "./Alert";
 export { Card, SummaryCard } from "./Card";
 export type { SummaryCardTone, SummaryCardValue } from "./Card";
 export { PageShell } from "./PageShell";
+export { BrandMark } from "./BrandMark";
 export {
   Eyebrow,
   SectionLabel,
