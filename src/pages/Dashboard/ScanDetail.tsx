@@ -162,9 +162,7 @@ export default function ScanDetailPage() {
   const selectedVersion = model.selectedVersion.value;
   const compare = model.compare.value;
   const hasRuleFindings = Boolean(detail?.findings.length);
-  const workbenchGridClass = hasRuleFindings
-    ? "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)_320px] gap-4"
-    : "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-4";
+  const workbenchGridClass = "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-4";
 
   return (
     <PageShell>
@@ -239,26 +237,26 @@ export default function ScanDetailPage() {
                 stagedVersion={detail.scan.stagedVersion}
               />
             </Card>
-
-            {hasRuleFindings ? (
-              <Card as="aside" class="p-5 flex flex-col gap-3">
-                <SectionLabel>Risk signals</SectionLabel>
-                <ul class="list-none p-0 m-0 flex flex-col gap-2">
-                  {detail.findings.map((finding) => (
-                    <FindingCard
-                      key={finding.id}
-                      severity={finding.severity}
-                      file={finding.file}
-                      ruleId={finding.ruleId}
-                    >
-                      <FindingRow label="evidence" value={finding.evidence} />
-                      <FindingRow label="reason" value={finding.reason} />
-                    </FindingCard>
-                  ))}
-                </ul>
-              </Card>
-            ) : null}
           </section>
+
+          {hasRuleFindings ? (
+            <section class="flex flex-col gap-3">
+              <SectionLabel>Risk signals</SectionLabel>
+              <ul class="list-none p-0 m-0 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                {detail.findings.map((finding) => (
+                  <FindingCard
+                    key={finding.id}
+                    severity={finding.severity}
+                    file={finding.file}
+                    ruleId={finding.ruleId}
+                  >
+                    <FindingRow label="evidence" value={finding.evidence} />
+                    <FindingRow label="reason" value={finding.reason} />
+                  </FindingCard>
+                ))}
+              </ul>
+            </section>
+          ) : null}
 
           <PersistedReportSections summary={summary.value} ai={ai.value} />
         </>
