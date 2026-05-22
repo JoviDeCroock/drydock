@@ -17,6 +17,19 @@ export interface StagedPublishesPage {
   page: number | null;
 }
 
+export interface StartedStagedPublishScan {
+  id: string;
+  stageId: string;
+}
+
+export interface StagedPublishesScanResponse {
+  found: number;
+  created: number;
+  skipped: number;
+  queued: boolean;
+  scans: StartedStagedPublishScan[];
+}
+
 const MAX_PER_PAGE = 100;
 const STAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,160}$/;
 

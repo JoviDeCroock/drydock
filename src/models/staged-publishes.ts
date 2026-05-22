@@ -1,33 +1,43 @@
 import { createModel, signal } from "@preact/signals";
-import type { StagedPublishItem, StagedPublishesPage } from "../../server/lib/staged-publishes";
+import type { StagedPublishesScanResponse } from "../../server/lib/staged-publishes";
 import { apiFetch } from "./api";
 
-export type { StagedPublishItem, StagedPublishesPage };
+export type { StagedPublishesScanResponse };
 
-export function listStagedPublishes(): Promise<StagedPublishesPage> {
-  return apiFetch<StagedPublishesPage>("/api/v1/staged-publishes");
+export function startStagedPublishScans(): Promise<StagedPublishesScanResponse> {
+  return apiFetch<StagedPublishesScanResponse>("/api/v1/staged-publishes/scan", {
+    method: "POST",
+  });
 }
 
 export const StagedPublishesModel = createModel(() => {
-  const items = signal<StagedPublishItem[]>([]);
+  const lastResult = signal<StagedPublishesScanResponse | null>(null);
   const loaded = signal(false);
   const refreshing = signal(false);
   const error = signal<string | null>(null);
 
   return {
-    items,
+    lastResult,
     loaded,
     refreshing,
     error,
 
-    async refresh(): Promise<void> {
+    reset(): void {
+      this.lastResult.value = null;
+      this.loaded.value = false;
+      this.error.value = null;
+    },
+
+    async discover(): Promise<StagedPublishesScanResponse | null> {
       this.refreshing.value = true;
       try {
-        const page = await listStagedPublishes();
-        this.items.value = page.items;
+        const result = await startStagedPublishScans();
+        this.lastResult.value = result;
         this.error.value = null;
+        return result;
       } catch (err) {
         this.error.value = err instanceof Error ? err.message : String(err);
+        return null;
       } finally {
         this.loaded.value = true;
         this.refreshing.value = false;

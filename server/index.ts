@@ -167,7 +167,7 @@ app.get("/api", (c) =>
       compatibilityScan: "POST /api/v1/scan { stageId }",
       scans: "GET /api/v1/scans",
       scanDetail: "GET /api/v1/scans/:id",
-      stagedPublishes: "GET /api/v1/staged-publishes",
+      stagedPublishes: "POST /api/v1/staged-publishes/scan",
       npmConnection: "GET/POST/DELETE /api/v1/npm-connection; POST /api/v1/npm-connection/validate",
       health: "GET /api/health",
     },

@@ -5,7 +5,7 @@ import { useLocation } from "preact-iso";
 import { sessionModel } from "../../models/auth";
 import { NpmConnectionModel } from "../../models/npm-connection";
 import { ScanListModel, ScanRequestModel, type ScanListItem } from "../../models/scan";
-import { StagedPublishesModel, type StagedPublishItem } from "../../models/staged-publishes";
+import { StagedPublishesModel } from "../../models/staged-publishes";
 import {
   Alert,
   Badge,
@@ -28,10 +28,9 @@ export default function DashboardPage() {
   const scans = useModel(ScanListModel);
   const npm = useModel(NpmConnectionModel);
   const request = useModel(ScanRequestModel);
-  const openStages = useModel(StagedPublishesModel);
+  const stagedPublishes = useModel(StagedPublishesModel);
   const sessionChecked = useSignal(false);
   const stagedPublishesConnectionId = useSignal<string | null>(null);
-  const openReportAfterSubmit = useSignal(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,36 +52,29 @@ export default function DashboardPage() {
   useSignalEffect(() => {
     const checked = sessionChecked.value;
     const connectionId = npm.connection.value?.id ?? null;
-    const refreshing = openStages.refreshing.value;
+    const refreshing = stagedPublishes.refreshing.value;
     const loadedConnectionId = stagedPublishesConnectionId.value;
     if (!checked) return;
     if (!connectionId) {
       stagedPublishesConnectionId.value = null;
-      openStages.items.value = [];
-      openStages.loaded.value = false;
-      openStages.error.value = null;
+      stagedPublishes.reset();
       return;
     }
     if (refreshing || loadedConnectionId === connectionId) return;
     stagedPublishesConnectionId.value = connectionId;
-    void openStages.refresh();
+    void discoverStagedPublishes(stagedPublishes, scans);
   });
 
   useSignalEffect(() => {
-    const status = request.status.value;
+    if (request.status.value !== "done") return;
     const id = request.lastResult.value?.scan.id;
-    const shouldOpenReport = openReportAfterSubmit.value;
-    if (status !== "done") return;
     if (!id) return;
     void scans.refresh();
-    if (shouldOpenReport) {
-      location.route(`/dashboard/scans/${encodeURIComponent(id)}`);
-    }
+    location.route(`/dashboard/scans/${encodeURIComponent(id)}`);
   });
 
   const onSubmit = async (event: Event) => {
     event.preventDefault();
-    openReportAfterSubmit.value = true;
     await request.submit();
   };
 
@@ -124,21 +116,21 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      <OpenStagedPublishesSection
-        npm={npm}
-        openStages={openStages}
-        scans={scans}
-        request={request}
-        openReportAfterSubmit={openReportAfterSubmit}
-      />
-
       <ReviewRequestCard npm={npm} request={request} onSubmit={onSubmit} />
 
-      <RecentReviewsSection scans={scans} />
+      <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
 
       <WorkspaceSetupPanel npm={npm} />
     </PageShell>
   );
+}
+
+async function discoverStagedPublishes(
+  stagedPublishes: ReturnType<typeof useModel<typeof StagedPublishesModel.prototype>>,
+  scans: ReturnType<typeof useModel<typeof ScanListModel.prototype>>,
+) {
+  await stagedPublishes.discover();
+  await scans.refresh();
 }
 
 function ReviewRequestCard({
@@ -201,147 +193,36 @@ function ReviewRequestCard({
   );
 }
 
-function OpenStagedPublishesSection({
-  npm,
-  openStages,
+function RecentReviewsSection({
   scans,
-  request,
-  openReportAfterSubmit,
+  stagedPublishes,
+  npm,
 }: {
-  npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
-  openStages: ReturnType<typeof useModel<typeof StagedPublishesModel.prototype>>;
   scans: ReturnType<typeof useModel<typeof ScanListModel.prototype>>;
-  request: ReturnType<typeof useModel<typeof ScanRequestModel.prototype>>;
-  openReportAfterSubmit: { value: boolean };
+  stagedPublishes: ReturnType<typeof useModel<typeof StagedPublishesModel.prototype>>;
+  npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
 }) {
   const connected = npm.isConnected.value;
-  const refreshing = openStages.refreshing.value;
-  const loaded = openStages.loaded.value;
-  const items = openStages.items.value;
-  const fetchError = openStages.error.value;
-  const requestStatus = request.status.value;
-  const pendingStageId = requestStatus === "scanning" ? request.stageId.value : null;
-  const scansByStageId = new Map<string, ScanListItem>(
-    scans.scans.value.map((scan: ScanListItem) => [scan.stageId, scan]),
-  );
-
-  const onScan = async (stageId: string) => {
-    openReportAfterSubmit.value = false;
-    request.stageId.value = stageId;
-    await request.submit();
+  const discovery = stagedPublishes.lastResult.value;
+  const discoveryError = stagedPublishes.error.value;
+  const discoveryRefreshing = stagedPublishes.refreshing.value;
+  const onDiscover = async () => {
+    await discoverStagedPublishes(stagedPublishes, scans);
   };
 
   return (
     <section class="flex flex-col gap-3">
       <div class="flex items-center gap-3">
-        <SectionLabel class="flex-1 min-w-0">Open staged publishes</SectionLabel>
+        <SectionLabel class="flex-1 min-w-0">Recent reviews</SectionLabel>
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => void openStages.refresh()}
+          onClick={() => void onDiscover()}
           class="shrink-0"
-          disabled={refreshing || !connected}
+          disabled={discoveryRefreshing || !connected}
         >
-          {refreshing ? "Refreshing…" : "Refresh"}
+          {discoveryRefreshing ? "Checking…" : "Check npm"}
         </Button>
-      </div>
-      <Card class="p-0 overflow-hidden">
-        {!connected ? (
-          <div class="p-5">
-            <EmptyLine>
-              Connect npm access in workspace setup to list staged publishes for this org.
-            </EmptyLine>
-          </div>
-        ) : !loaded ? (
-          <div class="p-5">
-            <LoadingLine>Loading staged publishes…</LoadingLine>
-          </div>
-        ) : fetchError ? (
-          <div class="p-5">
-            <Alert tone="critical">{fetchError}</Alert>
-          </div>
-        ) : items.length ? (
-          <StagedPublishesTable
-            items={items}
-            scansByStageId={scansByStageId}
-            pendingStageId={pendingStageId}
-            onScan={onScan}
-          />
-        ) : (
-          <div class="p-5">
-            <EmptyLine>
-              No open staged publishes. New stages will appear here once the registry returns them.
-            </EmptyLine>
-          </div>
-        )}
-      </Card>
-    </section>
-  );
-}
-
-function StagedPublishesTable({
-  items,
-  scansByStageId,
-  pendingStageId,
-  onScan,
-}: {
-  items: StagedPublishItem[];
-  scansByStageId: Map<string, ScanListItem>;
-  pendingStageId: string | null;
-  onScan: (stageId: string) => Promise<void> | void;
-}) {
-  return (
-    <div class="overflow-x-auto">
-      <table class="w-full border-collapse text-[13px]">
-        <thead>
-          <tr class="border-b border-border bg-surface-2">
-            <Th>Package</Th>
-            <Th>Version</Th>
-            <Th>Tag</Th>
-            <Th>Staged by</Th>
-            <Th>Staged</Th>
-            <Th>Action</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((item) => {
-            const existingScan = scansByStageId.get(item.id);
-            const isPending = pendingStageId === item.id;
-            return (
-              <tr key={item.id} class="border-b border-border last:border-b-0 hover:bg-surface-2">
-                <Td>{item.packageName || item.id}</Td>
-                <Td class="font-mono text-xs text-ink-muted">{item.version || "—"}</Td>
-                <Td class="font-mono text-xs text-ink-muted">{item.tag || "—"}</Td>
-                <Td class="font-mono text-xs text-ink-muted">{item.actor || "—"}</Td>
-                <Td class="font-mono text-xs text-ink-muted">{formatDate(item.createdAt)}</Td>
-                <Td>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => void onScan(item.id)}
-                    disabled={isPending || pendingStageId !== null}
-                  >
-                    {isPending ? "Scanning…" : existingScan ? "Scan again" : "Scan"}
-                  </Button>
-                </Td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function RecentReviewsSection({
-  scans,
-}: {
-  scans: ReturnType<typeof useModel<typeof ScanListModel.prototype>>;
-}) {
-  return (
-    <section class="flex flex-col gap-3">
-      <div class="flex items-center gap-3">
-        <SectionLabel class="flex-1 min-w-0">Recent reviews</SectionLabel>
         <Button
           variant="secondary"
           size="sm"
@@ -352,6 +233,16 @@ function RecentReviewsSection({
           {scans.refreshing.value ? "Refreshing…" : "Refresh"}
         </Button>
       </div>
+      {discoveryError ? <Alert tone="critical">{discoveryError}</Alert> : null}
+      {discovery && !discoveryError ? (
+        <Muted class="text-[13px] m-0">
+          {discovery.created
+            ? `Started ${discovery.created} new review${discovery.created === 1 ? "" : "s"} from npm.`
+            : discovery.found
+              ? "No new staged publishes need review."
+              : "No open staged publishes found."}
+        </Muted>
+      ) : null}
       <Card class="p-0 overflow-hidden">
         {scans.scans.value.length ? (
           <ScanTable scans={scans.scans.value} />

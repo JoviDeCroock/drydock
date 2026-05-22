@@ -207,6 +207,7 @@ Current API:
 
 - `POST /api/v1/scans` — create queued/background scan;
 - `POST /api/v1/scan` — synchronous compatibility scan;
+- `POST /api/v1/staged-publishes/scan` — discover open staged publishes and create scans for newly found stage IDs;
 - `GET /api/v1/scans` — list organization scans;
 - `GET /api/v1/scans/:id` — scan status/report detail;
 - `GET /api/v1/npm-connection` — read connection metadata;

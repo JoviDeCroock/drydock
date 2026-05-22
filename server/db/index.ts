@@ -179,6 +179,19 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
   return getScan(db, input.id, input.organizationId);
 }
 
+export async function listExistingScanStageIds(
+  db: AppDb,
+  organizationId: string,
+  stageIds: string[],
+) {
+  if (!stageIds.length) return new Set<string>();
+  const rows = await db
+    .select({ stageId: scans.stageId })
+    .from(scans)
+    .where(and(eq(scans.organizationId, organizationId), inArray(scans.stageId, stageIds)));
+  return new Set(rows.map((row) => row.stageId));
+}
+
 const NON_TERMINAL_STATUSES = ["pending", "running"] as const;
 
 export async function claimScanForRun(db: AppDb, scanId: string, organizationId: string) {
