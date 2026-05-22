@@ -263,6 +263,7 @@ function RecentReviewsSection({
   const discovery = stagedPublishes.lastResult.value;
   const discoveryError = stagedPublishes.error.value;
   const discoveryRefreshing = stagedPublishes.refreshing.value;
+  const startedLabels = discovery?.scans.map(formatStartedScanLabel).filter(Boolean) ?? [];
   const onDiscover = async () => {
     await discoverStagedPublishes(stagedPublishes, scans);
   };
@@ -298,7 +299,9 @@ function RecentReviewsSection({
       {discoveryError ? <Alert tone="critical">{discoveryError}</Alert> : null}
       {discovery && !discoveryError && discovery.created ? (
         <Muted class="text-[13px] m-0">
-          {`Started ${discovery.created} new review${discovery.created === 1 ? "" : "s"} from npm.`}
+          {`Started ${discovery.created} new review${discovery.created === 1 ? "" : "s"} from npm${
+            startedLabels.length ? `: ${startedLabels.slice(0, 3).join(", ")}` : ""
+          }${startedLabels.length > 3 ? `, +${startedLabels.length - 3} more` : ""}.`}
         </Muted>
       ) : null}
       {discovery && !discoveryError && !discovery.created && !discovery.found ? (
@@ -387,6 +390,11 @@ function emptyStateMessage(filter: ScanDecisionFilter): string {
     default:
       return "No reviews yet. Request one above to start building your release history.";
   }
+}
+
+function formatStartedScanLabel(scan: { packageName: string | null; version: string | null }) {
+  if (scan.packageName && scan.version) return `${scan.packageName}@${scan.version}`;
+  return scan.packageName || scan.version || null;
 }
 
 function WorkspaceSetupPanel({
