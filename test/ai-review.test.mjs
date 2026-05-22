@@ -139,29 +139,30 @@ describe("ai review normalization", () => {
       requiresManualReview: false,
     };
     const ai = await analyzeWithAi(
+      reviewerEnv({
+        run: async () => ({
+          id: "chatcmpl-1",
+          object: "chat.completion",
+          created: 0,
+          model: "test-model",
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: JSON.stringify(aiPayload), refusal: null },
+              finish_reason: "stop",
+              logprobs: null,
+            },
+          ],
+        }),
+      }),
+      "test-model",
       {
-        AI_MODEL: "test-model",
-        AI: {
-          run: async () => ({
-            id: "chatcmpl-1",
-            object: "chat.completion",
-            created: 0,
-            model: "test-model",
-            choices: [
-              {
-                index: 0,
-                message: { role: "assistant", content: JSON.stringify(aiPayload), refusal: null },
-                finish_reason: "stop",
-                logprobs: null,
-              },
-            ],
-          }),
-        },
+        files: [],
+        diff: [],
+        packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
+        ruleFindings: [],
+        previousVersionAvailable: true,
       },
-      [],
-      [],
-      {},
-      [],
     );
 
     expect(ai.status).toBe("complete");
@@ -179,24 +180,25 @@ describe("ai review normalization", () => {
       requiresManualReview: true,
     };
     const ai = await analyzeWithAi(
+      reviewerEnv({
+        run: async () => ({
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: aiPayload, refusal: null },
+              finish_reason: "stop",
+            },
+          ],
+        }),
+      }),
+      "test-model",
       {
-        AI_MODEL: "test-model",
-        AI: {
-          run: async () => ({
-            choices: [
-              {
-                index: 0,
-                message: { role: "assistant", content: aiPayload, refusal: null },
-                finish_reason: "stop",
-              },
-            ],
-          }),
-        },
+        files: [],
+        diff: [],
+        packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
+        ruleFindings: [],
+        previousVersionAvailable: true,
       },
-      [],
-      [],
-      {},
-      [],
     );
 
     expect(ai.status).toBe("complete");
