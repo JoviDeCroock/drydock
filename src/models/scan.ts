@@ -39,6 +39,8 @@ export interface ScanListItem {
   decisionReason?: string | null;
   decidedByUserId?: string | null;
   decidedAt?: string | number | Date | null;
+  changedFileCount?: number;
+  findingCount?: number;
   reportVersion?: number | null;
   reportDigest?: string | null;
   startedAt?: string | number | Date | null;

@@ -373,6 +373,8 @@ export interface ListScansResult {
     decisionReason: string | null;
     decidedByUserId: string | null;
     decidedAt: Date | null;
+    changedFileCount: number;
+    findingCount: number;
     reportVersion: number | null;
     reportDigest: string | null;
     startedAt: Date | null;
@@ -427,6 +429,7 @@ export async function listScans(
       decisionReason: scans.decisionReason,
       decidedByUserId: scans.decidedByUserId,
       decidedAt: scans.decidedAt,
+      summaryJson: scans.summaryJson,
       reportVersion: scans.reportVersion,
       reportDigest: scans.reportDigest,
       startedAt: scans.startedAt,
@@ -445,7 +448,54 @@ export async function listScans(
   const nextCursor =
     hasMore && last ? { createdAtMs: new Date(last.createdAt).getTime(), id: last.id } : null;
 
-  return { scans: page, nextCursor };
+  const scanIds = page.map((row) => row.id);
+  if (!scanIds.length) return { scans: [], nextCursor };
+
+  const [files, findings] = await Promise.all([
+    db
+      .select({ scanId: scanFiles.scanId, status: scanFiles.status })
+      .from(scanFiles)
+      .where(inArray(scanFiles.scanId, scanIds)),
+    db
+      .select({ scanId: scanFindings.scanId })
+      .from(scanFindings)
+      .where(inArray(scanFindings.scanId, scanIds)),
+  ]);
+  const changedFileCounts = new Map<string, number>();
+  for (const file of files) {
+    if (!CHANGED_FILE_STATUSES.has(file.status)) continue;
+    changedFileCounts.set(file.scanId, (changedFileCounts.get(file.scanId) ?? 0) + 1);
+  }
+  const findingCounts = new Map<string, number>();
+  for (const finding of findings) {
+    findingCounts.set(finding.scanId, (findingCounts.get(finding.scanId) ?? 0) + 1);
+  }
+
+  return {
+    scans: page.map((row) => {
+      const { summaryJson, ...scan } = row;
+      return {
+        ...scan,
+        changedFileCount: countChangedFiles(summaryJson, changedFileCounts.get(row.id) ?? 0),
+        findingCount: findingCounts.get(row.id) ?? 0,
+      };
+    }),
+    nextCursor,
+  };
+}
+
+const CHANGED_FILE_STATUSES = new Set(["added", "removed", "modified"]);
+
+function countChangedFiles(summaryJson: unknown, fallback: number): number {
+  const summary = summaryJson && typeof summaryJson === "object" ? summaryJson : null;
+  if (!summary || Array.isArray(summary)) return fallback;
+  const diff = (summary as { diff?: unknown }).diff;
+  if (!Array.isArray(diff)) return fallback;
+  return diff.reduce((count, entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return count;
+    const status = (entry as { status?: unknown }).status;
+    return typeof status === "string" && CHANGED_FILE_STATUSES.has(status) ? count + 1 : count;
+  }, 0);
 }
 
 export interface RecordScanDecisionInput {

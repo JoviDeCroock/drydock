@@ -609,18 +609,22 @@ function ScanTable({ scans }: { scans: ScanListItem[] }) {
             <Th>Package</Th>
             <Th>Version</Th>
             <Th>Risk</Th>
+            <Th>Evidence</Th>
             <Th>Status</Th>
             <Th>Decision</Th>
-            <Th>Created</Th>
+            <Th>Updated</Th>
           </tr>
         </thead>
         <tbody>
           {scans.map((scan) => (
             <tr key={scan.id} class="border-b border-border last:border-b-0 hover:bg-surface-2">
               <Td>
-                <a href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}>
-                  {scan.packageName || scan.stageId}
-                </a>
+                <div class="flex flex-col gap-1 min-w-[180px]">
+                  <a href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}>
+                    {scan.packageName || scan.stageId}
+                  </a>
+                  <span class="font-mono text-[11px] text-ink-subtle">stage {scan.stageId}</span>
+                </div>
               </Td>
               <Td class="font-mono text-xs text-ink-muted">
                 {scan.previousVersion || "—"} → {scan.stagedVersion || "—"}
@@ -628,11 +632,18 @@ function ScanTable({ scans }: { scans: ScanListItem[] }) {
               <Td>
                 <Badge tone={severityTone(scan.risk)}>{scan.risk}</Badge>
               </Td>
+              <Td class="font-mono text-xs text-ink-muted">
+                {scan.changedFileCount ?? 0} {pluralize("changed file", scan.changedFileCount ?? 0)}
+                {" · "}
+                {scan.findingCount ?? 0} {pluralize("finding", scan.findingCount ?? 0)}
+              </Td>
               <Td class="font-mono text-xs text-ink-muted">{scan.status}</Td>
               <Td>
                 <DecisionBadge decision={scan.decision} />
               </Td>
-              <Td class="font-mono text-xs text-ink-muted">{formatDate(scan.createdAt)}</Td>
+              <Td class="font-mono text-xs text-ink-muted">
+                {formatDate(scan.completedAt ?? scan.updatedAt ?? scan.createdAt)}
+              </Td>
             </tr>
           ))}
         </tbody>
@@ -663,6 +674,10 @@ function formatDate(value: string | number | Date | null | undefined) {
   if (value === null || value === undefined) return "—";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+}
+
+function pluralize(word: string, count: number) {
+  return count === 1 ? word : `${word}s`;
 }
 
 function ScanFreshnessIndicator({ at }: { at: number }) {

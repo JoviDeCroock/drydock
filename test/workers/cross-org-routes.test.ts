@@ -101,6 +101,62 @@ describe("scans routes enforce organization boundaries", () => {
     expect(intruderBody.scans.map((s) => s.id)).not.toContain(scanId);
   });
 
+  test("GET /scans includes compact evidence counts for each row", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const scanId = `scan_${crypto.randomUUID()}`;
+    const stageId = `stage-${scanId.slice(-12)}`;
+    await createScanJob(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+    });
+    await persistScan(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+      packageJson: { name: "@org/evidence-counts", version: "1.2.3" },
+      risk: "high",
+      status: "complete",
+      summary: {
+        diff: [
+          { path: "package.json", status: "modified" },
+          { path: "README.md", status: "unchanged" },
+          { path: "OLD.md", status: "removed" },
+        ],
+      },
+      ai: null,
+      files: [
+        { path: "package.json", size: 10, sha256: "a", flags: [], textSample: "{}" },
+        { path: "README.md", size: 20, sha256: "b", flags: [], textSample: "docs" },
+      ],
+      diff: [
+        { path: "package.json", status: "modified" },
+        { path: "README.md", status: "unchanged" },
+        { path: "OLD.md", status: "removed" },
+      ],
+      findings: [
+        {
+          severity: "high",
+          file: "package.json",
+          evidence: "postinstall",
+          reason: "install lifecycle hook changed",
+        },
+      ],
+      report: { version: 1, digest: "digest" },
+    });
+
+    const res = await fetchWithSession(buildTestApp(owner), "/api/v1/scans");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      scans: Array<{ id: string; changedFileCount: number; findingCount: number }>;
+    };
+    const row = body.scans.find((scan) => scan.id === scanId);
+    expect(row).toMatchObject({ changedFileCount: 2, findingCount: 1 });
+  });
+
   test("GET /scans lists every scan for a stage id with the newest first", async () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
