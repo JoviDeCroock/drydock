@@ -21,6 +21,7 @@ import {
   Eyebrow,
   Field,
   Input,
+  LinkButton,
   LoadingState,
   MonoDetail,
   Muted,
@@ -209,7 +210,12 @@ function ReviewRequestCard({
       </div>
       {!hasConnection ? (
         <Alert tone="info">
-          Connect npm access in workspace setup before reviewing staged packages.
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>Connect npm access in workspace setup before reviewing staged packages.</span>
+            <LinkButton href="#workspace-setup" variant="secondary" size="sm" class="shrink-0">
+              Open settings
+            </LinkButton>
+          </div>
         </Alert>
       ) : !hasValidatedConnection ? (
         <Alert tone="info">
@@ -390,39 +396,41 @@ function WorkspaceSetupPanel({
 }) {
   const connection = npm.connection.value;
   return (
-    <Card as="section" class="p-0 overflow-hidden">
-      <details open={!connection} class="group">
-        <summary class="list-none cursor-pointer px-5 py-4 transition-colors duration-150 ease-out hover:bg-surface-2 group-open:border-b group-open:border-border">
-          <div class="flex flex-wrap items-center justify-between gap-3">
-            <div class="flex flex-col gap-1.5 min-w-0">
-              <SectionLabel>Workspace setup</SectionLabel>
-              <Muted class="text-[13px] m-0">
-                Manage npm access, credential checks, and workspace safety defaults.
-              </Muted>
-              <MonoDetail
-                parts={[
-                  <span key="connection">npm {connection ? "connected" : "not connected"}</span>,
-                  <span key="evidence">redacted evidence</span>,
-                  <span key="approval">human approval</span>,
-                ]}
-              />
+    <section id="workspace-setup" class="scroll-mt-6">
+      <Card as="div" class="p-0 overflow-hidden">
+        <details open={!connection} class="group">
+          <summary class="list-none cursor-pointer px-5 py-4 transition-colors duration-150 ease-out hover:bg-surface-2 group-open:border-b group-open:border-border">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div class="flex flex-col gap-1.5 min-w-0">
+                <SectionLabel>Workspace setup</SectionLabel>
+                <Muted class="text-[13px] m-0">
+                  Manage npm access, credential checks, and workspace safety defaults.
+                </Muted>
+                <MonoDetail
+                  parts={[
+                    <span key="connection">npm {connection ? "connected" : "not connected"}</span>,
+                    <span key="evidence">redacted evidence</span>,
+                    <span key="approval">human approval</span>,
+                  ]}
+                />
+              </div>
+              <div class="flex flex-wrap items-center justify-end gap-2">
+                <Badge tone={connection ? "ok" : "info"}>
+                  {connection ? connection.validationStatus : "connect npm"}
+                </Badge>
+                <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+                  <span class="group-open:hidden">open settings</span>
+                  <span class="hidden group-open:inline">close settings</span>
+                </span>
+              </div>
             </div>
-            <div class="flex flex-wrap items-center justify-end gap-2">
-              <Badge tone={connection ? "ok" : "info"}>
-                {connection ? connection.validationStatus : "connect npm"}
-              </Badge>
-              <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
-                <span class="group-open:hidden">show</span>
-                <span class="hidden group-open:inline">hide</span>
-              </span>
-            </div>
+          </summary>
+          <div class="p-5">
+            <NpmConnectionCard npm={npm} />
           </div>
-        </summary>
-        <div class="p-5">
-          <NpmConnectionCard npm={npm} />
-        </div>
-      </details>
-    </Card>
+        </details>
+      </Card>
+    </section>
   );
 }
 

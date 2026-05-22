@@ -75,7 +75,7 @@ Use cards for interactive containment and lists that need table-like edges. Pref
 - Open staged publishes are not displayed directly. Discovery starts scan records for newly found stage IDs, and those records appear in Recent reviews.
 - The recent reviews list paginates with `GET /api/v1/scans?cursor=…&filter=…`. The default filter is `undecided`; filter chips (Undecided / Approved / Blocked / All) sit above the table and re-fetch on change. Retries appear as separate rows — the old "newest-per-stage" dedup is gone now that decisions and pagination both depend on a one-row-per-scan model.
 - The scan detail page renders a publish decision panel above the diff workbench whenever the scan is `complete`. Approve / Block buttons record a decision via `POST /api/v1/scans/:id/decision`; a recorded decision is displayed with timestamp, optional reason, and a "Change decision" affordance that re-opens the form. The dashboard exposes the same decision as a badge column.
-- Connected workspace setup is collapsed by default, but the closed row must look clickable and include an explicit “Open settings” affordance.
+- When npm access is missing, the blocked request-review card links directly to workspace setup. Connected workspace setup is collapsed by default, but the closed row must look clickable and include an explicit “Open settings” affordance.
 - Connection metadata is displayed as compact label/value rows, while the editable credential form remains inside a card.
 - Marketing hero copy is unboxed; feature claims use cards below the headline.
 
