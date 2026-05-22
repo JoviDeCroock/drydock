@@ -251,7 +251,7 @@ Exit criteria:
 - Multiple AI provider abstraction.
 - Deep native/binary malware analysis.
 - Automated publish approval, which is intentionally out of scope.
-- Private beta operations gating: production Queues/KV/D1/secrets configuration, scan-duration / failure / retry metrics + logging, email verification + Turnstile if `PUBLIC_SIGNUPS_ENABLED=true`, endpoint rate limits, custom-registry abuse controls if `CUSTOM_NPM_REGISTRIES_ENABLED=true`, and a deployment + incident-response checklist. Defer until product surface stabilizes after multi-org and the diff-first review UX land.
+- Private beta operations gating: production Queues/KV/D1/secrets configuration, scan-duration / failure / retry metrics + logging, email verification + Turnstile, endpoint rate limits, custom-registry abuse controls, and a deployment + incident-response checklist. Defer until product surface stabilizes after multi-org and the diff-first review UX land.
 - Scan/report deletion and a documented retention policy for persisted redacted text samples. Defer alongside private beta operations.
 
 ## Suggested next implementation slice

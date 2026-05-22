@@ -48,11 +48,6 @@ npmConnectionRoutes.post("/", async (c) => {
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : "invalid registry URL" }, 400);
   }
-  const defaultRegistryUrl = normalizeRegistryUrl(c.env.NPM_REGISTRY);
-  if (registryUrl !== defaultRegistryUrl && c.env.CUSTOM_NPM_REGISTRIES_ENABLED !== "true") {
-    return c.json({ error: "custom npm registries are not enabled for this deployment" }, 400);
-  }
-
   try {
     const db = createDb(c.env.DB);
     const session = c.get("authSession");

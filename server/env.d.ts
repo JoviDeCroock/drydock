@@ -12,8 +12,6 @@ declare global {
       BETTER_AUTH_SECRET: string;
       BETTER_AUTH_URL?: string;
       AUTH_REQUIRED?: string;
-      PUBLIC_SIGNUPS_ENABLED?: string;
-      CUSTOM_NPM_REGISTRIES_ENABLED?: string;
     }
   }
 

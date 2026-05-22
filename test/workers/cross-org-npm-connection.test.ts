@@ -108,7 +108,7 @@ describe("npm-connection routes enforce organization boundaries", () => {
     expect(ownerConnection?.tokenCiphertext).not.toBe(intruderConnection?.tokenCiphertext);
   });
 
-  test("POST /npm-connection rejects custom registries unless the deployment enables them", async () => {
+  test("POST /npm-connection accepts custom registries for organization connections", async () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
 
@@ -118,10 +118,9 @@ describe("npm-connection routes enforce organization boundaries", () => {
       registryUrl: "https://registry.example.com",
     });
 
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("custom npm registries are not enabled for this deployment");
-    await expect(getNpmConnection(db, owner.organizationId)).resolves.toBeNull();
+    expect(res.status).toBe(200);
+    const connection = await getNpmConnection(db, owner.organizationId);
+    expect(connection?.registryUrl).toBe("https://registry.example.com");
   });
 
   test("DELETE /npm-connection only removes the caller's connection", async () => {
