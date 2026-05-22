@@ -30,7 +30,6 @@ export default function DashboardPage() {
   const request = useModel(ScanRequestModel);
   const stagedPublishes = useModel(StagedPublishesModel);
   const sessionChecked = useSignal(false);
-  const stagedPublishesConnectionId = useSignal<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,19 +49,10 @@ export default function DashboardPage() {
   }, []);
 
   useSignalEffect(() => {
-    const checked = sessionChecked.value;
-    const connectionId = npm.connection.value?.id ?? null;
-    const refreshing = stagedPublishes.refreshing.value;
-    const loadedConnectionId = stagedPublishesConnectionId.value;
-    if (!checked) return;
-    if (!connectionId) {
-      stagedPublishesConnectionId.value = null;
+    if (!sessionChecked.value) return;
+    if (!npm.connection.value?.id) {
       stagedPublishes.reset();
-      return;
     }
-    if (refreshing || loadedConnectionId === connectionId) return;
-    stagedPublishesConnectionId.value = connectionId;
-    void discoverStagedPublishes(stagedPublishes, scans);
   });
 
   useSignalEffect(() => {
