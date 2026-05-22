@@ -71,6 +71,8 @@ Use cards for interactive containment and lists that need table-like edges. Pref
 - Saved scan reports and immediate review results use badge rows + mono metadata instead of grids of `SummaryCard`s.
 - Empty findings do not get full bordered panels; represent them as compact badges or `EmptyLine`s inside an existing section.
 - Dashboard order follows user intent: request a review first, recent reviews second, workspace setup last.
+- Open staged publishes are not displayed directly. Discovery starts scan records for newly found stage IDs, and those records appear in Recent reviews.
+- The recent reviews list returns only the newest scan per stage ID; repeated reviews of the same staged publish should not create duplicate dashboard rows.
 - Connected workspace setup is collapsed by default, but the closed row must look clickable and include an explicit “Open settings” affordance.
 - Connection metadata is displayed as compact label/value rows, while the editable credential form remains inside a card.
 - Marketing hero copy is unboxed; feature claims use cards below the headline.

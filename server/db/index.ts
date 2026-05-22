@@ -179,6 +179,19 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
   return getScan(db, input.id, input.organizationId);
 }
 
+export async function listExistingScanStageIds(
+  db: AppDb,
+  organizationId: string,
+  stageIds: string[],
+) {
+  if (!stageIds.length) return new Set<string>();
+  const rows = await db
+    .select({ stageId: scans.stageId })
+    .from(scans)
+    .where(and(eq(scans.organizationId, organizationId), inArray(scans.stageId, stageIds)));
+  return new Set(rows.map((row) => row.stageId));
+}
+
 const NON_TERMINAL_STATUSES = ["pending", "running"] as const;
 
 export async function claimScanForRun(db: AppDb, scanId: string, organizationId: string) {
@@ -321,7 +334,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
 }
 
 export async function listScans(db: AppDb, organizationId: string) {
-  return db
+  const rows = await db
     .select({
       id: scans.id,
       stageId: scans.stageId,
@@ -342,7 +355,17 @@ export async function listScans(db: AppDb, organizationId: string) {
     .from(scans)
     .where(eq(scans.organizationId, organizationId))
     .orderBy(desc(scans.createdAt))
-    .limit(50);
+    .limit(100);
+
+  const unique: typeof rows = [];
+  const seenStageIds = new Set<string>();
+  for (const row of rows) {
+    if (seenStageIds.has(row.stageId)) continue;
+    seenStageIds.add(row.stageId);
+    unique.push(row);
+    if (unique.length === 50) break;
+  }
+  return unique;
 }
 
 export async function getScan(db: AppDb, id: string, organizationId: string) {

@@ -5,6 +5,7 @@ import { useLocation } from "preact-iso";
 import { sessionModel } from "../../models/auth";
 import { NpmConnectionModel } from "../../models/npm-connection";
 import { ScanListModel, ScanRequestModel, type ScanListItem } from "../../models/scan";
+import { StagedPublishesModel } from "../../models/staged-publishes";
 import {
   Alert,
   Badge,
@@ -27,7 +28,9 @@ export default function DashboardPage() {
   const scans = useModel(ScanListModel);
   const npm = useModel(NpmConnectionModel);
   const request = useModel(ScanRequestModel);
+  const stagedPublishes = useModel(StagedPublishesModel);
   const sessionChecked = useSignal(false);
+  const stagedPublishesConnectionId = useSignal<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,6 +48,22 @@ export default function DashboardPage() {
       cancelled = true;
     };
   }, []);
+
+  useSignalEffect(() => {
+    const checked = sessionChecked.value;
+    const connectionId = npm.connection.value?.id ?? null;
+    const refreshing = stagedPublishes.refreshing.value;
+    const loadedConnectionId = stagedPublishesConnectionId.value;
+    if (!checked) return;
+    if (!connectionId) {
+      stagedPublishesConnectionId.value = null;
+      stagedPublishes.reset();
+      return;
+    }
+    if (refreshing || loadedConnectionId === connectionId) return;
+    stagedPublishesConnectionId.value = connectionId;
+    void discoverStagedPublishes(stagedPublishes, scans);
+  });
 
   useSignalEffect(() => {
     if (request.status.value !== "done") return;
@@ -100,11 +119,19 @@ export default function DashboardPage() {
 
       <ReviewRequestCard npm={npm} request={request} onSubmit={onSubmit} />
 
-      <RecentReviewsSection scans={scans} />
+      <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
 
       <WorkspaceSetupPanel npm={npm} />
     </PageShell>
   );
+}
+
+async function discoverStagedPublishes(
+  stagedPublishes: ReturnType<typeof useModel<typeof StagedPublishesModel.prototype>>,
+  scans: ReturnType<typeof useModel<typeof ScanListModel.prototype>>,
+) {
+  await stagedPublishes.discover();
+  await scans.refresh();
 }
 
 function ReviewRequestCard({
@@ -169,13 +196,34 @@ function ReviewRequestCard({
 
 function RecentReviewsSection({
   scans,
+  stagedPublishes,
+  npm,
 }: {
   scans: ReturnType<typeof useModel<typeof ScanListModel.prototype>>;
+  stagedPublishes: ReturnType<typeof useModel<typeof StagedPublishesModel.prototype>>;
+  npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
 }) {
+  const connected = npm.isConnected.value;
+  const discovery = stagedPublishes.lastResult.value;
+  const discoveryError = stagedPublishes.error.value;
+  const discoveryRefreshing = stagedPublishes.refreshing.value;
+  const onDiscover = async () => {
+    await discoverStagedPublishes(stagedPublishes, scans);
+  };
+
   return (
     <section class="flex flex-col gap-3">
       <div class="flex items-center gap-3">
         <SectionLabel class="flex-1 min-w-0">Recent reviews</SectionLabel>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => void onDiscover()}
+          class="shrink-0"
+          disabled={discoveryRefreshing || !connected}
+        >
+          {discoveryRefreshing ? "Checking…" : "Check npm"}
+        </Button>
         <Button
           variant="secondary"
           size="sm"
@@ -186,6 +234,16 @@ function RecentReviewsSection({
           {scans.refreshing.value ? "Refreshing…" : "Refresh"}
         </Button>
       </div>
+      {discoveryError ? <Alert tone="critical">{discoveryError}</Alert> : null}
+      {discovery && !discoveryError ? (
+        <Muted class="text-[13px] m-0">
+          {discovery.created
+            ? `Started ${discovery.created} new review${discovery.created === 1 ? "" : "s"} from npm.`
+            : discovery.found
+              ? "No new staged publishes need review."
+              : "No open staged publishes found."}
+        </Muted>
+      ) : null}
       <Card class="p-0 overflow-hidden">
         {scans.scans.value.length ? (
           <ScanTable scans={scans.scans.value} />
@@ -445,7 +503,8 @@ function Td({ children, class: className }: { children: ComponentChildren; class
   return <td class={`px-4 py-2.5 align-middle ${className || ""}`}>{children}</td>;
 }
 
-function formatDate(value: ScanListItem["createdAt"]) {
+function formatDate(value: string | number | Date | null | undefined) {
+  if (value === null || value === undefined) return "—";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
 }
