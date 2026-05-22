@@ -445,7 +445,13 @@ function NpmConnectionCard({
           />
         </Field>
         <Button type="submit" disabled={busy || !token.trim()} class="shrink-0">
-          {status === "saving" ? "Saving…" : connection ? "Rotate" : "Save"}
+          {status === "saving"
+            ? "Saving…"
+            : status === "validating"
+              ? "Checking…"
+              : connection
+                ? "Rotate"
+                : "Save"}
         </Button>
       </form>
 
@@ -477,8 +483,8 @@ function NpmConnectionCard({
       </div>
 
       <Muted class="text-xs">
-        Without a stage ID, we confirm the token is accepted by npm. Add a stage ID to prove it can
-        read that staged release; we do not keep the release archive.
+        Saving runs the npm auth check automatically. Add a stage ID to prove the token can read
+        that staged release; we do not keep the release archive.
       </Muted>
 
       {error ? <Alert tone="critical">{error}</Alert> : null}

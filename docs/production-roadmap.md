@@ -153,7 +153,7 @@ Tasks:
 - Add a scan lifecycle timeline: queued, download staged tarball, download previous version, parse, deterministic review, AI review, report generated.
 - Add retry failed scan and cancel pending/running scan flows where platform semantics allow it.
 - Improve file explorer ergonomics with search/filter, changed-files-only default, and clearer bounded text sample labeling.
-- Add first-run onboarding: connect npm token, validate it, paste stage ID, review report.
+- Add first-run onboarding: connect npm token, wait for automatic validation, paste stage ID, review report.
 - Add in-app npm token setup guidance with least-privilege recommendations.
 
 Exit criteria:

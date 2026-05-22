@@ -98,22 +98,23 @@ export const NpmConnectionModel = createModel(() => {
       this.status.value = "saving";
       this.error.value = null;
       try {
-        const data = await apiFetch<{ connection: PublicNpmConnection | null }>(
-          "/api/v1/npm-connection",
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              token: trimmedToken,
-              label: this.label.value.trim() || DEFAULT_LABEL,
-              registryUrl: this.registry.value.trim() || DEFAULT_REGISTRY,
-            }),
-          },
-        );
+        const data = await saveNpmConnection({
+          token: trimmedToken,
+          label: this.label.value.trim() || DEFAULT_LABEL,
+          registryUrl: this.registry.value.trim() || DEFAULT_REGISTRY,
+        });
         this.applyConnection(data.connection);
-        this.token.value = "";
+        if (data.connection) {
+          this.status.value = "validating";
+          const validation = await validateNpmConnection();
+          this.applyConnection(validation.connection);
+          if (!validation.validation.ok) {
+            this.error.value = "Saved token, but npm validation reported invalid access.";
+          }
+        }
       } catch (err) {
         this.error.value = err instanceof Error ? err.message : String(err);
+        await this.load();
       } finally {
         this.status.value = "idle";
       }
@@ -124,15 +125,11 @@ export const NpmConnectionModel = createModel(() => {
       this.error.value = null;
       try {
         const stageId = this.validationStageId.value.trim() || undefined;
-        const data = await apiFetch<{
-          validation: NpmCredentialValidation;
-          connection: PublicNpmConnection | null;
-        }>("/api/v1/npm-connection/validate", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ stageId }),
-        });
+        const data = await validateNpmConnection(stageId);
         this.applyConnection(data.connection);
+        if (!data.validation.ok) {
+          this.error.value = "Npm validation reported invalid access.";
+        }
       } catch (err) {
         this.error.value = err instanceof Error ? err.message : String(err);
         await this.load();
@@ -156,3 +153,29 @@ export const NpmConnectionModel = createModel(() => {
     },
   };
 });
+
+function saveNpmConnection(input: {
+  token: string;
+  label: string;
+  registryUrl: string;
+}): Promise<{ connection: PublicNpmConnection | null }> {
+  return apiFetch<{ connection: PublicNpmConnection | null }>("/api/v1/npm-connection", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+function validateNpmConnection(stageId?: string): Promise<{
+  validation: NpmCredentialValidation;
+  connection: PublicNpmConnection | null;
+}> {
+  return apiFetch<{
+    validation: NpmCredentialValidation;
+    connection: PublicNpmConnection | null;
+  }>("/api/v1/npm-connection/validate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ stageId }),
+  });
+}
