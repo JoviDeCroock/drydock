@@ -5,6 +5,7 @@ import { useLocation } from "preact-iso";
 import { sessionModel } from "../../models/auth";
 import { NpmConnectionModel } from "../../models/npm-connection";
 import { ScanListModel, ScanRequestModel, type ScanListItem } from "../../models/scan";
+import { StagedPublishesModel, type StagedPublishItem } from "../../models/staged-publishes";
 import {
   Alert,
   Badge,
@@ -27,6 +28,7 @@ export default function DashboardPage() {
   const scans = useModel(ScanListModel);
   const npm = useModel(NpmConnectionModel);
   const request = useModel(ScanRequestModel);
+  const openStages = useModel(StagedPublishesModel);
   const sessionChecked = useSignal(false);
 
   useEffect(() => {
@@ -40,6 +42,8 @@ export default function DashboardPage() {
       }
       sessionChecked.value = true;
       await Promise.all([scans.refresh(), npm.load()]);
+      if (cancelled) return;
+      if (npm.isConnected.value) await openStages.refresh();
     })();
     return () => {
       cancelled = true;
@@ -96,6 +100,13 @@ export default function DashboardPage() {
           </Button>
         </div>
       </header>
+
+      <OpenStagedPublishesSection
+        npm={npm}
+        openStages={openStages}
+        scans={scans}
+        request={request}
+      />
 
       <ReviewRequestCard npm={npm} request={request} onSubmit={onSubmit} />
 
@@ -163,6 +174,144 @@ function ReviewRequestCard({
       </form>
       {request.error.value ? <Alert tone="critical">{request.error.value}</Alert> : null}
     </Card>
+  );
+}
+
+function OpenStagedPublishesSection({
+  npm,
+  openStages,
+  scans,
+  request,
+}: {
+  npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
+  openStages: ReturnType<typeof useModel<typeof StagedPublishesModel.prototype>>;
+  scans: ReturnType<typeof useModel<typeof ScanListModel.prototype>>;
+  request: ReturnType<typeof useModel<typeof ScanRequestModel.prototype>>;
+}) {
+  const connected = npm.isConnected.value;
+  const refreshing = openStages.refreshing.value;
+  const loaded = openStages.loaded.value;
+  const items = openStages.items.value;
+  const fetchError = openStages.error.value;
+  const requestStatus = request.status.value;
+  const pendingStageId = requestStatus === "scanning" ? request.stageId.value : null;
+  const scansByStageId = new Map<string, ScanListItem>(
+    scans.scans.value.map((scan: ScanListItem) => [scan.stageId, scan]),
+  );
+
+  const onScan = async (stageId: string) => {
+    request.stageId.value = stageId;
+    await request.submit();
+  };
+
+  return (
+    <section class="flex flex-col gap-3">
+      <div class="flex items-center gap-3">
+        <SectionLabel class="flex-1 min-w-0">Open staged publishes</SectionLabel>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => void openStages.refresh()}
+          class="shrink-0"
+          disabled={refreshing || !connected}
+        >
+          {refreshing ? "Refreshing…" : "Refresh"}
+        </Button>
+      </div>
+      <Card class="p-0 overflow-hidden">
+        {!connected ? (
+          <div class="p-5">
+            <EmptyLine>
+              Connect npm access in workspace setup to list staged publishes for this org.
+            </EmptyLine>
+          </div>
+        ) : !loaded ? (
+          <div class="p-5">
+            <LoadingLine>Loading staged publishes…</LoadingLine>
+          </div>
+        ) : fetchError ? (
+          <div class="p-5">
+            <Alert tone="critical">{fetchError}</Alert>
+          </div>
+        ) : items.length ? (
+          <StagedPublishesTable
+            items={items}
+            scansByStageId={scansByStageId}
+            pendingStageId={pendingStageId}
+            onScan={onScan}
+          />
+        ) : (
+          <div class="p-5">
+            <EmptyLine>
+              No open staged publishes. New stages will appear here once the registry returns them.
+            </EmptyLine>
+          </div>
+        )}
+      </Card>
+    </section>
+  );
+}
+
+function StagedPublishesTable({
+  items,
+  scansByStageId,
+  pendingStageId,
+  onScan,
+}: {
+  items: StagedPublishItem[];
+  scansByStageId: Map<string, ScanListItem>;
+  pendingStageId: string | null;
+  onScan: (stageId: string) => Promise<void> | void;
+}) {
+  return (
+    <div class="overflow-x-auto">
+      <table class="w-full border-collapse text-[13px]">
+        <thead>
+          <tr class="border-b border-border bg-surface-2">
+            <Th>Package</Th>
+            <Th>Version</Th>
+            <Th>Tag</Th>
+            <Th>Staged by</Th>
+            <Th>Staged</Th>
+            <Th>Action</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => {
+            const existingScan = scansByStageId.get(item.id);
+            const isPending = pendingStageId === item.id;
+            return (
+              <tr key={item.id} class="border-b border-border last:border-b-0 hover:bg-surface-2">
+                <Td>{item.packageName || item.id}</Td>
+                <Td class="font-mono text-xs text-ink-muted">{item.version || "—"}</Td>
+                <Td class="font-mono text-xs text-ink-muted">{item.tag || "—"}</Td>
+                <Td class="font-mono text-xs text-ink-muted">{item.actor || "—"}</Td>
+                <Td class="font-mono text-xs text-ink-muted">{formatDate(item.createdAt)}</Td>
+                <Td>
+                  {existingScan ? (
+                    <a
+                      href={`/dashboard/scans/${encodeURIComponent(existingScan.id)}`}
+                      class="font-mono text-xs"
+                    >
+                      View review
+                    </a>
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void onScan(item.id)}
+                      disabled={isPending || pendingStageId !== null}
+                    >
+                      {isPending ? "Scanning…" : "Scan"}
+                    </Button>
+                  )}
+                </Td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -444,7 +593,8 @@ function Td({ children, class: className }: { children: ComponentChildren; class
   return <td class={`px-4 py-2.5 align-middle ${className || ""}`}>{children}</td>;
 }
 
-function formatDate(value: ScanListItem["createdAt"]) {
+function formatDate(value: string | number | Date | null | undefined) {
+  if (value === null || value === undefined) return "—";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
 }

@@ -11,6 +11,7 @@ import {
 import { npmConnectionRoutes } from "./routes/npm-connection";
 import { scanRoutes } from "./routes/scan";
 import { scansRoutes } from "./routes/scans";
+import { stagedPublishesRoutes } from "./routes/staged-publishes";
 import type { Bindings, Variables } from "./types";
 
 export { NpmStageGateway } from "./lib/sandbox";
@@ -166,6 +167,7 @@ app.get("/api", (c) =>
       compatibilityScan: "POST /api/v1/scan { stageId }",
       scans: "GET /api/v1/scans",
       scanDetail: "GET /api/v1/scans/:id",
+      stagedPublishes: "GET /api/v1/staged-publishes",
       npmConnection: "GET/POST/DELETE /api/v1/npm-connection; POST /api/v1/npm-connection/validate",
       health: "GET /api/health",
     },
@@ -177,6 +179,7 @@ app.get("/api", (c) =>
 app.route("/api/v1/npm-connection", npmConnectionRoutes);
 app.route("/api/v1/scan", scanRoutes);
 app.route("/api/v1/scans", scansRoutes);
+app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
 
 app.notFound((c) => c.json({ error: "not found" }, 404));
 
