@@ -3,6 +3,8 @@ import { useSignal } from "@preact/signals";
 import type { Organization } from "../models/organization";
 import { Alert } from "./Alert";
 import { Button } from "./Button";
+import { Dialog } from "./Dialog";
+import { Field } from "./Field";
 import { Input } from "./Input";
 import { cn } from "./cn";
 
@@ -31,13 +33,22 @@ export function OrgSwitcher({
     if (value && value !== activeOrganizationId) void onActivate(value);
   };
 
+  const openCreate = () => {
+    draftName.value = "";
+    creating.value = true;
+  };
+
+  const closeCreate = () => {
+    creating.value = false;
+    draftName.value = "";
+  };
+
   const submitCreate = async (event: Event) => {
     event.preventDefault();
     const name = draftName.value.trim();
     if (!name) return;
     await onCreate(name);
-    draftName.value = "";
-    creating.value = false;
+    closeCreate();
   };
 
   return (
@@ -62,40 +73,53 @@ export function OrgSwitcher({
             <option key={org.id} value={org.id}>
               {org.name}
               {org.isPersonal ? " (personal)" : ""}
-              {org.npmConnectionConfigured ? "" : " — no npm token"}
             </option>
           ))}
         </select>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => (creating.value = !creating.value)}
-          disabled={busy}
-          class="shrink-0"
-        >
-          {creating.value ? "Cancel" : "New organization"}
+        <Button variant="secondary" size="sm" onClick={openCreate} disabled={busy} class="shrink-0">
+          New organization
         </Button>
       </div>
 
-      {creating.value ? (
-        <form class="flex flex-wrap items-center gap-2" onSubmit={submitCreate}>
-          <Input
-            type="text"
-            value={draftName.value}
-            placeholder="acme-frontend"
-            onInput={(e) => (draftName.value = (e.target as HTMLInputElement).value)}
-            disabled={busy}
-            autoComplete="off"
-            spellcheck={false}
-            class="min-w-[220px]"
-          />
-          <Button type="submit" size="sm" disabled={busy || !draftName.value.trim()}>
-            {busy ? "Creating…" : "Create"}
-          </Button>
-        </form>
-      ) : null}
-
       {error ? <Alert tone="critical">{error}</Alert> : null}
+
+      <Dialog
+        open={creating.value}
+        onClose={closeCreate}
+        title="New organization"
+        description="Create a workspace for a team or product. You can add an npm token afterwards."
+        footer={
+          <>
+            <Button variant="secondary" size="sm" onClick={closeCreate} disabled={busy}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              size="sm"
+              form="org-create-form"
+              disabled={busy || !draftName.value.trim()}
+            >
+              {busy ? "Creating…" : "Create"}
+            </Button>
+          </>
+        }
+      >
+        <form id="org-create-form" onSubmit={submitCreate} class="flex flex-col gap-3">
+          <Field label="Name" for="orgName">
+            <Input
+              id="orgName"
+              type="text"
+              value={draftName.value}
+              placeholder="acme-frontend"
+              onInput={(e) => (draftName.value = (e.target as HTMLInputElement).value)}
+              disabled={busy}
+              autoComplete="off"
+              spellcheck={false}
+              autofocus
+            />
+          </Field>
+        </form>
+      </Dialog>
     </div>
   );
 }
