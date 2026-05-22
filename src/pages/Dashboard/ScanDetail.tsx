@@ -243,7 +243,7 @@ export default function ScanDetailPage() {
             <section class="flex flex-col gap-3">
               <SectionLabel>Risk signals</SectionLabel>
               <ul class="list-none p-0 m-0 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                {detail.findings.map((finding) => (
+                {sortFindingsBySeverity(detail.findings).map((finding) => (
                   <FindingCard
                     key={finding.id}
                     severity={finding.severity}
@@ -451,6 +451,23 @@ function ReportOverview({
       {findingTotal ? <SeverityBar counts={severityCounts} class="max-w-[520px]" /> : null}
     </section>
   );
+}
+
+const SEVERITY_RANK: Record<SeverityKey, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+  info: 4,
+  ok: 5,
+};
+
+function sortFindingsBySeverity<T extends { severity?: string }>(findings: T[]): T[] {
+  return findings.slice().sort((a, b) => {
+    const aRank = SEVERITY_RANK[normalizeSeverityKey(a.severity) ?? "info"] ?? SEVERITY_RANK.info;
+    const bRank = SEVERITY_RANK[normalizeSeverityKey(b.severity) ?? "info"] ?? SEVERITY_RANK.info;
+    return aRank - bRank;
+  });
 }
 
 function countSeverities(findings: Array<{ severity?: string }>): SeverityCounts {
