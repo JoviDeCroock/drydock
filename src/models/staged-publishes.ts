@@ -12,18 +12,21 @@ export function startStagedPublishScans(): Promise<StagedPublishesScanResponse> 
 
 export const StagedPublishesModel = createModel(() => {
   const lastResult = signal<StagedPublishesScanResponse | null>(null);
+  const lastDiscoveryAt = signal<number | null>(null);
   const loaded = signal(false);
   const refreshing = signal(false);
   const error = signal<string | null>(null);
 
   return {
     lastResult,
+    lastDiscoveryAt,
     loaded,
     refreshing,
     error,
 
     reset(): void {
       this.lastResult.value = null;
+      this.lastDiscoveryAt.value = null;
       this.loaded.value = false;
       this.error.value = null;
     },
@@ -33,6 +36,7 @@ export const StagedPublishesModel = createModel(() => {
       try {
         const result = await startStagedPublishScans();
         this.lastResult.value = result;
+        this.lastDiscoveryAt.value = Date.now();
         this.error.value = null;
         return result;
       } catch (err) {

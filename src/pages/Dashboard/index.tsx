@@ -211,19 +211,24 @@ function RecentReviewsSection({
     await discoverStagedPublishes(stagedPublishes, scans);
   };
 
+  const discoveredAt = stagedPublishes.lastDiscoveryAt.value;
+  const showFreshness = discoveredAt !== null && !discoveryError && !discoveryRefreshing;
+
   return (
     <section class="flex flex-col gap-3">
       <div class="flex items-center gap-3">
         <SectionLabel class="flex-1 min-w-0">Recent reviews</SectionLabel>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => void onDiscover()}
-          class="shrink-0"
-          disabled={discoveryRefreshing || !connected}
-        >
-          {discoveryRefreshing ? "Checking…" : "Check npm"}
-        </Button>
+        <div class="flex items-center gap-2 shrink-0">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void onDiscover()}
+            disabled={discoveryRefreshing || !connected}
+          >
+            {discoveryRefreshing ? "Checking…" : "Check npm"}
+          </Button>
+          {showFreshness ? <ScanFreshnessIndicator at={discoveredAt} /> : null}
+        </div>
         <Button
           variant="secondary"
           size="sm"
@@ -235,14 +240,13 @@ function RecentReviewsSection({
         </Button>
       </div>
       {discoveryError ? <Alert tone="critical">{discoveryError}</Alert> : null}
-      {discovery && !discoveryError ? (
+      {discovery && !discoveryError && discovery.created ? (
         <Muted class="text-[13px] m-0">
-          {discovery.created
-            ? `Started ${discovery.created} new review${discovery.created === 1 ? "" : "s"} from npm.`
-            : discovery.found
-              ? "No new staged publishes need review."
-              : "No open staged publishes found."}
+          {`Started ${discovery.created} new review${discovery.created === 1 ? "" : "s"} from npm.`}
         </Muted>
+      ) : null}
+      {discovery && !discoveryError && !discovery.created && !discovery.found ? (
+        <Muted class="text-[13px] m-0">No open staged publishes found.</Muted>
       ) : null}
       <Card class="p-0 overflow-hidden">
         {scans.scans.value.length ? (
@@ -507,4 +511,36 @@ function formatDate(value: string | number | Date | null | undefined) {
   if (value === null || value === undefined) return "—";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+}
+
+function ScanFreshnessIndicator({ at }: { at: number }) {
+  const now = useSignal(Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      now.value = Date.now();
+    }, 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+  const label = `scanned ${formatRelativeTime(at, now.value)}`;
+  return (
+    <span
+      class="font-mono text-[14px] leading-none text-ok cursor-help select-none"
+      title={label}
+      aria-label={label}
+    >
+      ✓
+    </span>
+  );
+}
+
+function formatRelativeTime(at: number, now: number): string {
+  const diff = Math.max(0, now - at);
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 45) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
 }
