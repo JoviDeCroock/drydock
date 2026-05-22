@@ -31,6 +31,7 @@ export default function DashboardPage() {
   const openStages = useModel(StagedPublishesModel);
   const sessionChecked = useSignal(false);
   const stagedPublishesConnectionId = useSignal<string | null>(null);
+  const openReportAfterSubmit = useSignal(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,15 +69,20 @@ export default function DashboardPage() {
   });
 
   useSignalEffect(() => {
-    if (request.status.value !== "done") return;
+    const status = request.status.value;
     const id = request.lastResult.value?.scan.id;
+    const shouldOpenReport = openReportAfterSubmit.value;
+    if (status !== "done") return;
     if (!id) return;
     void scans.refresh();
-    location.route(`/dashboard/scans/${encodeURIComponent(id)}`);
+    if (shouldOpenReport) {
+      location.route(`/dashboard/scans/${encodeURIComponent(id)}`);
+    }
   });
 
   const onSubmit = async (event: Event) => {
     event.preventDefault();
+    openReportAfterSubmit.value = true;
     await request.submit();
   };
 
@@ -123,6 +129,7 @@ export default function DashboardPage() {
         openStages={openStages}
         scans={scans}
         request={request}
+        openReportAfterSubmit={openReportAfterSubmit}
       />
 
       <ReviewRequestCard npm={npm} request={request} onSubmit={onSubmit} />
@@ -199,11 +206,13 @@ function OpenStagedPublishesSection({
   openStages,
   scans,
   request,
+  openReportAfterSubmit,
 }: {
   npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
   openStages: ReturnType<typeof useModel<typeof StagedPublishesModel.prototype>>;
   scans: ReturnType<typeof useModel<typeof ScanListModel.prototype>>;
   request: ReturnType<typeof useModel<typeof ScanRequestModel.prototype>>;
+  openReportAfterSubmit: { value: boolean };
 }) {
   const connected = npm.isConnected.value;
   const refreshing = openStages.refreshing.value;
@@ -217,6 +226,7 @@ function OpenStagedPublishesSection({
   );
 
   const onScan = async (stageId: string) => {
+    openReportAfterSubmit.value = false;
     request.stageId.value = stageId;
     await request.submit();
   };
@@ -305,23 +315,14 @@ function StagedPublishesTable({
                 <Td class="font-mono text-xs text-ink-muted">{item.actor || "—"}</Td>
                 <Td class="font-mono text-xs text-ink-muted">{formatDate(item.createdAt)}</Td>
                 <Td>
-                  {existingScan ? (
-                    <a
-                      href={`/dashboard/scans/${encodeURIComponent(existingScan.id)}`}
-                      class="font-mono text-xs"
-                    >
-                      View review
-                    </a>
-                  ) : (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => void onScan(item.id)}
-                      disabled={isPending || pendingStageId !== null}
-                    >
-                      {isPending ? "Scanning…" : "Scan"}
-                    </Button>
-                  )}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void onScan(item.id)}
+                    disabled={isPending || pendingStageId !== null}
+                  >
+                    {isPending ? "Scanning…" : existingScan ? "Scan again" : "Scan"}
+                  </Button>
                 </Td>
               </tr>
             );
