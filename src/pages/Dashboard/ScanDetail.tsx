@@ -17,6 +17,7 @@ import {
   FindingCard,
   FindingRow,
   LoadingLine,
+  LoadingState,
   MonoDetail,
   PageShell,
   SectionLabel,
@@ -147,7 +148,8 @@ export default function ScanDetailPage() {
   if (!sessionChecked.value) {
     return (
       <PageShell>
-        <LoadingLine>Opening review</LoadingLine>
+        <ScanDetailHeader />
+        <LoadingState title="Opening review" detail="confirming session · fetching report" />
       </PageShell>
     );
   }
@@ -167,29 +169,7 @@ export default function ScanDetailPage() {
 
   return (
     <PageShell>
-      <header class="flex flex-col gap-2">
-        <a href="/dashboard" class="text-[13px] text-ink-muted hover:text-ink no-underline">
-          ← Reviews
-        </a>
-        <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">
-          {detail?.scan.packageName || "Release review"}
-        </h1>
-        {detail ? (
-          <MonoDetail
-            parts={[
-              <span key="version">
-                {detail.scan.previousVersion || "—"} → {detail.scan.stagedVersion || "—"}
-              </span>,
-              <Badge key="risk" tone={severityTone(detail.scan.risk)}>
-                {detail.scan.risk}
-              </Badge>,
-              <span key="scan-id">scan {detail.scan.id.slice(0, 12)}</span>,
-            ]}
-          />
-        ) : (
-          <LoadingLine>Loading saved review</LoadingLine>
-        )}
-      </header>
+      <ScanDetailHeader detail={detail} />
 
       {error ? <Alert tone="critical">{error}</Alert> : null}
       {detail?.scan.status === "pending" || detail?.scan.status === "running" ? (
@@ -200,6 +180,10 @@ export default function ScanDetailPage() {
       ) : null}
       {detail?.scan.status === "failed" ? (
         <ScanFailureAlert errorJson={detail.scan.errorJson} />
+      ) : null}
+
+      {!detail && !error ? (
+        <LoadingState title="Loading saved review" detail="fetching report · normalizing diff" />
       ) : null}
 
       {detail ? (
@@ -298,6 +282,34 @@ export default function ScanDetailPage() {
         </>
       ) : null}
     </PageShell>
+  );
+}
+
+function ScanDetailHeader({ detail }: { detail?: PersistedScanDetail | null } = {}) {
+  return (
+    <header class="flex flex-col gap-2">
+      <a href="/dashboard" class="text-[13px] text-ink-muted hover:text-ink no-underline">
+        ← Reviews
+      </a>
+      <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">
+        {detail?.scan.packageName || "Release review"}
+      </h1>
+      {detail ? (
+        <MonoDetail
+          parts={[
+            <span key="version">
+              {detail.scan.previousVersion || "—"} → {detail.scan.stagedVersion || "—"}
+            </span>,
+            <Badge key="risk" tone={severityTone(detail.scan.risk)}>
+              {detail.scan.risk}
+            </Badge>,
+            <span key="scan-id">scan {detail.scan.id.slice(0, 12)}</span>,
+          ]}
+        />
+      ) : (
+        <LoadingLine size="inline">Loading saved review</LoadingLine>
+      )}
+    </header>
   );
 }
 
