@@ -5,6 +5,7 @@ import {
   decidePreAiEscalation,
   DEFAULT_AI_MODEL,
   ESCALATION_AI_MODEL,
+  estimateAiReviewInputTokens,
   runSelectiveAiReview,
 } from "../server/lib/ai-review.ts";
 import { computeScanRisk } from "../server/lib/risk.ts";
@@ -367,6 +368,40 @@ describe("escalation decision", () => {
     expect(review.model).toBe(DEFAULT_AI_MODEL);
     expect(review.escalated).toBe(false);
     expect(review.escalationReasons).toEqual([]);
+  });
+
+  test("large calm scan skips default model when prompt estimate exceeds its context budget", async () => {
+    const files = Array.from({ length: 80 }, (_, index) => ({
+      path: `src/generated-${index}.js`,
+      size: 4096,
+      sha256: `sha-${index}`,
+      flags: [],
+      textSample: "export const value = 1;\n".repeat(200),
+    }));
+    const diff = files.map((file) => ({ path: file.path, status: "modified", flags: [] }));
+    const options = {
+      files,
+      diff,
+      packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
+      ruleFindings: [],
+      previousVersionAvailable: true,
+    };
+    const calls = [];
+    const review = await runSelectiveAiReview(
+      reviewerEnv({
+        run: async (model) => {
+          calls.push(model);
+          return completeResponse();
+        },
+      }),
+      options,
+    );
+
+    expect(estimateAiReviewInputTokens(options)).toBeGreaterThan(24_000);
+    expect(calls).toEqual([ESCALATION_AI_MODEL]);
+    expect(review.model).toBe(ESCALATION_AI_MODEL);
+    expect(review.escalated).toBe(true);
+    expect(review.escalationReasons).toContain("default model context budget exceeded");
   });
 
   test("risky deterministic signal skips the default model and runs escalation only", async () => {

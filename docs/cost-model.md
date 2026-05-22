@@ -64,7 +64,7 @@ Kimi is valuable for deep package-security review, but it should not necessarily
 
 `runSelectiveAiReview` decides escalation in two stages:
 
-- **Pre-AI**, based on deterministic signals: any rule finding at medium or higher, an install-lifecycle script add/modify (`preinstall`, `install`, `postinstall`, `prepare`, `prepack`, `postpack`, `publish`, `prepublish`, `prepublishOnly`), any dependency / peerDep / optionalDep change, any entrypoint change (`bin`, `main`, `module`, `types`, `exports`), or a scan where no previous version was available to compare against. When any pre-AI trigger fires we skip the default model and call the escalation model directly to avoid paying for both passes.
+- **Pre-AI**, based on deterministic signals and request shape: any rule finding at medium or higher, an install-lifecycle script add/modify (`preinstall`, `install`, `postinstall`, `prepare`, `prepack`, `postpack`, `publish`, `prepublish`, `prepublishOnly`), any dependency / peerDep / optionalDep change, any entrypoint change (`bin`, `main`, `module`, `types`, `exports`), a scan where no previous version was available to compare against, or an estimated AI input that exceeds the default model's context budget. When any pre-AI trigger fires we skip the default model and call the escalation model directly to avoid paying for both passes.
 - **Post-default**, based on the default model's output: a `suspicious` or `blocked` release assessment, `requiresManualReview === true`, or a non-`complete` review status. When any post-default trigger fires we run the escalation model with the same payload and return its review.
 
 The persisted `aiJson` records the model that produced the final review, whether escalation occurred, and the trigger reasons.

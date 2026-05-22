@@ -126,7 +126,7 @@ Abuse and data lifecycle:
 
 Nice-to-have before widening beta:
 
-- ~~Add basic AI model routing from [`docs/cost-model.md`](./cost-model.md): cheaper default triage, Kimi escalation for risky or ambiguous scans.~~ Landed: [`runSelectiveAiReview`](../server/lib/ai-review.ts) routes ordinary releases through `@cf/qwen/qwen3-30b-a3b-fp8` and escalates to Kimi (`@cf/moonshotai/kimi-k2.5`) on medium+ deterministic findings, install-lifecycle script changes, dependency/entrypoint changes, missing previous-version comparisons, or when the default reviewer returns suspicious/blocked/manual-review output. The persisted `aiJson` records which model produced each review and why escalation fired.
+- ~~Add basic AI model routing from [`docs/cost-model.md`](./cost-model.md): cheaper default triage, Kimi escalation for risky or ambiguous scans.~~ Landed: [`runSelectiveAiReview`](../server/lib/ai-review.ts) routes ordinary releases through `@cf/qwen/qwen3-30b-a3b-fp8` when the AI input fits its context budget and escalates to Kimi (`@cf/moonshotai/kimi-k2.5`) on medium+ deterministic findings, install-lifecycle script changes, dependency/entrypoint changes, missing previous-version comparisons, oversized AI inputs, or when the default reviewer returns suspicious/blocked/manual-review output. The persisted `aiJson` records which model produced each review and why escalation fired.
 - Add first-run onboarding copy for least-privilege npm token setup.
 
 Exit criteria:

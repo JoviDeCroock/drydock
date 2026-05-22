@@ -112,6 +112,8 @@ const LIFECYCLE_SCRIPT_KEYS = new Set([
 ]);
 
 const RISKY_SEVERITIES = new Set(["medium", "high", "critical"]);
+const DEFAULT_AI_INPUT_TOKEN_BUDGET = 24_000;
+const APPROX_CHARS_PER_TOKEN = 4;
 
 export interface SelectiveAiReviewOptions {
   files: FileRecord[];
@@ -125,6 +127,7 @@ export interface PreAiEscalationInput {
   ruleFindings: Finding[];
   packageJsonDiff: PackageJsonDiff;
   previousVersionAvailable: boolean;
+  defaultInputTokenEstimate?: number;
 }
 
 export function decidePreAiEscalation(input: PreAiEscalationInput): string[] {
@@ -145,8 +148,19 @@ export function decidePreAiEscalation(input: PreAiEscalationInput): string[] {
   if (!input.previousVersionAvailable) {
     reasons.push("previous-version comparison unavailable");
   }
+  if (
+    input.defaultInputTokenEstimate &&
+    input.defaultInputTokenEstimate > DEFAULT_AI_INPUT_TOKEN_BUDGET
+  ) {
+    reasons.push("default model context budget exceeded");
+  }
 
   return reasons;
+}
+
+export function estimateAiReviewInputTokens(options: SelectiveAiReviewOptions): number {
+  const userPayload = JSON.stringify(buildAiReviewPayload(options));
+  return Math.ceil((REVIEWER_SYSTEM_PROMPT.length + userPayload.length) / APPROX_CHARS_PER_TOKEN);
 }
 
 export function decidePostDefaultEscalation(review: AiReview): string[] {
@@ -171,6 +185,7 @@ export async function runSelectiveAiReview(
     ruleFindings: options.ruleFindings,
     packageJsonDiff: options.packageJsonDiff,
     previousVersionAvailable: options.previousVersionAvailable,
+    defaultInputTokenEstimate: estimateAiReviewInputTokens(options),
   });
 
   if (preReasons.length > 0) {
@@ -193,18 +208,7 @@ export async function analyzeWithAi(
   model: string,
   options: SelectiveAiReviewOptions,
 ): Promise<AiReview> {
-  const compactFiles = options.files
-    .filter((file) =>
-      options.diff.some((entry) => entry.path === file.path && entry.status !== "unchanged"),
-    )
-    .slice(0, 80)
-    .map((file) => ({
-      path: file.path,
-      size: file.size,
-      sha256: file.sha256,
-      flags: file.flags,
-      textSample: file.textSample?.slice(0, 4000),
-    }));
+  const payload = buildAiReviewPayload(options);
 
   try {
     const result = await env.AI.run(
@@ -217,15 +221,7 @@ export async function analyzeWithAi(
           },
           {
             role: "user",
-            content: JSON.stringify({
-              task: "Review this staged npm release. Decide whether the changed release looks ordinary or whether anything is off and should be reviewed before a maintainer manually approves it.",
-              deterministicFindings: options.ruleFindings,
-              packageJsonDiff: options.packageJsonDiff,
-              changedFileDiff: options.diff
-                .filter((entry) => entry.status !== "unchanged")
-                .slice(0, 250),
-              untrustedChangedPackageFiles: compactFiles,
-            }),
+            content: JSON.stringify(payload),
           },
         ],
         response_format: {
@@ -249,6 +245,29 @@ export async function analyzeWithAi(
       `Assistant review didn't run: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+}
+
+function buildAiReviewPayload(options: SelectiveAiReviewOptions) {
+  const compactFiles = options.files
+    .filter((file) =>
+      options.diff.some((entry) => entry.path === file.path && entry.status !== "unchanged"),
+    )
+    .slice(0, 80)
+    .map((file) => ({
+      path: file.path,
+      size: file.size,
+      sha256: file.sha256,
+      flags: file.flags,
+      textSample: file.textSample?.slice(0, 4000),
+    }));
+
+  return {
+    task: "Review this staged npm release. Decide whether the changed release looks ordinary or whether anything is off and should be reviewed before a maintainer manually approves it.",
+    deterministicFindings: options.ruleFindings,
+    packageJsonDiff: options.packageJsonDiff,
+    changedFileDiff: options.diff.filter((entry) => entry.status !== "unchanged").slice(0, 250),
+    untrustedChangedPackageFiles: compactFiles,
+  };
 }
 
 function normalizeAiResponse(model: string, result: unknown): AiReview {
