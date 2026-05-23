@@ -34,6 +34,7 @@ export const DETERMINISTIC_RULE_IDS = {
   fileSecretContent: "file.secret-content",
   fileLargeBinary: "file.large-binary",
   fileNativeArtifact: "file.native-artifact",
+  installScriptImplicitNodeGyp: "install-script.implicit-node-gyp",
   diffCredentialFileAdded: "diff.credential-file-added",
   diffLargeNewFile: "diff.large-new-file",
   stageMetadataMismatch: "stage.metadata-mismatch",
@@ -43,6 +44,8 @@ export interface PackageJsonSummary {
   name?: string;
   version?: string;
   scripts?: Record<string, string>;
+  implicitScripts?: Record<string, string>;
+  gypfile?: boolean;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
@@ -111,6 +114,12 @@ const SECRET_PATTERNS: Array<[RegExp, string]> = [
 export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = []): Finding[] {
   const findings: Finding[] = [];
   const diffByPath = new Map(diff.map((entry) => [entry.path, entry]));
+  const packageJsonFile = files.find((file) => file.path === "package.json" && file.textSample);
+  const packageJson = packageJsonFile?.textSample
+    ? (safeJson(packageJsonFile.textSample) as PackageJsonSummary | null)
+    : null;
+  const scripts = packageJson?.scripts || {};
+  const rootGypFile = files.find((file) => !file.path.includes("/") && /\.gyp$/i.test(file.path));
   const tag = (
     rule: keyof typeof DETERMINISTIC_RULE_IDS,
     finding: Omit<Finding, "ruleId" | "ruleVersion">,
@@ -119,6 +128,18 @@ export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = [
     ruleId: DETERMINISTIC_RULE_IDS[rule],
     ruleVersion: DETERMINISTIC_RULES_VERSION,
   });
+
+  if (rootGypFile && !scripts.install && !scripts.preinstall && packageJson?.gypfile !== false) {
+    findings.push(
+      tag("installScriptImplicitNodeGyp", {
+        severity: "high",
+        file: rootGypFile.path,
+        evidence: "implicit install: node-gyp rebuild",
+        reason:
+          "npm defaults install to node-gyp rebuild when a root *.gyp file exists and no install/preinstall script or gypfile=false is declared",
+      }),
+    );
+  }
 
   for (const file of files) {
     const p = file.path.toLowerCase();

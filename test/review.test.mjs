@@ -101,4 +101,28 @@ describe("review", () => {
     ]);
     expect(summary.entrypointsChanged).toBe(true);
   });
+
+  test("flags npm's implicit node-gyp install hook from root gyp files", () => {
+    const staged = [
+      {
+        path: "package.json",
+        size: 40,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({ name: "pkg", version: "1.0.1" }),
+      },
+      { path: "binding.gyp", size: 2, sha256: "gyp", flags: [], textSample: "{}" },
+    ];
+    const diff = createPackageDiff([], staged);
+    const findings = deterministicFindings(staged, diff);
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        severity: "high",
+        file: "binding.gyp",
+        evidence: "implicit install: node-gyp rebuild",
+        ruleId: "install-script.implicit-node-gyp",
+      }),
+    );
+  });
 });

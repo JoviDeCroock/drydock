@@ -10,6 +10,8 @@ export interface ParsedPackageJson {
   name?: string;
   version?: string;
   scripts?: Record<string, string>;
+  implicitScripts?: Record<string, string>;
+  gypfile?: boolean;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;

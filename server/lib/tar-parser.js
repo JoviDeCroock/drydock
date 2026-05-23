@@ -147,10 +147,18 @@ export function parsePackageJson(files) {
   if (!pkg || !pkg.textSample) return null;
   try {
     const parsed = JSON.parse(pkg.textSample);
+    const scripts = parsed.scripts || {};
+    const hasRootGyp = files.some((f) => !f.path.includes("/") && /\.gyp$/i.test(f.path));
+    const npmAddsNodeGypInstall =
+      hasRootGyp && !scripts.install && !scripts.preinstall && parsed.gypfile !== false;
     return {
       name: parsed.name,
       version: parsed.version,
-      scripts: parsed.scripts || {},
+      scripts: npmAddsNodeGypInstall ? { ...scripts, install: "node-gyp rebuild" } : scripts,
+      ...(npmAddsNodeGypInstall ? { implicitScripts: { install: "node-gyp rebuild" } } : {}),
+      ...(npmAddsNodeGypInstall || typeof parsed.gypfile !== "undefined"
+        ? { gypfile: npmAddsNodeGypInstall ? true : parsed.gypfile }
+        : {}),
       dependencies: parsed.dependencies || {},
       devDependencies: parsed.devDependencies || {},
       peerDependencies: parsed.peerDependencies || {},
