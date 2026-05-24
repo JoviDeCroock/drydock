@@ -230,6 +230,7 @@ export async function analyzeWithAi(
         },
       },
       {
+        gateway: { id: "drydock-gateway" },
         extraHeaders: {
           "x-session-affinity":
             env.AI_CACHE_AFFINITY || "staged-publish-review-release-reviewer-v1",
