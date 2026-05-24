@@ -105,6 +105,8 @@ Allowed credentialed egress through `NpmStageGateway`:
 - `GET` npm package metadata JSON endpoint;
 - `GET` published npm `.tgz` tarballs for previous-version diffing.
 
+The trusted parent Worker also fetches staged metadata (`GET /-/stage/{stageId}`) with the organization credential so it can select the comparison baseline from the staged dist-tag. That metadata is not fetched from inside the sandbox.
+
 This matches Cloudflare's [outbound Worker sandbox-auth model](https://blog.cloudflare.com/sandbox-auth/): auth injection happens in a trusted WorkerEntrypoint using parent-provided props, not inside the sandboxed workload.
 
 Blocked:

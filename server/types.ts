@@ -1,5 +1,6 @@
 import type { Auth, AuthSession } from "./lib/auth";
 import type { AiReview } from "./lib/ai-review";
+import type { BaselineVersionSelection } from "./lib/registry";
 import type {
   DiffEntry,
   Finding,
@@ -29,8 +30,10 @@ export interface ScanResult {
   package: {
     name: string | null;
     stagedVersion: string | null;
+    stagedTag: string | null;
     previousVersion: string | null;
   };
+  baseline: BaselineVersionSelection;
   fileCount: number;
   previousFileCount: number;
   packageJson: PackageJsonSummary | null;

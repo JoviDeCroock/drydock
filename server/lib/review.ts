@@ -36,6 +36,7 @@ export const DETERMINISTIC_RULE_IDS = {
   fileNativeArtifact: "file.native-artifact",
   diffCredentialFileAdded: "diff.credential-file-added",
   diffLargeNewFile: "diff.large-new-file",
+  stageMetadataMismatch: "stage.metadata-mismatch",
 } as const;
 
 export interface PackageJsonSummary {
