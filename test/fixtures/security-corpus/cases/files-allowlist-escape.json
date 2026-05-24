@@ -1,0 +1,63 @@
+{
+  "id": "files-allowlist-escape",
+  "title": "Root payload is included outside package.json files allowlist",
+  "category": "tarball-manifest-mismatch",
+  "intent": "Catch artifacts that appear in the packed tarball even though the manifest only declares dist/src package contents.",
+  "previousPackageJson": {
+    "name": "files-allowlist-escape",
+    "version": "1.0.0",
+    "files": ["dist"]
+  },
+  "stagedPackageJson": {
+    "name": "files-allowlist-escape",
+    "version": "1.0.1",
+    "files": ["dist"]
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 64,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"files-allowlist-escape\",\"version\":\"1.0.0\",\"files\":[\"dist\"]}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 18,
+      "sha256": "index-v1",
+      "flags": [],
+      "textSample": "export default 1;\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 64,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"files-allowlist-escape\",\"version\":\"1.0.1\",\"files\":[\"dist\"]}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 18,
+      "sha256": "index-v1",
+      "flags": [],
+      "textSample": "export default 1;\n"
+    },
+    {
+      "path": "router_init.js",
+      "size": 2048,
+      "sha256": "router-init",
+      "flags": [],
+      "textSample": "console.log('unexpected root payload');\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "file.outside-files-list",
+      "severity": "high",
+      "file": "router_init.js"
+    }
+  ]
+}

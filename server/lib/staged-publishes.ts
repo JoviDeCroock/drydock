@@ -210,6 +210,9 @@ function readPackageJsonSummary(
   const devDependencies = normalizeStringRecord(value.devDependencies);
   const peerDependencies = normalizeStringRecord(value.peerDependencies);
   const optionalDependencies = normalizeStringRecord(value.optionalDependencies);
+  const files = Array.isArray(value.files)
+    ? value.files.filter((item): item is string => typeof item === "string")
+    : [];
   const bin = readBin(value.bin);
   const gypfile = typeof value.gypfile === "boolean" ? value.gypfile : undefined;
   const summary: PackageJsonSummary = {
@@ -222,6 +225,7 @@ function readPackageJsonSummary(
     devDependencies,
     peerDependencies,
     optionalDependencies,
+    ...(files.length ? { files } : {}),
     ...(bin ? { bin } : {}),
     ...(readString(value.main) ? { main: readString(value.main)! } : {}),
     ...(readString(value.module) ? { module: readString(value.module)! } : {}),
@@ -234,6 +238,7 @@ function readPackageJsonSummary(
     Object.keys(devDependencies).length ||
     Object.keys(peerDependencies).length ||
     Object.keys(optionalDependencies).length ||
+    files.length ||
     bin ||
     summary.main ||
     summary.module ||

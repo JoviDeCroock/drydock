@@ -42,6 +42,11 @@ export function normalizeStringRecord(value) {
   return out;
 }
 
+export function normalizeStringList(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => typeof item === "string");
+}
+
 export function isRootGypPath(path) {
   return typeof path === "string" && !path.includes("/") && /\.gyp$/i.test(path);
 }
@@ -186,6 +191,9 @@ export function parsePackageJson(files) {
       devDependencies: parsed.devDependencies || {},
       peerDependencies: parsed.peerDependencies || {},
       optionalDependencies: parsed.optionalDependencies || {},
+      ...(normalizeStringList(parsed.files).length
+        ? { files: normalizeStringList(parsed.files) }
+        : {}),
       bin: parsed.bin,
       main: parsed.main,
       module: parsed.module,
