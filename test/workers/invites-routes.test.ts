@@ -330,6 +330,58 @@ describe("invites routes", () => {
     expect(memberDelete.status).toBe(403);
   });
 
+  test("invited owners can manage organization membership and invites", async () => {
+    const primaryOwner = await seedUser();
+    const invitedOwner = await seedUser();
+    const member = await seedUser();
+    const org = await createSharedOrg(primaryOwner);
+
+    const ownerInvite = await call(
+      buildTestApp(primaryOwner),
+      "POST",
+      `/api/v1/organizations/${org.id}/invites`,
+      { body: { role: "owner" } },
+    );
+    const ownerInviteBody = (await ownerInvite.json()) as { token: string };
+    await call(
+      buildTestApp(invitedOwner),
+      "POST",
+      `/api/v1/invites/${encodeURIComponent(ownerInviteBody.token)}/accept`,
+    );
+
+    const createdByInvitedOwner = await call(
+      buildTestApp(invitedOwner),
+      "POST",
+      `/api/v1/organizations/${org.id}/invites`,
+      { body: { role: "member" } },
+    );
+    expect(createdByInvitedOwner.status).toBe(201);
+    const memberInviteBody = (await createdByInvitedOwner.json()) as { token: string };
+    await call(
+      buildTestApp(member),
+      "POST",
+      `/api/v1/invites/${encodeURIComponent(memberInviteBody.token)}/accept`,
+    );
+
+    const invites = await call(
+      buildTestApp(invitedOwner),
+      "GET",
+      `/api/v1/organizations/${org.id}/invites`,
+    );
+    expect(invites.status).toBe(200);
+
+    const removeMember = await call(
+      buildTestApp(invitedOwner),
+      "DELETE",
+      `/api/v1/organizations/${org.id}/members/${member.userId}`,
+    );
+    expect(removeMember.status).toBe(200);
+
+    const db = createDb(env.DB);
+    const removedMembership = await getOrganizationMembership(db, org.id, member.userId);
+    expect(removedMembership).toBeNull();
+  });
+
   test("invite token hash is single-use even if the row remains", async () => {
     const owner = await seedUser();
     const invitee = await seedUser();

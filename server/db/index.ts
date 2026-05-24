@@ -957,9 +957,15 @@ export async function isOrganizationOwner(
   userId: string,
 ): Promise<boolean> {
   const [row] = await db
-    .select({ id: organizations.id })
-    .from(organizations)
-    .where(and(eq(organizations.id, organizationId), eq(organizations.ownerUserId, userId)))
+    .select({ id: organizationMembers.id })
+    .from(organizationMembers)
+    .where(
+      and(
+        eq(organizationMembers.organizationId, organizationId),
+        eq(organizationMembers.userId, userId),
+        eq(organizationMembers.role, "owner"),
+      ),
+    )
     .limit(1);
   return Boolean(row);
 }
