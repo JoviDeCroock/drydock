@@ -25,7 +25,7 @@ export interface Finding {
 // way that should invalidate cached scan reports. Stored alongside each
 // finding so historical reports can be traced back to the ruleset that
 // produced them.
-export const DETERMINISTIC_RULES_VERSION = "1.6.0";
+export const DETERMINISTIC_RULES_VERSION = "1.7.0";
 
 export const DETERMINISTIC_RULE_IDS = {
   installScriptPreinstall: "install-script.preinstall",
@@ -44,6 +44,7 @@ export const DETERMINISTIC_RULE_IDS = {
   packageJsonParseFailed: "package-json.parse-failed",
   diffCredentialFileAdded: "diff.credential-file-added",
   diffLargeNewFile: "diff.large-new-file",
+  packageSizeAnomaly: "package.size-anomaly",
   dependencyUnusualSpec: "dependency.unusual-spec",
   dependencyOptionalAdded: "dependency.optional-added",
   stageMetadataMismatch: "stage.metadata-mismatch",
@@ -382,6 +383,19 @@ export function deterministicFindings(
     }
   }
 
+  const sizeAnomaly = packageSizeAnomaly(diff);
+  if (sizeAnomaly) {
+    findings.push(
+      tag("packageSizeAnomaly", {
+        severity: "high",
+        file: "package",
+        evidence: `unpacked size grew from ${sizeAnomaly.previousTotal} to ${sizeAnomaly.stagedTotal} bytes (${sizeAnomaly.ratio.toFixed(1)}x)`,
+        reason:
+          "large package size jumps can indicate injected payloads, vendored binaries, or generated artifacts that were not present in the previous release",
+      }),
+    );
+  }
+
   for (const entry of diff) {
     if (entry.status === "added" && /(^|\/)(\.npmrc|\.env|id_rsa|id_ed25519)$/i.test(entry.path)) {
       findings.push(
@@ -570,6 +584,7 @@ function isReleaseScopedFinding(finding: { ruleId?: string | null }): boolean {
     finding.ruleId?.startsWith("stage.") ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyUnusualSpec ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyOptionalAdded ||
+    finding.ruleId === DETERMINISTIC_RULE_IDS.packageSizeAnomaly ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffCredentialFileAdded ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffLargeNewFile,
   );
@@ -800,6 +815,22 @@ export function redactJson<T>(value: T): T {
     ) as T;
   }
   return value;
+}
+
+function packageSizeAnomaly(
+  diff: DiffEntry[],
+): { previousTotal: number; stagedTotal: number; ratio: number } | null {
+  let previousTotal = 0;
+  let stagedTotal = 0;
+  for (const entry of diff) {
+    previousTotal += entry.previousSize ?? 0;
+    stagedTotal += entry.stagedSize ?? 0;
+  }
+  if (previousTotal <= 0) return null;
+  const delta = stagedTotal - previousTotal;
+  const ratio = stagedTotal / previousTotal;
+  if (delta > 1024 * 1024 && ratio >= 3) return { previousTotal, stagedTotal, ratio };
+  return null;
 }
 
 function isUnexpectedRootLargeJavaScript(path: string, size: number): boolean {

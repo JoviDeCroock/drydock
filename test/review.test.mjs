@@ -296,6 +296,25 @@ describe("review", () => {
     ).toEqual([]);
   });
 
+  test("flags large package size anomalies compared to previous version", () => {
+    const previous = [
+      { path: "dist/index.js", size: 800_000, sha256: "before", flags: [], textSample: "" },
+    ];
+    const staged = [
+      { path: "dist/index.js", size: 3_100_000, sha256: "after", flags: [], textSample: "" },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(previous, staged));
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        severity: "high",
+        file: "package",
+        evidence: "unpacked size grew from 800000 to 3100000 bytes (3.9x)",
+        ruleId: "package.size-anomaly",
+      }),
+    );
+  });
+
   test("flags unexpected large root-level JavaScript payloads", () => {
     const staged = [
       {

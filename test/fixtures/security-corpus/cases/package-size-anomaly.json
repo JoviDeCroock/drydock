@@ -1,0 +1,32 @@
+{
+  "id": "package-size-anomaly",
+  "title": "Unpacked package size jumps by more than 3x",
+  "category": "size-anomaly",
+  "intent": "Catch releases whose aggregate unpacked size suddenly grows enough to suggest injected payloads or generated artifacts.",
+  "previousFiles": [
+    {
+      "path": "dist/index.js",
+      "size": 800000,
+      "sha256": "dist-before",
+      "flags": [],
+      "textSample": ""
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "dist/index.js",
+      "size": 3100000,
+      "sha256": "dist-after",
+      "flags": [],
+      "textSample": ""
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "package.size-anomaly",
+      "severity": "high",
+      "file": "package"
+    }
+  ]
+}

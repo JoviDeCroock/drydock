@@ -46,6 +46,11 @@
       "ruleId": "diff.large-new-file",
       "severity": "medium",
       "file": "vendor/tool.bin"
+    },
+    {
+      "ruleId": "package.size-anomaly",
+      "severity": "high",
+      "file": "package"
     }
   ]
 }
