@@ -27,6 +27,8 @@ Dynamic Worker sandbox
 
 Scan orchestration lives in `server/lib/scan-pipeline.ts` and is shared by both entrypoints. The product path is the queued/background lifecycle: `POST /api/v1/scans` creates a scan, a Queue consumer or local `waitUntil()` job runs the pipeline, and the UI reads status/report data from `GET /api/v1/scans/:id`. `POST /api/v1/scan` remains only as a synchronous compatibility shim during the migration.
 
+Baseline selection should be tag-aware rather than simply highest-semver. See [`diff-baseline.md`](./diff-baseline.md) for the staged metadata constraints and the recommended default comparison strategy.
+
 ## Trust boundaries
 
 ### Browser/UI
@@ -79,11 +81,11 @@ Current high-level flow:
 
 1. User submits a `stageId`.
 2. API validates input and resolves the authenticated user's active organization via `requireActiveOrganization`.
-3. Parent Worker loads the staged tarball in a Dynamic Worker.
-4. Gateway attaches npm auth only for allowed npm registry endpoints.
+3. Parent Worker loads the staged tarball in a Dynamic Worker and fetches staged metadata (`GET /-/stage/{stageId}`) in parallel.
+4. Gateway attaches npm auth only for allowed sandbox npm registry endpoints.
 5. Sandbox extracts bounded file records and package metadata.
-6. Parent Worker fetches npm package metadata and the previous published tarball when available.
-7. Sandbox extracts the previous tarball.
+6. Parent Worker fetches npm package metadata, chooses a tag-aware comparison baseline, and downloads the selected previous published tarball when available.
+7. Sandbox extracts the selected previous tarball.
 8. Parent Worker computes:
    - package file diff;
    - package.json diff;

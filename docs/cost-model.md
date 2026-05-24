@@ -51,7 +51,7 @@ Workers AI is ~90% of the variable cost at every scale above the smallest tier.
 
 ## Where the money goes
 
-- **Workers AI**: dominant at scale. Biggest levers: (a) keep only changed files in the input (already enforced in [`ai-review.ts`](../server/lib/ai-review.ts)); (b) keep the system prompt cache-friendly via `AI_CACHE_AFFINITY`; (c) pick the cheapest model that still produces useful structured output.
+- **Workers AI**: dominant at scale. Biggest levers: (a) choose the correct tag-aware comparison baseline so changed files reflect the release channel under review; (b) keep only changed files in the input (already enforced in [`ai-review.ts`](../server/lib/ai-review.ts)); (c) keep the system prompt cache-friendly via `AI_CACHE_AFFINITY`; (d) pick the cheapest model that still produces useful structured output. See [`diff-baseline.md`](./diff-baseline.md).
 - **D1 storage growth**: ~500 KB–2 MB per scan retained. At 50k scans/mo that's 25–100 GB/mo accumulating. Add a retention/GC policy before this becomes a line item.
 - **KV storage**: trivial. The added `COMPARE_CACHE` is essentially free across any realistic catalog of cached versions; it primarily saves sandbox CPU and tarball egress.
 - **Sandbox compute**: bounded per scan (2 Dynamic Workers, ~3s CPU each). The KV cache means alternate-version diffs in the detail page no longer linearly multiply this cost.
