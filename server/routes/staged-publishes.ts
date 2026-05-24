@@ -10,7 +10,11 @@ import {
 } from "../db";
 import { requireActiveOrganization } from "../lib/active-organization";
 import { getOrganizationNpmToken } from "../lib/npm-connection";
-import { StagedPublishesFetchError, listStagedPublishes } from "../lib/staged-publishes";
+import {
+  StagedPublishesFetchError,
+  listStagedPublishes,
+  type StartedStagedPublishScan,
+} from "../lib/staged-publishes";
 import { executeScanJob, type ScanQueueMessage } from "../lib/scan-job";
 import type { Bindings, Variables } from "../types";
 
@@ -66,11 +70,13 @@ stagedPublishesRoutes.post("/scan", async (c) => {
     const page = await listStagedPublishes(connection.registryUrl, connection.token, {
       perPage: 50,
     });
-    const stageIds = [...new Set(page.items.map((item) => item.id))];
+    const stagedItems = [...new Map(page.items.map((item) => [item.id, item])).values()];
+    const stageIds = stagedItems.map((item) => item.id);
     const existingStageIds = await listExistingScanStageIds(db, organizationId, stageIds);
-    const scans: Array<{ id: string; stageId: string }> = [];
+    const scans: StartedStagedPublishScan[] = [];
 
-    for (const stageId of stageIds) {
+    for (const item of stagedItems) {
+      const stageId = item.id;
       if (existingStageIds.has(stageId)) continue;
       const scanId = crypto.randomUUID();
       const detail = await createScanJob(db, {
@@ -81,7 +87,16 @@ stagedPublishesRoutes.post("/scan", async (c) => {
       });
       if (!detail) continue;
       existingStageIds.add(stageId);
-      scans.push({ id: scanId, stageId });
+      scans.push({
+        id: scanId,
+        stageId,
+        packageName: item.packageName,
+        version: item.version,
+        tag: item.tag,
+        access: item.access,
+        actor: item.actor,
+        createdAt: item.createdAt,
+      });
 
       const message: ScanQueueMessage = {
         stageId,

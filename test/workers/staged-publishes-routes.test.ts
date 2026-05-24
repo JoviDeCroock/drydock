@@ -78,7 +78,17 @@ describe("staged publishes route", () => {
       vi.fn(async (url: string | URL | Request) => {
         expect(String(url)).toBe("https://registry.npmjs.org/-/stage?perPage=50");
         return Response.json({
-          items: [{ id: "stage-existing-123" }, { id: "stage-new-123" }],
+          items: [
+            { id: "stage-existing-123", packageName: "@org/existing", version: "1.0.0" },
+            {
+              id: "stage-new-123",
+              packageName: "@org/new",
+              version: "1.1.0",
+              tag: "latest",
+              actor: "maintainer",
+              createdAt: "2026-05-22T12:00:00.000Z",
+            },
+          ],
           total: 2,
           perPage: 50,
           page: 1,
@@ -100,13 +110,18 @@ describe("staged publishes route", () => {
       found: number;
       created: number;
       skipped: number;
-      scans: Array<{ id: string; stageId: string }>;
+      scans: Array<{
+        id: string;
+        stageId: string;
+        packageName: string | null;
+        version: string | null;
+      }>;
     };
     expect(body).toMatchObject({
       found: 2,
       created: 1,
       skipped: 1,
-      scans: [{ stageId: "stage-new-123" }],
+      scans: [{ stageId: "stage-new-123", packageName: "@org/new", version: "1.1.0" }],
     });
     expect(queue.send).toHaveBeenCalledTimes(1);
     expect(queue.send.mock.calls[0]?.[0]).toMatchObject({ stageId: "stage-new-123" });

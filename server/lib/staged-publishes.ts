@@ -20,6 +20,12 @@ export interface StagedPublishesPage {
 export interface StartedStagedPublishScan {
   id: string;
   stageId: string;
+  packageName: string | null;
+  version: string | null;
+  tag: string | null;
+  access: string | null;
+  actor: string | null;
+  createdAt: string | null;
 }
 
 export interface StagedPublishesScanResponse {
