@@ -248,34 +248,32 @@ export default function ScanDetailPage() {
           ) : null}
 
           <section class={workbenchGridClass}>
-            <Card as="aside" class="p-0 overflow-hidden flex flex-col">
-              <div class="px-4 py-3 border-b border-border flex flex-col gap-3">
-                <SectionLabel>Release tree</SectionLabel>
-                <Input
-                  type="search"
-                  value={fileFilter.value}
-                  placeholder="Filter files"
-                  onInput={(e) => (fileFilter.value = (e.target as HTMLInputElement).value)}
-                  autoComplete="off"
-                  spellcheck={false}
-                />
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                  <label class="flex items-center gap-2 text-[13px] text-ink-muted">
-                    <input
-                      type="checkbox"
-                      checked={changedFilesOnly.value}
-                      onChange={(e) =>
-                        (changedFilesOnly.value = (e.target as HTMLInputElement).checked)
-                      }
-                    />
-                    Changed files only
-                  </label>
-                  <span class="font-mono text-[11px] text-ink-subtle">
-                    {visibleDiffEntries.value.length} / {diffEntries.value.length}
-                  </span>
-                </div>
+            <Card as="aside" class="p-5 flex flex-col gap-3 h-[720px] overflow-hidden">
+              <SectionLabel>Release tree</SectionLabel>
+              <Input
+                type="search"
+                value={fileFilter.value}
+                placeholder="Filter files"
+                onInput={(e) => (fileFilter.value = (e.target as HTMLInputElement).value)}
+                autoComplete="off"
+                spellcheck={false}
+              />
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <label class="flex items-center gap-2 text-[13px] text-ink-muted">
+                  <input
+                    type="checkbox"
+                    checked={changedFilesOnly.value}
+                    onChange={(e) =>
+                      (changedFilesOnly.value = (e.target as HTMLInputElement).checked)
+                    }
+                  />
+                  Changed files only
+                </label>
+                <span class="font-mono text-[11px] text-ink-subtle">
+                  {visibleDiffEntries.value.length} / {diffEntries.value.length}
+                </span>
               </div>
-              <div class="flex flex-col overflow-y-auto h-[640px] py-2">
+              <div class="flex flex-col overflow-y-auto flex-1 min-h-0 border-t border-border pt-2">
                 <FileTree
                   entries={visibleDiffEntries.value}
                   selectedPath={model.selectedPath.value}
@@ -447,33 +445,47 @@ function buildRecommendationEvidence(
 
 function ScanTimeline({ events }: { events: PersistedScanDetail["events"] }) {
   const visibleEvents = events.filter((event) => event.type !== "scan.viewed");
+  const expanded = useSignal(false);
+  const isExpanded = expanded.value;
 
   return (
     <section class="flex flex-col gap-3">
-      <SectionLabel>Review timeline</SectionLabel>
-      {visibleEvents.length ? (
-        <ol class="list-none p-0 m-0 border-y border-border divide-y divide-border">
-          {visibleEvents.map((event) => {
-            const item = describeTimelineEvent(event);
-            return (
-              <li
-                key={event.id}
-                class="grid grid-cols-1 md:grid-cols-[128px_180px_minmax(0,1fr)] gap-2 px-0 py-2.5 text-[13px]"
-              >
-                <time class="font-mono text-[11px] text-ink-subtle">
-                  {formatDate(event.createdAt)}
-                </time>
-                <div class="flex items-center gap-2">
-                  <Badge tone={item.tone}>{item.label}</Badge>
-                </div>
-                <span class="text-ink-muted min-w-0">{item.detail}</span>
-              </li>
-            );
-          })}
-        </ol>
-      ) : (
-        <EmptyLine>No lifecycle events were saved for this review.</EmptyLine>
-      )}
+      <div class="flex items-center justify-between gap-3">
+        <SectionLabel>Review timeline</SectionLabel>
+        <button
+          type="button"
+          onClick={() => (expanded.value = !expanded.value)}
+          class="bg-transparent border-0 p-0 cursor-pointer font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle hover:text-ink"
+          aria-expanded={isExpanded}
+        >
+          {isExpanded ? "Collapse" : `Expand (${visibleEvents.length})`}
+        </button>
+      </div>
+      {isExpanded ? (
+        visibleEvents.length ? (
+          <ol class="list-none p-0 m-0 border-y border-border divide-y divide-border">
+            {visibleEvents.map((event) => {
+              const item = describeTimelineEvent(event);
+              return (
+                <li
+                  key={event.id}
+                  class="grid grid-cols-1 md:grid-cols-[128px_180px_minmax(0,1fr)] gap-2 px-0 py-2.5 text-[13px]"
+                >
+                  <time class="font-mono text-[11px] text-ink-subtle">
+                    {formatDate(event.createdAt)}
+                  </time>
+                  <div class="flex items-center gap-2">
+                    <Badge tone={item.tone}>{item.label}</Badge>
+                  </div>
+                  <span class="text-ink-muted min-w-0">{item.detail}</span>
+                </li>
+              );
+            })}
+          </ol>
+        ) : (
+          <EmptyLine>No lifecycle events were saved for this review.</EmptyLine>
+        )
+      ) : null}
     </section>
   );
 }
