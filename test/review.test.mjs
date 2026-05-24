@@ -296,6 +296,39 @@ describe("review", () => {
     ).toEqual([]);
   });
 
+  test("flags newly added optional dependencies", () => {
+    const stagedPackageJsonText = `{
+  "name": "pkg",
+  "version": "1.0.1",
+  "optionalDependencies": {
+    "existing": "^1.0.0",
+    "maybe": "^2.0.0"
+  }
+}`;
+    const diff = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", optionalDependencies: { existing: "^1.0.0" } },
+      JSON.parse(stagedPackageJsonText),
+    );
+
+    const findings = packageJsonDiffFindings(diff, stagedPackageJsonText);
+
+    expect(diff.dependencies).toContainEqual({
+      key: "maybe",
+      status: "added",
+      staged: "^2.0.0",
+      section: "optionalDependencies",
+    });
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        severity: "high",
+        file: "package.json",
+        line: 6,
+        evidence: "maybe: ^2.0.0",
+        ruleId: "dependency.optional-added",
+      }),
+    );
+  });
+
   test("flags npm's implicit node-gyp install hook from root gyp files", () => {
     const staged = [
       {

@@ -25,7 +25,7 @@ export interface Finding {
 // way that should invalidate cached scan reports. Stored alongside each
 // finding so historical reports can be traced back to the ruleset that
 // produced them.
-export const DETERMINISTIC_RULES_VERSION = "1.2.0";
+export const DETERMINISTIC_RULES_VERSION = "1.3.0";
 
 export const DETERMINISTIC_RULE_IDS = {
   installScriptPreinstall: "install-script.preinstall",
@@ -42,6 +42,7 @@ export const DETERMINISTIC_RULE_IDS = {
   diffCredentialFileAdded: "diff.credential-file-added",
   diffLargeNewFile: "diff.large-new-file",
   dependencyUnusualSpec: "dependency.unusual-spec",
+  dependencyOptionalAdded: "dependency.optional-added",
   stageMetadataMismatch: "stage.metadata-mismatch",
 } as const;
 
@@ -62,11 +63,14 @@ export interface PackageJsonSummary {
   exports?: unknown;
 }
 
+export type DependencySection = "dependencies" | "optionalDependencies" | "peerDependencies";
+
 export interface PackageJsonDiffEntry {
   key: string;
   status: "added" | "removed" | "modified";
   previous?: string;
   staged?: string;
+  section?: DependencySection;
 }
 
 export interface PackageJsonDiff {
@@ -414,18 +418,7 @@ export function summarizePackageJsonDiff(
   stagedPkg: PackageJsonSummary | null | undefined,
 ): PackageJsonDiff {
   const changedScripts = diffObject(previousPkg?.scripts || {}, stagedPkg?.scripts || {});
-  const changedDependencies = diffObject(
-    {
-      ...previousPkg?.dependencies,
-      ...previousPkg?.optionalDependencies,
-      ...previousPkg?.peerDependencies,
-    },
-    {
-      ...stagedPkg?.dependencies,
-      ...stagedPkg?.optionalDependencies,
-      ...stagedPkg?.peerDependencies,
-    },
-  );
+  const changedDependencies = diffDependencySections(previousPkg, stagedPkg);
   return {
     name: stagedPkg?.name || previousPkg?.name || null,
     previousVersion: previousPkg?.version || null,
@@ -457,6 +450,18 @@ export function packageJsonDiffFindings(
   const findings: Finding[] = [];
   for (const entry of packageJsonDiff.dependencies) {
     if (entry.status !== "added" && entry.status !== "modified") continue;
+    if (entry.section === "optionalDependencies" && entry.status === "added") {
+      findings.push({
+        severity: "high",
+        file: "package.json",
+        line: firstJsonPropertyLine(stagedPackageJsonText, entry.key, entry.staged),
+        evidence: `${entry.key}: ${entry.staged}`,
+        reason:
+          "optional dependencies can execute install lifecycle hooks while failing softly on unsupported platforms, so newly added optional dependencies require manual review",
+        ruleId: DETERMINISTIC_RULE_IDS.dependencyOptionalAdded,
+        ruleVersion: DETERMINISTIC_RULES_VERSION,
+      });
+    }
     if (!entry.staged) continue;
     const kind = unusualDependencySpecKind(entry.staged);
     if (!kind) continue;
@@ -518,6 +523,7 @@ function isReleaseScopedFinding(finding: { ruleId?: string | null }): boolean {
   return Boolean(
     finding.ruleId?.startsWith("stage.") ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyUnusualSpec ||
+    finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyOptionalAdded ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffCredentialFileAdded ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffLargeNewFile,
   );
@@ -746,6 +752,23 @@ export function redactJson<T>(value: T): T {
     ) as T;
   }
   return value;
+}
+
+function diffDependencySections(
+  previousPkg: PackageJsonSummary | null | undefined,
+  stagedPkg: PackageJsonSummary | null | undefined,
+): PackageJsonDiffEntry[] {
+  const sectionEntries = (section: DependencySection) =>
+    diffObject(previousPkg?.[section] || {}, stagedPkg?.[section] || {}).map((entry) => ({
+      ...entry,
+      section,
+    }));
+
+  return [
+    ...sectionEntries("dependencies"),
+    ...sectionEntries("optionalDependencies"),
+    ...sectionEntries("peerDependencies"),
+  ].sort((a, b) => a.key.localeCompare(b.key) || a.section.localeCompare(b.section));
 }
 
 function unusualDependencySpecKind(spec: string): string | null {
