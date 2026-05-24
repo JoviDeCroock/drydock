@@ -310,6 +310,7 @@ describe("parsePackageJson", () => {
           version: "1.2.3",
           scripts: { preinstall: "node bad.js" },
           dependencies: { foo: "1.0.0" },
+          files: ["dist", 42, "README.md"],
         }),
       },
     ];
@@ -319,6 +320,7 @@ describe("parsePackageJson", () => {
     expect(parsed?.scripts?.preinstall).toBe("node bad.js");
     expect(parsed?.dependencies?.foo).toBe("1.0.0");
     expect(parsed?.devDependencies).toEqual({});
+    expect(parsed?.files).toEqual(["dist", "README.md"]);
   });
 
   test("models npm's implicit node-gyp install script for root gyp files", () => {

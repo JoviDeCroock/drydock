@@ -14,6 +14,7 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.decodeText,
   tarParser.isPlainObject,
   tarParser.normalizeStringRecord,
+  tarParser.normalizeStringList,
   tarParser.isRootGypPath,
   tarParser.hasImplicitNodeGypInstall,
   tarParser.isSafePaxPath,

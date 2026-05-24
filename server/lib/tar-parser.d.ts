@@ -16,6 +16,7 @@ export interface ParsedPackageJson {
   devDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
+  files?: string[];
   bin?: unknown;
   main?: string;
   module?: string;
@@ -27,6 +28,7 @@ export function readString(bytes: Uint8Array, start: number, len: number): strin
 export function decodeText(bytes: Uint8Array): string;
 export function isPlainObject(value: unknown): value is Record<string, unknown>;
 export function normalizeStringRecord(value: unknown): Record<string, string>;
+export function normalizeStringList(value: unknown): string[];
 export function isRootGypPath(path: unknown): boolean;
 export function hasImplicitNodeGypInstall(
   files: Array<{ path?: unknown }> | unknown,

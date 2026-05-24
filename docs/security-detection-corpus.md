@@ -57,6 +57,7 @@ The first corpus slice covers:
 - base64/dynamic evaluation plus network-capable code;
 - secret-looking file addition;
 - large opaque binary addition;
+- files that appear in the tarball outside a declared `package.json.files` allowlist;
 - malformed `package.json` parse failure;
 - dependency and entrypoint package-json diff changes; unusual non-registry dependency specs now raise deterministic findings while entrypoint changes remain a documented coverage gap.
 

@@ -24,7 +24,7 @@ export interface Finding {
 // way that should invalidate cached scan reports. Stored alongside each
 // finding so historical reports can be traced back to the ruleset that
 // produced them.
-export const DETERMINISTIC_RULES_VERSION = "1.3.0";
+export const DETERMINISTIC_RULES_VERSION = "1.4.0";
 
 export const DETERMINISTIC_RULE_IDS = {
   installScriptPreinstall: "install-script.preinstall",
@@ -36,6 +36,7 @@ export const DETERMINISTIC_RULE_IDS = {
   fileSecretContent: "file.secret-content",
   fileLargeBinary: "file.large-binary",
   fileNativeArtifact: "file.native-artifact",
+  fileOutsideFilesList: "file.outside-files-list",
   installScriptImplicitNodeGyp: "install-script.implicit-node-gyp",
   packageJsonParseFailed: "package-json.parse-failed",
   diffCredentialFileAdded: "diff.credential-file-added",
@@ -55,6 +56,7 @@ export interface PackageJsonSummary {
   devDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
+  files?: string[];
   bin?: string | Record<string, string>;
   main?: string;
   module?: string;
@@ -264,6 +266,17 @@ export function deterministicFindings(
           file: file.path,
           evidence: `${file.size} byte binary`,
           reason: "large binary should be reviewed manually",
+        }),
+      );
+    }
+    if (isOutsidePackageFilesAllowlist(file.path, packageJson) && changed !== "removed") {
+      findings.push(
+        tag("fileOutsideFilesList", {
+          severity: changed === "added" ? "high" : "medium",
+          file: file.path,
+          evidence: `${changedPrefix}file is not matched by package.json files allowlist`,
+          reason:
+            "unexpected files outside the declared package files list can indicate tarball tampering or generated payloads that are not visible in the source/package manifest review",
         }),
       );
     }
@@ -477,6 +490,46 @@ export function redactJson<T>(value: T): T {
     ) as T;
   }
   return value;
+}
+
+function isOutsidePackageFilesAllowlist(
+  path: string,
+  packageJson: PackageJsonSummary | null | undefined,
+): boolean {
+  const files = packageJson?.files?.filter((entry) => entry.trim()) ?? [];
+  if (!files.length) return false;
+  if (isAlwaysIncludedPackageFile(path, packageJson)) return false;
+  return !files.some((entry) => packageFilesEntryMatches(entry, path));
+}
+
+function isAlwaysIncludedPackageFile(
+  path: string,
+  packageJson: PackageJsonSummary | null | undefined,
+): boolean {
+  const lower = path.toLowerCase();
+  if (lower === "package.json") return true;
+  if (/^(?:readme|licen[cs]e|copying|notice)(?:\.|$)/i.test(path)) return true;
+  const entrypoints = [packageJson?.main, packageJson?.module, packageJson?.types];
+  if (entrypoints.includes(path)) return true;
+  const bin = packageJson?.bin;
+  if (typeof bin === "string" && bin === path) return true;
+  if (bin && typeof bin === "object" && Object.values(bin).includes(path)) return true;
+  return false;
+}
+
+function packageFilesEntryMatches(entry: string, path: string): boolean {
+  const normalized = entry.trim().replace(/^\.\//, "").replace(/\/+$/, "");
+  if (!normalized) return false;
+  if (normalized.includes("*")) return globLikePackageFilesEntryMatches(normalized, path);
+  return path === normalized || path.startsWith(`${normalized}/`);
+}
+
+function globLikePackageFilesEntryMatches(entry: string, path: string): boolean {
+  const escaped = entry
+    .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, ".*")
+    .replace(/\*/g, "[^/]*");
+  return new RegExp(`^${escaped}$`).test(path);
 }
 
 function diffDependencySections(
