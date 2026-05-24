@@ -58,6 +58,7 @@ Implementation requirements:
 - Validate credentials before use.
 - Record audit events for add, validate, use, rotate, and remove.
 - Never return token material from an API.
+- Redact credential metadata fields from scan lifecycle events before returning them to the UI.
 - Never include token material in scan errors, AI inputs, logs, or persisted reports.
 
 Current code has encrypted per-organization npm connections only. SaaS production must configure `NPM_CONNECTIONS_ENCRYPTION_KEY`; scans require an organization-owned npm token.

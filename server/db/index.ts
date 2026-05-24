@@ -1,5 +1,5 @@
 import { drizzle } from "drizzle-orm/d1";
-import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import * as schema from "./schema";
 import {
   npmConnections,
@@ -491,7 +491,7 @@ export async function recordScanDecision(db: AppDb, input: RecordScanDecisionInp
 }
 
 export async function getScan(db: AppDb, id: string, organizationId: string) {
-  const [scanRows, files, findings] = await Promise.all([
+  const [scanRows, files, findings, events] = await Promise.all([
     db
       .select()
       .from(scans)
@@ -499,10 +499,36 @@ export async function getScan(db: AppDb, id: string, organizationId: string) {
       .limit(1),
     db.select().from(scanFiles).where(eq(scanFiles.scanId, id)),
     db.select().from(scanFindings).where(eq(scanFindings.scanId, id)),
+    db
+      .select()
+      .from(scanEvents)
+      .where(and(eq(scanEvents.scanId, id), eq(scanEvents.organizationId, organizationId)))
+      .orderBy(asc(scanEvents.createdAt)),
   ]);
   const scan = scanRows[0];
   if (!scan) return null;
-  return { scan, files, findings };
+  return { scan, files, findings, events: events.map(redactScanEventForClient) };
+}
+
+const SENSITIVE_EVENT_METADATA_KEYS = new Set([
+  "tokenCiphertext",
+  "tokenFingerprint",
+  "tokenLast4",
+  "tokenNonce",
+]);
+
+function redactScanEventForClient<T extends { metadataJson: unknown }>(event: T): T {
+  return { ...event, metadataJson: redactScanEventMetadata(event.metadataJson) };
+}
+
+function redactScanEventMetadata(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const redacted: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (SENSITIVE_EVENT_METADATA_KEYS.has(key)) continue;
+    redacted[key] = redactScanEventMetadata(item);
+  }
+  return redacted;
 }
 
 export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) {
