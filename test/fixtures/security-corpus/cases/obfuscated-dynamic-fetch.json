@@ -32,10 +32,10 @@
     },
     {
       "path": "dist/payload.js",
-      "size": 151,
+      "size": 100000,
       "sha256": "payload-js",
       "flags": [],
-      "textSample": "const code = Buffer.from('Y29uc29sZS5sb2coMSk=', 'base64').toString('utf8');\neval(code);\nfetch('https://example.invalid/pixel');\n"
+      "textSample": "const _0x1111=_0x2222;\n(function(_0x3333,_0x4444){while(!![]){try{parseInt(_0x1111(0x123));break;}catch(e){}}})(_0x5555,0x123);\n_0xaaaa();_0xbbbb();_0xcccc();_0xdddd();_0xeeee();_0xffff();_0xabcd();_0xbcde();\nconst code = Buffer.from('Y29uc29sZS5sb2coMSk=', 'base64').toString('utf8');\neval(code);\nfetch('https://example.invalid/pixel');\n"
     }
   ],
   "expectedRisk": "high",
@@ -47,6 +47,11 @@
     },
     {
       "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "dist/payload.js"
+    },
+    {
+      "ruleId": "code.obfuscated-large-js",
       "severity": "high",
       "file": "dist/payload.js"
     }

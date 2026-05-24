@@ -25,7 +25,7 @@ export interface Finding {
 // way that should invalidate cached scan reports. Stored alongside each
 // finding so historical reports can be traced back to the ruleset that
 // produced them.
-export const DETERMINISTIC_RULES_VERSION = "1.4.0";
+export const DETERMINISTIC_RULES_VERSION = "1.5.0";
 
 export const DETERMINISTIC_RULE_IDS = {
   installScriptPreinstall: "install-script.preinstall",
@@ -33,6 +33,7 @@ export const DETERMINISTIC_RULE_IDS = {
   codeProcessExecution: "code.process-execution",
   codeNetworkAccess: "code.network-access",
   codeDynamicEvaluation: "code.dynamic-evaluation",
+  codeObfuscatedLargeJs: "code.obfuscated-large-js",
   codeCredentialAccess: "code.credential-access",
   fileSecretContent: "file.secret-content",
   fileLargeBinary: "file.large-binary",
@@ -142,6 +143,14 @@ const CREDENTIAL_ACCESS_PATTERNS = [
   /\bGITHUB_TOKEN\b/,
   /\bAWS_SECRET\b/,
   /\bPRIVATE_KEY\b/,
+];
+const HEX_IDENTIFIER_PATTERN = /\b_0x[0-9a-f]{3,}\b/i;
+const HEX_IDENTIFIER_GLOBAL_PATTERN = /\b_0x[0-9a-f]{3,}\b/gi;
+const OBFUSCATED_JAVASCRIPT_PATTERNS = [
+  HEX_IDENTIFIER_PATTERN,
+  /while\s*\(\s*!!\s*\[\s*\]\s*\)/,
+  /parseInt\s*\([^)]*_0x[0-9a-f]{3,}/i,
+  /function\s*\(\s*_0x[0-9a-f]{3,}\s*,\s*_0x[0-9a-f]{3,}/i,
 ];
 
 const SECRET_PATTERNS: Array<[RegExp, string]> = [
@@ -288,6 +297,18 @@ export function deterministicFindings(
           line: firstMatchingLine(sample, DYNAMIC_EVALUATION_PATTERNS),
           evidence: `${changedPrefix}dynamic code or obfuscation primitive`,
           reason: "common malware and obfuscation technique",
+        }),
+      );
+    }
+    if (isLikelyObfuscatedLargeJavaScript(file.path, file.size, sample)) {
+      findings.push(
+        tag("codeObfuscatedLargeJs", {
+          severity: changed === "added" ? "high" : "medium",
+          file: file.path,
+          line: firstObfuscatedJavaScriptLine(sample),
+          evidence: `${changedPrefix}large obfuscated JavaScript payload`,
+          reason:
+            "large single-line or obfuscator-style JavaScript payloads are difficult to review and commonly used to hide credential theft or install-time malware",
         }),
       );
     }
@@ -641,6 +662,8 @@ function patternsForFinding(finding: { ruleId?: string | null }): RegExp[] {
       return NETWORK_ACCESS_PATTERNS;
     case DETERMINISTIC_RULE_IDS.codeDynamicEvaluation:
       return DYNAMIC_EVALUATION_PATTERNS;
+    case DETERMINISTIC_RULE_IDS.codeObfuscatedLargeJs:
+      return OBFUSCATED_JAVASCRIPT_PATTERNS;
     case DETERMINISTIC_RULE_IDS.codeCredentialAccess:
       return CREDENTIAL_ACCESS_PATTERNS;
     case DETERMINISTIC_RULE_IDS.fileSecretContent:
@@ -765,6 +788,29 @@ export function redactJson<T>(value: T): T {
     ) as T;
   }
   return value;
+}
+
+function isLikelyObfuscatedLargeJavaScript(path: string, size: number, sample: string): boolean {
+  if (!/\.[cm]?jsx?$/i.test(path)) return false;
+  if (size < 50 * 1024) return false;
+  const longestLine = sample.split(/\r?\n/).reduce((max, line) => Math.max(max, line.length), 0);
+  if (longestLine > 4_000) return true;
+  const hexIdentifierCount = sample.match(HEX_IDENTIFIER_GLOBAL_PATTERN)?.length ?? 0;
+  const obfuscatorControlFlow = OBFUSCATED_JAVASCRIPT_PATTERNS.slice(1).some((pattern) =>
+    pattern.test(sample),
+  );
+  return hexIdentifierCount >= 8 && obfuscatorControlFlow;
+}
+
+function firstObfuscatedJavaScriptLine(sample: string): number | undefined {
+  const lines = sample.split(/\r?\n/);
+  const longestLine = lines.reduce(
+    (longest, line, index) =>
+      line.length > longest.length ? { index, length: line.length } : longest,
+    { index: -1, length: 0 },
+  );
+  if (longestLine.length > 4_000) return longestLine.index + 1;
+  return firstMatchingLine(sample, OBFUSCATED_JAVASCRIPT_PATTERNS);
 }
 
 function isOutsidePackageFilesAllowlist(

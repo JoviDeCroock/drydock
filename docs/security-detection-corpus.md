@@ -54,7 +54,7 @@ The first corpus slice covers:
 - benign version bump control;
 - preinstall credential/environment collection with command and network capability;
 - implicit `node-gyp rebuild` from root `binding.gyp` plus native artifact review;
-- base64/dynamic evaluation plus network-capable code;
+- base64/dynamic evaluation, obfuscator-style large JavaScript payloads, and network-capable code;
 - secret-looking file addition;
 - large opaque binary addition;
 - files that appear in the tarball outside a declared `package.json.files` allowlist;

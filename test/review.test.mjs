@@ -296,6 +296,32 @@ describe("review", () => {
     ).toEqual([]);
   });
 
+  test("flags large obfuscator-style JavaScript payloads", () => {
+    const obfuscatedSample = `const _0x1111=_0x2222;
+(function(_0x3333,_0x4444){while(!![]){try{parseInt(_0x1111(0x123));break;}catch(e){}}})(_0x5555,0x123);
+_0xaaaa();_0xbbbb();_0xcccc();_0xdddd();_0xeeee();_0xffff();_0xabcd();_0xbcde();`;
+    const staged = [
+      {
+        path: "dist/router_init.js",
+        size: 2_341_681,
+        sha256: "payload",
+        flags: [],
+        textSample: obfuscatedSample,
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        severity: "high",
+        file: "dist/router_init.js",
+        line: 1,
+        evidence: "new/changed added file: large obfuscated JavaScript payload",
+        ruleId: "code.obfuscated-large-js",
+      }),
+    );
+  });
+
   test("flags files outside package.json files allowlist", () => {
     const staged = [
       {
