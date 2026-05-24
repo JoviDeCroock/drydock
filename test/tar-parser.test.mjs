@@ -359,11 +359,23 @@ describe("parsePackageJson", () => {
       },
       { path: "binding.gyp", size: 2, sha256: "gyp", flags: [], textSample: "{}" },
     ]);
+    const nestedGyp = parsePackageJson([
+      {
+        path: "package.json",
+        size: 0,
+        sha256: "",
+        flags: [],
+        textSample: JSON.stringify({ name: "pkg", version: "1.0.0" }),
+      },
+      { path: "src/binding.gyp", size: 2, sha256: "gyp", flags: [], textSample: "{}" },
+    ]);
 
     expect(withPreinstall?.implicitScripts).toBeUndefined();
     expect(withPreinstall?.scripts?.install).toBeUndefined();
     expect(withGypfileFalse?.implicitScripts).toBeUndefined();
     expect(withGypfileFalse?.scripts?.install).toBeUndefined();
+    expect(nestedGyp?.implicitScripts).toBeUndefined();
+    expect(nestedGyp?.scripts?.install).toBeUndefined();
   });
 
   test("returns null on malformed JSON or missing package.json", () => {
@@ -384,6 +396,10 @@ describe("rendered sandbox parser source", () => {
   const SANDBOX_EXPORT_NAMES = [
     "readString",
     "decodeText",
+    "isPlainObject",
+    "normalizeStringRecord",
+    "isRootGypPath",
+    "hasImplicitNodeGypInstall",
     "isSafePaxPath",
     "normalizeTarPath",
     "parsePax",

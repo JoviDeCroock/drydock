@@ -106,7 +106,7 @@ Allowed credentialed egress through `NpmStageGateway`:
 - `GET` npm package metadata JSON endpoint;
 - `GET` published npm `.tgz` tarballs for previous-version diffing.
 
-The trusted parent Worker also fetches staged metadata (`GET /-/stage/{stageId}`) with the organization credential so it can select the comparison baseline from the staged dist-tag. That metadata is not fetched from inside the sandbox.
+The trusted parent Worker may also call npm's staged list/view endpoints (`/-/stage`, `/-/stage/:id`) with organization credentials for discovery, validation, tag-aware baseline selection, and prepared-manifest recovery. Those responses are treated as registry metadata and are not fetched from inside the sandbox; token material still never enters the sandbox.
 
 This matches Cloudflare's [outbound Worker sandbox-auth model](https://blog.cloudflare.com/sandbox-auth/): auth injection happens in a trusted WorkerEntrypoint using parent-provided props, not inside the sandboxed workload.
 
@@ -140,7 +140,7 @@ The prompt's npm-specific risk checklist prioritizes:
 - lifecycle script bodies that invoke shells, `node`, package managers, `curl`/`wget`, `powershell`, `git`, or `child_process`-style behavior;
 - added or modified dependencies, optional dependencies, peer dependencies, and bundled dependencies, because their own lifecycle scripts may run on consumer install even when they are not present in the staged tarball evidence;
 - unusual dependency specs such as git/http/tarball/file URLs, npm alias syntax, broad ranges, typo-squat-looking names, native/build tooling, or optional platform-specific packages;
-- entrypoint changes, credential/environment access, network/process execution, obfuscation/dynamic code, native binaries, and package-shape surprises.
+- entrypoint changes, credential/environment access, network/process execution, obfuscation/dynamic code, native binaries, unparseable package manifests, and package-shape surprises.
 
 The AI must not claim an added dependency is malicious without evidence. If dependency risk depends on unavailable dependency metadata or maintainer reputation, it should require manual review and recommend checking the dependency tarballs/metadata rather than guessing.
 

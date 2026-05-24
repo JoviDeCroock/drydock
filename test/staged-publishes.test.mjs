@@ -48,6 +48,22 @@ describe("staged publish metadata", () => {
     ]);
   });
 
+  test("deduces list item metadata and ignores malformed stage ids", () => {
+    const page = parseStagedPublishesResponse({
+      items: [
+        { id: "stage-good-123", packageName: "pkg", version: "1.0.0" },
+        { id: "../bad", packageName: "bad", version: "1.0.0" },
+      ],
+      total: 2,
+      perPage: 50,
+      page: 0,
+    });
+
+    expect(page.items).toEqual([
+      expect.objectContaining({ id: "stage-good-123", packageName: "pkg", version: "1.0.0" }),
+    ]);
+  });
+
   test("parses detail responses with a fallback id", () => {
     expect(
       parseStagedPublishDetails(
@@ -65,6 +81,31 @@ describe("staged publish metadata", () => {
       version: "0.4.0",
       tag: "next",
       actorType: "trusted automation",
+    });
+  });
+
+  test("extracts prepared package manifests from staged view version metadata", () => {
+    const detail = parseStagedPublishDetails({
+      id: "stage-good-123",
+      packageName: "pkg",
+      version: "1.0.1",
+      versions: {
+        "1.0.1": {
+          name: "pkg",
+          version: "1.0.1",
+          scripts: { install: "node-gyp rebuild" },
+          gypfile: true,
+          dependencies: { leftpad: "1.3.0" },
+        },
+      },
+    });
+
+    expect(detail?.packageJson).toMatchObject({
+      name: "pkg",
+      version: "1.0.1",
+      scripts: { install: "node-gyp rebuild" },
+      gypfile: true,
+      dependencies: { leftpad: "1.3.0" },
     });
   });
 

@@ -25,6 +25,13 @@ export interface ParsedPackageJson {
 
 export function readString(bytes: Uint8Array, start: number, len: number): string;
 export function decodeText(bytes: Uint8Array): string;
+export function isPlainObject(value: unknown): value is Record<string, unknown>;
+export function normalizeStringRecord(value: unknown): Record<string, string>;
+export function isRootGypPath(path: unknown): boolean;
+export function hasImplicitNodeGypInstall(
+  files: Array<{ path?: unknown }> | unknown,
+  packageJson: { scripts?: unknown; gypfile?: unknown } | null | undefined,
+): boolean;
 export function isSafePaxPath(value: unknown): boolean;
 export function normalizeTarPath(rawPath: string | null | undefined): string | null;
 export function parsePax(body: Uint8Array): Record<string, string>;

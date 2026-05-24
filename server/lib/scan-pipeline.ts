@@ -57,11 +57,15 @@ export async function runScanPipeline(
     stagedDetails,
     staged.packageJson ?? null,
   );
+  const stagedPackageJson = mergeStagedPackageJson(
+    staged.packageJson ?? null,
+    stagedDetails?.packageJson ?? null,
+  );
   const stagedTag = stagedMetadataFindings.length ? null : (stagedDetails?.tag ?? null);
   const previousResult = await maybeDownloadPreviousVersion(
     env,
     executionCtx,
-    staged.packageJson ?? null,
+    stagedPackageJson,
     stagedTag,
     input,
   );
@@ -71,14 +75,14 @@ export async function runScanPipeline(
     ? createPackageDiff(previous.files, staged.files)
     : createPackageDiff([], staged.files);
   const packageJsonDiff = redactJson(
-    summarizePackageJsonDiff(previous?.packageJson, staged.packageJson),
+    summarizePackageJsonDiff(previous?.packageJson, stagedPackageJson),
   );
   const ruleFindings = redactFindings([
-    ...deterministicFindings(staged.files, diff),
+    ...deterministicFindings(staged.files, diff, stagedPackageJson),
     ...stagedMetadataFindings,
   ]);
   const redactedStagedFiles = redactFileRecords(staged.files);
-  const redactedPackageJson = redactJson(staged.packageJson ?? null);
+  const redactedPackageJson = redactJson(stagedPackageJson ?? null);
   const redactedPreviousPackageJson = redactJson(previous?.packageJson ?? null);
   const redactedStagedDetails = redactJson(summarizeStagedDetails(stagedDetails));
   const scanId = input.scanId || crypto.randomUUID();
@@ -110,8 +114,8 @@ export async function runScanPipeline(
         scanId,
         stageId: input.stageId,
         organizationId: input.organizationId,
-        packageName: staged.packageJson?.name ?? null,
-        stagedVersion: staged.packageJson?.version ?? null,
+        packageName: stagedPackageJson?.name ?? null,
+        stagedVersion: stagedPackageJson?.version ?? null,
         model: aiFindings.model,
         reasons: aiFindings.escalationReasons,
       });
@@ -134,8 +138,8 @@ export async function runScanPipeline(
     id: scanId,
     stageId: input.stageId,
     package: {
-      name: staged.packageJson?.name ?? null,
-      stagedVersion: staged.packageJson?.version ?? null,
+      name: stagedPackageJson?.name ?? null,
+      stagedVersion: stagedPackageJson?.version ?? null,
       stagedTag: stagedDetails?.tag ?? null,
       previousVersion: previous?.packageJson?.version ?? null,
     },
@@ -232,6 +236,74 @@ function stableJson(value: unknown): string {
     .filter(([, item]) => item !== undefined)
     .sort(([a], [b]) => a.localeCompare(b));
   return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
+}
+
+function mergeStagedPackageJson(
+  tarballPackageJson: PackageJsonSummary | null,
+  stagedMetadataPackageJson: PackageJsonSummary | null,
+): PackageJsonSummary | null {
+  if (!tarballPackageJson && !stagedMetadataPackageJson) return null;
+  const scripts = mergeRecord(tarballPackageJson?.scripts, stagedMetadataPackageJson?.scripts);
+  const implicitScripts = mergeRecord(
+    tarballPackageJson?.implicitScripts,
+    stagedMetadataPackageJson?.implicitScripts,
+  );
+  if (
+    stagedMetadataPackageJson?.scripts?.install === "node-gyp rebuild" &&
+    stagedMetadataPackageJson.gypfile === true &&
+    !tarballPackageJson?.scripts?.install &&
+    !tarballPackageJson?.scripts?.preinstall
+  ) {
+    implicitScripts.install = "node-gyp rebuild";
+  }
+
+  return {
+    name: stagedMetadataPackageJson?.name ?? tarballPackageJson?.name,
+    version: stagedMetadataPackageJson?.version ?? tarballPackageJson?.version,
+    ...(Object.keys(scripts).length ? { scripts } : {}),
+    ...(Object.keys(implicitScripts).length ? { implicitScripts } : {}),
+    ...(typeof (stagedMetadataPackageJson?.gypfile ?? tarballPackageJson?.gypfile) === "boolean"
+      ? { gypfile: stagedMetadataPackageJson?.gypfile ?? tarballPackageJson?.gypfile }
+      : {}),
+    ...optionalRecord(
+      "dependencies",
+      mergeRecord(tarballPackageJson?.dependencies, stagedMetadataPackageJson?.dependencies),
+    ),
+    ...optionalRecord(
+      "devDependencies",
+      mergeRecord(tarballPackageJson?.devDependencies, stagedMetadataPackageJson?.devDependencies),
+    ),
+    ...optionalRecord(
+      "peerDependencies",
+      mergeRecord(
+        tarballPackageJson?.peerDependencies,
+        stagedMetadataPackageJson?.peerDependencies,
+      ),
+    ),
+    ...optionalRecord(
+      "optionalDependencies",
+      mergeRecord(
+        tarballPackageJson?.optionalDependencies,
+        stagedMetadataPackageJson?.optionalDependencies,
+      ),
+    ),
+    bin: stagedMetadataPackageJson?.bin ?? tarballPackageJson?.bin,
+    main: stagedMetadataPackageJson?.main ?? tarballPackageJson?.main,
+    module: stagedMetadataPackageJson?.module ?? tarballPackageJson?.module,
+    types: stagedMetadataPackageJson?.types ?? tarballPackageJson?.types,
+    exports: stagedMetadataPackageJson?.exports ?? tarballPackageJson?.exports,
+  };
+}
+
+function mergeRecord(
+  before: Record<string, string> | undefined,
+  after: Record<string, string> | undefined,
+): Record<string, string> {
+  return { ...before, ...after };
+}
+
+function optionalRecord(key: string, value: Record<string, string>): Record<string, unknown> {
+  return Object.keys(value).length ? { [key]: value } : {};
 }
 
 async function maybeDownloadPreviousVersion(

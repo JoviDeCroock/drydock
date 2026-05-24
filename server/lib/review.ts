@@ -1,3 +1,5 @@
+import { hasImplicitNodeGypInstall, isRootGypPath, normalizeStringRecord } from "./tar-parser.js";
+
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 
 export interface FileRecord {
@@ -22,7 +24,7 @@ export interface Finding {
 // way that should invalidate cached scan reports. Stored alongside each
 // finding so historical reports can be traced back to the ruleset that
 // produced them.
-export const DETERMINISTIC_RULES_VERSION = "1.0.0";
+export const DETERMINISTIC_RULES_VERSION = "1.1.0";
 
 export const DETERMINISTIC_RULE_IDS = {
   installScriptPreinstall: "install-script.preinstall",
@@ -35,6 +37,7 @@ export const DETERMINISTIC_RULE_IDS = {
   fileLargeBinary: "file.large-binary",
   fileNativeArtifact: "file.native-artifact",
   installScriptImplicitNodeGyp: "install-script.implicit-node-gyp",
+  packageJsonParseFailed: "package-json.parse-failed",
   diffCredentialFileAdded: "diff.credential-file-added",
   diffLargeNewFile: "diff.large-new-file",
   stageMetadataMismatch: "stage.metadata-mismatch",
@@ -111,15 +114,22 @@ const SECRET_PATTERNS: Array<[RegExp, string]> = [
   ],
 ];
 
-export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = []): Finding[] {
+export function deterministicFindings(
+  files: FileRecord[],
+  diff: DiffEntry[] = [],
+  packageJsonSummary?: PackageJsonSummary | null,
+): Finding[] {
   const findings: Finding[] = [];
   const diffByPath = new Map(diff.map((entry) => [entry.path, entry]));
   const packageJsonFile = files.find((file) => file.path === "package.json" && file.textSample);
-  const packageJson = packageJsonFile?.textSample
+  const rawPackageJson = packageJsonFile?.textSample
     ? (safeJson(packageJsonFile.textSample) as PackageJsonSummary | null)
     : null;
-  const scripts = packageJson?.scripts || {};
-  const rootGypFile = files.find((file) => !file.path.includes("/") && /\.gyp$/i.test(file.path));
+  const packageJsonParseFailed = Boolean(packageJsonFile?.textSample) && rawPackageJson === null;
+  const packageJson = packageJsonSummary ?? rawPackageJson;
+  const scripts = normalizeStringRecord(packageJson?.scripts);
+  const implicitScripts = normalizeStringRecord(packageJson?.implicitScripts);
+  const rootGypFile = files.find((file) => isRootGypPath(file.path));
   const tag = (
     rule: keyof typeof DETERMINISTIC_RULE_IDS,
     finding: Omit<Finding, "ruleId" | "ruleVersion">,
@@ -129,43 +139,52 @@ export function deterministicFindings(files: FileRecord[], diff: DiffEntry[] = [
     ruleVersion: DETERMINISTIC_RULES_VERSION,
   });
 
-  if (rootGypFile && !scripts.install && !scripts.preinstall && packageJson?.gypfile !== false) {
+  if (packageJsonParseFailed) {
+    findings.push(
+      tag("packageJsonParseFailed", {
+        severity: "medium",
+        file: packageJsonFile?.path ?? "package.json",
+        evidence: packageJsonFile?.flags.includes("truncated")
+          ? "package.json parse failed; captured sample was truncated"
+          : "package.json parse failed",
+        reason:
+          "the package manifest could not be parsed, so lifecycle script and dependency review from the tarball manifest may be incomplete",
+      }),
+    );
+  }
+
+  const implicitNodeGyp =
+    implicitScripts.install === "node-gyp rebuild" || hasImplicitNodeGypInstall(files, packageJson);
+  if (implicitNodeGyp) {
     findings.push(
       tag("installScriptImplicitNodeGyp", {
         severity: "high",
-        file: rootGypFile.path,
+        file: rootGypFile?.path ?? packageJsonFile?.path ?? "package.json",
         evidence: "implicit install: node-gyp rebuild",
-        reason:
-          "npm defaults install to node-gyp rebuild when a root *.gyp file exists and no install/preinstall script or gypfile=false is declared",
+        reason: rootGypFile
+          ? "npm defaults install to node-gyp rebuild when a root *.gyp file exists and no install/preinstall script or gypfile=false is declared"
+          : "npm staged metadata reports the default node-gyp install hook; the source root had a *.gyp file even if that file is not present in the packed tarball",
+      }),
+    );
+  }
+
+  for (const script of LIFECYCLE_SCRIPTS) {
+    if (!scripts[script] || implicitScripts[script] === scripts[script]) continue;
+    findings.push(
+      tag(script === "preinstall" ? "installScriptPreinstall" : "installScript", {
+        severity: script === "preinstall" ? "critical" : "high",
+        file: packageJsonFile?.path ?? "package.json",
+        evidence: `${script}: ${scripts[script]}`,
+        reason: "install lifecycle hooks execute on consumer machines",
       }),
     );
   }
 
   for (const file of files) {
-    const p = file.path.toLowerCase();
     const sample = file.textSample || "";
     const changed = diffByPath.get(file.path)?.status;
     const changedPrefix = changed && changed !== "unchanged" ? `new/changed ${changed} file: ` : "";
 
-    if (
-      p.endsWith("package.json") &&
-      /"(preinstall|install|postinstall|prepare)"\s*:/.test(sample)
-    ) {
-      const pkg = safeJson(sample) as PackageJsonSummary | null;
-      const scripts = pkg?.scripts || {};
-      for (const script of LIFECYCLE_SCRIPTS) {
-        if (scripts[script]) {
-          findings.push(
-            tag(script === "preinstall" ? "installScriptPreinstall" : "installScript", {
-              severity: script === "preinstall" ? "critical" : "high",
-              file: file.path,
-              evidence: `${script}: ${scripts[script]}`,
-              reason: "install lifecycle hooks execute on consumer machines",
-            }),
-          );
-        }
-      }
-    }
     if (
       /\b(child_process|execSync|execFileSync|spawn\(|spawnSync\(|curl\s|wget\s|nc\s|bash\s+-c|powershell\s)/.test(
         sample,
