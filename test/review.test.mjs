@@ -3,6 +3,7 @@ import {
   computeRisk,
   createPackageDiff,
   deterministicFindings,
+  packageJsonDiffFindings,
   summarizePackageJsonDiff,
 } from "../server/lib/review.ts";
 
@@ -100,6 +101,51 @@ describe("review", () => {
       { key: "postinstall", status: "added", staged: "node install.js" },
     ]);
     expect(summary.entrypointsChanged).toBe(true);
+  });
+
+  test("flags unusual dependency specs in package json diffs", () => {
+    const diff = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { safe: "^1.0.0" } },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        dependencies: {
+          safe: "github:example/safe#main",
+          remote: "https://example.invalid/pkg.tgz",
+          local: "file:../local.tgz",
+          alias: "npm:other-package@^1.0.0",
+        },
+      },
+    );
+
+    const findings = packageJsonDiffFindings(diff);
+
+    expect(findings).toEqual([
+      expect.objectContaining({
+        severity: "high",
+        file: "package.json",
+        evidence: "alias: npm:other-package@^1.0.0",
+        ruleId: "dependency.unusual-spec",
+      }),
+      expect.objectContaining({
+        evidence: "local: file:../local.tgz",
+        ruleId: "dependency.unusual-spec",
+      }),
+      expect.objectContaining({
+        evidence: "remote: https://example.invalid/pkg.tgz",
+        ruleId: "dependency.unusual-spec",
+      }),
+      expect.objectContaining({
+        evidence: "safe: github:example/safe#main",
+        ruleId: "dependency.unusual-spec",
+      }),
+    ]);
+    expect(
+      packageJsonDiffFindings({
+        ...diff,
+        dependencies: [{ key: "safe", status: "added", staged: "^1.0.0" }],
+      }),
+    ).toEqual([]);
   });
 
   test("flags npm's implicit node-gyp install hook from root gyp files", () => {
