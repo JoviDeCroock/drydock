@@ -202,6 +202,73 @@ describe("scan pipeline baseline selection", () => {
     );
   });
 
+  test("surfaces npm's implicit node-gyp install when a staged tarball adds root binding.gyp", async () => {
+    const stagedFiles = [
+      {
+        path: "package.json",
+        size: 80,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({
+          name: "pkg",
+          version: "1.0.1",
+          files: ["binding.gyp", "index.js"],
+        }),
+      },
+      { path: "binding.gyp", size: 2, sha256: "gyp", flags: [], textSample: "{}" },
+    ];
+    sandboxMock.downloadInSandbox.mockResolvedValueOnce({
+      files: stagedFiles,
+      packageJson: {
+        name: "pkg",
+        version: "1.0.1",
+        scripts: { install: "node-gyp rebuild" },
+        implicitScripts: { install: "node-gyp rebuild" },
+        gypfile: true,
+      },
+    });
+    stagedMock.fetchStagedPublishDetails.mockResolvedValueOnce({
+      id: "stage-gyp123",
+      packageName: "pkg",
+      version: "1.0.1",
+      tag: "latest",
+      access: null,
+      actor: null,
+      actorType: null,
+      createdAt: null,
+      shasum: null,
+      packageJson: null,
+    });
+    registryMock.fetchPackageMetadata.mockResolvedValue(null);
+
+    const result = await runScanPipeline(
+      {
+        env: { NPM_REGISTRY: "https://registry.npmjs.org" },
+        executionCtx: {},
+        db: {},
+        session: { userId: "user_1" },
+      },
+      {
+        stageId: "stage-gyp123",
+        organizationId: "org_1",
+        npmToken: "npm_token_0123456789",
+        npmRegistry: "https://registry.npmjs.org",
+      },
+    );
+
+    expect(result.risk).toBe("high");
+    expect(result.packageJsonDiff.scripts).toEqual([
+      { key: "install", status: "added", staged: "node-gyp rebuild" },
+    ]);
+    expect(result.ruleFindings).toContainEqual(
+      expect.objectContaining({
+        severity: "high",
+        ruleId: "install-script.implicit-node-gyp",
+        file: "binding.gyp",
+      }),
+    );
+  });
+
   test("uses npm staged detail manifest to surface implicit node-gyp hooks missing from the tarball", async () => {
     const stagedFiles = [
       {
