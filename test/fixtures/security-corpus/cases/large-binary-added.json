@@ -1,0 +1,51 @@
+{
+  "id": "large-binary-added",
+  "title": "Large opaque binary is added to the package",
+  "category": "binary-review",
+  "intent": "Keep manual-review pressure on large opaque artifacts even when they are not native extensions by filename.",
+  "previousPackageJson": {
+    "name": "large-binary-added",
+    "version": "1.0.0"
+  },
+  "stagedPackageJson": {
+    "name": "large-binary-added",
+    "version": "1.0.1"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 51,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"large-binary-added\",\"version\":\"1.0.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 51,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"large-binary-added\",\"version\":\"1.0.1\"}"
+    },
+    {
+      "path": "vendor/tool.bin",
+      "size": 3145728,
+      "sha256": "large-binary",
+      "flags": ["binary"]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "file.large-binary",
+      "severity": "high",
+      "file": "vendor/tool.bin"
+    },
+    {
+      "ruleId": "diff.large-new-file",
+      "severity": "medium",
+      "file": "vendor/tool.bin"
+    }
+  ]
+}

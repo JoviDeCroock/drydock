@@ -1,0 +1,31 @@
+{
+  "id": "package-json-parse-failed",
+  "title": "Malformed package.json prevents complete manifest review",
+  "category": "manifest-parse-failure",
+  "intent": "Ensure malformed manifests fail closed into manual review rather than silently passing lifecycle/dependency checks.",
+  "previousFiles": [],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 9,
+      "sha256": "bad-package-json",
+      "flags": [],
+      "textSample": "{not-json"
+    },
+    {
+      "path": "binding.gyp",
+      "size": 2,
+      "sha256": "binding-gyp",
+      "flags": [],
+      "textSample": "{}"
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedFindings": [
+    {
+      "ruleId": "package-json.parse-failed",
+      "severity": "medium",
+      "file": "package.json"
+    }
+  ]
+}

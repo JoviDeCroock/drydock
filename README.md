@@ -15,7 +15,7 @@ This repository is moving from prototype to real product. The current implementa
 - **Safe artifact defaults.** Do not retain raw tarballs by default in SaaS. Persist redacted summaries, manifests, diffs, findings, and report metadata. Raw artifact retention may become an explicit short-TTL organization setting later.
 - **Signed reports later.** Prepare report data to be canonical and signable, but do not launch public signed report generation yet.
 
-See [`docs/architecture.md`](docs/architecture.md), [`docs/security-model.md`](docs/security-model.md), [`docs/production-roadmap.md`](docs/production-roadmap.md), [`docs/cost-model.md`](docs/cost-model.md), and [`docs/test-package.md`](docs/test-package.md) for the production plan, budget napkin math, and staged-publish test package.
+See [`docs/architecture.md`](docs/architecture.md), [`docs/security-model.md`](docs/security-model.md), [`docs/security-detection-corpus.md`](docs/security-detection-corpus.md), [`docs/production-roadmap.md`](docs/production-roadmap.md), [`docs/cost-model.md`](docs/cost-model.md), and [`docs/test-package.md`](docs/test-package.md) for the production plan, detection corpus notes, budget napkin math, and staged-publish test package.
 
 ## Current capabilities
 
