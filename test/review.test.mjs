@@ -396,6 +396,33 @@ _0xaaaa();_0xbbbb();_0xcccc();_0xdddd();_0xeeee();_0xffff();_0xabcd();_0xbcde();
     );
   });
 
+  test("flags optional external dependency lifecycle risk", () => {
+    const stagedPackageJsonText = `{
+  "name": "pkg",
+  "version": "1.0.1",
+  "optionalDependencies": {
+    "@tanstack/setup": "github:tanstack/router#79ac49eedf774dd4b0cfa308722bc463cfe5885c"
+  }
+}`;
+    const diff = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0" },
+      JSON.parse(stagedPackageJsonText),
+    );
+
+    const findings = packageJsonDiffFindings(diff, stagedPackageJsonText);
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        severity: "critical",
+        file: "package.json",
+        line: 5,
+        evidence:
+          "@tanstack/setup: github:tanstack/router#79ac49eedf774dd4b0cfa308722bc463cfe5885c",
+        ruleId: "dependency.optional-lifecycle-risk",
+      }),
+    );
+  });
+
   test("flags newly added optional dependencies", () => {
     const stagedPackageJsonText = `{
   "name": "pkg",

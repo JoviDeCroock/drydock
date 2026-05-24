@@ -25,7 +25,7 @@ export interface Finding {
 // way that should invalidate cached scan reports. Stored alongside each
 // finding so historical reports can be traced back to the ruleset that
 // produced them.
-export const DETERMINISTIC_RULES_VERSION = "1.7.0";
+export const DETERMINISTIC_RULES_VERSION = "1.8.0";
 
 export const DETERMINISTIC_RULE_IDS = {
   installScriptPreinstall: "install-script.preinstall",
@@ -47,6 +47,7 @@ export const DETERMINISTIC_RULE_IDS = {
   packageSizeAnomaly: "package.size-anomaly",
   dependencyUnusualSpec: "dependency.unusual-spec",
   dependencyOptionalAdded: "dependency.optional-added",
+  dependencyOptionalLifecycleRisk: "dependency.optional-lifecycle-risk",
   stageMetadataMismatch: "stage.metadata-mismatch",
 } as const;
 
@@ -524,6 +525,18 @@ export function packageJsonDiffFindings(
     }
     if (!entry.staged) continue;
     const kind = unusualDependencySpecKind(entry.staged);
+    if (kind && entry.section === "optionalDependencies" && kind !== "npm alias") {
+      findings.push({
+        severity: "critical",
+        file: "package.json",
+        line: firstJsonPropertyLine(stagedPackageJsonText, entry.key, entry.staged),
+        evidence: `${entry.key}: ${entry.staged}`,
+        reason:
+          "optional dependencies with external specs can run prepare/install lifecycle hooks outside the staged tarball evidence and then fail softly without leaving normal dependency traces",
+        ruleId: DETERMINISTIC_RULE_IDS.dependencyOptionalLifecycleRisk,
+        ruleVersion: DETERMINISTIC_RULES_VERSION,
+      });
+    }
     if (!kind) continue;
     findings.push({
       severity: "high",
@@ -584,6 +597,7 @@ function isReleaseScopedFinding(finding: { ruleId?: string | null }): boolean {
     finding.ruleId?.startsWith("stage.") ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyUnusualSpec ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyOptionalAdded ||
+    finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyOptionalLifecycleRisk ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.packageSizeAnomaly ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffCredentialFileAdded ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffLargeNewFile,

