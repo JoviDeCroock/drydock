@@ -56,6 +56,8 @@ export default function ScanDetailPage() {
   const id = route.params.id;
   const model = useModel(() => new ScanDetailModel(id));
   const sessionChecked = useSignal(false);
+  const fileFilter = useSignal("");
+  const changedFilesOnly = useSignal(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -112,6 +114,10 @@ export default function ScanDetailPage() {
     if (!path) return null;
     return entries.find((entry) => entry.path === path) ?? null;
   });
+
+  const visibleDiffEntries = useComputed(() =>
+    filterDiffEntries(diffEntries.value, fileFilter.value, changedFilesOnly.value),
+  );
 
   const stagedFile = useComputed(() => {
     const path = model.selectedPath.value;
@@ -239,12 +245,35 @@ export default function ScanDetailPage() {
 
           <section class={workbenchGridClass}>
             <Card as="aside" class="p-0 overflow-hidden flex flex-col">
-              <div class="px-4 py-3 border-b border-border">
+              <div class="px-4 py-3 border-b border-border flex flex-col gap-3">
                 <SectionLabel>Release tree</SectionLabel>
+                <Input
+                  type="search"
+                  value={fileFilter.value}
+                  placeholder="Filter files"
+                  onInput={(e) => (fileFilter.value = (e.target as HTMLInputElement).value)}
+                  autoComplete="off"
+                  spellcheck={false}
+                />
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <label class="flex items-center gap-2 text-[13px] text-ink-muted">
+                    <input
+                      type="checkbox"
+                      checked={changedFilesOnly.value}
+                      onChange={(e) =>
+                        (changedFilesOnly.value = (e.target as HTMLInputElement).checked)
+                      }
+                    />
+                    Changed files only
+                  </label>
+                  <span class="font-mono text-[11px] text-ink-subtle">
+                    {visibleDiffEntries.value.length} / {diffEntries.value.length}
+                  </span>
+                </div>
               </div>
               <div class="flex flex-col overflow-y-auto h-[640px] py-2">
                 <FileTree
-                  entries={diffEntries.value}
+                  entries={visibleDiffEntries.value}
                   selectedPath={model.selectedPath.value}
                   onSelect={(path) => model.selectPath(path)}
                 />
@@ -681,6 +710,31 @@ function ScanFailureAlert({ errorJson }: { errorJson: unknown }) {
       </div>
     </Alert>
   );
+}
+
+const DIFF_STATUS_RANK: Record<DiffEntry["status"], number> = {
+  added: 0,
+  modified: 1,
+  removed: 2,
+  unchanged: 3,
+};
+
+function filterDiffEntries(
+  entries: DiffEntry[],
+  rawFilter: string,
+  changedOnly: boolean,
+): DiffEntry[] {
+  const filter = rawFilter.trim().toLowerCase();
+  return entries
+    .filter((entry) => {
+      if (changedOnly && entry.status === "unchanged") return false;
+      if (!filter) return true;
+      return entry.path.toLowerCase().includes(filter);
+    })
+    .sort((a, b) => {
+      const status = DIFF_STATUS_RANK[a.status] - DIFF_STATUS_RANK[b.status];
+      return status || a.path.localeCompare(b.path);
+    });
 }
 
 function ReportOverview({
