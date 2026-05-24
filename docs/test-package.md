@@ -34,7 +34,7 @@ From `packages/experiments`:
 
 ```sh
 npm version patch --no-git-tag-version
-npm run pack:dry-run
+npm run pack:implicit-node-gyp
 npm run stage:publish
 ```
 
@@ -54,6 +54,6 @@ For deterministic-rule tests, introduce a temporary change that should be flagge
 
 ### Implicit node-gyp probe
 
-The current `0.1.2` fixture generates and packs a root `binding.gyp` without defining `install`, `preinstall`, or `gypfile=false`. `prepack` writes the probe and `postpack` removes it so normal workspace installs do not run node-gyp.
+The current `0.1.2` fixture generates a source-root `binding.gyp` without defining `install`, `preinstall`, or `gypfile=false`, then stages the package while leaving `binding.gyp` out of the package `files` allowlist. `scripts/with-implicit-node-gyp.mjs` writes the probe before invoking npm and removes it afterward so normal workspace installs do not run node-gyp.
 
-Expected result: the staged tarball contains `binding.gyp`, and a staged review for this fixture should include an `install-script.implicit-node-gyp` high-severity finding. Discard the staged publish after testing.
+Expected result: the staged tarball omits `binding.gyp`. If npm's staged view exposes the prepared manifest, a staged review should include an `install-script.implicit-node-gyp` high-severity finding from staged metadata. Discard the staged publish after testing.

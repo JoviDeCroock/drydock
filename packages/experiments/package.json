@@ -10,7 +10,6 @@
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
-    "binding.gyp",
     "cli.js",
     "index.d.ts",
     "index.js"
@@ -28,11 +27,10 @@
     "access": "public"
   },
   "scripts": {
-    "prepack": "node ./scripts/write-binding-gyp.mjs",
-    "postpack": "node ./scripts/remove-binding-gyp.mjs",
     "pack:dry-run": "npm pack --dry-run",
+    "pack:implicit-node-gyp": "node ./scripts/with-implicit-node-gyp.mjs pack --dry-run",
     "publish:public": "npm publish --access public",
-    "stage:publish": "npm stage publish --access public"
+    "stage:publish": "node ./scripts/with-implicit-node-gyp.mjs stage publish --access public"
   },
   "engines": {
     "node": ">=18"

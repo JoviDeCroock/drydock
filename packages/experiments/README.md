@@ -10,7 +10,7 @@ It usually has:
 - a tiny CLI binary;
 - a narrow `files` allowlist so package contents are predictable.
 
-This test revision intentionally generates and packs a root `binding.gyp` without declaring `install`, `preinstall`, or `gypfile=false`. npm may infer `scripts.install = "node-gyp rebuild"`, which exercises Drydock's implicit node-gyp detection. The probe is removed after packing so local workspace installs do not run node-gyp. Do not approve this staged publish.
+This test revision intentionally generates a source-root `binding.gyp` before staging without adding it to the package `files` allowlist. npm may infer `scripts.install = "node-gyp rebuild"` in the prepared staged manifest even though the tarball omits the gyp file. The probe is removed after the command so local workspace installs do not run node-gyp. Do not approve this staged publish.
 
 ## Publish the baseline package
 
@@ -32,7 +32,7 @@ Make a small change, bump the version, then stage the package:
 
 ```sh
 npm version patch --no-git-tag-version
-npm run pack:dry-run
+npm run pack:implicit-node-gyp
 npm run stage:publish
 ```
 

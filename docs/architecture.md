@@ -81,9 +81,9 @@ Current high-level flow:
 
 1. User submits a `stageId`.
 2. API validates input and resolves the authenticated user's active organization via `requireActiveOrganization`.
-3. Parent Worker loads the staged tarball in a Dynamic Worker and fetches staged metadata (`GET /-/stage/{stageId}`) in parallel in the trusted parent to recover npm's prepared manifest and dist-tag context when available.
+3. Parent Worker loads the staged tarball in a Dynamic Worker and fetches staged metadata (`GET /-/stage/{stageId}`) in parallel in the trusted parent for dist-tag, shasum, and mismatch checks. Current npm staged-view responses are metadata-only; if npm later exposes the prepared manifest, the parser can merge it.
 4. Gateway attaches npm auth only for allowed sandbox npm registry endpoints.
-5. Sandbox extracts bounded file records and tarball-derived package metadata. The package metadata models npm manifest normalization that is inferable from tarball contents, including npm's implicit `scripts.install = "node-gyp rebuild"` when a root `*.gyp` file exists and no `install`/`preinstall` script or `gypfile=false` is declared. Staged-view metadata is merged in before review so implicit lifecycle hooks can still be surfaced when npm inferred them from source files that were not included in the packed tarball.
+5. Sandbox extracts bounded file records and tarball-derived package metadata. The package metadata models npm manifest normalization that is inferable from tarball contents, including npm's implicit `scripts.install = "node-gyp rebuild"` when a root `*.gyp` file exists and no `install`/`preinstall` script or `gypfile=false` is declared.
 6. Parent Worker fetches npm package metadata, chooses a tag-aware comparison baseline, and downloads the selected previous published tarball when available.
 7. Sandbox extracts the selected previous tarball.
 8. Parent Worker computes:

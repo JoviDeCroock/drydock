@@ -84,6 +84,22 @@ describe("staged publish metadata", () => {
     });
   });
 
+  test("does not treat metadata-only staged view responses as prepared manifests", () => {
+    const detail = parseStagedPublishDetails({
+      id: "stage-good-123",
+      packageName: "pkg",
+      version: "1.0.1",
+      tag: "latest",
+      createdAt: "2026-05-24T04:35:48.540Z",
+      actor: "maintainer",
+      actorType: "user",
+      access: "public",
+      shasum: "abc123",
+    });
+
+    expect(detail?.packageJson).toBeNull();
+  });
+
   test("extracts prepared package manifests from staged view version metadata", () => {
     const detail = parseStagedPublishDetails({
       id: "stage-good-123",

@@ -2,8 +2,8 @@
 
 ## 0.1.2
 
-- Generate and pack a root `binding.gyp` probe with no explicit install/preinstall script so staged publishes exercise npm's implicit `node-gyp rebuild` install hook detection.
-- Keep the generated probe out of the workspace checkout between packs so local installs do not run node-gyp.
+- Generate a source-root `binding.gyp` probe before staging without packing it, so staged publishes exercise npm's source-only implicit `node-gyp rebuild` manifest behavior.
+- Keep the generated probe out of the workspace checkout after the command so local installs do not run node-gyp.
 
 ## 0.1.1
 
