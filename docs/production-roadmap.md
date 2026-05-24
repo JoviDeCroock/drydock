@@ -228,7 +228,7 @@ Goals:
 
 Tasks:
 
-- Build a golden fixture corpus of benign and malicious npm package patterns.
+- Expand the golden fixture corpus of benign and malicious npm package patterns. The initial safe synthetic corpus and research notes live in [`security-detection-corpus.md`](./security-detection-corpus.md).
 - Add continuous deterministic-rule and AI-prompt evals.
 - Add tests for malformed AI JSON and prompt-injection-like package contents.
 - Add archive parser fuzzing or property-based tests.

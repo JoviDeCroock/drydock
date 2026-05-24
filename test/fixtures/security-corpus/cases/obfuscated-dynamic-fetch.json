@@ -1,0 +1,54 @@
+{
+  "id": "obfuscated-dynamic-fetch",
+  "title": "Added file decodes base64, evaluates code, and performs a fetch",
+  "category": "obfuscation-network",
+  "intent": "Cover dynamic evaluation and network-capable code in a newly added file without carrying a real payload.",
+  "previousPackageJson": {
+    "name": "obfuscated-dynamic-fetch",
+    "version": "1.0.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "obfuscated-dynamic-fetch",
+    "version": "1.0.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 72,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"obfuscated-dynamic-fetch\",\"version\":\"1.0.0\",\"main\":\"index.js\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 72,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"obfuscated-dynamic-fetch\",\"version\":\"1.0.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "dist/payload.js",
+      "size": 151,
+      "sha256": "payload-js",
+      "flags": [],
+      "textSample": "const code = Buffer.from('Y29uc29sZS5sb2coMSk=', 'base64').toString('utf8');\neval(code);\nfetch('https://example.invalid/pixel');\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "high",
+      "file": "dist/payload.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "dist/payload.js"
+    }
+  ]
+}

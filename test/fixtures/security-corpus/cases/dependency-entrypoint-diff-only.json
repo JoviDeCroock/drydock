@@ -1,0 +1,78 @@
+{
+  "id": "dependency-entrypoint-diff-only",
+  "title": "Dependency specs and entrypoints change without direct code indicators",
+  "category": "package-json-diff-coverage-gap",
+  "intent": "Track release-review-sensitive package.json changes that are currently diff-only and should become richer findings later.",
+  "coverageGaps": [
+    "unusual dependency specs are visible in packageJsonDiff but do not yet raise deterministic findings",
+    "entrypoint changes are visible in packageJsonDiff but do not yet raise deterministic findings"
+  ],
+  "previousPackageJson": {
+    "name": "dependency-entrypoint-diff-only",
+    "version": "1.0.0",
+    "main": "index.js",
+    "dependencies": {
+      "left-pad": "1.3.0"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "dependency-entrypoint-diff-only",
+    "version": "1.0.1",
+    "main": "dist/index.js",
+    "exports": "./dist/index.js",
+    "dependencies": {
+      "left-pad": "github:someone/left-pad#main",
+      "@scope/native": "npm:totally-safe@^1.0.0"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 119,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"dependency-entrypoint-diff-only\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"dependencies\":{\"left-pad\":\"1.3.0\"}}"
+    },
+    {
+      "path": "index.js",
+      "size": 18,
+      "sha256": "index-v1",
+      "flags": [],
+      "textSample": "export default 1;\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 194,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"dependency-entrypoint-diff-only\",\"version\":\"1.0.1\",\"main\":\"dist/index.js\",\"exports\":\"./dist/index.js\",\"dependencies\":{\"left-pad\":\"github:someone/left-pad#main\",\"@scope/native\":\"npm:totally-safe@^1.0.0\"}}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 18,
+      "sha256": "index-v2",
+      "flags": [],
+      "textSample": "export default 1;\n"
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": [],
+  "expectedPackageJsonDiff": {
+    "entrypointsChanged": true,
+    "dependencies": [
+      {
+        "key": "@scope/native",
+        "status": "added",
+        "staged": "npm:totally-safe@^1.0.0"
+      },
+      {
+        "key": "left-pad",
+        "status": "modified",
+        "previous": "1.3.0",
+        "staged": "github:someone/left-pad#main"
+      }
+    ]
+  }
+}

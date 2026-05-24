@@ -1,0 +1,58 @@
+{
+  "id": "implicit-node-gyp-native",
+  "title": "Root binding.gyp creates npm's implicit node-gyp install hook and ships a native addon",
+  "category": "native-install-surface",
+  "intent": "Track npm's implicit install behavior and native artifact review signal.",
+  "previousPackageJson": {
+    "name": "implicit-node-gyp-native",
+    "version": "1.0.0"
+  },
+  "stagedPackageJson": {
+    "name": "implicit-node-gyp-native",
+    "version": "1.0.1"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 53,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"implicit-node-gyp-native\",\"version\":\"1.0.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 53,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"implicit-node-gyp-native\",\"version\":\"1.0.1\"}"
+    },
+    {
+      "path": "binding.gyp",
+      "size": 2,
+      "sha256": "binding-gyp",
+      "flags": [],
+      "textSample": "{}"
+    },
+    {
+      "path": "prebuilds/linux-x64/addon.node",
+      "size": 2048,
+      "sha256": "native-addon",
+      "flags": ["binary"]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "install-script.implicit-node-gyp",
+      "severity": "high",
+      "file": "binding.gyp"
+    },
+    {
+      "ruleId": "file.native-artifact",
+      "severity": "high",
+      "file": "prebuilds/linux-x64/addon.node"
+    }
+  ]
+}
