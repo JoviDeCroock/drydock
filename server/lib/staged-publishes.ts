@@ -87,7 +87,6 @@ export async function fetchStagedPublishDetails(
     throw new StagedPublishesFetchError(response.status, detail.slice(0, 200));
   }
   const data = (await response.json().catch(() => null)) as unknown;
-  logStagedPublishDetailsResponse(stageId, data);
   const parsed = parseStagedPublishDetails(data, stageId);
   if (!parsed) throw new StagedPublishesFetchError(response.status, "invalid staged details");
   return parsed;
@@ -167,37 +166,6 @@ function npmStageHeaders(token: string, userAgentSuffix: string) {
     authorization: `Bearer ${token}`,
     "user-agent": `staged-publish-review/${userAgentSuffix}`,
   };
-}
-
-function logStagedPublishDetailsResponse(stageId: string, data: unknown): void {
-  try {
-    const json = JSON.stringify({ stageId, response: redactLogValue(data) });
-    const maxLength = 12_000;
-    console.log(
-      "npm staged view response",
-      json.length > maxLength ? `${json.slice(0, maxLength)}...[truncated]` : json,
-    );
-  } catch (err) {
-    console.log("npm staged view response unavailable", {
-      stageId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
-
-function redactLogValue(value: unknown, depth = 0): unknown {
-  if (depth > 8) return "[MaxDepth]";
-  if (typeof value === "string") return value.length > 1_000 ? `${value.slice(0, 1_000)}…` : value;
-  if (Array.isArray(value)) return value.map((item) => redactLogValue(item, depth + 1));
-  if (!isRecord(value)) return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([key, nested]) => [
-      key,
-      /token|authorization|password|secret|otp|auth/i.test(key)
-        ? "[REDACTED]"
-        : redactLogValue(nested, depth + 1),
-    ]),
-  );
 }
 
 function extractPackageJsonSummary(

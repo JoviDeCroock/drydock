@@ -10,6 +10,7 @@
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
+    "binding.gyp",
     "cli.js",
     "index.d.ts",
     "index.js"
