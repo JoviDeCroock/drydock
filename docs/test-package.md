@@ -54,9 +54,6 @@ For deterministic-rule tests, introduce a temporary change that should be flagge
 
 ### Implicit node-gyp probe
 
-The current `0.1.2` fixture adds a root `binding.gyp` without defining `install`, `preinstall`, or `gypfile=false`. It intentionally leaves `binding.gyp` out of the package `files` allowlist. This tests both paths for npm's implicit `scripts.install = "node-gyp rebuild"` behavior:
+The current `0.1.2` fixture generates and packs a root `binding.gyp` without defining `install`, `preinstall`, or `gypfile=false`. `prepack` writes the probe and `postpack` removes it so normal workspace installs do not run node-gyp.
 
-- tarball-derived review when a root `*.gyp` file is packed;
-- staged-view metadata recovery when npm inferred the install hook from source files that are absent from the packed tarball.
-
-Expected result: a staged review for this fixture should include an `install-script.implicit-node-gyp` high-severity finding. Discard the staged publish after testing.
+Expected result: the staged tarball contains `binding.gyp`, and a staged review for this fixture should include an `install-script.implicit-node-gyp` high-severity finding. Discard the staged publish after testing.

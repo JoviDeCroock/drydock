@@ -10,7 +10,7 @@ It usually has:
 - a tiny CLI binary;
 - a narrow `files` allowlist so package contents are predictable.
 
-This test revision intentionally includes a root `binding.gyp` while leaving it out of the `files` allowlist. npm may infer `scripts.install = "node-gyp rebuild"` from the source tree even when the file is absent from the packed tarball, which exercises Drydock's implicit node-gyp detection and staged-metadata recovery. Do not approve this staged publish.
+This test revision intentionally generates and packs a root `binding.gyp` without declaring `install`, `preinstall`, or `gypfile=false`. npm may infer `scripts.install = "node-gyp rebuild"`, which exercises Drydock's implicit node-gyp detection. The probe is removed after packing so local workspace installs do not run node-gyp. Do not approve this staged publish.
 
 ## Publish the baseline package
 

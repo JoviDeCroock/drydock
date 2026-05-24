@@ -150,7 +150,12 @@ describe("scan pipeline baseline selection", () => {
       actorType: "user",
       createdAt: "2026-03-16T09:00:00.000Z",
       shasum: "4f7f5f1d5bcf2f72f6e4d6c4f3b2812d8a2f6c19",
-      packageJson: null,
+      packageJson: {
+        name: "@other/pkg",
+        version: "2.0.0-beta.3",
+        scripts: { install: "node-gyp rebuild" },
+        gypfile: true,
+      },
     });
     registryMock.fetchPackageMetadata.mockResolvedValue({
       versions: {
@@ -184,6 +189,8 @@ describe("scan pipeline baseline selection", () => {
       tag: null,
       source: "semver-predecessor",
     });
+    expect(result.package.name).toBe("@scope/pkg");
+    expect(result.packageJson?.scripts?.install).toBeUndefined();
     expect(result.ruleFindings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

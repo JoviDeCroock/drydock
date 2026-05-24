@@ -59,7 +59,7 @@ export async function runScanPipeline(
   );
   const stagedPackageJson = mergeStagedPackageJson(
     staged.packageJson ?? null,
-    stagedDetails?.packageJson ?? null,
+    stagedMetadataFindings.length ? null : (stagedDetails?.packageJson ?? null),
   );
   const stagedTag = stagedMetadataFindings.length ? null : (stagedDetails?.tag ?? null);
   const previousResult = await maybeDownloadPreviousVersion(
@@ -258,8 +258,8 @@ function mergeStagedPackageJson(
   }
 
   return {
-    name: stagedMetadataPackageJson?.name ?? tarballPackageJson?.name,
-    version: stagedMetadataPackageJson?.version ?? tarballPackageJson?.version,
+    name: tarballPackageJson?.name ?? stagedMetadataPackageJson?.name,
+    version: tarballPackageJson?.version ?? stagedMetadataPackageJson?.version,
     ...(Object.keys(scripts).length ? { scripts } : {}),
     ...(Object.keys(implicitScripts).length ? { implicitScripts } : {}),
     ...(typeof (stagedMetadataPackageJson?.gypfile ?? tarballPackageJson?.gypfile) === "boolean"

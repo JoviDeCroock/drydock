@@ -2,8 +2,8 @@
 
 ## 0.1.2
 
-- Add a root `binding.gyp` probe with no explicit install/preinstall script so staged publishes exercise npm's implicit `node-gyp rebuild` install hook detection.
-- Keep the probe out of the package `files` allowlist to test prepared-manifest recovery from staged metadata.
+- Generate and pack a root `binding.gyp` probe with no explicit install/preinstall script so staged publishes exercise npm's implicit `node-gyp rebuild` install hook detection.
+- Keep the generated probe out of the workspace checkout between packs so local installs do not run node-gyp.
 
 ## 0.1.1
 
