@@ -187,6 +187,17 @@ app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
 
 app.notFound((c) => c.json({ error: "not found" }, 404));
 
+app.onError((err, c) => {
+  console.error("unhandled request error", {
+    method: c.req.method,
+    path: c.req.path,
+    name: err instanceof Error ? err.name : "UnknownError",
+    message: err instanceof Error ? err.message : String(err),
+    stack: err instanceof Error ? err.stack : undefined,
+  });
+  return c.json({ error: "internal error" }, 500);
+});
+
 export default {
   fetch: app.fetch,
   async queue(batch: MessageBatch<ScanQueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
