@@ -8,6 +8,7 @@ import {
 import {
   createPackageDiff,
   deterministicFindings,
+  packageJsonDiffFindings,
   DETERMINISTIC_RULE_IDS,
   DETERMINISTIC_RULES_VERSION,
   redactFileRecords,
@@ -79,6 +80,7 @@ export async function runScanPipeline(
   );
   const ruleFindings = redactFindings([
     ...deterministicFindings(staged.files, diff, stagedPackageJson),
+    ...packageJsonDiffFindings(packageJsonDiff),
     ...stagedMetadataFindings,
   ]);
   const redactedStagedFiles = redactFileRecords(staged.files);

@@ -7,6 +7,7 @@ import {
   createPackageDiff,
   deterministicFindings,
   DETERMINISTIC_RULES_VERSION,
+  packageJsonDiffFindings,
   summarizePackageJsonDiff,
 } from "../server/lib/review.ts";
 
@@ -40,7 +41,14 @@ describe("security detection golden corpus", () => {
       const previousFiles = fixture.previousFiles ?? [];
       const stagedFiles = fixture.stagedFiles ?? [];
       const diff = createPackageDiff(previousFiles, stagedFiles);
-      const findings = deterministicFindings(stagedFiles, diff, fixture.stagedPackageJson);
+      const packageJsonDiff = summarizePackageJsonDiff(
+        fixture.previousPackageJson,
+        fixture.stagedPackageJson,
+      );
+      const findings = [
+        ...deterministicFindings(stagedFiles, diff, fixture.stagedPackageJson),
+        ...packageJsonDiffFindings(packageJsonDiff),
+      ];
 
       expect(computeRisk(findings)).toBe(fixture.expectedRisk);
       expect(comparableFindings(findings)).toEqual(
@@ -51,10 +59,6 @@ describe("security detection golden corpus", () => {
       }
 
       if (fixture.expectedPackageJsonDiff) {
-        const packageJsonDiff = summarizePackageJsonDiff(
-          fixture.previousPackageJson,
-          fixture.stagedPackageJson,
-        );
         expect(packageJsonDiff).toMatchObject(fixture.expectedPackageJsonDiff);
       }
     });

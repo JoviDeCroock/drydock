@@ -24,7 +24,7 @@ export interface Finding {
 // way that should invalidate cached scan reports. Stored alongside each
 // finding so historical reports can be traced back to the ruleset that
 // produced them.
-export const DETERMINISTIC_RULES_VERSION = "1.1.0";
+export const DETERMINISTIC_RULES_VERSION = "1.2.0";
 
 export const DETERMINISTIC_RULE_IDS = {
   installScriptPreinstall: "install-script.preinstall",
@@ -40,6 +40,7 @@ export const DETERMINISTIC_RULE_IDS = {
   packageJsonParseFailed: "package-json.parse-failed",
   diffCredentialFileAdded: "diff.credential-file-added",
   diffLargeNewFile: "diff.large-new-file",
+  dependencyUnusualSpec: "dependency.unusual-spec",
   stageMetadataMismatch: "stage.metadata-mismatch",
 } as const;
 
@@ -392,6 +393,25 @@ export function summarizePackageJsonDiff(
   };
 }
 
+export function packageJsonDiffFindings(packageJsonDiff: PackageJsonDiff): Finding[] {
+  const findings: Finding[] = [];
+  for (const entry of packageJsonDiff.dependencies) {
+    if (entry.status !== "added" && entry.status !== "modified") continue;
+    if (!entry.staged) continue;
+    const kind = unusualDependencySpecKind(entry.staged);
+    if (!kind) continue;
+    findings.push({
+      severity: "high",
+      file: "package.json",
+      evidence: `${entry.key}: ${entry.staged}`,
+      reason: `${kind} dependency specs resolve code outside normal npm semver ranges and can introduce unreviewed install-time behavior`,
+      ruleId: DETERMINISTIC_RULE_IDS.dependencyUnusualSpec,
+      ruleVersion: DETERMINISTIC_RULES_VERSION,
+    });
+  }
+  return findings;
+}
+
 export function computeRisk(findings: Finding[]): RiskLevel {
   if (findings.some((f) => f.severity === "critical")) return "critical";
   if (findings.some((f) => f.severity === "high")) return "high";
@@ -453,6 +473,17 @@ export function redactJson<T>(value: T): T {
     ) as T;
   }
   return value;
+}
+
+function unusualDependencySpecKind(spec: string): string | null {
+  const normalized = spec.trim().toLowerCase();
+  if (/^(?:github|gitlab|bitbucket):/.test(normalized)) return "git-hosted";
+  if (/^(?:git\+ssh|git\+https|git\+http|git|ssh):/.test(normalized)) return "git";
+  if (/^https?:/.test(normalized))
+    return normalized.endsWith(".tgz") ? "remote tarball" : "remote URL";
+  if (normalized.startsWith("file:")) return "local file";
+  if (normalized.startsWith("npm:")) return "npm alias";
+  return null;
 }
 
 function diffObject(

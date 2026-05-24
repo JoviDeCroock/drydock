@@ -58,13 +58,13 @@ The first corpus slice covers:
 - secret-looking file addition;
 - large opaque binary addition;
 - malformed `package.json` parse failure;
-- dependency and entrypoint package-json diff changes that are currently tracked as coverage gaps.
+- dependency and entrypoint package-json diff changes; unusual non-registry dependency specs now raise deterministic findings while entrypoint changes remain a documented coverage gap.
 
 ## Known coverage gaps
 
 The corpus deliberately records some product gaps instead of hiding them:
 
-- Dependency additions and unusual specs are visible in `packageJsonDiff`, but they do not yet raise deterministic findings or risk.
+- Plain dependency additions are visible in `packageJsonDiff`, but they do not yet raise deterministic findings unless they use unusual specs such as `github:`, `git+ssh:`, `http(s):`, `file:`, or `npm:` aliases.
 - Entrypoint changes are visible in `packageJsonDiff`, but they do not yet raise deterministic findings or risk.
 - Maintainer/package transfer signals, new publisher signals, package reputation, and OpenSSF/package intelligence integrations are not implemented.
 - Behavior-chain detection is regex-based and does not yet prove source-to-sink intent.

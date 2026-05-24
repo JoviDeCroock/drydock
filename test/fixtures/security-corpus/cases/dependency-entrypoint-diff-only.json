@@ -4,7 +4,6 @@
   "category": "package-json-diff-coverage-gap",
   "intent": "Track release-review-sensitive package.json changes that are currently diff-only and should become richer findings later.",
   "coverageGaps": [
-    "unusual dependency specs are visible in packageJsonDiff but do not yet raise deterministic findings",
     "entrypoint changes are visible in packageJsonDiff but do not yet raise deterministic findings"
   ],
   "previousPackageJson": {
@@ -57,8 +56,19 @@
       "textSample": "export default 1;\n"
     }
   ],
-  "expectedRisk": "low",
-  "expectedFindings": [],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "dependency.unusual-spec",
+      "severity": "high",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "dependency.unusual-spec",
+      "severity": "high",
+      "file": "package.json"
+    }
+  ],
   "expectedPackageJsonDiff": {
     "entrypointsChanged": true,
     "dependencies": [
