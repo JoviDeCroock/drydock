@@ -243,6 +243,8 @@ export default function ScanDetailPage() {
               ) : null}
               {compareError ? <Alert tone="warn">{compareError}</Alert> : null}
             </div>
+          ) : compareError ? (
+            <Alert tone="warn">{compareError}</Alert>
           ) : null}
 
           <section class={workbenchGridClass}>

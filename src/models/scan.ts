@@ -367,6 +367,7 @@ export const ScanDetailModel = createModel((id: string) => {
       if (!current || current.scan.status !== "complete") return;
       if (!current.scan.packageName) return;
       const id = this.scanId.peek();
+      this.compareError.value = null;
       try {
         const data = await getScanVersions(id);
         this.versions.value = data;
