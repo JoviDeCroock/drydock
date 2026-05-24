@@ -81,15 +81,15 @@ Current high-level flow:
 
 1. User submits a `stageId`.
 2. API validates input and resolves the authenticated user's active organization via `requireActiveOrganization`.
-3. Parent Worker loads the staged tarball in a Dynamic Worker and fetches staged metadata (`GET /-/stage/{stageId}`) in parallel.
+3. Parent Worker loads the staged tarball in a Dynamic Worker and fetches staged metadata (`GET /-/stage/{stageId}`) in parallel in the trusted parent for dist-tag, shasum, and mismatch checks. Current npm staged-view responses are metadata-only; if npm later exposes the prepared manifest, the parser can merge it.
 4. Gateway attaches npm auth only for allowed sandbox npm registry endpoints.
-5. Sandbox extracts bounded file records and package metadata.
+5. Sandbox extracts bounded file records and tarball-derived package metadata. The package metadata models npm manifest normalization that is inferable from tarball contents, including npm's implicit `scripts.install = "node-gyp rebuild"` when a root `*.gyp` file exists and no `install`/`preinstall` script or `gypfile=false` is declared.
 6. Parent Worker fetches npm package metadata, chooses a tag-aware comparison baseline, and downloads the selected previous published tarball when available.
 7. Sandbox extracts the selected previous tarball.
 8. Parent Worker computes:
    - package file diff;
    - package.json diff;
-   - deterministic findings;
+   - deterministic findings, including implicit npm lifecycle hooks surfaced from tarball shape and warnings when `package.json` cannot be parsed;
    - redacted package/file records.
 9. Parent Worker derives risk from deterministic findings, persists the scan, records audit events, and returns/report renders the result. (AI review is disabled — see "Workers AI" below.)
 

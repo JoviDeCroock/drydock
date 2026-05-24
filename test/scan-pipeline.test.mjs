@@ -39,6 +39,7 @@ describe("scan pipeline baseline selection", () => {
       actorType: "user",
       createdAt: "2026-03-16T09:00:00.000Z",
       shasum: "4f7f5f1d5bcf2f72f6e4d6c4f3b2812d8a2f6c19",
+      packageJson: null,
     });
     registryMock.fetchPackageMetadata.mockResolvedValue({
       versions: {
@@ -149,6 +150,12 @@ describe("scan pipeline baseline selection", () => {
       actorType: "user",
       createdAt: "2026-03-16T09:00:00.000Z",
       shasum: "4f7f5f1d5bcf2f72f6e4d6c4f3b2812d8a2f6c19",
+      packageJson: {
+        name: "@other/pkg",
+        version: "2.0.0-beta.3",
+        scripts: { install: "node-gyp rebuild" },
+        gypfile: true,
+      },
     });
     registryMock.fetchPackageMetadata.mockResolvedValue({
       versions: {
@@ -182,6 +189,8 @@ describe("scan pipeline baseline selection", () => {
       tag: null,
       source: "semver-predecessor",
     });
+    expect(result.package.name).toBe("@scope/pkg");
+    expect(result.packageJson?.scripts?.install).toBeUndefined();
     expect(result.ruleFindings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -190,6 +199,135 @@ describe("scan pipeline baseline selection", () => {
           evidence: "packageName @other/pkg != package.json name @scope/pkg",
         }),
       ]),
+    );
+  });
+
+  test("surfaces npm's implicit node-gyp install when a staged tarball adds root binding.gyp", async () => {
+    const stagedFiles = [
+      {
+        path: "package.json",
+        size: 80,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({
+          name: "pkg",
+          version: "1.0.1",
+          files: ["binding.gyp", "index.js"],
+        }),
+      },
+      { path: "binding.gyp", size: 2, sha256: "gyp", flags: [], textSample: "{}" },
+    ];
+    sandboxMock.downloadInSandbox.mockResolvedValueOnce({
+      files: stagedFiles,
+      packageJson: {
+        name: "pkg",
+        version: "1.0.1",
+        scripts: { install: "node-gyp rebuild" },
+        implicitScripts: { install: "node-gyp rebuild" },
+        gypfile: true,
+      },
+    });
+    stagedMock.fetchStagedPublishDetails.mockResolvedValueOnce({
+      id: "stage-gyp123",
+      packageName: "pkg",
+      version: "1.0.1",
+      tag: "latest",
+      access: null,
+      actor: null,
+      actorType: null,
+      createdAt: null,
+      shasum: null,
+      packageJson: null,
+    });
+    registryMock.fetchPackageMetadata.mockResolvedValue(null);
+
+    const result = await runScanPipeline(
+      {
+        env: { NPM_REGISTRY: "https://registry.npmjs.org" },
+        executionCtx: {},
+        db: {},
+        session: { userId: "user_1" },
+      },
+      {
+        stageId: "stage-gyp123",
+        organizationId: "org_1",
+        npmToken: "npm_token_0123456789",
+        npmRegistry: "https://registry.npmjs.org",
+      },
+    );
+
+    expect(result.risk).toBe("high");
+    expect(result.packageJsonDiff.scripts).toEqual([
+      { key: "install", status: "added", staged: "node-gyp rebuild" },
+    ]);
+    expect(result.ruleFindings).toContainEqual(
+      expect.objectContaining({
+        severity: "high",
+        ruleId: "install-script.implicit-node-gyp",
+        file: "binding.gyp",
+      }),
+    );
+  });
+
+  test("uses npm staged detail manifest to surface implicit node-gyp hooks missing from the tarball", async () => {
+    const stagedFiles = [
+      {
+        path: "package.json",
+        size: 40,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({ name: "pkg", version: "1.0.1" }),
+      },
+    ];
+    sandboxMock.downloadInSandbox.mockResolvedValueOnce({
+      files: stagedFiles,
+      packageJson: { name: "pkg", version: "1.0.1", scripts: {} },
+    });
+    stagedMock.fetchStagedPublishDetails.mockResolvedValueOnce({
+      id: "stage-abc123",
+      packageName: "pkg",
+      version: "1.0.1",
+      tag: "latest",
+      access: null,
+      actor: null,
+      actorType: null,
+      createdAt: null,
+      shasum: null,
+      packageJson: {
+        name: "pkg",
+        version: "1.0.1",
+        scripts: { install: "node-gyp rebuild" },
+        gypfile: true,
+      },
+    });
+    registryMock.fetchPackageMetadata.mockResolvedValue(null);
+
+    const result = await runScanPipeline(
+      {
+        env: { NPM_REGISTRY: "https://registry.npmjs.org" },
+        executionCtx: {},
+        db: {},
+        session: { userId: "user_1" },
+      },
+      {
+        stageId: "stage-abc123",
+        organizationId: "org_1",
+        npmToken: "npm_token_0123456789",
+        npmRegistry: "https://registry.npmjs.org",
+      },
+    );
+
+    expect(stagedMock.fetchStagedPublishDetails).toHaveBeenCalledWith(
+      "https://registry.npmjs.org",
+      "npm_token_0123456789",
+      "stage-abc123",
+    );
+    expect(result.packageJson?.implicitScripts).toEqual({ install: "node-gyp rebuild" });
+    expect(result.ruleFindings).toContainEqual(
+      expect.objectContaining({
+        ruleId: "install-script.implicit-node-gyp",
+        file: "package.json",
+      }),
     );
   });
 });

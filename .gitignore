@@ -1,6 +1,8 @@
 node_modules/
 .wrangler/
 dist/
+packages/experiments/binding.gyp
+packages/experiments/build/
 .DS_Store
 .dev.vars
 .gstack/

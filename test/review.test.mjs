@@ -101,4 +101,115 @@ describe("review", () => {
     ]);
     expect(summary.entrypointsChanged).toBe(true);
   });
+
+  test("flags npm's implicit node-gyp install hook from root gyp files", () => {
+    const staged = [
+      {
+        path: "package.json",
+        size: 40,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({ name: "pkg", version: "1.0.1" }),
+      },
+      { path: "binding.gyp", size: 2, sha256: "gyp", flags: [], textSample: "{}" },
+    ];
+    const diff = createPackageDiff([], staged);
+    const findings = deterministicFindings(staged, diff);
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        severity: "high",
+        file: "binding.gyp",
+        evidence: "implicit install: node-gyp rebuild",
+        ruleId: "install-script.implicit-node-gyp",
+      }),
+    );
+  });
+
+  test("does not flag implicit node-gyp when npm suppressors are present", () => {
+    const withPreinstall = [
+      {
+        path: "package.json",
+        size: 40,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({ scripts: { preinstall: "node setup.js" } }),
+      },
+      { path: "binding.gyp", size: 2, sha256: "gyp", flags: [], textSample: "{}" },
+    ];
+    const withGypfileFalse = [
+      {
+        path: "package.json",
+        size: 40,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({ gypfile: false }),
+      },
+      { path: "binding.gyp", size: 2, sha256: "gyp", flags: [], textSample: "{}" },
+    ];
+
+    expect(
+      deterministicFindings(withPreinstall, createPackageDiff([], withPreinstall)),
+    ).not.toContainEqual(expect.objectContaining({ ruleId: "install-script.implicit-node-gyp" }));
+    expect(
+      deterministicFindings(withGypfileFalse, createPackageDiff([], withGypfileFalse)),
+    ).not.toContainEqual(expect.objectContaining({ ruleId: "install-script.implicit-node-gyp" }));
+  });
+
+  test("warns instead of inferring implicit node-gyp when package.json cannot be parsed", () => {
+    const staged = [
+      {
+        path: "package.json",
+        size: 40,
+        sha256: "pkg",
+        flags: [],
+        textSample: "{not-json",
+      },
+      { path: "binding.gyp", size: 2, sha256: "gyp", flags: [], textSample: "{}" },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        severity: "medium",
+        file: "package.json",
+        evidence: "package.json parse failed",
+        ruleId: "package-json.parse-failed",
+      }),
+    );
+    expect(findings).not.toContainEqual(
+      expect.objectContaining({ ruleId: "install-script.implicit-node-gyp" }),
+    );
+  });
+
+  test("uses staged metadata to flag implicit node-gyp even when the gyp file is absent from the tarball", () => {
+    const staged = [
+      {
+        path: "package.json",
+        size: 40,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({ name: "pkg", version: "1.0.1" }),
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged), {
+      name: "pkg",
+      version: "1.0.1",
+      scripts: { install: "node-gyp rebuild" },
+      implicitScripts: { install: "node-gyp rebuild" },
+      gypfile: true,
+    });
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        severity: "high",
+        file: "package.json",
+        evidence: "implicit install: node-gyp rebuild",
+        ruleId: "install-script.implicit-node-gyp",
+      }),
+    );
+    expect(findings).not.toContainEqual(
+      expect.objectContaining({ ruleId: "install-script.lifecycle" }),
+    );
+  });
 });

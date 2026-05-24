@@ -321,6 +321,63 @@ describe("parsePackageJson", () => {
     expect(parsed?.devDependencies).toEqual({});
   });
 
+  test("models npm's implicit node-gyp install script for root gyp files", () => {
+    const parsed = parsePackageJson([
+      {
+        path: "package.json",
+        size: 0,
+        sha256: "",
+        flags: [],
+        textSample: JSON.stringify({ name: "pkg", version: "1.0.0" }),
+      },
+      { path: "binding.gyp", size: 2, sha256: "gyp", flags: [], textSample: "{}" },
+    ]);
+
+    expect(parsed?.scripts?.install).toBe("node-gyp rebuild");
+    expect(parsed?.implicitScripts).toEqual({ install: "node-gyp rebuild" });
+    expect(parsed?.gypfile).toBe(true);
+  });
+
+  test("does not infer node-gyp install when npm would suppress it", () => {
+    const withPreinstall = parsePackageJson([
+      {
+        path: "package.json",
+        size: 0,
+        sha256: "",
+        flags: [],
+        textSample: JSON.stringify({ scripts: { preinstall: "node setup.js" } }),
+      },
+      { path: "binding.gyp", size: 2, sha256: "gyp", flags: [], textSample: "{}" },
+    ]);
+    const withGypfileFalse = parsePackageJson([
+      {
+        path: "package.json",
+        size: 0,
+        sha256: "",
+        flags: [],
+        textSample: JSON.stringify({ gypfile: false }),
+      },
+      { path: "binding.gyp", size: 2, sha256: "gyp", flags: [], textSample: "{}" },
+    ]);
+    const nestedGyp = parsePackageJson([
+      {
+        path: "package.json",
+        size: 0,
+        sha256: "",
+        flags: [],
+        textSample: JSON.stringify({ name: "pkg", version: "1.0.0" }),
+      },
+      { path: "src/binding.gyp", size: 2, sha256: "gyp", flags: [], textSample: "{}" },
+    ]);
+
+    expect(withPreinstall?.implicitScripts).toBeUndefined();
+    expect(withPreinstall?.scripts?.install).toBeUndefined();
+    expect(withGypfileFalse?.implicitScripts).toBeUndefined();
+    expect(withGypfileFalse?.scripts?.install).toBeUndefined();
+    expect(nestedGyp?.implicitScripts).toBeUndefined();
+    expect(nestedGyp?.scripts?.install).toBeUndefined();
+  });
+
   test("returns null on malformed JSON or missing package.json", () => {
     expect(parsePackageJson([])).toBeNull();
     expect(
@@ -339,6 +396,10 @@ describe("rendered sandbox parser source", () => {
   const SANDBOX_EXPORT_NAMES = [
     "readString",
     "decodeText",
+    "isPlainObject",
+    "normalizeStringRecord",
+    "isRootGypPath",
+    "hasImplicitNodeGypInstall",
     "isSafePaxPath",
     "normalizeTarPath",
     "parsePax",

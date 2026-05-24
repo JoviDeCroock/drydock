@@ -4,6 +4,7 @@ const defaultExperiments = Object.freeze({
   stagedPublishReview: true,
   packageDiffWorkbench: true,
   signedReportsPreview: true,
+  implicitNodeGypProbe: true,
 });
 
 export function listExperiments() {

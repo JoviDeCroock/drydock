@@ -2,13 +2,15 @@
 
 Small public npm package used to exercise Staged Publish Review with real published and staged artifacts.
 
-It intentionally has:
+It usually has:
 
 - no runtime dependencies;
-- no install lifecycle scripts;
+- no explicit install lifecycle scripts;
 - a tiny ESM entrypoint;
 - a tiny CLI binary;
 - a narrow `files` allowlist so package contents are predictable.
+
+This test revision intentionally generates and packs a root `binding.gyp` without declaring `install`, `preinstall`, or `gypfile=false`. npm may infer `scripts.install = "node-gyp rebuild"`, and the tarball gives Drydock direct evidence for implicit node-gyp detection. The probe is removed after the command so local workspace installs do not run node-gyp. Do not approve this staged publish.
 
 ## Publish the baseline package
 
@@ -30,7 +32,7 @@ Make a small change, bump the version, then stage the package:
 
 ```sh
 npm version patch --no-git-tag-version
-npm run pack:dry-run
+npm run pack:implicit-node-gyp
 npm run stage:publish
 ```
 

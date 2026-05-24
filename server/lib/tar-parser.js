@@ -29,6 +29,30 @@ export function decodeText(bytes) {
   return text;
 }
 
+export function isPlainObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function normalizeStringRecord(value) {
+  const out = {};
+  if (!isPlainObject(value)) return out;
+  for (const [key, nested] of Object.entries(value)) {
+    if (typeof nested === "string") out[key] = nested;
+  }
+  return out;
+}
+
+export function isRootGypPath(path) {
+  return typeof path === "string" && !path.includes("/") && /\.gyp$/i.test(path);
+}
+
+export function hasImplicitNodeGypInstall(files, packageJson) {
+  if (!isPlainObject(packageJson)) return false;
+  const scripts = normalizeStringRecord(packageJson.scripts);
+  const hasRootGyp = Array.isArray(files) && files.some((f) => f && isRootGypPath(f.path));
+  return hasRootGyp && !scripts.install && !scripts.preinstall && packageJson.gypfile !== false;
+}
+
 export function isSafePaxPath(value) {
   const nul = String.fromCharCode(0);
   return typeof value === "string" && !value.includes(nul) && !value.includes("\\");
@@ -147,10 +171,17 @@ export function parsePackageJson(files) {
   if (!pkg || !pkg.textSample) return null;
   try {
     const parsed = JSON.parse(pkg.textSample);
+    if (!isPlainObject(parsed)) return null;
+    const scripts = normalizeStringRecord(parsed.scripts);
+    const npmAddsNodeGypInstall = hasImplicitNodeGypInstall(files, parsed);
     return {
       name: parsed.name,
       version: parsed.version,
-      scripts: parsed.scripts || {},
+      scripts: npmAddsNodeGypInstall ? { ...scripts, install: "node-gyp rebuild" } : scripts,
+      ...(npmAddsNodeGypInstall ? { implicitScripts: { install: "node-gyp rebuild" } } : {}),
+      ...(npmAddsNodeGypInstall || typeof parsed.gypfile !== "undefined"
+        ? { gypfile: npmAddsNodeGypInstall ? true : parsed.gypfile }
+        : {}),
       dependencies: parsed.dependencies || {},
       devDependencies: parsed.devDependencies || {},
       peerDependencies: parsed.peerDependencies || {},

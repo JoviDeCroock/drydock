@@ -1,6 +1,6 @@
 {
   "name": "@pracht/experiments",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Small publish/staged-publish package used to exercise Staged Publish Review.",
   "license": "MIT",
   "bin": {
@@ -10,6 +10,7 @@
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
+    "binding.gyp",
     "cli.js",
     "index.d.ts",
     "index.js"
@@ -28,8 +29,9 @@
   },
   "scripts": {
     "pack:dry-run": "npm pack --dry-run",
+    "pack:implicit-node-gyp": "node ./scripts/with-implicit-node-gyp.mjs pack --dry-run",
     "publish:public": "npm publish --access public",
-    "stage:publish": "npm stage publish --access public"
+    "stage:publish": "node ./scripts/with-implicit-node-gyp.mjs stage publish --access public"
   },
   "engines": {
     "node": ">=18"

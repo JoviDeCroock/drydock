@@ -12,7 +12,7 @@ The application needs real package artifacts to verify the full review flow:
 4. compare the staged tarball against the published baseline;
 5. manually approve or discard the staged publish outside the app.
 
-The package is intentionally boring and predictable: no dependencies, no install lifecycle scripts, a small ESM entrypoint, a small CLI binary, and a `files` allowlist.
+The baseline package is intentionally boring and predictable: no dependencies, no explicit install lifecycle scripts, a small ESM entrypoint, a small CLI binary, and a `files` allowlist. Individual staged-test branches may temporarily add risky probes; discard those staged publishes after review.
 
 ## Baseline publish
 
@@ -34,7 +34,7 @@ From `packages/experiments`:
 
 ```sh
 npm version patch --no-git-tag-version
-npm run pack:dry-run
+npm run pack:implicit-node-gyp
 npm run stage:publish
 ```
 
@@ -51,3 +51,9 @@ For disposable tests, discard the staged publish instead of approving it.
 For low-risk smoke tests, change only `index.js`, `index.d.ts`, `README.md`, or `CHANGELOG.md`.
 
 For deterministic-rule tests, introduce a temporary change that should be flagged, such as adding an install lifecycle script, adding network-capable code, adding dynamic-code primitives, or adding a credential-looking file. Do not approve those staged publishes.
+
+### Implicit node-gyp probe
+
+The current `0.1.2` fixture generates and packs a root `binding.gyp` without defining `install`, `preinstall`, or `gypfile=false`. `scripts/with-implicit-node-gyp.mjs` writes the probe before invoking npm and removes it afterward so normal workspace installs do not run node-gyp.
+
+Expected result: the staged tarball contains `binding.gyp`, and a staged review should include an `install-script.implicit-node-gyp` high-severity finding from direct tarball evidence. Discard the staged publish after testing.

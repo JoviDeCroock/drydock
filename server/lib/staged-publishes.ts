@@ -1,4 +1,6 @@
 import { normalizeRegistryUrl } from "./npm-connection";
+import { normalizeStringRecord } from "./tar-parser.js";
+import type { PackageJsonSummary } from "./review";
 
 export interface StagedPublishItem {
   id: string;
@@ -12,7 +14,9 @@ export interface StagedPublishItem {
   shasum: string | null;
 }
 
-export type StagedPublishDetails = StagedPublishItem;
+export interface StagedPublishDetails extends StagedPublishItem {
+  packageJson: PackageJsonSummary | null;
+}
 
 export interface StagedPublishesPage {
   items: StagedPublishItem[];
@@ -58,11 +62,7 @@ export async function listStagedPublishes(
   const params = new URLSearchParams({ perPage: String(perPage) });
   if (options.packageName) params.set("package", options.packageName);
   const response = await fetch(`${registry}/-/stage?${params.toString()}`, {
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${token}`,
-      "user-agent": "staged-publish-review/staged-list",
-    },
+    headers: npmStageHeaders(token, "staged-list"),
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
@@ -80,11 +80,7 @@ export async function fetchStagedPublishDetails(
   if (!STAGE_ID_RE.test(stageId)) throw new Error("invalid stageId");
   const registry = normalizeRegistryUrl(registryUrl);
   const response = await fetch(`${registry}/-/stage/${encodeURIComponent(stageId)}`, {
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${token}`,
-      "user-agent": "staged-publish-review/staged-view",
-    },
+    headers: npmStageHeaders(token, "staged-view"),
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
@@ -111,8 +107,7 @@ export function parseStagedPublishesResponse(data: unknown): StagedPublishesPage
   const rawItems = Array.isArray(root.items) ? root.items : [];
   const items: StagedPublishItem[] = [];
   for (const entry of rawItems) {
-    if (!isRecord(entry)) continue;
-    const item = parseStagedPublishDetails(entry);
+    const item = parseStagedPublishItem(entry);
     if (item) items.push(item);
   }
   return {
@@ -127,19 +122,29 @@ export function parseStagedPublishDetails(
   data: unknown,
   fallbackId?: string,
 ): StagedPublishDetails | null {
-  if (!isRecord(data)) return null;
-  const id = readString(data.id) ?? fallbackId ?? null;
+  const root = isRecord(data) ? data : {};
+  const item = parseStagedPublishItem(root, fallbackId);
+  if (!item) return null;
+  return {
+    ...item,
+    packageJson: extractPackageJsonSummary(root, item),
+  };
+}
+
+function parseStagedPublishItem(value: unknown, fallbackId?: string): StagedPublishItem | null {
+  if (!isRecord(value)) return null;
+  const id = readString(value.id) ?? readString(value.stageId) ?? fallbackId ?? null;
   if (!id || !STAGE_ID_RE.test(id)) return null;
   return {
     id,
-    packageName: readString(data.packageName) ?? readString(data.name),
-    version: readString(data.version),
-    tag: readString(data.tag),
-    access: readString(data.access),
-    actor: readString(data.actor),
-    actorType: readString(data.actorType) ?? readString(data.actor_type),
-    createdAt: readString(data.createdAt) ?? readString(data.created_at),
-    shasum: readString(data.shasum),
+    packageName: readString(value.packageName) ?? readString(value.name),
+    version: readString(value.version),
+    tag: readString(value.tag),
+    access: readString(value.access),
+    actor: readString(value.actor),
+    actorType: readString(value.actorType) ?? readString(value.actor_type),
+    createdAt: readString(value.createdAt) ?? readString(value.created_at),
+    shasum: readString(value.shasum),
   };
 }
 
@@ -153,4 +158,94 @@ function readString(value: unknown): string | null {
 
 function readNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function npmStageHeaders(token: string, userAgentSuffix: string) {
+  return {
+    accept: "application/json",
+    authorization: `Bearer ${token}`,
+    "user-agent": `staged-publish-review/${userAgentSuffix}`,
+  };
+}
+
+function extractPackageJsonSummary(
+  root: Record<string, unknown>,
+  item: StagedPublishItem,
+): PackageJsonSummary | null {
+  const byVersion = readVersionManifest(root, item.version);
+  const candidates = [
+    root.manifest,
+    root.packageJson,
+    root.package_json,
+    root.versionManifest,
+    byVersion,
+    isRecord(root.metadata) ? readVersionManifest(root.metadata, item.version) : null,
+    isRecord(root.packument) ? readVersionManifest(root.packument, item.version) : null,
+    root,
+  ];
+
+  for (const candidate of candidates) {
+    const summary = readPackageJsonSummary(candidate, item.packageName, item.version);
+    if (summary) return summary;
+  }
+  return null;
+}
+
+function readVersionManifest(root: Record<string, unknown>, version: string | null) {
+  if (!version || !isRecord(root.versions)) return null;
+  return root.versions[version];
+}
+
+function readPackageJsonSummary(
+  value: unknown,
+  fallbackName: string | null,
+  fallbackVersion: string | null,
+): PackageJsonSummary | null {
+  if (!isRecord(value)) return null;
+  const ownName = readString(value.name) ?? readString(value.packageName);
+  const ownVersion = readString(value.version);
+  const scripts = normalizeStringRecord(value.scripts);
+  const implicitScripts = normalizeStringRecord(value.implicitScripts);
+  const dependencies = normalizeStringRecord(value.dependencies);
+  const devDependencies = normalizeStringRecord(value.devDependencies);
+  const peerDependencies = normalizeStringRecord(value.peerDependencies);
+  const optionalDependencies = normalizeStringRecord(value.optionalDependencies);
+  const bin = readBin(value.bin);
+  const gypfile = typeof value.gypfile === "boolean" ? value.gypfile : undefined;
+  const summary: PackageJsonSummary = {
+    name: ownName ?? fallbackName ?? undefined,
+    version: ownVersion ?? fallbackVersion ?? undefined,
+    scripts,
+    ...(Object.keys(implicitScripts).length ? { implicitScripts } : {}),
+    ...(typeof gypfile === "boolean" ? { gypfile } : {}),
+    dependencies,
+    devDependencies,
+    peerDependencies,
+    optionalDependencies,
+    ...(bin ? { bin } : {}),
+    ...(readString(value.main) ? { main: readString(value.main)! } : {}),
+    ...(readString(value.module) ? { module: readString(value.module)! } : {}),
+    ...(readString(value.types) ? { types: readString(value.types)! } : {}),
+    ...("exports" in value ? { exports: value.exports } : {}),
+  };
+  const hasPackageData = Boolean(
+    Object.keys(scripts).length ||
+    Object.keys(dependencies).length ||
+    Object.keys(devDependencies).length ||
+    Object.keys(peerDependencies).length ||
+    Object.keys(optionalDependencies).length ||
+    bin ||
+    summary.main ||
+    summary.module ||
+    summary.types ||
+    "exports" in summary ||
+    typeof summary.gypfile === "boolean",
+  );
+  return hasPackageData ? summary : null;
+}
+
+function readBin(value: unknown): string | Record<string, string> | undefined {
+  if (typeof value === "string") return value;
+  const bin = normalizeStringRecord(value);
+  return Object.keys(bin).length ? bin : undefined;
 }
