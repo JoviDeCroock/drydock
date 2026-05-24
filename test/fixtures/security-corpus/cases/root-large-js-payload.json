@@ -1,0 +1,29 @@
+{
+  "id": "root-large-js-payload",
+  "title": "Large JavaScript payload appears at package root",
+  "category": "root-payload",
+  "intent": "Catch large root-level JavaScript files such as init payloads that are not normal package entrypoints.",
+  "previousFiles": [],
+  "stagedFiles": [
+    {
+      "path": "router_init.js",
+      "size": 2341681,
+      "sha256": "router-init-large",
+      "flags": [],
+      "textSample": "console.log('synthetic root payload');\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "file.root-large-javascript",
+      "severity": "high",
+      "file": "router_init.js"
+    },
+    {
+      "ruleId": "diff.large-new-file",
+      "severity": "medium",
+      "file": "router_init.js"
+    }
+  ]
+}

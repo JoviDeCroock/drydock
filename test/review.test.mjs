@@ -296,6 +296,28 @@ describe("review", () => {
     ).toEqual([]);
   });
 
+  test("flags unexpected large root-level JavaScript payloads", () => {
+    const staged = [
+      {
+        path: "router_init.js",
+        size: 2_341_681,
+        sha256: "payload",
+        flags: [],
+        textSample: "console.log('payload');",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        severity: "high",
+        file: "router_init.js",
+        evidence: "new/changed added file: 2341681 byte root-level JavaScript payload",
+        ruleId: "file.root-large-javascript",
+      }),
+    );
+  });
+
   test("flags large obfuscator-style JavaScript payloads", () => {
     const obfuscatedSample = `const _0x1111=_0x2222;
 (function(_0x3333,_0x4444){while(!![]){try{parseInt(_0x1111(0x123));break;}catch(e){}}})(_0x5555,0x123);

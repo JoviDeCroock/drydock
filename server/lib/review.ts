@@ -25,7 +25,7 @@ export interface Finding {
 // way that should invalidate cached scan reports. Stored alongside each
 // finding so historical reports can be traced back to the ruleset that
 // produced them.
-export const DETERMINISTIC_RULES_VERSION = "1.5.0";
+export const DETERMINISTIC_RULES_VERSION = "1.6.0";
 
 export const DETERMINISTIC_RULE_IDS = {
   installScriptPreinstall: "install-script.preinstall",
@@ -39,6 +39,7 @@ export const DETERMINISTIC_RULE_IDS = {
   fileLargeBinary: "file.large-binary",
   fileNativeArtifact: "file.native-artifact",
   fileOutsideFilesList: "file.outside-files-list",
+  fileRootLargeJavaScript: "file.root-large-javascript",
   installScriptImplicitNodeGyp: "install-script.implicit-node-gyp",
   packageJsonParseFailed: "package-json.parse-failed",
   diffCredentialFileAdded: "diff.credential-file-added",
@@ -343,6 +344,17 @@ export function deterministicFindings(
           file: file.path,
           evidence: `${file.size} byte binary`,
           reason: "large binary should be reviewed manually",
+        }),
+      );
+    }
+    if (isUnexpectedRootLargeJavaScript(file.path, file.size)) {
+      findings.push(
+        tag("fileRootLargeJavaScript", {
+          severity: changed === "added" ? "high" : "medium",
+          file: file.path,
+          evidence: `${changedPrefix}${file.size} byte root-level JavaScript payload`,
+          reason:
+            "large root-level JavaScript files are unusual in packed packages and can hide install-time payloads outside normal source/build directories",
         }),
       );
     }
@@ -788,6 +800,10 @@ export function redactJson<T>(value: T): T {
     ) as T;
   }
   return value;
+}
+
+function isUnexpectedRootLargeJavaScript(path: string, size: number): boolean {
+  return !path.includes("/") && /\.[cm]?jsx?$/i.test(path) && size > 512 * 1024;
 }
 
 function isLikelyObfuscatedLargeJavaScript(path: string, size: number, sample: string): boolean {
