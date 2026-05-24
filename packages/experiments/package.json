@@ -1,6 +1,6 @@
 {
   "name": "@pracht/experiments",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Small publish/staged-publish package used to exercise Staged Publish Review.",
   "license": "MIT",
   "bin": {
