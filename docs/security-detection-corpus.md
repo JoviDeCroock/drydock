@@ -64,7 +64,7 @@ The first corpus slice covers:
 
 The corpus deliberately records some product gaps instead of hiding them:
 
-- Plain dependency additions are visible in `packageJsonDiff`, but they do not yet raise deterministic findings unless they use unusual specs such as `github:`, `git+ssh:`, `http(s):`, `file:`, or `npm:` aliases.
+- Plain dependency additions are visible in `packageJsonDiff`, but they do not yet raise deterministic findings unless they use unusual specs such as `github:`, `git+ssh:`, `http(s):`, `file:`, or `npm:` aliases. Newly added optional dependencies also raise deterministic findings because they can fail softly while still running install-time lifecycle hooks.
 - Entrypoint changes are visible in `packageJsonDiff`, but they do not yet raise deterministic findings or risk.
 - Maintainer/package transfer signals, new publisher signals, package reputation, and OpenSSF/package intelligence integrations are not implemented.
 - Behavior-chain detection is regex-based and does not yet prove source-to-sink intent.
