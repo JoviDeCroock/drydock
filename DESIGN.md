@@ -274,7 +274,7 @@ Split-view diff inside an 8px-radius border shell.
 Document-shaped tree, rendered with `<details>` + `<ul>`, not a custom widget.
 
 - **Type:** Geist Mono `13px`.
-- **Indent:** `8px base + 14px per depth`. Indent is expressed as `padding-left` so the hover/selection background reaches the leftmost edge.
+- **Indent:** `8px base + 20px per depth`. Indent is expressed as `padding-left` so the hover/selection background reaches the leftmost edge. Children should read as clearly nested under their parent folder.
 - **Folder marker:** the text glyph `▸` (collapsed) or `▾` (expanded), `10px / ink-subtle`. Files do not get a marker.
 - **Auto-expand:** folders open by default when `status ≠ unchanged` and `depth < 2`.
 - **Name color follows aggregate status:** `added → text-ok`, `removed → text-danger`, `modified → text-warn`, `mixed → text-accent`, `unchanged → text-ink-muted`. Selected file overrides to `text-ink`.
