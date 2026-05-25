@@ -1,4 +1,3 @@
-import type { JSX } from "preact";
 import { useSignal } from "@preact/signals";
 import type { Organization } from "../models/organization";
 import { Alert } from "./Alert";
@@ -6,6 +5,7 @@ import { Button } from "./Button";
 import { Dialog } from "./Dialog";
 import { Field } from "./Field";
 import { Input } from "./Input";
+import { Menu, MenuItem, MenuLabel, MenuSeparator } from "./Menu";
 import { cn } from "./cn";
 
 interface OrgSwitcherProps {
@@ -28,10 +28,12 @@ export function OrgSwitcher({
   const creating = useSignal(false);
   const draftName = useSignal("");
 
-  const handleChange: JSX.GenericEventHandler<HTMLSelectElement> = (event) => {
-    const value = (event.currentTarget as HTMLSelectElement).value;
-    if (value && value !== activeOrganizationId) void onActivate(value);
-  };
+  const active = organizations.find((org) => org.id === activeOrganizationId);
+  const triggerLabel = active
+    ? active.name
+    : organizations.length === 0
+      ? "no organizations"
+      : "select organization";
 
   const openCreate = () => {
     draftName.value = "";
@@ -52,36 +54,54 @@ export function OrgSwitcher({
   };
 
   return (
-    <div class="flex flex-col gap-2">
-      <div class="flex flex-wrap items-center gap-3">
-        <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
-          Organization
-        </span>
-        <select
-          value={activeOrganizationId ?? ""}
-          onChange={handleChange}
-          disabled={busy || organizations.length === 0}
-          class={cn(
-            "bg-bg border border-border rounded-md text-[13px] text-ink px-3 py-2 outline-none",
-            "focus:border-accent focus:shadow-[0_0_0_3px_var(--color-accent-soft)]",
-            "disabled:opacity-60 disabled:cursor-not-allowed",
-            "font-mono min-w-[200px]",
-          )}
-        >
-          {organizations.length === 0 ? <option value="">no organizations</option> : null}
-          {organizations.map((org) => (
-            <option key={org.id} value={org.id}>
-              {org.name}
-              {org.isPersonal ? " (personal)" : ""}
-            </option>
-          ))}
-        </select>
-        <Button variant="secondary" size="sm" onClick={openCreate} disabled={busy} class="shrink-0">
-          New organization
-        </Button>
-      </div>
+    <div class="relative">
+      <Menu
+        align="end"
+        disabled={busy}
+        triggerAriaLabel="Switch organization"
+        triggerClass={cn(
+          "inline-flex items-center gap-2 bg-surface border border-border rounded-md px-3 py-1.5",
+          "text-[13px] text-ink font-mono transition-colors duration-150",
+          "hover:border-border-strong",
+        )}
+        trigger={() => (
+          <>
+            <span class="truncate max-w-[180px]">{triggerLabel}</span>
+            {active?.isPersonal ? (
+              <span class="text-ink-subtle text-[11px]">(personal)</span>
+            ) : null}
+            <span class="text-ink-subtle text-[10px] leading-none ml-1">▾</span>
+          </>
+        )}
+        panelClass="min-w-[240px]"
+      >
+        {organizations.length === 0 ? (
+          <MenuLabel>no organizations</MenuLabel>
+        ) : (
+          organizations.map((org) => (
+            <MenuItem
+              key={org.id}
+              active={org.id === activeOrganizationId}
+              onSelect={() => {
+                if (org.id !== activeOrganizationId) void onActivate(org.id);
+              }}
+            >
+              <span>{org.name}</span>
+              {org.isPersonal ? <span class="text-ink-subtle"> (personal)</span> : null}
+            </MenuItem>
+          ))
+        )}
+        <MenuSeparator />
+        <MenuItem tone="accent" onSelect={openCreate} disabled={busy}>
+          + New organization
+        </MenuItem>
+      </Menu>
 
-      {error ? <Alert tone="critical">{error}</Alert> : null}
+      {error ? (
+        <div class="absolute right-0 top-full mt-2 z-10 w-[280px]">
+          <Alert tone="critical">{error}</Alert>
+        </div>
+      ) : null}
 
       <Dialog
         open={creating.value}
