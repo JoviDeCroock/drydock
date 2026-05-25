@@ -2,7 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import { useSignal, useModel, useSignalEffect } from "@preact/signals";
 import { useLocation } from "preact-iso";
-import { buildQueryUrl, currentLocationKey } from "../../lib/query-state";
+import { useQuerySignal } from "../../lib/query-state";
 import { sessionModel } from "../../models/auth";
 import { NpmConnectionModel } from "../../models/npm-connection";
 import { OrganizationModel } from "../../models/organization";
@@ -42,6 +42,15 @@ export default function DashboardPage() {
   const stagedPublishes = useModel(StagedPublishesModel);
   const sessionChecked = useSignal(false);
 
+  // Two-way bind the decision filter to ?filter=. The model re-fetches
+  // whenever the filter signal changes, so URL → filter → refresh comes
+  // for free on browser back/forward.
+  useQuerySignal(scans.filter, {
+    name: "filter",
+    parse: parseDecisionFilter,
+    serialize: (value) => (value === "undecided" ? null : value),
+  });
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -51,10 +60,6 @@ export default function DashboardPage() {
         location.route("/login", true);
         return;
       }
-      const initialFilter = parseDecisionFilter(location.query.filter);
-      if (initialFilter !== scans.filter.peek()) {
-        scans.filter.value = initialFilter;
-      }
       sessionChecked.value = true;
       await Promise.all([organizations.load(), scans.refresh(), npm.load()]);
     })();
@@ -62,26 +67,6 @@ export default function DashboardPage() {
       cancelled = true;
     };
   }, []);
-
-  // Mirror the decision filter to ?filter= so browser back restores it.
-  useSignalEffect(() => {
-    if (!sessionChecked.value) return;
-    const filter = scans.filter.value;
-    const next = buildQueryUrl({
-      filter: filter === "undecided" ? null : filter,
-    });
-    if (next !== currentLocationKey()) {
-      location.route(next, true);
-    }
-  });
-
-  // React to popstate (back/forward) by syncing filter from URL.
-  const urlFilter = parseDecisionFilter(location.query.filter);
-  useEffect(() => {
-    if (!sessionChecked.peek()) return;
-    if (urlFilter === scans.filter.peek()) return;
-    void scans.setFilter(urlFilter);
-  }, [urlFilter]);
 
   const onSwitchOrganization = async (organizationId: string) => {
     if (organizations.activate(organizationId)) {
@@ -329,7 +314,7 @@ function RecentReviewsSection({
       <ScanFilterChips
         active={scans.filter.value}
         disabled={scans.refreshing.value}
-        onChange={(filter) => void scans.setFilter(filter)}
+        onChange={(filter) => (scans.filter.value = filter)}
       />
       <Card class="p-0 overflow-hidden">
         {scans.scans.value.length ? (

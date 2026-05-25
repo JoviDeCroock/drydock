@@ -2,7 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import { useComputed, useModel, useSignal, useSignalEffect } from "@preact/signals";
 import { useLocation, useRoute } from "preact-iso";
-import { buildQueryUrl, currentLocationKey } from "../../lib/query-state";
+import { useQuerySignal } from "../../lib/query-state";
 import { sessionModel } from "../../models/auth";
 import {
   ScanDetailModel,
@@ -72,19 +72,35 @@ export default function ScanDetailPage() {
   const location = useLocation();
   const route = useRoute();
   const id = route.params.id;
-  const initialQuery = location.query;
-  // Seed model signals from the URL inside the factory so the URL-sync
-  // effects below don't briefly overwrite ?path / ?version with their defaults.
-  const model = useModel(() => {
-    const m = new ScanDetailModel(id);
-    if (initialQuery.path) m.selectedPath.value = initialQuery.path;
-    if (initialQuery.version) m.selectedVersion.value = initialQuery.version;
-    return m;
-  });
+  const model = useModel(() => new ScanDetailModel(id));
   const sessionChecked = useSignal(false);
-  const fileFilter = useSignal(initialQuery.file ?? "");
-  const changedFilesOnly = useSignal(initialQuery.changedOnly !== "0");
+  const fileFilter = useSignal("");
+  const changedFilesOnly = useSignal(true);
   const decisionDialogOpen = useSignal(false);
+
+  // Two-way bind filter state to query params. The text filter is debounced
+  // because it fires on every keystroke; the rest write through immediately.
+  useQuerySignal(fileFilter, {
+    name: "file",
+    parse: (raw) => raw ?? "",
+    serialize: (value) => value || null,
+    debounceMs: 250,
+  });
+  useQuerySignal(changedFilesOnly, {
+    name: "changedOnly",
+    parse: (raw) => raw !== "0",
+    serialize: (value) => (value ? null : "0"),
+  });
+  useQuerySignal(model.selectedVersion, {
+    name: "version",
+    parse: (raw) => raw ?? null,
+    serialize: (value) => value,
+  });
+  useQuerySignal(model.selectedPath, {
+    name: "path",
+    parse: (raw) => raw ?? null,
+    serialize: (value) => value,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -102,61 +118,6 @@ export default function ScanDetailPage() {
       cancelled = true;
     };
   }, [id]);
-
-  // Persist filter state to ?file/?changedOnly/?version/?path. The text filter
-  // is debounced because it fires on every keystroke; the others write through.
-  useSignalEffect(() => {
-    const value = fileFilter.value;
-    const timer = window.setTimeout(() => {
-      const next = buildQueryUrl({ file: value || null });
-      if (next !== currentLocationKey()) {
-        location.route(next, true);
-      }
-    }, 250);
-    return () => window.clearTimeout(timer);
-  });
-
-  useSignalEffect(() => {
-    const changedOnly = changedFilesOnly.value;
-    const next = buildQueryUrl({ changedOnly: changedOnly ? null : "0" });
-    if (next !== currentLocationKey()) {
-      location.route(next, true);
-    }
-  });
-
-  useSignalEffect(() => {
-    const version = model.selectedVersion.value;
-    const next = buildQueryUrl({ version: version ?? null });
-    if (next !== currentLocationKey()) {
-      location.route(next, true);
-    }
-  });
-
-  useSignalEffect(() => {
-    const path = model.selectedPath.value;
-    const next = buildQueryUrl({ path: path ?? null });
-    if (next !== currentLocationKey()) {
-      location.route(next, true);
-    }
-  });
-
-  // Sync URL → state for browser back/forward navigation.
-  const urlFile = location.query.file ?? "";
-  const urlChangedOnly = location.query.changedOnly !== "0";
-  const urlVersion = location.query.version ?? null;
-  const urlPath = location.query.path ?? null;
-  useEffect(() => {
-    if (fileFilter.peek() !== urlFile) fileFilter.value = urlFile;
-  }, [urlFile]);
-  useEffect(() => {
-    if (changedFilesOnly.peek() !== urlChangedOnly) changedFilesOnly.value = urlChangedOnly;
-  }, [urlChangedOnly]);
-  useEffect(() => {
-    if (model.selectedVersion.peek() !== urlVersion) model.selectVersion(urlVersion);
-  }, [urlVersion]);
-  useEffect(() => {
-    if (model.selectedPath.peek() !== urlPath) model.selectPath(urlPath);
-  }, [urlPath]);
 
   // Fetch version metadata as soon as the scan is complete with a package name.
   useSignalEffect(() => {
