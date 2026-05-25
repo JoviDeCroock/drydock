@@ -12,6 +12,7 @@ declare global {
       BETTER_AUTH_SECRET: string;
       BETTER_AUTH_URL?: string;
       AUTH_REQUIRED?: string;
+      AI_REVIEW_ENABLED?: string;
     }
   }
 

@@ -100,9 +100,9 @@ export async function runScanPipeline(
     releaseDelta: finding.releaseDelta,
   }));
   const scanId = input.scanId || crypto.randomUUID();
-  // AI review is disabled while we work toward a paid-tier offering. The call,
-  // escalation logging, and risk wiring below stay intact (gated by `if (false)`)
-  // so the feature can be re-enabled without rebuilding the contract.
+  // AI review is gated behind AI_REVIEW_ENABLED while we work toward a paid-tier
+  // offering. Default-off so the call, escalation logging, and risk wiring below
+  // stay dormant until an operator opts in.
   let aiFindings: AiReview = {
     status: "unavailable",
     risk: "low",
@@ -114,8 +114,7 @@ export async function runScanPipeline(
     escalated: false,
     escalationReasons: [],
   };
-  // eslint-disable-next-line no-constant-condition -- AI review is intentionally disabled; the call below remains wired up for paid-tier re-introduction.
-  if (false) {
+  if (env.AI_REVIEW_ENABLED === "true") {
     aiFindings = await runSelectiveAiReview(env, {
       files: redactedStagedFiles,
       diff,
