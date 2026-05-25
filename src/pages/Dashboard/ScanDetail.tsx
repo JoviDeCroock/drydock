@@ -11,10 +11,11 @@ import {
 } from "../../models/scan";
 import type { AiFinding, AiReview } from "../../../server/lib/ai-review";
 import {
+  annotateFindingsWithDiffStatus as annotateReviewFindingsWithDiffStatus,
   createPackageDiff,
-  isReleaseDeltaStatus,
   normalizeFindingDiffStatus,
   type DiffEntry,
+  type FindingDiffAnnotation,
   type FileRecord,
   type FindingDiffStatus,
 } from "../../../server/lib/review";
@@ -35,6 +36,7 @@ import {
   LoadingLine,
   LoadingState,
   MonoDetail,
+  Muted,
   PageShell,
   SectionLabel,
   SeverityBar,
@@ -136,7 +138,13 @@ export default function ScanDetailPage() {
   );
 
   const findingsWithDiffStatus = useComputed(() =>
-    annotateFindingsWithDiffStatus(model.detail.value?.findings ?? [], diffEntries.value),
+    annotateFindingsWithDiffStatus(
+      model.detail.value?.findings ?? [],
+      diffEntries.value,
+      model.isDefaultComparison.value,
+      model.compare.value?.files ?? [],
+      model.detail.value ? scanFilesToFileRecords(model.detail.value.files) : [],
+    ),
   );
 
   const stagedFile = useComputed(() => {
@@ -237,6 +245,7 @@ export default function ScanDetailPage() {
             summary={summary.value}
             diffCount={diffEntries.value.filter((entry) => entry.status !== "unchanged").length}
             findingsWithDiffStatus={findingsWithDiffStatus.value}
+            usePersistedRiskSummary={model.isDefaultComparison.value}
           />
 
           <ReportOverview
@@ -247,6 +256,7 @@ export default function ScanDetailPage() {
             findingsWithDiffStatus={findingsWithDiffStatus.value}
             aiFindings={ai.value?.findings ?? []}
             diffCount={diffEntries.value.filter((entry) => entry.status !== "unchanged").length}
+            usePersistedRiskSummary={model.isDefaultComparison.value}
           />
 
           <ScanTimeline events={detail.events ?? []} />
@@ -346,11 +356,13 @@ function ReleaseRecommendation({
   summary,
   diffCount,
   findingsWithDiffStatus,
+  usePersistedRiskSummary,
 }: {
   detail: PersistedScanDetail;
   summary: PersistedSummary;
   diffCount: number;
   findingsWithDiffStatus: FindingWithDiffStatus[];
+  usePersistedRiskSummary: boolean;
 }) {
   if (detail.scan.status !== "complete") return null;
 
@@ -358,8 +370,14 @@ function ReleaseRecommendation({
     .filter((item) => item.releaseDelta)
     .map((item) => item.finding);
   const artifactRisk = detail.riskSummary?.artifactRisk ?? detail.scan.risk;
-  const releaseRisk = detail.riskSummary?.releaseRisk ?? highestFindingRisk(changedFindings);
-  const releaseFindingCount = detail.riskSummary?.releaseFindingCount ?? changedFindings.length;
+  const releaseRisk =
+    usePersistedRiskSummary && detail.riskSummary
+      ? detail.riskSummary.releaseRisk
+      : highestFindingRisk(changedFindings);
+  const releaseFindingCount =
+    usePersistedRiskSummary && detail.riskSummary
+      ? detail.riskSummary.releaseFindingCount
+      : changedFindings.length;
   const recommendation = getReleaseRecommendation(artifactRisk, releaseRisk, releaseFindingCount);
   const evidence = buildRecommendationEvidence(detail, summary, diffCount, changedFindings);
 
@@ -614,8 +632,10 @@ function ScanDetailHeader({
 } = {}) {
   const decision = detail?.scan.decision;
   const decidedAt = detail?.scan.decidedAt;
-  const releaseRisk = detail?.riskSummary?.releaseRisk ?? detail?.scan.risk;
-
+  const releaseRisk =
+    detail?.scan.status === "complete"
+      ? (detail.riskSummary?.releaseRisk ?? detail.scan.risk)
+      : detail?.scan.risk;
   return (
     <header class="flex flex-wrap items-start justify-between gap-4">
       <div class="flex flex-col gap-2 min-w-0">
@@ -955,16 +975,35 @@ function FindingGrid({ findings }: { findings: FindingWithDiffStatus[] }) {
 function annotateFindingsWithDiffStatus(
   findings: PersistedFinding[],
   diff: DiffEntry[],
+  preferPersistedStatus: boolean,
+  previousFiles: FileRecord[],
+  stagedFiles: FileRecord[],
 ): FindingWithDiffStatus[] {
-  const diffByPath = new Map(diff.map((entry) => [entry.path, entry.status]));
-  return findings.map((finding) => {
-    const diffStatus = normalizeFindingDiffStatus(
-      finding.diffStatus ?? diffByPath.get(finding.file),
-    );
+  const persistedAnnotations = preferPersistedStatus
+    ? new Map(
+        findings.flatMap((finding): Array<[string, FindingDiffAnnotation]> => {
+          if (!finding.diffStatus) return [];
+          return [
+            [
+              finding.id,
+              {
+                diffStatus: normalizeFindingDiffStatus(finding.diffStatus),
+                releaseDelta: Boolean(finding.releaseDelta),
+              },
+            ],
+          ];
+        }),
+      )
+    : undefined;
+  return annotateReviewFindingsWithDiffStatus(findings, diff, {
+    persistedAnnotations,
+    previousFiles,
+    stagedFiles,
+  }).map((finding) => {
     return {
       finding,
-      diffStatus,
-      releaseDelta: finding.releaseDelta ?? isReleaseDeltaStatus(diffStatus),
+      diffStatus: finding.diffStatus,
+      releaseDelta: finding.releaseDelta,
     };
   });
 }
@@ -990,6 +1029,7 @@ function ReportOverview({
   findingsWithDiffStatus,
   aiFindings,
   diffCount,
+  usePersistedRiskSummary,
 }: {
   detail: PersistedScanDetail;
   summary: PersistedSummary;
@@ -998,6 +1038,7 @@ function ReportOverview({
   findingsWithDiffStatus: FindingWithDiffStatus[];
   aiFindings: AiFinding[];
   diffCount: number;
+  usePersistedRiskSummary: boolean;
 }) {
   const changed =
     diffCount ||
@@ -1005,17 +1046,22 @@ function ReportOverview({
     detail.files.filter((file) => file.status !== "unchanged").length;
   const severityCounts = countSeverities([...findings, ...aiFindings]);
   const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
-  const releaseRisk =
-    detail.riskSummary?.releaseRisk ??
-    highestFindingRisk(
-      findingsWithDiffStatus.filter((item) => item.releaseDelta).map((item) => item.finding),
-    );
-  const artifactRisk = detail.riskSummary?.artifactRisk ?? detail.scan.risk;
+  const isComplete = detail.scan.status === "complete";
+  const riskSummary = isComplete && usePersistedRiskSummary ? detail.riskSummary : null;
+  const releaseRisk = isComplete
+    ? (riskSummary?.releaseRisk ??
+      highestFindingRisk(
+        findingsWithDiffStatus.filter((item) => item.releaseDelta).map((item) => item.finding),
+      ))
+    : detail.scan.risk;
+  const artifactRisk = isComplete
+    ? (detail.riskSummary?.artifactRisk ?? detail.scan.risk)
+    : detail.scan.risk;
   const changedFindingTotal =
-    detail.riskSummary?.releaseFindingCount ??
+    riskSummary?.releaseFindingCount ??
     findingsWithDiffStatus.filter((item) => item.releaseDelta).length;
   const contextFindingTotal =
-    detail.riskSummary?.contextFindingCount ??
+    riskSummary?.contextFindingCount ??
     findingsWithDiffStatus.filter((item) => !item.releaseDelta).length;
   const aiComplete = ai?.status === "complete";
 

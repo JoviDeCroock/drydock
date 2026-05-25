@@ -624,12 +624,10 @@ function ScanTable({ scans }: { scans: ScanListItem[] }) {
                 {scan.previousVersion || "—"} → {scan.stagedVersion || "—"}
               </Td>
               <Td>
-                <Badge tone={severityTone(scan.risk)}>{scan.risk}</Badge>
+                <ScanRiskCell scan={scan} />
               </Td>
-              <Td class="font-mono text-xs text-ink-muted">
-                {scan.changedFileCount ?? 0} {pluralize("changed file", scan.changedFileCount ?? 0)}
-                {" · "}
-                {scan.findingCount ?? 0} {pluralize("finding", scan.findingCount ?? 0)}
+              <Td>
+                <ScanEvidenceCell scan={scan} />
               </Td>
               <Td class="font-mono text-xs text-ink-muted">{scan.status}</Td>
               <Td>
@@ -642,6 +640,42 @@ function ScanTable({ scans }: { scans: ScanListItem[] }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function ScanRiskCell({ scan }: { scan: ScanListItem }) {
+  const releaseRisk = scan.riskSummary?.releaseRisk ?? scan.risk;
+  const artifactRisk = scan.riskSummary?.artifactRisk ?? scan.risk;
+  return (
+    <div class="flex flex-wrap gap-1.5">
+      <Badge tone={severityTone(releaseRisk)}>
+        {scan.riskSummary ? `release ${releaseRisk}` : releaseRisk}
+      </Badge>
+      {scan.riskSummary && artifactRisk !== releaseRisk ? (
+        <Badge tone="neutral">artifact {artifactRisk}</Badge>
+      ) : null}
+    </div>
+  );
+}
+
+function ScanEvidenceCell({ scan }: { scan: ScanListItem }) {
+  const changedFiles = scan.changedFileCount ?? 0;
+  const releaseFindings = scan.riskSummary?.releaseFindingCount;
+  const contextFindings = scan.riskSummary?.contextFindingCount;
+  return (
+    <div class="font-mono text-xs text-ink-muted">
+      {changedFiles} {pluralize("changed file", changedFiles)}
+      {" · "}
+      {releaseFindings === undefined || contextFindings === undefined ? (
+        <>
+          {scan.findingCount ?? 0} {pluralize("finding", scan.findingCount ?? 0)}
+        </>
+      ) : (
+        <>
+          {releaseFindings} release / {contextFindings} context
+        </>
+      )}
     </div>
   );
 }

@@ -25,6 +25,15 @@ export interface ScanCompareFileResponse {
 export type ScanDecision = "publish" | "no_publish";
 export type ScanDecisionFilter = "undecided" | "publish" | "no_publish" | "all";
 
+export interface ScanRiskSummary {
+  artifactRisk: string;
+  releaseRisk: string;
+  contextRisk: string;
+  releaseFindingCount: number;
+  contextFindingCount: number;
+  unknownFindingCount: number;
+}
+
 export interface ScanListItem {
   id: string;
   stageId: string;
@@ -41,6 +50,7 @@ export interface ScanListItem {
   decidedAt?: string | number | Date | null;
   changedFileCount?: number;
   findingCount?: number;
+  riskSummary?: ScanRiskSummary | null;
   reportVersion?: number | null;
   reportDigest?: string | null;
   startedAt?: string | number | Date | null;
@@ -59,14 +69,7 @@ export interface PersistedScanDetail {
     startedAt?: string | number | Date | null;
     completedAt?: string | number | Date | null;
   };
-  riskSummary?: {
-    artifactRisk: string;
-    releaseRisk: string;
-    contextRisk: string;
-    releaseFindingCount: number;
-    contextFindingCount: number;
-    unknownFindingCount: number;
-  };
+  riskSummary?: ScanRiskSummary | null;
   files: Array<{
     id: string;
     scanId: string;

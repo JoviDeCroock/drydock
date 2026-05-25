@@ -138,6 +138,93 @@ describe("review", () => {
     });
   });
 
+  test("keeps modified-file findings contextual when the finding line did not change", () => {
+    const previous = [
+      {
+        path: "src/server.ts",
+        size: 60,
+        sha256: "old",
+        flags: [],
+        textSample: "fetch('/existing-risk');\nexport const value = 1;\n",
+      },
+    ];
+    const staged = [
+      {
+        path: "src/server.ts",
+        size: 60,
+        sha256: "new",
+        flags: [],
+        textSample: "fetch('/existing-risk');\nexport const value = 2;\n",
+      },
+    ];
+    const diff = createPackageDiff(previous, staged);
+    const annotated = annotateFindingsWithDiffStatus(
+      [
+        {
+          id: "existing-risk",
+          severity: "medium",
+          file: "src/server.ts",
+          line: 1,
+          evidence: "network-capable code path",
+          reason: "existing network path",
+        },
+        {
+          id: "changed-line",
+          severity: "medium",
+          file: "src/server.ts",
+          line: 2,
+          evidence: "changed value",
+          reason: "changed release line",
+        },
+      ],
+      diff,
+      { previousFiles: previous, stagedFiles: staged },
+    );
+
+    expect(annotated.find((finding) => finding.id === "existing-risk")).toMatchObject({
+      diffStatus: "modified",
+      releaseDelta: false,
+    });
+    expect(annotated.find((finding) => finding.id === "changed-line")).toMatchObject({
+      diffStatus: "modified",
+      releaseDelta: true,
+    });
+  });
+
+  test("keeps modified-file findings release scoped when a later matching line changed", () => {
+    const previous = [
+      {
+        path: "src/server.ts",
+        size: 60,
+        sha256: "old",
+        flags: [],
+        textSample: "fetch('/existing-risk');\nexport const value = 1;\n",
+      },
+    ];
+    const staged = [
+      {
+        path: "src/server.ts",
+        size: 90,
+        sha256: "new",
+        flags: [],
+        textSample:
+          "fetch('/existing-risk');\nexport const value = 1;\nfetch('https://example.invalid/new-risk');\n",
+      },
+    ];
+    const diff = createPackageDiff(previous, staged);
+    const findings = deterministicFindings(staged, diff);
+    const annotated = annotateFindingsWithDiffStatus(findings, diff, {
+      previousFiles: previous,
+      stagedFiles: staged,
+    });
+
+    expect(annotated.find((finding) => finding.ruleId === "code.network-access")).toMatchObject({
+      line: 1,
+      diffStatus: "modified",
+      releaseDelta: true,
+    });
+  });
+
   test("package json diff summarizes release-review sensitive fields", () => {
     const summary = summarizePackageJsonDiff(
       {

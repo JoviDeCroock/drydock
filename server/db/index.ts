@@ -15,6 +15,7 @@ import { personalOrganizationId } from "../lib/ownership";
 import {
   annotateFindingsWithDiffStatus,
   computeRisk,
+  type FindingDiffAnnotation,
   normalizeFindingDiffStatus,
   normalizeRisk,
 } from "../lib/review";
@@ -40,9 +41,19 @@ export interface PersistedScanInput {
   summary: unknown;
   ai: unknown;
   files: FileRecord[];
+  previousFiles?: FileRecord[];
   diff: DiffEntry[];
   findings: Finding[];
   report?: { version: number; digest: string };
+}
+
+export interface ScanRiskSummary {
+  artifactRisk: string;
+  releaseRisk: string;
+  contextRisk: string;
+  releaseFindingCount: number;
+  contextFindingCount: number;
+  unknownFindingCount: number;
 }
 
 export interface CreateScanJobInput {
@@ -242,6 +253,41 @@ export async function markScanFailed(
 
 export async function persistScan(db: AppDb, input: PersistedScanInput) {
   const now = new Date();
+  const diffByPath = new Map(input.diff.map((entry) => [entry.path, entry]));
+  const fileRows = input.files.map((file) => {
+    const entry = diffByPath.get(file.path);
+    return {
+      id: crypto.randomUUID(),
+      scanId: input.id,
+      path: file.path,
+      status: entry?.status || "unknown",
+      size: file.size,
+      sha256: file.sha256,
+      flagsJson: file.flags,
+      textSample: file.textSample || null,
+    };
+  });
+  const findingRows = input.findings.map((finding) => ({
+    id: crypto.randomUUID(),
+    scanId: input.id,
+    severity: finding.severity,
+    file: finding.file,
+    evidence: finding.evidence,
+    reason: finding.reason,
+    line: finding.line ?? null,
+    source: "rule",
+    ruleId: finding.ruleId ?? null,
+    ruleVersion: finding.ruleVersion ?? null,
+  }));
+  const findingAnnotations = annotateFindingsWithDiffStatus(findingRows, input.diff, {
+    previousFiles: input.previousFiles ?? [],
+    stagedFiles: input.files,
+  }).map((finding) => ({
+    id: finding.id,
+    diffStatus: finding.diffStatus,
+    releaseDelta: finding.releaseDelta,
+  }));
+
   const scanValues = {
     id: input.id,
     stageId: input.stageId,
@@ -252,7 +298,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     previousVersion: input.previousPackageJson?.version || null,
     risk: input.risk,
     status: input.status,
-    summaryJson: input.summary,
+    summaryJson: withFindingAnnotations(input.summary, findingAnnotations),
     aiJson: input.ai,
     errorJson: null,
     reportVersion: input.report?.version ?? null,
@@ -302,33 +348,6 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     db.delete(scanFindings).where(eq(scanFindings.scanId, input.id)),
   ]);
 
-  const diffByPath = new Map(input.diff.map((entry) => [entry.path, entry]));
-  const fileRows = input.files.map((file) => {
-    const entry = diffByPath.get(file.path);
-    return {
-      id: crypto.randomUUID(),
-      scanId: input.id,
-      path: file.path,
-      status: entry?.status || "unknown",
-      size: file.size,
-      sha256: file.sha256,
-      flagsJson: file.flags,
-      textSample: file.textSample || null,
-    };
-  });
-  const findingRows = input.findings.map((finding) => ({
-    id: crypto.randomUUID(),
-    scanId: input.id,
-    severity: finding.severity,
-    file: finding.file,
-    evidence: finding.evidence,
-    reason: finding.reason,
-    line: finding.line ?? null,
-    source: "rule",
-    ruleId: finding.ruleId ?? null,
-    ruleVersion: finding.ruleVersion ?? null,
-  }));
-
   // D1 caps bound parameters at 100 per query, so insert in chunks sized to
   // each row's column count. Without this, packages with more than ~12 files
   // silently drop their scan_files rows and the scan-detail view renders as
@@ -339,6 +358,17 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
   ]);
 
   return { persisted: true as const };
+}
+
+function withFindingAnnotations(
+  summary: unknown,
+  annotations: Array<{ id: string; diffStatus: string; releaseDelta: boolean }>,
+): Record<string, unknown> {
+  const base =
+    summary && typeof summary === "object" && !Array.isArray(summary)
+      ? (summary as Record<string, unknown>)
+      : {};
+  return { ...base, findingAnnotations: annotations };
 }
 
 const D1_MAX_BOUND_PARAMETERS = 100;
@@ -382,6 +412,7 @@ export interface ListScansResult {
     decidedAt: Date | null;
     changedFileCount: number;
     findingCount: number;
+    riskSummary: ScanRiskSummary | null;
     reportVersion: number | null;
     reportDigest: string | null;
     startedAt: Date | null;
@@ -460,21 +491,45 @@ export async function listScans(
 
   const [files, findings] = await Promise.all([
     db
-      .select({ scanId: scanFiles.scanId, status: scanFiles.status })
+      .select({ scanId: scanFiles.scanId, path: scanFiles.path, status: scanFiles.status })
       .from(scanFiles)
       .where(inArray(scanFiles.scanId, scanIds)),
     db
-      .select({ scanId: scanFindings.scanId })
+      .select({
+        scanId: scanFindings.scanId,
+        id: scanFindings.id,
+        severity: scanFindings.severity,
+        file: scanFindings.file,
+        line: scanFindings.line,
+        ruleId: scanFindings.ruleId,
+      })
       .from(scanFindings)
       .where(inArray(scanFindings.scanId, scanIds)),
   ]);
+  const filesByScan = new Map<string, Array<{ path: string; status: string }>>();
   const changedFileCounts = new Map<string, number>();
   for (const file of files) {
+    const list = filesByScan.get(file.scanId) ?? [];
+    list.push(file);
+    filesByScan.set(file.scanId, list);
     if (!CHANGED_FILE_STATUSES.has(file.status)) continue;
     changedFileCounts.set(file.scanId, (changedFileCounts.get(file.scanId) ?? 0) + 1);
   }
+  const findingsByScan = new Map<
+    string,
+    Array<{
+      id: string;
+      severity: string;
+      file: string;
+      line: number | null;
+      ruleId: string | null;
+    }>
+  >();
   const findingCounts = new Map<string, number>();
   for (const finding of findings) {
+    const list = findingsByScan.get(finding.scanId) ?? [];
+    list.push(finding);
+    findingsByScan.set(finding.scanId, list);
     findingCounts.set(finding.scanId, (findingCounts.get(finding.scanId) ?? 0) + 1);
   }
 
@@ -485,6 +540,17 @@ export async function listScans(
         ...scan,
         changedFileCount: countChangedFiles(summaryJson, changedFileCounts.get(row.id) ?? 0),
         findingCount: findingCounts.get(row.id) ?? 0,
+        riskSummary:
+          row.status === "complete"
+            ? summarizeScanRisk(
+                row.risk,
+                annotateFindingsWithDiffStatus(
+                  findingsByScan.get(row.id) ?? [],
+                  diffForFindingAnnotations(summaryJson, filesByScan.get(row.id) ?? []),
+                  { persistedAnnotations: readFindingAnnotations(summaryJson) },
+                ),
+              )
+            : null,
       };
     }),
     nextCursor,
@@ -565,12 +631,15 @@ export async function getScan(db: AppDb, id: string, organizationId: string) {
   const scan = scanRows[0];
   if (!scan) return null;
   const diff = diffForFindingAnnotations(scan.summaryJson, files);
-  const annotatedFindings = annotateFindingsWithDiffStatus(findings, diff);
+  const annotatedFindings = annotateFindingsWithDiffStatus(findings, diff, {
+    persistedAnnotations: readFindingAnnotations(scan.summaryJson),
+  });
   return {
     scan,
     files,
     findings: annotatedFindings,
-    riskSummary: summarizeScanRisk(scan.risk, annotatedFindings),
+    riskSummary:
+      scan.status === "complete" ? summarizeScanRisk(scan.risk, annotatedFindings) : null,
     events: events.map(redactScanEventForClient),
   };
 }
@@ -578,7 +647,7 @@ export async function getScan(db: AppDb, id: string, organizationId: string) {
 function summarizeScanRisk(
   artifactRisk: string,
   findings: Array<{ severity?: string | null; releaseDelta: boolean; diffStatus: string }>,
-) {
+): ScanRiskSummary {
   const releaseFindings = findings.filter((finding) => finding.releaseDelta);
   const contextFindings = findings.filter((finding) => !finding.releaseDelta);
   const unknownFindingCount = contextFindings.filter(
@@ -592,6 +661,29 @@ function summarizeScanRisk(
     contextFindingCount: contextFindings.length,
     unknownFindingCount,
   };
+}
+
+function readFindingAnnotations(summaryJson: unknown): Map<string, FindingDiffAnnotation> {
+  const summary = summaryJson && typeof summaryJson === "object" ? summaryJson : null;
+  const annotations =
+    summary && !Array.isArray(summary)
+      ? (summary as { findingAnnotations?: unknown }).findingAnnotations
+      : null;
+  const out = new Map<string, FindingDiffAnnotation>();
+  if (!Array.isArray(annotations)) return out;
+  for (const annotation of annotations) {
+    if (!annotation || typeof annotation !== "object" || Array.isArray(annotation)) continue;
+    const id = (annotation as { id?: unknown }).id;
+    if (typeof id !== "string") continue;
+    const diffStatus = normalizeFindingDiffStatus(
+      (annotation as { diffStatus?: unknown }).diffStatus,
+    );
+    out.set(id, {
+      diffStatus,
+      releaseDelta: Boolean((annotation as { releaseDelta?: unknown }).releaseDelta),
+    });
+  }
+  return out;
 }
 
 function diffForFindingAnnotations(

@@ -86,6 +86,7 @@ export async function runScanPipeline(
     ...stagedMetadataFindings,
   ]);
   const redactedStagedFiles = redactFileRecords(staged.files);
+  const redactedPreviousFiles = previous ? redactFileRecords(previous.files) : [];
   const redactedPackageJson = redactJson(stagedPackageJson ?? null);
   const redactedPreviousPackageJson = redactJson(previous?.packageJson ?? null);
   const redactedStagedDetails = redactJson(summarizeStagedDetails(stagedDetails));
@@ -203,6 +204,7 @@ export async function runScanPipeline(
     },
     ai: aiFindings,
     files: redactedStagedFiles,
+    previousFiles: redactedPreviousFiles,
     diff,
     findings: ruleFindings,
     report: { version: reportPayload.version, digest: reportDigest },
