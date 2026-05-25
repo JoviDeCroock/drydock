@@ -2,7 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import { useComputed, useModel, useSignal, useSignalEffect } from "@preact/signals";
 import { useLocation, useRoute } from "preact-iso";
-import { useQuerySignal } from "../../lib/query-state";
+import { getDashboardReturnUrl, useQuerySignal } from "../../lib/query-state";
 import { sessionModel } from "../../models/auth";
 import {
   ScanDetailModel,
@@ -662,14 +662,11 @@ function ScanDetailHeader({
     detail?.scan.status === "complete"
       ? (detail.riskSummary?.releaseRisk ?? detail.scan.risk)
       : detail?.scan.risk;
+  const dashboardHref = getDashboardReturnUrl();
   return (
     <header class="flex flex-wrap items-start justify-between gap-4">
       <div class="flex flex-col gap-2 min-w-0">
-        <a
-          href="/dashboard"
-          class="text-[13px] text-ink-muted hover:text-ink no-underline"
-          onClick={handleBackLinkClick}
-        >
+        <a href={dashboardHref} class="text-[13px] text-ink-muted hover:text-ink no-underline">
           ← Reviews
         </a>
         <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">
@@ -908,15 +905,6 @@ const DIFF_STATUS_RANK: Record<DiffEntry["status"], number> = {
   removed: 2,
   unchanged: 3,
 };
-
-function handleBackLinkClick(event: MouseEvent) {
-  // Honor modifier/middle-click — let the browser open the href in a new tab.
-  if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
-  if (window.history.length > 1) {
-    event.preventDefault();
-    window.history.back();
-  }
-}
 
 function filterDiffEntries(
   entries: DiffEntry[],

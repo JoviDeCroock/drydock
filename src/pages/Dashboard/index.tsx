@@ -2,7 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import { useSignal, useModel, useSignalEffect } from "@preact/signals";
 import { useLocation } from "preact-iso";
-import { useQuerySignal } from "../../lib/query-state";
+import { rememberDashboardReturnUrl, useQuerySignal } from "../../lib/query-state";
 import { sessionModel } from "../../models/auth";
 import { NpmConnectionModel } from "../../models/npm-connection";
 import { OrganizationModel } from "../../models/organization";
@@ -50,6 +50,10 @@ export default function DashboardPage() {
     parse: parseDecisionFilter,
     serialize: (value) => (value === "undecided" ? null : value),
   });
+
+  useEffect(() => {
+    rememberDashboardReturnUrl(location.url);
+  }, [location.url]);
 
   useEffect(() => {
     let cancelled = false;

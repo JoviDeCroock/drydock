@@ -4,6 +4,8 @@ import { useLocation } from "preact-iso";
 
 export type QueryUpdates = Record<string, string | null | undefined>;
 
+const DASHBOARD_RETURN_URL_KEY = "staged-publish-review.dashboard-return-url";
+
 export function buildQueryUrl(updates: QueryUpdates): string {
   const params = new URLSearchParams(window.location.search);
   for (const [key, value] of Object.entries(updates)) {
@@ -19,6 +21,30 @@ export function buildQueryUrl(updates: QueryUpdates): string {
 
 export function currentLocationKey(): string {
   return window.location.pathname + window.location.search;
+}
+
+export function rememberDashboardReturnUrl(url = currentLocationKey()) {
+  if (typeof window === "undefined") return;
+  const normalized = normalizeDashboardReturnUrl(url);
+  if (normalized) window.sessionStorage.setItem(DASHBOARD_RETURN_URL_KEY, normalized);
+}
+
+export function getDashboardReturnUrl(): string {
+  if (typeof window === "undefined") return "/dashboard";
+  const stored = window.sessionStorage.getItem(DASHBOARD_RETURN_URL_KEY);
+  return normalizeDashboardReturnUrl(stored) ?? "/dashboard";
+}
+
+function normalizeDashboardReturnUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (parsed.origin !== window.location.origin) return null;
+    if (parsed.pathname !== "/dashboard") return null;
+    return parsed.pathname + parsed.search;
+  } catch {
+    return null;
+  }
 }
 
 export interface QuerySignalOptions<T> {
