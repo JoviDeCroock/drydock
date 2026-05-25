@@ -1,6 +1,6 @@
 ---
 name: preact-signals-models-utils
-description: Use when designing or debugging Preact Signals models and utilities, including createModel, useModel, action methods, Show, For, useLiveSignal, useSignalRef, nested model state, and model lifecycle disposal.
+description: Use when designing or debugging Preact Signals models and utilities, including createModel, useModel, action methods, passing signals through models without over-eager unboxing, Show, For, useLiveSignal, useSignalRef, nested model state, and model lifecycle disposal.
 ---
 
 # Preact Signals Models And Utils
@@ -8,6 +8,8 @@ description: Use when designing or debugging Preact Signals models and utilities
 ## Core Approach
 
 Use models for cohesive signal state plus actions. A model should contain signals, actions, and nested objects containing only signals and actions. `useModel()` creates one model instance for a component lifetime and disposes it on unmount.
+
+Models should preserve signal boundaries. Store live state as signals and expose those signal objects so components can decide whether to render `{model.count}`, read `model.count.value`, or pass `model.count` farther down. Do not turn model state into plain aggregate values unless the caller intentionally needs a snapshot.
 
 ## createModel Pattern
 
@@ -51,6 +53,42 @@ function Counter() {
 ```
 
 `useModel()` ignores factory changes after the initial render. If constructor inputs can change and the model must react to them, pass a signal such as `useLiveSignal(inputSignal)` into the model and observe it inside the model.
+
+## Live Inputs And Unboxing
+
+Constructor arguments are snapshots unless they are signals:
+
+```tsx
+function Detail({ id }: { id: string }) {
+  const model = useModel(() => new DetailModel(id));
+  return <DetailView model={model} />;
+}
+```
+
+Use a signal input when the model must track future changes:
+
+```tsx
+import type { Signal } from "@preact/signals";
+import { useLiveSignal } from "@preact/signals/utils";
+
+function Detail({ selectedId }: { selectedId: Signal<string> }) {
+  const liveSelectedId = useLiveSignal(selectedId);
+  const model = useModel(() => new DetailModel(liveSelectedId));
+  return <DetailView model={model} />;
+}
+```
+
+Inside the model, unbox in the smallest reactive scope that needs the current value:
+
+```ts
+const DetailModel = createModel((selectedId: Signal<string>) => {
+  const resourceUrl = computed(() => `/api/items/${selectedId.value}`);
+
+  return { selectedId, resourceUrl };
+});
+```
+
+Pass model signals to leaf components instead of reading `.value` in a parent and forwarding plain values, unless the parent really owns the render decision.
 
 ## State Shape
 
@@ -111,5 +149,6 @@ For values inside `For` children that should keep updating after the child is ca
 
 ## References
 
-- Preact utilities: https://github.com/preactjs/signals/blob/main/packages/preact/utils/README.md
+- Preact package docs: `node_modules/@preact/signals/README.md`
+- Preact utilities: https://github.com/preactjs/signals/blob/main/packages/preact/README.md#utility-components-and-hooks
 - React utilities: https://github.com/preactjs/signals/blob/main/packages/react/utils/README.md
