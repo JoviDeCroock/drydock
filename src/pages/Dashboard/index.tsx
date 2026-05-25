@@ -28,6 +28,7 @@ import {
   OrgSwitcher,
   PageShell,
   SectionLabel,
+  UserMenu,
   severityTone,
 } from "../../components";
 
@@ -115,7 +116,7 @@ export default function DashboardPage() {
   return (
     <PageShell
       headerActions={
-        <div class="flex flex-col items-end gap-3">
+        <>
           <OrgSwitcher
             organizations={organizations.organizations.value}
             activeOrganizationId={organizations.activeOrganizationId.value}
@@ -124,15 +125,8 @@ export default function DashboardPage() {
             onActivate={onSwitchOrganization}
             onCreate={onCreateOrganization}
           />
-          <div class="flex items-center gap-2.5 bg-surface border border-border rounded-lg pl-3.5 pr-1.5 py-1.5">
-            <span class="font-mono text-xs text-ink-muted">
-              {user?.email || user?.name || "signed in"}
-            </span>
-            <Button variant="secondary" size="sm" onClick={onSignOut}>
-              Sign out
-            </Button>
-          </div>
-        </div>
+          <UserMenu email={user?.email} name={user?.name} onSignOut={onSignOut} />
+        </>
       }
     >
       <DashboardHeader />

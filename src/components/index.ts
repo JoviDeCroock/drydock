@@ -31,3 +31,5 @@ export type { SeverityCounts, SeverityKey } from "./SeverityBar";
 export { StatusStrip, StatusStripItem } from "./StatusStrip";
 export { FindingCard, FindingRow } from "./FindingCard";
 export { OrgSwitcher } from "./OrgSwitcher";
+export { UserMenu } from "./UserMenu";
+export { Menu, MenuItem, MenuLabel, MenuSeparator } from "./Menu";
