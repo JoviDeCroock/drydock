@@ -797,9 +797,6 @@ function DecisionDialog({
         <Button variant="danger" onClick={() => submit("no_publish")} disabled={saving}>
           {saving ? "Saving…" : "Block publish"}
         </Button>
-        <Button variant="ghost" size="sm" onClick={handleClose} disabled={saving}>
-          Cancel
-        </Button>
       </div>
       {error ? <Alert tone="critical">{error}</Alert> : null}
     </Dialog>

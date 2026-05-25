@@ -55,8 +55,16 @@ export function Dialog({
         className,
       )}
     >
-      <div class="flex flex-col gap-4 p-5">
-        <header class="flex flex-col gap-1">
+      <div class="relative flex flex-col gap-4 p-5">
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          class="absolute top-3 right-3 flex items-center justify-center w-7 h-7 rounded-md text-ink-subtle hover:text-ink hover:bg-surface-2 focus:outline-none focus:ring-2 focus:ring-accent leading-none text-[14px]"
+        >
+          ✕
+        </button>
+        <header class="flex flex-col gap-1 pr-7">
           <h2 class="text-[18px] font-medium tracking-[-0.01em] leading-[1.35] m-0">{title}</h2>
           {description ? (
             <p class="text-[13px] leading-[1.55] text-ink-muted m-0">{description}</p>
