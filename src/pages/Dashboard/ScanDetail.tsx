@@ -17,6 +17,7 @@ import {
   Badge,
   Button,
   Card,
+  Dialog,
   DiffView,
   EmptyLine,
   Field,
@@ -27,7 +28,6 @@ import {
   LoadingLine,
   LoadingState,
   MonoDetail,
-  Muted,
   PageShell,
   SectionLabel,
   SeverityBar,
@@ -58,6 +58,7 @@ export default function ScanDetailPage() {
   const sessionChecked = useSignal(false);
   const fileFilter = useSignal("");
   const changedFilesOnly = useSignal(true);
+  const decisionDialogOpen = useSignal(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -179,9 +180,21 @@ export default function ScanDetailPage() {
   const hasRuleFindings = Boolean(detail?.findings.length);
   const workbenchGridClass = "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-4";
 
+  const handleDecisionSubmit = async (decision: ScanDecision, reason: string | null) => {
+    await model.setDecision(decision, reason);
+    if (model.decisionStatus.peek() === "idle") {
+      decisionDialogOpen.value = false;
+    }
+  };
+
   return (
     <PageShell>
-      <ScanDetailHeader detail={detail} />
+      <ScanDetailHeader
+        detail={detail}
+        onDecideClick={
+          detail?.scan.status === "complete" ? () => (decisionDialogOpen.value = true) : undefined
+        }
+      />
 
       {error ? <Alert tone="critical">{error}</Alert> : null}
       {detail?.scan.status === "pending" || detail?.scan.status === "running" ? (
@@ -214,17 +227,6 @@ export default function ScanDetailPage() {
             aiFindings={ai.value?.findings ?? []}
             diffCount={diffEntries.value.filter((entry) => entry.status !== "unchanged").length}
           />
-
-          {detail.scan.status === "complete" ? (
-            <DecisionPanel
-              decision={detail.scan.decision}
-              decisionReason={detail.scan.decisionReason}
-              decidedAt={detail.scan.decidedAt}
-              status={model.decisionStatus.value}
-              error={model.decisionError.value}
-              onSubmit={(decision, reason) => void model.setDecision(decision, reason)}
-            />
-          ) : null}
 
           <ScanTimeline events={detail.events ?? []} />
 
@@ -317,6 +319,19 @@ export default function ScanDetailPage() {
 
           <PersistedReportSections summary={summary.value} ai={ai.value} />
         </>
+      ) : null}
+
+      {detail && detail.scan.status === "complete" ? (
+        <DecisionDialog
+          open={decisionDialogOpen.value}
+          onClose={() => (decisionDialogOpen.value = false)}
+          decision={detail.scan.decision}
+          decisionReason={detail.scan.decisionReason}
+          decidedAt={detail.scan.decidedAt}
+          status={model.decisionStatus.value}
+          error={model.decisionError.value}
+          onSubmit={handleDecisionSubmit}
+        />
       ) : null}
     </PageShell>
   );
@@ -561,30 +576,58 @@ function describeTimelineEvent(event: PersistedScanDetail["events"][number]): {
   }
 }
 
-function ScanDetailHeader({ detail }: { detail?: PersistedScanDetail | null } = {}) {
+function ScanDetailHeader({
+  detail,
+  onDecideClick,
+}: {
+  detail?: PersistedScanDetail | null;
+  onDecideClick?: () => void;
+} = {}) {
+  const decision = detail?.scan.decision;
+  const decidedAt = detail?.scan.decidedAt;
+
   return (
-    <header class="flex flex-col gap-2">
-      <a href="/dashboard" class="text-[13px] text-ink-muted hover:text-ink no-underline">
-        ← Reviews
-      </a>
-      <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">
-        {detail?.scan.packageName || "Release review"}
-      </h1>
-      {detail ? (
-        <MonoDetail
-          parts={[
-            <span key="version">
-              {detail.scan.previousVersion || "—"} → {detail.scan.stagedVersion || "—"}
-            </span>,
-            <Badge key="risk" tone={severityTone(detail.scan.risk)}>
-              {detail.scan.risk}
-            </Badge>,
-            <span key="scan-id">scan {detail.scan.id.slice(0, 12)}</span>,
-          ]}
-        />
-      ) : (
-        <LoadingLine size="inline">Loading saved review</LoadingLine>
-      )}
+    <header class="flex flex-wrap items-start justify-between gap-4">
+      <div class="flex flex-col gap-2 min-w-0">
+        <a href="/dashboard" class="text-[13px] text-ink-muted hover:text-ink no-underline">
+          ← Reviews
+        </a>
+        <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">
+          {detail?.scan.packageName || "Release review"}
+        </h1>
+        {detail ? (
+          <MonoDetail
+            parts={[
+              <span key="version">
+                {detail.scan.previousVersion || "—"} → {detail.scan.stagedVersion || "—"}
+              </span>,
+              <Badge key="risk" tone={severityTone(detail.scan.risk)}>
+                {detail.scan.risk}
+              </Badge>,
+              <span key="scan-id">scan {detail.scan.id.slice(0, 12)}</span>,
+            ]}
+          />
+        ) : (
+          <LoadingLine size="inline">Loading saved review</LoadingLine>
+        )}
+      </div>
+      {onDecideClick ? (
+        <div class="flex flex-wrap items-center gap-3">
+          {decision ? (
+            <div class="flex flex-col items-end gap-1">
+              <Badge tone={decision === "publish" ? "ok" : "critical"}>
+                {decision === "publish" ? "approved" : "blocked"}
+              </Badge>
+              {decidedAt ? (
+                <span class="font-mono text-[11px] text-ink-subtle">{formatDate(decidedAt)}</span>
+              ) : null}
+            </div>
+          ) : null}
+          <Button variant={decision ? "secondary" : "primary"} onClick={onDecideClick}>
+            {decision ? "Update decision" : "Decide"}
+          </Button>
+        </div>
+      ) : null}
     </header>
   );
 }
@@ -671,7 +714,9 @@ function toDiffSide(file: FileRecord) {
   };
 }
 
-function DecisionPanel({
+function DecisionDialog({
+  open,
+  onClose,
   decision,
   decisionReason,
   decidedAt,
@@ -679,139 +724,85 @@ function DecisionPanel({
   error,
   onSubmit,
 }: {
+  open: boolean;
+  onClose: () => void;
   decision?: string | null;
   decisionReason?: string | null;
   decidedAt?: string | number | Date | null;
   status: DecisionStatus;
   error: string | null;
-  onSubmit: (decision: ScanDecision, reason: string | null) => void;
+  onSubmit: (decision: ScanDecision, reason: string | null) => void | Promise<void>;
 }) {
-  const editing = useSignal(!decision);
   const reasonDraft = useSignal("");
-  const expanded = useSignal(false);
   const saving = status === "saving";
 
-  useSignalEffect(() => {
-    if (!decision) {
-      editing.value = true;
-      return;
+  useEffect(() => {
+    if (open) {
+      reasonDraft.value = decisionReason ?? "";
     }
-    editing.value = false;
-    reasonDraft.value = "";
-  });
+  }, [open, decisionReason]);
 
   const submit = (next: ScanDecision) => {
+    if (saving) return;
     const trimmed = reasonDraft.value.trim();
-    onSubmit(next, trimmed.length ? trimmed : null);
+    void onSubmit(next, trimmed.length ? trimmed : null);
   };
 
-  const showForm = editing.value || !decision;
-  const isExpanded = expanded.value || Boolean(error);
+  const handleClose = () => {
+    if (saving) return;
+    onClose();
+  };
 
   return (
-    <Card class="p-5 flex flex-col gap-4 border-accent/40">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div class="flex flex-wrap items-center gap-3">
-          <SectionLabel>Publish decision</SectionLabel>
-          {decision ? (
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      title="Publish decision"
+      description="Record whether this staged publish is approved to go live. The decision is part of the audit trail. It doesn't publish or cancel the release on npm — that still requires you to confirm or cancel with 2FA there."
+    >
+      {decision ? (
+        <div class="flex flex-col gap-2 border border-border rounded-md p-3">
+          <div class="flex flex-wrap items-center gap-2">
             <Badge tone={decision === "publish" ? "ok" : "critical"}>
-              {decision === "publish" ? "approved" : "blocked"}
+              {decision === "publish" ? "currently approved" : "currently blocked"}
             </Badge>
-          ) : (
-            <Badge tone="neutral">undecided</Badge>
-          )}
-          {!isExpanded && decision && decidedAt ? (
-            <span class="font-mono text-[11px] text-ink-subtle">{formatDate(decidedAt)}</span>
+            {decidedAt ? (
+              <span class="font-mono text-[11px] text-ink-subtle">{formatDate(decidedAt)}</span>
+            ) : null}
+          </div>
+          {decisionReason ? (
+            <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{decisionReason}</p>
           ) : null}
         </div>
-        <button
-          type="button"
-          onClick={() => (expanded.value = !expanded.value)}
-          class="bg-transparent border-0 p-0 cursor-pointer font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle hover:text-ink"
-          aria-expanded={isExpanded}
-        >
-          {isExpanded ? "Collapse" : "Expand"}
-        </button>
-      </div>
-
-      {isExpanded ? (
-        <>
-          <Muted class="text-[13px] max-w-[640px]">
-            Record whether this staged publish is approved to go live. The decision is part of the
-            audit trail. It doesn't publish or cancel the release on npm — that still requires you
-            to confirm or cancel with 2FA there.
-          </Muted>
-
-          {decision && !editing.value ? (
-            <div class="flex flex-col gap-2">
-              <MonoDetail
-                parts={[
-                  <span key="kind">
-                    {decision === "publish" ? "approved publish" : "blocked publish"}
-                  </span>,
-                  <span key="at">{decidedAt ? formatDate(decidedAt) : "just now"}</span>,
-                ]}
-              />
-              {decisionReason ? (
-                <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{decisionReason}</p>
-              ) : null}
-              <div class="flex">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    reasonDraft.value = decisionReason ?? "";
-                    editing.value = true;
-                  }}
-                >
-                  Change decision
-                </Button>
-              </div>
-            </div>
-          ) : null}
-
-          {showForm ? (
-            <div class="flex flex-col gap-3">
-              <Field label="Reason (optional)" for="decisionReason">
-                <Input
-                  id="decisionReason"
-                  type="text"
-                  value={reasonDraft.value}
-                  placeholder="e.g. minor patch, no risk signals"
-                  onInput={(e) => (reasonDraft.value = (e.target as HTMLInputElement).value)}
-                  disabled={saving}
-                  maxLength={500}
-                  autoComplete="off"
-                  spellcheck={false}
-                />
-              </Field>
-              <div class="flex flex-wrap gap-2">
-                <Button onClick={() => submit("publish")} disabled={saving}>
-                  {saving ? "Saving…" : "Approve publish"}
-                </Button>
-                <Button variant="danger" onClick={() => submit("no_publish")} disabled={saving}>
-                  {saving ? "Saving…" : "Block publish"}
-                </Button>
-                {decision ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      editing.value = false;
-                      reasonDraft.value = "";
-                    }}
-                    disabled={saving}
-                  >
-                    Cancel
-                  </Button>
-                ) : null}
-              </div>
-              {error ? <Alert tone="critical">{error}</Alert> : null}
-            </div>
-          ) : null}
-        </>
       ) : null}
-    </Card>
+
+      <Field label="Reason (optional)" for="decisionReason">
+        <Input
+          id="decisionReason"
+          type="text"
+          value={reasonDraft.value}
+          placeholder="e.g. minor patch, no risk signals"
+          onInput={(e) => (reasonDraft.value = (e.target as HTMLInputElement).value)}
+          disabled={saving}
+          maxLength={500}
+          autoComplete="off"
+          spellcheck={false}
+        />
+      </Field>
+
+      <div class="flex flex-wrap gap-2">
+        <Button onClick={() => submit("publish")} disabled={saving}>
+          {saving ? "Saving…" : "Approve publish"}
+        </Button>
+        <Button variant="danger" onClick={() => submit("no_publish")} disabled={saving}>
+          {saving ? "Saving…" : "Block publish"}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={handleClose} disabled={saving}>
+          Cancel
+        </Button>
+      </div>
+      {error ? <Alert tone="critical">{error}</Alert> : null}
+    </Dialog>
   );
 }
 
