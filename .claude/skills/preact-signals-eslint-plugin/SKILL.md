@@ -9,6 +9,8 @@ description: Use when configuring, extending, or debugging @preact/eslint-plugin
 
 Use lint rules for common static signal misuse that issue history shows humans and agents repeat. The plugin supports projects using `@preact/signals-core`, `@preact/signals`, `@preact/signals-react`, and `@preact/signals-react/runtime`.
 
+Treat each `.value` read as an intentional unboxing/subscription decision. The plugin catches many incorrect unboxing sites, such as reads after `await`, hidden reads behind non-reactive guards, writes from computed callbacks, and signal objects used as always-truthy booleans. It does not prove that a `.value` read is as granular as it could be; code review still needs to catch parent/provider unboxing that should have been deferred to a leaf component or DOM binding.
+
 ## Configuration
 
 Oxlint:
@@ -65,6 +67,8 @@ export default [
 | `no-signal-truthiness` | `if (signal)` and similar always-truthy checks |
 | `no-signal-in-component-body` | `signal()`, `computed()`, `effect()` created on every render |
 | `no-conditional-value-read` | `.value` reads hidden behind non-reactive guards |
+
+These rules protect correctness more than performance. They should be paired with the Preact integration skill's "unbox late" guidance for granularity.
 
 ## Common Limitations
 

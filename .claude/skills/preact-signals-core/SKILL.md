@@ -1,6 +1,6 @@
 ---
 name: preact-signals-core
-description: Use when implementing or debugging @preact/signals-core, signal, computed, effect, batch, untracked, action, createModel, signal.value tracking, object or array updates, and reactivity that appears stale or over-eager.
+description: Use when implementing or debugging @preact/signals-core, signal, computed, effect, batch, untracked, action, createModel, signal.value tracking, signal unboxing/subscription boundaries, object or array updates, and reactivity that appears stale or over-eager.
 ---
 
 # Preact Signals Core
@@ -8,6 +8,18 @@ description: Use when implementing or debugging @preact/signals-core, signal, co
 ## Core Model
 
 Signals are runtime-tracked containers. A reactive scope subscribes only to `.value` reads that actually execute during that run. Signals are not deep proxies; changing a property inside the current value does not notify subscribers unless a new `.value` is assigned.
+
+Think of a signal as a box. Passing the box around does not subscribe anything. Unboxing it does, and the subscriber is determined by the surrounding context that unboxes it.
+
+| Unboxing context | What subscribes or updates |
+| --- | --- |
+| `computed()` / `useComputed()` reads `.value` | The computed tracks the read and recomputes when it changes |
+| `effect()` / `useSignalEffect()` reads `.value` | The effect tracks the read and reruns when it changes |
+| Preact component render reads `.value` | That component rerenders when it changes |
+| Preact JSX text renders `{signal}` | Preact binds the signal to the text node and updates it directly |
+| Preact DOM prop receives `{signal}` | Preact can bind the signal to the DOM property directly |
+| Component prop or context value receives a signal | No subscription yet; the eventual consumer decides by unboxing |
+| Event handler or ordinary function reads `.value` | Current value is read; no reactive subscriber is created |
 
 ## Creation And Reads
 
@@ -34,6 +46,31 @@ effect(() => {
 ```
 
 ## Runtime Tracking
+
+Read `.value` as late as correctness allows. Passing `Signal<T>` through props, context, models, or helper objects preserves the stable signal identity and lets the actual consumer subscribe at the smallest useful boundary.
+
+Prefer this when a leaf owns the UI dependency:
+
+```tsx
+import type { Signal } from "@preact/signals";
+
+function Parent({ count }: { count: Signal<number> }) {
+  return <CounterLabel count={count} />;
+}
+
+function CounterLabel({ count }: { count: Signal<number> }) {
+  return <span>{count}</span>;
+}
+```
+
+Unbox earlier only when the current scope must branch, derive, validate, snapshot, or run side effects from the current value:
+
+```ts
+const visibleItems = computed(() => {
+  const query = filter.value.trim();
+  return items.value.filter((item) => item.name.includes(query));
+});
+```
 
 Reads behind a non-reactive early return are not tracked if that path does not execute:
 
@@ -96,5 +133,5 @@ batch(() => {
 
 ## References
 
-- Package docs: `node_modules/@preact/signals-core/README.md`
+- Package docs: `node_modules/.pnpm/@preact+signals-core@*/node_modules/@preact/signals-core/README.md`
 - Online: https://github.com/preactjs/signals/blob/main/packages/core/README.md

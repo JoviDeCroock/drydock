@@ -36,6 +36,21 @@ If a commit must skip the hook, pass `git commit --no-verify` — only do that w
 
 Reach for a signal when the state is one value; reach for a model when the state and the writes that touch it form a unit (e.g. `loading + error + items + load()`).
 
+## Signal unboxing model
+
+Treat a signal as a stable box around a value. Passing the signal object through props, context, or a model does not subscribe the current component. Unboxing it with `.value` subscribes the current reactive scope, so unbox as late as correctness allows.
+
+| Context                                               | Result                                                                                              |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Component render reads `signal.value`                 | That component rerenders when the signal changes.                                                   |
+| `computed()` / `useComputed()` reads `signal.value`   | The computed tracks the read and recomputes when the signal changes.                                |
+| `effect()` / `useSignalEffect()` reads `signal.value` | The effect tracks the read and reruns when the signal changes.                                      |
+| JSX text renders `{signal}`                           | Preact binds the signal to the text node and updates it directly without rerendering the component. |
+| DOM element prop receives `{signal}`                  | Preact can update the DOM property directly without rerendering the component.                      |
+| Component prop or context carries `signal`            | No subscription occurs until a consumer unboxes it or renders it directly.                          |
+
+Prefer passing `Signal<T>` to leaf components, utility components, and context consumers when they need live state. Read `.value` earlier only when the current scope needs to branch, derive a value, run an effect, validate input, or pass a plain snapshot to an API that cannot accept a signal.
+
 ## Signal plugin rules
 
 The following rules from `@preact/eslint-plugin-signals` are enforced (see [`preact-signals-eslint-plugin`](../.claude/skills/preact-signals-eslint-plugin/SKILL.md) for intent):
@@ -48,7 +63,7 @@ The following rules from `@preact/eslint-plugin-signals` are enforced (see [`pre
 
 ## Related skills
 
-The `.claude/skills/` directory ships the signals/models reference set used by Claude Code during this migration:
+The `.claude/skills/` directory ships the canonical signals/models reference set used by Claude Code during this migration. The same skills are exposed to agents through the `.agents/skills` symlink:
 
 - `preact-signals-core` — core reactivity primitives and the runtime tracking model.
 - `preact-signals-preact-integration` — `useSignal`, JSX rendering choices, `Show`/`For`, `useLiveSignal`.

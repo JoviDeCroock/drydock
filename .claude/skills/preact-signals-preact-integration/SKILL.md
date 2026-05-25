@@ -1,13 +1,23 @@
 ---
 name: preact-signals-preact-integration
-description: Use when working with @preact/signals in Preact components, including useSignal, useComputed, useSignalEffect, direct JSX signal rendering, DOM attribute optimization, Show, For, useLiveSignal, and rerender behavior.
+description: Use when working with @preact/signals in Preact components, including useSignal, useComputed, useSignalEffect, signal unboxing/subscription boundaries, direct JSX signal rendering, DOM attribute optimization, passing signals through props or context, Show, For, useLiveSignal, and rerender behavior.
 ---
 
 # Preact Signals Preact Integration
 
 ## Core Approach
 
-In Preact, reading `signal.value` during component render subscribes the component. Passing a signal object directly as JSX text or a supported DOM attribute can skip component rerenders and update the DOM directly.
+In Preact, a signal is a stable box around a value. Reading `signal.value` during component render unboxes it and subscribes that component. Passing the signal object itself through props or context does not subscribe intermediate components. Passing a signal object directly as JSX text or a supported DOM attribute lets Preact own the subscription and update the DOM directly.
+
+Use the latest unboxing point that is still correct:
+
+| Pattern | Subscription / update boundary | Use when |
+| --- | --- | --- |
+| `{state.value}` in a component | The component rerenders | The component must branch, derive, or pass a plain snapshot |
+| `{state}` as JSX text | The text node updates directly | The value is only displayed as text |
+| `<input value={state}>` on DOM nodes | The DOM property updates directly | The property mirrors signal state |
+| `<Child state={state}>` | No subscription in the parent | The child should decide how granular updates are |
+| Context provides `state` | No subscription in the provider | Distant consumers should subscribe only where used |
 
 ## Component State
 
@@ -60,6 +70,38 @@ function NameField() {
 
 Do not apply the React adapter limitation to Preact; React does not support signal DOM attributes, but Preact does.
 
+Direct DOM prop optimization only applies to DOM elements. Passing a signal to a component prop just passes the signal object; the child must either render `{signal}` directly or read `signal.value`.
+
+## Props And Context
+
+Prefer passing signals over plain values when the receiver needs live state:
+
+```tsx
+import type { Signal } from "@preact/signals";
+
+function Toolbar({ disabled }: { disabled: Signal<boolean> }) {
+  return <button disabled={disabled}>Run</button>;
+}
+```
+
+Avoid this when it only unwraps state to rewrap the same dependency in a child:
+
+```tsx
+// Over-eager: parent subscribes and rerenders before the leaf can update.
+<Toolbar disabled={disabled.value} />
+```
+
+Use plain values when the receiver truly needs a snapshot, cannot accept `Signal<T>`, or should rerender as part of the parent's render contract.
+
+Context should carry signal objects or models containing signals, not freshly-created plain objects that read `.value` in the provider:
+
+```tsx
+// Good: consumers choose their own subscription boundary.
+<SessionContext.Provider value={sessionModel}>{children}</SessionContext.Provider>
+```
+
+If a consumer receives a signal prop whose identity can be replaced by the parent, use `useLiveSignal()` before storing it in a long-lived model.
+
 ## Show And For
 
 `Show` and `For` optimize around signals. They should not be used to smuggle non-signal parent values into cached children.
@@ -111,4 +153,4 @@ This guards against stale signal references when the parent swaps which signal i
 
 - Package docs: `node_modules/@preact/signals/README.md`
 - Online: https://github.com/preactjs/signals/blob/main/packages/preact/README.md
-- Utilities: https://github.com/preactjs/signals/blob/main/packages/preact/utils/README.md
+- Utilities are documented in the same package README and online package README.
