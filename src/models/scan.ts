@@ -1,5 +1,10 @@
 import { computed, createModel, effect, signal } from "@preact/signals";
-import type { FileRecord, PackageJsonSummary } from "../../server/lib/review";
+import type {
+  FileRecord,
+  FindingDiffAnnotation,
+  FindingDiffStatus,
+  PackageJsonSummary,
+} from "../../server/lib/review";
 import type { ScanResult } from "../../server/types";
 import { apiFetch } from "./api";
 
@@ -14,6 +19,7 @@ export interface ScanCompareResponse {
   version: string;
   files: FileRecord[];
   packageJson: PackageJsonSummary | null;
+  findingAnnotations?: Array<{ id: string } & FindingDiffAnnotation>;
   cachedAt?: string;
 }
 
@@ -24,6 +30,15 @@ export interface ScanCompareFileResponse {
 
 export type ScanDecision = "publish" | "no_publish";
 export type ScanDecisionFilter = "undecided" | "publish" | "no_publish" | "all";
+
+export interface ScanRiskSummary {
+  artifactRisk: string;
+  releaseRisk: string;
+  contextRisk: string;
+  releaseFindingCount: number;
+  contextFindingCount: number;
+  unknownFindingCount: number;
+}
 
 export interface ScanListItem {
   id: string;
@@ -41,6 +56,7 @@ export interface ScanListItem {
   decidedAt?: string | number | Date | null;
   changedFileCount?: number;
   findingCount?: number;
+  riskSummary?: ScanRiskSummary | null;
   reportVersion?: number | null;
   reportDigest?: string | null;
   startedAt?: string | number | Date | null;
@@ -59,6 +75,7 @@ export interface PersistedScanDetail {
     startedAt?: string | number | Date | null;
     completedAt?: string | number | Date | null;
   };
+  riskSummary?: ScanRiskSummary | null;
   files: Array<{
     id: string;
     scanId: string;
@@ -76,9 +93,12 @@ export interface PersistedScanDetail {
     file: string;
     evidence: string;
     reason: string;
+    line?: number | null;
     source: string;
     ruleId?: string | null;
     ruleVersion?: string | null;
+    diffStatus?: FindingDiffStatus;
+    releaseDelta?: boolean;
   }>;
   events: Array<{
     id: string;

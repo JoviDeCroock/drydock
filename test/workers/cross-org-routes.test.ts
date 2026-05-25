@@ -157,6 +157,197 @@ describe("scans routes enforce organization boundaries", () => {
     expect(row).toMatchObject({ changedFileCount: 2, findingCount: 1 });
   });
 
+  test("GET /scans/:id annotates findings with line numbers and release delta status", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const scanId = `scan_${crypto.randomUUID()}`;
+    const stageId = `stage-${scanId.slice(-12)}`;
+    await createScanJob(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+    });
+    await persistScan(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+      packageJson: { name: "@org/annotated-findings", version: "1.2.3" },
+      risk: "high",
+      status: "complete",
+      summary: {
+        diff: [{ path: "src/server.ts", status: "modified" }],
+      },
+      ai: null,
+      files: [
+        {
+          path: "src/server.ts",
+          size: 80,
+          sha256: "new",
+          flags: [],
+          textSample: "fetch('/existing-risk');\nnew Function('return 2');\n",
+        },
+      ],
+      previousFiles: [
+        {
+          path: "src/server.ts",
+          size: 80,
+          sha256: "old",
+          flags: [],
+          textSample: "fetch('/existing-risk');\nexport const value = 1;\n",
+        },
+      ],
+      diff: [{ path: "src/server.ts", status: "modified" }],
+      findings: [
+        {
+          severity: "high",
+          file: "src/server.ts",
+          line: 1,
+          evidence: "network-capable code path",
+          reason: "existing network path",
+        },
+        {
+          severity: "medium",
+          file: "src/server.ts",
+          line: 2,
+          evidence: "dynamic code or obfuscation primitive",
+          reason: "changed release line",
+        },
+      ],
+      report: { version: 1, digest: "digest" },
+    });
+
+    const res = await fetchWithSession(buildTestApp(owner), `/api/v1/scans/${scanId}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      riskSummary: {
+        artifactRisk: string;
+        releaseRisk: string;
+        contextRisk: string;
+        releaseFindingCount: number;
+        contextFindingCount: number;
+      };
+      findings: Array<{
+        file: string;
+        line: number | null;
+        diffStatus: string;
+        releaseDelta: boolean;
+      }>;
+    };
+    expect(body.riskSummary).toMatchObject({
+      artifactRisk: "high",
+      releaseRisk: "medium",
+      contextRisk: "high",
+      releaseFindingCount: 1,
+      contextFindingCount: 1,
+    });
+    expect(body.findings.find((finding) => finding.line === 1)).toMatchObject({
+      diffStatus: "modified",
+      releaseDelta: false,
+    });
+    expect(body.findings.find((finding) => finding.line === 2)).toMatchObject({
+      diffStatus: "modified",
+      releaseDelta: true,
+    });
+  });
+
+  test("GET /scans includes release risk summaries for dashboard rows", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const scanId = `scan_${crypto.randomUUID()}`;
+    const stageId = `stage-${scanId.slice(-12)}`;
+    await createScanJob(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+    });
+    await persistScan(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+      packageJson: { name: "@org/list-risk-summary", version: "1.2.3" },
+      risk: "high",
+      status: "complete",
+      summary: {
+        diff: [{ path: "src/server.ts", status: "modified" }],
+      },
+      ai: null,
+      files: [
+        {
+          path: "src/server.ts",
+          size: 80,
+          sha256: "new",
+          flags: [],
+          textSample: "fetch('/existing-risk');\nexport const value = 2;\n",
+        },
+      ],
+      previousFiles: [
+        {
+          path: "src/server.ts",
+          size: 80,
+          sha256: "old",
+          flags: [],
+          textSample: "fetch('/existing-risk');\nexport const value = 1;\n",
+        },
+      ],
+      diff: [{ path: "src/server.ts", status: "modified" }],
+      findings: [
+        {
+          severity: "high",
+          file: "src/server.ts",
+          line: 1,
+          evidence: "network-capable code path",
+          reason: "existing network path",
+        },
+      ],
+      report: { version: 1, digest: "digest" },
+    });
+
+    const res = await fetchWithSession(buildTestApp(owner), "/api/v1/scans?filter=all");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      scans: Array<{
+        id: string;
+        riskSummary: {
+          artifactRisk: string;
+          releaseRisk: string;
+          contextRisk: string;
+          releaseFindingCount: number;
+          contextFindingCount: number;
+        } | null;
+      }>;
+    };
+    const row = body.scans.find((scan) => scan.id === scanId);
+    expect(row?.riskSummary).toMatchObject({
+      artifactRisk: "high",
+      releaseRisk: "low",
+      contextRisk: "high",
+      releaseFindingCount: 0,
+      contextFindingCount: 1,
+    });
+  });
+
+  test("GET /scans/:id omits derived risk summary before completion", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const scanId = `scan_${crypto.randomUUID()}`;
+    await createScanJob(db, {
+      id: scanId,
+      stageId: `stage-${scanId.slice(-12)}`,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+    });
+
+    const res = await fetchWithSession(buildTestApp(owner), `/api/v1/scans/${scanId}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { scan: { status: string }; riskSummary: unknown };
+    expect(body.scan.status).toBe("pending");
+    expect(body.riskSummary).toBeNull();
+  });
+
   test("GET /scans lists every scan for a stage id with the newest first", async () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
@@ -430,6 +621,7 @@ describe("scans routes enforce organization boundaries", () => {
         {
           severity: "high",
           file: "package.json",
+          line: 3,
           evidence: "install script added",
           reason: "lifecycle script touches network",
         },
@@ -441,10 +633,20 @@ describe("scans routes enforce organization boundaries", () => {
     expect(ownerRes.status).toBe(200);
     const ownerBody = (await ownerRes.json()) as {
       files: Array<{ path: string }>;
-      findings: Array<{ severity: string }>;
+      findings: Array<{
+        severity: string;
+        line: number | null;
+        diffStatus: string;
+        releaseDelta: boolean;
+      }>;
     };
     expect(ownerBody.files.map((f) => f.path)).toEqual(["package.json"]);
     expect(ownerBody.findings.map((f) => f.severity)).toEqual(["high"]);
+    expect(ownerBody.findings[0]).toMatchObject({
+      line: 3,
+      diffStatus: "added",
+      releaseDelta: true,
+    });
 
     const intruderRes = await fetchWithSession(buildTestApp(intruder), `/api/v1/scans/${scanId}`);
     expect(intruderRes.status).toBe(404);

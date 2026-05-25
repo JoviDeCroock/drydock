@@ -1,16 +1,22 @@
 import type { ComponentChildren } from "preact";
-import { Badge, severityTone } from "./Badge";
+import { Badge, severityTone, statusTone } from "./Badge";
 import { cn } from "./cn";
 
 export function FindingCard({
   severity,
   file,
+  line,
+  diffStatus,
+  diffLabel,
   ruleId,
   children,
   class: className,
 }: {
   severity: string;
   file: string;
+  line?: number | null;
+  diffStatus?: string | null;
+  diffLabel?: string | null;
   ruleId?: string | null;
   children: ComponentChildren;
   class?: string;
@@ -27,6 +33,14 @@ export function FindingCard({
           {severity}
         </Badge>
         <code class="text-[13px] text-ink-muted truncate">{file}</code>
+        {line ? (
+          <code class="text-[11px] text-ink-subtle font-mono flex-shrink-0">L{line}</code>
+        ) : null}
+        {diffStatus ? (
+          <Badge tone={statusTone(diffStatus)} class="flex-shrink-0">
+            {diffLabel ?? diffStatus}
+          </Badge>
+        ) : null}
         {ruleId ? (
           <code
             class="ml-auto text-[11px] text-ink-subtle font-mono uppercase tracking-[0.05em] flex-shrink-0"

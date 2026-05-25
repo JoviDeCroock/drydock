@@ -51,7 +51,7 @@ Tag-aware baseline selection is the largest low-risk token reducer because it pr
 
 Do not make deterministic safety depend only on the diff. The staged artifact is still the package under review, so risky install hooks, native artifacts, credential access, and secrets must be detected even if they existed before.
 
-However, report presentation and AI payload construction should distinguish:
+However, report payloads, report presentation, and AI payload construction should distinguish:
 
 - new or modified risky evidence, which is release-blocking signal;
 - removed risky evidence, which may be positive but still deserves context;

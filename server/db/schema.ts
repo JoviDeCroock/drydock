@@ -120,6 +120,7 @@ export const scanFindings = sqliteTable("scan_findings", {
   file: text("file").notNull(),
   evidence: text("evidence").notNull(),
   reason: text("reason").notNull(),
+  line: integer("line"),
   source: text("source").notNull().default("rule"),
   ruleId: text("rule_id"),
   ruleVersion: text("rule_version"),

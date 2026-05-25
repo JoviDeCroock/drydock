@@ -20,6 +20,7 @@ import { requireActiveOrganization } from "../lib/active-organization";
 import { loadCompare, stripTextSamples } from "../lib/compare-cache";
 import { getOrganizationNpmToken } from "../lib/npm-connection";
 import { compareSemver, fetchPackageMetadata, pickPreviousVersion } from "../lib/registry";
+import { annotateFindingsWithDiffStatus, createPackageDiff, type FileRecord } from "../lib/review";
 import { executeScanJob, type ScanQueueMessage } from "../lib/scan-job";
 import type { Bindings, ScanInput, Variables } from "../types";
 
@@ -375,12 +376,49 @@ scansRoutes.get("/:id/compare", async (c) => {
       version: cached.version,
       files: stripTextSamples(cached.files),
       packageJson: cached.packageJson,
+      findingAnnotations: buildCompareFindingAnnotations(ctx.scan, cached.files),
       cachedAt: cached.cachedAt,
     },
     200,
     { "cache-control": "private, max-age=300" },
   );
 });
+
+function buildCompareFindingAnnotations(
+  scan: NonNullable<Awaited<ReturnType<typeof getScan>>>,
+  previousFiles: FileRecord[],
+) {
+  const stagedFiles = scanFilesToFileRecords(scan.files);
+  const diff = createPackageDiff(previousFiles, stagedFiles);
+  return annotateFindingsWithDiffStatus(scan.findings, diff, {
+    previousFiles,
+    stagedFiles,
+  }).map((finding) => ({
+    id: finding.id,
+    diffStatus: finding.diffStatus,
+    releaseDelta: finding.releaseDelta,
+  }));
+}
+
+function scanFilesToFileRecords(
+  files: Array<{
+    path: string;
+    size: number | null;
+    sha256: string | null;
+    flagsJson: unknown;
+    textSample: string | null;
+  }>,
+): FileRecord[] {
+  return files.map((file) => ({
+    path: file.path,
+    size: file.size ?? 0,
+    sha256: file.sha256 ?? "",
+    textSample: file.textSample ?? undefined,
+    flags: Array.isArray(file.flagsJson)
+      ? file.flagsJson.filter((flag): flag is string => typeof flag === "string")
+      : [],
+  }));
+}
 
 scansRoutes.get("/:id/compare/file", async (c) => {
   const ctx = await resolveCompareContext(c);

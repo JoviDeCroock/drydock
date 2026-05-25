@@ -6,6 +6,7 @@ import {
   type BaselineVersionSelection,
 } from "./registry";
 import {
+  annotateFindingsWithDiffStatus,
   createPackageDiff,
   deterministicFindings,
   packageJsonDiffFindings,
@@ -78,15 +79,26 @@ export async function runScanPipeline(
   const packageJsonDiff = redactJson(
     summarizePackageJsonDiff(previous?.packageJson, stagedPackageJson),
   );
+  const stagedPackageJsonText =
+    staged.files.find((file) => file.path === "package.json")?.textSample ?? null;
   const ruleFindings = redactFindings([
     ...deterministicFindings(staged.files, diff, stagedPackageJson),
-    ...packageJsonDiffFindings(packageJsonDiff),
+    ...packageJsonDiffFindings(packageJsonDiff, stagedPackageJsonText),
     ...stagedMetadataFindings,
   ]);
   const redactedStagedFiles = redactFileRecords(staged.files);
+  const redactedPreviousFiles = previous ? redactFileRecords(previous.files) : [];
   const redactedPackageJson = redactJson(stagedPackageJson ?? null);
   const redactedPreviousPackageJson = redactJson(previous?.packageJson ?? null);
   const redactedStagedDetails = redactJson(summarizeStagedDetails(stagedDetails));
+  const reportFindingAnnotations = annotateFindingsWithDiffStatus(ruleFindings, diff, {
+    previousFiles: redactedPreviousFiles,
+    stagedFiles: redactedStagedFiles,
+  }).map((finding, index) => ({
+    findingIndex: index,
+    diffStatus: finding.diffStatus,
+    releaseDelta: finding.releaseDelta,
+  }));
   const scanId = input.scanId || crypto.randomUUID();
   // AI review is disabled while we work toward a paid-tier offering. The call,
   // escalation logging, and risk wiring below stay intact (gated by `if (false)`)
@@ -170,6 +182,7 @@ export async function runScanPipeline(
     packageJsonDiff,
     diff,
     ruleFindings,
+    findingAnnotations: reportFindingAnnotations,
     aiFindings,
     risk,
     safety,
@@ -201,6 +214,7 @@ export async function runScanPipeline(
     },
     ai: aiFindings,
     files: redactedStagedFiles,
+    previousFiles: redactedPreviousFiles,
     diff,
     findings: ruleFindings,
     report: { version: reportPayload.version, digest: reportDigest },
