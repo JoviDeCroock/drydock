@@ -286,7 +286,7 @@ export default function ScanDetailPage() {
               <SectionLabel>Release tree</SectionLabel>
               <Input
                 type="search"
-                value={fileFilter.value}
+                value={fileFilter}
                 placeholder="Filter files"
                 onInput={(e) => (fileFilter.value = (e.target as HTMLInputElement).value)}
                 autoComplete="off"
@@ -296,7 +296,7 @@ export default function ScanDetailPage() {
                 <label class="flex items-center gap-2 text-[13px] text-ink-muted">
                   <input
                     type="checkbox"
-                    checked={changedFilesOnly.value}
+                    checked={changedFilesOnly}
                     onChange={(e) =>
                       (changedFilesOnly.value = (e.target as HTMLInputElement).checked)
                     }
@@ -833,7 +833,7 @@ function DecisionDialog({
         <Input
           id="decisionReason"
           type="text"
-          value={reasonDraft.value}
+          value={reasonDraft}
           placeholder="e.g. minor patch, no risk signals"
           onInput={(e) => (reasonDraft.value = (e.target as HTMLInputElement).value)}
           disabled={saving}

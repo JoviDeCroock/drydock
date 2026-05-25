@@ -9,6 +9,8 @@ description: Use when configuring, extending, or debugging @preact/eslint-plugin
 
 Use lint rules for common static signal misuse that issue history shows humans and agents repeat. The plugin supports projects using `@preact/signals-core`, `@preact/signals`, `@preact/signals-react`, and `@preact/signals-react/runtime`.
 
+In this repo these rules are the non-negotiable correctness floor. Do not weaken or remove them while making signal changes; add narrower repo checks on top when a pattern is about granularity rather than correctness.
+
 ## Configuration
 
 Oxlint:
@@ -65,6 +67,10 @@ export default [
 | `no-signal-truthiness` | `if (signal)` and similar always-truthy checks |
 | `no-signal-in-component-body` | `signal()`, `computed()`, `effect()` created on every render |
 | `no-conditional-value-read` | `.value` reads hidden behind non-reactive guards |
+
+## Repo-Specific Boundary Check
+
+Run `pnpm run signals:check` for the local AST prototype that flags over-eager `.value` reads in native DOM text and signal-friendly DOM props. This complements the plugin: the plugin catches incorrect signal semantics, while the repo check catches clear missed direct-DOM granularity opportunities.
 
 ## Common Limitations
 

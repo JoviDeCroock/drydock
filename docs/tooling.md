@@ -8,16 +8,17 @@
 
 ## Scripts
 
-| Command                 | What it does                                                                                            |
-| ----------------------- | ------------------------------------------------------------------------------------------------------- |
-| `pnpm run lint`         | Run oxlint over the repo. Exit non-zero on errors.                                                      |
-| `pnpm run lint:fix`     | Apply oxlint autofixes.                                                                                 |
-| `pnpm run format`       | Rewrite files with oxfmt.                                                                               |
-| `pnpm run format:check` | Report files that would change without writing.                                                         |
-| `pnpm run test`         | Node logic tests (`test/**`) plus D1-backed worker tests (`test/workers/**`) via `vitest-pool-workers`. |
-| `pnpm run test:node`    | Just the node logic suite.                                                                              |
-| `pnpm run test:workers` | Just the worker suite (Miniflare D1 from `wrangler.test.jsonc` + `drizzle/`).                           |
-| `pnpm run verify`       | Run lint + format check + typecheck + tests, in order.                                                  |
+| Command                  | What it does                                                                                            |
+| ------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `pnpm run lint`          | Run oxlint over the repo. Exit non-zero on errors.                                                      |
+| `pnpm run lint:fix`      | Apply oxlint autofixes.                                                                                 |
+| `pnpm run signals:check` | Run the repo-specific signal boundary check over `src/**/*.tsx`.                                        |
+| `pnpm run format`        | Rewrite files with oxfmt.                                                                               |
+| `pnpm run format:check`  | Report files that would change without writing.                                                         |
+| `pnpm run test`          | Node logic tests (`test/**`) plus D1-backed worker tests (`test/workers/**`) via `vitest-pool-workers`. |
+| `pnpm run test:node`     | Just the node logic suite.                                                                              |
+| `pnpm run test:workers`  | Just the worker suite (Miniflare D1 from `wrangler.test.jsonc` + `drizzle/`).                           |
+| `pnpm run verify`        | Run lint + signal boundary check + format check + typecheck + tests, in order.                          |
 
 `pnpm lint` (the shorthand without `run`) can collide with workspace forwarding or shell wrappers — always use `pnpm run lint`.
 
@@ -38,13 +39,30 @@ Reach for a signal when the state is one value; reach for a model when the state
 
 ## Signal plugin rules
 
-The following rules from `@preact/eslint-plugin-signals` are enforced (see [`preact-signals-eslint-plugin`](../.claude/skills/preact-signals-eslint-plugin/SKILL.md) for intent):
+The following rules from `@preact/eslint-plugin-signals` are the repo's correctness floor and must stay enabled (see [`preact-signals-eslint-plugin`](../.claude/skills/preact-signals-eslint-plugin/SKILL.md) for intent):
 
 - `no-signal-write-in-computed` (error)
 - `no-value-after-await` (error)
 - `no-signal-in-component-body` (error)
 - `no-conditional-value-read` (error)
 - `no-signal-truthiness` (warn)
+
+## Signal boundary check
+
+`pnpm run signals:check` runs [`scripts/check-signal-boundaries.mjs`](../scripts/check-signal-boundaries.mjs). This prototype catches locally-created signals that are unboxed too early in native DOM JSX:
+
+- DOM text such as `<span>{count.value}</span>` should usually be `<span>{count}</span>`.
+- DOM props such as `<input value={query.value}>` should usually be `<input value={query}>`.
+
+The check intentionally does not block every `.value` read. Parent components still need `.value` for branching, deriving values, calling APIs that expect plain values, and passing deliberate snapshots. For an intentional snapshot at a DOM boundary, add `// signals-boundary-ok: <reason>` on the same or previous line.
+
+## Signal review checklist
+
+- Is the official signal lint-rule floor still enabled?
+- Where is each signal unboxed, and does that scope need to subscribe?
+- Could a DOM text node, DOM prop, leaf component, or context consumer receive the signal object instead?
+- Are async effects reading `.value` before `await`, or intentionally using `untracked()` after it?
+- Are object and array signal updates assigning a new `.value` reference?
 
 ## Related skills
 

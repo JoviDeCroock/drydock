@@ -31,6 +31,9 @@ jobs:
       - name: Lint
         run: pnpm run lint
 
+      - name: Signal boundary check
+        run: pnpm run signals:check
+
       - name: Format check
         run: pnpm run format:check
 

@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
+    "signals:check": "node scripts/check-signal-boundaries.mjs",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "db:generate": "drizzle-kit generate",
@@ -19,7 +20,7 @@
     "test": "vitest run --config vitest.config.ts && vitest run --config vitest.workers.config.ts",
     "test:node": "vitest run --config vitest.config.ts",
     "test:workers": "vitest run --config vitest.workers.config.ts",
-    "verify": "pnpm run lint && pnpm run format:check && pnpm run typecheck && pnpm run test",
+    "verify": "pnpm run lint && pnpm run signals:check && pnpm run format:check && pnpm run typecheck && pnpm run test",
     "prepare": "git config core.hooksPath .githooks"
   },
   "dependencies": {

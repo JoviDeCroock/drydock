@@ -60,6 +60,14 @@ function NameField() {
 
 Do not apply the React adapter limitation to Preact; React does not support signal DOM attributes, but Preact does.
 
+## Review Checklist
+
+- Locate where each signal is unboxed. The surrounding component, computed, effect, text node, or DOM prop is the subscriber.
+- Keep signals boxed through props, context, and models when a downstream consumer can subscribe more narrowly.
+- Prefer `{signal}` in DOM text and DOM props such as `value={signal}`, `checked={signal}`, and `disabled={signal}` when the current component does not need to branch on the value.
+- Use `.value` when the current component must branch, derive a plain value, call an API, or pass a deliberate snapshot.
+- Run `pnpm run signals:check` after signal-heavy UI work; use `// signals-boundary-ok: <reason>` only for intentional DOM-boundary snapshots.
+
 ## Show And For
 
 `Show` and `For` optimize around signals. They should not be used to smuggle non-signal parent values into cached children.

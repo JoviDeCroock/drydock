@@ -29,8 +29,9 @@
 - **Read [`DESIGN.md`](DESIGN.md) before making any visual or UI decision.** It is the source of truth for fonts, colors, spacing, iconography (text glyphs only — no SVG icons), data viz (severity stacked bar only), state patterns, and marketing-surface rules. Do not deviate without explicit user approval. Anti-patterns there are not suggestions — they're prohibitions.
 - We use `preact`, `preact-iso`, and `signals`.
 - `useState` and `useReducer` are banned (oxlint `no-restricted-imports` enforces it). Component-local state goes through `useSignal`/`useComputed` or `createModel`/`useModel`. See `docs/tooling.md` and the skills under `.claude/skills/preact-signals-*` (also surfaced as `.agents/preact-signals-*`).
+- Signal-heavy UI changes must keep the official `@preact/eslint-plugin-signals` rule floor enabled and pass `pnpm run signals:check`, which catches clear DOM-boundary `.value` unboxing that should stay boxed for granular updates.
 - Lint with `pnpm run lint` (oxlint) and format with `pnpm run format` (oxfmt). Configs live in `.oxlintrc.json` and `.oxfmtrc.json`.
-- Before every commit, run `pnpm run verify` (lint + format check + typecheck + tests). The pre-commit hook in `.githooks/pre-commit` runs it automatically; `pnpm install` wires `core.hooksPath` for you. Don't bypass it with `--no-verify` unless you have a real reason.
+- Before every commit, run `pnpm run verify` (lint + signal boundary check + format check + typecheck + tests). The pre-commit hook in `.githooks/pre-commit` runs it automatically; `pnpm install` wires `core.hooksPath` for you. Don't bypass it with `--no-verify` unless you have a real reason.
 - Never write SQL migrations by hand; use `pnpm db:generate` to create migrations from `server/db/schema.ts`.
 - Before you start work read up on `docs/`, when you are done working update `docs/` with relevant information
 - WE NEVER USE `preact/compat`
@@ -41,7 +42,8 @@
 - `npm run build` — Build the UI bundle into `dist/`.
 - `npm run typecheck` — `tsc --noEmit`.
 - `npm run lint` / `npm run lint:fix` — oxlint over `src/`, `server/`, `test/`. Use `:fix` to apply autofixes.
+- `npm run signals:check` — local AST prototype that catches clear DOM-boundary `.value` unboxing in Preact UI.
 - `npm run format` / `npm run format:check` — oxfmt write / check-only.
 - `npm run test` — Vitest logic suite.
-- `npm run verify` — runs lint, format check, typecheck, and tests in order. CI and the pre-commit hook both call this.
+- `npm run verify` — runs lint, signal boundary check, format check, typecheck, and tests in order. CI and the pre-commit hook both call this.
 - `npm run db:generate` — Drizzle migration from `server/db/schema.ts`.
