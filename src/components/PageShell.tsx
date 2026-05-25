@@ -1,6 +1,10 @@
 import type { ComponentChildren } from "preact";
 import { cn } from "./cn";
 import { BrandMark } from "./BrandMark";
+import { LinkButton } from "./Button";
+
+const FEEDBACK_MAILTO =
+  "mailto:drydock@resynapse.dev?subject=Drydock%20feedback&body=Tell%20us%20what%27s%20broken%2C%20confusing%2C%20or%20missing%3A%0A%0A";
 
 export function PageShell({
   class: className,
@@ -26,7 +30,17 @@ export function PageShell({
       {brand ? (
         <div class="flex flex-wrap items-center justify-between gap-3">
           <BrandMark href="/" size="sm" />
-          {headerActions ? <div class="flex items-center gap-2">{headerActions}</div> : null}
+          <div class="flex items-center gap-2">
+            <LinkButton
+              href={FEEDBACK_MAILTO}
+              variant="ghost"
+              size="sm"
+              title="Email drydock@resynapse.dev with any issues"
+            >
+              Feedback
+            </LinkButton>
+            {headerActions}
+          </div>
         </div>
       ) : null}
       {children}
