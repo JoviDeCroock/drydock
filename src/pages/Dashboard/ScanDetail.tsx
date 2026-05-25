@@ -144,6 +144,7 @@ export default function ScanDetailPage() {
       model.isDefaultComparison.value,
       model.compare.value?.files ?? [],
       model.detail.value ? scanFilesToFileRecords(model.detail.value.files) : [],
+      model.isDefaultComparison.value ? undefined : model.compare.value?.findingAnnotations,
     ),
   );
 
@@ -978,23 +979,34 @@ function annotateFindingsWithDiffStatus(
   preferPersistedStatus: boolean,
   previousFiles: FileRecord[],
   stagedFiles: FileRecord[],
+  compareAnnotations?: Array<{ id: string } & FindingDiffAnnotation>,
 ): FindingWithDiffStatus[] {
-  const persistedAnnotations = preferPersistedStatus
+  const persistedAnnotations = compareAnnotations
     ? new Map(
-        findings.flatMap((finding): Array<[string, FindingDiffAnnotation]> => {
-          if (!finding.diffStatus) return [];
-          return [
-            [
-              finding.id,
-              {
-                diffStatus: normalizeFindingDiffStatus(finding.diffStatus),
-                releaseDelta: Boolean(finding.releaseDelta),
-              },
-            ],
-          ];
-        }),
+        compareAnnotations.map((annotation) => [
+          annotation.id,
+          {
+            diffStatus: normalizeFindingDiffStatus(annotation.diffStatus),
+            releaseDelta: Boolean(annotation.releaseDelta),
+          },
+        ]),
       )
-    : undefined;
+    : preferPersistedStatus
+      ? new Map(
+          findings.flatMap((finding): Array<[string, FindingDiffAnnotation]> => {
+            if (!finding.diffStatus) return [];
+            return [
+              [
+                finding.id,
+                {
+                  diffStatus: normalizeFindingDiffStatus(finding.diffStatus),
+                  releaseDelta: Boolean(finding.releaseDelta),
+                },
+              ],
+            ];
+          }),
+        )
+      : undefined;
   return annotateReviewFindingsWithDiffStatus(findings, diff, {
     persistedAnnotations,
     previousFiles,

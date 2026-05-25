@@ -330,4 +330,97 @@ describe("scan pipeline baseline selection", () => {
       }),
     );
   });
+
+  test("report digest includes release-context finding annotations", async () => {
+    stagedMock.fetchStagedPublishDetails.mockResolvedValue({
+      id: "stage-digest123",
+      packageName: "pkg",
+      version: "1.0.1",
+      tag: "latest",
+      access: null,
+      actor: null,
+      actorType: null,
+      createdAt: null,
+      shasum: null,
+      packageJson: null,
+    });
+    registryMock.fetchPackageMetadata.mockResolvedValue({
+      versions: {
+        "1.0.0": { dist: { tarball: "https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz" } },
+      },
+      "dist-tags": { latest: "1.0.0" },
+    });
+
+    const runWithPreviousText = async (previousText) => {
+      dbMock.persistScan.mockClear();
+      sandboxMock.downloadInSandbox.mockImplementation(async (_env, _ctx, options) => {
+        if (options.stageId) {
+          return {
+            files: [
+              {
+                path: "package.json",
+                size: 40,
+                sha256: "staged-pkg",
+                flags: [],
+                textSample: JSON.stringify({ name: "pkg", version: "1.0.1" }),
+              },
+              {
+                path: "index.js",
+                size: 80,
+                sha256: "staged-index",
+                flags: [],
+                textSample: "fetch('/existing-risk');\nexport const value = 2;\n",
+              },
+            ],
+            packageJson: { name: "pkg", version: "1.0.1" },
+          };
+        }
+        return {
+          files: [
+            {
+              path: "package.json",
+              size: 40,
+              sha256: "previous-pkg",
+              flags: [],
+              textSample: JSON.stringify({ name: "pkg", version: "1.0.0" }),
+            },
+            {
+              path: "index.js",
+              size: 80,
+              sha256: "previous-index",
+              flags: [],
+              textSample: previousText,
+            },
+          ],
+          packageJson: { name: "pkg", version: "1.0.0" },
+        };
+      });
+
+      await runScanPipeline(
+        {
+          env: { NPM_REGISTRY: "https://registry.npmjs.org" },
+          executionCtx: {},
+          db: {},
+          session: { userId: "user_1" },
+        },
+        {
+          scanId: `scan_${crypto.randomUUID()}`,
+          stageId: "stage-digest123",
+          organizationId: "org_1",
+          npmToken: "npm_token_0123456789",
+          npmRegistry: "https://registry.npmjs.org",
+        },
+      );
+      return dbMock.persistScan.mock.calls[0]?.[1].summary.report.digest;
+    };
+
+    const contextDigest = await runWithPreviousText(
+      "fetch('/existing-risk');\nexport const value = 1;\n",
+    );
+    const releaseDigest = await runWithPreviousText("export const value = 1;\n");
+
+    expect(contextDigest).toBeDefined();
+    expect(releaseDigest).toBeDefined();
+    expect(contextDigest).not.toBe(releaseDigest);
+  });
 });

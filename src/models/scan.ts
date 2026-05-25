@@ -1,5 +1,10 @@
 import { computed, createModel, effect, signal } from "@preact/signals";
-import type { FileRecord, FindingDiffStatus, PackageJsonSummary } from "../../server/lib/review";
+import type {
+  FileRecord,
+  FindingDiffAnnotation,
+  FindingDiffStatus,
+  PackageJsonSummary,
+} from "../../server/lib/review";
 import type { ScanResult } from "../../server/types";
 import { apiFetch } from "./api";
 
@@ -14,6 +19,7 @@ export interface ScanCompareResponse {
   version: string;
   files: FileRecord[];
   packageJson: PackageJsonSummary | null;
+  findingAnnotations?: Array<{ id: string } & FindingDiffAnnotation>;
   cachedAt?: string;
 }
 
