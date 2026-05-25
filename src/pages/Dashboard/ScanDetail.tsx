@@ -1084,8 +1084,7 @@ function ReportOverview({
         {artifactRisk !== releaseRisk ? (
           <Badge tone="neutral">artifact {artifactRisk}</Badge>
         ) : null}
-        {/* eslint-disable-next-line no-constant-binary-expression -- AI review intentionally disabled; JSX preserved for paid-tier re-introduction. */}
-        {false &&
+        {ai?.model != null &&
           (aiComplete ? (
             <>
               <Badge tone={ai!.requiresManualReview ? "medium" : "ok"}>
@@ -1193,8 +1192,7 @@ function PersistedReportSections({
         )}
       </ReportSection>
 
-      {/* eslint-disable-next-line no-constant-binary-expression -- AI review intentionally disabled; JSX preserved for paid-tier re-introduction. */}
-      {false && (
+      {ai?.model != null && (
         <ReportSection title="Reviewer notes">
           {ai ? (
             ai!.status === "complete" ? (
