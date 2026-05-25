@@ -612,7 +612,7 @@ function ScanDetailHeader({
         )}
       </div>
       {onDecideClick ? (
-        <div class="flex flex-wrap items-center gap-3">
+        <div class="flex flex-wrap items-start gap-3">
           {decision ? (
             <div class="flex flex-col items-end gap-1">
               <Badge tone={decision === "publish" ? "ok" : "critical"}>
