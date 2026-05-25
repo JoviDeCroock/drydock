@@ -12,6 +12,12 @@ import {
   scans,
 } from "./schema";
 import { personalOrganizationId } from "../lib/ownership";
+import {
+  annotateFindingsWithDiffStatus,
+  computeRisk,
+  normalizeFindingDiffStatus,
+  normalizeRisk,
+} from "../lib/review";
 import type { DiffEntry, FileRecord, Finding, PackageJsonSummary } from "../lib/review";
 
 export type AppDb = ReturnType<typeof drizzle<typeof schema>>;
@@ -317,6 +323,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     file: finding.file,
     evidence: finding.evidence,
     reason: finding.reason,
+    line: finding.line ?? null,
     source: "rule",
     ruleId: finding.ruleId ?? null,
     ruleVersion: finding.ruleVersion ?? null,
@@ -328,7 +335,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
   // "No file content available." for every entry.
   await Promise.all([
     ...chunkForD1(fileRows, 8).map((chunk) => db.insert(scanFiles).values(chunk)),
-    ...chunkForD1(findingRows, 9).map((chunk) => db.insert(scanFindings).values(chunk)),
+    ...chunkForD1(findingRows, 10).map((chunk) => db.insert(scanFindings).values(chunk)),
   ]);
 
   return { persisted: true as const };
@@ -557,7 +564,55 @@ export async function getScan(db: AppDb, id: string, organizationId: string) {
   ]);
   const scan = scanRows[0];
   if (!scan) return null;
-  return { scan, files, findings, events: events.map(redactScanEventForClient) };
+  const diff = diffForFindingAnnotations(scan.summaryJson, files);
+  const annotatedFindings = annotateFindingsWithDiffStatus(findings, diff);
+  return {
+    scan,
+    files,
+    findings: annotatedFindings,
+    riskSummary: summarizeScanRisk(scan.risk, annotatedFindings),
+    events: events.map(redactScanEventForClient),
+  };
+}
+
+function summarizeScanRisk(
+  artifactRisk: string,
+  findings: Array<{ severity?: string | null; releaseDelta: boolean; diffStatus: string }>,
+) {
+  const releaseFindings = findings.filter((finding) => finding.releaseDelta);
+  const contextFindings = findings.filter((finding) => !finding.releaseDelta);
+  const unknownFindingCount = contextFindings.filter(
+    (finding) => finding.diffStatus === "unknown",
+  ).length;
+  return {
+    artifactRisk: normalizeRisk(artifactRisk),
+    releaseRisk: computeRisk(releaseFindings),
+    contextRisk: computeRisk(contextFindings),
+    releaseFindingCount: releaseFindings.length,
+    contextFindingCount: contextFindings.length,
+    unknownFindingCount,
+  };
+}
+
+function diffForFindingAnnotations(
+  summaryJson: unknown,
+  files: Array<{ path: string; status: string }>,
+): Array<{ path: string; status: string }> {
+  const summary = summaryJson && typeof summaryJson === "object" ? summaryJson : null;
+  const diff = summary && !Array.isArray(summary) ? (summary as { diff?: unknown }).diff : null;
+  if (Array.isArray(diff)) {
+    const entries = diff.flatMap((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+      const path = (entry as { path?: unknown }).path;
+      if (typeof path !== "string") return [];
+      return [{ path, status: normalizeFindingDiffStatus((entry as { status?: unknown }).status) }];
+    });
+    if (entries.length) return entries;
+  }
+  return files.map((file) => ({
+    path: file.path,
+    status: normalizeFindingDiffStatus(file.status),
+  }));
 }
 
 const SENSITIVE_EVENT_METADATA_KEYS = new Set([

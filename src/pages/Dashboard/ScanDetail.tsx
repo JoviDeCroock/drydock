@@ -10,7 +10,14 @@ import {
   type ScanDecision,
 } from "../../models/scan";
 import type { AiFinding, AiReview } from "../../../server/lib/ai-review";
-import { createPackageDiff, type DiffEntry, type FileRecord } from "../../../server/lib/review";
+import {
+  createPackageDiff,
+  isReleaseDeltaStatus,
+  normalizeFindingDiffStatus,
+  type DiffEntry,
+  type FileRecord,
+  type FindingDiffStatus,
+} from "../../../server/lib/review";
 import type { PackageJsonDiff, ScanResult } from "../../../server/types";
 import {
   Alert,
@@ -48,6 +55,14 @@ interface PersistedSummary {
   packageJsonDiff?: PackageJsonDiff;
   diff?: DiffEntry[];
   safety?: ScanResult["safety"];
+}
+
+type PersistedFinding = PersistedScanDetail["findings"][number];
+
+interface FindingWithDiffStatus {
+  finding: PersistedFinding;
+  diffStatus: FindingDiffStatus;
+  releaseDelta: boolean;
 }
 
 export default function ScanDetailPage() {
@@ -118,6 +133,10 @@ export default function ScanDetailPage() {
 
   const visibleDiffEntries = useComputed(() =>
     filterDiffEntries(diffEntries.value, fileFilter.value, changedFilesOnly.value),
+  );
+
+  const findingsWithDiffStatus = useComputed(() =>
+    annotateFindingsWithDiffStatus(model.detail.value?.findings ?? [], diffEntries.value),
   );
 
   const stagedFile = useComputed(() => {
@@ -217,6 +236,7 @@ export default function ScanDetailPage() {
             detail={detail}
             summary={summary.value}
             diffCount={diffEntries.value.filter((entry) => entry.status !== "unchanged").length}
+            findingsWithDiffStatus={findingsWithDiffStatus.value}
           />
 
           <ReportOverview
@@ -224,6 +244,7 @@ export default function ScanDetailPage() {
             summary={summary.value}
             ai={ai.value}
             findings={detail.findings}
+            findingsWithDiffStatus={findingsWithDiffStatus.value}
             aiFindings={ai.value?.findings ?? []}
             diffCount={diffEntries.value.filter((entry) => entry.status !== "unchanged").length}
           />
@@ -298,24 +319,7 @@ export default function ScanDetailPage() {
             </Card>
           </section>
 
-          {hasRuleFindings ? (
-            <section class="flex flex-col gap-3">
-              <SectionLabel>Risk signals</SectionLabel>
-              <ul class="list-none p-0 m-0 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                {sortFindingsBySeverity(detail.findings).map((finding) => (
-                  <FindingCard
-                    key={finding.id}
-                    severity={finding.severity}
-                    file={finding.file}
-                    ruleId={finding.ruleId}
-                  >
-                    <FindingRow label="evidence" value={finding.evidence} />
-                    <FindingRow label="reason" value={finding.reason} />
-                  </FindingCard>
-                ))}
-              </ul>
-            </section>
-          ) : null}
+          {hasRuleFindings ? <RiskSignalsSection findings={findingsWithDiffStatus.value} /> : null}
 
           <PersistedReportSections summary={summary.value} ai={ai.value} />
         </>
@@ -341,22 +345,33 @@ function ReleaseRecommendation({
   detail,
   summary,
   diffCount,
+  findingsWithDiffStatus,
 }: {
   detail: PersistedScanDetail;
   summary: PersistedSummary;
   diffCount: number;
+  findingsWithDiffStatus: FindingWithDiffStatus[];
 }) {
   if (detail.scan.status !== "complete") return null;
 
-  const recommendation = getReleaseRecommendation(detail.scan.risk);
-  const evidence = buildRecommendationEvidence(detail, summary, diffCount);
+  const changedFindings = findingsWithDiffStatus
+    .filter((item) => item.releaseDelta)
+    .map((item) => item.finding);
+  const artifactRisk = detail.riskSummary?.artifactRisk ?? detail.scan.risk;
+  const releaseRisk = detail.riskSummary?.releaseRisk ?? highestFindingRisk(changedFindings);
+  const releaseFindingCount = detail.riskSummary?.releaseFindingCount ?? changedFindings.length;
+  const recommendation = getReleaseRecommendation(artifactRisk, releaseRisk, releaseFindingCount);
+  const evidence = buildRecommendationEvidence(detail, summary, diffCount, changedFindings);
 
   return (
     <section class="flex flex-col gap-3 border-t border-border pt-4">
       <SectionLabel>Recommendation</SectionLabel>
       <div class="flex flex-wrap items-center gap-2">
         <Badge tone={recommendation.tone}>{recommendation.label}</Badge>
-        <Badge tone={severityTone(detail.scan.risk)}>{detail.scan.risk}</Badge>
+        <Badge tone={severityTone(releaseRisk)}>release {releaseRisk}</Badge>
+        {artifactRisk !== releaseRisk ? (
+          <Badge tone="neutral">artifact {artifactRisk}</Badge>
+        ) : null}
       </div>
       <p class="m-0 max-w-[760px] text-[14px] leading-[1.55] text-ink-muted">
         {recommendation.copy}
@@ -378,23 +393,34 @@ function ReleaseRecommendation({
   );
 }
 
-function getReleaseRecommendation(risk: string): {
+function getReleaseRecommendation(
+  risk: string,
+  changedRisk: string,
+  changedFindingCount: number,
+): {
   label: string;
   tone: "critical" | "high" | "medium" | "ok" | "neutral";
   copy: string;
 } {
-  if (risk === "critical" || risk === "high") {
+  if (changedFindingCount > 0 && (changedRisk === "critical" || changedRisk === "high")) {
     return {
       label: "block manual approval",
-      tone: risk,
+      tone: changedRisk,
       copy: "Do not approve this staged publish until the highlighted release evidence has been reviewed and resolved outside this tool.",
     };
   }
-  if (risk === "medium") {
+  if (changedRisk === "medium") {
     return {
       label: "review carefully",
       tone: "medium",
       copy: "Pause before approving and inspect the highest-impact findings, manifest changes, and changed files below.",
+    };
+  }
+  if (changedFindingCount === 0 && (risk === "critical" || risk === "high" || risk === "medium")) {
+    return {
+      label: "changed files clear",
+      tone: "ok",
+      copy: "No deterministic risk signals point at changed files; existing package signals are retained below as context.",
     };
   }
   return {
@@ -408,12 +434,15 @@ function buildRecommendationEvidence(
   detail: PersistedScanDetail,
   summary: PersistedSummary,
   diffCount: number,
+  changedFindings: PersistedFinding[],
 ): Array<{ label: string; value: ComponentChildren }> {
   const evidence: Array<{ label: string; value: ComponentChildren }> = [];
-  const topFindings = sortFindingsBySeverity(detail.findings).slice(0, 3);
+  const topFindings = sortFindingsBySeverity(
+    changedFindings.length ? changedFindings : detail.findings,
+  ).slice(0, 3);
   for (const finding of topFindings) {
     evidence.push({
-      label: finding.severity,
+      label: changedFindings.length ? finding.severity : "existing",
       value: (
         <>
           <code>{finding.file}</code>: {finding.reason}
@@ -585,6 +614,7 @@ function ScanDetailHeader({
 } = {}) {
   const decision = detail?.scan.decision;
   const decidedAt = detail?.scan.decidedAt;
+  const releaseRisk = detail?.riskSummary?.releaseRisk ?? detail?.scan.risk;
 
   return (
     <header class="flex flex-wrap items-start justify-between gap-4">
@@ -601,9 +631,11 @@ function ScanDetailHeader({
               <span key="version">
                 {detail.scan.previousVersion || "—"} → {detail.scan.stagedVersion || "—"}
               </span>,
-              <Badge key="risk" tone={severityTone(detail.scan.risk)}>
-                {detail.scan.risk}
-              </Badge>,
+              releaseRisk ? (
+                <Badge key="risk" tone={severityTone(releaseRisk)}>
+                  release {releaseRisk}
+                </Badge>
+              ) : null,
               <span key="scan-id">scan {detail.scan.id.slice(0, 12)}</span>,
             ]}
           />
@@ -845,11 +877,117 @@ function filterDiffEntries(
     });
 }
 
+function RiskSignalsSection({ findings }: { findings: FindingWithDiffStatus[] }) {
+  const changedFindings = sortFindingItemsBySeverity(findings.filter((item) => item.releaseDelta));
+  const contextualFindings = sortFindingItemsBySeverity(
+    findings.filter((item) => !item.releaseDelta),
+  );
+  const contextLabel = `${contextualFindings.length} context ${pluralize(
+    "signal",
+    contextualFindings.length,
+  )}`;
+
+  return (
+    <section class="flex flex-col gap-3">
+      <SectionLabel>Risk signals</SectionLabel>
+      <div class="flex flex-wrap items-center gap-2">
+        <Badge tone={changedFindings.length ? "medium" : "ok"}>
+          {changedFindings.length
+            ? `${changedFindings.length} changed-file ${pluralize(
+                "signal",
+                changedFindings.length,
+              )}`
+            : "no changed-file signals"}
+        </Badge>
+        {contextualFindings.length ? <Badge tone="neutral">{contextLabel}</Badge> : null}
+      </div>
+      <Muted class="m-0 text-[13px] leading-[1.55] max-w-[760px]">
+        Deterministic rules scan the full staged artifact; unchanged signals are retained as package
+        context and separated from this release's changed files.
+      </Muted>
+
+      {changedFindings.length ? (
+        <FindingGrid findings={changedFindings} />
+      ) : (
+        <EmptyLine>No deterministic risk signals point at this release delta.</EmptyLine>
+      )}
+
+      {contextualFindings.length ? (
+        <details class="group border-y border-border py-3">
+          <summary class="cursor-pointer list-none flex flex-wrap items-center justify-between gap-3">
+            <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+              Package context
+            </span>
+            <span class="font-mono text-[11px] text-ink-subtle">
+              {contextualFindings.length} {pluralize("signal", contextualFindings.length)}
+            </span>
+          </summary>
+          <div class="pt-3">
+            <FindingGrid findings={contextualFindings} />
+          </div>
+        </details>
+      ) : null}
+    </section>
+  );
+}
+
+function FindingGrid({ findings }: { findings: FindingWithDiffStatus[] }) {
+  return (
+    <ul class="list-none p-0 m-0 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+      {findings.map(({ finding, diffStatus }) => (
+        <FindingCard
+          key={finding.id}
+          severity={finding.severity}
+          file={finding.file}
+          line={finding.line}
+          diffStatus={diffStatus === "unknown" ? null : diffStatus}
+          diffLabel={findingDiffStatusLabel(diffStatus)}
+          ruleId={finding.ruleId}
+        >
+          <FindingRow label="evidence" value={finding.evidence} />
+          <FindingRow label="reason" value={finding.reason} />
+        </FindingCard>
+      ))}
+    </ul>
+  );
+}
+
+function annotateFindingsWithDiffStatus(
+  findings: PersistedFinding[],
+  diff: DiffEntry[],
+): FindingWithDiffStatus[] {
+  const diffByPath = new Map(diff.map((entry) => [entry.path, entry.status]));
+  return findings.map((finding) => {
+    const diffStatus = normalizeFindingDiffStatus(
+      finding.diffStatus ?? diffByPath.get(finding.file),
+    );
+    return {
+      finding,
+      diffStatus,
+      releaseDelta: finding.releaseDelta ?? isReleaseDeltaStatus(diffStatus),
+    };
+  });
+}
+
+function sortFindingItemsBySeverity(items: FindingWithDiffStatus[]): FindingWithDiffStatus[] {
+  return items.slice().sort((a, b) => {
+    const severity = compareSeverity(a.finding.severity, b.finding.severity);
+    return severity || a.finding.file.localeCompare(b.finding.file);
+  });
+}
+
+function findingDiffStatusLabel(status: FindingDiffStatus): string | null {
+  if (status === "unknown") return null;
+  if (status === "unchanged") return "existing";
+  return status;
+}
+
 function ReportOverview({
   detail,
   summary,
   ai,
   findings,
+  findingsWithDiffStatus,
   aiFindings,
   diffCount,
 }: {
@@ -857,6 +995,7 @@ function ReportOverview({
   summary: PersistedSummary;
   ai: AiReview | null;
   findings: PersistedScanDetail["findings"];
+  findingsWithDiffStatus: FindingWithDiffStatus[];
   aiFindings: AiFinding[];
   diffCount: number;
 }) {
@@ -866,12 +1005,27 @@ function ReportOverview({
     detail.files.filter((file) => file.status !== "unchanged").length;
   const severityCounts = countSeverities([...findings, ...aiFindings]);
   const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
+  const releaseRisk =
+    detail.riskSummary?.releaseRisk ??
+    highestFindingRisk(
+      findingsWithDiffStatus.filter((item) => item.releaseDelta).map((item) => item.finding),
+    );
+  const artifactRisk = detail.riskSummary?.artifactRisk ?? detail.scan.risk;
+  const changedFindingTotal =
+    detail.riskSummary?.releaseFindingCount ??
+    findingsWithDiffStatus.filter((item) => item.releaseDelta).length;
+  const contextFindingTotal =
+    detail.riskSummary?.contextFindingCount ??
+    findingsWithDiffStatus.filter((item) => !item.releaseDelta).length;
   const aiComplete = ai?.status === "complete";
 
   return (
     <section class="flex flex-col gap-3 border-t border-border pt-4">
       <div class="flex flex-wrap items-center gap-2">
-        <Badge tone={severityTone(detail.scan.risk)}>{detail.scan.risk}</Badge>
+        <Badge tone={severityTone(releaseRisk)}>release {releaseRisk}</Badge>
+        {artifactRisk !== releaseRisk ? (
+          <Badge tone="neutral">artifact {artifactRisk}</Badge>
+        ) : null}
         {/* eslint-disable-next-line no-constant-binary-expression -- AI review intentionally disabled; JSX preserved for paid-tier re-introduction. */}
         {false &&
           (aiComplete ? (
@@ -887,6 +1041,12 @@ function ReportOverview({
         <Badge tone={findingTotal ? "medium" : "ok"}>
           {findingTotal ? `${findingTotal} ${pluralize("finding", findingTotal)}` : "no findings"}
         </Badge>
+        {findingTotal ? (
+          <Badge tone={changedFindingTotal ? "medium" : "ok"}>
+            {changedFindingTotal} changed-file
+          </Badge>
+        ) : null}
+        {contextFindingTotal ? <Badge tone="neutral">{contextFindingTotal} context</Badge> : null}
       </div>
       <MonoDetail
         parts={[
@@ -917,10 +1077,21 @@ const SEVERITY_RANK: Record<SeverityKey, number> = {
 
 function sortFindingsBySeverity<T extends { severity?: string }>(findings: T[]): T[] {
   return findings.slice().sort((a, b) => {
-    const aRank = SEVERITY_RANK[normalizeSeverityKey(a.severity) ?? "info"] ?? SEVERITY_RANK.info;
-    const bRank = SEVERITY_RANK[normalizeSeverityKey(b.severity) ?? "info"] ?? SEVERITY_RANK.info;
-    return aRank - bRank;
+    return compareSeverity(a.severity, b.severity);
   });
+}
+
+function compareSeverity(a: string | undefined, b: string | undefined): number {
+  const aRank = SEVERITY_RANK[normalizeSeverityKey(a) ?? "info"] ?? SEVERITY_RANK.info;
+  const bRank = SEVERITY_RANK[normalizeSeverityKey(b) ?? "info"] ?? SEVERITY_RANK.info;
+  return aRank - bRank;
+}
+
+function highestFindingRisk(findings: Array<{ severity?: string }>): string {
+  if (findings.some((finding) => finding.severity === "critical")) return "critical";
+  if (findings.some((finding) => finding.severity === "high")) return "high";
+  if (findings.some((finding) => finding.severity === "medium")) return "medium";
+  return "low";
 }
 
 function countSeverities(findings: Array<{ severity?: string }>): SeverityCounts {

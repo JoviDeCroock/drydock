@@ -87,6 +87,13 @@ export interface DiffEntry {
   flags: string[];
 }
 
+export type FindingDiffStatus = DiffEntry["status"] | "unknown";
+
+export interface FindingDiffAnnotation {
+  diffStatus: FindingDiffStatus;
+  releaseDelta: boolean;
+}
+
 const LIFECYCLE_SCRIPTS = ["preinstall", "install", "postinstall", "prepare"];
 const RISK_RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 
@@ -145,6 +152,7 @@ export function deterministicFindings(
       tag("packageJsonParseFailed", {
         severity: "medium",
         file: packageJsonFile?.path ?? "package.json",
+        line: 1,
         evidence: packageJsonFile?.flags.includes("truncated")
           ? "package.json parse failed; captured sample was truncated"
           : "package.json parse failed",
@@ -161,6 +169,7 @@ export function deterministicFindings(
       tag("installScriptImplicitNodeGyp", {
         severity: "high",
         file: rootGypFile?.path ?? packageJsonFile?.path ?? "package.json",
+        line: rootGypFile ? 1 : firstJsonPropertyLine(packageJsonFile?.textSample, "gypfile"),
         evidence: "implicit install: node-gyp rebuild",
         reason: rootGypFile
           ? "npm defaults install to node-gyp rebuild when a root *.gyp file exists and no install/preinstall script or gypfile=false is declared"
@@ -175,6 +184,7 @@ export function deterministicFindings(
       tag(script === "preinstall" ? "installScriptPreinstall" : "installScript", {
         severity: script === "preinstall" ? "critical" : "high",
         file: packageJsonFile?.path ?? "package.json",
+        line: firstJsonPropertyLine(packageJsonFile?.textSample, script, scripts[script]),
         evidence: `${script}: ${scripts[script]}`,
         reason: "install lifecycle hooks execute on consumer machines",
       }),
@@ -195,6 +205,18 @@ export function deterministicFindings(
         tag("codeProcessExecution", {
           severity: "high",
           file: file.path,
+          line: firstMatchingLine(sample, [
+            /\bchild_process\b/,
+            /\bexecSync\b/,
+            /\bexecFileSync\b/,
+            /\bspawn\(/,
+            /\bspawnSync\(/,
+            /\bcurl\s/,
+            /\bwget\s/,
+            /\bnc\s/,
+            /\bbash\s+-c/,
+            /\bpowershell\s/,
+          ]),
           evidence: `${changedPrefix}process or shell execution`,
           reason: "package may execute arbitrary commands",
         }),
@@ -209,6 +231,13 @@ export function deterministicFindings(
         tag("codeNetworkAccess", {
           severity: changed === "added" ? "high" : "medium",
           file: file.path,
+          line: firstMatchingLine(sample, [
+            /\brequire\(["'](?:node:)?(?:http|https|net|dns)["']\)/,
+            /\bfrom\s+["'](?:node:)?(?:http|https|net|dns)["']/,
+            /\bfetch\s*\(/,
+            /\bXMLHttpRequest\b/,
+            /\baxios\s*\./,
+          ]),
           evidence: `${changedPrefix}network-capable code path`,
           reason:
             "unexpected network access in package code can be used for exfiltration or staged payload retrieval",
@@ -226,6 +255,13 @@ export function deterministicFindings(
         tag("codeDynamicEvaluation", {
           severity: changed === "added" ? "high" : "medium",
           file: file.path,
+          line: firstMatchingLine(sample, [
+            /\beval\s*\(/,
+            /\bnew\s+Function\s*\(/,
+            /\bWebAssembly\.compile\s*\(/,
+            /\batob\s*\(/,
+            /\bBuffer\.from\s*\([^,]+,\s*["']base64["']\s*\)/,
+          ]),
           evidence: `${changedPrefix}dynamic code or obfuscation primitive`,
           reason: "common malware and obfuscation technique",
         }),
@@ -238,6 +274,14 @@ export function deterministicFindings(
         tag("codeCredentialAccess", {
           severity: changed === "added" ? "high" : "medium",
           file: file.path,
+          line: firstMatchingLine(sample, [
+            /\bprocess\.env\b/,
+            /\bnpm_config_/,
+            /\bNPM_TOKEN\b/,
+            /\bGITHUB_TOKEN\b/,
+            /\bAWS_SECRET\b/,
+            /\bPRIVATE_KEY\b/,
+          ]),
           evidence: `${changedPrefix}secret/environment access`,
           reason: "package may read credentials from the install environment",
         }),
@@ -248,6 +292,7 @@ export function deterministicFindings(
         tag("fileSecretContent", {
           severity: changed === "added" ? "critical" : "high",
           file: file.path,
+          line: firstSecretLine(sample),
           evidence: `${changedPrefix}secret-looking file or content`,
           reason: "published artifacts should not include credentials or private material",
         }),
@@ -282,6 +327,7 @@ export function deterministicFindings(
         tag("diffCredentialFileAdded", {
           severity: "critical",
           file: entry.path,
+          line: 1,
           evidence: "credential-looking file added",
           reason: "package artifact includes a file name commonly associated with secrets",
         }),
@@ -393,7 +439,10 @@ export function summarizePackageJsonDiff(
   };
 }
 
-export function packageJsonDiffFindings(packageJsonDiff: PackageJsonDiff): Finding[] {
+export function packageJsonDiffFindings(
+  packageJsonDiff: PackageJsonDiff,
+  stagedPackageJsonText?: string | null,
+): Finding[] {
   const findings: Finding[] = [];
   for (const entry of packageJsonDiff.dependencies) {
     if (entry.status !== "added" && entry.status !== "modified") continue;
@@ -403,6 +452,7 @@ export function packageJsonDiffFindings(packageJsonDiff: PackageJsonDiff): Findi
     findings.push({
       severity: "high",
       file: "package.json",
+      line: firstJsonPropertyLine(stagedPackageJsonText, entry.key, entry.staged),
       evidence: `${entry.key}: ${entry.staged}`,
       reason: `${kind} dependency specs resolve code outside normal npm semver ranges and can introduce unreviewed install-time behavior`,
       ruleId: DETERMINISTIC_RULE_IDS.dependencyUnusualSpec,
@@ -412,11 +462,48 @@ export function packageJsonDiffFindings(packageJsonDiff: PackageJsonDiff): Findi
   return findings;
 }
 
-export function computeRisk(findings: Finding[]): RiskLevel {
+export function computeRisk(findings: Array<{ severity?: string | null }>): RiskLevel {
   if (findings.some((f) => f.severity === "critical")) return "critical";
   if (findings.some((f) => f.severity === "high")) return "high";
   if (findings.some((f) => f.severity === "medium")) return "medium";
   return "low";
+}
+
+export function annotateFindingsWithDiffStatus<T extends { file: string; ruleId?: string | null }>(
+  findings: T[],
+  diff: Array<{ path: string; status?: unknown }>,
+): Array<T & FindingDiffAnnotation> {
+  const diffByPath = new Map(
+    diff.map((entry) => [entry.path, normalizeFindingDiffStatus(entry.status)]),
+  );
+  return findings.map((finding) => {
+    const diffStatus = diffByPath.get(finding.file) ?? "unknown";
+    return {
+      ...finding,
+      diffStatus,
+      releaseDelta: isReleaseDeltaStatus(diffStatus) || isReleaseScopedFinding(finding),
+    };
+  });
+}
+
+function isReleaseScopedFinding(finding: { ruleId?: string | null }): boolean {
+  return Boolean(finding.ruleId?.startsWith("stage."));
+}
+
+export function isReleaseDeltaStatus(status: FindingDiffStatus): boolean {
+  return status === "added" || status === "modified";
+}
+
+export function normalizeFindingDiffStatus(value: unknown): FindingDiffStatus {
+  switch (value) {
+    case "added":
+    case "removed":
+    case "modified":
+    case "unchanged":
+      return value;
+    default:
+      return "unknown";
+  }
 }
 
 export function combineRisk(...risks: Array<RiskLevel | null | undefined>): RiskLevel {
@@ -444,6 +531,51 @@ function containsSecretLikeText(text: string): boolean {
     pattern.lastIndex = 0;
     return pattern.test(text);
   });
+}
+
+function firstMatchingLine(
+  text: string | undefined | null,
+  patterns: RegExp[],
+): number | undefined {
+  if (!text) return undefined;
+  const lines = text.split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    for (const pattern of patterns) {
+      pattern.lastIndex = 0;
+      if (pattern.test(lines[index])) return index + 1;
+    }
+  }
+  return undefined;
+}
+
+function firstSecretLine(text: string | undefined | null): number | undefined {
+  if (!text) return undefined;
+  return firstMatchingLine(
+    text,
+    SECRET_PATTERNS.map(([pattern]) => pattern),
+  );
+}
+
+function firstJsonPropertyLine(
+  text: string | undefined | null,
+  key: string,
+  value?: string,
+): number | undefined {
+  if (!text) return undefined;
+  const escapedKey = escapeRegExp(key);
+  const keyPattern = new RegExp(`["']${escapedKey}["']\\s*:`);
+  const lines = text.split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    if (keyPattern.test(lines[index])) return index + 1;
+  }
+  if (value) {
+    const escapedValue = escapeRegExp(value);
+    const valuePattern = new RegExp(escapedValue);
+    for (let index = 0; index < lines.length; index += 1) {
+      if (valuePattern.test(lines[index])) return index + 1;
+    }
+  }
+  return undefined;
 }
 
 export function redactFileRecords(files: FileRecord[]): FileRecord[] {
@@ -498,6 +630,10 @@ function diffObject(
       out.push({ key, status: "modified", previous: before[key], staged: after[key] });
   }
   return out;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function safeJson(text: string): unknown | null {

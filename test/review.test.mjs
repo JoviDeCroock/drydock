@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  annotateFindingsWithDiffStatus,
   computeRisk,
   createPackageDiff,
   deterministicFindings,
@@ -75,6 +76,66 @@ describe("review", () => {
     expect(findings.some((finding) => finding.evidence.includes("secret/environment access"))).toBe(
       true,
     );
+  });
+
+  test("adds best-effort line numbers and diff annotations to findings", () => {
+    const before = [
+      {
+        path: "index.js",
+        size: 20,
+        sha256: "old",
+        flags: [],
+        textSample: "export const value = 1;\n",
+      },
+    ];
+    const staged = [
+      {
+        path: "package.json",
+        size: 120,
+        sha256: "pkg",
+        flags: [],
+        textSample: `{
+  "name": "pkg",
+  "scripts": {
+    "postinstall": "node install.js"
+  }
+}`,
+      },
+      {
+        path: "index.js",
+        size: 80,
+        sha256: "new",
+        flags: [],
+        textSample: "export const value = 1;\nfetch('/debug');\n",
+      },
+    ];
+    const diff = createPackageDiff(before, staged);
+    const findings = deterministicFindings(staged, diff);
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        file: "package.json",
+        evidence: "postinstall: node install.js",
+        line: 4,
+      }),
+    );
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        file: "index.js",
+        evidence: "new/changed modified file: network-capable code path",
+        line: 2,
+      }),
+    );
+
+    const annotated = annotateFindingsWithDiffStatus(findings, diff);
+    expect(annotated.find((finding) => finding.file === "index.js")).toMatchObject({
+      diffStatus: "modified",
+      releaseDelta: true,
+    });
+    expect(annotated.find((finding) => finding.file === "package.json")).toMatchObject({
+      diffStatus: "added",
+      releaseDelta: true,
+    });
   });
 
   test("package json diff summarizes release-review sensitive fields", () => {

@@ -1,5 +1,5 @@
 import { computed, createModel, effect, signal } from "@preact/signals";
-import type { FileRecord, PackageJsonSummary } from "../../server/lib/review";
+import type { FileRecord, FindingDiffStatus, PackageJsonSummary } from "../../server/lib/review";
 import type { ScanResult } from "../../server/types";
 import { apiFetch } from "./api";
 
@@ -59,6 +59,14 @@ export interface PersistedScanDetail {
     startedAt?: string | number | Date | null;
     completedAt?: string | number | Date | null;
   };
+  riskSummary?: {
+    artifactRisk: string;
+    releaseRisk: string;
+    contextRisk: string;
+    releaseFindingCount: number;
+    contextFindingCount: number;
+    unknownFindingCount: number;
+  };
   files: Array<{
     id: string;
     scanId: string;
@@ -76,9 +84,12 @@ export interface PersistedScanDetail {
     file: string;
     evidence: string;
     reason: string;
+    line?: number | null;
     source: string;
     ruleId?: string | null;
     ruleVersion?: string | null;
+    diffStatus?: FindingDiffStatus;
+    releaseDelta?: boolean;
   }>;
   events: Array<{
     id: string;

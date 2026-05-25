@@ -78,9 +78,11 @@ export async function runScanPipeline(
   const packageJsonDiff = redactJson(
     summarizePackageJsonDiff(previous?.packageJson, stagedPackageJson),
   );
+  const stagedPackageJsonText =
+    staged.files.find((file) => file.path === "package.json")?.textSample ?? null;
   const ruleFindings = redactFindings([
     ...deterministicFindings(staged.files, diff, stagedPackageJson),
-    ...packageJsonDiffFindings(packageJsonDiff),
+    ...packageJsonDiffFindings(packageJsonDiff, stagedPackageJsonText),
     ...stagedMetadataFindings,
   ]);
   const redactedStagedFiles = redactFileRecords(staged.files);

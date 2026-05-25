@@ -157,6 +157,95 @@ describe("scans routes enforce organization boundaries", () => {
     expect(row).toMatchObject({ changedFileCount: 2, findingCount: 1 });
   });
 
+  test("GET /scans/:id annotates findings with line numbers and release delta status", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const scanId = `scan_${crypto.randomUUID()}`;
+    const stageId = `stage-${scanId.slice(-12)}`;
+    await createScanJob(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+    });
+    await persistScan(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+      packageJson: { name: "@org/annotated-findings", version: "1.2.3" },
+      risk: "high",
+      status: "complete",
+      summary: {
+        diff: [
+          { path: "package.json", status: "modified" },
+          { path: "README.md", status: "unchanged" },
+        ],
+      },
+      ai: null,
+      files: [
+        { path: "package.json", size: 10, sha256: "a", flags: [], textSample: "{}" },
+        { path: "README.md", size: 20, sha256: "b", flags: [], textSample: "docs" },
+      ],
+      diff: [
+        { path: "package.json", status: "modified" },
+        { path: "README.md", status: "unchanged" },
+      ],
+      findings: [
+        {
+          severity: "high",
+          file: "package.json",
+          line: 5,
+          evidence: "postinstall",
+          reason: "install lifecycle hook changed",
+        },
+        {
+          severity: "medium",
+          file: "README.md",
+          line: 12,
+          evidence: "network-capable code path",
+          reason: "existing documentation sample references network access",
+        },
+      ],
+      report: { version: 1, digest: "digest" },
+    });
+
+    const res = await fetchWithSession(buildTestApp(owner), `/api/v1/scans/${scanId}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      riskSummary: {
+        artifactRisk: string;
+        releaseRisk: string;
+        contextRisk: string;
+        releaseFindingCount: number;
+        contextFindingCount: number;
+      };
+      findings: Array<{
+        file: string;
+        line: number | null;
+        diffStatus: string;
+        releaseDelta: boolean;
+      }>;
+    };
+    expect(body.riskSummary).toMatchObject({
+      artifactRisk: "high",
+      releaseRisk: "high",
+      contextRisk: "medium",
+      releaseFindingCount: 1,
+      contextFindingCount: 1,
+    });
+    expect(body.findings.find((finding) => finding.file === "package.json")).toMatchObject({
+      line: 5,
+      diffStatus: "modified",
+      releaseDelta: true,
+    });
+    expect(body.findings.find((finding) => finding.file === "README.md")).toMatchObject({
+      line: 12,
+      diffStatus: "unchanged",
+      releaseDelta: false,
+    });
+  });
+
   test("GET /scans lists every scan for a stage id with the newest first", async () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
@@ -430,6 +519,7 @@ describe("scans routes enforce organization boundaries", () => {
         {
           severity: "high",
           file: "package.json",
+          line: 3,
           evidence: "install script added",
           reason: "lifecycle script touches network",
         },
@@ -441,10 +531,20 @@ describe("scans routes enforce organization boundaries", () => {
     expect(ownerRes.status).toBe(200);
     const ownerBody = (await ownerRes.json()) as {
       files: Array<{ path: string }>;
-      findings: Array<{ severity: string }>;
+      findings: Array<{
+        severity: string;
+        line: number | null;
+        diffStatus: string;
+        releaseDelta: boolean;
+      }>;
     };
     expect(ownerBody.files.map((f) => f.path)).toEqual(["package.json"]);
     expect(ownerBody.findings.map((f) => f.severity)).toEqual(["high"]);
+    expect(ownerBody.findings[0]).toMatchObject({
+      line: 3,
+      diffStatus: "added",
+      releaseDelta: true,
+    });
 
     const intruderRes = await fetchWithSession(buildTestApp(intruder), `/api/v1/scans/${scanId}`);
     expect(intruderRes.status).toBe(404);

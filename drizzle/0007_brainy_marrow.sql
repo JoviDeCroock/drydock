@@ -1,0 +1,1 @@
+ALTER TABLE `scan_findings` ADD `line` integer;
