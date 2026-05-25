@@ -229,7 +229,7 @@ export default function ScanDetailPage() {
           <ScanTimeline events={detail.events ?? []} />
 
           {versions ? (
-            <div class="flex flex-col gap-2 border-y border-border py-3">
+            <div class="flex flex-col gap-2 border-t border-border pt-3">
               <VersionPicker
                 options={versions.versions}
                 selected={selectedVersion}
@@ -337,7 +337,7 @@ function ReleaseRecommendation({
   const evidence = buildRecommendationEvidence(detail, summary, diffCount);
 
   return (
-    <section class="flex flex-col gap-3 border-y border-border py-4">
+    <section class="flex flex-col gap-3 border-t border-border pt-4">
       <SectionLabel>Recommendation</SectionLabel>
       <div class="flex flex-wrap items-center gap-2">
         <Badge tone={recommendation.tone}>{recommendation.label}</Badge>
@@ -881,7 +881,7 @@ function ReportOverview({
   const aiComplete = ai?.status === "complete";
 
   return (
-    <section class="flex flex-col gap-3 border-y border-border py-4">
+    <section class="flex flex-col gap-3 border-t border-border pt-4">
       <div class="flex flex-wrap items-center gap-2">
         <Badge tone={severityTone(detail.scan.risk)}>{detail.scan.risk}</Badge>
         {/* eslint-disable-next-line no-constant-binary-expression -- AI review intentionally disabled; JSX preserved for paid-tier re-introduction. */}
