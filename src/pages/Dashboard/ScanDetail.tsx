@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import { useComputed, useModel, useSignal, useSignalEffect } from "@preact/signals";
 import { useLocation, useRoute } from "preact-iso";
+import { buildQueryUrl, currentLocationKey } from "../../lib/query-state";
 import { sessionModel } from "../../models/auth";
 import {
   ScanDetailModel,
@@ -71,10 +72,18 @@ export default function ScanDetailPage() {
   const location = useLocation();
   const route = useRoute();
   const id = route.params.id;
-  const model = useModel(() => new ScanDetailModel(id));
+  const initialQuery = location.query;
+  // Seed model signals from the URL inside the factory so the URL-sync
+  // effects below don't briefly overwrite ?path / ?version with their defaults.
+  const model = useModel(() => {
+    const m = new ScanDetailModel(id);
+    if (initialQuery.path) m.selectedPath.value = initialQuery.path;
+    if (initialQuery.version) m.selectedVersion.value = initialQuery.version;
+    return m;
+  });
   const sessionChecked = useSignal(false);
-  const fileFilter = useSignal("");
-  const changedFilesOnly = useSignal(true);
+  const fileFilter = useSignal(initialQuery.file ?? "");
+  const changedFilesOnly = useSignal(initialQuery.changedOnly !== "0");
   const decisionDialogOpen = useSignal(false);
 
   useEffect(() => {
@@ -93,6 +102,61 @@ export default function ScanDetailPage() {
       cancelled = true;
     };
   }, [id]);
+
+  // Persist filter state to ?file/?changedOnly/?version/?path. The text filter
+  // is debounced because it fires on every keystroke; the others write through.
+  useSignalEffect(() => {
+    const value = fileFilter.value;
+    const timer = window.setTimeout(() => {
+      const next = buildQueryUrl({ file: value || null });
+      if (next !== currentLocationKey()) {
+        location.route(next, true);
+      }
+    }, 250);
+    return () => window.clearTimeout(timer);
+  });
+
+  useSignalEffect(() => {
+    const changedOnly = changedFilesOnly.value;
+    const next = buildQueryUrl({ changedOnly: changedOnly ? null : "0" });
+    if (next !== currentLocationKey()) {
+      location.route(next, true);
+    }
+  });
+
+  useSignalEffect(() => {
+    const version = model.selectedVersion.value;
+    const next = buildQueryUrl({ version: version ?? null });
+    if (next !== currentLocationKey()) {
+      location.route(next, true);
+    }
+  });
+
+  useSignalEffect(() => {
+    const path = model.selectedPath.value;
+    const next = buildQueryUrl({ path: path ?? null });
+    if (next !== currentLocationKey()) {
+      location.route(next, true);
+    }
+  });
+
+  // Sync URL → state for browser back/forward navigation.
+  const urlFile = location.query.file ?? "";
+  const urlChangedOnly = location.query.changedOnly !== "0";
+  const urlVersion = location.query.version ?? null;
+  const urlPath = location.query.path ?? null;
+  useEffect(() => {
+    if (fileFilter.peek() !== urlFile) fileFilter.value = urlFile;
+  }, [urlFile]);
+  useEffect(() => {
+    if (changedFilesOnly.peek() !== urlChangedOnly) changedFilesOnly.value = urlChangedOnly;
+  }, [urlChangedOnly]);
+  useEffect(() => {
+    if (model.selectedVersion.peek() !== urlVersion) model.selectVersion(urlVersion);
+  }, [urlVersion]);
+  useEffect(() => {
+    if (model.selectedPath.peek() !== urlPath) model.selectPath(urlPath);
+  }, [urlPath]);
 
   // Fetch version metadata as soon as the scan is complete with a package name.
   useSignalEffect(() => {
@@ -640,7 +704,11 @@ function ScanDetailHeader({
   return (
     <header class="flex flex-wrap items-start justify-between gap-4">
       <div class="flex flex-col gap-2 min-w-0">
-        <a href="/dashboard" class="text-[13px] text-ink-muted hover:text-ink no-underline">
+        <a
+          href="/dashboard"
+          class="text-[13px] text-ink-muted hover:text-ink no-underline"
+          onClick={handleBackLinkClick}
+        >
           ← Reviews
         </a>
         <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">
@@ -879,6 +947,15 @@ const DIFF_STATUS_RANK: Record<DiffEntry["status"], number> = {
   removed: 2,
   unchanged: 3,
 };
+
+function handleBackLinkClick(event: MouseEvent) {
+  // Honor modifier/middle-click — let the browser open the href in a new tab.
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+  if (window.history.length > 1) {
+    event.preventDefault();
+    window.history.back();
+  }
+}
 
 function filterDiffEntries(
   entries: DiffEntry[],

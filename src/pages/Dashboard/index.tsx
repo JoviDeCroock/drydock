@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import { useSignal, useModel, useSignalEffect } from "@preact/signals";
 import { useLocation } from "preact-iso";
+import { buildQueryUrl, currentLocationKey } from "../../lib/query-state";
 import { sessionModel } from "../../models/auth";
 import { NpmConnectionModel } from "../../models/npm-connection";
 import { OrganizationModel } from "../../models/organization";
@@ -50,6 +51,10 @@ export default function DashboardPage() {
         location.route("/login", true);
         return;
       }
+      const initialFilter = parseDecisionFilter(location.query.filter);
+      if (initialFilter !== scans.filter.peek()) {
+        scans.filter.value = initialFilter;
+      }
       sessionChecked.value = true;
       await Promise.all([organizations.load(), scans.refresh(), npm.load()]);
     })();
@@ -57,6 +62,26 @@ export default function DashboardPage() {
       cancelled = true;
     };
   }, []);
+
+  // Mirror the decision filter to ?filter= so browser back restores it.
+  useSignalEffect(() => {
+    if (!sessionChecked.value) return;
+    const filter = scans.filter.value;
+    const next = buildQueryUrl({
+      filter: filter === "undecided" ? null : filter,
+    });
+    if (next !== currentLocationKey()) {
+      location.route(next, true);
+    }
+  });
+
+  // React to popstate (back/forward) by syncing filter from URL.
+  const urlFilter = parseDecisionFilter(location.query.filter);
+  useEffect(() => {
+    if (!sessionChecked.peek()) return;
+    if (urlFilter === scans.filter.peek()) return;
+    void scans.setFilter(urlFilter);
+  }, [urlFilter]);
 
   const onSwitchOrganization = async (organizationId: string) => {
     if (organizations.activate(organizationId)) {
@@ -337,6 +362,16 @@ const FILTER_OPTIONS: Array<{ value: ScanDecisionFilter; label: string }> = [
   { value: "no_publish", label: "Blocked" },
   { value: "all", label: "All" },
 ];
+
+const FILTER_VALUES: ReadonlySet<ScanDecisionFilter> = new Set(
+  FILTER_OPTIONS.map((option) => option.value),
+);
+
+function parseDecisionFilter(raw: string | undefined): ScanDecisionFilter {
+  return raw && FILTER_VALUES.has(raw as ScanDecisionFilter)
+    ? (raw as ScanDecisionFilter)
+    : "undecided";
+}
 
 function ScanFilterChips({
   active,
