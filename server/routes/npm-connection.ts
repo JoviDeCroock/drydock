@@ -18,9 +18,8 @@ import {
   publicNpmConnection,
   validateNpmCredential,
 } from "../lib/npm-connection";
+import { isValidStageId } from "../lib/stage-id";
 import type { Bindings, Variables } from "../types";
-
-const STAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,160}$/;
 
 export const npmConnectionRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -104,7 +103,7 @@ npmConnectionRoutes.post("/validate", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { stageId?: unknown };
   const stageId =
     typeof body.stageId === "string" && body.stageId.trim() ? body.stageId.trim() : undefined;
-  if (stageId && !STAGE_ID_RE.test(stageId)) return c.json({ error: "invalid stageId" }, 400);
+  if (stageId && !isValidStageId(stageId)) return c.json({ error: "invalid stageId" }, 400);
 
   try {
     const db = createDb(c.env.DB);

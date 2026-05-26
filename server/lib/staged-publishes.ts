@@ -1,6 +1,7 @@
 import { normalizeRegistryUrl, type NormalizeRegistryUrlOptions } from "./npm-connection";
 import { normalizeStringRecord } from "./tar-parser.js";
 import type { PackageJsonSummary } from "./review";
+import { isValidStageId } from "./stage-id";
 
 export interface StagedPublishItem {
   id: string;
@@ -45,7 +46,6 @@ export interface StagedPublishesScanResponse {
 }
 
 const MAX_PER_PAGE = 100;
-const STAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,160}$/;
 
 export interface ListStagedPublishesOptions extends NormalizeRegistryUrlOptions {
   perPage?: number;
@@ -82,7 +82,7 @@ export async function fetchStagedPublishDetails(
   stageId: string,
   options: NormalizeRegistryUrlOptions = {},
 ): Promise<StagedPublishDetails> {
-  if (!STAGE_ID_RE.test(stageId)) throw new Error("invalid stageId");
+  if (!isValidStageId(stageId)) throw new Error("invalid stageId");
   const registry = normalizeRegistryUrl(registryUrl, options);
   const response = await fetch(`${registry}/-/stage/${encodeURIComponent(stageId)}`, {
     headers: npmStageHeaders(token, "staged-view"),
@@ -139,7 +139,7 @@ export function parseStagedPublishDetails(
 function parseStagedPublishItem(value: unknown, fallbackId?: string): StagedPublishItem | null {
   if (!isRecord(value)) return null;
   const id = readString(value.id) ?? readString(value.stageId) ?? fallbackId ?? null;
-  if (!id || !STAGE_ID_RE.test(id)) return null;
+  if (!isValidStageId(id)) return null;
   return {
     id,
     packageName: readString(value.packageName) ?? readString(value.name),

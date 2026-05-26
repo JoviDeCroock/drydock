@@ -5,7 +5,7 @@ import type {
   FindingDiffStatus,
   PackageJsonSummary,
 } from "../../server/lib/review";
-import { apiFetch } from "./api";
+import { apiFetch, apiJson, errorMessage } from "./api";
 
 export interface ScanVersionsResponse {
   packageName: string | null;
@@ -133,10 +133,9 @@ export function setScanDecision(
   decision: ScanDecision,
   reason: string | null,
 ): Promise<PersistedScanDetail> {
-  return apiFetch<PersistedScanDetail>(`/api/v1/scans/${encodeURIComponent(id)}/decision`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ decision, reason }),
+  return apiJson<PersistedScanDetail>(`/api/v1/scans/${encodeURIComponent(id)}/decision`, {
+    decision,
+    reason,
   });
 }
 
@@ -186,7 +185,7 @@ export const ScanListModel = createModel(() => {
       nextCursor.value = data.nextCursor;
       error.value = null;
     } catch (err) {
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = errorMessage(err);
     } finally {
       loaded.value = true;
       refreshing.value = false;
@@ -222,7 +221,7 @@ export const ScanListModel = createModel(() => {
         this.nextCursor.value = data.nextCursor;
         this.error.value = null;
       } catch (err) {
-        this.error.value = err instanceof Error ? err.message : String(err);
+        this.error.value = errorMessage(err);
       } finally {
         this.loadingMore.value = false;
       }
@@ -292,7 +291,7 @@ export const ScanDetailModel = createModel((id: string) => {
         selectedPath.value = pickInitialPath(data);
       }
     } catch (err) {
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = errorMessage(err);
     }
   }
 
@@ -304,7 +303,7 @@ export const ScanDetailModel = createModel((id: string) => {
       const data = await getScanCompare(id, version);
       compareCache.value = { ...compareCache.peek(), [version]: data };
     } catch (err) {
-      compareError.value = err instanceof Error ? err.message : String(err);
+      compareError.value = errorMessage(err);
     } finally {
       compareLoading.value = false;
     }
@@ -338,7 +337,7 @@ export const ScanDetailModel = createModel((id: string) => {
           this.selectedPath.value = pickInitialPath(data);
         }
       } catch (err) {
-        this.error.value = err instanceof Error ? err.message : String(err);
+        this.error.value = errorMessage(err);
       }
     },
 
@@ -357,7 +356,7 @@ export const ScanDetailModel = createModel((id: string) => {
           }
         });
       } catch (err) {
-        this.compareError.value = err instanceof Error ? err.message : String(err);
+        this.compareError.value = errorMessage(err);
       }
     },
 
@@ -378,7 +377,7 @@ export const ScanDetailModel = createModel((id: string) => {
         this.detail.value = updated;
         this.decisionStatus.value = "idle";
       } catch (err) {
-        this.decisionError.value = err instanceof Error ? err.message : String(err);
+        this.decisionError.value = errorMessage(err);
         this.decisionStatus.value = "error";
       }
     },
@@ -392,7 +391,7 @@ export const ScanDetailModel = createModel((id: string) => {
         const data = await getScanCompareFile(id, version, path);
         this.fileContentCache.value = { ...this.fileContentCache.peek(), [key]: data.file };
       } catch (err) {
-        this.compareError.value = err instanceof Error ? err.message : String(err);
+        this.compareError.value = errorMessage(err);
       } finally {
         this.fileLoading.value = false;
       }

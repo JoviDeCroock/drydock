@@ -1,6 +1,6 @@
 import { computed, createModel, signal } from "@preact/signals";
 import { activeOrganizationId, setActiveOrganizationId } from "./active-organization";
-import { apiFetch } from "./api";
+import { apiFetch, apiJson, errorMessage } from "./api";
 
 export interface Organization {
   id: string;
@@ -57,7 +57,7 @@ export const OrganizationModel = createModel(() => {
         }
         this.error.value = null;
       } catch (err) {
-        this.error.value = err instanceof Error ? err.message : String(err);
+        this.error.value = errorMessage(err);
       } finally {
         this.loaded.value = true;
         this.status.value = "idle";
@@ -73,19 +73,15 @@ export const OrganizationModel = createModel(() => {
       this.status.value = "creating";
       this.error.value = null;
       try {
-        const data = await apiFetch<{ organization: { id: string; name: string } }>(
+        const data = await apiJson<{ organization: { id: string; name: string } }>(
           "/api/v1/organizations",
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ name: trimmed }),
-          },
+          { name: trimmed },
         );
         await this.load();
         setActiveOrganizationId(data.organization.id);
         return this.organizations.value.find((org) => org.id === data.organization.id) ?? null;
       } catch (err) {
-        this.error.value = err instanceof Error ? err.message : String(err);
+        this.error.value = errorMessage(err);
         return null;
       } finally {
         this.status.value = "idle";
@@ -111,18 +107,17 @@ export const OrganizationModel = createModel(() => {
       this.status.value = "renaming";
       this.error.value = null;
       try {
-        await apiFetch<{ organization: { id: string; name: string } }>(
+        await apiJson<{ organization: { id: string; name: string } }>(
           `/api/v1/organizations/${encodeURIComponent(organizationId)}`,
+          { name: trimmed },
           {
             method: "PATCH",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ name: trimmed }),
           },
         );
         await this.load();
         return true;
       } catch (err) {
-        this.error.value = err instanceof Error ? err.message : String(err);
+        this.error.value = errorMessage(err);
         return false;
       } finally {
         this.status.value = "idle";

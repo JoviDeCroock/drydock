@@ -1,25 +1,18 @@
 import { Hono } from "hono";
 import { RateLimitError, createDb, createScanJob, enforceRateLimit, getNpmConnection } from "../db";
 import { requireActiveOrganization } from "../lib/active-organization";
+import { parseScanInput } from "../lib/scan-input";
 import { executeScanJob } from "../lib/scan-job";
 import { sandboxErrorDetail } from "../lib/sandbox";
 import type { Bindings, ScanInput, Variables } from "../types";
-
-const STAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,160}$/;
 
 export const scanRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 scanRoutes.post("/", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as Partial<ScanInput>;
-  if (body.maxFiles !== undefined || body.maxBytesPerFile !== undefined) {
-    return c.json({ error: "scan limits are controlled by the server" }, 400);
-  }
-  const input: ScanInput = {
-    stageId: String(body.stageId || ""),
-  };
-  if (!STAGE_ID_RE.test(input.stageId)) {
-    return c.json({ error: "invalid stageId" }, 400);
-  }
+  const parsed = parseScanInput(body);
+  if (!parsed.ok) return c.json({ error: parsed.error }, parsed.status);
+  const { input } = parsed;
 
   try {
     const db = createDb(c.env.DB);

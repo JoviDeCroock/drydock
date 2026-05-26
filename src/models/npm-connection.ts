@@ -1,5 +1,5 @@
 import { computed, createModel, signal } from "@preact/signals";
-import { apiFetch } from "./api";
+import { apiFetch, apiJson, errorMessage } from "./api";
 
 export interface PublicNpmConnection {
   id: string;
@@ -113,7 +113,7 @@ export const NpmConnectionModel = createModel(() => {
           }
         }
       } catch (err) {
-        this.error.value = err instanceof Error ? err.message : String(err);
+        this.error.value = errorMessage(err);
         await this.load();
       } finally {
         this.status.value = "idle";
@@ -131,7 +131,7 @@ export const NpmConnectionModel = createModel(() => {
           this.error.value = "Npm validation reported invalid access.";
         }
       } catch (err) {
-        this.error.value = err instanceof Error ? err.message : String(err);
+        this.error.value = errorMessage(err);
         await this.load();
       } finally {
         this.status.value = "idle";
@@ -146,7 +146,7 @@ export const NpmConnectionModel = createModel(() => {
         this.connection.value = null;
         this.token.value = "";
       } catch (err) {
-        this.error.value = err instanceof Error ? err.message : String(err);
+        this.error.value = errorMessage(err);
       } finally {
         this.status.value = "idle";
       }
@@ -159,23 +159,15 @@ function saveNpmConnection(input: {
   label: string;
   registryUrl: string;
 }): Promise<{ connection: PublicNpmConnection | null }> {
-  return apiFetch<{ connection: PublicNpmConnection | null }>("/api/v1/npm-connection", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  });
+  return apiJson<{ connection: PublicNpmConnection | null }>("/api/v1/npm-connection", input);
 }
 
 function validateNpmConnection(stageId?: string): Promise<{
   validation: NpmCredentialValidation;
   connection: PublicNpmConnection | null;
 }> {
-  return apiFetch<{
+  return apiJson<{
     validation: NpmCredentialValidation;
     connection: PublicNpmConnection | null;
-  }>("/api/v1/npm-connection/validate", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ stageId }),
-  });
+  }>("/api/v1/npm-connection/validate", { stageId });
 }

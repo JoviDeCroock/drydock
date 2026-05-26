@@ -1,6 +1,6 @@
 import { createModel, signal } from "@preact/signals";
 import type { StagedPublishesScanResponse } from "../../server/lib/staged-publishes";
-import { apiFetch } from "./api";
+import { apiFetch, errorMessage } from "./api";
 
 export type { StagedPublishesScanResponse };
 
@@ -40,7 +40,7 @@ export const StagedPublishesModel = createModel(() => {
         this.error.value = null;
         return result;
       } catch (err) {
-        this.error.value = err instanceof Error ? err.message : String(err);
+        this.error.value = errorMessage(err);
         return null;
       } finally {
         this.loaded.value = true;

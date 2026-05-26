@@ -1,4 +1,5 @@
 import { computed, createModel, signal } from "@preact/signals";
+import { errorMessage } from "./api";
 
 export interface SessionUser {
   id: string;
@@ -32,7 +33,7 @@ export const SessionModel = createModel(() => {
         this.error.value = null;
         return data;
       } catch (err) {
-        this.error.value = err instanceof Error ? err.message : String(err);
+        this.error.value = errorMessage(err);
         this.session.value = null;
         return null;
       } finally {

@@ -1,6 +1,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { allowInsecureLocalRegistry, registryProtocolAllowed } from "./npm-connection";
 import type { FileRecord, PackageJsonSummary } from "./review";
+import { STAGE_ID_PATTERN } from "./stage-id";
 import * as tarParser from "./tar-parser.js";
 
 const MAX_FILES = 250;
@@ -233,7 +234,7 @@ export async function downloadInSandbox(
 function sandboxSource() {
   return `${renderTarParserSource()}
 
-const STAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,160}$/;
+const STAGE_ID_RE = new RegExp(${JSON.stringify(`^${STAGE_ID_PATTERN}$`)});
 
 export default {
   async fetch(request, env) {

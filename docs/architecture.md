@@ -238,6 +238,8 @@ Do not expose public signed report generation until the report payload is stable
 
 ## API direction
 
+Stage ID validation is centralized in `server/lib/stage-id.ts` and reused by scan routes, staged-publish helpers, npm-token validation, and the Dynamic Worker source renderer. Keep the accepted shape in that module so route and sandbox behavior cannot drift.
+
 Current API:
 
 - `POST /api/v1/scans` — create queued/background scan;

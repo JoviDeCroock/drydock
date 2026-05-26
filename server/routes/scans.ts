@@ -25,22 +25,17 @@ import {
 } from "../lib/npm-connection";
 import { compareSemver, fetchPackageMetadata, pickPreviousVersion } from "../lib/registry";
 import { annotateFindingsWithDiffStatus, createPackageDiff, type FileRecord } from "../lib/review";
+import { parseScanInput } from "../lib/scan-input";
 import { executeScanJob, type ScanQueueMessage } from "../lib/scan-job";
 import type { Bindings, ScanInput, Variables } from "../types";
-
-const STAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,160}$/;
 
 export const scansRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 scansRoutes.post("/", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as Partial<ScanInput>;
-  if (body.maxFiles !== undefined || body.maxBytesPerFile !== undefined) {
-    return c.json({ error: "scan limits are controlled by the server" }, 400);
-  }
-  const input: ScanInput = {
-    stageId: String(body.stageId || ""),
-  };
-  if (!STAGE_ID_RE.test(input.stageId)) return c.json({ error: "invalid stageId" }, 400);
+  const parsed = parseScanInput(body);
+  if (!parsed.ok) return c.json({ error: parsed.error }, parsed.status);
+  const { input } = parsed;
 
   try {
     const db = createDb(c.env.DB);
@@ -337,60 +332,82 @@ async function resolveCompareContext(
 scansRoutes.get("/:id/compare", async (c) => {
   const ctx = await resolveCompareContext(c);
   if ("error" in ctx) return ctx.error;
-  const { version, db, session, packageName } = ctx;
 
+  const loaded = await loadCompareArchive(c, ctx, {
+    rateLimitKey: `compare-fetch:${ctx.session.userId}`,
+    rateLimit: 30,
+  });
+  if ("error" in loaded) return loaded.error;
+
+  return c.json(
+    {
+      version: loaded.cached.version,
+      files: stripTextSamples(loaded.cached.files),
+      packageJson: loaded.cached.packageJson,
+      findingAnnotations: buildCompareFindingAnnotations(ctx.scan, loaded.cached.files),
+      cachedAt: loaded.cached.cachedAt,
+    },
+    200,
+    { "cache-control": "private, max-age=300" },
+  );
+});
+
+type CompareContext = Extract<
+  Awaited<ReturnType<typeof resolveCompareContext>>,
+  { version: string }
+>;
+
+async function loadCompareArchive(
+  c: import("hono").Context<{ Bindings: Bindings; Variables: Variables }>,
+  ctx: CompareContext,
+  options: { rateLimitKey: string; rateLimit: number },
+) {
   let connection: Awaited<ReturnType<typeof getOrganizationNpmToken>> = null;
   try {
     [, connection] = await Promise.all([
-      enforceRateLimit(db, {
-        key: `compare-fetch:${session.userId}`,
-        limit: 30,
+      enforceRateLimit(ctx.db, {
+        key: options.rateLimitKey,
+        limit: options.rateLimit,
         windowMs: 60 * 1000,
       }),
-      getOrganizationNpmToken(db, c.env, ctx.organizationId).catch(() => null),
+      getOrganizationNpmToken(ctx.db, c.env, ctx.organizationId).catch(() => null),
     ]);
   } catch (err) {
     if (err instanceof RateLimitError) {
-      return c.json(
-        { error: "rate limit exceeded", retryAfterSeconds: err.retryAfterSeconds },
-        429,
-        { "retry-after": String(err.retryAfterSeconds) },
-      );
+      return {
+        error: c.json(
+          { error: "rate limit exceeded", retryAfterSeconds: err.retryAfterSeconds },
+          429,
+          { "retry-after": String(err.retryAfterSeconds) },
+        ),
+      } as const;
     }
     throw err;
   }
 
-  const metadata = await fetchPackageMetadata(c.env, packageName, {
+  const metadata = await fetchPackageMetadata(c.env, ctx.packageName, {
     npmToken: connection?.token,
     npmRegistry: connection?.registryUrl,
   }).catch(() => null);
-  const tarballUrl = metadata?.versions?.[version]?.dist?.tarball;
-  if (!tarballUrl) return c.json({ error: "unknown version" }, 404);
+  const tarballUrl = metadata?.versions?.[ctx.version]?.dist?.tarball;
+  if (!tarballUrl) return { error: c.json({ error: "unknown version" }, 404) } as const;
 
   const registryUrl = connection?.registryUrl || c.env.NPM_REGISTRY || "https://registry.npmjs.org";
   if (!isTarballUrlAllowed(tarballUrl, registryUrl, allowInsecureLocalRegistry(c.env))) {
-    return c.json({ error: "registry returned an unexpected tarball URL" }, 502);
+    return {
+      error: c.json({ error: "registry returned an unexpected tarball URL" }, 502),
+    } as const;
   }
 
-  const cached = await loadCompare(c.env, c.executionCtx, version, {
+  const cached = await loadCompare(c.env, c.executionCtx, ctx.version, {
     tarballUrl,
     registryUrl,
     npmToken: connection?.token,
     cacheScope: `org:${ctx.organizationId}`,
   });
 
-  return c.json(
-    {
-      version: cached.version,
-      files: stripTextSamples(cached.files),
-      packageJson: cached.packageJson,
-      findingAnnotations: buildCompareFindingAnnotations(ctx.scan, cached.files),
-      cachedAt: cached.cachedAt,
-    },
-    200,
-    { "cache-control": "private, max-age=300" },
-  );
-});
+  return { cached } as const;
+}
 
 function buildCompareFindingAnnotations(
   scan: NonNullable<Awaited<ReturnType<typeof getScan>>>,
@@ -431,54 +448,19 @@ function scanFilesToFileRecords(
 scansRoutes.get("/:id/compare/file", async (c) => {
   const ctx = await resolveCompareContext(c);
   if ("error" in ctx) return ctx.error;
-  const { version, db, session, packageName } = ctx;
   const path = c.req.query("path") || "";
   if (!path) return c.json({ error: "path is required" }, 400);
 
-  let connection: Awaited<ReturnType<typeof getOrganizationNpmToken>> = null;
-  try {
-    [, connection] = await Promise.all([
-      enforceRateLimit(db, {
-        key: `compare-file:${session.userId}`,
-        limit: 240,
-        windowMs: 60 * 1000,
-      }),
-      getOrganizationNpmToken(db, c.env, ctx.organizationId).catch(() => null),
-    ]);
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return c.json(
-        { error: "rate limit exceeded", retryAfterSeconds: err.retryAfterSeconds },
-        429,
-        { "retry-after": String(err.retryAfterSeconds) },
-      );
-    }
-    throw err;
-  }
-
-  const metadata = await fetchPackageMetadata(c.env, packageName, {
-    npmToken: connection?.token,
-    npmRegistry: connection?.registryUrl,
-  }).catch(() => null);
-  const tarballUrl = metadata?.versions?.[version]?.dist?.tarball;
-  if (!tarballUrl) return c.json({ error: "unknown version" }, 404);
-
-  const registryUrl = connection?.registryUrl || c.env.NPM_REGISTRY || "https://registry.npmjs.org";
-  if (!isTarballUrlAllowed(tarballUrl, registryUrl, allowInsecureLocalRegistry(c.env))) {
-    return c.json({ error: "registry returned an unexpected tarball URL" }, 502);
-  }
-
-  const cached = await loadCompare(c.env, c.executionCtx, version, {
-    tarballUrl,
-    registryUrl,
-    npmToken: connection?.token,
-    cacheScope: `org:${ctx.organizationId}`,
+  const loaded = await loadCompareArchive(c, ctx, {
+    rateLimitKey: `compare-file:${ctx.session.userId}`,
+    rateLimit: 240,
   });
+  if ("error" in loaded) return loaded.error;
 
-  const file = cached.files.find((entry) => entry.path === path);
+  const file = loaded.cached.files.find((entry) => entry.path === path);
   if (!file) return c.json({ error: "file not found in version" }, 404);
 
-  return c.json({ version: cached.version, file }, 200, {
+  return c.json({ version: loaded.cached.version, file }, 200, {
     "cache-control": "private, max-age=300",
   });
 });
