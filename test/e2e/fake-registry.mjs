@@ -39,11 +39,12 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (!hasBearerToken(request)) {
+      await sendJson(request, response, startedAt, 401, { error: "missing bearer token" });
+      return;
+    }
+
     if (url.pathname === "/-/whoami") {
-      if (!request.headers.authorization?.startsWith("Bearer ")) {
-        await sendJson(request, response, startedAt, 401, { error: "missing bearer token" });
-        return;
-      }
       await sendJson(request, response, startedAt, 200, { username: "drydock-e2e" });
       return;
     }
@@ -178,9 +179,11 @@ function stageListItem(scenario) {
 function stageDetails(scenario) {
   return {
     ...stageListItem(scenario),
-    manifest: scenario.staged.manifest,
-    packageJson: scenario.staged.manifest,
   };
+}
+
+function hasBearerToken(request) {
+  return request.headers.authorization?.startsWith("Bearer ") === true;
 }
 
 async function sendStageList(request, response, startedAt, url) {

@@ -17,7 +17,7 @@ interface RegistryScenario {
   packageName: string;
   expected: {
     releaseRisk?: string;
-    packageName?: string;
+    packageName?: string | null;
     stagedVersion?: string;
     previousVersion?: string | null;
     ruleIds?: string[];
@@ -105,6 +105,10 @@ test("registry journal limits credential forwarding", async () => {
   expect(journal.some((entry) => entry.path.includes("/-/drydock-e2e-native-1.0.0.tgz"))).toBe(
     true,
   );
+
+  for (const entry of journal.filter((item) => item.path !== "/__health")) {
+    expect(entry.authorization, entry.path).toBe("present");
+  }
 
   for (const entry of journal.filter((item) => item.authorization === "present")) {
     expect(entry.path).toMatch(
@@ -219,7 +223,9 @@ function assertScanMatchesScenario(result: any, scenario: RegistryScenario) {
   expect(result.stageId, scenario.name).toBe(scenario.stageId);
   expect(result.risk, scenario.name).toBe(expected.releaseRisk);
   expect(result.riskSummary?.releaseRisk, scenario.name).toBe(expected.releaseRisk);
-  expect(result.package?.name, scenario.name).toBe(expected.packageName ?? scenario.packageName);
+  expect(result.package?.name, scenario.name).toBe(
+    "packageName" in expected ? expected.packageName : scenario.packageName,
+  );
   if ("stagedVersion" in expected) {
     expect(result.package?.stagedVersion, scenario.name).toBe(expected.stagedVersion);
   }
