@@ -8,7 +8,7 @@ The normal end-to-end loop is local and deterministic. It uses fixture packages 
 - `test/e2e/build-fixtures.mjs` runs `npm pack --json` for the previous and staged package directories and writes generated registry state to `.context/e2e-registry/`.
 - `test/e2e/fake-registry.mjs` serves only the staged-publish, packument, and tarball endpoints the app uses.
 - `test/e2e/dev-server.mjs` starts the fake registry and the Vite/Cloudflare Worker dev server together, after applying D1 migrations to an isolated `.context/e2e/state` persistence path that is reset on each run.
-- `test/e2e/local-registry.spec.ts` is the browser smoke. It signs up, stores a fake npm token, validates it, submits the implicit node-gyp fixture through the UI, then scans every other fixture through the local Worker API and asserts each `scenario.json` expected outcome.
+- `test/e2e/local-registry.spec.ts` creates one authenticated browser state, runs the implicit node-gyp fixture through the UI, then runs each remaining fixture as its own Playwright test through the local Worker API. Each scenario asserts its `scenario.json` expected outcome independently, so CI points at the exact fixture that regressed.
 
 The fake registry writes `.context/e2e-registry/requests.jsonl`. The browser test checks this journal so we can verify authorization headers only appear on expected npm-like endpoints.
 
