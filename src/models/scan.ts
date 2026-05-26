@@ -194,6 +194,31 @@ export const ScanListModel = createModel(() => {
   const nextCursor = signal<string | null>(null);
   const error = signal<string | null>(null);
 
+  async function refresh(): Promise<void> {
+    const currentFilter = filter.peek();
+    refreshing.value = true;
+    try {
+      const data = await listScans({ filter: currentFilter });
+      scans.value = data.scans;
+      nextCursor.value = data.nextCursor;
+      error.value = null;
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err);
+    } finally {
+      loaded.value = true;
+      refreshing.value = false;
+    }
+  }
+
+  // Re-fetch when the filter changes. The first load is driven externally
+  // (after auth) so callers can sequence it with other startup work; this
+  // effect only kicks in for filter changes that happen after that.
+  effect(() => {
+    void filter.value;
+    if (!loaded.peek()) return;
+    void refresh();
+  });
+
   return {
     scans,
     loaded,
@@ -202,27 +227,7 @@ export const ScanListModel = createModel(() => {
     filter,
     nextCursor,
     error,
-
-    async refresh(): Promise<void> {
-      this.refreshing.value = true;
-      try {
-        const data = await listScans({ filter: this.filter.value });
-        this.scans.value = data.scans;
-        this.nextCursor.value = data.nextCursor;
-        this.error.value = null;
-      } catch (err) {
-        this.error.value = err instanceof Error ? err.message : String(err);
-      } finally {
-        this.loaded.value = true;
-        this.refreshing.value = false;
-      }
-    },
-
-    async setFilter(next: ScanDecisionFilter): Promise<void> {
-      if (this.filter.value === next) return;
-      this.filter.value = next;
-      await this.refresh();
-    },
+    refresh,
 
     async loadMore(): Promise<void> {
       const cursor = this.nextCursor.value;

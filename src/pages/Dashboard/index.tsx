@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import { useSignal, useModel, useSignalEffect } from "@preact/signals";
 import { useLocation } from "preact-iso";
+import { rememberDashboardReturnUrl, useQuerySignal } from "../../lib/query-state";
 import { sessionModel } from "../../models/auth";
 import { NpmConnectionModel } from "../../models/npm-connection";
 import { OrganizationModel } from "../../models/organization";
@@ -40,6 +41,19 @@ export default function DashboardPage() {
   const request = useModel(ScanRequestModel);
   const stagedPublishes = useModel(StagedPublishesModel);
   const sessionChecked = useSignal(false);
+
+  // Two-way bind the decision filter to ?filter=. The model re-fetches
+  // whenever the filter signal changes, so URL → filter → refresh comes
+  // for free on browser back/forward.
+  useQuerySignal(scans.filter, {
+    name: "filter",
+    parse: parseDecisionFilter,
+    serialize: (value) => (value === "undecided" ? null : value),
+  });
+
+  useEffect(() => {
+    rememberDashboardReturnUrl(location.url);
+  }, [location.url]);
 
   useEffect(() => {
     let cancelled = false;
@@ -304,7 +318,7 @@ function RecentReviewsSection({
       <ScanFilterChips
         active={scans.filter.value}
         disabled={scans.refreshing.value}
-        onChange={(filter) => void scans.setFilter(filter)}
+        onChange={(filter) => (scans.filter.value = filter)}
       />
       <Card class="p-0 overflow-hidden">
         {scans.scans.value.length ? (
@@ -337,6 +351,16 @@ const FILTER_OPTIONS: Array<{ value: ScanDecisionFilter; label: string }> = [
   { value: "no_publish", label: "Blocked" },
   { value: "all", label: "All" },
 ];
+
+const FILTER_VALUES: ReadonlySet<ScanDecisionFilter> = new Set(
+  FILTER_OPTIONS.map((option) => option.value),
+);
+
+function parseDecisionFilter(raw: string | undefined): ScanDecisionFilter {
+  return raw && FILTER_VALUES.has(raw as ScanDecisionFilter)
+    ? (raw as ScanDecisionFilter)
+    : "undecided";
+}
 
 function ScanFilterChips({
   active,

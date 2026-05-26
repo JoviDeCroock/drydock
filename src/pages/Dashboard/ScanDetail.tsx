@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import { useComputed, useModel, useSignal, useSignalEffect } from "@preact/signals";
 import { useLocation, useRoute } from "preact-iso";
+import { getDashboardReturnUrl, useQuerySignal } from "../../lib/query-state";
 import { sessionModel } from "../../models/auth";
 import {
   ScanDetailModel,
@@ -76,6 +77,30 @@ export default function ScanDetailPage() {
   const fileFilter = useSignal("");
   const changedFilesOnly = useSignal(true);
   const decisionDialogOpen = useSignal(false);
+
+  // Two-way bind filter state to query params. The text filter is debounced
+  // because it fires on every keystroke; the rest write through immediately.
+  useQuerySignal(fileFilter, {
+    name: "file",
+    parse: (raw) => raw ?? "",
+    serialize: (value) => value || null,
+    debounceMs: 250,
+  });
+  useQuerySignal(changedFilesOnly, {
+    name: "changedOnly",
+    parse: (raw) => raw !== "0",
+    serialize: (value) => (value ? null : "0"),
+  });
+  useQuerySignal(model.selectedVersion, {
+    name: "version",
+    parse: (raw) => raw ?? null,
+    serialize: (value) => value,
+  });
+  useQuerySignal(model.selectedPath, {
+    name: "path",
+    parse: (raw) => raw ?? null,
+    serialize: (value) => value,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -637,10 +662,11 @@ function ScanDetailHeader({
     detail?.scan.status === "complete"
       ? (detail.riskSummary?.releaseRisk ?? detail.scan.risk)
       : detail?.scan.risk;
+  const dashboardHref = getDashboardReturnUrl();
   return (
     <header class="flex flex-wrap items-start justify-between gap-4">
       <div class="flex flex-col gap-2 min-w-0">
-        <a href="/dashboard" class="text-[13px] text-ink-muted hover:text-ink no-underline">
+        <a href={dashboardHref} class="text-[13px] text-ink-muted hover:text-ink no-underline">
           ← Reviews
         </a>
         <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">
