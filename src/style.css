@@ -99,6 +99,7 @@
   samp {
     font-family: var(--font-mono);
     font-feature-settings: "ss01", "tnum";
+    font-variant-ligatures: none;
   }
 
   a {
