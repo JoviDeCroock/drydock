@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { deflateRawSync } from "node:zlib";
 import { describe, expect, test } from "vitest";
-import { normalizeZipPath, readZipArchive } from "../server/lib/tar-parser.js";
+import { normalizeZipPath, readStreamBounded, readZipArchive } from "../server/lib/tar-parser.js";
 
 const encoder = new TextEncoder();
 
@@ -132,5 +132,19 @@ describe("readZipArchive", () => {
     ]);
     const files = await parse(zip);
     expect(files.map((file) => file.path)).toEqual(["demo/good.py"]);
+  });
+});
+
+describe("readStreamBounded", () => {
+  test("rejects downloads that exceed the configured cap while reading", async () => {
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(8));
+        controller.enqueue(new Uint8Array(8));
+        controller.close();
+      },
+    });
+
+    await expect(readStreamBounded(stream, 12)).rejects.toThrow(/archive too large/);
   });
 });

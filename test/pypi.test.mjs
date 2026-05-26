@@ -179,6 +179,44 @@ describe("PyPI artifact summaries and review", () => {
     );
   });
 
+  test("detects secret-looking content before redacting PyPI evidence", () => {
+    const manifest = parsePyPiReleaseManifest({
+      schema: "drydock.release-artifacts.v1",
+      ecosystem: "pypi",
+      package: "demo-package",
+      version: "1.2.0",
+      artifacts: [{ path: "dist/demo_package-1.2.0-py3-none-any.whl", sha256: "a".repeat(64) }],
+    });
+    const review = createPyPiReleaseCandidateReview({
+      manifest,
+      artifacts: [
+        {
+          path: "dist/demo_package-1.2.0-py3-none-any.whl",
+          files: [
+            file(
+              "demo_package-1.2.0.dist-info/METADATA",
+              "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
+            ),
+            file(
+              "demo_package-1.2.0.dist-info/WHEEL",
+              "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+            ),
+            file("demo_package-1.2.0.dist-info/RECORD", "demo_package/secret.py,,\n"),
+            file("demo_package/secret.py", "TOKEN = 'ghp_aaaaaaaaaaaaaaaaaaaa'\n"),
+          ],
+        },
+      ],
+    });
+
+    expect(review.ruleFindings).toContainEqual(
+      expect.objectContaining({
+        severity: "critical",
+        ruleId: "file.secret-content",
+        file: "wheel/py3-none-any/demo_package/secret.py",
+      }),
+    );
+  });
+
   test("requires reviewed artifacts to exactly match the manifest", () => {
     const manifest = parsePyPiReleaseManifest({
       schema: "drydock.release-artifacts.v1",

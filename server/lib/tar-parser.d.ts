@@ -60,6 +60,10 @@ export function readZipArchive(
   maxBytesPerFile: number,
   maxArchiveBytes: number,
 ): Promise<ParsedFile[]>;
+export function readStreamBounded(
+  body: ReadableStream<Uint8Array> | null,
+  maxBytes: number,
+): Promise<Uint8Array>;
 export function parsePackageJson(files: ParsedFile[]): ParsedPackageJson | null;
 export function gunzipBounded(
   body: ReadableStream<Uint8Array> | null,

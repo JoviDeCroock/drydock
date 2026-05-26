@@ -28,7 +28,7 @@ The repo now has a backend-only PyPI foundation in `server/lib/pypi.ts`:
 - extracts wheel/sdist download metadata and SHA-256 digests from PyPI release files;
 - restricts public PyPI artifact downloads to `https://files.pythonhosted.org`.
 
-The sandbox parser now supports safe ZIP archive parsing for wheels in addition to npm-style gzipped tar archives. ZIP parsing reads the central directory, accepts stored and deflated entries, rejects traversal paths and Zip64, enforces file/expanded-size caps, and keeps package contents as bounded text samples or binary metadata.
+The sandbox parser now supports safe ZIP archive parsing for wheels in addition to npm-style gzipped tar archives. ZIP downloads are read through a bounded stream before parsing; ZIP parsing then reads the central directory, accepts stored and deflated entries, rejects traversal paths and Zip64, enforces file/expanded-size caps, and keeps package contents as bounded text samples or binary metadata.
 
 ## Manifest contract
 

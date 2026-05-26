@@ -30,6 +30,7 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.findZipEndOfCentralDirectory,
   tarParser.inflateRawBounded,
   tarParser.readZipArchive,
+  tarParser.readStreamBounded,
   tarParser.parsePackageJson,
   tarParser.gunzipBounded,
 ];
@@ -252,8 +253,14 @@ export default {
     if (contentLength > maxTarBytes) return json({ error: "tarball too large", status: 413 }, 413);
     const archiveFormat = env.ARCHIVE_FORMAT || "tgz";
     if (archiveFormat === "zip") {
-      const zip = await res.arrayBuffer();
-      if (zip.byteLength > maxTarBytes) return json({ error: "archive too large", status: 413 }, 413);
+      let zip;
+      try {
+        zip = await readStreamBounded(res.body, maxTarBytes);
+      } catch (err) {
+        const reason = err && err.message === "archive too large" ? "archive too large" : "archive download failed";
+        const status = reason === "archive too large" ? 413 : 400;
+        return json({ error: reason, status }, status);
+      }
       let files;
       try {
         files = await readZipArchive(zip, env.MAX_FILES || 250, env.MAX_BYTES_PER_FILE || 65536, maxTarBytes);

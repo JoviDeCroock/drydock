@@ -2,7 +2,6 @@ import {
   computeRisk,
   createPackageDiff,
   deterministicFindings,
-  redactFileRecords,
   redactFindings,
   type DiffEntry,
   type FileRecord,
@@ -199,8 +198,8 @@ export function createPyPiReleaseCandidateReview(input: {
   assertManifestArtifactSet(input.manifest, input.artifacts);
   const artifacts = input.artifacts.map(preparePyPiArtifact);
   const previousArtifacts = (input.previousArtifacts ?? []).map(preparePyPiArtifact);
-  const stagedFiles = redactFileRecords(flattenPyPiArtifactFiles(artifacts));
-  const previousFiles = redactFileRecords(flattenPyPiArtifactFiles(previousArtifacts));
+  const stagedFiles = flattenPyPiArtifactFiles(artifacts);
+  const previousFiles = flattenPyPiArtifactFiles(previousArtifacts);
   const diff = createPackageDiff(previousFiles, stagedFiles);
   const packageIdentity = pickPackageIdentity(input.manifest, artifacts);
   const ruleFindings = redactFindings([

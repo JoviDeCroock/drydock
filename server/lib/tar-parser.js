@@ -308,6 +308,30 @@ export async function readZipArchive(buffer, maxFiles, maxBytesPerFile, maxArchi
   return files;
 }
 
+export async function readStreamBounded(body, maxBytes) {
+  if (!body) throw new Error("archive download failed");
+  const reader = body.getReader();
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      reader.cancel().catch(() => undefined);
+      throw new Error("archive too large");
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
 export function parsePackageJson(files) {
   const pkg = files.find((f) => f.path === "package.json" && f.textSample);
   if (!pkg || !pkg.textSample) return null;
