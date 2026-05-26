@@ -249,12 +249,6 @@ export default function ScanDetailPage() {
       />
 
       {error ? <Alert tone="critical">{error}</Alert> : null}
-      {detail?.scan.status === "pending" || detail?.scan.status === "running" ? (
-        <Alert tone="info">
-          Review is {detail.scan.status}. This page refreshes automatically until the report is
-          ready.
-        </Alert>
-      ) : null}
       {detail?.scan.status === "failed" ? (
         <ScanFailureAlert errorJson={detail.scan.errorJson} />
       ) : null}
@@ -352,6 +346,11 @@ export default function ScanDetailPage() {
 
             <PersistedReportSections summary={summary.value} ai={ai.value} />
           </>
+        ) : detail.scan.status === "pending" || detail.scan.status === "running" ? (
+          <LoadingState
+            title={detail.scan.status === "pending" ? "Review queued" : "Reviewing release"}
+            detail="auto-refreshes when the report is ready"
+          />
         ) : (
           <ScanTimeline events={detail.events ?? []} />
         )
