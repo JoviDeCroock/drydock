@@ -40,7 +40,7 @@ export function VersionPicker({
         onChange={handleChange}
         disabled={disabled || options.length === 0}
         class={cn(
-          "bg-bg border border-border rounded-md text-[13px] text-ink px-3 py-2 outline-none",
+          "bg-bg border border-border rounded-md text-[13px] text-ink pl-3 pr-8 py-2 outline-none",
           "focus:border-accent focus:shadow-[0_0_0_3px_var(--color-accent-soft)]",
           "disabled:opacity-60 disabled:cursor-not-allowed",
           "font-mono min-w-[200px]",
