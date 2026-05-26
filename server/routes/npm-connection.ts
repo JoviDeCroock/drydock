@@ -63,25 +63,49 @@ npmConnectionRoutes.post("/", async (c) => {
       }),
       encryptNpmToken(c.env, token),
     ]);
-    const [connection] = await Promise.all([
-      upsertNpmConnection(db, {
-        organizationId,
-        registryUrl,
-        label,
-        createdByUserId: session.userId,
-        ...encrypted,
-      }),
+    const previous = await getNpmConnection(db, organizationId);
+    const isRotate = Boolean(previous);
+    const registryChanged = previous ? previous.registryUrl !== registryUrl : false;
+    const connection = await upsertNpmConnection(db, {
+      organizationId,
+      registryUrl,
+      label,
+      createdByUserId: session.userId,
+      ...encrypted,
+    });
+    const auditEvents: Promise<unknown>[] = [
       recordScanEvent(db, {
         organizationId,
         actorUserId: session.userId,
-        type: "npm_connection.upserted",
+        type: isRotate ? "npm_connection.rotated" : "npm_connection.created",
         metadata: {
           registryUrl,
           label,
           tokenFingerprint: encrypted.tokenFingerprint,
+          ...(isRotate && previous
+            ? {
+                previousTokenFingerprint: previous.tokenFingerprint,
+                previousValidationStatus: previous.validationStatus,
+              }
+            : {}),
         },
       }),
-    ]);
+    ];
+    if (registryChanged && previous) {
+      auditEvents.push(
+        recordScanEvent(db, {
+          organizationId,
+          actorUserId: session.userId,
+          type: "npm_connection.registry_changed",
+          metadata: {
+            previousRegistryUrl: previous.registryUrl,
+            registryUrl,
+            tokenFingerprint: encrypted.tokenFingerprint,
+          },
+        }),
+      );
+    }
+    await Promise.all(auditEvents);
 
     return c.json({ connection: publicNpmConnection(connection) });
   } catch (err) {
@@ -126,25 +150,44 @@ npmConnectionRoutes.post("/validate", async (c) => {
       stageId,
       allowInsecureLocalhost: allowInsecureLocalRegistry(c.env),
     });
-    const [updated] = await Promise.all([
-      updateNpmConnectionValidation(db, {
-        organizationId,
-        validationStatus: validation.status,
-        capabilities: { ...validation.capabilities, reasons: validation.reasons },
-        validatedAt: validation.ok ? new Date() : null,
-      }),
+    const wasValid = connection.validationStatus === "valid";
+    const isDowngrade = wasValid && validation.status !== "valid";
+    const updated = await updateNpmConnectionValidation(db, {
+      organizationId,
+      validationStatus: validation.status,
+      capabilities: { ...validation.capabilities, reasons: validation.reasons },
+      validatedAt: validation.ok ? new Date() : null,
+    });
+    const auditEvents: Promise<unknown>[] = [
       recordScanEvent(db, {
         organizationId,
         actorUserId: session.userId,
-        type: "npm_connection.validated",
+        type: validation.ok ? "npm_connection.validated" : "npm_connection.validation_failed",
         metadata: {
           ok: validation.ok,
           status: validation.status,
           reasons: validation.reasons,
           capabilities: validation.capabilities,
+          ...(stageId ? { probedStageSource: "caller" } : {}),
         },
       }),
-    ]);
+    ];
+    if (isDowngrade) {
+      auditEvents.push(
+        recordScanEvent(db, {
+          organizationId,
+          actorUserId: session.userId,
+          type: "npm_connection.validation_downgraded",
+          metadata: {
+            previousStatus: "valid",
+            status: validation.status,
+            reasons: validation.reasons,
+            tokenFingerprint: connection.tokenFingerprint,
+          },
+        }),
+      );
+    }
+    await Promise.all(auditEvents);
 
     return c.json({ validation, connection: publicNpmConnection(updated) });
   } catch (err) {

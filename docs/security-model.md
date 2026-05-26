@@ -56,9 +56,17 @@ Implementation requirements:
 - Store token material encrypted at rest.
 - Show only a label/fingerprint/last-used timestamp after storage.
 - Validate credentials before use.
-- Record audit events for add, validate, use, rotate, and remove.
+- Record audit events across the full lifecycle:
+  - `npm_connection.created` — first save for an organization.
+  - `npm_connection.rotated` — subsequent saves; metadata includes the previous and new token fingerprint plus the previous validation status.
+  - `npm_connection.registry_changed` — a rotate that also changes the stored registry URL.
+  - `npm_connection.validated` — validation passed.
+  - `npm_connection.validation_failed` — validation rejected; metadata records the structured reasons (`registry_auth_failed`, `staged_list_denied`, `staged_view_denied`, `staged_tarball_denied`, `no_stages_to_probe`).
+  - `npm_connection.validation_downgraded` — a token previously marked `valid` has been rejected on revalidation.
+  - `npm_connection.used` — a scan worker decrypted the token to run a scan.
+  - `npm_connection.deleted` — connection removed.
 - Never return token material from an API.
-- Redact credential metadata fields from scan lifecycle events before returning them to the UI.
+- Redact credential metadata fields (`tokenCiphertext`, `tokenNonce`, `tokenFingerprint`, `tokenLast4`, `previousTokenFingerprint`) from scan lifecycle events before returning them to the UI.
 - Never include token material in scan errors, AI inputs, logs, or persisted reports.
 
 Current code has encrypted per-organization npm connections only. SaaS production must configure `NPM_CONNECTIONS_ENCRYPTION_KEY`; scans require an organization-owned npm token.
