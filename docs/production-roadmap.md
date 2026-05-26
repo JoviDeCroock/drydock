@@ -18,6 +18,8 @@ The prototype-to-product foundation is in place: authenticated organization-scop
 
 Closed: tenant-boundary, sandbox-gateway, and archive-parser regression tests now have route- and unit-level coverage (`test/workers/cross-org-routes.test.ts`, `test/workers/cross-org-npm-connection.test.ts`, `test/workers/sandbox-gateway-runtime.test.ts`, `test/tar-parser.test.mjs`).
 
+PyPI workflow-gate support has a backend foundation only: manifest validation, PyPI metadata helpers, safe wheel ZIP parsing, and deterministic PyPI artifact findings. It is not yet a routed or persisted product workflow. See [`pypi-workflow-gate.md`](./pypi-workflow-gate.md).
+
 ## Phase 3 — Per-organization npm connections (open follow-up)
 
 Open validation question:
@@ -242,6 +244,38 @@ Exit criteria:
 - Detection changes are evaluated before release.
 - Security claims are backed by tests, fixtures, and documented limitations.
 - The product earns trust as a release-security tool, not just a scanner UI.
+
+## Phase 14 — PyPI workflow gate
+
+Priority: after the npm review loop is stable enough for a second operating mode.
+
+Goals:
+
+- Review PyPI release candidates before the trusted-publishing job uploads them.
+- Preserve the invariant that the publish job uploads the exact wheel/sdist bytes Drydock reviewed.
+- Keep PyPI credentials and OIDC token exchange outside Drydock.
+
+Implemented foundation:
+
+- `server/lib/pypi.ts` validates `drydock.release-artifacts.v1` PyPI manifests, reads PyPI project JSON metadata, selects a published baseline, and creates PyPI deterministic findings.
+- `server/lib/tar-parser.js` now supports safe ZIP parsing for wheel archives.
+- `NpmStageGateway` can allow exact public artifact URLs without attaching npm credentials.
+
+Remaining tasks:
+
+- Add GitHub App installation, repository, workflow, and environment mapping.
+- Handle GitHub `deployment_protection_rule` webhooks for the PyPI environment.
+- Fetch GitHub Actions artifacts and the required `drydock-manifest.json`.
+- Verify artifact SHA-256 digests before review and before publish.
+- Persist workflow-gate reviews without overloading npm `stage_id`.
+- Download previous PyPI release artifacts from `files.pythonhosted.org` for comparison.
+- Add UI for PyPI setup, gate status, and review reports.
+
+Exit criteria:
+
+- A GitHub Actions PyPI publish job waits on Drydock through a GitHub Environment gate.
+- Drydock reviews all candidate wheels/sdists and compares them to the selected previous PyPI release.
+- The publish job verifies the reviewed manifest digest and publishes with PyPI Trusted Publishing only after gate approval.
 
 ## Deferred work
 

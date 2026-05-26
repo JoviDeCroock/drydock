@@ -11,11 +11,13 @@ This repository is moving from prototype to real product. The current implementa
 - **SaaS, organization-scoped.** Scans belong to an organization boundary. RBAC is intentionally deferred for the first production slice, but the data model should keep organization ownership explicit.
 - **Per-organization npm credentials.** Production SaaS should not use a deployment-wide npm token. Each organization will connect its own npm credential, scoped as narrowly as npm permits, and the credential will only be used by the gateway that talks to npm.
 - **Manual publish approval.** The product reviews and explains a staged publish. It does not run `npm stage approve`, does not bypass npm 2FA, and does not become the final publisher.
+- **Workflow-gate expansion.** PyPI support is being introduced as a GitHub Environment gate rather than a registry-staged publish clone. See [`docs/pypi-workflow-gate.md`](docs/pypi-workflow-gate.md) for the implemented backend foundation and remaining GitHub App work.
 - **AI review paused.** Cloudflare Workers AI was the production reviewer, but AI review is currently disabled in the pipeline. We plan to re-introduce it as a paid-tier feature; until then, scans rely entirely on deterministic findings. AI findings will remain advisory and unable to downgrade deterministic findings when they return.
 - **Safe artifact defaults.** Do not retain raw tarballs by default in SaaS. Persist redacted summaries, manifests, diffs, findings, and report metadata. Raw artifact retention may become an explicit short-TTL organization setting later.
 - **Signed reports later.** Prepare report data to be canonical and signable, but do not launch public signed report generation yet.
 
 See [`docs/architecture.md`](docs/architecture.md), [`docs/security-model.md`](docs/security-model.md), [`docs/security-detection-corpus.md`](docs/security-detection-corpus.md), [`docs/production-roadmap.md`](docs/production-roadmap.md), [`docs/cost-model.md`](docs/cost-model.md), [`docs/test-package.md`](docs/test-package.md), and [`docs/e2e-test-environment.md`](docs/e2e-test-environment.md) for the production plan, detection corpus notes, budget napkin math, staged-publish test package, and local E2E harness.
+See [`docs/pypi-workflow-gate.md`](docs/pypi-workflow-gate.md) for the PyPI workflow-gate direction.
 
 ## Current capabilities
 
@@ -26,6 +28,7 @@ See [`docs/architecture.md`](docs/architecture.md), [`docs/security-model.md`](d
   - staged tarball: `https://registry.npmjs.org/-/stage/<stage-id>/tarball`
   - package metadata JSON
   - published `.tgz` tarballs for previous-version diffing
+- The sandbox parser can also parse ZIP wheel artifacts for the PyPI workflow-gate review foundation. End-to-end PyPI gating is not wired to routes or persistence yet.
 - The sandbox gunzips/parses tarballs, returns bounded file metadata and text samples, and the parent Worker runs deterministic checks.
 - AI triage (Workers AI JSON-mode review of changed files only) is **disabled for now**. The reviewer module — a single-model (Kimi K2.5) policy and prompt-injection-resistant system prompt — lives in `server/lib/ai-review.ts` so it can return behind a paid tier without re-engineering.
 - The service diffs the staged tarball against the currently published previous version when package metadata is available.

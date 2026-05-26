@@ -61,7 +61,7 @@ The Dynamic Worker handles untrusted package bytes. It:
 
 The sandbox must stay small and boring. Do not add package execution, dependency installation, build steps, import resolution, or rendering.
 
-The dynamic Worker's tar parser is defined in `server/lib/tar-parser.js` and concatenated into the sandbox module by `server/lib/sandbox.ts` via `Function.prototype.toString()`. This keeps the parser code path the one exercised by the unit tests in `test/tar-parser.test.mjs` instead of a sibling string copy that could drift.
+The dynamic Worker's archive parser is defined in `server/lib/tar-parser.js` and concatenated into the sandbox module by `server/lib/sandbox.ts` via `Function.prototype.toString()`. It covers gzipped tar archives for npm/sdist flows and ZIP archives for PyPI wheels. This keeps the parser code path the one exercised by the unit tests in `test/tar-parser.test.mjs` and `test/zip-parser.test.mjs` instead of sibling string copies that could drift.
 
 ### NpmStageGateway
 
@@ -255,3 +255,17 @@ Current API:
 All other `/api/v1/*` endpoints honor the `x-organization-id` request header to pick the active org; absent or non-member ids silently fall back to the caller's personal org.
 
 Keep `POST /api/v1/scan` only as a compatibility shim during migration.
+
+## PyPI workflow-gate foundation
+
+PyPI support is intentionally modeled as a separate workflow-gate mode because PyPI does not have npm's staged-publish review primitive. The current backend foundation lives in `server/lib/pypi.ts` and is not yet mounted as a route or persisted scan type.
+
+Implemented pieces:
+
+- `drydock.release-artifacts.v1` manifest validation for `ecosystem: "pypi"`;
+- PyPI wheel/sdist artifact normalization and metadata extraction;
+- safe ZIP parsing for `.whl` archives in the sandbox parser;
+- PyPI-specific deterministic findings for manifest/metadata mismatches, missing wheel `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, and `.pyd` native extensions;
+- PyPI project JSON metadata helpers for baseline release selection and wheel/sdist download metadata.
+
+The target gate is a GitHub custom deployment protection rule on the same GitHub Environment configured in PyPI Trusted Publishers. CI must build artifacts before the gate, Drydock must review those exact artifact digests, and the publish job must verify the digest manifest immediately before invoking PyPI trusted publishing. See [`pypi-workflow-gate.md`](./pypi-workflow-gate.md).
