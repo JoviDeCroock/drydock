@@ -1124,10 +1124,8 @@ function ReportOverview({
         <Badge tone={findingTotal ? "medium" : "ok"}>
           {findingTotal ? `${findingTotal} ${pluralize("finding", findingTotal)}` : "no findings"}
         </Badge>
-        {findingTotal ? (
-          <Badge tone={changedFindingTotal ? "medium" : "ok"}>
-            {changedFindingTotal} changed-file
-          </Badge>
+        {changedFindingTotal ? (
+          <Badge tone="medium">{changedFindingTotal} changed-file</Badge>
         ) : null}
         {contextFindingTotal ? <Badge tone="neutral">{contextFindingTotal} context</Badge> : null}
       </div>
