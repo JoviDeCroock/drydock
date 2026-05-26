@@ -1329,21 +1329,29 @@ function AiFindingList({ findings }: { findings: AiFinding[] }) {
 function PackageJsonDiffView({ diff }: { diff: PackageJsonDiff }) {
   return (
     <div class="flex flex-col gap-4">
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-2">
-        <MetadataRow label="package" value={diff.name || "unknown"} />
-        <MetadataRow
+      <div class="flex flex-wrap gap-x-6 gap-y-2 text-[13px]">
+        <InlineMeta label="package" value={diff.name || "unknown"} />
+        <InlineMeta
           label="version"
           value={`${diff.previousVersion || "—"} → ${diff.stagedVersion || "—"}`}
         />
-        <MetadataRow
-          label="entrypoints"
-          value={diff.entrypointsChanged ? "changed" : "unchanged"}
-        />
+        <InlineMeta label="entrypoints" value={diff.entrypointsChanged ? "changed" : "unchanged"} />
       </div>
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <ChangeList title="scripts" rows={diff.scripts} />
         <ChangeList title="dependencies" rows={diff.dependencies} />
       </div>
+    </div>
+  );
+}
+
+function InlineMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <div class="flex items-baseline gap-2 min-w-0">
+      <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle flex-shrink-0">
+        {label}
+      </span>
+      <code class="text-xs text-ink-muted break-words min-w-0">{value}</code>
     </div>
   );
 }
@@ -1370,15 +1378,13 @@ function ChangeList({
           {rows.map((row) => (
             <div
               key={`${title}-${row.key}`}
-              class="grid grid-cols-1 md:grid-cols-[120px_minmax(0,1fr)] gap-2 px-3 py-2 text-[13px]"
+              class="flex flex-col gap-1.5 px-3 py-2.5 text-[13px] min-w-0"
             >
-              <div class="flex items-center gap-2 min-w-0">
+              <div class="flex flex-wrap items-center gap-2 min-w-0">
                 <Badge tone={statusTone(row.status)}>{row.status}</Badge>
-                <code class="truncate">{row.key}</code>
+                <code class="font-mono text-[12px] text-ink break-all min-w-0">{row.key}</code>
               </div>
-              <code class="text-xs text-ink-muted break-all">
-                {row.previous || "—"} → {row.staged || "—"}
-              </code>
+              <ChangeValue status={row.status} previous={row.previous} staged={row.staged} />
             </div>
           ))}
         </div>
@@ -1387,6 +1393,43 @@ function ChangeList({
           <EmptyLine>No {title} changes.</EmptyLine>
         </div>
       )}
+    </div>
+  );
+}
+
+function ChangeValue({
+  status,
+  previous,
+  staged,
+}: {
+  status: "added" | "removed" | "modified";
+  previous?: string;
+  staged?: string;
+}) {
+  if (status === "added") {
+    return (
+      <code class="font-mono text-[11px] leading-[1.55] text-ink-muted break-words whitespace-pre-wrap">
+        {staged || "—"}
+      </code>
+    );
+  }
+  if (status === "removed") {
+    return (
+      <code class="font-mono text-[11px] leading-[1.55] text-ink-subtle break-words whitespace-pre-wrap line-through decoration-1">
+        {previous || "—"}
+      </code>
+    );
+  }
+  return (
+    <div class="flex flex-col gap-1 font-mono text-[11px] leading-[1.55]">
+      <code class="text-ink-subtle break-words whitespace-pre-wrap">
+        <span class="text-ink-subtle mr-1.5 select-none">−</span>
+        {previous || "—"}
+      </code>
+      <code class="text-ink-muted break-words whitespace-pre-wrap">
+        <span class="text-ink-subtle mr-1.5 select-none">+</span>
+        {staged || "—"}
+      </code>
     </div>
   );
 }
