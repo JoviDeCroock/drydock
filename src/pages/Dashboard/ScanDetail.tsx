@@ -271,8 +271,6 @@ export default function ScanDetailPage() {
               usePersistedRiskSummary={model.isDefaultComparison.value || !compare}
             />
 
-            <ScanTimeline events={detail.events ?? []} />
-
             {detail.scan.packageName ? (
               <div class="flex flex-col gap-2 border-t border-border pt-3">
                 {versions ? (
@@ -356,9 +354,7 @@ export default function ScanDetailPage() {
             title={detail.scan.status === "pending" ? "Review queued" : "Reviewing release"}
             detail="auto-refreshes when the report is ready"
           />
-        ) : (
-          <ScanTimeline events={detail.events ?? []} />
-        )
+        ) : null
       ) : null}
 
       {detail && detail.scan.status === "complete" ? (
@@ -527,124 +523,6 @@ type RecommendationFinding = {
   file: string;
   reason: string;
 };
-
-function ScanTimeline({ events }: { events: PersistedScanDetail["events"] }) {
-  const visibleEvents = events.filter((event) => event.type !== "scan.viewed");
-  const expanded = useSignal(false);
-  const isExpanded = expanded.value;
-
-  return (
-    <section class="flex flex-col gap-3">
-      <div class="flex items-center justify-between gap-3">
-        <SectionLabel>Review timeline</SectionLabel>
-        <button
-          type="button"
-          onClick={() => (expanded.value = !expanded.value)}
-          class="bg-transparent border-0 p-0 cursor-pointer font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle hover:text-ink"
-          aria-expanded={isExpanded}
-        >
-          {isExpanded ? "Collapse" : `Expand (${visibleEvents.length})`}
-        </button>
-      </div>
-      {isExpanded ? (
-        visibleEvents.length ? (
-          <ol class="list-none p-0 m-0 border-y border-border divide-y divide-border">
-            {visibleEvents.map((event) => {
-              const item = describeTimelineEvent(event);
-              return (
-                <li
-                  key={event.id}
-                  class="grid grid-cols-1 md:grid-cols-[128px_180px_minmax(0,1fr)] gap-2 px-0 py-2.5 text-[13px]"
-                >
-                  <time class="font-mono text-[11px] text-ink-subtle">
-                    {formatDate(event.createdAt)}
-                  </time>
-                  <div class="flex items-center gap-2">
-                    <Badge tone={item.tone}>{item.label}</Badge>
-                  </div>
-                  <span class="text-ink-muted min-w-0">{item.detail}</span>
-                </li>
-              );
-            })}
-          </ol>
-        ) : (
-          <EmptyLine>No lifecycle events were saved for this review.</EmptyLine>
-        )
-      ) : null}
-    </section>
-  );
-}
-
-function describeTimelineEvent(event: PersistedScanDetail["events"][number]): {
-  label: string;
-  tone: "critical" | "medium" | "info" | "ok" | "neutral";
-  detail: ComponentChildren;
-} {
-  const metadata = asRecord(event.metadataJson);
-  switch (event.type) {
-    case "scan.queued":
-      return { label: "queued", tone: "info", detail: "Queued for background review." };
-    case "scan.backgrounded":
-      return { label: "queued", tone: "info", detail: "Started local background review." };
-    case "scan.started":
-      return {
-        label: "started",
-        tone: "info",
-        detail: `Review attempt ${readNumber(metadata.attempt) ?? 1} started.`,
-      };
-    case "npm_connection.used": {
-      const registryUrl = readString(metadata.registryUrl);
-      return {
-        label: "npm access",
-        tone: "neutral",
-        detail: registryUrl
-          ? `Fetched release evidence from ${registryUrl}.`
-          : "Fetched release evidence with the organization npm token.",
-      };
-    }
-    case "scan.retryable_failed": {
-      const error = asRecord(metadata.error);
-      const message = readString(error.message);
-      return {
-        label: "retry",
-        tone: "medium",
-        detail: message
-          ? `${message} Attempt ${readNumber(metadata.attempt) ?? 1} will retry if attempts remain.`
-          : "A retryable review failure was recorded.",
-      };
-    }
-    case "scan.failed": {
-      const error = asRecord(metadata.error);
-      return {
-        label: "failed",
-        tone: "critical",
-        detail:
-          readString(error.message) ?? "The review failed before a report could be generated.",
-      };
-    }
-    case "scan.completed":
-      return { label: "complete", tone: "ok", detail: "Report generated and saved." };
-    case "scan.decided": {
-      const decision = readString(metadata.decision);
-      const reason = readString(metadata.reason);
-      const approved = decision === "publish";
-      const blocked = decision === "no_publish";
-      return {
-        label: approved ? "approved" : blocked ? "blocked" : "decision",
-        tone: approved ? "ok" : blocked ? "critical" : "neutral",
-        detail: reason ? `Decision recorded: ${reason}` : "Publish decision recorded.",
-      };
-    }
-    default:
-      return {
-        label: event.type.replace(/^scan\./, "").replaceAll("_", " "),
-        tone: "neutral",
-        detail: readString(metadata.stageId)
-          ? `Stage ${readString(metadata.stageId)}.`
-          : "Lifecycle event recorded.",
-      };
-  }
-}
 
 function ScanDetailHeader({
   detail,
@@ -1343,18 +1221,4 @@ function asPersistedSummary(value: unknown): PersistedSummary {
 function asAiReview(value: unknown): AiReview | null {
   if (!value || typeof value !== "object") return null;
   return value as AiReview;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function readNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function readString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value : null;
 }
