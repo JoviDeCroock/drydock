@@ -29,6 +29,7 @@ import { stagedPublishesRoutes } from "./routes/staged-publishes";
 import type { Bindings, Variables } from "./types";
 
 export { NpmStageGateway } from "./lib/sandbox";
+export { NpmAdapterBroker } from "./lib/adapters/npm";
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 

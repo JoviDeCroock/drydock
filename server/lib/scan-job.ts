@@ -10,7 +10,7 @@ import {
   type ScanSource,
   type WorkspaceSession,
 } from "../db";
-import { decryptNpmToken } from "./npm-connection";
+import { npmAdapter } from "./adapters/npm";
 import { notifyScanCompletion } from "./notify";
 import { runScanPipeline } from "./scan-pipeline";
 import { SandboxError } from "./sandbox";
@@ -69,8 +69,7 @@ export async function executeScanJob(
       throw new Error("Validate the organization npm token before scanning staged publishes.");
     }
 
-    const [orgNpmToken] = await Promise.all([
-      decryptNpmToken(env, npmConnection),
+    await Promise.all([
       markNpmConnectionUsed(db, message.organizationId),
       recordScanEvent(db, {
         organizationId: message.organizationId,
@@ -85,18 +84,13 @@ export async function executeScanJob(
       }),
     ]);
 
-    const result = await runScanPipeline(
-      { env, executionCtx, db, session },
-      {
-        scanId: message.scanId,
-        stageId: message.stageId,
-        maxFiles: message.maxFiles,
-        maxBytesPerFile: message.maxBytesPerFile,
-        organizationId: message.organizationId,
-        npmToken: orgNpmToken,
-        npmRegistry: npmConnection.registryUrl,
-      },
-    );
+    const result = await runScanPipeline({ env, executionCtx, db, session }, npmAdapter, {
+      scanId: message.scanId,
+      stageId: message.stageId,
+      maxFiles: message.maxFiles,
+      maxBytesPerFile: message.maxBytesPerFile,
+      organizationId: message.organizationId,
+    });
     if (message.source === "auto_discovery") {
       executionCtx.waitUntil(
         notifyScanCompletion({
