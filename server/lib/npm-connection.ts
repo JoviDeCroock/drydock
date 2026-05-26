@@ -30,9 +30,19 @@ export interface PublicNpmConnection {
   updatedAt: Date | string | number;
 }
 
+export type NpmCredentialStatus = "valid" | "invalid" | "capability_limited";
+
+export type NpmCredentialReason =
+  | "registry_auth_failed"
+  | "staged_list_denied"
+  | "staged_view_denied"
+  | "staged_tarball_denied"
+  | "no_stages_to_probe";
+
 export interface NpmCredentialValidation {
   ok: boolean;
-  status: "valid" | "invalid";
+  status: NpmCredentialStatus;
+  reasons: NpmCredentialReason[];
   capabilities: {
     registryAuth: boolean;
     stagedListAccess: boolean;
@@ -41,6 +51,7 @@ export interface NpmCredentialValidation {
     whoami?: string | null;
     registryUrl: string;
     stageId?: string;
+    probedStageSource?: "caller" | "list";
     status?: number;
     stagedListStatus?: number;
     stagedViewStatus?: number;
@@ -175,30 +186,56 @@ export async function validateNpmCredential(
   const registry = normalizeRegistryUrl(registryUrl, {
     allowInsecureLocalhost: options.allowInsecureLocalhost,
   });
-  const [auth, stagedList, stagedView, stagedTarball] = await Promise.all([
+  const [auth, stagedList] = await Promise.all([
     validateRegistryAuth(registry, token),
     validateStagedListAccess(registry, token),
-    options.stageId
-      ? validateStagedViewAccess(registry, token, options.stageId)
-      : Promise.resolve(null),
-    options.stageId
-      ? validateStagedTarballAccess(registry, token, options.stageId)
-      : Promise.resolve(null),
   ]);
-  const ok =
-    auth.registryAuth &&
-    stagedList.stagedListAccess &&
-    (stagedView ? stagedView.stagedViewAccess : true) &&
-    (stagedTarball ? stagedTarball.stagedTarballAccess : true);
+
+  const reasons: NpmCredentialReason[] = [];
+  if (!auth.registryAuth) reasons.push("registry_auth_failed");
+  if (!stagedList.stagedListAccess) reasons.push("staged_list_denied");
+
+  const callerStageId = options.stageId;
+  const listedStageId =
+    !callerStageId && stagedList.stagedListAccess ? stagedList.firstStageId : null;
+  const probedStageId = callerStageId ?? listedStageId;
+
+  let stagedView: Awaited<ReturnType<typeof validateStagedViewAccess>> | null = null;
+  let stagedTarball: Awaited<ReturnType<typeof validateStagedTarballAccess>> | null = null;
+
+  if (auth.registryAuth && stagedList.stagedListAccess && probedStageId) {
+    [stagedView, stagedTarball] = await Promise.all([
+      validateStagedViewAccess(registry, token, probedStageId),
+      validateStagedTarballAccess(registry, token, probedStageId),
+    ]);
+    if (stagedView && !stagedView.stagedViewAccess) reasons.push("staged_view_denied");
+    if (stagedTarball && !stagedTarball.stagedTarballAccess) reasons.push("staged_tarball_denied");
+  } else if (auth.registryAuth && stagedList.stagedListAccess) {
+    reasons.push("no_stages_to_probe");
+  }
+
+  const status: NpmCredentialStatus =
+    !auth.registryAuth || !stagedList.stagedListAccess
+      ? "invalid"
+      : reasons.length === 0
+        ? "valid"
+        : "capability_limited";
 
   return {
-    ok,
-    status: ok ? "valid" : "invalid",
+    ok: status === "valid",
+    status,
+    reasons,
     capabilities: {
       ...auth,
-      ...stagedList,
+      registryAuth: auth.registryAuth,
+      stagedListAccess: stagedList.stagedListAccess,
+      stagedListStatus: stagedList.stagedListStatus,
+      stagedListDetail: stagedList.stagedListDetail,
       ...stagedView,
       ...stagedTarball,
+      ...(probedStageId
+        ? { probedStageSource: callerStageId ? "caller" : "list", stageId: probedStageId }
+        : {}),
       registryUrl: registry,
     },
   };
@@ -238,18 +275,48 @@ async function validateStagedListAccess(registry: string, token: string) {
     const response = await fetch(`${registry}/-/stage?perPage=1`, {
       headers: npmAuthHeaders(token, "application/json"),
     });
-    await response.body?.cancel();
+    if (!response.ok) {
+      await response.body?.cancel();
+      return {
+        stagedListAccess: false,
+        stagedListStatus: response.status,
+        stagedListDetail: response.statusText,
+        firstStageId: null as string | null,
+      };
+    }
+    const data = (await response.json().catch(() => null)) as unknown;
+    const firstStageId = extractFirstStageId(data);
     return {
-      stagedListAccess: response.ok,
+      stagedListAccess: true,
       stagedListStatus: response.status,
-      stagedListDetail: response.ok ? undefined : response.statusText,
+      stagedListDetail: undefined as string | undefined,
+      firstStageId,
     };
   } catch (err) {
     return {
       stagedListAccess: false,
       stagedListDetail: err instanceof Error ? err.message : String(err),
+      firstStageId: null as string | null,
     };
   }
+}
+
+function extractFirstStageId(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const root = payload as { items?: unknown };
+  if (!Array.isArray(root.items)) return null;
+  for (const entry of root.items) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as { id?: unknown; stageId?: unknown };
+    const candidate =
+      typeof record.id === "string" && record.id.trim()
+        ? record.id.trim()
+        : typeof record.stageId === "string" && record.stageId.trim()
+          ? record.stageId.trim()
+          : null;
+    if (candidate) return candidate;
+  }
+  return null;
 }
 
 async function validateStagedViewAccess(registry: string, token: string, stageId: string) {

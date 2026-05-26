@@ -201,6 +201,7 @@ function ReviewRequestCard({
   const stageId = request.stageId.value;
   const hasConnection = npm.isConnected.value;
   const hasValidatedConnection = npm.validated.value;
+  const validationState = npm.validationState.value;
 
   return (
     <Card class="p-5 md:p-6 flex flex-col gap-4 border-accent/40">
@@ -226,8 +227,13 @@ function ReviewRequestCard({
           </div>
         </Alert>
       ) : !hasValidatedConnection ? (
-        <Alert tone="info">
-          Validate npm access in workspace setup before reviewing staged packages.
+        <Alert tone={validationState === "invalid" ? "critical" : "info"}>
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>{reviewBannerCopy(validationState)}</span>
+            <LinkButton href="#workspace-setup" variant="secondary" size="sm" class="shrink-0">
+              Open settings
+            </LinkButton>
+          </div>
         </Alert>
       ) : null}
       <form class="flex flex-col gap-3" onSubmit={onSubmit}>
@@ -415,6 +421,77 @@ function formatStartedScanLabel(scan: { packageName: string | null; version: str
   return scan.packageName || scan.version || null;
 }
 
+type ValidationState = "missing" | "unvalidated" | "valid" | "invalid" | "capability_limited";
+
+function summaryBadgeTone(state: ValidationState): "ok" | "info" | "critical" | "medium" {
+  switch (state) {
+    case "valid":
+      return "ok";
+    case "invalid":
+      return "critical";
+    case "capability_limited":
+      return "medium";
+    default:
+      return "info";
+  }
+}
+
+function summaryBadgeLabel(state: ValidationState): string {
+  switch (state) {
+    case "missing":
+      return "connect npm";
+    case "unvalidated":
+      return "unvalidated";
+    case "valid":
+      return "valid";
+    case "invalid":
+      return "invalid";
+    case "capability_limited":
+      return "capability limited";
+  }
+}
+
+function reviewBannerCopy(state: ValidationState): string {
+  switch (state) {
+    case "invalid":
+      return "npm token failed validation. Rotate or refresh it in workspace setup before reviewing staged packages.";
+    case "capability_limited":
+      return "npm token validated for auth but is missing staged-publish view/download capability. Update capabilities in workspace setup.";
+    default:
+      return "Validate npm access in workspace setup before reviewing staged packages.";
+  }
+}
+
+function describeValidationStateForCard(
+  state: ValidationState,
+  reasons: ReadonlyArray<string>,
+): string {
+  if (state === "invalid") {
+    if (reasons.includes("registry_auth_failed")) {
+      return "npm rejected the token at /-/whoami. Rotate it or paste a new one above, then save to revalidate.";
+    }
+    if (reasons.includes("staged_list_denied")) {
+      return "npm rejected staged-publish list access. The token needs staged-publish list/view/download capability.";
+    }
+    return "npm validation failed. Rotate or refresh the token above.";
+  }
+  if (state === "capability_limited") {
+    if (reasons.includes("no_stages_to_probe")) {
+      return "Auth and staged-list access look good, but no open staged publishes were available to confirm view + download. Paste a real stage ID below or wait until one is staged.";
+    }
+    const missing: string[] = [];
+    if (reasons.includes("staged_view_denied")) missing.push("view");
+    if (reasons.includes("staged_tarball_denied")) missing.push("download");
+    return missing.length
+      ? `Token is missing staged-publish ${missing.join(" + ")} capability. Grant it on the npm side and revalidate.`
+      : "Token capability check did not complete.";
+  }
+  if (state === "unvalidated") {
+    return "Token saved but not yet validated. Click 'Check npm auth' below to confirm access.";
+  }
+  return "";
+}
+
 function WorkspaceSetupPanel({
   npm,
 }: {
@@ -441,8 +518,8 @@ function WorkspaceSetupPanel({
                 />
               </div>
               <div class="flex flex-wrap items-center justify-end gap-2">
-                <Badge tone={connection ? "ok" : "info"}>
-                  {connection ? connection.validationStatus : "connect npm"}
+                <Badge tone={summaryBadgeTone(npm.validationState.value)}>
+                  {summaryBadgeLabel(npm.validationState.value)}
                 </Badge>
                 <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
                   <span class="group-open:hidden">open settings</span>
@@ -468,12 +545,13 @@ function NpmConnectionCard({
   const connection = npm.connection.value;
   const status = npm.status.value;
   const busy = npm.busy.value;
-  const validated = npm.validated.value;
   const token = npm.token.value;
   const label = npm.label.value;
   const registry = npm.registry.value;
   const validationStageId = npm.validationStageId.value;
   const error = npm.error.value;
+  const state = npm.validationState.value;
+  const reasons = npm.validationReasons.value;
 
   const onSave = async (event: Event) => {
     event.preventDefault();
@@ -491,17 +569,19 @@ function NpmConnectionCard({
           </Muted>
         </div>
         {connection ? (
-          <Badge
-            tone={
-              validated ? "ok" : connection.validationStatus === "invalid" ? "critical" : "info"
-            }
-          >
-            {connection.validationStatus}
-          </Badge>
+          <Badge tone={summaryBadgeTone(state)}>{summaryBadgeLabel(state)}</Badge>
         ) : (
           <Badge tone="info">not connected</Badge>
         )}
       </div>
+
+      {connection && state !== "valid" ? (
+        <Alert
+          tone={state === "invalid" ? "critical" : state === "capability_limited" ? "warn" : "info"}
+        >
+          {describeValidationStateForCard(state, reasons)}
+        </Alert>
+      ) : null}
 
       {connection ? (
         <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-x-6 gap-y-2 border-y border-border py-3">

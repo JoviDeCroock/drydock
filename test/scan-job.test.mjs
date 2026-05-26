@@ -180,6 +180,28 @@ describe("executeScanJob idempotency", () => {
     });
   });
 
+  test("fails closed when the stored connection is capability_limited", async () => {
+    dbMock.claimScanForRun.mockResolvedValue(true);
+    dbMock.getNpmConnection.mockResolvedValue({
+      registryUrl: "https://registry.npmjs.org",
+      tokenFingerprint: "fp",
+      validationStatus: "capability_limited",
+    });
+
+    await expect(
+      executeScanJob(env, ctx, message, {}, { attempt: 1, finalAttempt: true }),
+    ).rejects.toThrow("Validate the organization npm token");
+
+    expect(npmConnectionMock.decryptNpmToken).not.toHaveBeenCalled();
+    expect(dbMock.markNpmConnectionUsed).not.toHaveBeenCalled();
+    expect(pipelineMock.runScanPipeline).not.toHaveBeenCalled();
+    expect(dbMock.markScanFailed).toHaveBeenCalledWith({}, message.scanId, message.organizationId, {
+      code: "npm_connection_unvalidated",
+      message: "Validate the organization npm token before scanning staged publishes.",
+      retryable: false,
+    });
+  });
+
   test("records scan.retryable_failed without marking failed when a retryable error fires before exhaustion", async () => {
     dbMock.claimScanForRun.mockResolvedValue(true);
     pipelineMock.runScanPipeline.mockRejectedValue(

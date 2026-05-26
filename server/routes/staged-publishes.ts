@@ -48,20 +48,36 @@ stagedPublishesRoutes.post("/scan", async (c) => {
   const savedConnection = await getNpmConnection(db, organizationId);
   if (!savedConnection) {
     return c.json(
-      { error: "Connect an organization npm token before discovering staged publishes." },
+      {
+        error: "Connect an organization npm token before discovering staged publishes.",
+        code: "token_missing",
+      },
       400,
     );
   }
   if (savedConnection.validationStatus !== "valid") {
+    const code =
+      savedConnection.validationStatus === "invalid"
+        ? "token_invalid"
+        : savedConnection.validationStatus === "capability_limited"
+          ? "token_capability_limited"
+          : "token_unvalidated";
     return c.json(
-      { error: "Validate the organization npm token before discovering staged publishes." },
+      {
+        error: "Validate the organization npm token before discovering staged publishes.",
+        code,
+        validationStatus: savedConnection.validationStatus,
+      },
       400,
     );
   }
   const connection = await getOrganizationNpmToken(db, c.env, organizationId);
   if (!connection) {
     return c.json(
-      { error: "Connect an organization npm token before discovering staged publishes." },
+      {
+        error: "Connect an organization npm token before discovering staged publishes.",
+        code: "token_missing",
+      },
       400,
     );
   }

@@ -5,6 +5,7 @@ export class ApiError extends Error {
     message: string,
     readonly status: number,
     readonly detail?: string,
+    readonly code?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -24,13 +25,14 @@ export async function apiFetch<T>(input: RequestInfo | URL, init?: RequestInit):
     headers,
   });
   const data = (await res.json().catch(() => null)) as
-    | (Partial<T> & { error?: string; detail?: string; message?: string })
+    | (Partial<T> & { error?: string; detail?: string; message?: string; code?: string })
     | null;
   if (!res.ok) {
     if (res.status === 401) throw new ApiError("Please sign in to continue.", 401);
     const detail = typeof data?.detail === "string" ? data.detail : undefined;
+    const code = typeof data?.code === "string" ? data.code : undefined;
     const message = data?.message || data?.error || "request failed";
-    throw new ApiError(detail ? `${message}: ${detail}` : message, res.status, detail);
+    throw new ApiError(detail ? `${message}: ${detail}` : message, res.status, detail, code);
   }
   return data as T;
 }
