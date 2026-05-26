@@ -100,7 +100,7 @@ Redaction is a defense-in-depth feature, not a proof that data is safe. Redact k
 
 ## Sandbox egress policy
 
-The gateway is pinned per-call to the exact URL the parent intends to fetch. The parent computes the target URL (staged tarball for a stage ID, or a registry-issued previous-version `.tgz`) and passes it to `NpmStageGateway` as the `allowedUrl` prop. Metadata-provided previous-version URLs must still be HTTPS, same-origin with the configured registry, and published tarball-shaped (`/-/` path ending in `.tgz`) before they are pinned. The gateway accepts only a `GET` whose protocol, origin, pathname, and search exactly match `allowedUrl`; everything else is rejected with `403`.
+The gateway is pinned per-call to the exact URL the parent intends to fetch. The parent computes the target URL (staged tarball for a stage ID, or a registry-issued previous-version `.tgz`) and passes it to `NpmStageGateway` as the `allowedUrl` prop. Metadata-provided previous-version URLs must still be HTTPS, same-origin with the configured registry, and published tarball-shaped (`/-/` path ending in `.tgz`) before they are pinned. The gateway accepts only a `GET` whose protocol, origin, pathname, and search exactly match `allowedUrl`; everything else is rejected with `403`. Gateway fetches use manual redirect handling so a registry redirect cannot create a second unpinned outbound request.
 
 The trusted parent Worker may also call npm's staged list/view endpoints (`/-/stage`, `/-/stage/:id`) and package metadata with organization credentials for discovery, validation, tag-aware baseline selection, and shasum/mismatch checks. Those responses are never fetched from inside the sandbox; token material still never enters the sandbox.
 

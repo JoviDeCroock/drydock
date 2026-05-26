@@ -73,8 +73,6 @@ describe("npm stage gateway URL pinning", () => {
         [artifact],
       ),
     ).toBe(false);
-    expect(isAllowedPublicArtifactUrl(artifact.replace("https:", "http:"), [artifact])).toBe(
-      false,
-    );
+    expect(isAllowedPublicArtifactUrl(artifact.replace("https:", "http:"), [artifact])).toBe(false);
   });
 });
