@@ -8,6 +8,7 @@ declare global {
       COMPARE_CACHE?: KVNamespace;
       SCAN_QUEUE?: Queue<import("./lib/scan-job").ScanQueueMessage>;
       NPM_REGISTRY: string;
+      ALLOW_INSECURE_LOCAL_REGISTRY?: string;
       NPM_CONNECTIONS_ENCRYPTION_KEY?: string;
       BETTER_AUTH_SECRET: string;
       BETTER_AUTH_URL?: string;

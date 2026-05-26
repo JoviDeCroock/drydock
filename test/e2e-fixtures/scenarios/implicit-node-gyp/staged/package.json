@@ -1,0 +1,13 @@
+{
+  "name": "@drydock/e2e-native",
+  "version": "1.0.1",
+  "description": "Native probe E2E fixture package.",
+  "license": "MIT",
+  "files": [
+    "binding.gyp",
+    "index.js",
+    "README.md"
+  ],
+  "type": "module",
+  "main": "index.js"
+}

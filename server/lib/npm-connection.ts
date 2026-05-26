@@ -3,6 +3,10 @@ import { getNpmConnection, markNpmConnectionUsed } from "../db";
 
 const DEFAULT_REGISTRY = "https://registry.npmjs.org";
 
+export interface NormalizeRegistryUrlOptions {
+  allowInsecureLocalhost?: boolean;
+}
+
 export interface EncryptedToken {
   tokenCiphertext: string;
   tokenNonce: string;
@@ -48,10 +52,41 @@ export interface NpmCredentialValidation {
   };
 }
 
-export function normalizeRegistryUrl(value: unknown): string {
+export function allowInsecureLocalRegistry(
+  env: Pick<Cloudflare.Env, "ALLOW_INSECURE_LOCAL_REGISTRY">,
+): boolean {
+  return env.ALLOW_INSECURE_LOCAL_REGISTRY === "true";
+}
+
+export function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/^\[(.*)\]$/, "$1");
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "0:0:0:0:0:0:0:1"
+  );
+}
+
+export function registryProtocolAllowed(
+  url: URL,
+  options: NormalizeRegistryUrlOptions = {},
+): boolean {
+  return (
+    url.protocol === "https:" ||
+    (options.allowInsecureLocalhost === true &&
+      url.protocol === "http:" &&
+      isLoopbackHostname(url.hostname))
+  );
+}
+
+export function normalizeRegistryUrl(
+  value: unknown,
+  options: NormalizeRegistryUrlOptions = {},
+): string {
   const raw = typeof value === "string" && value.trim() ? value.trim() : DEFAULT_REGISTRY;
   const url = new URL(raw);
-  if (url.protocol !== "https:") throw new Error("registry URL must use https");
+  if (!registryProtocolAllowed(url, options)) throw new Error("registry URL must use https");
   url.pathname = url.pathname.replace(/\/+$/, "");
   url.search = "";
   url.hash = "";
@@ -135,9 +170,11 @@ export async function getOrganizationNpmToken(
 export async function validateNpmCredential(
   registryUrl: string,
   token: string,
-  options: { stageId?: string } = {},
+  options: { stageId?: string; allowInsecureLocalhost?: boolean } = {},
 ): Promise<NpmCredentialValidation> {
-  const registry = normalizeRegistryUrl(registryUrl);
+  const registry = normalizeRegistryUrl(registryUrl, {
+    allowInsecureLocalhost: options.allowInsecureLocalhost,
+  });
   const [auth, stagedList, stagedView, stagedTarball] = await Promise.all([
     validateRegistryAuth(registry, token),
     validateStagedListAccess(registry, token),

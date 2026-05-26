@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   check:
-    name: lint · format · typecheck · test
+    name: lint · format · typecheck · test · e2e
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,3 +39,20 @@ jobs:
 
       - name: Test
         run: pnpm run test
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: E2E test
+        run: E2E_APP_PORT=5200 E2E_REGISTRY_PORT=5201 pnpm run test:e2e
+
+      - name: Upload E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: |
+            .context/e2e-artifacts
+            .context/e2e-registry/requests.jsonl
+          if-no-files-found: ignore
+          retention-days: 7

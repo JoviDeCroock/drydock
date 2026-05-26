@@ -1,4 +1,4 @@
-import { normalizeRegistryUrl } from "./npm-connection";
+import { normalizeRegistryUrl, type NormalizeRegistryUrlOptions } from "./npm-connection";
 import { normalizeStringRecord } from "./tar-parser.js";
 import type { PackageJsonSummary } from "./review";
 
@@ -47,7 +47,7 @@ export interface StagedPublishesScanResponse {
 const MAX_PER_PAGE = 100;
 const STAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,160}$/;
 
-export interface ListStagedPublishesOptions {
+export interface ListStagedPublishesOptions extends NormalizeRegistryUrlOptions {
   perPage?: number;
   packageName?: string;
 }
@@ -57,7 +57,7 @@ export async function listStagedPublishes(
   token: string,
   options: ListStagedPublishesOptions = {},
 ): Promise<StagedPublishesPage> {
-  const registry = normalizeRegistryUrl(registryUrl);
+  const registry = normalizeRegistryUrl(registryUrl, options);
   const perPage = Math.min(Math.max(options.perPage ?? 25, 1), MAX_PER_PAGE);
   const params = new URLSearchParams({ perPage: String(perPage) });
   if (options.packageName) params.set("package", options.packageName);
@@ -76,9 +76,10 @@ export async function fetchStagedPublishDetails(
   registryUrl: string,
   token: string,
   stageId: string,
+  options: NormalizeRegistryUrlOptions = {},
 ): Promise<StagedPublishDetails> {
   if (!STAGE_ID_RE.test(stageId)) throw new Error("invalid stageId");
-  const registry = normalizeRegistryUrl(registryUrl);
+  const registry = normalizeRegistryUrl(registryUrl, options);
   const response = await fetch(`${registry}/-/stage/${encodeURIComponent(stageId)}`, {
     headers: npmStageHeaders(token, "staged-view"),
   });

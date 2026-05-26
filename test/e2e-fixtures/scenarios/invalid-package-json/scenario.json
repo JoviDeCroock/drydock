@@ -1,0 +1,30 @@
+{
+  "stageId": "stage-invalid-package-json-000001",
+  "packageName": "@drydock/e2e-invalid-manifest",
+  "tag": "latest",
+  "access": "public",
+  "actor": "e2e-bot",
+  "actorType": "automation",
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "previous": {
+    "directory": "previous",
+    "tag": "latest",
+    "publishedAt": "2026-05-20T00:00:00.000Z"
+  },
+  "staged": {
+    "directory": "staged",
+    "packageJsonText": "{ invalid json\n"
+  },
+  "expected": {
+    "releaseRisk": "medium",
+    "packageName": null,
+    "stagedVersion": null,
+    "previousVersion": null,
+    "ruleIds": ["package-json.parse-failed"],
+    "baseline": {
+      "version": null,
+      "source": "none",
+      "tag": "latest"
+    }
+  }
+}

@@ -11,6 +11,7 @@ import {
 } from "../db";
 import { requireActiveOrganization } from "../lib/active-organization";
 import {
+  allowInsecureLocalRegistry,
   decryptNpmToken,
   encryptNpmToken,
   normalizeRegistryUrl,
@@ -44,7 +45,9 @@ npmConnectionRoutes.post("/", async (c) => {
 
   let registryUrl: string;
   try {
-    registryUrl = normalizeRegistryUrl(body.registryUrl);
+    registryUrl = normalizeRegistryUrl(body.registryUrl, {
+      allowInsecureLocalhost: allowInsecureLocalRegistry(c.env),
+    });
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : "invalid registry URL" }, 400);
   }
@@ -117,7 +120,10 @@ npmConnectionRoutes.post("/validate", async (c) => {
     if (!connection) return c.json({ error: "npm connection is not configured" }, 404);
 
     const token = await decryptNpmToken(c.env, connection);
-    const validation = await validateNpmCredential(connection.registryUrl, token, { stageId });
+    const validation = await validateNpmCredential(connection.registryUrl, token, {
+      stageId,
+      allowInsecureLocalhost: allowInsecureLocalRegistry(c.env),
+    });
     const [updated] = await Promise.all([
       updateNpmConnectionValidation(db, {
         organizationId,

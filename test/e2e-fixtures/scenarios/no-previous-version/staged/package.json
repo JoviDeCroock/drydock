@@ -1,0 +1,12 @@
+{
+  "name": "@drydock/e2e-first-release",
+  "version": "1.0.0",
+  "description": "First release E2E fixture package.",
+  "license": "MIT",
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "type": "module",
+  "main": "index.js"
+}

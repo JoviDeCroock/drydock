@@ -18,6 +18,22 @@ describe("npm connection validation", () => {
     );
   });
 
+  test("allows loopback http registries only when explicitly enabled", () => {
+    expect(
+      normalizeRegistryUrl("http://127.0.0.1:5184///?ignored=1#hash", {
+        allowInsecureLocalhost: true,
+      }),
+    ).toBe("http://127.0.0.1:5184");
+    expect(
+      normalizeRegistryUrl("http://localhost:5184", {
+        allowInsecureLocalhost: true,
+      }),
+    ).toBe("http://localhost:5184");
+    expect(() =>
+      normalizeRegistryUrl("http://registry.npmjs.org", { allowInsecureLocalhost: true }),
+    ).toThrow("registry URL must use https");
+  });
+
   test("checks registry auth and staged list capability without a stage id", async () => {
     const fetchMock = vi.fn(async (url, init) => {
       expect(init.headers.authorization).toBe("Bearer npm_secret_token");

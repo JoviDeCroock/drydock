@@ -9,7 +9,7 @@ import {
   recordScanEvent,
 } from "../db";
 import { requireActiveOrganization } from "../lib/active-organization";
-import { getOrganizationNpmToken } from "../lib/npm-connection";
+import { allowInsecureLocalRegistry, getOrganizationNpmToken } from "../lib/npm-connection";
 import {
   StagedPublishesFetchError,
   listStagedPublishes,
@@ -69,6 +69,7 @@ stagedPublishesRoutes.post("/scan", async (c) => {
   try {
     const page = await listStagedPublishes(connection.registryUrl, connection.token, {
       perPage: 50,
+      allowInsecureLocalhost: allowInsecureLocalRegistry(c.env),
     });
     const stagedItems = [...new Map(page.items.map((item) => [item.id, item])).values()];
     const stageIds = stagedItems.map((item) => item.id);

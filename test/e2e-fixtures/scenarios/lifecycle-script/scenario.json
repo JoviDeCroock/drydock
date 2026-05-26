@@ -1,0 +1,29 @@
+{
+  "stageId": "stage-lifecycle-script-000001",
+  "packageName": "@drydock/e2e-lifecycle",
+  "tag": "latest",
+  "access": "public",
+  "actor": "e2e-bot",
+  "actorType": "automation",
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "previous": {
+    "directory": "previous",
+    "tag": "latest",
+    "publishedAt": "2026-05-20T00:00:00.000Z"
+  },
+  "staged": {
+    "directory": "staged"
+  },
+  "expected": {
+    "releaseRisk": "high",
+    "packageName": "@drydock/e2e-lifecycle",
+    "stagedVersion": "1.0.1",
+    "previousVersion": "1.0.0",
+    "ruleIds": ["install-script.lifecycle"],
+    "baseline": {
+      "version": "1.0.0",
+      "source": "dist-tag",
+      "tag": "latest"
+    }
+  }
+}

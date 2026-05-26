@@ -1,0 +1,31 @@
+{
+  "stageId": "stage-metadata-mismatch-000001",
+  "packageName": "@drydock/e2e-metadata-actual",
+  "stagePackageName": "@drydock/e2e-metadata-claimed",
+  "stageVersion": "9.9.9",
+  "tag": "latest",
+  "access": "public",
+  "actor": "e2e-bot",
+  "actorType": "automation",
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "previous": {
+    "directory": "previous",
+    "tag": "latest",
+    "publishedAt": "2026-05-20T00:00:00.000Z"
+  },
+  "staged": {
+    "directory": "staged"
+  },
+  "expected": {
+    "releaseRisk": "critical",
+    "packageName": "@drydock/e2e-metadata-actual",
+    "stagedVersion": "1.0.1",
+    "previousVersion": "1.0.0",
+    "ruleIds": ["stage.metadata-mismatch"],
+    "baseline": {
+      "version": "1.0.0",
+      "source": "semver-predecessor",
+      "tag": null
+    }
+  }
+}

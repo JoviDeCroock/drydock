@@ -2,6 +2,8 @@
 
 This repository includes `packages/experiments`, a tiny publishable npm package named `@pracht/experiments` for end-to-end testing against real npm staged publishes.
 
+For the normal local E2E loop, use the fake-registry harness in [`e2e-test-environment.md`](./e2e-test-environment.md). The real npm package below is only the final canary for npm staged-publish endpoint drift and credential behavior.
+
 ## Why it exists
 
 The application needs real package artifacts to verify the full review flow:

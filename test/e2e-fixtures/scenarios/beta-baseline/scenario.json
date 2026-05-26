@@ -1,0 +1,29 @@
+{
+  "stageId": "stage-beta-baseline-000001",
+  "packageName": "@drydock/e2e-beta",
+  "tag": "beta",
+  "access": "public",
+  "actor": "e2e-bot",
+  "actorType": "automation",
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "previous": {
+    "directory": "previous",
+    "tag": "beta",
+    "publishedAt": "2026-05-20T00:00:00.000Z"
+  },
+  "staged": {
+    "directory": "staged"
+  },
+  "expected": {
+    "releaseRisk": "low",
+    "packageName": "@drydock/e2e-beta",
+    "stagedVersion": "2.0.0-beta.2",
+    "previousVersion": "2.0.0-beta.1",
+    "ruleIds": [],
+    "baseline": {
+      "version": "2.0.0-beta.1",
+      "source": "dist-tag",
+      "tag": "beta"
+    }
+  }
+}

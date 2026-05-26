@@ -18,7 +18,11 @@ import {
 } from "../db";
 import { requireActiveOrganization } from "../lib/active-organization";
 import { loadCompare, stripTextSamples } from "../lib/compare-cache";
-import { getOrganizationNpmToken } from "../lib/npm-connection";
+import {
+  allowInsecureLocalRegistry,
+  getOrganizationNpmToken,
+  registryProtocolAllowed,
+} from "../lib/npm-connection";
 import { compareSemver, fetchPackageMetadata, pickPreviousVersion } from "../lib/registry";
 import { annotateFindingsWithDiffStatus, createPackageDiff, type FileRecord } from "../lib/review";
 import { executeScanJob, type ScanQueueMessage } from "../lib/scan-job";
@@ -282,13 +286,17 @@ scansRoutes.get("/:id/versions", async (c) => {
 
 const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
 
-function isTarballUrlAllowed(tarballUrl: string, registryUrl: string): boolean {
+function isTarballUrlAllowed(
+  tarballUrl: string,
+  registryUrl: string,
+  allowInsecureLocalhost: boolean,
+): boolean {
   try {
     const tarball = new URL(tarballUrl);
     const registry = new URL(registryUrl);
     return (
       tarball.origin === registry.origin &&
-      tarball.protocol === "https:" &&
+      registryProtocolAllowed(tarball, { allowInsecureLocalhost }) &&
       tarball.pathname.endsWith(".tgz") &&
       tarball.pathname.includes("/-/")
     );
@@ -360,7 +368,7 @@ scansRoutes.get("/:id/compare", async (c) => {
   if (!tarballUrl) return c.json({ error: "unknown version" }, 404);
 
   const registryUrl = connection?.registryUrl || c.env.NPM_REGISTRY || "https://registry.npmjs.org";
-  if (!isTarballUrlAllowed(tarballUrl, registryUrl)) {
+  if (!isTarballUrlAllowed(tarballUrl, registryUrl, allowInsecureLocalRegistry(c.env))) {
     return c.json({ error: "registry returned an unexpected tarball URL" }, 502);
   }
 
@@ -456,7 +464,7 @@ scansRoutes.get("/:id/compare/file", async (c) => {
   if (!tarballUrl) return c.json({ error: "unknown version" }, 404);
 
   const registryUrl = connection?.registryUrl || c.env.NPM_REGISTRY || "https://registry.npmjs.org";
-  if (!isTarballUrlAllowed(tarballUrl, registryUrl)) {
+  if (!isTarballUrlAllowed(tarballUrl, registryUrl, allowInsecureLocalRegistry(c.env))) {
     return c.json({ error: "registry returned an unexpected tarball URL" }, 502);
   }
 

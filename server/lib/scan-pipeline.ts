@@ -22,6 +22,7 @@ import {
 import { computeScanRiskBreakdown } from "./risk";
 import { downloadInSandbox, type DownloadResult } from "./sandbox";
 import { fetchStagedPublishDetails, type StagedPublishDetails } from "./staged-publishes";
+import { allowInsecureLocalRegistry } from "./npm-connection";
 import type { ScanInput, ScanResult } from "../types";
 
 export interface ScanPipelineOptions extends ScanInput {
@@ -398,7 +399,9 @@ async function maybeFetchStagedDetails(
 ): Promise<StagedPublishDetails | null> {
   if (!input.npmToken) return null;
   const registry = input.npmRegistry || env.NPM_REGISTRY || "https://registry.npmjs.org";
-  return fetchStagedPublishDetails(registry, input.npmToken, input.stageId).catch(() => null);
+  return fetchStagedPublishDetails(registry, input.npmToken, input.stageId, {
+    allowInsecureLocalhost: allowInsecureLocalRegistry(env),
+  }).catch(() => null);
 }
 
 function emptyBaseline(tag: string | null, reason: string): BaselineVersionSelection {
