@@ -33,6 +33,8 @@ interface ResolvedCredentials {
 // the decrypted npm token only exists inside this class's method-local scope.
 // The orchestrator never sees it.
 export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBrokerProps> {
+  dispose(): void {}
+
   async fetchPackageMetadata(name: string): Promise<RegistryMetadata | null> {
     const creds = await this.resolveCredentials();
     return fetchPackageMetadata(this.env, name, {
@@ -103,6 +105,8 @@ class LocalNpmBroker implements NpmBroker {
     private readonly ctx: AdapterContext,
     private readonly props: NpmBrokerProps,
   ) {}
+
+  dispose(): void {}
 
   async fetchPackageMetadata(name: string): Promise<RegistryMetadata | null> {
     const creds = await this.resolve();

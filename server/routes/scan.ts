@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { RateLimitError, createDb, createScanJob, enforceRateLimit, getNpmConnection } from "../db";
 import { requireActiveOrganization } from "../lib/active-organization";
 import { executeScanJob } from "../lib/scan-job";
-import { SandboxError } from "../lib/sandbox";
+import { isSandboxError } from "../lib/sandbox";
 import type { Bindings, ScanInput, Variables } from "../types";
 
 const STAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,160}$/;
@@ -68,7 +68,7 @@ scanRoutes.post("/", async (c) => {
         { "retry-after": String(err.retryAfterSeconds) },
       );
     }
-    if (err instanceof SandboxError) {
+    if (isSandboxError(err)) {
       return c.json(
         { error: "Could not download or inspect the staged tarball.", detail: err.detail },
         502,

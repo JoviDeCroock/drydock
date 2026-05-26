@@ -75,7 +75,7 @@ export interface AdapterPackageSummary {
 // receives a broker handle from the adapter and passes it back into the
 // adapter's acquire methods; it never touches the underlying secret.
 export interface AdapterBroker {
-  dispose?(): void | Promise<void>;
+  dispose(): void | Promise<void>;
 }
 
 export interface PackageAdapter<TInput = unknown, TBroker extends AdapterBroker = AdapterBroker> {

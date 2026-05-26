@@ -41,6 +41,21 @@ describe("scan job retry classification", () => {
     expect(safe).not.toHaveProperty("detail");
   });
 
+  test("classifies sandbox errors that crossed the Worker RPC boundary", () => {
+    const safe = classifyScanError({
+      name: "SandboxError",
+      message: "sandbox download failed",
+      detail: JSON.stringify({ error: "download failed", status: 503 }),
+      remote: true,
+    });
+
+    expect(safe).toMatchObject({
+      code: "sandbox_download_transient",
+      retryable: true,
+    });
+    expect(safe).not.toHaveProperty("detail");
+  });
+
   test("does not include raw error messages on generic failures", () => {
     const safe = classifyScanError(new Error("D1_ERROR: column not found"));
     expect(safe).toEqual({

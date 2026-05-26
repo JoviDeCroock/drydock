@@ -111,6 +111,13 @@ export class SandboxError extends Error {
   }
 }
 
+export function isSandboxError(err: unknown): err is { detail: string } {
+  if (err instanceof SandboxError) return true;
+  if (!err || typeof err !== "object") return false;
+  const value = err as Record<string, unknown>;
+  return value.name === "SandboxError" && typeof value.detail === "string";
+}
+
 export async function downloadInSandbox(
   env: Cloudflare.Env,
   ctx: ExecutionContext,

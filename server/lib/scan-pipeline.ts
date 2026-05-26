@@ -209,7 +209,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
 
     return result;
   } finally {
-    if (broker.dispose) await broker.dispose();
+    await broker.dispose();
   }
 }
 
