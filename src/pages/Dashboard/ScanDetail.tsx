@@ -1142,7 +1142,7 @@ function PersistedReportSections({
       </ReportSection>
 
       {ai?.model != null && (
-        <ReportSection title="Reviewer notes">
+        <ReportSection title="Reviewer notes" class="lg:col-span-2">
           {ai ? (
             ai!.status === "complete" ? (
               <>
@@ -1179,27 +1179,6 @@ function PersistedReportSections({
           )}
         </ReportSection>
       )}
-
-      <ReportSection title="Report fingerprint">
-        {summary.report ? (
-          <div class="flex flex-col gap-2 text-[13px]">
-            <MetadataRow label="version" value={String(summary.report.version ?? "unknown")} />
-            <MetadataRow
-              label="digest"
-              value={`${summary.report.digestAlgorithm || "sha256"}:${summary.report.digest || "missing"}`}
-            />
-            <MetadataRow
-              label="generated"
-              value={
-                summary.report.generatedAt ? formatDate(summary.report.generatedAt) : "unknown"
-              }
-            />
-            <MetadataRow label="rules" value={`v${summary.report.rulesVersion ?? "unknown"}`} />
-          </div>
-        ) : (
-          <EmptyLine>This older review does not include a report fingerprint.</EmptyLine>
-        )}
-      </ReportSection>
     </section>
   );
 }
@@ -1223,7 +1202,7 @@ function ReportSection({
 
 function AiFindingList({ findings }: { findings: AiFinding[] }) {
   return (
-    <ul class="list-none p-0 m-0 flex flex-col gap-2">
+    <ul class="list-none p-0 m-0 grid grid-cols-1 md:grid-cols-2 gap-2">
       {sortFindingsBySeverity(findings).map((finding, index) => (
         <FindingCard
           key={`${finding.file}-${index}`}
@@ -1343,15 +1322,6 @@ function ChangeValue({
         <span class="text-ink-subtle mr-1.5 select-none">+</span>
         {staged || "—"}
       </code>
-    </div>
-  );
-}
-
-function MetadataRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div class="grid grid-cols-[96px_minmax(0,1fr)] gap-3">
-      <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">{label}</span>
-      <code class="text-xs text-ink-muted break-all">{value}</code>
     </div>
   );
 }
