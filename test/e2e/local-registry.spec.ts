@@ -46,21 +46,30 @@ test("reviews staged fixtures from the local fake npm registry", async ({ page }
     });
   });
 
-  const scenarios = (await readScenarios()).filter((scenario) => scenario.stageId !== uiStageId);
-  for (const scenario of scenarios) {
-    await test.step(`scenario: ${scenario.name}`, async () => {
-      const response = await scanStage(page, scenario.stageId);
-      if (scenario.expected.errorStatus) {
-        expect(response.status, scenario.name).toBe(scenario.expected.errorStatus);
-        expect(String(response.body?.error ?? ""), scenario.name).toContain(
-          scenario.expected.errorIncludes,
-        );
-        return;
-      }
+  const apiPage = await page.context().newPage();
+  await apiPage.goto("/dashboard");
+  await expect(apiPage.getByRole("heading", { name: "Ready for the next release" })).toBeVisible({
+    timeout: 30_000,
+  });
+  try {
+    const scenarios = (await readScenarios()).filter((scenario) => scenario.stageId !== uiStageId);
+    for (const scenario of scenarios) {
+      await test.step(`scenario: ${scenario.name}`, async () => {
+        const response = await scanStage(apiPage, scenario.stageId);
+        if (scenario.expected.errorStatus) {
+          expect(response.status, scenario.name).toBe(scenario.expected.errorStatus);
+          expect(String(response.body?.error ?? ""), scenario.name).toContain(
+            scenario.expected.errorIncludes,
+          );
+          return;
+        }
 
-      expect(response.status, scenario.name).toBe(200);
-      assertScanMatchesScenario(response.body, scenario);
-    });
+        expect(response.status, scenario.name).toBe(200);
+        assertScanMatchesScenario(response.body, scenario);
+      });
+    }
+  } finally {
+    await apiPage.close();
   }
 
   await test.step("registry journal", async () => {

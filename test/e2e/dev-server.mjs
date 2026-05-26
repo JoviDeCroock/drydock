@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,11 +13,14 @@ const registryUrl = `http://127.0.0.1:${registryPort}`;
 const stateDir = path.join(repoRoot, ".context/e2e-registry");
 const artifactsDir = path.join(repoRoot, ".context/e2e-artifacts");
 const configDir = path.join(repoRoot, ".context/e2e");
+const persistRoot = path.join(configDir, "state");
 const wranglerConfigPath = path.join(configDir, "wrangler.jsonc");
 let shuttingDown = false;
 
 await mkdir(configDir, { recursive: true });
 await mkdir(artifactsDir, { recursive: true });
+await rm(persistRoot, { recursive: true, force: true });
+await mkdir(persistRoot, { recursive: true });
 await writeWranglerConfig();
 run("node", ["test/e2e/build-fixtures.mjs"]);
 run("pnpm", [
@@ -29,7 +32,7 @@ run("pnpm", [
   "staged-publish-review-e2e",
   "--local",
   "--persist-to",
-  path.join(repoRoot, ".wrangler/state"),
+  persistRoot,
   "--config",
   wranglerConfigPath,
 ]);
@@ -46,6 +49,7 @@ const app = start(
   ["exec", "vite", "--host", "127.0.0.1", "--port", String(appPort), "--strictPort"],
   {
     ALLOW_INSECURE_LOCAL_REGISTRY: "true",
+    CLOUDFLARE_VITE_PERSIST_STATE_PATH: persistRoot,
     CLOUDFLARE_VITE_WRANGLER_CONFIG_PATH: wranglerConfigPath,
     E2E_NPM_REGISTRY: registryUrl,
   },
@@ -57,6 +61,7 @@ console.log(`E2E app: ${appUrl}`);
 console.log(`Fake npm registry: ${registryUrl}`);
 console.log(`Registry journal: ${path.relative(repoRoot, path.join(stateDir, "requests.jsonl"))}`);
 console.log(`Artifacts: ${path.relative(repoRoot, artifactsDir)}`);
+console.log(`Worker state: ${path.relative(repoRoot, persistRoot)}`);
 
 await new Promise((resolve, reject) => {
   for (const child of children) {

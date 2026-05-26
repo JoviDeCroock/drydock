@@ -7,7 +7,7 @@ The normal end-to-end loop is local and deterministic. It uses fixture packages 
 - `test/e2e-fixtures/scenarios/*` stores package scenarios. Each scenario has a `staged/` package, optional `previous/` package, and `scenario.json` expected outcome.
 - `test/e2e/build-fixtures.mjs` runs `npm pack --json` for the previous and staged package directories and writes generated registry state to `.context/e2e-registry/`.
 - `test/e2e/fake-registry.mjs` serves only the staged-publish, packument, and tarball endpoints the app uses.
-- `test/e2e/dev-server.mjs` starts the fake registry and the Vite/Cloudflare Worker dev server together, after applying D1 migrations to the same local persistence path Vite uses.
+- `test/e2e/dev-server.mjs` starts the fake registry and the Vite/Cloudflare Worker dev server together, after applying D1 migrations to an isolated `.context/e2e/state` persistence path that is reset on each run.
 - `test/e2e/local-registry.spec.ts` is the browser smoke. It signs up, stores a fake npm token, validates it, submits the implicit node-gyp fixture through the UI, then scans every other fixture through the local Worker API and asserts each `scenario.json` expected outcome.
 
 The fake registry writes `.context/e2e-registry/requests.jsonl`. The browser test checks this journal so we can verify authorization headers only appear on expected npm-like endpoints.
@@ -20,7 +20,7 @@ pnpm run e2e:dev
 pnpm run test:e2e
 ```
 
-`pnpm run e2e:dev` prints the app URL, fake registry URL, request journal, and artifact directory. By default it uses:
+`pnpm run e2e:dev` prints the app URL, fake registry URL, request journal, artifact directory, and Worker state directory. By default it uses:
 
 - app: `http://127.0.0.1:5173`
 - fake registry: `http://127.0.0.1:5174`
