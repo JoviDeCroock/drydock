@@ -267,21 +267,25 @@ export default function ScanDetailPage() {
               aiFindings={ai.value?.findings ?? []}
               diffCount={diffEntries.value.filter((entry) => entry.status !== "unchanged").length}
               findingsWithDiffStatus={findingsWithDiffStatus.value}
-              usePersistedRiskSummary={model.isDefaultComparison.value}
+              usePersistedRiskSummary={model.isDefaultComparison.value || !compare}
             />
 
             <ScanTimeline events={detail.events ?? []} />
 
-            {versions ? (
+            {detail.scan.packageName ? (
               <div class="flex flex-col gap-2 border-t border-border pt-3">
-                <VersionPicker
-                  options={versions.versions}
-                  selected={selectedVersion}
-                  defaultVersion={versions.defaultPreviousVersion}
-                  stagedVersion={versions.stagedVersion}
-                  onChange={(value) => model.selectVersion(value)}
-                  disabled={compareLoading}
-                />
+                {versions ? (
+                  <VersionPicker
+                    options={versions.versions}
+                    selected={selectedVersion}
+                    defaultVersion={versions.defaultPreviousVersion}
+                    stagedVersion={versions.stagedVersion}
+                    onChange={(value) => model.selectVersion(value)}
+                    disabled={compareLoading}
+                  />
+                ) : (
+                  <VersionPickerSkeleton stagedVersion={detail.scan.stagedVersion ?? null} />
+                )}
                 {compareLoading ? (
                   <LoadingLine size="inline">Fetching {selectedVersion} via sandbox</LoadingLine>
                 ) : null}
@@ -721,6 +725,20 @@ function ScanDetailHeader({
         </div>
       ) : null}
     </header>
+  );
+}
+
+function VersionPickerSkeleton({ stagedVersion }: { stagedVersion: string | null }) {
+  return (
+    <div class="flex flex-wrap items-center gap-3" aria-busy="true">
+      <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+        Compare against
+      </span>
+      <div class="flex items-center bg-bg border border-border rounded-md text-[13px] text-ink-muted pl-3 pr-8 py-2 font-mono min-w-[200px] opacity-60">
+        loading versions<span class="ml-0.5 motion-safe:animate-pulse">…</span>
+      </div>
+      <span class="font-mono text-[11px] text-ink-muted">→ staged {stagedVersion || "—"}</span>
+    </div>
   );
 }
 
