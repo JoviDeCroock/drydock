@@ -5,7 +5,7 @@ const EMPTY_PACKAGE_JSON_DIFF = {
   name: "fixture",
   previousVersion: "1.0.0",
   stagedVersion: "1.0.1",
-  scripts: [{ key: "postinstall", status: "added", staged: "node scripts/install.js" }],
+  scripts: [{ key: "postinstall", status: "added", staged: "node scripts/install" }],
   dependencies: [],
   entrypointsChanged: true,
 };
@@ -26,7 +26,7 @@ function reviewOptions() {
       name: "fixture",
       version: "1.0.1",
       main: "dist/index.js",
-      scripts: { postinstall: "node scripts/install.js" },
+      scripts: { postinstall: "node scripts/install" },
     },
     null,
     2,

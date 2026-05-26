@@ -523,10 +523,8 @@ function collectPackageJsonPaths(text: string, mode: "entrypoints" | "scripts"):
   if (scripts && typeof scripts === "object" && !Array.isArray(scripts)) {
     for (const script of Object.values(scripts)) {
       if (typeof script !== "string") continue;
-      for (const match of script.matchAll(
-        /(?:\.\/)?[\w@./-]+\.(?:cjs|js|mjs|node|sh|ts|wasm|gyp)\b/g,
-      )) {
-        addStringPath(paths, match[0]);
+      for (const match of script.matchAll(/(?:\.\/)?[\w@./-]+(?:\.[\w-]+)?\b/g)) {
+        addScriptTokenPath(paths, match[0]);
       }
     }
   }
@@ -553,6 +551,22 @@ function addStringPath(paths: Set<string>, value: unknown) {
   const path = value.replace(/^\.\//, "");
   if (!path || path === "." || path.includes("*") || !isSafePackagePath(path)) return;
   paths.add(path);
+}
+
+function addScriptTokenPath(paths: Set<string>, value: string) {
+  const path = value.replace(/^\.\//, "");
+  if (!looksLikePackageFileReference(path)) return;
+  addStringPath(paths, path);
+
+  if (/\.[^/]+$/.test(path)) return;
+  for (const extension of [".js", ".cjs", ".mjs", ".ts", ".node", ".sh", ".gyp"]) {
+    addStringPath(paths, `${path}${extension}`);
+  }
+}
+
+function looksLikePackageFileReference(path: string): boolean {
+  if (!path || path === "." || path.includes("*") || !isSafePackagePath(path)) return false;
+  return path.includes("/") || /\.(?:cjs|js|mjs|node|sh|ts|wasm|gyp)$/i.test(path);
 }
 
 function isNativeOrExecutablePath(path: string): boolean {
