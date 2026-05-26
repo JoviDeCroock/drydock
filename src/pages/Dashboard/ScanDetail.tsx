@@ -414,7 +414,6 @@ function ReleaseRecommendation({
       <SectionLabel>Recommendation</SectionLabel>
       <div class="flex flex-wrap items-center gap-2">
         <Badge tone={recommendation.tone}>{recommendation.label}</Badge>
-        <Badge tone={severityTone(releaseRisk)}>release {releaseRisk}</Badge>
         {artifactRisk !== releaseRisk ? (
           <Badge tone="neutral">artifact {artifactRisk}</Badge>
         ) : null}
