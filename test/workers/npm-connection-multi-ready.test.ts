@@ -6,6 +6,7 @@ import {
   ensurePersonalOrganization,
   getNpmConnection,
   listNpmConnections,
+  listUserOrganizations,
   upsertNpmConnection,
 } from "../../server/db";
 import * as schema from "../../server/db/schema";
@@ -91,6 +92,33 @@ describe("npm-connection multi-connection schema", () => {
     expect(all).toHaveLength(1);
   });
 
+  test("concurrent first saves settle on a single active connection", async () => {
+    const owner = await seedUser();
+
+    await Promise.all([
+      saveConnection({
+        organizationId: owner.organizationId,
+        userId: owner.userId,
+        token: "npm_multi_token_AAAAAAAAAAAAAA",
+        label: "first",
+      }),
+      saveConnection({
+        organizationId: owner.organizationId,
+        userId: owner.userId,
+        token: "npm_multi_token_BBBBBBBBBBBBBB",
+        label: "second",
+      }),
+    ]);
+
+    const db = createDb(env.DB);
+    const all = await listNpmConnections(db, owner.organizationId);
+    expect(all).toHaveLength(1);
+    expect(all[0]?.isActive).toBe(true);
+
+    const active = await getNpmConnection(db, owner.organizationId);
+    expect(active?.id).toBe(all[0]?.id);
+  });
+
   test("getNpmConnection ignores rows where isActive=false", async () => {
     const owner = await seedUser();
     await saveConnection({
@@ -114,5 +142,10 @@ describe("npm-connection multi-connection schema", () => {
     const all = await listNpmConnections(db, owner.organizationId);
     expect(all).toHaveLength(1);
     expect(all[0]?.isActive).toBe(false);
+
+    const organizations = await listUserOrganizations(db, owner.userId);
+    const listed = organizations.filter((org) => org.id === owner.organizationId);
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.npmConnectionConfigured).toBe(false);
   });
 });

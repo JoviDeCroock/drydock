@@ -761,28 +761,7 @@ function redactScanEventMetadata(value: unknown): unknown {
 
 export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) {
   const now = new Date();
-  const existing = await getNpmConnection(db, input.organizationId);
-
-  if (existing) {
-    await db
-      .update(npmConnections)
-      .set({
-        registryUrl: input.registryUrl,
-        label: input.label,
-        tokenCiphertext: input.tokenCiphertext,
-        tokenNonce: input.tokenNonce,
-        tokenFingerprint: input.tokenFingerprint,
-        tokenLast4: input.tokenLast4 || null,
-        validationStatus: "unvalidated",
-        capabilitiesJson: null,
-        validatedAt: null,
-        updatedAt: now,
-      })
-      .where(eq(npmConnections.id, existing.id));
-    return getNpmConnection(db, input.organizationId);
-  }
-
-  await db.insert(npmConnections).values({
+  const values = {
     id: crypto.randomUUID(),
     organizationId: input.organizationId,
     registryUrl: input.registryUrl,
@@ -799,7 +778,27 @@ export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) 
     createdByUserId: input.createdByUserId,
     createdAt: now,
     updatedAt: now,
-  });
+  };
+
+  await db
+    .insert(npmConnections)
+    .values(values)
+    .onConflictDoUpdate({
+      target: npmConnections.organizationId,
+      targetWhere: sql`${npmConnections.isActive} = 1`,
+      set: {
+        registryUrl: values.registryUrl,
+        label: values.label,
+        tokenCiphertext: values.tokenCiphertext,
+        tokenNonce: values.tokenNonce,
+        tokenFingerprint: values.tokenFingerprint,
+        tokenLast4: values.tokenLast4,
+        validationStatus: values.validationStatus,
+        capabilitiesJson: values.capabilitiesJson,
+        validatedAt: values.validatedAt,
+        updatedAt: now,
+      },
+    });
 
   return getNpmConnection(db, input.organizationId);
 }
@@ -885,7 +884,10 @@ export async function listUserOrganizations(
     })
     .from(organizationMembers)
     .innerJoin(organizations, eq(organizations.id, organizationMembers.organizationId))
-    .leftJoin(npmConnections, eq(npmConnections.organizationId, organizations.id))
+    .leftJoin(
+      npmConnections,
+      and(eq(npmConnections.organizationId, organizations.id), eq(npmConnections.isActive, true)),
+    )
     .where(eq(organizationMembers.userId, userId));
 
   return rows

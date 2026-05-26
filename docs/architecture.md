@@ -166,7 +166,7 @@ Organization-owned resources scope by the active org:
 
 - scans;
 - audit events;
-- npm connections (one per organization — `UNIQUE(organization_id)` on `npm_connections`);
+- npm connections (one active connection per organization; inactive rows are retained for future multi-connection support);
 - future report signatures;
 - future artifact retention settings.
 
@@ -186,7 +186,7 @@ Implemented `npm_connections` responsibilities:
 - support rotation/removal;
 - emit audit events for add, validate, use, and delete.
 
-Credential validation is empirical where possible: it checks registry auth through `/-/whoami`, staged list access through `GET /-/stage?perPage=1`, and when the user supplies a real stage ID it checks staged view plus ranged staged-tarball access without retaining the tarball. Before launch, confirm the least-privilege token shape with real npm tokens. Do not rely solely on broad token labels.
+Credential validation is empirical where possible: it checks registry auth through `/-/whoami`, staged list access through `GET /-/stage?perPage=1`, and when a staged publish is available (from the list response or a user-supplied stage ID) it checks staged view plus ranged staged-tarball access without retaining the tarball. Before launch, confirm the least-privilege token shape with real npm tokens. Do not rely solely on broad token labels.
 
 ## Report model and future signing
 

@@ -202,6 +202,7 @@ function ReviewRequestCard({
   const hasConnection = npm.isConnected.value;
   const hasValidatedConnection = npm.validated.value;
   const validationState = npm.validationState.value;
+  const validationReasons = npm.validationReasons.value;
 
   return (
     <Card class="p-5 md:p-6 flex flex-col gap-4 border-accent/40">
@@ -229,7 +230,7 @@ function ReviewRequestCard({
       ) : !hasValidatedConnection ? (
         <Alert tone={validationState === "invalid" ? "critical" : "info"}>
           <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>{reviewBannerCopy(validationState)}</span>
+            <span>{reviewBannerCopy(validationState, validationReasons)}</span>
             <LinkButton href="#workspace-setup" variant="secondary" size="sm" class="shrink-0">
               Open settings
             </LinkButton>
@@ -451,11 +452,14 @@ function summaryBadgeLabel(state: ValidationState): string {
   }
 }
 
-function reviewBannerCopy(state: ValidationState): string {
+function reviewBannerCopy(state: ValidationState, reasons: ReadonlyArray<string>): string {
   switch (state) {
     case "invalid":
       return "npm token failed validation. Rotate or refresh it in workspace setup before reviewing staged packages.";
     case "capability_limited":
+      if (reasons.includes("no_stages_to_probe")) {
+        return "npm auth and staged-list access passed, but no staged publish was available to confirm package access. Paste a stage ID in workspace setup.";
+      }
       return "npm token validated for auth but is missing staged-publish view/download capability. Update capabilities in workspace setup.";
     default:
       return "Validate npm access in workspace setup before reviewing staged packages.";

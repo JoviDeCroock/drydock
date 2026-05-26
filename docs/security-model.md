@@ -105,7 +105,7 @@ Scans and staged-publish discovery require the organization npm connection to be
 
 ### Multiple connections per organization
 
-The `npm_connections` schema carries an `is_active` boolean and a partial unique index `(organization_id) WHERE is_active = 1`, so the database can hold many rows per org but enforces at most one active row. Today's `upsertNpmConnection` updates the active row in place — there is one connection per org from a UX perspective — but `listNpmConnections` and the row layout are ready for a future "multiple named connections" feature without another migration.
+The `npm_connections` schema carries an `is_active` boolean and a partial unique index `(organization_id) WHERE is_active = 1`, so the database can hold many rows per org but enforces at most one active row. Today's `upsertNpmConnection` updates the active row in place — there is one connection per org from a UX perspective — while organization listing and scan gates only treat active rows as configured connections. `listNpmConnections` and the row layout are ready for a future "multiple named connections" feature without another migration.
 
 ## Package artifact handling
 
