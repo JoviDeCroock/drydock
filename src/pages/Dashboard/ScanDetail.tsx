@@ -20,7 +20,7 @@ import {
   type FileRecord,
   type FindingDiffStatus,
 } from "../../../server/lib/review";
-import type { PackageJsonDiff, ScanResult } from "../../../server/types";
+import type { PackageJsonDiff } from "../../../server/types";
 import {
   Alert,
   Badge,
@@ -57,7 +57,6 @@ interface PersistedSummary {
   };
   packageJsonDiff?: PackageJsonDiff;
   diff?: DiffEntry[];
-  safety?: ScanResult["safety"];
 }
 
 type PersistedFinding = PersistedScanDetail["findings"][number];
@@ -1276,16 +1275,6 @@ function PersistedReportSections({
         ) : (
           <EmptyLine>This older review does not include a report fingerprint.</EmptyLine>
         )}
-        {summary.safety ? (
-          <details class="group mt-1">
-            <summary class="cursor-pointer font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle list-none">
-              Safety model
-            </summary>
-            <pre class="bg-surface-2 rounded-lg p-3 overflow-x-auto text-xs leading-[1.5] mt-3 mb-0">
-              {JSON.stringify(summary.safety, null, 2)}
-            </pre>
-          </details>
-        ) : null}
       </ReportSection>
     </section>
   );
