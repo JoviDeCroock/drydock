@@ -117,6 +117,7 @@ describe("scan pipeline baseline selection", () => {
       "https://registry.npmjs.org",
       "npm_secret_token",
       "stage-beta-123",
+      { allowInsecureLocalhost: false },
     );
     expect(sandboxMock.downloadInSandbox.mock.calls[1]?.[2]).toMatchObject({
       tarballUrl: "https://registry.npmjs.org/@scope/pkg/-/pkg-2.0.0-beta.2.tgz",
@@ -321,6 +322,7 @@ describe("scan pipeline baseline selection", () => {
       "https://registry.npmjs.org",
       "npm_token_0123456789",
       "stage-abc123",
+      { allowInsecureLocalhost: false },
     );
     expect(result.packageJson?.implicitScripts).toEqual({ install: "node-gyp rebuild" });
     expect(result.ruleFindings).toContainEqual(

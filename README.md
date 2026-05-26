@@ -15,7 +15,7 @@ This repository is moving from prototype to real product. The current implementa
 - **Safe artifact defaults.** Do not retain raw tarballs by default in SaaS. Persist redacted summaries, manifests, diffs, findings, and report metadata. Raw artifact retention may become an explicit short-TTL organization setting later.
 - **Signed reports later.** Prepare report data to be canonical and signable, but do not launch public signed report generation yet.
 
-See [`docs/architecture.md`](docs/architecture.md), [`docs/security-model.md`](docs/security-model.md), [`docs/security-detection-corpus.md`](docs/security-detection-corpus.md), [`docs/production-roadmap.md`](docs/production-roadmap.md), [`docs/cost-model.md`](docs/cost-model.md), and [`docs/test-package.md`](docs/test-package.md) for the production plan, detection corpus notes, budget napkin math, and staged-publish test package.
+See [`docs/architecture.md`](docs/architecture.md), [`docs/security-model.md`](docs/security-model.md), [`docs/security-detection-corpus.md`](docs/security-detection-corpus.md), [`docs/production-roadmap.md`](docs/production-roadmap.md), [`docs/cost-model.md`](docs/cost-model.md), [`docs/test-package.md`](docs/test-package.md), and [`docs/e2e-test-environment.md`](docs/e2e-test-environment.md) for the production plan, detection corpus notes, budget napkin math, staged-publish test package, and local E2E harness.
 
 ## Current capabilities
 
@@ -73,9 +73,12 @@ cp .dev.vars.example .dev.vars
 # edit .dev.vars with local secrets
 pnpm test         # Vitest logic suite
 pnpm dev          # vite + cloudflare plugin, http://localhost:5173
+pnpm test:e2e     # Playwright + local fake npm staging registry
 ```
 
 The Vite dev server runs the Worker locally and serves the UI at the same origin, so authenticated `fetch("/api/v1/scan")` works without CORS.
+
+For deterministic browser testing without real npm staged publishes, use the local E2E harness in [`docs/e2e-test-environment.md`](docs/e2e-test-environment.md). It packs fixture packages, runs a fake npm staging registry, starts the Worker locally, and writes inspectable screenshots/traces/journals under `.context/`.
 
 ## Configuration and secrets
 

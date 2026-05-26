@@ -1,4 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
+import { allowInsecureLocalRegistry, registryProtocolAllowed } from "./npm-connection";
 import type { FileRecord, PackageJsonSummary } from "./review";
 import * as tarParser from "./tar-parser.js";
 
@@ -120,7 +121,12 @@ export async function downloadInSandbox(
     try {
       const tarball = new URL(options.tarballUrl);
       const registryOrigin = new URL(registry).origin;
-      if (tarball.origin !== registryOrigin || tarball.protocol !== "https:") {
+      if (
+        tarball.origin !== registryOrigin ||
+        !registryProtocolAllowed(tarball, {
+          allowInsecureLocalhost: allowInsecureLocalRegistry(env),
+        })
+      ) {
         throw new SandboxError(
           JSON.stringify({ error: "tarball URL is not allowed by the gateway", status: 400 }),
         );

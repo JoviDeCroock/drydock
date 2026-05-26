@@ -145,21 +145,23 @@ export async function enforceRateLimit(db: AppDb, input: RateLimitInput) {
   const expiresAt = new Date((bucket + 1) * input.windowMs);
   const now = new Date(nowMs);
 
-  await db
-    .insert(rateLimits)
-    .values({
+  const [existing] = await db.select().from(rateLimits).where(eq(rateLimits.key, key)).limit(1);
+  if (existing) {
+    await db
+      .update(rateLimits)
+      .set({
+        count: sql`${rateLimits.count} + 1`,
+        updatedAt: now,
+      })
+      .where(eq(rateLimits.key, key));
+  } else {
+    await db.insert(rateLimits).values({
       key,
       count: 1,
       expiresAt,
       updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: rateLimits.key,
-      set: {
-        count: sql`${rateLimits.count} + 1`,
-        updatedAt: now,
-      },
     });
+  }
 
   const [entry] = await db.select().from(rateLimits).where(eq(rateLimits.key, key)).limit(1);
   if (Math.random() < 0.01) {

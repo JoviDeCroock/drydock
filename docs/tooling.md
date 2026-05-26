@@ -17,6 +17,9 @@
 | `pnpm run test`         | Node logic tests (`test/**`) plus D1-backed worker tests (`test/workers/**`) via `vitest-pool-workers`. |
 | `pnpm run test:node`    | Just the node logic suite.                                                                              |
 | `pnpm run test:workers` | Just the worker suite (Miniflare D1 from `wrangler.test.jsonc` + `drizzle/`).                           |
+| `pnpm run e2e:fixtures` | Pack local E2E fixture packages and generate `.context/e2e-registry/registry.json`.                     |
+| `pnpm run e2e:dev`      | Start the fake npm staging registry plus the Vite/Worker dev server for browser testing.                |
+| `pnpm run test:e2e`     | Run Playwright against the local fake-registry harness.                                                 |
 | `pnpm run verify`       | Run lint + format check + typecheck + tests, in order.                                                  |
 
 `pnpm lint` (the shorthand without `run`) can collide with workspace forwarding or shell wrappers — always use `pnpm run lint`.
