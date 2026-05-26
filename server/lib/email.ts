@@ -75,12 +75,12 @@ export function buildMimeMessage(input: BuildMimeMessageInput): string {
     const parts = [
       `--${boundary}`,
       'Content-Type: text/plain; charset="utf-8"',
-      "Content-Transfer-Encoding: 7bit",
+      "Content-Transfer-Encoding: 8bit",
       "",
       input.text,
       `--${boundary}`,
       'Content-Type: text/html; charset="utf-8"',
-      "Content-Transfer-Encoding: 7bit",
+      "Content-Transfer-Encoding: 8bit",
       "",
       input.html,
       `--${boundary}--`,
@@ -90,7 +90,7 @@ export function buildMimeMessage(input: BuildMimeMessageInput): string {
   }
 
   headers.push('Content-Type: text/plain; charset="utf-8"');
-  headers.push("Content-Transfer-Encoding: 7bit");
+  headers.push("Content-Transfer-Encoding: 8bit");
   return headers.join("\r\n") + "\r\n\r\n" + input.text + "\r\n";
 }
 

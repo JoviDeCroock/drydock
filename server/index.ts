@@ -1,5 +1,11 @@
 import { Hono } from "hono";
-import { createDb, enforceRateLimit, listAutoDiscoveryNpmConnections, RateLimitError } from "./db";
+import {
+  createDb,
+  enforceRateLimit,
+  getOrganizationOwnerUserId,
+  listAutoDiscoveryNpmConnections,
+  RateLimitError,
+} from "./db";
 import { createAuth, getAuthSession } from "./lib/auth";
 import { allowInsecureLocalRegistry } from "./lib/npm-connection";
 import {
@@ -212,7 +218,15 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
   console.log("staged publishes cron sweep", { organizations: connections.length });
   const allowInsecureLocalhost = allowInsecureLocalRegistry(env);
   for (const connection of connections) {
-    const actorUserId = connection.createdByUserId ?? connection.organizationId;
+    const actorUserId =
+      connection.createdByUserId ??
+      (await getOrganizationOwnerUserId(db, connection.organizationId));
+    if (!actorUserId) {
+      console.error("staged publishes cron sweep skipped: organization owner missing", {
+        organizationId: connection.organizationId,
+      });
+      continue;
+    }
     try {
       const usable = await ensureUsableNpmConnection({
         db,

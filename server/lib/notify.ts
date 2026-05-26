@@ -82,7 +82,7 @@ function scanUrl(env: Cloudflare.Env, scanId: string): string | null {
   const base = env.BETTER_AUTH_URL;
   if (typeof base !== "string" || !base) return null;
   try {
-    const url = new URL(`/scans/${encodeURIComponent(scanId)}`, base);
+    const url = new URL(`/dashboard/scans/${encodeURIComponent(scanId)}`, base);
     return url.toString();
   } catch {
     return null;

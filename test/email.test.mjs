@@ -38,6 +38,7 @@ describe("buildMimeMessage", () => {
     expect(raw).toContain("To: user@example.com\r\n");
     expect(raw).toContain("Subject: Scan complete\r\n");
     expect(raw).toContain('Content-Type: text/plain; charset="utf-8"');
+    expect(raw).toContain("Content-Transfer-Encoding: 8bit");
     expect(raw).toContain("Hello world");
   });
 
