@@ -90,8 +90,10 @@ Current high-level flow:
    - package file diff;
    - package.json diff;
    - deterministic findings, including implicit npm lifecycle hooks surfaced from tarball shape and warnings when `package.json` cannot be parsed;
+   - release/context annotations for deterministic findings, using package-to-package diff status and changed-line checks where text samples are available;
+   - a risk breakdown where `releaseRisk` is the primary saved scan risk, while `artifactRisk` and `contextRisk` keep full-artifact safety context visible;
    - redacted package/file records.
-9. Parent Worker derives risk from deterministic findings, persists the scan, records audit events, and returns/report renders the result. (AI review is disabled — see "Workers AI" below.)
+9. Parent Worker persists the scan, records audit events, and returns/report renders the result. (AI review is disabled — see "Workers AI" below.)
 
 Current async-capable flow:
 
@@ -145,7 +147,7 @@ When AI review returns it will continue to:
 
 - see changed files only;
 - see redacted bounded text samples;
-- receive deterministic findings as authoritative evidence;
+- receive release-delta deterministic findings as authoritative evidence;
 - treat every package-derived string as hostile evidence, not instructions;
 - explicitly check npm supply-chain hazards such as lifecycle scripts, added dependencies whose own postinstall/install hooks are not visible in the staged tarball, entrypoint changes, credential access, network/process execution, obfuscation, and native artifacts;
 - return schema-constrained JSON;
@@ -194,6 +196,7 @@ Implemented foundation:
 
 - newly completed scans store report metadata inside `summary_json.report`;
 - `digest` is SHA-256 over stable canonical report JSON built from redacted scan evidence, including the deterministic rules version and release/context finding annotations so digests change when the ruleset or visible risk interpretation changes;
+- newly completed scans store `summary_json.risk` with release, artifact, and context risk; `scans.risk` stores the primary release risk for new reports, while old reports without the breakdown are treated as legacy artifact-risk rows;
 - each deterministic finding carries `ruleId` and `ruleVersion` (see `DETERMINISTIC_RULES_VERSION` in `server/lib/review.ts`), persisted on `scan_findings.rule_id` / `rule_version`;
 - persisted scan detail renders report version, digest, rules version, package diff, and safety posture (AI review is disabled — see the Workers AI section).
 

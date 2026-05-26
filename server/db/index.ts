@@ -19,6 +19,7 @@ import {
   normalizeFindingDiffStatus,
   normalizeRisk,
 } from "../lib/review";
+import { normalizeScanRiskBreakdown } from "../lib/risk";
 import type { DiffEntry, FileRecord, Finding, PackageJsonSummary } from "../lib/review";
 
 export type AppDb = ReturnType<typeof drizzle<typeof schema>>;
@@ -549,6 +550,7 @@ export async function listScans(
                   diffForFindingAnnotations(summaryJson, filesByScan.get(row.id) ?? []),
                   { persistedAnnotations: readFindingAnnotations(summaryJson) },
                 ),
+                summaryJson,
               )
             : null,
       };
@@ -639,28 +641,38 @@ export async function getScan(db: AppDb, id: string, organizationId: string) {
     files,
     findings: annotatedFindings,
     riskSummary:
-      scan.status === "complete" ? summarizeScanRisk(scan.risk, annotatedFindings) : null,
+      scan.status === "complete"
+        ? summarizeScanRisk(scan.risk, annotatedFindings, scan.summaryJson)
+        : null,
     events: events.map(redactScanEventForClient),
   };
 }
 
 function summarizeScanRisk(
-  artifactRisk: string,
+  persistedRisk: string,
   findings: Array<{ severity?: string | null; releaseDelta: boolean; diffStatus: string }>,
+  summaryJson?: unknown,
 ): ScanRiskSummary {
   const releaseFindings = findings.filter((finding) => finding.releaseDelta);
   const contextFindings = findings.filter((finding) => !finding.releaseDelta);
   const unknownFindingCount = contextFindings.filter(
     (finding) => finding.diffStatus === "unknown",
   ).length;
+  const persistedBreakdown = readPersistedRiskBreakdown(summaryJson);
   return {
-    artifactRisk: normalizeRisk(artifactRisk),
-    releaseRisk: computeRisk(releaseFindings),
-    contextRisk: computeRisk(contextFindings),
-    releaseFindingCount: releaseFindings.length,
-    contextFindingCount: contextFindings.length,
-    unknownFindingCount,
+    artifactRisk: persistedBreakdown?.artifactRisk ?? normalizeRisk(persistedRisk),
+    releaseRisk: persistedBreakdown?.releaseRisk ?? computeRisk(releaseFindings),
+    contextRisk: persistedBreakdown?.contextRisk ?? computeRisk(contextFindings),
+    releaseFindingCount: persistedBreakdown?.releaseFindingCount ?? releaseFindings.length,
+    contextFindingCount: persistedBreakdown?.contextFindingCount ?? contextFindings.length,
+    unknownFindingCount: persistedBreakdown?.unknownFindingCount ?? unknownFindingCount,
   };
+}
+
+function readPersistedRiskBreakdown(summaryJson: unknown) {
+  const summary = summaryJson && typeof summaryJson === "object" ? summaryJson : null;
+  const risk = summary && !Array.isArray(summary) ? (summary as { risk?: unknown }).risk : null;
+  return normalizeScanRiskBreakdown(risk);
 }
 
 function readFindingAnnotations(summaryJson: unknown): Map<string, FindingDiffAnnotation> {

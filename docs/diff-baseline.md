@@ -41,7 +41,7 @@ The pipeline cross-checks staged detail package name/version against the staged 
 AI review is disabled in the current pipeline, but when it returns it should remain diff-first:
 
 - deterministic findings stay authoritative and are computed before AI;
-- AI sees package-json diff, deterministic findings, changed-file diff, and bounded samples for changed files only;
+- AI sees package-json diff, release-delta deterministic findings, changed-file diff, and bounded samples for changed files only;
 - unchanged files should not be sent as AI review evidence unless a deterministic rule needs context;
 - changed files should be ranked so high-signal files are kept when caps are hit.
 
@@ -56,5 +56,13 @@ However, report payloads, report presentation, and AI payload construction shoul
 - new or modified risky evidence, which is release-blocking signal;
 - removed risky evidence, which may be positive but still deserves context;
 - unchanged risky evidence, which is pre-existing package risk and should not dominate "what changed" unless policy says the product blocks any release containing that behavior.
+
+New scan reports persist this split as a risk breakdown in `summary_json.risk`:
+
+- `releaseRisk` is the primary scan risk and is computed from findings annotated as part of the package-to-package delta, plus any complete AI review result when AI review is enabled;
+- `artifactRisk` is computed from the full staged artifact findings, plus any complete AI review result when AI review is enabled, and remains visible as package context;
+- `contextRisk` covers findings that were not part of the release delta.
+
+The `scans.risk` column now stores `releaseRisk` for new reports. Older reports without `summary_json.risk` are interpreted with the previous behavior, where `scans.risk` is the artifact risk and release/context risk is derived from persisted finding annotations.
 
 This avoids hiding persistent risk while keeping the staged-publish review centered on the actual release delta.
