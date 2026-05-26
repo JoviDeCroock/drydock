@@ -196,6 +196,7 @@ export function createPyPiReleaseCandidateReview(input: {
   artifacts: PyPiArtifactInput[];
   previousArtifacts?: PyPiArtifactInput[];
 }): PyPiReleaseCandidateReview {
+  assertManifestArtifactSet(input.manifest, input.artifacts);
   const artifacts = input.artifacts.map(preparePyPiArtifact);
   const previousArtifacts = (input.previousArtifacts ?? []).map(preparePyPiArtifact);
   const stagedFiles = redactFileRecords(flattenPyPiArtifactFiles(artifacts));
@@ -488,9 +489,52 @@ function flattenPyPiArtifactFiles(artifacts: PyPiPreparedArtifact[]): FileRecord
   return artifacts.flatMap((artifact) =>
     artifact.files.map((file) => ({
       ...file,
-      path: namespacedPath(artifact.path, file.path),
+      path: namespacedPath(artifactDiffNamespace(artifact), normalizePyPiDiffFilePath(file.path)),
     })),
   );
+}
+
+function assertManifestArtifactSet(
+  manifest: PyPiReleaseManifest,
+  artifacts: PyPiArtifactInput[],
+): void {
+  const manifestPaths = sortedUnique(manifest.artifacts.map((artifact) => artifact.path));
+  const artifactPaths = sortedUnique(artifacts.map((artifact) => artifact.path));
+  if (
+    manifestPaths.length !== manifest.artifacts.length ||
+    artifactPaths.length !== artifacts.length ||
+    manifestPaths.length !== artifactPaths.length ||
+    manifestPaths.some((path, index) => path !== artifactPaths[index])
+  ) {
+    throw new Error("review artifacts must exactly match manifest artifacts");
+  }
+}
+
+function sortedUnique(values: string[]): string[] {
+  return [...new Set(values)].sort();
+}
+
+function artifactDiffNamespace(artifact: PyPiPreparedArtifact): string {
+  if (artifact.kind === "sdist") return "sdist";
+  const tags = artifact.summary.wheel?.tags ?? [];
+  if (tags.length) return `wheel/${tags.slice().sort().map(safeDiffPathPart).join("+")}`;
+  const filename = artifact.path.split("/").at(-1) ?? "";
+  const wheelTags = filename
+    .replace(/\.whl$/i, "")
+    .split("-")
+    .slice(-3);
+  if (wheelTags.length === 3) return `wheel/${wheelTags.map(safeDiffPathPart).join("-")}`;
+  return "wheel/unknown";
+}
+
+function normalizePyPiDiffFilePath(path: string): string {
+  return path
+    .replace(/(^|\/)[^/]+\.dist-info\//gi, "$1.dist-info/")
+    .replace(/(^|\/)[^/]+\.egg-info\//gi, "$1.egg-info/");
+}
+
+function safeDiffPathPart(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]+/g, "_") || "unknown";
 }
 
 function pickPackageIdentity(manifest: PyPiReleaseManifest, artifacts: PyPiPreparedArtifact[]) {

@@ -20,7 +20,8 @@ The repo now has a backend-only PyPI foundation in `server/lib/pypi.ts`:
 - recognizes wheel (`.whl`) and sdist (`.tar.gz`, `.tgz`) artifacts;
 - parses wheel `METADATA`, `WHEEL`, and `RECORD` evidence from ZIP archives;
 - strips the common root directory from sdists before reading `PKG-INFO`;
-- compares flattened candidate artifact files against optional previous artifacts;
+- compares flattened candidate artifact files against optional previous artifacts using stable wheel/sdist namespaces instead of versioned artifact filenames;
+- requires the reviewed artifact path set to exactly match the manifest artifact path set;
 - adds PyPI-specific deterministic findings for metadata mismatches, missing wheel `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, and `.pyd` native extensions;
 - fetches PyPI project metadata from `GET /pypi/<project>/json`;
 - selects a default PyPI baseline release from `info.version`, falling back to newest non-yanked upload time;
