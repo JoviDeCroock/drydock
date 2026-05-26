@@ -5,21 +5,19 @@ import { NpmStageGateway } from "../../server/lib/sandbox";
 interface CapturedRequest {
   url: string;
   method: string;
+  redirect: RequestRedirect;
   authorization: string | null;
   userAgent: string | null;
 }
 
-function setupGateway(props: {
-  npmToken?: string;
-  npmRegistry?: string;
-  publicArtifactUrls?: string[];
-}) {
+function setupGateway(props: { npmToken?: string; allowedUrl: string; credentialed?: boolean }) {
   const captured: CapturedRequest[] = [];
   const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init);
     captured.push({
       url: request.url,
       method: request.method,
+      redirect: request.redirect,
       authorization: request.headers.get("authorization"),
       userAgent: request.headers.get("user-agent"),
     });
@@ -28,7 +26,7 @@ function setupGateway(props: {
   vi.stubGlobal("fetch", fetchSpy);
 
   const ctx = createExecutionContext() as ExecutionContext & {
-    props: { npmToken?: string; npmRegistry?: string; publicArtifactUrls?: string[] };
+    props: { npmToken?: string; allowedUrl: string; credentialed?: boolean };
   };
   ctx.props = props;
   const gateway = new (NpmStageGateway as unknown as new (
@@ -43,68 +41,58 @@ afterEach(() => {
 });
 
 describe("NpmStageGateway runtime credential injection", () => {
-  test("attaches Authorization on staged-tarball requests", async () => {
-    const { gateway, captured } = setupGateway({ npmToken: "npm_secret_token_123" });
-    const res = await gateway.fetch(
-      new Request("https://registry.npmjs.org/-/stage/stage-abc123/tarball"),
-    );
+  test("attaches Authorization on the pinned URL", async () => {
+    const allowedUrl = "https://registry.npmjs.org/-/stage/stage-abc123/tarball";
+    const { gateway, captured } = setupGateway({
+      npmToken: "npm_secret_token_123",
+      allowedUrl,
+    });
+    const res = await gateway.fetch(new Request(allowedUrl));
     expect(res.status).toBe(200);
     expect(captured).toHaveLength(1);
     expect(captured[0].authorization).toBe("Bearer npm_secret_token_123");
+    expect(captured[0].redirect).toBe("manual");
     expect(captured[0].userAgent).toBe("staged-publish-review/0.3");
   });
 
-  test("attaches Authorization on published-tarball requests", async () => {
-    const { gateway, captured } = setupGateway({ npmToken: "npm_secret_token_xyz" });
-    const res = await gateway.fetch(new Request("https://registry.npmjs.org/pkg/-/pkg-1.2.3.tgz"));
-    expect(res.status).toBe(200);
-    expect(captured).toHaveLength(1);
-    expect(captured[0].authorization).toBe("Bearer npm_secret_token_xyz");
-  });
+  test("blocks any URL other than the pinned one", async () => {
+    const allowedUrl = "https://registry.npmjs.org/-/stage/stage-abc123/tarball";
+    const { gateway, captured } = setupGateway({
+      npmToken: "npm_should_not_leak",
+      allowedUrl,
+    });
 
-  test("attaches Authorization on package-metadata requests", async () => {
-    const { gateway, captured } = setupGateway({ npmToken: "npm_secret_meta" });
-    const res = await gateway.fetch(new Request("https://registry.npmjs.org/@scope%2fpkg"));
-    expect(res.status).toBe(200);
-    expect(captured).toHaveLength(1);
-    expect(captured[0].authorization).toBe("Bearer npm_secret_meta");
-  });
+    const otherStage = await gateway.fetch(
+      new Request("https://registry.npmjs.org/-/stage/stage-other/tarball"),
+    );
+    expect(otherStage.status).toBe(403);
 
-  test("blocks foreign origins without forwarding or sending the token", async () => {
-    const { gateway, captured } = setupGateway({ npmToken: "npm_should_not_leak" });
-    const res = await gateway.fetch(
+    const metadata = await gateway.fetch(new Request("https://registry.npmjs.org/@scope%2fpkg"));
+    expect(metadata.status).toBe(403);
+
+    const foreign = await gateway.fetch(
       new Request("https://example.com/-/stage/stage-abc123/tarball"),
     );
-    expect(res.status).toBe(403);
+    expect(foreign.status).toBe(403);
+
     expect(captured).toHaveLength(0);
   });
 
-  test("blocks state-changing methods even on allowed paths", async () => {
-    const { gateway, captured } = setupGateway({ npmToken: "npm_should_not_leak" });
-    const res = await gateway.fetch(
-      new Request("https://registry.npmjs.org/-/stage/stage-abc123/tarball", { method: "POST" }),
-    );
+  test("blocks state-changing methods on the pinned URL", async () => {
+    const allowedUrl = "https://registry.npmjs.org/-/stage/stage-abc123/tarball";
+    const { gateway, captured } = setupGateway({
+      npmToken: "npm_should_not_leak",
+      allowedUrl,
+    });
+    const res = await gateway.fetch(new Request(allowedUrl, { method: "POST" }));
     expect(res.status).toBe(403);
-    expect(captured).toHaveLength(0);
-  });
-
-  test("blocks /-/whoami and other unrelated registry paths", async () => {
-    const { gateway, captured } = setupGateway({ npmToken: "npm_should_not_leak" });
-
-    const whoami = await gateway.fetch(new Request("https://registry.npmjs.org/-/whoami"));
-    expect(whoami.status).toBe(403);
-
-    const readme = await gateway.fetch(new Request("https://registry.npmjs.org/pkg/readme"));
-    expect(readme.status).toBe(403);
-
     expect(captured).toHaveLength(0);
   });
 
   test("omits Authorization when no npm token is configured", async () => {
-    const { gateway, captured } = setupGateway({});
-    const res = await gateway.fetch(
-      new Request("https://registry.npmjs.org/-/stage/stage-no-token/tarball"),
-    );
+    const allowedUrl = "https://registry.npmjs.org/-/stage/stage-no-token/tarball";
+    const { gateway, captured } = setupGateway({ allowedUrl });
+    const res = await gateway.fetch(new Request(allowedUrl));
     expect(res.status).toBe(200);
     expect(captured).toHaveLength(1);
     expect(captured[0].authorization).toBeNull();
@@ -115,7 +103,8 @@ describe("NpmStageGateway runtime credential injection", () => {
     const publicUrl = "https://files.pythonhosted.org/packages/aa/bb/demo-1.0.0-py3-none-any.whl";
     const { gateway, captured } = setupGateway({
       npmToken: "npm_should_not_reach_public_artifact",
-      publicArtifactUrls: [publicUrl],
+      allowedUrl: publicUrl,
+      credentialed: false,
     });
 
     const res = await gateway.fetch(new Request(publicUrl));
@@ -128,9 +117,8 @@ describe("NpmStageGateway runtime credential injection", () => {
   test("blocks non-exact public artifact URLs without forwarding npm credentials", async () => {
     const { gateway, captured } = setupGateway({
       npmToken: "npm_should_not_leak",
-      publicArtifactUrls: [
-        "https://files.pythonhosted.org/packages/aa/bb/demo-1.0.0-py3-none-any.whl",
-      ],
+      allowedUrl: "https://files.pythonhosted.org/packages/aa/bb/demo-1.0.0-py3-none-any.whl",
+      credentialed: false,
     });
 
     const res = await gateway.fetch(
@@ -141,15 +129,14 @@ describe("NpmStageGateway runtime credential injection", () => {
     expect(captured).toHaveLength(0);
   });
 
-  test("respects custom registry origins supplied via props", async () => {
+  test("pins independently for custom registry origins", async () => {
+    const allowedUrl = "https://registry.example.com/-/stage/stage-custom/tarball";
     const { gateway, captured } = setupGateway({
       npmToken: "npm_custom_registry_token",
-      npmRegistry: "https://registry.example.com",
+      allowedUrl,
     });
 
-    const allowed = await gateway.fetch(
-      new Request("https://registry.example.com/-/stage/stage-custom/tarball"),
-    );
+    const allowed = await gateway.fetch(new Request(allowedUrl));
     expect(allowed.status).toBe(200);
     expect(captured[0].authorization).toBe("Bearer npm_custom_registry_token");
 

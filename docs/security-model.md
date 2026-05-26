@@ -100,13 +100,9 @@ Redaction is a defense-in-depth feature, not a proof that data is safe. Redact k
 
 ## Sandbox egress policy
 
-Allowed credentialed egress through `NpmStageGateway`:
+The gateway is pinned per-call to the exact URL the parent intends to fetch. The parent computes the target URL (staged tarball for a stage ID, or a registry-issued previous-version `.tgz`) and passes it to `NpmStageGateway` as the `allowedUrl` prop. The gateway accepts only a `GET` whose protocol, origin, pathname, and search exactly match `allowedUrl`; everything else is rejected with `403`.
 
-- `GET` staged npm tarball endpoint;
-- `GET` npm package metadata JSON endpoint;
-- `GET` published npm `.tgz` tarballs for previous-version diffing.
-
-The trusted parent Worker may also call npm's staged list/view endpoints (`/-/stage`, `/-/stage/:id`) with organization credentials for discovery, validation, tag-aware baseline selection, and shasum/mismatch checks. Current staged-view responses are metadata-only, not prepared manifests. Those responses are treated as registry metadata and are not fetched from inside the sandbox; token material still never enters the sandbox.
+The trusted parent Worker may also call npm's staged list/view endpoints (`/-/stage`, `/-/stage/:id`) and package metadata with organization credentials for discovery, validation, tag-aware baseline selection, and shasum/mismatch checks. Those responses are never fetched from inside the sandbox; token material still never enters the sandbox.
 
 This matches Cloudflare's [outbound Worker sandbox-auth model](https://blog.cloudflare.com/sandbox-auth/): auth injection happens in a trusted WorkerEntrypoint using parent-provided props, not inside the sandboxed workload.
 
@@ -115,9 +111,15 @@ Blocked:
 - arbitrary origins;
 - package-controlled URLs;
 - install-time network calls;
-- any request where npm auth would be forwarded to a non-registry origin.
+- any URL other than the per-call pinned target — even other endpoints on the configured registry origin.
 
-The gateway compares URL origins against the configured npm registry and attaches credentials only for the minimal endpoint set requiring auth. For the PyPI foundation, it can also allow exact public artifact URLs without credentials; those URLs must be explicitly listed and are intended for `files.pythonhosted.org` release artifacts. Previous-version compare cache entries are scoped by organization so cached private-package evidence is not shared across tenants.
+Sandbox isolate posture:
+
+- `globalThis.caches` is redefined to `undefined` in the sandbox preamble so a parser regression cannot accidentally cache untrusted bytes;
+- `compatibilityFlags: []` is passed explicitly to `LOADER.load` so date bumps cannot quietly enable new ambient APIs in the sandbox;
+- `subRequests` is capped at `1` — the sandbox fetches exactly one artifact.
+
+For the PyPI foundation, the parent can also pin exact public artifact URLs without credentials; those URLs must be explicitly listed and are intended for `files.pythonhosted.org` release artifacts. Previous-version compare cache entries are scoped by organization so cached private-package evidence is not shared across tenants.
 
 ## PyPI workflow-gate posture
 

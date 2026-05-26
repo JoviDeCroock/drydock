@@ -8,6 +8,7 @@ import type { TarSuspiciousEntry } from "./tar-parser.js";
 const MAX_FILES = 250;
 const MAX_BYTES_PER_FILE = 64 * 1024;
 const MAX_TAR_BYTES = 25 * 1024 * 1024;
+const STAGE_ID_RE = new RegExp(`^${STAGE_ID_PATTERN}$`);
 
 // Functions whose source text is concatenated into the sandbox worker module.
 // They must remain referenced only by lexical name (no closures) so the order
@@ -46,68 +47,90 @@ function renderTarParserSource() {
 
 interface NpmStageGatewayProps {
   npmToken?: string;
-  npmRegistry?: string;
-  publicArtifactUrls?: string[];
+  allowedUrl: string;
+  credentialed?: boolean;
 }
 
-export interface NpmStageGatewayPolicy {
+export interface NpmStageGatewayDecision {
   allowed: boolean;
-  credentialed: boolean;
-  kind: "staged-tarball" | "published-tarball" | "package-metadata" | "public-artifact" | "blocked";
 }
 
-export function evaluateNpmStageGatewayRequest(
+export function matchAllowedRequest(
   requestUrl: string,
   method: string,
-  registryUrl: string,
-  publicArtifactUrls: string[] = [],
-): NpmStageGatewayPolicy {
-  const url = new URL(requestUrl);
-  const registry = new URL(registryUrl || "https://registry.npmjs.org");
-  const sameOrigin = url.origin === registry.origin;
-  const normalizedMethod = method.toUpperCase();
-  const isPublicArtifact =
-    normalizedMethod === "GET" &&
-    url.protocol === "https:" &&
-    publicArtifactUrls.some((allowedUrl) => requestUrl === allowedUrl);
-  const packageMetadataPath = /^\/(?:@[^/]+%2[fF][^/]+|[^/@-][^/]*)$/.test(url.pathname);
-  const isStagedTarball =
-    sameOrigin &&
-    normalizedMethod === "GET" &&
-    url.pathname.startsWith("/-/stage/") &&
-    url.pathname.endsWith("/tarball");
-  const isPublishedTarball =
-    sameOrigin &&
-    normalizedMethod === "GET" &&
-    url.pathname.endsWith(".tgz") &&
-    url.pathname.includes("/-/");
-  const isRegistryMetadata = sameOrigin && normalizedMethod === "GET" && packageMetadataPath;
+  allowedUrl: string,
+  options: { allowInsecureLocalhost?: boolean } = {},
+): NpmStageGatewayDecision {
+  if (method.toUpperCase() !== "GET") return { allowed: false };
+  let request: URL;
+  let allowed: URL;
+  try {
+    request = new URL(requestUrl);
+    allowed = new URL(allowedUrl);
+  } catch {
+    return { allowed: false };
+  }
+  if (!registryProtocolAllowed(request, options) || !registryProtocolAllowed(allowed, options)) {
+    return { allowed: false };
+  }
+  if (request.origin !== allowed.origin) return { allowed: false };
+  if (request.pathname !== allowed.pathname) return { allowed: false };
+  if (request.search !== allowed.search) return { allowed: false };
+  return { allowed: true };
+}
 
-  if (isPublicArtifact) return { allowed: true, credentialed: false, kind: "public-artifact" };
-  if (isStagedTarball) return { allowed: true, credentialed: true, kind: "staged-tarball" };
-  if (isPublishedTarball) return { allowed: true, credentialed: true, kind: "published-tarball" };
-  if (isRegistryMetadata) return { allowed: true, credentialed: true, kind: "package-metadata" };
-  return { allowed: false, credentialed: false, kind: "blocked" };
+export function isAllowedPublishedTarballUrl(
+  tarballUrl: string,
+  registryUrl: string,
+  options: { allowInsecureLocalhost?: boolean } = {},
+): boolean {
+  try {
+    const tarball = new URL(tarballUrl);
+    const registry = new URL(registryUrl);
+    return (
+      tarball.origin === registry.origin &&
+      registryProtocolAllowed(tarball, options) &&
+      tarball.pathname.endsWith(".tgz") &&
+      tarball.pathname.includes("/-/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function isAllowedPublicArtifactUrl(
+  artifactUrl: string,
+  publicArtifactUrls: readonly string[] = [],
+): boolean {
+  try {
+    const artifact = new URL(artifactUrl);
+    if (artifact.protocol !== "https:") return false;
+    return publicArtifactUrls.some((allowedUrl) => {
+      try {
+        return new URL(allowedUrl).toString() === artifact.toString();
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
 }
 
 export class NpmStageGateway extends WorkerEntrypoint<Cloudflare.Env, NpmStageGatewayProps> {
   async fetch(request: Request): Promise<Response> {
-    const registry =
-      this.ctx.props.npmRegistry || this.env.NPM_REGISTRY || "https://registry.npmjs.org";
-    const policy = evaluateNpmStageGatewayRequest(
-      request.url,
-      request.method,
-      registry,
-      this.ctx.props.publicArtifactUrls,
-    );
-
-    if (!policy.allowed) {
+    const decision = matchAllowedRequest(request.url, request.method, this.ctx.props.allowedUrl, {
+      allowInsecureLocalhost: allowInsecureLocalRegistry(this.env),
+    });
+    if (!decision.allowed) {
       return new Response("blocked by stage gateway", { status: 403 });
     }
 
     const token = this.ctx.props.npmToken;
-    const forwarded = new Request(request);
-    if (token && policy.credentialed) forwarded.headers.set("authorization", `Bearer ${token}`);
+    const forwarded = new Request(request, { redirect: "manual" });
+    if (token && this.ctx.props.credentialed !== false) {
+      forwarded.headers.set("authorization", `Bearer ${token}`);
+    }
     forwarded.headers.set("user-agent", "staged-publish-review/0.3");
 
     return fetch(forwarded);
@@ -172,34 +195,15 @@ export async function downloadInSandbox(
   options: DownloadOptions,
 ): Promise<DownloadResult> {
   const registry = options.npmRegistry || env.NPM_REGISTRY || "https://registry.npmjs.org";
-  if (options.tarballUrl) {
-    try {
-      const tarball = new URL(options.tarballUrl);
-      const registryOrigin = new URL(registry).origin;
-      const isRegistryArtifact =
-        tarball.origin === registryOrigin &&
-        registryProtocolAllowed(tarball, {
-          allowInsecureLocalhost: allowInsecureLocalRegistry(env),
-        });
-      const isPublicArtifact =
-        tarball.protocol === "https:" &&
-        (options.publicArtifactUrls ?? []).some((allowedUrl) => allowedUrl === options.tarballUrl);
-      if (!isRegistryArtifact && !isPublicArtifact) {
-        throw new SandboxError(
-          JSON.stringify({ error: "tarball URL is not allowed by the gateway", status: 400 }),
-        );
-      }
-    } catch (err) {
-      if (err instanceof SandboxError) throw err;
-      throw new SandboxError(JSON.stringify({ error: "invalid tarball URL", status: 400 }));
-    }
-  }
+  const target = resolveTargetUrl(registry, options, {
+    allowInsecureLocalhost: allowInsecureLocalRegistry(env),
+  });
   const sandbox = env.LOADER.load({
     compatibilityDate: "2026-05-20",
+    compatibilityFlags: [],
     mainModule: "sandbox.js",
     modules: { "sandbox.js": sandboxSource() },
     env: {
-      NPM_REGISTRY: options.npmRegistry || env.NPM_REGISTRY || "https://registry.npmjs.org",
       ARCHIVE_FORMAT: options.archiveFormat || "tgz",
       MAX_FILES: Math.min(options.maxFiles ?? MAX_FILES, MAX_FILES),
       MAX_BYTES_PER_FILE: Math.min(
@@ -215,17 +219,17 @@ export async function downloadInSandbox(
     ).exports.NpmStageGateway({
       props: {
         npmToken: options.npmToken,
-        npmRegistry: options.npmRegistry,
-        publicArtifactUrls: options.publicArtifactUrls,
+        allowedUrl: target.url,
+        credentialed: target.credentialed,
       },
     }),
-    limits: { cpuMs: 2_000, subRequests: 4 },
+    limits: { cpuMs: 2_000, subRequests: 1 },
   });
 
   const response = await sandbox.getEntrypoint().fetch(
     new Request("https://sandbox.local/download", {
       method: "POST",
-      body: JSON.stringify({ stageId: options.stageId, tarballUrl: options.tarballUrl }),
+      body: JSON.stringify({ targetUrl: target.url }),
       headers: { "content-type": "application/json" },
     }),
   );
@@ -236,19 +240,60 @@ export async function downloadInSandbox(
   return (await response.json()) as DownloadResult;
 }
 
-function sandboxSource() {
-  return `${renderTarParserSource()}
+function resolveTargetUrl(
+  registry: string,
+  options: DownloadOptions,
+  protocolOptions: { allowInsecureLocalhost?: boolean },
+): { url: string; credentialed: boolean } {
+  if (options.tarballUrl) {
+    if (isAllowedPublishedTarballUrl(options.tarballUrl, registry, protocolOptions)) {
+      return { url: new URL(options.tarballUrl).toString(), credentialed: true };
+    }
+    if (isAllowedPublicArtifactUrl(options.tarballUrl, options.publicArtifactUrls)) {
+      return { url: new URL(options.tarballUrl).toString(), credentialed: false };
+    }
+    throw new SandboxError(
+      JSON.stringify({ error: "tarball URL is not allowed by the gateway", status: 400 }),
+    );
+  }
+  if (!options.stageId || !STAGE_ID_RE.test(options.stageId)) {
+    throw new SandboxError(JSON.stringify({ error: "invalid stageId", status: 400 }));
+  }
+  let registryUrl: URL;
+  try {
+    registryUrl = new URL(registry);
+  } catch {
+    throw new SandboxError(JSON.stringify({ error: "invalid registry URL", status: 400 }));
+  }
+  if (!registryProtocolAllowed(registryUrl, protocolOptions)) {
+    throw new SandboxError(
+      JSON.stringify({ error: "registry URL is not allowed by the gateway", status: 400 }),
+    );
+  }
+  return {
+    url: `${registry.replace(/\/$/, "")}/-/stage/${encodeURIComponent(options.stageId)}/tarball`,
+    credentialed: true,
+  };
+}
 
-const STAGE_ID_RE = new RegExp(${JSON.stringify(`^${STAGE_ID_PATTERN}$`)});
+function sandboxSource() {
+  return `// Lock down ambient capabilities the parser doesn't need so a parser
+// regression cannot reach them. caches would let untrusted bytes be cached
+// across scans; the sandbox never needs it.
+try {
+  Object.defineProperty(globalThis, "caches", { value: undefined, configurable: true });
+} catch {}
+
+${renderTarParserSource()}
 
 export default {
   async fetch(request, env) {
-    const { stageId, tarballUrl } = await request.json();
-    if (!tarballUrl && !STAGE_ID_RE.test(stageId)) return json({ error: "invalid stageId" }, 400);
+    const { targetUrl } = await request.json();
+    if (typeof targetUrl !== "string" || !targetUrl) {
+      return json({ error: "missing targetUrl", status: 400 }, 400);
+    }
 
-    const registry = env.NPM_REGISTRY || "https://registry.npmjs.org";
-    const url = tarballUrl || registry.replace(/\\/$/, "") + "/-/stage/" + encodeURIComponent(stageId) + "/tarball";
-    const res = await fetch(url, { headers: { accept: "application/octet-stream" } });
+    const res = await fetch(targetUrl, { headers: { accept: "application/octet-stream" } });
     if (!res.ok) return json({ error: "download failed", status: res.status }, 502);
 
     const maxTarBytes = env.MAX_TAR_BYTES || 26214400;

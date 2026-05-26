@@ -34,6 +34,7 @@ declare global {
   interface WorkerLoader {
     load(code: {
       compatibilityDate: string;
+      compatibilityFlags?: string[];
       mainModule: string;
       modules: Record<string, string>;
       env?: Record<string, unknown>;

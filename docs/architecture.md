@@ -72,7 +72,8 @@ The dynamic Worker's archive parser is defined in `server/lib/tar-parser.js` and
 It should:
 
 - accept an organization-scoped credential context from the parent Worker;
-- attach auth only to allowed npm registry endpoints;
+- accept a per-call `allowedUrl` and reject anything that is not a `GET` to that exact URL;
+- attach auth only when the request matches the pinned URL;
 - never forward auth to arbitrary origins;
 - record token-use audit events at the parent layer;
 - keep the sandbox ignorant of credentials.
