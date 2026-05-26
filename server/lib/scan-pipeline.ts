@@ -302,6 +302,7 @@ function mergeStagedPackageJson(
         stagedMetadataPackageJson?.optionalDependencies,
       ),
     ),
+    files: stagedMetadataPackageJson?.files ?? tarballPackageJson?.files,
     bin: stagedMetadataPackageJson?.bin ?? tarballPackageJson?.bin,
     main: stagedMetadataPackageJson?.main ?? tarballPackageJson?.main,
     module: stagedMetadataPackageJson?.module ?? tarballPackageJson?.module,

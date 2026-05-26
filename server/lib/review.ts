@@ -25,7 +25,7 @@ export interface Finding {
 // way that should invalidate cached scan reports. Stored alongside each
 // finding so historical reports can be traced back to the ruleset that
 // produced them.
-export const DETERMINISTIC_RULES_VERSION = "1.2.0";
+export const DETERMINISTIC_RULES_VERSION = "1.4.0";
 
 export const DETERMINISTIC_RULE_IDS = {
   installScriptPreinstall: "install-script.preinstall",
@@ -37,11 +37,13 @@ export const DETERMINISTIC_RULE_IDS = {
   fileSecretContent: "file.secret-content",
   fileLargeBinary: "file.large-binary",
   fileNativeArtifact: "file.native-artifact",
+  fileOutsideFilesList: "file.outside-files-list",
   installScriptImplicitNodeGyp: "install-script.implicit-node-gyp",
   packageJsonParseFailed: "package-json.parse-failed",
   diffCredentialFileAdded: "diff.credential-file-added",
   diffLargeNewFile: "diff.large-new-file",
   dependencyUnusualSpec: "dependency.unusual-spec",
+  dependencyOptionalAdded: "dependency.optional-added",
   stageMetadataMismatch: "stage.metadata-mismatch",
 } as const;
 
@@ -55,6 +57,7 @@ export interface PackageJsonSummary {
   devDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
+  files?: string[];
   bin?: string | Record<string, string>;
   main?: string;
   module?: string;
@@ -62,11 +65,14 @@ export interface PackageJsonSummary {
   exports?: unknown;
 }
 
+export type DependencySection = "dependencies" | "optionalDependencies" | "peerDependencies";
+
 export interface PackageJsonDiffEntry {
   key: string;
   status: "added" | "removed" | "modified";
   previous?: string;
   staged?: string;
+  section?: DependencySection;
 }
 
 export interface PackageJsonDiff {
@@ -319,6 +325,17 @@ export function deterministicFindings(
         }),
       );
     }
+    if (isOutsidePackageFilesAllowlist(file.path, packageJson) && changed !== "removed") {
+      findings.push(
+        tag("fileOutsideFilesList", {
+          severity: changed === "added" ? "high" : "medium",
+          file: file.path,
+          evidence: `${changedPrefix}file is not matched by package.json files allowlist`,
+          reason:
+            "unexpected files outside the declared package files list can indicate tarball tampering or generated payloads that are not visible in the source/package manifest review",
+        }),
+      );
+    }
     if (/\.(node|dll|so|dylib|exe|wasm)$/i.test(file.path)) {
       findings.push(
         tag("fileNativeArtifact", {
@@ -414,18 +431,7 @@ export function summarizePackageJsonDiff(
   stagedPkg: PackageJsonSummary | null | undefined,
 ): PackageJsonDiff {
   const changedScripts = diffObject(previousPkg?.scripts || {}, stagedPkg?.scripts || {});
-  const changedDependencies = diffObject(
-    {
-      ...previousPkg?.dependencies,
-      ...previousPkg?.optionalDependencies,
-      ...previousPkg?.peerDependencies,
-    },
-    {
-      ...stagedPkg?.dependencies,
-      ...stagedPkg?.optionalDependencies,
-      ...stagedPkg?.peerDependencies,
-    },
-  );
+  const changedDependencies = diffDependencySections(previousPkg, stagedPkg);
   return {
     name: stagedPkg?.name || previousPkg?.name || null,
     previousVersion: previousPkg?.version || null,
@@ -457,6 +463,18 @@ export function packageJsonDiffFindings(
   const findings: Finding[] = [];
   for (const entry of packageJsonDiff.dependencies) {
     if (entry.status !== "added" && entry.status !== "modified") continue;
+    if (entry.section === "optionalDependencies" && entry.status === "added") {
+      findings.push({
+        severity: "high",
+        file: "package.json",
+        line: firstJsonPropertyLine(stagedPackageJsonText, entry.key, entry.staged),
+        evidence: `${entry.key}: ${entry.staged}`,
+        reason:
+          "optional dependencies can execute install lifecycle hooks while failing softly on unsupported platforms, so newly added optional dependencies require manual review",
+        ruleId: DETERMINISTIC_RULE_IDS.dependencyOptionalAdded,
+        ruleVersion: DETERMINISTIC_RULES_VERSION,
+      });
+    }
     if (!entry.staged) continue;
     const kind = unusualDependencySpecKind(entry.staged);
     if (!kind) continue;
@@ -518,6 +536,7 @@ function isReleaseScopedFinding(finding: { ruleId?: string | null }): boolean {
   return Boolean(
     finding.ruleId?.startsWith("stage.") ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyUnusualSpec ||
+    finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyOptionalAdded ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffCredentialFileAdded ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffLargeNewFile,
   );
@@ -746,6 +765,63 @@ export function redactJson<T>(value: T): T {
     ) as T;
   }
   return value;
+}
+
+function isOutsidePackageFilesAllowlist(
+  path: string,
+  packageJson: PackageJsonSummary | null | undefined,
+): boolean {
+  const files = packageJson?.files?.filter((entry) => entry.trim()) ?? [];
+  if (!files.length) return false;
+  if (isAlwaysIncludedPackageFile(path, packageJson)) return false;
+  return !files.some((entry) => packageFilesEntryMatches(entry, path));
+}
+
+function isAlwaysIncludedPackageFile(
+  path: string,
+  packageJson: PackageJsonSummary | null | undefined,
+): boolean {
+  const lower = path.toLowerCase();
+  if (lower === "package.json") return true;
+  if (/^(?:readme|licen[cs]e|copying|notice)(?:\.|$)/i.test(path)) return true;
+  const entrypoints = [packageJson?.main, packageJson?.module, packageJson?.types];
+  if (entrypoints.includes(path)) return true;
+  const bin = packageJson?.bin;
+  if (typeof bin === "string" && bin === path) return true;
+  if (bin && typeof bin === "object" && Object.values(bin).includes(path)) return true;
+  return false;
+}
+
+function packageFilesEntryMatches(entry: string, path: string): boolean {
+  const normalized = entry.trim().replace(/^\.\//, "").replace(/\/+$/, "");
+  if (!normalized) return false;
+  if (normalized.includes("*")) return globLikePackageFilesEntryMatches(normalized, path);
+  return path === normalized || path.startsWith(`${normalized}/`);
+}
+
+function globLikePackageFilesEntryMatches(entry: string, path: string): boolean {
+  const escaped = entry
+    .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, ".*")
+    .replace(/\*/g, "[^/]*");
+  return new RegExp(`^${escaped}$`).test(path);
+}
+
+function diffDependencySections(
+  previousPkg: PackageJsonSummary | null | undefined,
+  stagedPkg: PackageJsonSummary | null | undefined,
+): PackageJsonDiffEntry[] {
+  const sectionEntries = (section: DependencySection) =>
+    diffObject(previousPkg?.[section] || {}, stagedPkg?.[section] || {}).map((entry) => ({
+      ...entry,
+      section,
+    }));
+
+  return [
+    ...sectionEntries("dependencies"),
+    ...sectionEntries("optionalDependencies"),
+    ...sectionEntries("peerDependencies"),
+  ].sort((a, b) => a.key.localeCompare(b.key) || a.section.localeCompare(b.section));
 }
 
 function unusualDependencySpecKind(spec: string): string | null {

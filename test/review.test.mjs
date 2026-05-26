@@ -296,6 +296,72 @@ describe("review", () => {
     ).toEqual([]);
   });
 
+  test("flags files outside package.json files allowlist", () => {
+    const staged = [
+      {
+        path: "package.json",
+        size: 72,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({ name: "pkg", version: "1.0.1", files: ["dist"] }),
+      },
+      { path: "dist/index.js", size: 20, sha256: "dist", flags: [], textSample: "export {};" },
+      {
+        path: "router_init.js",
+        size: 2048,
+        sha256: "payload",
+        flags: [],
+        textSample: "console.log('init');",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        severity: "high",
+        file: "router_init.js",
+        evidence: "new/changed added file: file is not matched by package.json files allowlist",
+        ruleId: "file.outside-files-list",
+      }),
+    );
+    expect(findings).not.toContainEqual(
+      expect.objectContaining({ file: "dist/index.js", ruleId: "file.outside-files-list" }),
+    );
+  });
+
+  test("flags newly added optional dependencies", () => {
+    const stagedPackageJsonText = `{
+  "name": "pkg",
+  "version": "1.0.1",
+  "optionalDependencies": {
+    "existing": "^1.0.0",
+    "maybe": "^2.0.0"
+  }
+}`;
+    const diff = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", optionalDependencies: { existing: "^1.0.0" } },
+      JSON.parse(stagedPackageJsonText),
+    );
+
+    const findings = packageJsonDiffFindings(diff, stagedPackageJsonText);
+
+    expect(diff.dependencies).toContainEqual({
+      key: "maybe",
+      status: "added",
+      staged: "^2.0.0",
+      section: "optionalDependencies",
+    });
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        severity: "high",
+        file: "package.json",
+        line: 6,
+        evidence: "maybe: ^2.0.0",
+        ruleId: "dependency.optional-added",
+      }),
+    );
+  });
+
   test("flags npm's implicit node-gyp install hook from root gyp files", () => {
     const staged = [
       {
