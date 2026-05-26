@@ -6,6 +6,7 @@ vi.mock("cloudflare:workers", () => ({
 
 const dbMock = vi.hoisted(() => ({
   createScanJob: vi.fn(),
+  deletePendingScanJob: vi.fn(),
   listExistingScanStageIds: vi.fn(),
   markNpmConnectionUsed: vi.fn(),
   recordScanEvent: vi.fn(),
@@ -207,5 +208,89 @@ describe("discoverAndQueueStagedPublishes", () => {
       expect.objectContaining({ source: "auto_discovery", stageId: "stage-new-1" }),
     );
     expect(dbMock.markNpmConnectionUsed).toHaveBeenCalledWith(db, "org_a");
+  });
+
+  test("fetches additional staged publish pages before deduping", async () => {
+    stagedPublishesMock.listStagedPublishes
+      .mockResolvedValueOnce({
+        items: [
+          { id: "stage-page-1", packageName: "pkg-a", version: "1.0.0" },
+          { id: "stage-page-2", packageName: "pkg-b", version: "1.0.0" },
+        ],
+        total: 3,
+        perPage: 2,
+        page: 1,
+      })
+      .mockResolvedValueOnce({
+        items: [
+          { id: "stage-page-3", packageName: "pkg-c", version: "1.0.0" },
+          { id: "stage-page-2", packageName: "pkg-b", version: "1.0.0" },
+        ],
+        total: 3,
+        perPage: 2,
+        page: 2,
+      });
+    dbMock.listExistingScanStageIds.mockResolvedValue(new Set());
+    dbMock.createScanJob.mockResolvedValue({ id: "scan-new" });
+
+    const result = await discoverAndQueueStagedPublishes(
+      {
+        db,
+        env,
+        executionCtx: ctx,
+        organizationId: "org_a",
+        actorUserId: "user_a",
+        source: "auto_discovery",
+        eventSource: "staged_publishes.cron",
+      },
+      { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
+    );
+
+    expect(stagedPublishesMock.listStagedPublishes).toHaveBeenCalledTimes(2);
+    expect(stagedPublishesMock.listStagedPublishes.mock.calls[0]?.[2]).toEqual(
+      expect.objectContaining({ perPage: 50 }),
+    );
+    expect(stagedPublishesMock.listStagedPublishes.mock.calls[1]?.[2]).toEqual(
+      expect.objectContaining({ perPage: 50, page: 2 }),
+    );
+    expect(dbMock.listExistingScanStageIds).toHaveBeenCalledWith(db, "org_a", [
+      "stage-page-1",
+      "stage-page-2",
+      "stage-page-3",
+    ]);
+    expect(result).toEqual(
+      expect.objectContaining({ found: 3, created: 3, skipped: 0, queued: true }),
+    );
+  });
+
+  test("removes the pending scan when queue dispatch fails", async () => {
+    const queueError = new Error("queue unavailable");
+    stagedPublishesMock.listStagedPublishes.mockResolvedValue({
+      items: [{ id: "stage-queue-fail", packageName: "pkg-a", version: "1.0.0" }],
+    });
+    dbMock.listExistingScanStageIds.mockResolvedValue(new Set());
+    dbMock.createScanJob.mockResolvedValue({ id: "scan-new-1" });
+    env.SCAN_QUEUE.send.mockRejectedValueOnce(queueError);
+
+    await expect(
+      discoverAndQueueStagedPublishes(
+        {
+          db,
+          env,
+          executionCtx: ctx,
+          organizationId: "org_a",
+          actorUserId: "user_a",
+          source: "auto_discovery",
+          eventSource: "staged_publishes.cron",
+        },
+        { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
+      ),
+    ).rejects.toThrow("queue unavailable");
+
+    const createdScanId = dbMock.createScanJob.mock.calls[0]?.[1]?.id;
+    expect(dbMock.deletePendingScanJob).toHaveBeenCalledWith(db, createdScanId, "org_a");
+    expect(
+      dbMock.recordScanEvent.mock.calls.some(([, payload]) => payload?.type === "scan.queued"),
+    ).toBe(false);
   });
 });

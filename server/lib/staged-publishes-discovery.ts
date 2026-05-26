@@ -1,5 +1,6 @@
 import {
   createScanJob,
+  deletePendingScanJob,
   listExistingScanStageIds,
   markNpmConnectionUsed,
   recordScanEvent,
@@ -12,6 +13,7 @@ import { executeScanJob, type ScanQueueMessage } from "./scan-job";
 import {
   listStagedPublishes,
   StagedPublishesFetchError,
+  type StagedPublishItem,
   type StartedStagedPublishScan,
 } from "./staged-publishes";
 
@@ -117,12 +119,11 @@ export async function discoverAndQueueStagedPublishes(
     allowInsecureLocalhost,
   } = input;
 
-  const page = await listStagedPublishes(connection.registryUrl, connection.token, {
+  const stagedItems = await listAllStagedPublishes(connection, {
     perPage: 50,
     allowInsecureLocalhost,
   });
   await markNpmConnectionUsed(db, organizationId);
-  const stagedItems = [...new Map(page.items.map((item) => [item.id, item])).values()];
   const stageIds = stagedItems.map((item) => item.id);
   const existingStageIds = await listExistingScanStageIds(db, organizationId, stageIds);
   const startedScans: StartedStagedPublishScan[] = [];
@@ -158,16 +159,28 @@ export async function discoverAndQueueStagedPublishes(
       actorUserId,
       source,
     };
-    await recordScanEvent(db, {
-      organizationId,
-      actorUserId,
-      scanId,
-      type: env.SCAN_QUEUE ? "scan.queued" : "scan.backgrounded",
-      metadata: { stageId, source: eventSource },
-    });
     if (env.SCAN_QUEUE) {
-      await env.SCAN_QUEUE.send(message);
+      try {
+        await env.SCAN_QUEUE.send(message);
+      } catch (err) {
+        await deletePendingScanJob(db, scanId, organizationId);
+        throw err;
+      }
+      await recordScanEvent(db, {
+        organizationId,
+        actorUserId,
+        scanId,
+        type: "scan.queued",
+        metadata: { stageId, source: eventSource },
+      });
     } else {
+      await recordScanEvent(db, {
+        organizationId,
+        actorUserId,
+        scanId,
+        type: "scan.backgrounded",
+        metadata: { stageId, source: eventSource },
+      });
       executionCtx.waitUntil(
         executeScanJob(env, executionCtx, message, db, { finalAttempt: true }),
       );
@@ -193,6 +206,32 @@ export async function discoverAndQueueStagedPublishes(
     queued: Boolean(env.SCAN_QUEUE),
     scans: startedScans,
   };
+}
+
+async function listAllStagedPublishes(
+  connection: TokenForDiscovery,
+  options: { perPage: number; allowInsecureLocalhost?: boolean },
+): Promise<StagedPublishItem[]> {
+  const byId = new Map<string, StagedPublishItem>();
+  let page = await listStagedPublishes(connection.registryUrl, connection.token, options);
+  for (const item of page.items) byId.set(item.id, item);
+
+  const perPage = page.perPage ?? options.perPage;
+  let nextPage = typeof page.page === "number" ? page.page + 1 : 1;
+  for (let pagesFetched = 1; pagesFetched < 100; pagesFetched++) {
+    if (page.total !== null && byId.size >= page.total) break;
+    if (page.items.length < perPage) break;
+
+    page = await listStagedPublishes(connection.registryUrl, connection.token, {
+      ...options,
+      page: nextPage,
+    });
+    if (!page.items.length) break;
+    for (const item of page.items) byId.set(item.id, item);
+    nextPage = typeof page.page === "number" ? page.page + 1 : nextPage + 1;
+  }
+
+  return [...byId.values()];
 }
 
 export { StagedPublishesFetchError };

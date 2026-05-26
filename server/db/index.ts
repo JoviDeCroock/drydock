@@ -203,6 +203,18 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
   return getScan(db, input.id, input.organizationId);
 }
 
+export async function deletePendingScanJob(db: AppDb, scanId: string, organizationId: string) {
+  await db
+    .delete(scans)
+    .where(
+      and(
+        eq(scans.id, scanId),
+        eq(scans.organizationId, organizationId),
+        eq(scans.status, "pending"),
+      ),
+    );
+}
+
 export async function listExistingScanStageIds(
   db: AppDb,
   organizationId: string,
