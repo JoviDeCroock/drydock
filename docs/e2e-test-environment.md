@@ -33,6 +33,8 @@ E2E_APP_PORT=5200 E2E_REGISTRY_PORT=5201 pnpm run test:e2e
 
 Playwright artifacts are written under `.context/e2e-artifacts/`, including traces on failure and `implicit-node-gyp-report.png` on a successful smoke run.
 
+Vite ignores `.context/**` in its file watcher. The E2E runner writes registry state, Worker state, traces, screenshots, and reports there while the app is open; watching those files can cause hot-reload loops that interrupt browser interactions in CI.
+
 ## CI
 
 The GitHub Actions CI workflow runs `pnpm run test:e2e` after lint, format check, typecheck, and Vitest. CI installs Chromium with:
