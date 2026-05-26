@@ -411,7 +411,7 @@ function ReleaseRecommendation({
   const aiComplete = ai?.status === "complete";
 
   return (
-    <section class="flex flex-col gap-3 border-t border-border pt-4">
+    <section class="flex flex-col gap-3">
       <SectionLabel>Recommendation</SectionLabel>
       <div class="flex flex-wrap items-center gap-2">
         <Badge tone={recommendation.tone}>{recommendation.label}</Badge>
@@ -431,9 +431,11 @@ function ReleaseRecommendation({
             <Badge tone="neutral">assistant unavailable</Badge>
           ))}
       </div>
-      <p class="m-0 max-w-[760px] text-[14px] leading-[1.55] text-ink-muted">
-        {recommendation.copy}
-      </p>
+      {recommendation.copy ? (
+        <p class="m-0 max-w-[760px] text-[14px] leading-[1.55] text-ink-muted">
+          {recommendation.copy}
+        </p>
+      ) : null}
       <ul class="list-none p-0 m-0 flex flex-col gap-2">
         {evidence.map((item) => (
           <li
@@ -479,7 +481,7 @@ function getReleaseRecommendation(
     return {
       label: "changed files clear",
       tone: "ok",
-      copy: "No deterministic risk signals point at changed files; existing package signals are retained below as context.",
+      copy: "",
     };
   }
   return {
