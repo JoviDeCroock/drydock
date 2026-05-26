@@ -269,19 +269,10 @@ export default function ScanDetailPage() {
           <ReleaseRecommendation
             detail={detail}
             summary={summary.value}
-            diffCount={diffEntries.value.filter((entry) => entry.status !== "unchanged").length}
-            findingsWithDiffStatus={findingsWithDiffStatus.value}
-            usePersistedRiskSummary={model.isDefaultComparison.value}
-          />
-
-          <ReportOverview
-            detail={detail}
-            summary={summary.value}
             ai={ai.value}
-            findings={detail.findings}
-            findingsWithDiffStatus={findingsWithDiffStatus.value}
             aiFindings={ai.value?.findings ?? []}
             diffCount={diffEntries.value.filter((entry) => entry.status !== "unchanged").length}
+            findingsWithDiffStatus={findingsWithDiffStatus.value}
             usePersistedRiskSummary={model.isDefaultComparison.value}
           />
 
@@ -380,12 +371,16 @@ export default function ScanDetailPage() {
 function ReleaseRecommendation({
   detail,
   summary,
+  ai,
+  aiFindings,
   diffCount,
   findingsWithDiffStatus,
   usePersistedRiskSummary,
 }: {
   detail: PersistedScanDetail;
   summary: PersistedSummary;
+  ai: AiReview | null;
+  aiFindings: AiFinding[];
   diffCount: number;
   findingsWithDiffStatus: FindingWithDiffStatus[];
   usePersistedRiskSummary: boolean;
@@ -406,6 +401,9 @@ function ReleaseRecommendation({
       : changedFindings.length;
   const recommendation = getReleaseRecommendation(artifactRisk, releaseRisk, releaseFindingCount);
   const evidence = buildRecommendationEvidence(detail, summary, diffCount, changedFindings);
+  const severityCounts = countSeverities([...detail.findings, ...aiFindings]);
+  const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
+  const aiComplete = ai?.status === "complete";
 
   return (
     <section class="flex flex-col gap-3 border-t border-border pt-4">
@@ -416,6 +414,17 @@ function ReleaseRecommendation({
         {artifactRisk !== releaseRisk ? (
           <Badge tone="neutral">artifact {artifactRisk}</Badge>
         ) : null}
+        {ai?.model != null &&
+          (aiComplete ? (
+            <>
+              <Badge tone={ai!.requiresManualReview ? "medium" : "ok"}>
+                {ai!.requiresManualReview ? "manual review" : "no extra review"}
+              </Badge>
+              <Badge tone="neutral">{ai!.releaseAssessment.replaceAll("_", " ")}</Badge>
+            </>
+          ) : (
+            <Badge tone="neutral">assistant unavailable</Badge>
+          ))}
       </div>
       <p class="m-0 max-w-[760px] text-[14px] leading-[1.55] text-ink-muted">
         {recommendation.copy}
@@ -433,6 +442,7 @@ function ReleaseRecommendation({
           </li>
         ))}
       </ul>
+      {findingTotal ? <SeverityBar counts={severityCounts} class="max-w-[520px]" /> : null}
     </section>
   );
 }
@@ -1057,94 +1067,6 @@ function findingDiffStatusLabel(status: FindingDiffStatus): string | null {
   if (status === "unknown") return null;
   if (status === "unchanged") return "existing";
   return status;
-}
-
-function ReportOverview({
-  detail,
-  summary,
-  ai,
-  findings,
-  findingsWithDiffStatus,
-  aiFindings,
-  diffCount,
-  usePersistedRiskSummary,
-}: {
-  detail: PersistedScanDetail;
-  summary: PersistedSummary;
-  ai: AiReview | null;
-  findings: PersistedScanDetail["findings"];
-  findingsWithDiffStatus: FindingWithDiffStatus[];
-  aiFindings: AiFinding[];
-  diffCount: number;
-  usePersistedRiskSummary: boolean;
-}) {
-  const changed =
-    diffCount ||
-    summary.diff?.filter((entry) => entry.status !== "unchanged").length ||
-    detail.files.filter((file) => file.status !== "unchanged").length;
-  const severityCounts = countSeverities([...findings, ...aiFindings]);
-  const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
-  const isComplete = detail.scan.status === "complete";
-  const riskSummary = isComplete && usePersistedRiskSummary ? detail.riskSummary : null;
-  const releaseRisk = isComplete
-    ? (riskSummary?.releaseRisk ??
-      highestFindingRisk(
-        findingsWithDiffStatus.filter((item) => item.releaseDelta).map((item) => item.finding),
-      ))
-    : detail.scan.risk;
-  const artifactRisk = isComplete
-    ? (detail.riskSummary?.artifactRisk ?? detail.scan.risk)
-    : detail.scan.risk;
-  const changedFindingTotal =
-    riskSummary?.releaseFindingCount ??
-    findingsWithDiffStatus.filter((item) => item.releaseDelta).length;
-  const contextFindingTotal =
-    riskSummary?.contextFindingCount ??
-    findingsWithDiffStatus.filter((item) => !item.releaseDelta).length;
-  const aiComplete = ai?.status === "complete";
-
-  return (
-    <section class="flex flex-col gap-3 border-t border-border pt-4">
-      <div class="flex flex-wrap items-center gap-2">
-        <Badge tone={severityTone(releaseRisk)}>release {releaseRisk}</Badge>
-        {artifactRisk !== releaseRisk ? (
-          <Badge tone="neutral">artifact {artifactRisk}</Badge>
-        ) : null}
-        {ai?.model != null &&
-          (aiComplete ? (
-            <>
-              <Badge tone={ai!.requiresManualReview ? "medium" : "ok"}>
-                {ai!.requiresManualReview ? "manual review" : "no extra review"}
-              </Badge>
-              <Badge tone="neutral">{ai!.releaseAssessment.replaceAll("_", " ")}</Badge>
-            </>
-          ) : (
-            <Badge tone="neutral">assistant unavailable</Badge>
-          ))}
-        <Badge tone={findingTotal ? "medium" : "ok"}>
-          {findingTotal ? `${findingTotal} ${pluralize("finding", findingTotal)}` : "no findings"}
-        </Badge>
-        {changedFindingTotal ? (
-          <Badge tone="medium">{changedFindingTotal} changed-file</Badge>
-        ) : null}
-        {contextFindingTotal ? <Badge tone="neutral">{contextFindingTotal} context</Badge> : null}
-      </div>
-      <MonoDetail
-        parts={[
-          detail.scan.status,
-          <span key="stage">stage {detail.scan.stageId}</span>,
-          <span key="file-count">
-            {detail.files.length} {pluralize("file", detail.files.length)}
-          </span>,
-          <span key="changed">{changed} changed</span>,
-          <span key="report-version">
-            {summary.report?.version ? `report v${summary.report.version}` : "legacy report"}
-          </span>,
-        ]}
-      />
-      {findingTotal ? <SeverityBar counts={severityCounts} class="max-w-[520px]" /> : null}
-    </section>
-  );
 }
 
 const SEVERITY_RANK: Record<SeverityKey, number> = {
