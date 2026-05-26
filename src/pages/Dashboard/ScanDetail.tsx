@@ -264,91 +264,97 @@ export default function ScanDetailPage() {
       ) : null}
 
       {detail ? (
-        <>
-          <ReleaseRecommendation
-            detail={detail}
-            summary={summary.value}
-            ai={ai.value}
-            aiFindings={ai.value?.findings ?? []}
-            diffCount={diffEntries.value.filter((entry) => entry.status !== "unchanged").length}
-            findingsWithDiffStatus={findingsWithDiffStatus.value}
-            usePersistedRiskSummary={model.isDefaultComparison.value}
-          />
+        detail.scan.status === "complete" ? (
+          <>
+            <ReleaseRecommendation
+              detail={detail}
+              summary={summary.value}
+              ai={ai.value}
+              aiFindings={ai.value?.findings ?? []}
+              diffCount={diffEntries.value.filter((entry) => entry.status !== "unchanged").length}
+              findingsWithDiffStatus={findingsWithDiffStatus.value}
+              usePersistedRiskSummary={model.isDefaultComparison.value}
+            />
 
-          <ScanTimeline events={detail.events ?? []} />
+            <ScanTimeline events={detail.events ?? []} />
 
-          {versions ? (
-            <div class="flex flex-col gap-2 border-t border-border pt-3">
-              <VersionPicker
-                options={versions.versions}
-                selected={selectedVersion}
-                defaultVersion={versions.defaultPreviousVersion}
-                stagedVersion={versions.stagedVersion}
-                onChange={(value) => model.selectVersion(value)}
-                disabled={compareLoading}
-              />
-              {compareLoading ? (
-                <LoadingLine size="inline">Fetching {selectedVersion} via sandbox</LoadingLine>
-              ) : null}
-              {compareError ? <Alert tone="warn">{compareError}</Alert> : null}
-            </div>
-          ) : compareError ? (
-            <Alert tone="warn">{compareError}</Alert>
-          ) : null}
-
-          <section class={workbenchGridClass}>
-            <Card as="aside" class="p-5 flex flex-col gap-3 h-[720px] overflow-hidden">
-              <SectionLabel>Release tree</SectionLabel>
-              <Input
-                type="search"
-                value={fileFilter.value}
-                placeholder="Filter files"
-                onInput={(e) => (fileFilter.value = (e.target as HTMLInputElement).value)}
-                autoComplete="off"
-                spellcheck={false}
-              />
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <label class="flex items-center gap-2 text-[13px] text-ink-muted">
-                  <input
-                    type="checkbox"
-                    checked={changedFilesOnly.value}
-                    onChange={(e) =>
-                      (changedFilesOnly.value = (e.target as HTMLInputElement).checked)
-                    }
-                  />
-                  Changed files only
-                </label>
-                <span class="font-mono text-[11px] text-ink-subtle">
-                  {visibleDiffEntries.value.length} / {diffEntries.value.length}
-                </span>
-              </div>
-              <div class="flex flex-col overflow-y-auto flex-1 min-h-0 border-t border-border pt-2">
-                <FileTree
-                  entries={visibleDiffEntries.value}
-                  selectedPath={model.selectedPath.value}
-                  onSelect={(path) => model.selectPath(path)}
+            {versions ? (
+              <div class="flex flex-col gap-2 border-t border-border pt-3">
+                <VersionPicker
+                  options={versions.versions}
+                  selected={selectedVersion}
+                  defaultVersion={versions.defaultPreviousVersion}
+                  stagedVersion={versions.stagedVersion}
+                  onChange={(value) => model.selectVersion(value)}
+                  disabled={compareLoading}
                 />
+                {compareLoading ? (
+                  <LoadingLine size="inline">Fetching {selectedVersion} via sandbox</LoadingLine>
+                ) : null}
+                {compareError ? <Alert tone="warn">{compareError}</Alert> : null}
               </div>
-            </Card>
+            ) : compareError ? (
+              <Alert tone="warn">{compareError}</Alert>
+            ) : null}
 
-            <Card class="p-5 flex flex-col gap-3 h-[720px]">
-              <SectionLabel>File diff</SectionLabel>
-              <DiffWorkbench
-                entry={selectedEntry.value}
-                staged={stagedFile.value}
-                previousMeta={previousFileMeta.value}
-                previousContent={previousFile.value}
-                compareReady={Boolean(compare)}
-                selectedVersion={selectedVersion}
-                stagedVersion={detail.scan.stagedVersion}
-              />
-            </Card>
-          </section>
+            <section class={workbenchGridClass}>
+              <Card as="aside" class="p-5 flex flex-col gap-3 h-[720px] overflow-hidden">
+                <SectionLabel>Release tree</SectionLabel>
+                <Input
+                  type="search"
+                  value={fileFilter.value}
+                  placeholder="Filter files"
+                  onInput={(e) => (fileFilter.value = (e.target as HTMLInputElement).value)}
+                  autoComplete="off"
+                  spellcheck={false}
+                />
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <label class="flex items-center gap-2 text-[13px] text-ink-muted">
+                    <input
+                      type="checkbox"
+                      checked={changedFilesOnly.value}
+                      onChange={(e) =>
+                        (changedFilesOnly.value = (e.target as HTMLInputElement).checked)
+                      }
+                    />
+                    Changed files only
+                  </label>
+                  <span class="font-mono text-[11px] text-ink-subtle">
+                    {visibleDiffEntries.value.length} / {diffEntries.value.length}
+                  </span>
+                </div>
+                <div class="flex flex-col overflow-y-auto flex-1 min-h-0 border-t border-border pt-2">
+                  <FileTree
+                    entries={visibleDiffEntries.value}
+                    selectedPath={model.selectedPath.value}
+                    onSelect={(path) => model.selectPath(path)}
+                  />
+                </div>
+              </Card>
 
-          {hasRuleFindings ? <RiskSignalsSection findings={findingsWithDiffStatus.value} /> : null}
+              <Card class="p-5 flex flex-col gap-3 h-[720px]">
+                <SectionLabel>File diff</SectionLabel>
+                <DiffWorkbench
+                  entry={selectedEntry.value}
+                  staged={stagedFile.value}
+                  previousMeta={previousFileMeta.value}
+                  previousContent={previousFile.value}
+                  compareReady={Boolean(compare)}
+                  selectedVersion={selectedVersion}
+                  stagedVersion={detail.scan.stagedVersion}
+                />
+              </Card>
+            </section>
 
-          <PersistedReportSections summary={summary.value} ai={ai.value} />
-        </>
+            {hasRuleFindings ? (
+              <RiskSignalsSection findings={findingsWithDiffStatus.value} />
+            ) : null}
+
+            <PersistedReportSections summary={summary.value} ai={ai.value} />
+          </>
+        ) : (
+          <ScanTimeline events={detail.events ?? []} />
+        )
       ) : null}
 
       {detail && detail.scan.status === "complete" ? (
@@ -667,10 +673,8 @@ function ScanDetailHeader({
 } = {}) {
   const decision = detail?.scan.decision;
   const decidedAt = detail?.scan.decidedAt;
-  const releaseRisk =
-    detail?.scan.status === "complete"
-      ? (detail.riskSummary?.releaseRisk ?? detail.scan.risk)
-      : detail?.scan.risk;
+  const isComplete = detail?.scan.status === "complete";
+  const releaseRisk = isComplete ? (detail.riskSummary?.releaseRisk ?? detail.scan.risk) : null;
   const dashboardHref = getDashboardReturnUrl();
   return (
     <header class="flex flex-wrap items-start justify-between gap-4">

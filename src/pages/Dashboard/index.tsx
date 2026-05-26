@@ -669,6 +669,9 @@ function ScanTable({ scans }: { scans: ScanListItem[] }) {
 }
 
 function ScanRiskCell({ scan }: { scan: ScanListItem }) {
+  if (scan.status !== "complete") {
+    return <span class="font-mono text-xs text-ink-subtle">—</span>;
+  }
   const releaseRisk = scan.riskSummary?.releaseRisk ?? scan.risk;
   const artifactRisk = scan.riskSummary?.artifactRisk ?? scan.risk;
   return (
@@ -684,6 +687,9 @@ function ScanRiskCell({ scan }: { scan: ScanListItem }) {
 }
 
 function ScanEvidenceCell({ scan }: { scan: ScanListItem }) {
+  if (scan.status !== "complete") {
+    return <span class="font-mono text-xs text-ink-subtle">—</span>;
+  }
   const changedFiles = scan.changedFileCount ?? 0;
   const releaseFindings = scan.riskSummary?.releaseFindingCount;
   const contextFindings = scan.riskSummary?.contextFindingCount;
