@@ -47,6 +47,7 @@ describe("scan pipeline baseline selection", () => {
       registryUrl: "https://registry.npmjs.org",
       tokenCiphertext: "ct",
       tokenNonce: "nonce",
+      validationStatus: "valid",
     });
     npmConnectionMock.decryptNpmToken.mockResolvedValue("npm_secret_token");
     stagedMock.fetchStagedPublishDetails.mockResolvedValue({
@@ -125,6 +126,27 @@ describe("scan pipeline baseline selection", () => {
     db: {},
     session: { userId: "user_1" },
   };
+
+  test("refuses to decrypt a rotated unvalidated npm connection", async () => {
+    dbMock.getNpmConnection.mockResolvedValue({
+      registryUrl: "https://registry.npmjs.org",
+      tokenCiphertext: "ct",
+      tokenNonce: "nonce",
+      validationStatus: "unvalidated",
+    });
+
+    await expect(
+      runScanPipeline(baseContext, npmAdapter, {
+        scanId: "scan_unvalidated",
+        stageId: "stage-beta-123",
+        organizationId: "org_1",
+      }),
+    ).rejects.toThrow("Validate the organization npm token");
+
+    expect(npmConnectionMock.decryptNpmToken).not.toHaveBeenCalled();
+    expect(sandboxMock.downloadInSandbox).not.toHaveBeenCalled();
+    expect(stagedMock.fetchStagedPublishDetails).not.toHaveBeenCalled();
+  });
 
   test("diffs a staged beta release against the current beta dist-tag target", async () => {
     const result = await runScanPipeline(baseContext, npmAdapter, {

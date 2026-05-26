@@ -87,6 +87,9 @@ async function resolveNpmCredentials(
   if (!connection) {
     throw new Error("npm connection is no longer available for this organization");
   }
+  if (connection.validationStatus !== "valid") {
+    throw new Error("Validate the organization npm token before scanning staged publishes.");
+  }
   const token = await decryptNpmToken(env, connection);
   return { token, registry: connection.registryUrl };
 }

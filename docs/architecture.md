@@ -79,7 +79,7 @@ Current code supports encrypted per-organization npm connections only. Scans req
 
 ### NpmAdapterBroker
 
-`NpmAdapterBroker` (`server/lib/adapters/npm/broker.ts`) is the only component in the parent Worker allowed to hold a decrypted npm token. It extends the same-script `WorkerEntrypoint` pattern: callers obtain a stub via `ctx.exports.NpmAdapterBroker({ props: { organizationId } })` and invoke RPC methods (`fetchPackageMetadata`, `fetchStagedDetails`, `downloadStaged`, `downloadPublished`). Inside each method the broker resolves the connection from D1, decrypts the token, performs the call, and returns the result. The plaintext token never crosses the broker's method boundary.
+`NpmAdapterBroker` (`server/lib/adapters/npm/broker.ts`) is the only component in the parent Worker allowed to hold a decrypted npm token. It extends the same-script `WorkerEntrypoint` pattern: callers obtain a stub via `ctx.exports.NpmAdapterBroker({ props: { organizationId } })` and invoke RPC methods (`fetchPackageMetadata`, `fetchStagedDetails`, `downloadStaged`, `downloadPublished`). Inside each method the broker resolves the connection from D1, confirms it is still validated, decrypts the token, performs the call, and returns the result. The plaintext token never crosses the broker's method boundary.
 
 The scan pipeline and `scan-job.ts` receive a connection _reference_ — `{ organizationId }` — never the secret. The orchestrator stays credential-blind, so future additions to the pipeline cannot accidentally read, log, or forward the token. The broker uses `NpmStageGateway` internally when running a sandboxed tarball download; it is the only place that ever provides the token to that gateway's props.
 
