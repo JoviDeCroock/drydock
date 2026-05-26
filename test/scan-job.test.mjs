@@ -93,6 +93,19 @@ describe("scan job retry classification", () => {
     });
   });
 
+  test("does not retry credential failures that crossed the Worker RPC boundary", () => {
+    expect(
+      classifyScanError({
+        name: "Error",
+        message: "Validate the organization npm token before scanning staged publishes.",
+        remote: true,
+      }),
+    ).toMatchObject({
+      code: "npm_connection_unvalidated",
+      retryable: false,
+    });
+  });
+
   test("does not retry archive file-count limit failures", () => {
     const safe = classifyScanError(
       new SandboxError(JSON.stringify({ error: "archive contains too many files", status: 413 })),
