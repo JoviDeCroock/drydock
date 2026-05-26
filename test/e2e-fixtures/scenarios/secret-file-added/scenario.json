@@ -1,6 +1,6 @@
 {
-  "stageId": "stage-benign-diff-000001",
-  "packageName": "@drydock/e2e-benign",
+  "stageId": "stage-secret-file-added-000001",
+  "packageName": "@drydock/e2e-secret-file",
   "tag": "latest",
   "access": "public",
   "actor": "e2e-bot",
@@ -15,11 +15,11 @@
     "directory": "staged"
   },
   "expected": {
-    "releaseRisk": "low",
-    "packageName": "@drydock/e2e-benign",
+    "releaseRisk": "critical",
+    "packageName": "@drydock/e2e-secret-file",
     "stagedVersion": "1.0.1",
     "previousVersion": "1.0.0",
-    "ruleIds": [],
+    "ruleIds": ["file.secret-content"],
     "baseline": {
       "version": "1.0.0",
       "source": "dist-tag",

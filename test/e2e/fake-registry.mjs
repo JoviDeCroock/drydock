@@ -60,6 +60,12 @@ const server = createServer(async (request, response) => {
         await sendJson(request, response, startedAt, 404, { error: "stage not found" });
         return;
       }
+      if (scenario.failure?.stagedTarballStatus) {
+        await sendJson(request, response, startedAt, scenario.failure.stagedTarballStatus, {
+          error: "configured staged tarball failure",
+        });
+        return;
+      }
       await sendTarball(request, response, startedAt, scenario.staged.tarballFile);
       return;
     }
@@ -122,11 +128,13 @@ function buildPackageMap(scenarios) {
       versions: {},
       times: {},
     };
-    packument.distTags[scenario.previous.tag || scenario.tag || "latest"] =
-      scenario.previous.version;
-    packument.versions[scenario.previous.version] = scenario.previous;
-    if (scenario.previous.publishedAt) {
-      packument.times[scenario.previous.version] = scenario.previous.publishedAt;
+    if (scenario.previous) {
+      packument.distTags[scenario.previous.tag || scenario.tag || "latest"] =
+        scenario.previous.version;
+      packument.versions[scenario.previous.version] = scenario.previous;
+      if (scenario.previous.publishedAt) {
+        packument.times[scenario.previous.version] = scenario.previous.publishedAt;
+      }
     }
     byPackage.set(scenario.packageName, packument);
   }
@@ -156,8 +164,8 @@ function renderPackument(packument) {
 function stageListItem(scenario) {
   return {
     id: scenario.stageId,
-    packageName: scenario.packageName,
-    version: scenario.staged.version,
+    packageName: scenario.stagePackageName,
+    version: scenario.stageVersion,
     tag: scenario.tag,
     access: scenario.access,
     actor: scenario.actor,

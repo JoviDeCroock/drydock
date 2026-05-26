@@ -1,0 +1,24 @@
+{
+  "stageId": "stage-registry-failure-000001",
+  "packageName": "@drydock/e2e-registry-failure",
+  "tag": "latest",
+  "access": "public",
+  "actor": "e2e-bot",
+  "actorType": "automation",
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "previous": {
+    "directory": "previous",
+    "tag": "latest",
+    "publishedAt": "2026-05-20T00:00:00.000Z"
+  },
+  "staged": {
+    "directory": "staged"
+  },
+  "failure": {
+    "stagedTarballStatus": 503
+  },
+  "expected": {
+    "errorStatus": 502,
+    "errorIncludes": "Could not download or inspect the staged tarball."
+  }
+}

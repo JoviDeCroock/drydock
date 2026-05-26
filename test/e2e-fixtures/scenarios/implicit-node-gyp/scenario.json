@@ -16,6 +16,14 @@
   },
   "expected": {
     "releaseRisk": "high",
-    "ruleIds": ["install-script.implicit-node-gyp"]
+    "packageName": "@drydock/e2e-native",
+    "stagedVersion": "1.0.1",
+    "previousVersion": "1.0.0",
+    "ruleIds": ["install-script.implicit-node-gyp"],
+    "baseline": {
+      "version": "1.0.0",
+      "source": "dist-tag",
+      "tag": "latest"
+    }
   }
 }

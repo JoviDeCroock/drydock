@@ -1,6 +1,6 @@
 {
-  "stageId": "stage-benign-diff-000001",
-  "packageName": "@drydock/e2e-benign",
+  "stageId": "stage-invalid-package-json-000001",
+  "packageName": "@drydock/e2e-invalid-manifest",
   "tag": "latest",
   "access": "public",
   "actor": "e2e-bot",
@@ -12,14 +12,15 @@
     "publishedAt": "2026-05-20T00:00:00.000Z"
   },
   "staged": {
-    "directory": "staged"
+    "directory": "staged",
+    "packageJsonText": "{ invalid json\n"
   },
   "expected": {
-    "releaseRisk": "low",
-    "packageName": "@drydock/e2e-benign",
+    "releaseRisk": "medium",
+    "packageName": "@drydock/e2e-invalid-manifest",
     "stagedVersion": "1.0.1",
     "previousVersion": "1.0.0",
-    "ruleIds": [],
+    "ruleIds": ["package-json.parse-failed"],
     "baseline": {
       "version": "1.0.0",
       "source": "dist-tag",

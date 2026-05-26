@@ -1,6 +1,6 @@
 {
-  "stageId": "stage-benign-diff-000001",
-  "packageName": "@drydock/e2e-benign",
+  "stageId": "stage-lifecycle-script-000001",
+  "packageName": "@drydock/e2e-lifecycle",
   "tag": "latest",
   "access": "public",
   "actor": "e2e-bot",
@@ -15,11 +15,11 @@
     "directory": "staged"
   },
   "expected": {
-    "releaseRisk": "low",
-    "packageName": "@drydock/e2e-benign",
+    "releaseRisk": "high",
+    "packageName": "@drydock/e2e-lifecycle",
     "stagedVersion": "1.0.1",
     "previousVersion": "1.0.0",
-    "ruleIds": [],
+    "ruleIds": ["install-script.lifecycle"],
     "baseline": {
       "version": "1.0.0",
       "source": "dist-tag",

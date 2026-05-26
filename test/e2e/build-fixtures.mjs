@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,26 +24,39 @@ for (const name of scenarioNames) {
   const scenarioDir = path.join(scenariosRoot, name);
   const scenario = await readJson(path.join(scenarioDir, "scenario.json"));
   const stagedPackageDir = path.join(scenarioDir, scenario.staged.directory);
-  const previousPackageDir = path.join(scenarioDir, scenario.previous.directory);
   const stagedManifest = await readJson(path.join(stagedPackageDir, "package.json"));
-  const previousManifest = await readJson(path.join(previousPackageDir, "package.json"));
+  const previousPackageDir = scenario.previous?.directory
+    ? path.join(scenarioDir, scenario.previous.directory)
+    : null;
+  const previousManifest = previousPackageDir
+    ? await readJson(path.join(previousPackageDir, "package.json"))
+    : null;
 
   assertEqual(scenario.packageName, stagedManifest.name, `${name} staged package name`);
-  assertEqual(scenario.packageName, previousManifest.name, `${name} previous package name`);
+  if (previousManifest) {
+    assertEqual(scenario.packageName, previousManifest.name, `${name} previous package name`);
+  }
 
-  const stagedPack = packPackage(stagedPackageDir, tarballRoot);
-  const previousPack = packPackage(previousPackageDir, tarballRoot);
+  const stagedPack = await maybeRewritePackageJson(
+    packPackage(stagedPackageDir, tarballRoot),
+    scenario.staged.packageJsonText,
+    `${name} staged`,
+  );
+  const previousPack = previousPackageDir ? packPackage(previousPackageDir, tarballRoot) : null;
 
   scenarios.push({
     name,
     stageId: scenario.stageId,
     packageName: scenario.packageName,
+    stagePackageName: scenario.stagePackageName ?? scenario.packageName,
+    stageVersion: scenario.stageVersion ?? stagedManifest.version,
     tag: scenario.tag ?? "latest",
     access: scenario.access ?? null,
     actor: scenario.actor ?? null,
     actorType: scenario.actorType ?? null,
     createdAt: scenario.createdAt ?? null,
     expected: scenario.expected ?? {},
+    failure: scenario.failure ?? null,
     staged: {
       version: stagedManifest.version,
       manifest: stagedManifest,
@@ -50,15 +64,18 @@ for (const name of scenarioNames) {
       shasum: stagedPack.shasum ?? null,
       integrity: stagedPack.integrity ?? null,
     },
-    previous: {
-      version: previousManifest.version,
-      tag: scenario.previous.tag ?? "latest",
-      publishedAt: scenario.previous.publishedAt ?? null,
-      manifest: previousManifest,
-      tarballFile: previousPack.filename,
-      shasum: previousPack.shasum ?? null,
-      integrity: previousPack.integrity ?? null,
-    },
+    previous:
+      previousManifest && previousPack
+        ? {
+            version: previousManifest.version,
+            tag: scenario.previous.tag ?? "latest",
+            publishedAt: scenario.previous.publishedAt ?? null,
+            manifest: previousManifest,
+            tarballFile: previousPack.filename,
+            shasum: previousPack.shasum ?? null,
+            integrity: previousPack.integrity ?? null,
+          }
+        : null,
   });
 }
 
@@ -104,6 +121,38 @@ function packPackage(packageDir, destination) {
     throw new Error(`npm pack returned no filename in ${relative(packageDir)}`);
   }
   return packed;
+}
+
+async function maybeRewritePackageJson(packed, packageJsonText, label) {
+  if (typeof packageJsonText !== "string") return packed;
+  const tarballPath = path.join(tarballRoot, packed.filename);
+  const workDir = path.join(outputRoot, "tarball-work", label.replace(/[^a-z0-9_-]/gi, "-"));
+  await rm(workDir, { recursive: true, force: true });
+  await mkdir(workDir, { recursive: true });
+
+  runTar(["-xzf", tarballPath, "-C", workDir], label);
+  await writeFile(path.join(workDir, "package/package.json"), packageJsonText);
+  runTar(["-czf", tarballPath, "-C", workDir, "package"], label);
+
+  const bytes = await readFile(tarballPath);
+  const size = (await stat(tarballPath)).size;
+  return {
+    ...packed,
+    size,
+    shasum: createHash("sha1").update(bytes).digest("hex"),
+    integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
+  };
+}
+
+function runTar(args, label) {
+  const result = spawnSync("tar", args, {
+    cwd: repoRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.status !== 0) {
+    throw new Error(`tar failed for ${label}\n${result.stdout}\n${result.stderr}`);
+  }
 }
 
 function assertEqual(expected, actual, label) {

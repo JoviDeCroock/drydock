@@ -1,0 +1,16 @@
+{
+  "name": "@drydock/e2e-lifecycle",
+  "version": "1.0.1",
+  "description": "Lifecycle E2E fixture package.",
+  "license": "MIT",
+  "files": [
+    "index.js",
+    "postinstall.js",
+    "README.md"
+  ],
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "node postinstall.js"
+  }
+}

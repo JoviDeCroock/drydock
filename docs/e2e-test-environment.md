@@ -4,17 +4,11 @@ The normal end-to-end loop is local and deterministic. It uses fixture packages 
 
 ## What Runs
 
-- `test/e2e-fixtures/scenarios/*` stores package scenarios. Each scenario has a `previous/` package, a `staged/` package, and `scenario.json` metadata.
+- `test/e2e-fixtures/scenarios/*` stores package scenarios. Each scenario has a `staged/` package, optional `previous/` package, and `scenario.json` expected outcome.
 - `test/e2e/build-fixtures.mjs` runs `npm pack --json` for the previous and staged package directories and writes generated registry state to `.context/e2e-registry/`.
-- `test/e2e/fake-registry.mjs` serves only the npm endpoints the app uses:
-  - `GET /-/whoami`
-  - `GET /-/stage?perPage=...`
-  - `GET /-/stage/:stageId`
-  - `GET /-/stage/:stageId/tarball`
-  - `GET /:packageName`
-  - `GET /:packageName/-/:tarballName.tgz`
+- `test/e2e/fake-registry.mjs` serves only the staged-publish, packument, and tarball endpoints the app uses.
 - `test/e2e/dev-server.mjs` starts the fake registry and the Vite/Cloudflare Worker dev server together, after applying D1 migrations to the same local persistence path Vite uses.
-- `test/e2e/local-registry.spec.ts` is the browser smoke. It signs up, stores a fake npm token, validates it, submits a staged fixture ID, waits for the report, and asserts the implicit node-gyp finding.
+- `test/e2e/local-registry.spec.ts` is the browser smoke. It signs up, stores a fake npm token, validates it, submits the implicit node-gyp fixture through the UI, then scans every other fixture through the local Worker API and asserts each `scenario.json` expected outcome.
 
 The fake registry writes `.context/e2e-registry/requests.jsonl`. The browser test checks this journal so we can verify authorization headers only appear on expected npm-like endpoints.
 
@@ -71,20 +65,9 @@ Production registry URLs still require HTTPS. The E2E runner generates a Wrangle
 
 This flag exists for local testability only. Do not set it in production Wrangler config.
 
-## Current Scenarios
+## Scenario Contract
 
-- `benign-diff` exercises a harmless changed `index.js` release and expects low release risk.
-- `implicit-node-gyp` adds a root `binding.gyp` in the staged package and expects `install-script.implicit-node-gyp` with high release risk.
-
-Good next scenarios:
-
-- added lifecycle script;
-- secret-looking file added;
-- unparseable `package.json`;
-- staged metadata mismatch;
-- tag-aware beta baseline;
-- no previous published version;
-- registry failure/retry path.
+The scenario matrix is executable instead of duplicated in docs. Add a directory under `test/e2e-fixtures/scenarios/`, define the package inputs, and put the expected risk, rule IDs, baseline, or failure response in `scenario.json`. The Playwright smoke reads the generated `.context/e2e-registry/registry.json` and asserts those expectations automatically.
 
 ## Notes
 
