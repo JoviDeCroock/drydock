@@ -3,6 +3,7 @@ import { useEffect } from "preact/hooks";
 import { useComputed, useModel, useSignal, useSignalEffect } from "@preact/signals";
 import { useLocation, useRoute } from "preact-iso";
 import { getDashboardReturnUrl, useQuerySignal } from "../../lib/query-state";
+import { getReleaseRecommendation } from "./recommendation";
 import { sessionModel } from "../../models/auth";
 import {
   ScanDetailModel,
@@ -407,11 +408,17 @@ function ReleaseRecommendation({
     usePersistedRiskSummary && detail.riskSummary
       ? detail.riskSummary.releaseFindingCount
       : changedFindings.length;
+  const aiComplete = ai?.status === "complete";
   const recommendation = getReleaseRecommendation(artifactRisk, releaseRisk, releaseFindingCount);
-  const evidence = buildRecommendationEvidence(detail, summary, diffCount, changedFindings);
+  const evidence = buildRecommendationEvidence(
+    detail,
+    summary,
+    diffCount,
+    changedFindings,
+    aiComplete ? aiFindings : [],
+  );
   const severityCounts = countSeverities([...detail.findings, ...aiFindings]);
   const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
-  const aiComplete = ai?.status === "complete";
 
   return (
     <section class="flex flex-col gap-3">
@@ -439,9 +446,9 @@ function ReleaseRecommendation({
         </p>
       ) : null}
       <ul class="list-none p-0 m-0 flex flex-col gap-2">
-        {evidence.map((item) => (
+        {evidence.map((item, index) => (
           <li
-            key={`${item.label}-${item.value}`}
+            key={`${item.label}-${index}`}
             class="grid grid-cols-[112px_minmax(0,1fr)] gap-3 text-[13px]"
           >
             <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
@@ -456,56 +463,21 @@ function ReleaseRecommendation({
   );
 }
 
-function getReleaseRecommendation(
-  risk: string,
-  changedRisk: string,
-  changedFindingCount: number,
-): {
-  label: string;
-  tone: "critical" | "high" | "medium" | "ok" | "neutral";
-  copy: string;
-} {
-  if (changedFindingCount > 0 && (changedRisk === "critical" || changedRisk === "high")) {
-    return {
-      label: "block manual approval",
-      tone: changedRisk,
-      copy: "Do not approve this staged publish until the highlighted release evidence has been reviewed and resolved outside this tool.",
-    };
-  }
-  if (changedRisk === "medium") {
-    return {
-      label: "review carefully",
-      tone: "medium",
-      copy: "Pause before approving and inspect the highest-impact findings, manifest changes, and changed files below.",
-    };
-  }
-  if (changedFindingCount === 0 && (risk === "critical" || risk === "high" || risk === "medium")) {
-    return {
-      label: "changed files clear",
-      tone: "ok",
-      copy: "",
-    };
-  }
-  return {
-    label: "likely safe",
-    tone: "ok",
-    copy: "No blocking deterministic signals were found; approval still remains a maintainer action in npm.",
-  };
-}
-
 function buildRecommendationEvidence(
   detail: PersistedScanDetail,
   summary: PersistedSummary,
   diffCount: number,
   changedFindings: PersistedFinding[],
+  assistantFindings: AiFinding[],
 ): Array<{ label: string; value: ComponentChildren }> {
   const evidence: Array<{ label: string; value: ComponentChildren }> = [];
+  const releaseFindings: RecommendationFinding[] = [...changedFindings, ...assistantFindings];
   const topFindings = sortFindingsBySeverity(
-    changedFindings.length ? changedFindings : detail.findings,
+    releaseFindings.length ? releaseFindings : detail.findings,
   ).slice(0, 3);
   for (const finding of topFindings) {
     evidence.push({
-      label: changedFindings.length ? finding.severity : "existing",
+      label: releaseFindings.length ? (finding.severity ?? "signal") : "existing",
       value: (
         <>
           <code>{finding.file}</code>: {finding.reason}
@@ -549,6 +521,12 @@ function buildRecommendationEvidence(
 
   return evidence.slice(0, 5);
 }
+
+type RecommendationFinding = {
+  severity?: string;
+  file: string;
+  reason: string;
+};
 
 function ScanTimeline({ events }: { events: PersistedScanDetail["events"] }) {
   const visibleEvents = events.filter((event) => event.type !== "scan.viewed");
