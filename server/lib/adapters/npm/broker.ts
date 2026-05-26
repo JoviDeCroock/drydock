@@ -7,7 +7,7 @@ import { fetchStagedPublishDetails, type StagedPublishDetails } from "../../stag
 import type { AdapterBroker, AdapterContext, AdapterConnectionRef } from "../types";
 
 export interface NpmBroker extends AdapterBroker {
-  fetchPackageMetadata(name: string): Promise<RegistryMetadata>;
+  fetchPackageMetadata(name: string): Promise<RegistryMetadata | null>;
   fetchStagedDetails(stageId: string): Promise<StagedPublishDetails | null>;
   downloadStaged(stageId: string, opts: NpmBrokerDownloadOptions): Promise<DownloadResult>;
   downloadPublished(tarballUrl: string, opts: NpmBrokerDownloadOptions): Promise<DownloadResult>;
@@ -33,12 +33,12 @@ interface ResolvedCredentials {
 // the decrypted npm token only exists inside this class's method-local scope.
 // The orchestrator never sees it.
 export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBrokerProps> {
-  async fetchPackageMetadata(name: string): Promise<RegistryMetadata> {
+  async fetchPackageMetadata(name: string): Promise<RegistryMetadata | null> {
     const creds = await this.resolveCredentials();
     return fetchPackageMetadata(this.env, name, {
       npmToken: creds.token,
       npmRegistry: creds.registry,
-    });
+    }).catch(() => null);
   }
 
   async fetchStagedDetails(stageId: string): Promise<StagedPublishDetails | null> {
@@ -104,12 +104,12 @@ class LocalNpmBroker implements NpmBroker {
     private readonly props: NpmBrokerProps,
   ) {}
 
-  async fetchPackageMetadata(name: string): Promise<RegistryMetadata> {
+  async fetchPackageMetadata(name: string): Promise<RegistryMetadata | null> {
     const creds = await this.resolve();
     return fetchPackageMetadata(this.ctx.env, name, {
       npmToken: creds.token,
       npmRegistry: creds.registry,
-    });
+    }).catch(() => null);
   }
 
   async fetchStagedDetails(stageId: string): Promise<StagedPublishDetails | null> {

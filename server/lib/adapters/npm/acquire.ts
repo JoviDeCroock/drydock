@@ -58,7 +58,7 @@ export async function acquireBaselineNpm(
     };
   }
 
-  const metadata = await broker.fetchPackageMetadata(manifest.name).catch(() => null);
+  const metadata = await broker.fetchPackageMetadata(manifest.name);
   if (!metadata) {
     return { artifact: null, baseline: emptyBaseline(stagedTag, "metadata-unavailable") };
   }

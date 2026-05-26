@@ -148,6 +148,39 @@ describe("scan pipeline baseline selection", () => {
     expect(stagedMock.fetchStagedPublishDetails).not.toHaveBeenCalled();
   });
 
+  test("propagates credential failures during baseline metadata lookup", async () => {
+    dbMock.getNpmConnection
+      .mockResolvedValueOnce({
+        registryUrl: "https://registry.npmjs.org",
+        tokenCiphertext: "ct",
+        tokenNonce: "nonce",
+        validationStatus: "valid",
+      })
+      .mockResolvedValueOnce({
+        registryUrl: "https://registry.npmjs.org",
+        tokenCiphertext: "ct",
+        tokenNonce: "nonce",
+        validationStatus: "valid",
+      })
+      .mockResolvedValueOnce({
+        registryUrl: "https://registry.npmjs.org",
+        tokenCiphertext: "ct",
+        tokenNonce: "nonce",
+        validationStatus: "unvalidated",
+      });
+
+    await expect(
+      runScanPipeline(baseContext, npmAdapter, {
+        scanId: "scan_baseline_unvalidated",
+        stageId: "stage-beta-123",
+        organizationId: "org_1",
+      }),
+    ).rejects.toThrow("Validate the organization npm token");
+
+    expect(registryMock.fetchPackageMetadata).not.toHaveBeenCalled();
+    expect(dbMock.persistScan).not.toHaveBeenCalled();
+  });
+
   test("diffs a staged beta release against the current beta dist-tag target", async () => {
     const result = await runScanPipeline(baseContext, npmAdapter, {
       scanId: "scan_1",
