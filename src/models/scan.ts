@@ -300,9 +300,15 @@ export const ScanDetailModel = createModel((id: string) => {
 
   const status = computed(() => detail.value?.scan.status ?? null);
   const isPolling = computed(() => status.value === "pending" || status.value === "running");
-  const isDefaultComparison = computed(
-    () => selectedVersion.value === (versions.value?.defaultPreviousVersion ?? null),
-  );
+  const isDefaultComparison = computed(() => {
+    const selected = selectedVersion.value;
+    const v = versions.value;
+    // Until versions metadata arrives we can't tell what the default is.
+    // Treat the current selection as default so the persisted risk summary
+    // stays in view instead of flickering to computed-from-empty-compare values.
+    if (!v) return true;
+    return selected === (v.defaultPreviousVersion ?? null);
+  });
   const compare = computed(() => {
     const cache = compareCache.value;
     const v = selectedVersion.value;
