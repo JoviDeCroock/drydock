@@ -1,4 +1,4 @@
-import { computed, createModel, effect, signal } from "@preact/signals";
+import { batch, computed, createModel, effect, signal } from "@preact/signals";
 import type {
   FileRecord,
   FindingDiffAnnotation,
@@ -395,10 +395,12 @@ export const ScanDetailModel = createModel((id: string) => {
       this.compareError.value = null;
       try {
         const data = await getScanVersions(id);
-        this.versions.value = data;
-        if (this.selectedVersion.peek() === null) {
-          this.selectedVersion.value = data.defaultPreviousVersion ?? null;
-        }
+        batch(() => {
+          this.versions.value = data;
+          if (this.selectedVersion.peek() === null) {
+            this.selectedVersion.value = data.defaultPreviousVersion ?? null;
+          }
+        });
       } catch (err) {
         this.compareError.value = err instanceof Error ? err.message : String(err);
       }
