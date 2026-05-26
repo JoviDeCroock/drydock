@@ -26,7 +26,7 @@
 
 ## Pre-commit hook
 
-`pnpm install` runs a `prepare` script that points `git config core.hooksPath` at `.githooks/`. The `.githooks/pre-commit` script then runs `pnpm run verify`, so every commit on this repo must pass lint + format + typecheck + tests. CI (`.github/workflows/ci.yml`) runs the same `verify` pipeline.
+`pnpm install` runs a `prepare` script that points `git config core.hooksPath` at `.githooks/`. The `.githooks/pre-commit` script then runs `pnpm run verify`, so every commit on this repo must pass lint + format + typecheck + tests. CI (`.github/workflows/ci.yml`) runs the same core checks and then installs Chromium and runs `pnpm run test:e2e`.
 
 If a commit must skip the hook, pass `git commit --no-verify` — only do that when the gate is broken for reasons unrelated to your change.
 

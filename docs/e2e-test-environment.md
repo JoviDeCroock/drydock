@@ -39,6 +39,16 @@ E2E_APP_PORT=5200 E2E_REGISTRY_PORT=5201 pnpm run test:e2e
 
 Playwright artifacts are written under `.context/e2e-artifacts/`, including traces on failure and `implicit-node-gyp-report.png` on a successful smoke run.
 
+## CI
+
+The GitHub Actions CI workflow runs `pnpm run test:e2e` after lint, format check, typecheck, and Vitest. CI installs Chromium with:
+
+```sh
+pnpm exec playwright install --with-deps chromium
+```
+
+The workflow uploads `.context/e2e-artifacts/` and `.context/e2e-registry/requests.jsonl` as `e2e-artifacts` for every run, so failed browser tests keep traces, screenshots, videos, and the fake-registry request journal.
+
 ## Conductor
 
 `conductor.json` is checked in:
