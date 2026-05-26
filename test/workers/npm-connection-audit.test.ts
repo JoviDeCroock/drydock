@@ -207,6 +207,69 @@ describe("npm-connection audit events", () => {
     });
   });
 
+  test("repeated validation failures emit a single npm_connection.suspicious_use event", async () => {
+    const owner = await seedUser();
+
+    await call(buildTestApp(owner), "POST", "/api/v1/npm-connection", {
+      token: OWNER_TOKEN_A,
+      label: "primary",
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        if (String(url).endsWith("/-/whoami")) return Response.json({ username: "user" });
+        if (String(url).endsWith("/-/stage?perPage=1"))
+          return new Response("denied", { status: 403 });
+        return new Response("unexpected", { status: 500 });
+      }),
+    );
+    try {
+      for (let i = 0; i < 4; i += 1) {
+        await call(buildTestApp(owner), "POST", "/api/v1/npm-connection/validate", {});
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    const events = await eventsFor(owner.organizationId);
+    const failures = events.filter((e) => e.type === "npm_connection.validation_failed");
+    expect(failures).toHaveLength(4);
+    const suspicious = events.filter((e) => e.type === "npm_connection.suspicious_use");
+    expect(suspicious).toHaveLength(1);
+    expect(suspicious[0]?.metadata).toMatchObject({
+      reason: "repeated_validation_failures",
+      failureCount: 3,
+    });
+  });
+
+  test("a single validation failure does not emit suspicious_use", async () => {
+    const owner = await seedUser();
+
+    await call(buildTestApp(owner), "POST", "/api/v1/npm-connection", {
+      token: OWNER_TOKEN_A,
+      label: "primary",
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        if (String(url).endsWith("/-/whoami")) return Response.json({ username: "user" });
+        if (String(url).endsWith("/-/stage?perPage=1"))
+          return new Response("denied", { status: 403 });
+        return new Response("unexpected", { status: 500 });
+      }),
+    );
+    try {
+      await call(buildTestApp(owner), "POST", "/api/v1/npm-connection/validate", {});
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    const events = await eventsFor(owner.organizationId);
+    expect(events.find((e) => e.type === "npm_connection.suspicious_use")).toBeUndefined();
+  });
+
   test("audit metadata never contains tokenCiphertext, tokenNonce, or raw token", async () => {
     const owner = await seedUser();
 

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import {
   RateLimitError,
+  countRecentScanEvents,
   createDb,
   deleteNpmConnection,
   enforceRateLimit,
@@ -21,6 +22,8 @@ import {
 import type { Bindings, Variables } from "../types";
 
 const STAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,160}$/;
+const SUSPICIOUS_USE_WINDOW_MS = 15 * 60 * 1000;
+const SUSPICIOUS_USE_THRESHOLD = 3;
 
 export const npmConnectionRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -188,6 +191,35 @@ npmConnectionRoutes.post("/validate", async (c) => {
       );
     }
     await Promise.all(auditEvents);
+
+    if (!validation.ok) {
+      const [recentFailures, recentSuspicious] = await Promise.all([
+        countRecentScanEvents(db, {
+          organizationId,
+          type: "npm_connection.validation_failed",
+          windowMs: SUSPICIOUS_USE_WINDOW_MS,
+        }),
+        countRecentScanEvents(db, {
+          organizationId,
+          type: "npm_connection.suspicious_use",
+          windowMs: SUSPICIOUS_USE_WINDOW_MS,
+        }),
+      ]);
+      if (recentFailures >= SUSPICIOUS_USE_THRESHOLD && recentSuspicious === 0) {
+        await recordScanEvent(db, {
+          organizationId,
+          actorUserId: session.userId,
+          type: "npm_connection.suspicious_use",
+          metadata: {
+            reason: "repeated_validation_failures",
+            failureCount: recentFailures,
+            windowMs: SUSPICIOUS_USE_WINDOW_MS,
+            status: validation.status,
+            tokenFingerprint: connection.tokenFingerprint,
+          },
+        });
+      }
+    }
 
     return c.json({ validation, connection: publicNpmConnection(updated) });
   } catch (err) {

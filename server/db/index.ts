@@ -1,5 +1,5 @@
 import { drizzle } from "drizzle-orm/d1";
-import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import * as schema from "./schema";
 import {
   npmConnections,
@@ -180,6 +180,24 @@ export async function recordScanEvent(db: AppDb, input: AuditEventInput) {
     metadataJson: input.metadata ?? null,
     createdAt: new Date(),
   });
+}
+
+export async function countRecentScanEvents(
+  db: AppDb,
+  input: { organizationId: string; type: string; windowMs: number },
+): Promise<number> {
+  const since = new Date(Date.now() - input.windowMs);
+  const rows = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(scanEvents)
+    .where(
+      and(
+        eq(scanEvents.organizationId, input.organizationId),
+        eq(scanEvents.type, input.type),
+        gte(scanEvents.createdAt, since),
+      ),
+    );
+  return Number(rows[0]?.count ?? 0);
 }
 
 export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
