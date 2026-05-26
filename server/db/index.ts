@@ -761,7 +761,28 @@ function redactScanEventMetadata(value: unknown): unknown {
 
 export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) {
   const now = new Date();
-  const values = {
+  const existing = await getNpmConnection(db, input.organizationId);
+
+  if (existing) {
+    await db
+      .update(npmConnections)
+      .set({
+        registryUrl: input.registryUrl,
+        label: input.label,
+        tokenCiphertext: input.tokenCiphertext,
+        tokenNonce: input.tokenNonce,
+        tokenFingerprint: input.tokenFingerprint,
+        tokenLast4: input.tokenLast4 || null,
+        validationStatus: "unvalidated",
+        capabilitiesJson: null,
+        validatedAt: null,
+        updatedAt: now,
+      })
+      .where(eq(npmConnections.id, existing.id));
+    return getNpmConnection(db, input.organizationId);
+  }
+
+  await db.insert(npmConnections).values({
     id: crypto.randomUUID(),
     organizationId: input.organizationId,
     registryUrl: input.registryUrl,
@@ -774,29 +795,11 @@ export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) 
     capabilitiesJson: null,
     validatedAt: null,
     lastUsedAt: null,
+    isActive: true,
     createdByUserId: input.createdByUserId,
     createdAt: now,
     updatedAt: now,
-  };
-
-  await db
-    .insert(npmConnections)
-    .values(values)
-    .onConflictDoUpdate({
-      target: npmConnections.organizationId,
-      set: {
-        registryUrl: values.registryUrl,
-        label: values.label,
-        tokenCiphertext: values.tokenCiphertext,
-        tokenNonce: values.tokenNonce,
-        tokenFingerprint: values.tokenFingerprint,
-        tokenLast4: values.tokenLast4,
-        validationStatus: values.validationStatus,
-        capabilitiesJson: values.capabilitiesJson,
-        validatedAt: values.validatedAt,
-        updatedAt: now,
-      },
-    });
+  });
 
   return getNpmConnection(db, input.organizationId);
 }
@@ -805,9 +808,19 @@ export async function getNpmConnection(db: AppDb, organizationId: string) {
   const [connection] = await db
     .select()
     .from(npmConnections)
-    .where(eq(npmConnections.organizationId, organizationId))
+    .where(
+      and(eq(npmConnections.organizationId, organizationId), eq(npmConnections.isActive, true)),
+    )
     .limit(1);
   return connection ?? null;
+}
+
+export async function listNpmConnections(db: AppDb, organizationId: string) {
+  return db
+    .select()
+    .from(npmConnections)
+    .where(eq(npmConnections.organizationId, organizationId))
+    .orderBy(desc(npmConnections.isActive), desc(npmConnections.createdAt));
 }
 
 export async function updateNpmConnectionValidation(
@@ -822,7 +835,12 @@ export async function updateNpmConnectionValidation(
       validatedAt: input.validatedAt ?? null,
       updatedAt: new Date(),
     })
-    .where(eq(npmConnections.organizationId, input.organizationId));
+    .where(
+      and(
+        eq(npmConnections.organizationId, input.organizationId),
+        eq(npmConnections.isActive, true),
+      ),
+    );
   return getNpmConnection(db, input.organizationId);
 }
 
@@ -830,7 +848,9 @@ export async function markNpmConnectionUsed(db: AppDb, organizationId: string) {
   await db
     .update(npmConnections)
     .set({ lastUsedAt: new Date(), updatedAt: new Date() })
-    .where(eq(npmConnections.organizationId, organizationId));
+    .where(
+      and(eq(npmConnections.organizationId, organizationId), eq(npmConnections.isActive, true)),
+    );
 }
 
 export async function deleteNpmConnection(db: AppDb, organizationId: string) {

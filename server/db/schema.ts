@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const user = sqliteTable("user", {
@@ -175,12 +176,16 @@ export const npmConnections = sqliteTable(
     capabilitiesJson: text("capabilities_json", { mode: "json" }),
     validatedAt: integer("validated_at", { mode: "timestamp_ms" }),
     lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
     createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => ({
-    orgUniqueIdx: uniqueIndex("npm_connections_org_unique_idx").on(table.organizationId),
+    orgActiveUniqueIdx: uniqueIndex("npm_connections_org_active_unique_idx")
+      .on(table.organizationId)
+      .where(sql`${table.isActive} = 1`),
+    orgIdx: index("npm_connections_org_idx").on(table.organizationId),
     fingerprintIdx: index("npm_connections_fingerprint_idx").on(table.tokenFingerprint),
   }),
 );
