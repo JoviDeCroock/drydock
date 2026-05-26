@@ -10,6 +10,7 @@ import {
   scanFiles,
   scanFindings,
   scans,
+  user,
 } from "./schema";
 import { personalOrganizationId } from "../lib/ownership";
 import {
@@ -62,7 +63,11 @@ export interface CreateScanJobInput {
   stageId: string;
   organizationId: string;
   ownerUserId: string;
+  source?: ScanSource;
 }
+
+export const SCAN_SOURCES = ["manual", "auto_discovery"] as const;
+export type ScanSource = (typeof SCAN_SOURCES)[number];
 
 export interface AuditEventInput {
   organizationId: string;
@@ -191,6 +196,7 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
     ownerUserId: input.ownerUserId,
     risk: "unknown",
     status: "pending",
+    source: input.source ?? "manual",
     createdAt: now,
     updatedAt: now,
   });
@@ -789,6 +795,22 @@ export async function getNpmConnection(db: AppDb, organizationId: string) {
     .where(eq(npmConnections.organizationId, organizationId))
     .limit(1);
   return connection ?? null;
+}
+
+export async function listAutoDiscoveryNpmConnections(db: AppDb) {
+  return db
+    .select()
+    .from(npmConnections)
+    .where(inArray(npmConnections.validationStatus, ["valid", "unvalidated"]));
+}
+
+export async function getUserContact(db: AppDb, userId: string) {
+  const [row] = await db
+    .select({ id: user.id, email: user.email, name: user.name })
+    .from(user)
+    .where(eq(user.id, userId))
+    .limit(1);
+  return row ?? null;
 }
 
 export async function updateNpmConnectionValidation(

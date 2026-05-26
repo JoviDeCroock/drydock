@@ -62,6 +62,16 @@
 			}
 		]
 	},
+	"send_email": [
+		{
+			"name": "SEND_EMAIL"
+		}
+	],
+	"triggers": {
+		"crons": [
+			"*/15 * * * *"
+		]
+	},
 	  "routes": [
     {
       "pattern": "drydock.resynapse.dev",
@@ -76,6 +86,8 @@
 		"BETTER_AUTH_URL": "https://drydock.resynapse.dev",
 		"AI_CACHE_AFFINITY": "staged-publish-review-release-reviewer-v1",
 		"NPM_REGISTRY": "https://registry.npmjs.org",
-		"PNPM_VERSION": "11.1.1"
+		"PNPM_VERSION": "11.1.1",
+		"EMAIL_FROM_ADDRESS": "drydock@resynapse.dev",
+		"EMAIL_FROM_NAME": "Drydock"
 	}
 }

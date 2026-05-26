@@ -1,0 +1,1 @@
+ALTER TABLE `scans` ADD `source` text DEFAULT 'manual' NOT NULL;
