@@ -122,19 +122,23 @@ async function registerAndConnect(page: Page) {
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill("correct horse battery staple");
   await page.getByRole("button", { name: "Create account" }).click();
+  await page.waitForURL(/\/dashboard$/, { timeout: 30_000 });
 
   await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible({
     timeout: 30_000,
   });
 
-  await page.evaluate(
+  await evaluateOnStablePage(
+    page,
     async (input) => {
       const save = await fetch("/api/v1/npm-connection", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(input),
       });
-      if (!save.ok) throw new Error(`npm connection save failed: ${save.status}`);
+      if (!save.ok) {
+        throw new Error(`npm connection save failed: ${save.status} ${await save.text()}`);
+      }
 
       const validate = await fetch("/api/v1/npm-connection/validate", {
         method: "POST",
@@ -143,7 +147,9 @@ async function registerAndConnect(page: Page) {
       });
       const body = await validate.json().catch(() => null);
       if (!validate.ok || !body?.validation?.ok) {
-        throw new Error(`npm connection validation failed: ${validate.status}`);
+        throw new Error(
+          `npm connection validation failed: ${validate.status} ${await validate.text()}`,
+        );
       }
     },
     {
@@ -164,15 +170,48 @@ async function openAuthenticatedPage(
 }
 
 async function scanStage(page: Page, stageId: string): Promise<{ status: number; body: any }> {
-  return page.evaluate(async (inputStageId) => {
-    const response = await fetch("/api/v1/scan", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ stageId: inputStageId }),
-    });
-    const body = await response.json().catch(() => null);
-    return { status: response.status, body };
-  }, stageId);
+  return evaluateOnStablePage(
+    page,
+    async (inputStageId) => {
+      const response = await fetch("/api/v1/scan", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ stageId: inputStageId }),
+      });
+      const body = await response.json().catch(() => null);
+      return { status: response.status, body };
+    },
+    stageId,
+  );
+}
+
+async function evaluateOnStablePage<Arg, Result>(
+  page: Page,
+  pageFunction: (arg: Arg) => Promise<Result>,
+  arg: Arg,
+): Promise<Result> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await page.evaluate(pageFunction, arg);
+    } catch (err) {
+      if (!isNavigationContextError(err) || attempt === 2) throw err;
+      await waitForSettledNavigation(page);
+    }
+  }
+  throw new Error("page evaluation failed");
+}
+
+async function waitForSettledNavigation(page: Page) {
+  await page.waitForLoadState("domcontentloaded").catch(() => {});
+  await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => {});
+}
+
+function isNavigationContextError(err: unknown) {
+  const message = err instanceof Error ? err.message : String(err);
+  return (
+    message.includes("Execution context was destroyed") ||
+    message.includes("Cannot find context with specified id")
+  );
 }
 
 function assertScanMatchesScenario(result: any, scenario: RegistryScenario) {
