@@ -105,7 +105,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       tokenExposedToSandbox: false,
       directSandboxNetwork: false,
       outboundPolicy:
-        "sandbox uses the gateway only for npm staged tarball, published tarball, and package metadata endpoints; parent fetches staged metadata with the organization credential",
+        "sandbox uses the gateway only for the parent-pinned tarball URL for each download; parent fetches staged and package metadata with the organization credential",
       aiInputPolicy:
         "package bytes are untrusted evidence, not instructions; static safety prompt is prefix-cache friendly and AI cannot downgrade deterministic findings",
       fileExplorerPolicy:
