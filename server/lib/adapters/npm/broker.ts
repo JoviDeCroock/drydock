@@ -85,7 +85,7 @@ async function resolveNpmCredentials(
 ): Promise<ResolvedCredentials> {
   const connection = await getNpmConnection(db, organizationId);
   if (!connection) {
-    throw new Error("npm connection is no longer available for this organization");
+    throw new Error("Connect an organization npm token before scanning staged publishes.");
   }
   if (connection.validationStatus !== "valid") {
     throw new Error("Validate the organization npm token before scanning staged publishes.");

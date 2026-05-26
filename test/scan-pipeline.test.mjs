@@ -181,6 +181,34 @@ describe("scan pipeline baseline selection", () => {
     expect(dbMock.persistScan).not.toHaveBeenCalled();
   });
 
+  test("propagates deleted credential failures during baseline metadata lookup", async () => {
+    dbMock.getNpmConnection
+      .mockResolvedValueOnce({
+        registryUrl: "https://registry.npmjs.org",
+        tokenCiphertext: "ct",
+        tokenNonce: "nonce",
+        validationStatus: "valid",
+      })
+      .mockResolvedValueOnce({
+        registryUrl: "https://registry.npmjs.org",
+        tokenCiphertext: "ct",
+        tokenNonce: "nonce",
+        validationStatus: "valid",
+      })
+      .mockResolvedValueOnce(null);
+
+    await expect(
+      runScanPipeline(baseContext, npmAdapter, {
+        scanId: "scan_baseline_deleted_connection",
+        stageId: "stage-beta-123",
+        organizationId: "org_1",
+      }),
+    ).rejects.toThrow("Connect an organization npm token");
+
+    expect(registryMock.fetchPackageMetadata).not.toHaveBeenCalled();
+    expect(dbMock.persistScan).not.toHaveBeenCalled();
+  });
+
   test("diffs a staged beta release against the current beta dist-tag target", async () => {
     const result = await runScanPipeline(baseContext, npmAdapter, {
       scanId: "scan_1",
