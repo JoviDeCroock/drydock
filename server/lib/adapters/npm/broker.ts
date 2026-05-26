@@ -2,7 +2,12 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import { createDb, getNpmConnection, type AppDb } from "../../../db";
 import { allowInsecureLocalRegistry, decryptNpmToken } from "../../npm-connection";
 import { fetchPackageMetadata, type RegistryMetadata } from "../../registry";
-import { downloadInSandbox, type DownloadOptions, type DownloadResult } from "../../sandbox";
+import {
+  downloadInSandbox,
+  sandboxErrorDetail,
+  type DownloadOptions,
+  type DownloadResult,
+} from "../../sandbox";
 import { fetchStagedPublishDetails, type StagedPublishDetails } from "../../staged-publishes";
 import type { AdapterBroker, AdapterContext, AdapterConnectionRef } from "../types";
 
@@ -52,7 +57,7 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
 
   async downloadStaged(stageId: string, opts: NpmBrokerDownloadOptions): Promise<DownloadResult> {
     const creds = await this.resolveCredentials();
-    return downloadInSandbox(this.env, this.ctx, {
+    return downloadInSandboxForRpc(this.env, this.ctx, {
       stageId,
       maxFiles: opts.maxFiles,
       maxBytesPerFile: opts.maxBytesPerFile,
@@ -66,7 +71,7 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
     opts: NpmBrokerDownloadOptions,
   ): Promise<DownloadResult> {
     const creds = await this.resolveCredentials();
-    return downloadInSandbox(this.env, this.ctx, {
+    return downloadInSandboxForRpc(this.env, this.ctx, {
       tarballUrl,
       maxFiles: opts.maxFiles,
       maxBytesPerFile: opts.maxBytesPerFile,
@@ -94,6 +99,22 @@ async function resolveNpmCredentials(
   }
   const token = await decryptNpmToken(env, connection);
   return { token, registry: connection.registryUrl };
+}
+
+async function downloadInSandboxForRpc(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  options: DownloadOptions,
+): Promise<DownloadResult> {
+  try {
+    return await downloadInSandbox(env, ctx, options);
+  } catch (err) {
+    const detail = sandboxErrorDetail(err);
+    if (detail === null) throw err;
+    const rpcSafe = new Error(detail);
+    rpcSafe.name = "SandboxError";
+    throw rpcSafe;
+  }
 }
 
 // Local broker used when the Cloudflare runtime is not in play (tests, scripts

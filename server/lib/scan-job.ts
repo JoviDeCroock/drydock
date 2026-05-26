@@ -13,7 +13,7 @@ import {
 import { npmAdapter } from "./adapters/npm";
 import { notifyScanCompletion } from "./notify";
 import { runScanPipeline } from "./scan-pipeline";
-import { isSandboxError } from "./sandbox";
+import { sandboxErrorDetail } from "./sandbox";
 import type { ScanInput } from "../types";
 
 export interface ScanQueueMessage extends ScanInput {
@@ -161,8 +161,9 @@ export async function executeScanJob(
 }
 
 export function classifyScanError(err: unknown): SafeScanError {
-  if (isSandboxError(err)) {
-    const sandbox = parseSandboxDetail(err.detail);
+  const detail = sandboxErrorDetail(err);
+  if (detail !== null) {
+    const sandbox = parseSandboxDetail(detail);
     return {
       code: sandbox.code,
       message: sandbox.message,

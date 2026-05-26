@@ -56,6 +56,20 @@ describe("scan job retry classification", () => {
     expect(safe).not.toHaveProperty("detail");
   });
 
+  test("classifies RPC-safe sandbox errors serialized through message", () => {
+    const safe = classifyScanError({
+      name: "SandboxError",
+      message: JSON.stringify({ error: "archive contains too many files", status: 413 }),
+      remote: true,
+    });
+
+    expect(safe).toEqual({
+      code: "archive_too_many_files",
+      message: "The staged tarball contains more files than the scanner can safely review.",
+      retryable: false,
+    });
+  });
+
   test("does not include raw error messages on generic failures", () => {
     const safe = classifyScanError(new Error("D1_ERROR: column not found"));
     expect(safe).toEqual({

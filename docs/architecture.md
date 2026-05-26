@@ -83,6 +83,8 @@ Current code supports encrypted per-organization npm connections only. Scans req
 
 The scan pipeline and `scan-job.ts` receive a connection _reference_ — `{ organizationId }` — never the secret. The orchestrator stays credential-blind, so future additions to the pipeline cannot accidentally read, log, or forward the token. The broker uses `NpmStageGateway` internally when running a sandboxed tarball download; the Dynamic Worker that initially downloads, gunzips, and unpacks untrusted tarball bytes receives only scan options and registry URLs, never the npm token itself.
 
+Sandbox download failures raised inside the broker are rethrown as RPC-safe `SandboxError` standard errors with the JSON detail in `message`, because Workers RPC preserves standard error names/messages but drops custom own properties such as `detail`. Callers must use `sandboxErrorDetail()` instead of reading `err.detail` directly.
+
 Credential resolution failures from the broker are terminal scan errors. Only registry metadata fetch failures after a valid credential has been resolved may degrade to a no-baseline scan.
 
 For tests and non-Workers contexts, `createNpmBroker` falls back to a `LocalNpmBroker` that performs the same credential resolution against the host-supplied `db`. This keeps the broker contract identical between production and unit tests.
