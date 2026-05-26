@@ -12,7 +12,7 @@ declare global {
       BETTER_AUTH_SECRET: string;
       BETTER_AUTH_URL?: string;
       AUTH_REQUIRED?: string;
-      AI_REVIEW_ENABLED?: string;
+      FLAGS?: Flagship;
     }
   }
 
@@ -35,6 +35,18 @@ declare global {
       input: unknown,
       options?: { extraHeaders?: Record<string, string>; gateway?: { id: string } },
     ): Promise<{ response?: unknown; usage?: unknown } | unknown>;
+  }
+
+  interface FlagshipEvaluationContext {
+    [key: string]: string | number | boolean | undefined;
+  }
+
+  interface Flagship {
+    getBooleanValue(
+      flagKey: string,
+      defaultValue: boolean,
+      context?: FlagshipEvaluationContext,
+    ): Promise<boolean>;
   }
 }
 
