@@ -3,6 +3,7 @@ import {
   DETERMINISTIC_RULES_VERSION,
   deterministicFindings,
   packageJsonDiffFindings,
+  type DiffEntry,
   type Finding,
   type PackageJsonDiff,
   type PackageJsonSummary,
@@ -13,11 +14,12 @@ import type { AcquiredArtifact } from "../types";
 export function buildNpmFindings(args: {
   staged: AcquiredArtifact;
   details: StagedPublishDetails | null;
+  fileDiff: DiffEntry[];
   manifestDiff: PackageJsonDiff;
   stagedManifestText: string | null;
 }): Finding[] {
   return [
-    ...deterministicFindings(args.staged.files, [], args.staged.manifest),
+    ...deterministicFindings(args.staged.files, args.fileDiff, args.staged.manifest),
     ...packageJsonDiffFindings(args.manifestDiff, args.stagedManifestText),
     ...createStagedMetadataFindings(args.details, args.staged.manifest),
   ];

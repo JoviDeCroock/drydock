@@ -160,6 +160,79 @@ describe("scan pipeline baseline selection", () => {
     });
   });
 
+  test("preserves diff-scoped deterministic findings from the npm adapter", async () => {
+    stagedMock.fetchStagedPublishDetails.mockResolvedValue({
+      id: "stage-diff123",
+      packageName: "pkg",
+      version: "1.0.1",
+      tag: "latest",
+      access: "public",
+      actor: "octocat",
+      actorType: "user",
+      createdAt: "2026-03-16T09:00:00.000Z",
+      shasum: null,
+      packageJson: null,
+    });
+    registryMock.fetchPackageMetadata.mockResolvedValue({
+      versions: {
+        "1.0.0": { dist: { tarball: "https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz" } },
+      },
+      "dist-tags": { latest: "1.0.0" },
+    });
+    sandboxMock.downloadInSandbox.mockImplementation(async (_env, _ctx, options) => {
+      if (options.stageId) {
+        return {
+          files: [
+            {
+              path: "package.json",
+              size: 40,
+              sha256: "staged-pkg",
+              flags: [],
+              textSample: JSON.stringify({ name: "pkg", version: "1.0.1" }),
+            },
+            {
+              path: ".env",
+              size: 31,
+              sha256: "staged-env",
+              flags: [],
+              textSample: "NPM_TOKEN=npm_fakeTokenForTests123",
+            },
+          ],
+          packageJson: { name: "pkg", version: "1.0.1" },
+        };
+      }
+      return {
+        files: [
+          {
+            path: "package.json",
+            size: 40,
+            sha256: "previous-pkg",
+            flags: [],
+            textSample: JSON.stringify({ name: "pkg", version: "1.0.0" }),
+          },
+        ],
+        packageJson: { name: "pkg", version: "1.0.0" },
+      };
+    });
+
+    const result = await runScanPipeline(baseContext, npmAdapter, {
+      scanId: "scan_diff",
+      stageId: "stage-diff123",
+      organizationId: "org_1",
+    });
+
+    expect(result.risk).toBe("critical");
+    expect(result.ruleFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "critical",
+          file: ".env",
+          ruleId: "diff.credential-file-added",
+        }),
+      ]),
+    );
+  });
+
   test("suppresses tag baseline selection when staged metadata disagrees with the tarball", async () => {
     stagedMock.fetchStagedPublishDetails.mockResolvedValue({
       id: "stage-beta-123",

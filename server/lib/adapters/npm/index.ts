@@ -40,6 +40,7 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
     return buildNpmFindings({
       staged: args.staged,
       details: args.details as StagedPublishDetails | null,
+      fileDiff: args.fileDiff,
       manifestDiff: args.manifestDiff,
       stagedManifestText: args.stagedManifestText,
     });
