@@ -65,6 +65,7 @@ Implementation requirements:
   - `npm_connection.validation_downgraded` — a token previously marked `valid` has been rejected on revalidation.
   - `npm_connection.used` — a scan worker decrypted the token to run a scan.
   - `npm_connection.deleted` — connection removed.
+  - `npm_connection.suspicious_use` — three or more validation failures recorded for the organization within a 15-minute window. Idempotent within the window; surfaces as a signal that an org's token may be leaking, rotating without cleanup, or under brute-force attempt.
 - Never return token material from an API.
 - Redact credential metadata fields (`tokenCiphertext`, `tokenNonce`, `tokenFingerprint`, `tokenLast4`, `previousTokenFingerprint`) from scan lifecycle events before returning them to the UI.
 - Never include token material in scan errors, AI inputs, logs, or persisted reports.
