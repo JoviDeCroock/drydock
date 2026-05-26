@@ -269,10 +269,18 @@ describe("scans routes enforce organization boundaries", () => {
       organizationId: owner.organizationId,
       ownerUserId: owner.userId,
       packageJson: { name: "@org/list-risk-summary", version: "1.2.3" },
-      risk: "high",
+      risk: "low",
       status: "complete",
       summary: {
         diff: [{ path: "src/server.ts", status: "modified" }],
+        risk: {
+          artifactRisk: "high",
+          releaseRisk: "low",
+          contextRisk: "high",
+          releaseFindingCount: 0,
+          contextFindingCount: 1,
+          unknownFindingCount: 0,
+        },
       },
       ai: null,
       files: [

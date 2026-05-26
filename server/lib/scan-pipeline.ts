@@ -19,7 +19,7 @@ import {
   type Finding,
   type PackageJsonSummary,
 } from "./review";
-import { computeScanRisk } from "./risk";
+import { computeScanRiskBreakdown } from "./risk";
 import { downloadInSandbox, type DownloadResult } from "./sandbox";
 import { fetchStagedPublishDetails, type StagedPublishDetails } from "./staged-publishes";
 import type { ScanInput, ScanResult } from "../types";
@@ -94,7 +94,11 @@ export async function runScanPipeline(
   const reportFindingAnnotations = annotateFindingsWithDiffStatus(ruleFindings, diff, {
     previousFiles: redactedPreviousFiles,
     stagedFiles: redactedStagedFiles,
-  }).map((finding, index) => ({
+  });
+  const releaseRuleFindings = stripFindingAnnotations(
+    reportFindingAnnotations.filter((finding) => finding.releaseDelta),
+  );
+  const findingAnnotations = reportFindingAnnotations.map((finding, index) => ({
     findingIndex: index,
     diffStatus: finding.diffStatus,
     releaseDelta: finding.releaseDelta,
@@ -119,7 +123,7 @@ export async function runScanPipeline(
       files: redactedStagedFiles,
       diff,
       packageJsonDiff,
-      ruleFindings,
+      ruleFindings: releaseRuleFindings,
       previousVersionAvailable: previous !== null,
     });
     if (aiFindings.escalated) {
@@ -134,7 +138,8 @@ export async function runScanPipeline(
       });
     }
   }
-  const risk = computeScanRisk(ruleFindings, aiFindings);
+  const riskSummary = computeScanRiskBreakdown(reportFindingAnnotations, aiFindings);
+  const risk = riskSummary.releaseRisk;
 
   const safety: ScanResult["safety"] = {
     tokenExposedToSandbox: false,
@@ -165,6 +170,7 @@ export async function runScanPipeline(
     ruleFindings,
     aiFindings,
     risk,
+    riskSummary,
     safety,
   };
 
@@ -181,9 +187,9 @@ export async function runScanPipeline(
     packageJsonDiff,
     diff,
     ruleFindings,
-    findingAnnotations: reportFindingAnnotations,
+    findingAnnotations,
     aiFindings,
-    risk,
+    risk: riskSummary,
     safety,
   };
   const reportDigest = await sha256Hex(stableJson(reportPayload));
@@ -207,6 +213,7 @@ export async function runScanPipeline(
       },
       packageJsonDiff,
       diff,
+      risk: riskSummary,
       stagedPublish: redactedStagedDetails,
       baseline,
       safety: result.safety,
@@ -232,11 +239,28 @@ export async function runScanPipeline(
         stagedTag: result.package.stagedTag,
         baseline,
         risk,
+        releaseRisk: risk,
+        artifactRisk: riskSummary.artifactRisk,
+        contextRisk: riskSummary.contextRisk,
       },
     });
   }
 
   return result;
+}
+
+function stripFindingAnnotations(
+  findings: Array<Finding & { diffStatus?: string; releaseDelta?: boolean }>,
+): Finding[] {
+  return findings.map((finding) => ({
+    severity: finding.severity,
+    file: finding.file,
+    evidence: finding.evidence,
+    reason: finding.reason,
+    ...(finding.line !== undefined ? { line: finding.line } : {}),
+    ...(finding.ruleId !== undefined ? { ruleId: finding.ruleId } : {}),
+    ...(finding.ruleVersion !== undefined ? { ruleVersion: finding.ruleVersion } : {}),
+  }));
 }
 
 async function sha256Hex(value: string) {

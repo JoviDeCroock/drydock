@@ -423,4 +423,111 @@ describe("scan pipeline baseline selection", () => {
     expect(releaseDigest).toBeDefined();
     expect(contextDigest).not.toBe(releaseDigest);
   });
+
+  test("persists release risk from the package-to-package delta while keeping artifact context", async () => {
+    stagedMock.fetchStagedPublishDetails.mockResolvedValue({
+      id: "stage-context123",
+      packageName: "pkg",
+      version: "1.0.1",
+      tag: "latest",
+      access: null,
+      actor: null,
+      actorType: null,
+      createdAt: null,
+      shasum: null,
+      packageJson: null,
+    });
+    registryMock.fetchPackageMetadata.mockResolvedValue({
+      versions: {
+        "1.0.0": { dist: { tarball: "https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz" } },
+      },
+      "dist-tags": { latest: "1.0.0" },
+    });
+    sandboxMock.downloadInSandbox.mockImplementation(async (_env, _ctx, options) => {
+      if (options.stageId) {
+        return {
+          files: [
+            {
+              path: "package.json",
+              size: 40,
+              sha256: "staged-pkg",
+              flags: [],
+              textSample: JSON.stringify({ name: "pkg", version: "1.0.1" }),
+            },
+            {
+              path: "index.js",
+              size: 80,
+              sha256: "same-risk",
+              flags: [],
+              textSample: "require('child_process').execSync('true');\n",
+            },
+          ],
+          packageJson: { name: "pkg", version: "1.0.1" },
+        };
+      }
+      return {
+        files: [
+          {
+            path: "package.json",
+            size: 40,
+            sha256: "previous-pkg",
+            flags: [],
+            textSample: JSON.stringify({ name: "pkg", version: "1.0.0" }),
+          },
+          {
+            path: "index.js",
+            size: 80,
+            sha256: "same-risk",
+            flags: [],
+            textSample: "require('child_process').execSync('true');\n",
+          },
+        ],
+        packageJson: { name: "pkg", version: "1.0.0" },
+      };
+    });
+
+    const result = await runScanPipeline(
+      {
+        env: { NPM_REGISTRY: "https://registry.npmjs.org" },
+        executionCtx: {},
+        db: {},
+        session: { userId: "user_1" },
+      },
+      {
+        scanId: "scan_context",
+        stageId: "stage-context123",
+        organizationId: "org_1",
+        npmToken: "npm_token_0123456789",
+        npmRegistry: "https://registry.npmjs.org",
+      },
+    );
+
+    const persistedInput = dbMock.persistScan.mock.calls[0]?.[1];
+
+    expect(result.risk).toBe("low");
+    expect(result.riskSummary).toMatchObject({
+      artifactRisk: "high",
+      releaseRisk: "low",
+      contextRisk: "high",
+      releaseFindingCount: 0,
+      contextFindingCount: 1,
+    });
+    expect(result.ruleFindings).toContainEqual(
+      expect.objectContaining({
+        severity: "high",
+        file: "index.js",
+        ruleId: "code.process-execution",
+      }),
+    );
+    expect(persistedInput).toMatchObject({
+      risk: "low",
+      summary: {
+        risk: {
+          artifactRisk: "high",
+          releaseRisk: "low",
+          contextRisk: "high",
+        },
+      },
+    });
+  });
 });

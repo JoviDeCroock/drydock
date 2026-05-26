@@ -1,6 +1,7 @@
 import type { Auth, AuthSession } from "./lib/auth";
 import type { AiReview } from "./lib/ai-review";
 import type { BaselineVersionSelection } from "./lib/registry";
+import type { ScanRiskBreakdown } from "./lib/risk";
 import type {
   DiffEntry,
   Finding,
@@ -42,6 +43,7 @@ export interface ScanResult {
   ruleFindings: Finding[];
   aiFindings: AiReview;
   risk: RiskLevel;
+  riskSummary: ScanRiskBreakdown;
   safety: {
     tokenExposedToSandbox: boolean;
     directSandboxNetwork: boolean;
