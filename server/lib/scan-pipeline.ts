@@ -127,7 +127,9 @@ export async function runScanPipeline(
     : false;
   if (aiReviewEnabled) {
     aiFindings = await runSelectiveAiReview(env, {
+      scanId,
       files: redactedStagedFiles,
+      previousFiles: redactedPreviousFiles,
       diff,
       packageJsonDiff,
       ruleFindings: releaseRuleFindings,

@@ -145,18 +145,20 @@ Raw tarballs should not be retained by default in SaaS. If needed later, make ra
 
 ### Workers AI (disabled)
 
-Workers AI review is currently **disabled in the scan pipeline**. The reviewer module — `server/lib/ai-review.ts`, its two-tier escalation policy (default `@cf/qwen/qwen3-30b-a3b-fp8`, escalation `@cf/moonshotai/kimi-k2.5`), the prompt-injection-resistant system prompt, the JSON schema, and the test suite (skipped) — is kept on disk so it can be re-introduced behind a paid tier without re-engineering the contract.
+Workers AI review is currently **disabled in the scan pipeline**. The reviewer module — `server/lib/ai-review.ts`, its two-tier escalation policy (default `@cf/qwen/qwen3-30b-a3b-fp8`, escalation `@cf/moonshotai/kimi-k2.5`), the prompt-injection-resistant system prompt, the AI SDK evidence-tool loop, and the test suite (skipped) — is kept on disk so it can be re-introduced behind a paid tier without re-engineering the contract.
 
 Scans persist `scan.aiJson = null` while AI review is disabled, and the UI omits the reviewer-notes section entirely. Risk is computed exclusively from deterministic findings.
 
 When AI review returns it will continue to:
 
-- see changed files only;
-- see redacted bounded text samples;
+- start from deterministic findings, package.json/package.json diff, and changed-file metadata rather than a bulk dump of every changed file;
+- request targeted redacted file samples, text diffs, literal searches, and file subsets through app-owned AI SDK tools;
 - receive release-delta deterministic findings as authoritative evidence;
 - treat every package-derived string as hostile evidence, not instructions;
+- be limited by controller-enforced step count, per-tool character caps, and total evidence budget;
+- suffix Workers AI cache affinity with the scan ID so prompt/cache reuse is scan-scoped;
 - explicitly check npm supply-chain hazards such as lifecycle scripts, added dependencies whose own postinstall/install hooks are not visible in the staged tarball, entrypoint changes, credential access, network/process execution, obfuscation, and native artifacts;
-- return schema-constrained JSON;
+- submit schema-constrained JSON through the `submit_review` tool;
 - raise risk or add context only when the returned review is complete, schema-valid, and includes findings or an explicit manual-review flag;
 - be unable to approve a release or downgrade deterministic findings.
 
