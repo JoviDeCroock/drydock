@@ -366,6 +366,14 @@ describe("PyPI registry metadata helpers", () => {
             digests: { sha256: "d".repeat(64) },
             upload_time_iso_8601: "2026-02-01T00:00:00.000Z",
           },
+          {
+            filename: "demo-1.1.0-yanked.tar.gz",
+            packagetype: "sdist",
+            url: "https://files.pythonhosted.org/packages/demo-1.1.0-yanked.tar.gz",
+            digests: { sha256: "e".repeat(64) },
+            upload_time_iso_8601: "2026-02-01T00:00:00.000Z",
+            yanked: true,
+          },
         ],
       },
     };

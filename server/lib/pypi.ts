@@ -278,6 +278,7 @@ export function selectPyPiReleaseArtifacts(
   version: string,
 ): PyPiRemoteArtifact[] {
   return (metadata.releases?.[version] ?? [])
+    .filter((file) => !file.yanked)
     .map((file) => {
       const filename = file.filename ?? "";
       const kind = inferPyPiArtifactKind(filename);

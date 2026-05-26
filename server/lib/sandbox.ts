@@ -178,10 +178,7 @@ export async function downloadInSandbox(
       const isPublicArtifact =
         tarball.protocol === "https:" &&
         (options.publicArtifactUrls ?? []).some((allowedUrl) => allowedUrl === options.tarballUrl);
-      if (
-        !isRegistryArtifact &&
-        !isPublicArtifact
-      ) {
+      if (!isRegistryArtifact && !isPublicArtifact) {
         throw new SandboxError(
           JSON.stringify({ error: "tarball URL is not allowed by the gateway", status: 400 }),
         );

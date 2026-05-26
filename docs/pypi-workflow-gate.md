@@ -25,7 +25,7 @@ The repo now has a backend-only PyPI foundation in `server/lib/pypi.ts`:
 - adds PyPI-specific deterministic findings for metadata mismatches, missing wheel `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, and `.pyd` native extensions;
 - fetches PyPI project metadata from `GET /pypi/<project>/json`;
 - selects a default PyPI baseline release from `info.version`, falling back to newest non-yanked upload time;
-- extracts wheel/sdist download metadata and SHA-256 digests from PyPI release files;
+- extracts wheel/sdist download metadata and SHA-256 digests from non-yanked PyPI release files;
 - restricts public PyPI artifact downloads to `https://files.pythonhosted.org`.
 
 The sandbox parser now supports safe ZIP archive parsing for wheels in addition to npm-style gzipped tar archives. ZIP downloads are read through a bounded stream before parsing; ZIP parsing then reads the central directory, accepts stored and deflated entries, rejects traversal paths and Zip64, enforces file/expanded-size caps, and keeps package contents as bounded text samples or binary metadata.
