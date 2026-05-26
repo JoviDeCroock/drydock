@@ -51,13 +51,26 @@ scansRoutes.post("/", async (c) => {
     const npmConnection = await getNpmConnection(db, organizationId);
     if (!npmConnection) {
       return c.json(
-        { error: "Connect an organization npm token before scanning staged publishes." },
+        {
+          error: "Connect an organization npm token before scanning staged publishes.",
+          code: "token_missing",
+        },
         400,
       );
     }
     if (npmConnection.validationStatus !== "valid") {
+      const code =
+        npmConnection.validationStatus === "invalid"
+          ? "token_invalid"
+          : npmConnection.validationStatus === "capability_limited"
+            ? "token_capability_limited"
+            : "token_unvalidated";
       return c.json(
-        { error: "Validate the organization npm token before scanning staged publishes." },
+        {
+          error: "Validate the organization npm token before scanning staged publishes.",
+          code,
+          validationStatus: npmConnection.validationStatus,
+        },
         400,
       );
     }

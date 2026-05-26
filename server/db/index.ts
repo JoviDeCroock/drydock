@@ -91,7 +91,7 @@ export interface NpmConnectionInput {
 
 export interface NpmConnectionValidationInput {
   organizationId: string;
-  validationStatus: "valid" | "invalid" | "unvalidated";
+  validationStatus: "valid" | "invalid" | "capability_limited" | "unvalidated";
   capabilities?: unknown;
   validatedAt?: Date | null;
 }

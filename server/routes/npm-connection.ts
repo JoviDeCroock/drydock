@@ -20,7 +20,6 @@ import {
 } from "../lib/npm-connection";
 import { isValidStageId } from "../lib/stage-id";
 import { errorMessage } from "../lib/errors";
-import { rateLimitResponse } from "../lib/http";
 import type { Bindings, Variables } from "../types";
 
 export const npmConnectionRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -90,7 +89,15 @@ npmConnectionRoutes.post("/", async (c) => {
     return c.json({ connection: publicNpmConnection(connection) });
   } catch (err) {
     if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "npm connection save rate limit exceeded", err);
+      return c.json(
+        {
+          error: "npm connection save rate limit exceeded",
+          code: "rate_limited",
+          retryAfterSeconds: err.retryAfterSeconds,
+        },
+        429,
+        { "retry-after": String(err.retryAfterSeconds) },
+      );
     }
     console.error("npm connection upsert failed", err);
     return c.json({ error: "failed to store npm connection" }, 400);
@@ -114,7 +121,8 @@ npmConnectionRoutes.post("/validate", async (c) => {
     });
 
     const connection = await getNpmConnection(db, organizationId);
-    if (!connection) return c.json({ error: "npm connection is not configured" }, 404);
+    if (!connection)
+      return c.json({ error: "npm connection is not configured", code: "token_missing" }, 404);
 
     const token = await decryptNpmToken(c.env, connection);
     const validation = await validateNpmCredential(connection.registryUrl, token, {
@@ -125,7 +133,7 @@ npmConnectionRoutes.post("/validate", async (c) => {
       updateNpmConnectionValidation(db, {
         organizationId,
         validationStatus: validation.status,
-        capabilities: validation.capabilities,
+        capabilities: { ...validation.capabilities, reasons: validation.reasons },
         validatedAt: validation.ok ? new Date() : null,
       }),
       recordScanEvent(db, {
@@ -135,6 +143,7 @@ npmConnectionRoutes.post("/validate", async (c) => {
         metadata: {
           ok: validation.ok,
           status: validation.status,
+          reasons: validation.reasons,
           capabilities: validation.capabilities,
         },
       }),
@@ -143,10 +152,18 @@ npmConnectionRoutes.post("/validate", async (c) => {
     return c.json({ validation, connection: publicNpmConnection(updated) });
   } catch (err) {
     if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "npm validation rate limit exceeded", err);
+      return c.json(
+        {
+          error: "npm validation rate limit exceeded",
+          code: "rate_limited",
+          retryAfterSeconds: err.retryAfterSeconds,
+        },
+        429,
+        { "retry-after": String(err.retryAfterSeconds) },
+      );
     }
     console.error("npm connection validation failed", err);
-    return c.json({ error: "failed to validate npm connection" }, 400);
+    return c.json({ error: "failed to validate npm connection", code: "validation_failed" }, 400);
   }
 });
 

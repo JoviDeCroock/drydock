@@ -17,18 +17,35 @@ export interface PublicNpmConnection {
   updatedAt: string | number | Date;
 }
 
+export type NpmCredentialStatus = "valid" | "invalid" | "capability_limited";
+
+export type NpmCredentialReason =
+  | "registry_auth_failed"
+  | "staged_list_denied"
+  | "staged_view_denied"
+  | "staged_tarball_denied"
+  | "no_stages_to_probe";
+
 export interface NpmCredentialValidation {
   ok: boolean;
-  status: "valid" | "invalid";
+  status: NpmCredentialStatus;
+  reasons: NpmCredentialReason[];
   capabilities: {
     registryAuth: boolean;
+    stagedListAccess: boolean;
     stagedTarballAccess?: boolean;
+    stagedViewAccess?: boolean;
     whoami?: string | null;
     registryUrl: string;
     stageId?: string;
+    probedStageSource?: "caller" | "list";
     status?: number;
+    stagedListStatus?: number;
+    stagedViewStatus?: number;
     stagedTarballStatus?: number;
     detail?: string;
+    stagedListDetail?: string;
+    stagedViewDetail?: string;
     stagedTarballDetail?: string;
   };
 }
@@ -52,6 +69,28 @@ export const NpmConnectionModel = createModel(() => {
   const busy = computed(() => status.value !== "idle");
   const isConnected = computed(() => connection.value !== null);
   const validated = computed(() => connection.value?.validationStatus === "valid");
+  const validationState = computed<
+    "missing" | "unvalidated" | "valid" | "invalid" | "capability_limited"
+  >(() => {
+    const next = connection.value;
+    if (!next) return "missing";
+    switch (next.validationStatus) {
+      case "valid":
+      case "invalid":
+      case "capability_limited":
+        return next.validationStatus;
+      default:
+        return "unvalidated";
+    }
+  });
+  const validationReasons = computed<NpmCredentialReason[]>(() => {
+    const caps = connection.value?.capabilitiesJson;
+    if (!caps || typeof caps !== "object") return [];
+    const list = (caps as { reasons?: unknown }).reasons;
+    return Array.isArray(list)
+      ? (list.filter((entry) => typeof entry === "string") as NpmCredentialReason[])
+      : [];
+  });
 
   return {
     connection,
@@ -65,6 +104,8 @@ export const NpmConnectionModel = createModel(() => {
     busy,
     isConnected,
     validated,
+    validationState,
+    validationReasons,
 
     async load(): Promise<void> {
       try {
@@ -109,7 +150,7 @@ export const NpmConnectionModel = createModel(() => {
           const validation = await validateNpmConnection();
           this.applyConnection(validation.connection);
           if (!validation.validation.ok) {
-            this.error.value = "Saved token, but npm validation reported invalid access.";
+            this.error.value = "Saved token. " + describeValidationFailure(validation.validation);
           }
         }
       } catch (err) {
@@ -128,7 +169,7 @@ export const NpmConnectionModel = createModel(() => {
         const data = await validateNpmConnection(stageId);
         this.applyConnection(data.connection);
         if (!data.validation.ok) {
-          this.error.value = "Npm validation reported invalid access.";
+          this.error.value = describeValidationFailure(data.validation);
         }
       } catch (err) {
         this.error.value = errorMessage(err);
@@ -153,6 +194,30 @@ export const NpmConnectionModel = createModel(() => {
     },
   };
 });
+
+export function describeValidationFailure(validation: NpmCredentialValidation): string {
+  if (validation.status === "invalid") {
+    if (validation.reasons.includes("registry_auth_failed")) {
+      return "npm rejected the token — check it has registry access and try again.";
+    }
+    if (validation.reasons.includes("staged_list_denied")) {
+      return "npm rejected staged-publish list access — the token needs staged-publish list/view/download capability.";
+    }
+    return "npm validation failed.";
+  }
+  if (validation.status === "capability_limited") {
+    if (validation.reasons.includes("no_stages_to_probe")) {
+      return "Auth and staged-list access look good, but no open staged publishes were available to confirm view + download. Create a stage or paste a stage ID below to finish validation.";
+    }
+    const missing: string[] = [];
+    if (validation.reasons.includes("staged_view_denied")) missing.push("view");
+    if (validation.reasons.includes("staged_tarball_denied")) missing.push("download");
+    return missing.length
+      ? `Token is missing staged-publish ${missing.join(" + ")} capability — grant it before scanning.`
+      : "Token capability check did not complete.";
+  }
+  return "";
+}
 
 function saveNpmConnection(input: {
   token: string;

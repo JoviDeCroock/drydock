@@ -63,7 +63,36 @@ Implementation requirements:
 
 Current code has encrypted per-organization npm connections only. SaaS production must configure `NPM_CONNECTIONS_ENCRYPTION_KEY`; scans require an organization-owned npm token.
 
-Scans and staged-publish discovery require the organization npm connection to be validated first. The dashboard automatically runs the baseline npm auth/list validation after token save, and users can still run a stage-ID-specific validation check afterwards. Queued scan workers re-check validation immediately before decrypting and using the current token, so token rotation cannot bypass the validation gate. Custom npm registries are supported for organization npm connections and should be paired with explicit abuse controls in production operations.
+### Minimum viable npm token capability set
+
+Drydock needs these registry endpoints to function. Customers should grant exactly this set and no more on granular npm tokens:
+
+- `GET /-/whoami` — identity probe used by validation only.
+- `GET /-/stage?perPage=N` — list open staged publishes for discovery.
+- `GET /-/stage/:id` — fetch staged publish metadata (manifest/diff inputs).
+- `GET /-/stage/:id/tarball` — download the staged artifact for scanning. The validation probe uses a `Range: bytes=0-0` request to confirm download capability without consuming bandwidth.
+- `GET <registry>/:package` and `GET <registry>/:package/-/<tarball>` — public/private package metadata + previous-version tarballs for diffing. Required only when scanning private packages.
+
+Tokens that authenticate at `/-/whoami` and list `/-/stage` but cannot view or download an individual stage are marked **capability-limited** and rejected for scanning.
+
+### Validation status taxonomy
+
+A stored npm connection is always in one of these states; the scan pipeline and staged-publish discovery refuse anything other than `valid`:
+
+- `missing` — no row stored for the organization.
+- `unvalidated` — token row present, validation has never been run (or was reset after rotation).
+- `invalid` — `/-/whoami` or `/-/stage` denied the token. The connection is unusable.
+- `capability_limited` — auth + list succeeded, but the staged-publish view/download probe failed (capability gap), or the staged list was empty so view/download could not be confirmed. The connection is rejected by scans; the user must either wait for a staged publish, paste a stage ID, or fix the token's capability set.
+- `valid` — all probed capabilities passed.
+
+API error responses for credential-dependent routes include a stable `code` field — `token_missing`, `token_unvalidated`, `token_invalid`, `token_capability_limited`, or `rate_limited` — alongside the human-readable `error` string. The UI parses `code`, not the message, so wording can change without breaking automation.
+
+Validation runs:
+
+1. Always: `/-/whoami` + `/-/stage?perPage=1`.
+2. When a stage exists (auto-pick from list, or caller-supplied stage ID): `GET /-/stage/:id` + `GET /-/stage/:id/tarball` with a one-byte range.
+
+Scans and staged-publish discovery require the organization npm connection to be `valid`. The dashboard automatically runs the baseline npm auth/list validation after token save and probes a representative stage from the list response when one exists. Users can still re-run a stage-ID-specific validation check from workspace setup. Queued scan workers re-check validation immediately before decrypting and using the current token, so token rotation cannot bypass the validation gate. Custom npm registries are supported for organization npm connections and should be paired with explicit abuse controls in production operations.
 
 ## Package artifact handling
 
@@ -202,7 +231,7 @@ Do not expose signed report URLs until access controls, report canonicalization,
 
 ## Known gaps
 
-- Per-organization encrypted npm connections exist, and validation can check staged-tarball access when supplied a real stage ID; npm list/view capability checks still need confirmation before launch.
+- Per-organization encrypted npm connections exist with a four-state validation taxonomy (`unvalidated` / `invalid` / `capability_limited` / `valid`) and the validator auto-probes staged view + download against a representative stage when one is available. Multi-connection support, rotate-without-revalidate hardening, and per-token audit metrics are still open follow-ups for production hardening (tracked in [`production-roadmap.md`](production-roadmap.md)).
 - Queue-backed scan retry/dead-letter behavior exists in code and Wrangler config, and scan/queue paths now emit structured secret-redacted operational events. Production queue resources, DLQ visibility, metrics dashboards, and alerts still need deployment validation.
 - Persisted detail UI now renders core report data, but finding grouping and lifecycle timelines still need polish.
 - Tar parsing now rejects traversal paths, skips symlinks/hardlinks, handles long-name/PAX paths, caps expanded size, and fails closed when the safe file-count limit is exceeded, but it still needs deeper archive-bomb fuzzing before broad public launch.

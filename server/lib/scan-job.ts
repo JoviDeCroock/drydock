@@ -75,7 +75,15 @@ export async function executeScanJob(
       throw new Error("Connect an organization npm token before scanning staged publishes.");
     }
     if (npmConnection.validationStatus !== "valid") {
-      throw new Error("Validate the organization npm token before scanning staged publishes.");
+      const detail =
+        npmConnection.validationStatus === "capability_limited"
+          ? "Capability check failed; rerun validation with a real stage ID."
+          : npmConnection.validationStatus === "invalid"
+            ? "Token failed npm validation; rotate the token and revalidate."
+            : "Run validation before scanning.";
+      throw new Error(
+        `Validate the organization npm token before scanning staged publishes. ${detail}`,
+      );
     }
 
     await Promise.all([
