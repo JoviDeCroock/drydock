@@ -8,7 +8,6 @@
     "BETTER_AUTH_SECRET": "test-secret-that-is-long-enough-for-better-auth",
     "BETTER_AUTH_URL": "http://example.com",
     "AI_CACHE_AFFINITY": "staged-publish-review-test",
-    "AI_REVIEW_ENABLED": "false",
     "NPM_REGISTRY": "https://registry.npmjs.org",
     "NPM_CONNECTIONS_ENCRYPTION_KEY": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   },

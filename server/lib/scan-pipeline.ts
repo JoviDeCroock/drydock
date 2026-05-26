@@ -104,9 +104,9 @@ export async function runScanPipeline(
     releaseDelta: finding.releaseDelta,
   }));
   const scanId = input.scanId || crypto.randomUUID();
-  // AI review is gated behind AI_REVIEW_ENABLED while we work toward a paid-tier
-  // offering. Default-off so the call, escalation logging, and risk wiring below
-  // stay dormant until an operator opts in.
+  // AI review is gated by the Cloudflare Flagship `ai-review` flag in the
+  // `drydock` app, evaluated per-organization. Default-off until Flagship
+  // returns true for the organization placing the scan.
   let aiFindings: AiReview = {
     status: "unavailable",
     risk: "low",
@@ -118,7 +118,13 @@ export async function runScanPipeline(
     escalated: false,
     escalationReasons: [],
   };
-  if (env.AI_REVIEW_ENABLED === "true") {
+  const aiReviewEnabled = env.FLAGS
+    ? await env.FLAGS.getBooleanValue("ai-review", false, {
+        targetingKey: input.organizationId,
+        organizationId: input.organizationId,
+      })
+    : false;
+  if (aiReviewEnabled) {
     aiFindings = await runSelectiveAiReview(env, {
       files: redactedStagedFiles,
       diff,

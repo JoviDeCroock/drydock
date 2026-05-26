@@ -19,6 +19,12 @@
 	"ai": {
 		"binding": "AI"
 	},
+	"flagship": [
+		{
+			"binding": "FLAGS",
+			"app_id": "ba0fc327-0ea4-4c39-ad70-7ee70a33c6e3"
+		}
+	],
 	"worker_loaders": [
 		{
 			"binding": "LOADER"
@@ -69,7 +75,6 @@
 	"vars": {
 		"BETTER_AUTH_URL": "https://drydock.resynapse.dev",
 		"AI_CACHE_AFFINITY": "staged-publish-review-release-reviewer-v1",
-		"AI_REVIEW_ENABLED": "false",
 		"NPM_REGISTRY": "https://registry.npmjs.org",
 		"PNPM_VERSION": "11.1.1"
 	}
