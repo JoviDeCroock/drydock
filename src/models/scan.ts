@@ -5,7 +5,6 @@ import type {
   FindingDiffStatus,
   PackageJsonSummary,
 } from "../../server/lib/review";
-import type { ScanResult } from "../../server/types";
 import { apiFetch } from "./api";
 
 export interface ScanVersionsResponse {
@@ -109,22 +108,6 @@ export interface PersistedScanDetail {
     metadataJson: unknown;
     createdAt: string | number | Date;
   }>;
-}
-
-export function runScan(stageId: string): Promise<ScanResult> {
-  return apiFetch<ScanResult>("/api/v1/scan", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ stageId }),
-  });
-}
-
-export function createScan(stageId: string): Promise<{ scan: ScanListItem; queued: boolean }> {
-  return apiFetch<{ scan: ScanListItem; queued: boolean }>("/api/v1/scans", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ stageId }),
-  });
 }
 
 export interface ListScansResponse {
@@ -242,40 +225,6 @@ export const ScanListModel = createModel(() => {
         this.error.value = err instanceof Error ? err.message : String(err);
       } finally {
         this.loadingMore.value = false;
-      }
-    },
-  };
-});
-
-export type ScanRequestStatus = "idle" | "scanning" | "done" | "error";
-
-export const ScanRequestModel = createModel(() => {
-  const stageId = signal("");
-  const status = signal<ScanRequestStatus>("idle");
-  const error = signal<string | null>(null);
-  const lastResult = signal<{ scan: ScanListItem; queued: boolean } | null>(null);
-
-  return {
-    stageId,
-    status,
-    error,
-    lastResult,
-
-    async submit(): Promise<{ scan: ScanListItem; queued: boolean } | null> {
-      const trimmed = this.stageId.value.trim();
-      if (!trimmed) return null;
-      this.status.value = "scanning";
-      this.error.value = null;
-      this.lastResult.value = null;
-      try {
-        const data = await createScan(trimmed);
-        this.lastResult.value = data;
-        this.status.value = "done";
-        return data;
-      } catch (err) {
-        this.error.value = err instanceof Error ? err.message : String(err);
-        this.status.value = "error";
-        return null;
       }
     },
   };
