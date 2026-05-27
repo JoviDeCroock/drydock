@@ -11,8 +11,8 @@ import {
   type PersistedScanDetail,
   type ScanDecision,
 } from "../../models/scan";
-import type { AiFinding, AiReview, DisplayedAiResult } from "../../../server/lib/ai-review";
-import { displayedAiResult } from "../../../server/lib/ai-review";
+import type { AiFinding, AiReview, DisplayedAiResult } from "../../../server/lib/ai-review-types";
+import { displayedAiResult } from "../../../server/lib/ai-review-types";
 import {
   annotateFindingsWithDiffStatus as annotateReviewFindingsWithDiffStatus,
   createPackageDiff,

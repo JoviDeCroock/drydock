@@ -1,5 +1,5 @@
-import type { AiReview } from "./ai-review";
-import { displayedAiResult } from "./ai-review";
+import type { AiReview } from "./ai-review-types";
+import { displayedAiResult } from "./ai-review-types";
 import { combineRisk, computeRisk, normalizeRisk, type Finding, type RiskLevel } from "./review";
 
 export interface ScanRiskBreakdown {
