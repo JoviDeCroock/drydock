@@ -32,7 +32,7 @@
 - We use `preact`, `preact-iso`, and `signals`.
 - `useState` and `useReducer` are banned (oxlint `no-restricted-imports` enforces it). Component-local state goes through `useSignal`/`useComputed` or `createModel`/`useModel`. See `docs/tooling.md` and the skills under `.claude/skills/preact-signals-*` (also surfaced through the `.agents/skills` symlink).
 - Lint with `pnpm run lint` (oxlint) and format with `pnpm run format` (oxfmt). Configs live in `.oxlintrc.json` and `.oxfmtrc.json`.
-- Before every commit, run `pnpm run verify` (lint + format check + typecheck + tests). The pre-commit hook in `.githooks/pre-commit` runs it automatically; `pnpm install` wires `core.hooksPath` for you. Don't bypass it with `--no-verify` unless you have a real reason.
+- Before every commit, run `pnpm run verify` (lint + format check + typecheck + tests). Run `pnpm run test:e2e` as well when changes touch npm registry behavior, staged-publish discovery, scan workflow, credential forwarding, or browser-visible review flows. The pre-commit hook in `.githooks/pre-commit` runs `verify` automatically; `pnpm install` wires `core.hooksPath` for you. Don't bypass it with `--no-verify` unless you have a real reason.
 - New functionality needs tests in the same change. Use the narrowest useful layer, then add
   broader coverage when the behavior crosses a trust boundary:
   - `server/routes/*`, auth, organization scoping, rate limits, D1 persistence, queues, and
@@ -59,5 +59,8 @@
 - `npm run lint` / `npm run lint:fix` — oxlint over `src/`, `server/`, `test/`. Use `:fix` to apply autofixes.
 - `npm run format` / `npm run format:check` — oxfmt write / check-only.
 - `npm run test` — Vitest logic suite plus Worker-runtime tests.
+- `npm run e2e:fixtures` — Pack fake-registry fixture packages into `.context/e2e-registry/`.
+- `npm run e2e:dev` — Start the fake npm staging registry plus the local Worker dev server.
+- `npm run test:e2e` — Run Playwright against the fake-registry harness; required for registry, credential-forwarding, staged-publish, and scan-workflow changes.
 - `npm run verify` — runs lint, format check, typecheck, and tests in order. CI and the pre-commit hook both call this.
 - `npm run db:generate` — Drizzle migration from `server/db/schema.ts`.
