@@ -32,6 +32,9 @@ export function createAuth(env: Cloudflare.Env) {
     },
     advanced: {
       cookiePrefix: "spr",
+      ipAddress: {
+        ipAddressHeaders: ["cf-connecting-ip", "x-forwarded-for"],
+      },
       defaultCookieAttributes: {
         httpOnly: true,
         secure: true,
