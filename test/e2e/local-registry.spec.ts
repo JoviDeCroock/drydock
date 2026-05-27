@@ -56,16 +56,16 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
     await expect(checkNpm).toBeEnabled({ timeout: 30_000 });
     await checkNpm.click();
 
-    // The row's primary link renders the stage id until the scan completes and
-    // populates packageName, then it flips to "@drydock/e2e-native". Scope by
-    // the always-visible "stage {id}" subtext so either label works.
-    const row = page.getByRole("row").filter({ hasText: uiStageId });
-    await expect(row).toBeVisible({ timeout: 30_000 });
-    await row.getByRole("link").click();
+    // Each row's link text is the stage id until the scan completes and the
+    // pipeline populates packageName, then it flips to the package name. Wait
+    // for that flip so we click into a completed report.
+    const reportLink = page.getByRole("link", { name: "@drydock/e2e-native" });
+    await expect(reportLink).toBeVisible({ timeout: 180_000 });
+    await reportLink.click();
     await expect(page).toHaveURL(/\/dashboard\/scans\//, { timeout: 30_000 });
 
     await expect(page.getByRole("heading", { name: "@drydock/e2e-native" })).toBeVisible({
-      timeout: 180_000,
+      timeout: 30_000,
     });
     await expect(page.getByText("release high").first()).toBeVisible();
     await expect(page.getByText("implicit install: node-gyp rebuild")).toBeVisible();
