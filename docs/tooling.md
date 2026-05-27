@@ -75,7 +75,7 @@ Use `apiFetch` from `src/models/api.ts` for same-origin JSON requests so active 
 
 ## Server route helpers
 
-Use `rateLimitResponse` from `server/lib/http.ts` for 429 JSON responses so `retryAfterSeconds` and `retry-after` headers stay consistent. Use `errorMessage(err)` from `server/lib/errors.ts` for server-side caught-error stringification instead of repeating `err instanceof Error ? err.message : String(err)`.
+Use `rateLimitResponse` from `server/lib/http.ts` for 429 JSON responses so `retryAfterSeconds` and `retry-after` headers stay consistent. Use `errorMessage(err)` from `server/lib/errors.ts` for server-side caught-error stringification instead of repeating local branches; it also preserves `message` from Worker RPC-serialized error objects.
 
 ## Related skills
 
