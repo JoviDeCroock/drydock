@@ -3,6 +3,7 @@ import {
   DETERMINISTIC_RULES_VERSION,
   deterministicFindings,
   packageJsonDiffFindings,
+  tarSuspiciousEntryFindings,
   type DiffEntry,
   type Finding,
   type PackageJsonDiff,
@@ -22,6 +23,7 @@ export function buildNpmFindings(args: {
     ...deterministicFindings(args.staged.files, args.fileDiff, args.staged.manifest),
     ...packageJsonDiffFindings(args.manifestDiff, args.stagedManifestText),
     ...createStagedMetadataFindings(args.details, args.staged.manifest),
+    ...tarSuspiciousEntryFindings(args.staged.suspiciousTarEntries),
   ];
 }
 

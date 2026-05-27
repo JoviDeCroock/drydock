@@ -38,6 +38,7 @@ export async function acquireStagedNpm(
     artifact: {
       files: staged.files,
       manifest: mergedManifest,
+      suspiciousTarEntries: staged.suspiciousEntries,
     },
     details: stagedDetails as StagedDetails,
   };
@@ -79,7 +80,11 @@ export async function acquireBaselineNpm(
     maxBytesPerFile: input.maxBytesPerFile,
   });
   return {
-    artifact: { files: previous.files, manifest: previous.packageJson ?? null },
+    artifact: {
+      files: previous.files,
+      manifest: previous.packageJson ?? null,
+      suspiciousTarEntries: previous.suspiciousEntries,
+    },
     baseline,
   };
 }

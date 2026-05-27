@@ -2,6 +2,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import { allowInsecureLocalRegistry, registryProtocolAllowed } from "./npm-connection";
 import type { FileRecord, PackageJsonSummary } from "./review";
 import * as tarParser from "./tar-parser.js";
+import type { TarSuspiciousEntry } from "./tar-parser.js";
 
 const MAX_FILES = 250;
 const MAX_BYTES_PER_FILE = 64 * 1024;
@@ -16,12 +17,15 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.isPlainObject,
   tarParser.normalizeStringRecord,
   tarParser.normalizeStringList,
+  tarParser.canonicalizePath,
+  tarParser.hasUnicodeConfusables,
   tarParser.isRootGypPath,
   tarParser.hasImplicitNodeGypInstall,
   tarParser.isSafePaxPath,
   tarParser.normalizeTarPath,
   tarParser.normalizeZipPath,
   tarParser.parsePax,
+  tarParser.describeNonRegularType,
   tarParser.sha256Hex,
   tarParser.summarizeFile,
   tarParser.readTar,
@@ -112,6 +116,7 @@ export class NpmStageGateway extends WorkerEntrypoint<Cloudflare.Env, NpmStageGa
 export interface DownloadResult {
   files: FileRecord[];
   packageJson?: PackageJsonSummary | null;
+  suspiciousEntries?: TarSuspiciousEntry[];
 }
 
 export interface DownloadOptions {
@@ -287,8 +292,11 @@ export default {
     }
     if (tar.byteLength > maxTarBytes) return json({ error: "archive expands beyond safety limit", status: 413 }, 413);
     let files;
+    let suspiciousEntries;
     try {
-      files = await readTar(tar, env.MAX_FILES || 250, env.MAX_BYTES_PER_FILE || 65536, maxTarBytes);
+      const parsed = await readTar(tar, env.MAX_FILES || 250, env.MAX_BYTES_PER_FILE || 65536, maxTarBytes);
+      files = parsed.files;
+      suspiciousEntries = parsed.suspicious;
     } catch (err) {
       const reason = err && err.message === "archive contains too many files"
         ? "archive contains too many files"
@@ -299,7 +307,7 @@ export default {
       return json({ error: reason, status }, status);
     }
     const packageJson = parsePackageJson(files);
-    return json({ files, packageJson });
+    return json({ files, packageJson, suspiciousEntries });
   },
 };
 
