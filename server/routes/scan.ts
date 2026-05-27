@@ -57,6 +57,7 @@ scanRoutes.post("/", async (c) => {
       c.executionCtx,
       { ...input, scanId, organizationId, actorUserId: session.userId },
       db,
+      { finalAttempt: true },
     );
 
     return c.json(result);

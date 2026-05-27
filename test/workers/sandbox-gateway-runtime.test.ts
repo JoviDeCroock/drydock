@@ -9,7 +9,11 @@ interface CapturedRequest {
   userAgent: string | null;
 }
 
-function setupGateway(props: { npmToken?: string; npmRegistry?: string }) {
+function setupGateway(props: {
+  npmToken?: string;
+  npmRegistry?: string;
+  publicArtifactUrls?: string[];
+}) {
   const captured: CapturedRequest[] = [];
   const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init);
@@ -24,7 +28,7 @@ function setupGateway(props: { npmToken?: string; npmRegistry?: string }) {
   vi.stubGlobal("fetch", fetchSpy);
 
   const ctx = createExecutionContext() as ExecutionContext & {
-    props: { npmToken?: string; npmRegistry?: string };
+    props: { npmToken?: string; npmRegistry?: string; publicArtifactUrls?: string[] };
   };
   ctx.props = props;
   const gateway = new (NpmStageGateway as unknown as new (
@@ -105,6 +109,36 @@ describe("NpmStageGateway runtime credential injection", () => {
     expect(captured).toHaveLength(1);
     expect(captured[0].authorization).toBeNull();
     expect(captured[0].userAgent).toBe("staged-publish-review/0.3");
+  });
+
+  test("allows exact public artifact URLs without forwarding npm credentials", async () => {
+    const publicUrl = "https://files.pythonhosted.org/packages/aa/bb/demo-1.0.0-py3-none-any.whl";
+    const { gateway, captured } = setupGateway({
+      npmToken: "npm_should_not_reach_public_artifact",
+      publicArtifactUrls: [publicUrl],
+    });
+
+    const res = await gateway.fetch(new Request(publicUrl));
+
+    expect(res.status).toBe(200);
+    expect(captured).toHaveLength(1);
+    expect(captured[0].authorization).toBeNull();
+  });
+
+  test("blocks non-exact public artifact URLs without forwarding npm credentials", async () => {
+    const { gateway, captured } = setupGateway({
+      npmToken: "npm_should_not_leak",
+      publicArtifactUrls: [
+        "https://files.pythonhosted.org/packages/aa/bb/demo-1.0.0-py3-none-any.whl",
+      ],
+    });
+
+    const res = await gateway.fetch(
+      new Request("https://files.pythonhosted.org/packages/aa/bb/other-1.0.0-py3-none-any.whl"),
+    );
+
+    expect(res.status).toBe(403);
+    expect(captured).toHaveLength(0);
   });
 
   test("respects custom registry origins supplied via props", async () => {

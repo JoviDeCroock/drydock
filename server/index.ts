@@ -8,6 +8,7 @@ import {
 } from "./db";
 import { createAuth, getAuthSession } from "./lib/auth";
 import { allowInsecureLocalRegistry } from "./lib/npm-connection";
+import { durationMsSince, emitOperationalEvent } from "./lib/observability";
 import {
   classifyScanError,
   executeScanJob,
@@ -281,26 +282,43 @@ export default {
   },
   async queue(batch: MessageBatch<ScanQueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
     for (const message of batch.messages) {
+      const messageStartedAtMs = Date.now();
       try {
         await executeScanJob(env, ctx, message.body, undefined, {
           attempt: message.attempts,
           finalAttempt: message.attempts >= MAX_SCAN_JOB_ATTEMPTS,
         });
+        emitOperationalEvent("info", "scan.queue.message.completed", {
+          scanId: message.body.scanId,
+          organizationId: message.body.organizationId,
+          stageId: message.body.stageId,
+          source: message.body.source ?? "manual",
+          attempt: message.attempts,
+          durationMs: durationMsSince(messageStartedAtMs),
+        });
       } catch (err) {
         const safe = classifyScanError(err);
         if (safe.retryable && message.attempts < MAX_SCAN_JOB_ATTEMPTS) {
           message.retry({ delaySeconds: retryDelaySeconds(message.attempts) });
-          console.warn("scan queue job scheduled for retry", {
+          emitOperationalEvent("warn", "scan.queue.retry_scheduled", {
             scanId: message.body.scanId,
+            organizationId: message.body.organizationId,
+            stageId: message.body.stageId,
+            source: message.body.source ?? "manual",
             attempt: message.attempts,
             nextDelaySeconds: retryDelaySeconds(message.attempts),
+            durationMs: durationMsSince(messageStartedAtMs),
             error: safe,
           });
         } else {
-          console.error("scan queue job failed", {
+          emitOperationalEvent("error", "scan.queue.message_failed", {
             scanId: message.body.scanId,
+            organizationId: message.body.organizationId,
+            stageId: message.body.stageId,
+            source: message.body.source ?? "manual",
             attempt: message.attempts,
             exhausted: safe.retryable,
+            durationMs: durationMsSince(messageStartedAtMs),
             error: safe,
           });
           if (safe.retryable) throw err;

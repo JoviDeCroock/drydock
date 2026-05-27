@@ -6,6 +6,7 @@ import type {
   AdapterContext,
   PackageAdapter,
 } from "./adapters/types";
+import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
 import {
   annotateFindingsWithDiffStatus,
   createPackageDiff,
@@ -41,6 +42,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
   const adapterInput = adapter.parseInput(input);
   const connectionRef: AdapterConnectionRef = { organizationId: input.organizationId };
   const broker = adapter.createBroker(adapterCtx, connectionRef);
+  const pipelineStartedAtMs = Date.now();
 
   try {
     const staged = await adapter.acquireStaged(adapterCtx, adapterInput, broker);
@@ -203,11 +205,37 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
           releaseRisk: risk,
           artifactRisk: riskSummary.artifactRisk,
           contextRisk: riskSummary.contextRisk,
+          durationMs: durationMsSince(pipelineStartedAtMs),
         },
       });
     }
 
+    emitOperationalEvent("info", "scan.pipeline.completed", {
+      scanId,
+      organizationId: input.organizationId,
+      stageId: input.stageId,
+      adapterId: adapter.id,
+      durationMs: durationMsSince(pipelineStartedAtMs),
+      packageName: result.package.name,
+      releaseRisk: risk,
+      artifactRisk: riskSummary.artifactRisk,
+      contextRisk: riskSummary.contextRisk,
+      fileCount: result.fileCount,
+      previousFileCount: result.previousFileCount,
+      findingCount: ruleFindings.length,
+    });
+
     return result;
+  } catch (err) {
+    emitOperationalEvent("error", "scan.pipeline.failed", {
+      scanId: input.scanId ?? null,
+      organizationId: input.organizationId,
+      stageId: input.stageId,
+      adapterId: adapter.id,
+      durationMs: durationMsSince(pipelineStartedAtMs),
+      error: describeOperationalError(err),
+    });
+    throw err;
   } finally {
     await broker.dispose();
   }
@@ -246,15 +274,34 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
     : false;
   if (!aiReviewEnabled) return disabled;
 
-  return runSelectiveAiReview(args.env, {
-    scanId: args.scanId,
-    files: args.redactedStagedFiles,
-    previousFiles: args.redactedPreviousFiles,
-    diff: args.fileDiff,
-    packageJsonDiff: args.manifestDiff,
-    ruleFindings: args.releaseRuleFindings,
-    previousVersionAvailable: args.previousVersionAvailable,
-  });
+  const startedAtMs = Date.now();
+  try {
+    const review = await runSelectiveAiReview(args.env, {
+      scanId: args.scanId,
+      files: args.redactedStagedFiles,
+      previousFiles: args.redactedPreviousFiles,
+      diff: args.fileDiff,
+      packageJsonDiff: args.manifestDiff,
+      ruleFindings: args.releaseRuleFindings,
+      previousVersionAvailable: args.previousVersionAvailable,
+    });
+    emitOperationalEvent("info", "scan.ai_review.completed", {
+      scanId: args.scanId,
+      organizationId: args.input.organizationId,
+      durationMs: durationMsSince(startedAtMs),
+      status: review.status,
+      model: review.model,
+    });
+    return review;
+  } catch (err) {
+    emitOperationalEvent("error", "scan.ai_review.failed", {
+      scanId: args.scanId,
+      organizationId: args.input.organizationId,
+      durationMs: durationMsSince(startedAtMs),
+      error: describeOperationalError(err),
+    });
+    throw err;
+  }
 }
 
 function stripFindingAnnotations(

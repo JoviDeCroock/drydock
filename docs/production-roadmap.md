@@ -77,7 +77,7 @@ Exit criteria:
 - Add structured error classes and user-safe messages across all scan failures.
 - Add archive parser fuzz/regression tests and deeper archive-bomb protections.
 - Add line numbers to deterministic findings where possible.
-- Add metrics/logging for scan durations, queue retries/exhaustion, failures, AI failures, and npm failures.
+- Build dashboards/alerts from the structured operational events now emitted for scan durations, queue retries/exhaustion, failures, and AI failures; add provider-specific npm failure rollups where the current safe error codes are too coarse.
 - Add D1/R2 retention controls for persisted redacted text samples and derived artifacts.
 - Add deployment checklist and incident-response notes.
 
