@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "4e750562-cd52-4b3f-bcec-e59edb3f6895",
+  "id": "bbb9dfb1-76e4-4e32-ab01-925d3875e82c",
   "prevId": "ebd340d3-c006-4842-9f5b-374c7418ec5a",
   "tables": {
     "account": {
@@ -369,13 +369,14 @@
           ],
           "isUnique": true
         },
-        "github_release_targets_repo_env_idx": {
-          "name": "github_release_targets_repo_env_idx",
+        "github_release_targets_org_repo_env_unique_idx": {
+          "name": "github_release_targets_org_repo_env_unique_idx",
           "columns": [
+            "organization_id",
             "repository_id",
             "environment"
           ],
-          "isUnique": false
+          "isUnique": true
         },
         "github_release_targets_installation_idx": {
           "name": "github_release_targets_installation_idx",

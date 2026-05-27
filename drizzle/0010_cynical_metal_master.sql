@@ -1,2 +1,0 @@
-DROP INDEX `github_release_targets_repo_env_idx`;--> statement-breakpoint
-CREATE UNIQUE INDEX `github_release_targets_org_repo_env_unique_idx` ON `github_release_targets` (`organization_id`,`repository_id`,`environment`);

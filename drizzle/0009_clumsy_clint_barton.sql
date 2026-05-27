@@ -38,5 +38,5 @@ CREATE TABLE `github_release_targets` (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `github_release_targets_org_pkg_unique_idx` ON `github_release_targets` (`organization_id`,`ecosystem`,`package_name`);--> statement-breakpoint
-CREATE INDEX `github_release_targets_repo_env_idx` ON `github_release_targets` (`repository_id`,`environment`);--> statement-breakpoint
+CREATE UNIQUE INDEX `github_release_targets_org_repo_env_unique_idx` ON `github_release_targets` (`organization_id`,`repository_id`,`environment`);--> statement-breakpoint
 CREATE INDEX `github_release_targets_installation_idx` ON `github_release_targets` (`installation_row_id`);
