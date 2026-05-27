@@ -563,9 +563,6 @@ function pyPiReleaseFindings(
 ): Finding[] {
   const findings: Finding[] = [];
   const manifestName = normalizePyPiProjectName(manifest.package);
-  const firstSummary = artifacts.find(
-    (artifact) => artifact.summary.name && artifact.summary.version,
-  )?.summary;
 
   for (const artifact of artifacts) {
     const { summary } = artifact;
@@ -599,24 +596,6 @@ function pyPiReleaseFindings(
           file: metadataEvidencePath,
           evidence: `${artifact.path} metadata Version ${summary.version} != manifest version ${manifest.version}`,
           reason: "the release artifact version does not match the reviewed PyPI manifest",
-        }),
-      );
-    }
-    if (
-      firstSummary &&
-      summary.name &&
-      summary.version &&
-      (normalizePyPiProjectName(summary.name) !==
-        normalizePyPiProjectName(firstSummary.name ?? "") ||
-        summary.version !== firstSummary.version)
-    ) {
-      findings.push(
-        tag("metadataMismatch", {
-          severity: "critical",
-          file: metadataEvidencePath,
-          evidence: `${artifact.path} metadata does not match the other candidate artifacts`,
-          reason:
-            "all PyPI artifacts in one gated release must describe the same package name and version",
         }),
       );
     }
