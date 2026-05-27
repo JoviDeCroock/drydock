@@ -205,6 +205,41 @@ describe("github-app createReleaseTarget", () => {
     ).rejects.toMatchObject({ code: "package_already_mapped" });
   });
 
+  test("normalizes equivalent PyPI package names before enforcing uniqueness", async () => {
+    const { organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    const dbInstance = createDb(env.DB);
+
+    const target = await createReleaseTarget(dbInstance, {
+      organizationId,
+      installationRowId: installation.id,
+      ecosystem: "pypi",
+      packageName: "Example.Package",
+      repositoryId: 1,
+      repositoryFullName: "octo/example",
+      workflowFilename: null,
+      environment: "pypi",
+      pypiTrustedPublisherEnvironment: "pypi",
+      createdByUserId: null,
+    });
+
+    expect(target.packageName).toBe("example-package");
+    await expect(
+      createReleaseTarget(dbInstance, {
+        organizationId,
+        installationRowId: installation.id,
+        ecosystem: "pypi",
+        packageName: "example_package",
+        repositoryId: 2,
+        repositoryFullName: "octo/example-2",
+        workflowFilename: null,
+        environment: "pypi-2",
+        pypiTrustedPublisherEnvironment: "pypi-2",
+        createdByUserId: null,
+      }),
+    ).rejects.toMatchObject({ code: "package_already_mapped" });
+  });
+
   test("rejects environment mismatch with the trusted publisher environment", async () => {
     const { organizationId } = await seedUser();
     const installation = await seedInstallation(organizationId);
@@ -335,6 +370,33 @@ describe("resolveDeploymentProtectionTarget", () => {
       installationId: "222",
       repositoryId: 42,
       environment: "staging",
+    });
+    expect(resolved).toBeNull();
+  });
+
+  test("returns null when the webhook installation does not own the mapped target", async () => {
+    const { organizationId } = await seedUser();
+    const targetInstallation = await seedInstallation(organizationId, { installationId: "444" });
+    await seedInstallation(organizationId, { installationId: "555" });
+    const dbInstance = createDb(env.DB);
+
+    await createReleaseTarget(dbInstance, {
+      organizationId,
+      installationRowId: targetInstallation.id,
+      ecosystem: "pypi",
+      packageName: "example",
+      repositoryId: 42,
+      repositoryFullName: "octo/example",
+      workflowFilename: null,
+      environment: "pypi",
+      pypiTrustedPublisherEnvironment: "pypi",
+      createdByUserId: null,
+    });
+
+    const resolved = await resolveDeploymentProtectionTarget(dbInstance, {
+      installationId: "555",
+      repositoryId: 42,
+      environment: "pypi",
     });
     expect(resolved).toBeNull();
   });

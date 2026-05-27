@@ -106,9 +106,11 @@ HTTP surface in `server/routes/github-app.ts`. Two tables back it:
   and `pypi_trusted_publisher_environment`. Drydock requires
   `environment === pypi_trusted_publisher_environment` so the deployment
   protection gate runs against the same job that performs the OIDC token
-  exchange. A repository/environment pair is unique within an organization
-  because GitHub deployment-protection webhooks identify the pending gate by
-  installation, repository, and environment, not by package name.
+  exchange. PyPI package names are stored in normalized PEP 503 form so
+  case/separator aliases map to the same release target. A
+  repository/environment pair is unique within an organization because GitHub
+  deployment-protection webhooks identify the pending gate by installation,
+  repository, and environment, not by package name.
 
 ### Endpoints
 
@@ -159,9 +161,10 @@ controls whether the deployment protection gate releases that job.
 ### Env bindings
 
 `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY`, and
-`GITHUB_APP_WEBHOOK_SECRET` are required for any GitHub App route to work.
-`GITHUB_APP_STATE_SECRET` is optional and falls back to `BETTER_AUTH_SECRET`
-for HMAC-signing the OAuth state.
+`GITHUB_APP_WEBHOOK_SECRET` are required for any GitHub App route to work. The
+private key may be GitHub's downloaded PKCS#1 PEM or a converted PKCS#8 PEM.
+`GITHUB_APP_STATE_SECRET` is optional and falls back to `BETTER_AUTH_SECRET` for
+HMAC-signing the OAuth state.
 
 ## Remaining work
 

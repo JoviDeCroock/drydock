@@ -128,7 +128,12 @@ export async function verifyOAuthState(
   const [version, payload, signature] = parts;
   if (version !== STATE_VERSION) return null;
   const expected = await hmacSha256(secret, `${version}.${payload}`);
-  const provided = base64UrlDecode(signature);
+  let provided: Uint8Array;
+  try {
+    provided = base64UrlDecode(signature);
+  } catch {
+    return null;
+  }
   if (!timingSafeEqual(expected, provided)) return null;
   let claims: OAuthStateClaims;
   try {
@@ -472,6 +477,7 @@ export async function createReleaseTarget(
   input: CreateReleaseTargetInput,
 ): Promise<ReleaseTargetRecord> {
   validateReleaseTargetShape(input);
+  const packageName = normalizePackageName(input.ecosystem, input.packageName);
   const installation = await getInstallationForOrganization(
     db,
     input.organizationId,
@@ -498,7 +504,7 @@ export async function createReleaseTarget(
       organizationId: input.organizationId,
       installationRowId: input.installationRowId,
       ecosystem: input.ecosystem,
-      packageName: input.packageName,
+      packageName,
       repositoryId: input.repositoryId,
       repositoryFullName: input.repositoryFullName,
       workflowFilename: input.workflowFilename?.trim() || null,
@@ -512,7 +518,7 @@ export async function createReleaseTarget(
     if (isUniquePackageConflict(err)) {
       throw new GithubAppValidationError(
         "package_already_mapped",
-        `a release target already exists for ${input.ecosystem}/${input.packageName} in this organization`,
+        `a release target already exists for ${input.ecosystem}/${packageName} in this organization`,
       );
     }
     if (isUniqueEnvironmentConflict(err)) {
@@ -528,7 +534,7 @@ export async function createReleaseTarget(
     organizationId: input.organizationId,
     installationRowId: input.installationRowId,
     ecosystem: input.ecosystem,
-    packageName: input.packageName,
+    packageName,
     repositoryId: input.repositoryId,
     repositoryFullName: input.repositoryFullName,
     workflowFilename: input.workflowFilename?.trim() || null,
@@ -595,6 +601,7 @@ export async function resolveDeploymentProtectionTarget(
     .where(
       and(
         eq(githubReleaseTargets.organizationId, installation.organizationId),
+        eq(githubReleaseTargets.installationRowId, installation.id),
         eq(githubReleaseTargets.repositoryId, input.repositoryId),
         eq(githubReleaseTargets.environment, input.environment),
       ),
@@ -771,6 +778,11 @@ function normalizeInstallationStatus(value: string): InstallationStatus {
   return "active";
 }
 
+function normalizePackageName(ecosystem: SupportedEcosystem, packageName: string): string {
+  if (ecosystem === "pypi") return packageName.toLowerCase().replace(/[-_.]+/g, "-");
+  return packageName;
+}
+
 function githubAppHeaders(jwt: string) {
   return {
     Authorization: `Bearer ${jwt}`,
@@ -791,22 +803,73 @@ function githubInstallationHeaders(token: string) {
 
 async function importPrivateKey(pem: string): Promise<CryptoKey> {
   const normalized = pem.replace(/\\n/g, "\n");
-  let base64 = normalized
-    .replace(/-----BEGIN PRIVATE KEY-----/, "")
-    .replace(/-----END PRIVATE KEY-----/, "")
-    .replace(/\s/g, "");
+  const isPkcs1 = /-----BEGIN RSA PRIVATE KEY-----/.test(normalized);
+  const begin = isPkcs1 ? /-----BEGIN RSA PRIVATE KEY-----/ : /-----BEGIN PRIVATE KEY-----/;
+  const end = isPkcs1 ? /-----END RSA PRIVATE KEY-----/ : /-----END PRIVATE KEY-----/;
+  let base64 = normalized.replace(begin, "").replace(end, "").replace(/\s/g, "");
   base64 = base64.replace(/-/g, "+").replace(/_/g, "/");
   const remainder = base64.length % 4;
   if (remainder === 2) base64 += "==";
   else if (remainder === 3) base64 += "=";
-  const binary = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  const keyData = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  const binary = isPkcs1 ? wrapPkcs1RsaPrivateKey(keyData) : keyData;
   return crypto.subtle.importKey(
     "pkcs8",
-    binary,
+    toArrayBuffer(binary),
     { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
     false,
     ["sign"],
   );
+}
+
+function wrapPkcs1RsaPrivateKey(pkcs1: Uint8Array): Uint8Array {
+  const rsaEncryptionOid = new Uint8Array([
+    0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
+  ]);
+  const algorithmIdentifier = derSequence(
+    concatBytes(rsaEncryptionOid, new Uint8Array([0x05, 0x00])),
+  );
+  return derSequence(concatBytes(derIntegerZero(), algorithmIdentifier, derOctetString(pkcs1)));
+}
+
+function derIntegerZero(): Uint8Array {
+  return new Uint8Array([0x02, 0x01, 0x00]);
+}
+
+function derOctetString(value: Uint8Array): Uint8Array {
+  return concatBytes(new Uint8Array([0x04]), derLength(value.length), value);
+}
+
+function derSequence(value: Uint8Array): Uint8Array {
+  return concatBytes(new Uint8Array([0x30]), derLength(value.length), value);
+}
+
+function derLength(length: number): Uint8Array {
+  if (length < 0x80) return new Uint8Array([length]);
+  const bytes: number[] = [];
+  let remaining = length;
+  while (remaining > 0) {
+    bytes.unshift(remaining & 0xff);
+    remaining >>= 8;
+  }
+  return new Uint8Array([0x80 | bytes.length, ...bytes]);
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const total = parts.reduce((sum, part) => sum + part.length, 0);
+  const combined = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    combined.set(part, offset);
+    offset += part.length;
+  }
+  return combined;
+}
+
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(copy).set(bytes);
+  return copy;
 }
 
 async function hmacSha256(secret: string, message: string): Promise<Uint8Array> {

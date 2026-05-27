@@ -1,8 +1,10 @@
 import { describe, expect, test } from "vitest";
+import { generateKeyPairSync } from "node:crypto";
 import {
   GithubAppConfigError,
   GithubAppValidationError,
   buildInstallUrl,
+  generateGithubAppJwt,
   isGithubAppConfigured,
   readGithubAppConfig,
   signOAuthState,
@@ -68,6 +70,14 @@ describe("github app config", () => {
       "https://github.com/apps/drydock-test/installations/new?state=state%20value%20with%20spaces",
     );
   });
+
+  test("generateGithubAppJwt accepts GitHub App PKCS#1 private keys", async () => {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const privateKeyPem = privateKey.export({ type: "pkcs1", format: "pem" });
+    const config = readGithubAppConfig({ ...VALID_ENV, GITHUB_APP_PRIVATE_KEY: privateKeyPem });
+    const jwt = await generateGithubAppJwt(config);
+    expect(jwt.split(".")).toHaveLength(3);
+  });
 });
 
 describe("oauth state token", () => {
@@ -102,6 +112,7 @@ describe("oauth state token", () => {
     expect(await verifyOAuthState(SECRET, "")).toBeNull();
     expect(await verifyOAuthState(SECRET, "nope")).toBeNull();
     expect(await verifyOAuthState(SECRET, "v0.aaaa.bbbb")).toBeNull();
+    expect(await verifyOAuthState(SECRET, "v1.@@@@.@@@@")).toBeNull();
   });
 });
 
