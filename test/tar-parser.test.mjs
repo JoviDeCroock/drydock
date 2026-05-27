@@ -377,6 +377,37 @@ describe("readTar suspicious entries", () => {
     expect(suspicious[0].path).toBe("lib/binding.gyp");
   });
 
+  test("flags confusable paths that normalize to an unsafe location", async () => {
+    // Fullwidth slashes canonicalize to ASCII separators, exposing traversal.
+    const sneaky = "package／..／payload.js";
+    const tar = buildTar([{ name: sneaky, body: "bad\n" }]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files).toEqual([]);
+    expect(suspicious).toHaveLength(1);
+    expect(suspicious[0]).toMatchObject({
+      kind: "unicode-confusable",
+      path: "<invalid-path>",
+    });
+    expect(suspicious[0].detail).toContain("normalized to an unsafe path");
+  });
+
+  test("caps suspicious entries and records a single limit marker", async () => {
+    const tar = buildTar([
+      { name: "package/one", type: "2", body: "" },
+      { name: "package/two", type: "2", body: "" },
+      { name: "package/three", type: "2", body: "" },
+      { name: "package/four", type: "2", body: "" },
+      { name: "package/real.js", body: "real\n" },
+    ]);
+    const { files, suspicious } = await parseFull(tar, {
+      ...PARSE_LIMITS,
+      maxFiles: 2,
+    });
+    expect(files.map((file) => file.path)).toEqual(["real.js"]);
+    expect(suspicious.map((entry) => entry.path)).toEqual(["one", "two", "<archive>"]);
+    expect(suspicious[2].detail).toContain("additional entries omitted");
+  });
+
   test("clean ASCII paths produce no suspicious entries", async () => {
     const tar = buildTar([{ name: "package/binding.gyp", body: "{}" }]);
     const { files, suspicious } = await parseFull(tar);

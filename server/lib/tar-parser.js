@@ -183,9 +183,26 @@ export async function readTar(buffer, maxFiles, maxBytesPerFile, maxTarBytes) {
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   const files = [];
   const suspicious = [];
+  const suspiciousLimit = Math.max(1, Number.isFinite(maxFiles) ? maxFiles : 250);
+  let suspiciousLimitReached = false;
   const seenPaths = new Map();
   let nextLongName = null;
   let pax = null;
+
+  function addSuspicious(entry) {
+    if (suspicious.length < suspiciousLimit) {
+      suspicious.push(entry);
+      return;
+    }
+    if (!suspiciousLimitReached) {
+      suspiciousLimitReached = true;
+      suspicious.push({
+        kind: "non-regular",
+        path: "<archive>",
+        detail: `suspicious entry limit reached (${suspiciousLimit}); additional entries omitted`,
+      });
+    }
+  }
 
   for (let offset = 0; offset + 512 <= bytes.length; ) {
     const header = bytes.subarray(offset, offset + 512);
@@ -222,18 +239,20 @@ export async function readTar(buffer, maxFiles, maxBytesPerFile, maxTarBytes) {
         (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName;
       const canonicalCandidate = canonicalizePath(rawCandidate);
       const path = normalizeTarPath(canonicalCandidate);
+      if (rawCandidate !== canonicalCandidate) {
+        addSuspicious({
+          kind: "unicode-confusable",
+          path: path || "<invalid-path>",
+          detail: path
+            ? "path contained zero-width or visually-confusable characters"
+            : "path contained zero-width or visually-confusable characters and normalized to an unsafe path",
+        });
+      }
       if (path) {
-        if (rawCandidate !== canonicalCandidate) {
-          suspicious.push({
-            kind: "unicode-confusable",
-            path,
-            detail: "path contained zero-width or visually-confusable characters",
-          });
-        }
         if (seenPaths.has(path)) {
           // Match last-write-wins extraction so downstream checks inspect the
           // bytes consumers are likely to receive, while still surfacing the duplicate.
-          suspicious.push({
+          addSuspicious({
             kind: "duplicate",
             path,
             detail: "duplicate path; later entry replaced earlier entry",
@@ -255,7 +274,7 @@ export async function readTar(buffer, maxFiles, maxBytesPerFile, maxTarBytes) {
       const rawCandidate =
         (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName;
       const reportedPath = normalizeTarPath(canonicalizePath(rawCandidate)) || rawCandidate || "";
-      suspicious.push({
+      addSuspicious({
         kind: "non-regular",
         path: reportedPath,
         detail: `typeflag ${type} (${describeNonRegularType(type)})`,
