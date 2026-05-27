@@ -258,7 +258,7 @@ Keep `POST /api/v1/scan` only as a compatibility shim during migration.
 
 ## PyPI workflow-gate foundation
 
-PyPI support is intentionally modeled as a separate workflow-gate mode because PyPI does not have npm's staged-publish review primitive. The current backend foundation lives in `server/lib/pypi.ts` and is not yet mounted as a route or persisted scan type.
+PyPI support is intentionally modeled as a separate workflow-gate mode because PyPI does not have npm's staged-publish review primitive. The current backend foundation lives in `server/lib/adapters/pypi/index.ts` as a `PackageAdapter` implementation, but it is not yet mounted as a route or persisted scan type.
 
 Implemented pieces:
 

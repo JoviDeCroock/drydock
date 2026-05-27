@@ -3,11 +3,22 @@ import {
   createPackageDiff,
   deterministicFindings,
   redactFindings,
+  summarizePackageJsonDiff,
   type DiffEntry,
   type FileRecord,
   type Finding,
+  type PackageJsonSummary,
   type RiskLevel,
-} from "./review";
+} from "../../review";
+import type {
+  AcquiredArtifact,
+  AdapterBroker,
+  AdapterConnectionRef,
+  AdapterContext,
+  BaselineInfo,
+  PackageAdapter,
+  StagedDetails,
+} from "../types";
 
 export const PYPI_RELEASE_MANIFEST_SCHEMA = "drydock.release-artifacts.v1";
 export const PYPI_RULES_VERSION = "0.1.0";
@@ -78,6 +89,21 @@ export interface PyPiReleaseCandidateReview {
   risk: RiskLevel;
 }
 
+export interface PyPiAdapterInput {
+  manifest: PyPiReleaseManifest;
+  artifacts: PyPiArtifactInput[];
+  previousArtifacts?: PyPiArtifactInput[];
+  metadata?: PyPiProjectMetadata;
+}
+
+export interface PyPiAdapterDetails {
+  manifest: PyPiReleaseManifest;
+  artifacts: PyPiArtifactSummary[];
+  preparedArtifacts: PyPiPreparedArtifact[];
+}
+
+export type PyPiBroker = AdapterBroker;
+
 export interface PyPiProjectMetadata {
   info?: { name?: string; version?: string };
   releases?: Record<string, PyPiReleaseFile[]>;
@@ -115,6 +141,59 @@ const PYPI_PROJECT_NAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
 const SAFE_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._!+-]{0,127}$/;
 const SHA256_RE = /^[a-f0-9]{64}$/i;
 const PYPI_ARTIFACT_LIMIT = 20;
+
+export const pypiAdapter: PackageAdapter<PyPiAdapterInput, PyPiBroker> = {
+  id: "pypi",
+
+  parseInput(raw: unknown): PyPiAdapterInput {
+    return parsePyPiAdapterInput(raw);
+  },
+
+  createBroker(ctx, ref) {
+    return createPyPiBroker(ctx, ref);
+  },
+
+  async acquireStaged(_ctx, input, _broker) {
+    return acquireStagedPyPi(input);
+  },
+
+  async acquireBaseline(_ctx, input, _broker) {
+    return acquireBaselinePyPi(input);
+  },
+
+  runFindings(args) {
+    const details = args.details as PyPiAdapterDetails;
+    return [
+      ...deterministicFindings(args.staged.files, args.fileDiff, null),
+      ...pyPiReleaseFindings(details.manifest, details.preparedArtifacts),
+    ];
+  },
+
+  describe({ details, previous }) {
+    const d = details as PyPiAdapterDetails;
+    const identity = pickPackageIdentity(d.manifest, d.preparedArtifacts);
+    return {
+      name: identity.name,
+      stagedVersion: identity.version,
+      stagedTag: null,
+      previousVersion: previous?.manifest?.version ?? null,
+    };
+  },
+
+  summarizeDetails(details) {
+    const d = details as PyPiAdapterDetails;
+    return {
+      manifest: d.manifest,
+      artifacts: d.artifacts,
+    };
+  },
+};
+
+export function createPyPiBroker(_ctx: AdapterContext, _ref: AdapterConnectionRef): PyPiBroker {
+  return {
+    dispose(): void {},
+  };
+}
 
 export function normalizePyPiProjectName(name: string): string {
   return name.toLowerCase().replace(/[-_.]+/g, "-");
@@ -178,6 +257,63 @@ export function parsePyPiReleaseManifest(value: unknown): PyPiReleaseManifest {
   };
 }
 
+export function parsePyPiAdapterInput(raw: unknown): PyPiAdapterInput {
+  if (!isRecord(raw)) throw new Error("PyPI adapter input must be an object");
+  const manifest = parsePyPiReleaseManifest(raw.manifest ?? raw);
+  return {
+    manifest,
+    artifacts: parsePyPiArtifactInputs(raw.artifacts, "artifacts"),
+    previousArtifacts:
+      raw.previousArtifacts === undefined
+        ? undefined
+        : parsePyPiArtifactInputs(raw.previousArtifacts, "previousArtifacts"),
+    metadata: isRecord(raw.metadata) ? (raw.metadata as PyPiProjectMetadata) : undefined,
+  };
+}
+
+function parsePyPiArtifactInputs(raw: unknown, field: string): PyPiArtifactInput[] {
+  if (!Array.isArray(raw) || !raw.length) {
+    throw new Error(`PyPI adapter input must include ${field}`);
+  }
+  return raw.map((artifact, index) => {
+    if (!isRecord(artifact)) throw new Error(`${field}[${index}] must be an object`);
+    const path = typeof artifact.path === "string" ? artifact.path : "";
+    if (!isSafeManifestPath(path)) throw new Error(`${field}[${index}] path is not safe`);
+    if (!Array.isArray(artifact.files))
+      throw new Error(`${field}[${index}] files must be an array`);
+    return {
+      path,
+      files: artifact.files.map((file, fileIndex) =>
+        parseFileRecord(file, field, index, fileIndex),
+      ),
+    };
+  });
+}
+
+function parseFileRecord(
+  raw: unknown,
+  field: string,
+  artifactIndex: number,
+  fileIndex: number,
+): FileRecord {
+  if (!isRecord(raw)) {
+    throw new Error(`${field}[${artifactIndex}].files[${fileIndex}] must be an object`);
+  }
+  const path = typeof raw.path === "string" ? raw.path : "";
+  const size = typeof raw.size === "number" ? raw.size : 0;
+  const sha256 = typeof raw.sha256 === "string" ? raw.sha256 : "";
+  const flags = Array.isArray(raw.flags)
+    ? raw.flags.filter((flag): flag is string => typeof flag === "string")
+    : [];
+  return {
+    path,
+    size,
+    sha256,
+    flags,
+    ...(typeof raw.textSample === "string" ? { textSample: raw.textSample } : {}),
+  };
+}
+
 export function preparePyPiArtifact(input: PyPiArtifactInput): PyPiPreparedArtifact {
   const kind = inferPyPiArtifactKind(input.path);
   if (!kind) throw new Error("PyPI artifact must be a wheel or sdist");
@@ -195,29 +331,109 @@ export function createPyPiReleaseCandidateReview(input: {
   artifacts: PyPiArtifactInput[];
   previousArtifacts?: PyPiArtifactInput[];
 }): PyPiReleaseCandidateReview {
-  assertManifestArtifactSet(input.manifest, input.artifacts);
-  const artifacts = input.artifacts.map(preparePyPiArtifact);
-  const previousArtifacts = (input.previousArtifacts ?? []).map(preparePyPiArtifact);
-  const stagedFiles = flattenPyPiArtifactFiles(artifacts);
-  const previousFiles = flattenPyPiArtifactFiles(previousArtifacts);
-  const diff = createPackageDiff(previousFiles, stagedFiles);
-  const packageIdentity = pickPackageIdentity(input.manifest, artifacts);
-  const ruleFindings = redactFindings([
-    ...deterministicFindings(stagedFiles, diff, null),
-    ...pyPiReleaseFindings(input.manifest, artifacts),
-  ]);
+  const adapterInput = pypiAdapter.parseInput(input);
+  const staged = acquireStagedPyPi(adapterInput);
+  const baseline = acquireBaselinePyPi(adapterInput);
+  const diff = createPackageDiff(baseline.artifact?.files ?? [], staged.artifact.files);
+  const ruleFindings = redactFindings(
+    pypiAdapter.runFindings({
+      staged: staged.artifact,
+      baseline: baseline.artifact,
+      details: staged.details,
+      fileDiff: diff,
+      manifestDiff: summarizePackageJsonDiff(baseline.artifact?.manifest, staged.artifact.manifest),
+      stagedManifestText: null,
+    }),
+  );
+  const packageIdentity = pypiAdapter.describe({
+    input: adapterInput,
+    staged: staged.artifact,
+    details: staged.details,
+    baseline: baseline.baseline,
+    previous: baseline.artifact,
+  });
+  const details = staged.details as PyPiAdapterDetails;
 
   return {
     ecosystem: "pypi",
-    manifest: input.manifest,
-    package: packageIdentity,
-    artifactCount: artifacts.length,
-    fileCount: stagedFiles.length,
-    previousFileCount: previousFiles.length,
-    artifacts: artifacts.map((artifact) => artifact.summary),
+    manifest: adapterInput.manifest,
+    package: {
+      name: packageIdentity.name,
+      version: packageIdentity.stagedVersion,
+    },
+    artifactCount: details.preparedArtifacts.length,
+    fileCount: staged.artifact.files.length,
+    previousFileCount: baseline.artifact?.files.length ?? 0,
+    artifacts: details.artifacts,
     diff,
     ruleFindings,
     risk: computeRisk(ruleFindings),
+  };
+}
+
+function acquireStagedPyPi(input: PyPiAdapterInput): {
+  artifact: AcquiredArtifact;
+  details: StagedDetails;
+} {
+  assertManifestArtifactSet(input.manifest, input.artifacts);
+  const preparedArtifacts = input.artifacts.map(preparePyPiArtifact);
+  const files = flattenPyPiArtifactFiles(preparedArtifacts);
+  const manifest = packageJsonSummaryFor(input.manifest, preparedArtifacts);
+  return {
+    artifact: { files, manifest },
+    details: {
+      manifest: input.manifest,
+      artifacts: preparedArtifacts.map((artifact) => artifact.summary),
+      preparedArtifacts,
+    } satisfies PyPiAdapterDetails,
+  };
+}
+
+function acquireBaselinePyPi(input: PyPiAdapterInput): {
+  artifact: AcquiredArtifact | null;
+  baseline: BaselineInfo;
+} {
+  if (input.previousArtifacts?.length) {
+    const preparedArtifacts = input.previousArtifacts.map(preparePyPiArtifact);
+    const manifest = packageJsonSummaryFor(input.manifest, preparedArtifacts);
+    return {
+      artifact: {
+        files: flattenPyPiArtifactFiles(preparedArtifacts),
+        manifest,
+      },
+      baseline: {
+        version: manifest.version ?? null,
+        tag: null,
+        source: "latest-published",
+        distTagVersion: null,
+        reason: "provided-previous-artifacts",
+      },
+    };
+  }
+
+  if (input.metadata) {
+    const selection = pickPyPiBaselineRelease(input.metadata, input.manifest.version);
+    return {
+      artifact: null,
+      baseline: {
+        version: selection.version,
+        tag: null,
+        source: selection.source,
+        distTagVersion: null,
+        reason: `${selection.reason}:not-downloaded`,
+      },
+    };
+  }
+
+  return {
+    artifact: null,
+    baseline: {
+      version: null,
+      tag: null,
+      source: "none",
+      distTagVersion: null,
+      reason: "no-previous-artifacts",
+    },
   };
 }
 
@@ -544,6 +760,17 @@ function pickPackageIdentity(manifest: PyPiReleaseManifest, artifacts: PyPiPrepa
   return {
     name: summary?.name ?? manifest.package ?? null,
     version: summary?.version ?? manifest.version ?? null,
+  };
+}
+
+function packageJsonSummaryFor(
+  manifest: PyPiReleaseManifest,
+  artifacts: PyPiPreparedArtifact[],
+): PackageJsonSummary {
+  const identity = pickPackageIdentity(manifest, artifacts);
+  return {
+    name: identity.name ?? undefined,
+    version: identity.version ?? undefined,
   };
 }
 

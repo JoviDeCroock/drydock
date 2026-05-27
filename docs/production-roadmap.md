@@ -257,7 +257,7 @@ Goals:
 
 Implemented foundation:
 
-- `server/lib/pypi.ts` validates `drydock.release-artifacts.v1` PyPI manifests, reads PyPI project JSON metadata, selects a published baseline, and creates PyPI deterministic findings.
+- `server/lib/adapters/pypi/index.ts` validates `drydock.release-artifacts.v1` PyPI manifests, reads PyPI project JSON metadata, selects a published baseline, and creates PyPI deterministic findings through the shared `PackageAdapter` contract.
 - `server/lib/tar-parser.js` now supports safe ZIP parsing for wheel archives.
 - `NpmStageGateway` can allow exact public artifact URLs without attaching npm credentials.
 

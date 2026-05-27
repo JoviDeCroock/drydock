@@ -6,9 +6,10 @@ import {
   normalizePyPiProjectName,
   parsePyPiReleaseManifest,
   pickPyPiBaselineRelease,
+  pypiAdapter,
   preparePyPiArtifact,
   selectPyPiReleaseArtifacts,
-} from "../server/lib/pypi.ts";
+} from "../server/lib/adapters/pypi/index.ts";
 
 function file(path, textSample, extra = {}) {
   return {
@@ -314,6 +315,64 @@ describe("PyPI artifact summaries and review", () => {
     expect(
       review.diff.some((entry) => entry.path.includes("demo_package-1.2.0-py3-none-any.whl")),
     ).toBe(false);
+  });
+
+  test("exposes PyPI review through the package adapter contract", async () => {
+    const manifest = parsePyPiReleaseManifest({
+      schema: "drydock.release-artifacts.v1",
+      ecosystem: "pypi",
+      package: "demo-package",
+      version: "1.2.0",
+      artifacts: [{ path: "dist/demo_package-1.2.0-py3-none-any.whl", sha256: "a".repeat(64) }],
+    });
+    const input = pypiAdapter.parseInput({
+      manifest,
+      artifacts: [
+        {
+          path: "dist/demo_package-1.2.0-py3-none-any.whl",
+          files: [
+            file(
+              "demo_package-1.2.0.dist-info/METADATA",
+              "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
+            ),
+            file(
+              "demo_package-1.2.0.dist-info/WHEEL",
+              "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+            ),
+            file("demo_package-1.2.0.dist-info/RECORD", "demo_package/__init__.py,,\n"),
+          ],
+        },
+      ],
+    });
+    const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user_1" } };
+    const broker = pypiAdapter.createBroker(ctx, { organizationId: "org_1" });
+    const staged = await pypiAdapter.acquireStaged(ctx, input, broker);
+    const baseline = await pypiAdapter.acquireBaseline(ctx, input, broker, staged);
+    const summary = pypiAdapter.describe({
+      input,
+      staged: staged.artifact,
+      details: staged.details,
+      baseline: baseline.baseline,
+      previous: baseline.artifact,
+    });
+
+    expect(pypiAdapter.id).toBe("pypi");
+    expect(summary).toMatchObject({
+      name: "demo-package",
+      stagedVersion: "1.2.0",
+      stagedTag: null,
+      previousVersion: null,
+    });
+    expect(staged.artifact.files.map((entry) => entry.path)).toEqual([
+      "wheel/py3-none-any/.dist-info/METADATA",
+      "wheel/py3-none-any/.dist-info/WHEEL",
+      "wheel/py3-none-any/.dist-info/RECORD",
+    ]);
+    expect(baseline.baseline).toMatchObject({
+      version: null,
+      source: "none",
+      reason: "no-previous-artifacts",
+    });
   });
 });
 

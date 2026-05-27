@@ -37,6 +37,8 @@ export type BaselineSelectionSource =
   | "dist-tag"
   | "semver-predecessor"
   | "highest-published"
+  | "latest-published"
+  | "upload-time"
   | "none";
 
 export interface BaselineInfo {

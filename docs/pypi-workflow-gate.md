@@ -13,9 +13,10 @@ Official references:
 
 ## Implemented foundation
 
-The repo now has a backend-only PyPI foundation in `server/lib/pypi.ts`:
+The repo now has a backend-only PyPI foundation in `server/lib/adapters/pypi/index.ts`:
 
 - validates `drydock.release-artifacts.v1` manifests for `ecosystem: "pypi"`;
+- exposes a `PackageAdapter` implementation compatible with the pluggable scan pipeline introduced for npm;
 - normalizes PyPI project names using the PEP 503-style `[-_.]+ -> -` convention;
 - recognizes wheel (`.whl`) and sdist (`.tar.gz`, `.tgz`) artifacts;
 - parses wheel `METADATA`, `WHEEL`, and `RECORD` evidence from ZIP archives;
