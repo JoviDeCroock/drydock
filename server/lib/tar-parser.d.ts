@@ -36,6 +36,7 @@ export function hasImplicitNodeGypInstall(
 ): boolean;
 export function isSafePaxPath(value: unknown): boolean;
 export function normalizeTarPath(rawPath: string | null | undefined): string | null;
+export function normalizeZipPath(rawPath: string | null | undefined): string | null;
 export function parsePax(body: Uint8Array): Record<string, string>;
 export function sha256Hex(bytes: Uint8Array): Promise<string>;
 export function summarizeFile(
@@ -49,6 +50,20 @@ export function readTar(
   maxBytesPerFile: number,
   maxTarBytes: number,
 ): Promise<ParsedFile[]>;
+export function readUint16Le(bytes: Uint8Array, offset: number): number;
+export function readUint32Le(bytes: Uint8Array, offset: number): number;
+export function findZipEndOfCentralDirectory(bytes: Uint8Array): number;
+export function inflateRawBounded(bytes: Uint8Array, maxBytes: number): Promise<Uint8Array>;
+export function readZipArchive(
+  buffer: ArrayBuffer | Uint8Array,
+  maxFiles: number,
+  maxBytesPerFile: number,
+  maxArchiveBytes: number,
+): Promise<ParsedFile[]>;
+export function readStreamBounded(
+  body: ReadableStream<Uint8Array> | null,
+  maxBytes: number,
+): Promise<Uint8Array>;
 export function parsePackageJson(files: ParsedFile[]): ParsedPackageJson | null;
 export function gunzipBounded(
   body: ReadableStream<Uint8Array> | null,

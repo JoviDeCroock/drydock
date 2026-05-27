@@ -59,4 +59,32 @@ describe("npm stage gateway policy", () => {
       });
     }
   });
+
+  test("allows exact public artifact URLs without credentials", () => {
+    expect(
+      evaluateNpmStageGatewayRequest(
+        "https://files.pythonhosted.org/packages/aa/bb/demo-1.0.0-py3-none-any.whl",
+        "GET",
+        registry,
+        ["https://files.pythonhosted.org/packages/aa/bb/demo-1.0.0-py3-none-any.whl"],
+      ),
+    ).toEqual({
+      allowed: true,
+      credentialed: false,
+      kind: "public-artifact",
+    });
+
+    expect(
+      evaluateNpmStageGatewayRequest(
+        "https://files.pythonhosted.org/packages/aa/bb/other-1.0.0-py3-none-any.whl",
+        "GET",
+        registry,
+        ["https://files.pythonhosted.org/packages/aa/bb/demo-1.0.0-py3-none-any.whl"],
+      ),
+    ).toEqual({
+      allowed: false,
+      credentialed: false,
+      kind: "blocked",
+    });
+  });
 });

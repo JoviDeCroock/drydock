@@ -76,6 +76,19 @@ export function normalizeTarPath(rawPath) {
   return path;
 }
 
+export function normalizeZipPath(rawPath) {
+  const nul = String.fromCharCode(0);
+  if (!rawPath || rawPath.includes(nul) || rawPath.includes("\\")) return null;
+  let path = rawPath.replace(/^\/+/, "");
+  if (!path || path.endsWith("/") || path.startsWith("../") || path.includes("/../")) return null;
+  if (/^[A-Za-z]:/.test(path)) return null;
+  const parts = path.split("/").filter(Boolean);
+  if (!parts.length || parts.some((part) => part === "." || part === "..")) return null;
+  path = parts.join("/");
+  if (path.length > 512) return null;
+  return path;
+}
+
 export function parsePax(body) {
   const text = decodeText(body.subarray(0, Math.min(body.length, 8192)));
   const out = {};
@@ -169,6 +182,154 @@ export async function readTar(buffer, maxFiles, maxBytesPerFile, maxTarBytes) {
     offset += Math.ceil(size / 512) * 512;
   }
   return files;
+}
+
+export function readUint16Le(bytes, offset) {
+  return bytes[offset] | (bytes[offset + 1] << 8);
+}
+
+export function readUint32Le(bytes, offset) {
+  return (
+    (bytes[offset] |
+      (bytes[offset + 1] << 8) |
+      (bytes[offset + 2] << 16) |
+      (bytes[offset + 3] << 24)) >>>
+    0
+  );
+}
+
+export function findZipEndOfCentralDirectory(bytes) {
+  const minOffset = Math.max(0, bytes.length - 65557);
+  for (let offset = bytes.length - 22; offset >= minOffset; offset -= 1) {
+    if (readUint32Le(bytes, offset) === 0x06054b50) return offset;
+  }
+  return -1;
+}
+
+export async function inflateRawBounded(bytes, maxBytes) {
+  const reader = new Response(bytes).body
+    .pipeThrough(new DecompressionStream("deflate-raw"))
+    .getReader();
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      reader.cancel().catch(() => undefined);
+      throw new Error("archive expands beyond safety limit");
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+export async function readZipArchive(buffer, maxFiles, maxBytesPerFile, maxArchiveBytes) {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const eocd = findZipEndOfCentralDirectory(bytes);
+  if (eocd < 0) throw new Error("zip central directory not found");
+
+  const entryCount = readUint16Le(bytes, eocd + 10);
+  const centralDirectorySize = readUint32Le(bytes, eocd + 12);
+  const centralDirectoryOffset = readUint32Le(bytes, eocd + 16);
+  if (
+    entryCount === 0xffff ||
+    centralDirectorySize === 0xffffffff ||
+    centralDirectoryOffset === 0xffffffff
+  ) {
+    throw new Error("zip64 archives are not supported");
+  }
+  if (centralDirectoryOffset + centralDirectorySize > bytes.length) {
+    throw new Error("truncated zip central directory");
+  }
+
+  const files = [];
+  let expandedBytes = 0;
+  let offset = centralDirectoryOffset;
+  for (let index = 0; index < entryCount; index += 1) {
+    if (offset + 46 > bytes.length || readUint32Le(bytes, offset) !== 0x02014b50) {
+      throw new Error("invalid zip central directory");
+    }
+    const compressionMethod = readUint16Le(bytes, offset + 10);
+    const compressedSize = readUint32Le(bytes, offset + 20);
+    const uncompressedSize = readUint32Le(bytes, offset + 24);
+    const fileNameLength = readUint16Le(bytes, offset + 28);
+    const extraLength = readUint16Le(bytes, offset + 30);
+    const commentLength = readUint16Le(bytes, offset + 32);
+    const localHeaderOffset = readUint32Le(bytes, offset + 42);
+    const fileNameStart = offset + 46;
+    const fileNameEnd = fileNameStart + fileNameLength;
+    if (fileNameEnd > bytes.length) throw new Error("truncated zip filename");
+
+    const rawPath = new TextDecoder("utf-8", { fatal: false }).decode(
+      bytes.subarray(fileNameStart, fileNameEnd),
+    );
+    const path = normalizeZipPath(rawPath);
+    offset = fileNameEnd + extraLength + commentLength;
+
+    if (!path) continue;
+    if (files.length >= maxFiles) throw new Error("archive contains too many files");
+    if (uncompressedSize > maxArchiveBytes || expandedBytes + uncompressedSize > maxArchiveBytes) {
+      throw new Error("archive expands beyond safety limit");
+    }
+    if (
+      localHeaderOffset + 30 > bytes.length ||
+      readUint32Le(bytes, localHeaderOffset) !== 0x04034b50
+    ) {
+      throw new Error("invalid zip local header");
+    }
+    const localFileNameLength = readUint16Le(bytes, localHeaderOffset + 26);
+    const localExtraLength = readUint16Le(bytes, localHeaderOffset + 28);
+    const dataOffset = localHeaderOffset + 30 + localFileNameLength + localExtraLength;
+    if (dataOffset + compressedSize > bytes.length) throw new Error("truncated zip entry");
+
+    let body;
+    if (compressionMethod === 0) {
+      body = bytes.subarray(dataOffset, dataOffset + compressedSize);
+    } else if (compressionMethod === 8) {
+      body = await inflateRawBounded(
+        bytes.subarray(dataOffset, dataOffset + compressedSize),
+        maxArchiveBytes,
+      );
+    } else {
+      throw new Error("unsupported zip compression method");
+    }
+    if (body.length !== uncompressedSize) throw new Error("zip entry size mismatch");
+    expandedBytes += body.length;
+    files.push(await summarizeFile(path, body, maxBytesPerFile));
+  }
+  return files;
+}
+
+export async function readStreamBounded(body, maxBytes) {
+  if (!body) throw new Error("archive download failed");
+  const reader = body.getReader();
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      reader.cancel().catch(() => undefined);
+      throw new Error("archive too large");
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }
 
 export function parsePackageJson(files) {

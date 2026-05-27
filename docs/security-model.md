@@ -117,7 +117,20 @@ Blocked:
 - install-time network calls;
 - any request where npm auth would be forwarded to a non-registry origin.
 
-The gateway compares URL origins against the configured npm registry and attaches credentials only for the minimal endpoint set requiring auth. Previous-version compare cache entries are scoped by organization so cached private-package evidence is not shared across tenants.
+The gateway compares URL origins against the configured npm registry and attaches credentials only for the minimal endpoint set requiring auth. For the PyPI foundation, it can also allow exact public artifact URLs without credentials; those URLs must be explicitly listed and are intended for `files.pythonhosted.org` release artifacts. Previous-version compare cache entries are scoped by organization so cached private-package evidence is not shared across tenants.
+
+## PyPI workflow-gate posture
+
+PyPI support is a workflow-gate mode, not an approval bot and not a registry credential path. PyPI Trusted Publishers use OIDC from GitHub Actions, and PyPI strongly encourages binding the publisher to a GitHub Environment. Drydock's future GitHub App should review the built wheel/sdist artifacts while that environment is pending, then approve or reject the GitHub gate.
+
+Additional boundaries for PyPI:
+
+- Do not mint PyPI OIDC tokens or upload to PyPI.
+- Do not rebuild artifacts after review.
+- Require a manifest with package name, version, artifact path, and SHA-256 digest.
+- Verify the reviewed digests immediately before the publish action.
+- Treat wheel ZIP and sdist tar contents as hostile evidence, with the same no-execution and bounded-sample rules as npm tarballs.
+- Keep GitHub Actions artifact credentials in the trusted parent/GitHub integration path; do not pass them into the sandbox.
 
 ## AI prompt-injection posture (paused)
 
