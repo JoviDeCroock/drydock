@@ -166,6 +166,8 @@ Workers AI review is currently **disabled in the scan pipeline**. The reviewer m
 
 Scans persist `scan.aiJson = null` while AI review is disabled, and the UI omits the reviewer-notes section entirely. Risk is computed exclusively from deterministic findings.
 
+All `AiReview` consumers must route the persisted record through `displayedAiResult()` (`server/lib/ai-review-types.ts`). The fallback shape used when the assistant did not complete carries `risk: "low"` and `releaseAssessment: "not_assessed"` — reading those fields raw would silently surface "we couldn't review this" as "low risk / nothing unusual." The helper narrows to a `{ kind: "complete" }` discriminated union or a `{ kind: "unavailable" }` view that intentionally omits `risk` and `releaseAssessment`, so neither the UI nor the risk computation can accidentally read fallback values as evidence.
+
 When AI review returns it will continue to:
 
 - start from deterministic findings, package.json/package.json diff, and changed-file metadata rather than a bulk dump of every changed file;

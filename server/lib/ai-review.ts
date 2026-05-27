@@ -11,10 +11,13 @@ import type { AiReview, AiReviewStatus, SelectiveAiReviewOptions } from "./ai-re
 
 export type {
   AiFinding,
+  AiReleaseAssessment,
   AiReview,
   AiReviewStatus,
+  DisplayedAiResult,
   SelectiveAiReviewOptions,
 } from "./ai-review-types";
+export { displayedAiResult } from "./ai-review-types";
 
 // Single reviewer model. See docs/cost-model.md.
 export const AI_MODEL = "@cf/moonshotai/kimi-k2.5";

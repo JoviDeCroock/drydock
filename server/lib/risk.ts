@@ -1,4 +1,5 @@
-import type { AiReview } from "./ai-review";
+import type { AiReview } from "./ai-review-types";
+import { displayedAiResult } from "./ai-review-types";
 import { combineRisk, computeRisk, normalizeRisk, type Finding, type RiskLevel } from "./review";
 
 export interface ScanRiskBreakdown {
@@ -15,13 +16,16 @@ type RiskFinding = Finding & {
   releaseDelta?: boolean | null;
 };
 
-export function computeScanRisk(ruleFindings: Finding[], aiFindings: AiReview): RiskLevel {
-  const aiReviewCompleted = aiFindings.status === "complete";
-  const aiHasEvidence = aiFindings.findings.length > 0 || aiFindings.requiresManualReview;
+export function computeScanRisk(ruleFindings: Finding[], aiReview: AiReview): RiskLevel {
+  const ai = displayedAiResult(aiReview);
+  if (ai?.kind !== "complete") {
+    return computeRisk(ruleFindings);
+  }
+  const aiHasEvidence = ai.findings.length > 0 || ai.requiresManualReview;
   return combineRisk(
     computeRisk(ruleFindings),
-    aiReviewCompleted && aiHasEvidence ? aiFindings.risk : "low",
-    aiReviewCompleted && aiFindings.requiresManualReview ? "medium" : "low",
+    aiHasEvidence ? ai.risk : "low",
+    ai.requiresManualReview ? "medium" : "low",
   );
 }
 

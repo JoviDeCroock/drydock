@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { AI_MODEL, analyzeWithAi, runSelectiveAiReview } from "../server/lib/ai-review.ts";
+import {
+  AI_MODEL,
+  analyzeWithAi,
+  displayedAiResult,
+  runSelectiveAiReview,
+} from "../server/lib/ai-review.ts";
 import { computeScanRisk } from "../server/lib/risk.ts";
 
 const EMPTY_PACKAGE_JSON_DIFF = {
@@ -244,5 +249,105 @@ describe.skip("ai review normalization", () => {
     );
     expect(calls).toEqual([AI_MODEL]);
     expect(review.model).toBe(AI_MODEL);
+  });
+});
+
+describe("displayedAiResult", () => {
+  test("returns null when no review is provided", () => {
+    expect(displayedAiResult(null)).toBeNull();
+    expect(displayedAiResult(undefined)).toBeNull();
+  });
+
+  test("invalid status produces an unavailable result that hides fallback risk/assessment", () => {
+    const result = displayedAiResult({
+      status: "invalid",
+      risk: "low",
+      releaseAssessment: "not_assessed",
+      summary: "Assistant returned non-JSON output.",
+      findings: [],
+      requiresManualReview: false,
+      model: "test-model",
+    });
+    expect(result).toEqual({
+      kind: "unavailable",
+      status: "invalid",
+      model: "test-model",
+      summary: "Assistant returned non-JSON output.",
+    });
+    expect(result).not.toHaveProperty("risk");
+    expect(result).not.toHaveProperty("releaseAssessment");
+  });
+
+  test("unavailable status produces an unavailable result", () => {
+    const result = displayedAiResult({
+      status: "unavailable",
+      risk: "low",
+      releaseAssessment: "not_assessed",
+      summary: "AI review is disabled.",
+      findings: [],
+      requiresManualReview: false,
+      model: null,
+    });
+    expect(result).toEqual({
+      kind: "unavailable",
+      status: "unavailable",
+      model: null,
+      summary: "AI review is disabled.",
+    });
+  });
+
+  test("complete review exposes risk/assessment", () => {
+    const result = displayedAiResult({
+      status: "complete",
+      risk: "medium",
+      releaseAssessment: "review_recommended",
+      summary: "Network behavior needs review.",
+      findings: [
+        {
+          severity: "medium",
+          file: "package/index.js",
+          evidence: "fetch('https://example.com')",
+          reason: "outbound network call",
+          recommendation: "review manually",
+        },
+      ],
+      requiresManualReview: true,
+      model: "test-model",
+    });
+    expect(result).toEqual({
+      kind: "complete",
+      model: "test-model",
+      summary: "Network behavior needs review.",
+      risk: "medium",
+      releaseAssessment: "review_recommended",
+      findings: [
+        {
+          severity: "medium",
+          file: "package/index.js",
+          evidence: "fetch('https://example.com')",
+          reason: "outbound network call",
+          recommendation: "review manually",
+        },
+      ],
+      requiresManualReview: true,
+    });
+  });
+
+  test("complete review with not_assessed assessment is treated as unavailable (defensive)", () => {
+    const result = displayedAiResult({
+      status: "complete",
+      risk: "low",
+      releaseAssessment: "not_assessed",
+      summary: "Stored without an assessment.",
+      findings: [],
+      requiresManualReview: false,
+      model: "test-model",
+    });
+    expect(result).toEqual({
+      kind: "unavailable",
+      status: "invalid",
+      model: "test-model",
+      summary: "Stored without an assessment.",
+    });
   });
 });

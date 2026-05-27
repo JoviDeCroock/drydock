@@ -11,7 +11,8 @@ import {
   type PersistedScanDetail,
   type ScanDecision,
 } from "../../models/scan";
-import type { AiFinding, AiReview } from "../../../server/lib/ai-review";
+import type { AiFinding, AiReview, DisplayedAiResult } from "../../../server/lib/ai-review-types";
+import { displayedAiResult } from "../../../server/lib/ai-review-types";
 import {
   annotateFindingsWithDiffStatus as annotateReviewFindingsWithDiffStatus,
   createPackageDiff,
@@ -128,7 +129,7 @@ export default function ScanDetailPage() {
   });
 
   const summary = useComputed(() => asPersistedSummary(model.detail.value?.scan.summaryJson));
-  const ai = useComputed(() => asAiReview(model.detail.value?.scan.aiJson));
+  const ai = useComputed(() => displayedAiResult(asAiReview(model.detail.value?.scan.aiJson)));
 
   const diffEntries = useComputed<DiffEntry[]>(() => {
     const detail = model.detail.value;
@@ -265,7 +266,6 @@ export default function ScanDetailPage() {
               detail={detail}
               summary={summary.value}
               ai={ai.value}
-              aiFindings={ai.value?.findings ?? []}
               diffCount={diffEntries.value.filter((entry) => entry.status !== "unchanged").length}
               findingsWithDiffStatus={findingsWithDiffStatus.value}
               usePersistedRiskSummary={model.isDefaultComparison.value || !compare}
@@ -377,15 +377,13 @@ function ReleaseRecommendation({
   detail,
   summary,
   ai,
-  aiFindings,
   diffCount,
   findingsWithDiffStatus,
   usePersistedRiskSummary,
 }: {
   detail: PersistedScanDetail;
   summary: PersistedSummary;
-  ai: AiReview | null;
-  aiFindings: AiFinding[];
+  ai: DisplayedAiResult | null;
   diffCount: number;
   findingsWithDiffStatus: FindingWithDiffStatus[];
   usePersistedRiskSummary: boolean;
@@ -404,14 +402,14 @@ function ReleaseRecommendation({
     usePersistedRiskSummary && detail.riskSummary
       ? detail.riskSummary.releaseFindingCount
       : changedFindings.length;
-  const aiComplete = ai?.status === "complete";
+  const aiFindings: AiFinding[] = ai?.kind === "complete" ? ai.findings : [];
   const recommendation = getReleaseRecommendation(artifactRisk, releaseRisk, releaseFindingCount);
   const evidence = buildRecommendationEvidence(
     detail,
     summary,
     diffCount,
     changedFindings,
-    aiComplete ? aiFindings : [],
+    aiFindings,
   );
   const severityCounts = countSeverities([...detail.findings, ...aiFindings]);
   const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
@@ -425,12 +423,12 @@ function ReleaseRecommendation({
           <Badge tone="neutral">artifact {artifactRisk}</Badge>
         ) : null}
         {ai?.model != null &&
-          (aiComplete ? (
+          (ai.kind === "complete" ? (
             <>
-              <Badge tone={ai!.requiresManualReview ? "medium" : "ok"}>
-                {ai!.requiresManualReview ? "manual review" : "no extra review"}
+              <Badge tone={ai.requiresManualReview ? "medium" : "ok"}>
+                {ai.requiresManualReview ? "manual review" : "no extra review"}
               </Badge>
-              <Badge tone="neutral">{ai!.releaseAssessment.replaceAll("_", " ")}</Badge>
+              <Badge tone="neutral">{ai.releaseAssessment.replaceAll("_", " ")}</Badge>
             </>
           ) : (
             <Badge tone="neutral">assistant unavailable</Badge>
@@ -1003,7 +1001,7 @@ function PersistedReportSections({
   ai,
 }: {
   summary: PersistedSummary;
-  ai: AiReview | null;
+  ai: DisplayedAiResult | null;
 }) {
   return (
     <section class="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-6">
@@ -1015,41 +1013,35 @@ function PersistedReportSections({
         )}
       </ReportSection>
 
-      {ai?.model != null && (
+      {ai != null && ai.model != null && (
         <ReportSection title="Reviewer notes" class="lg:col-span-2">
-          {ai ? (
-            ai!.status === "complete" ? (
-              <>
-                <div class="flex flex-wrap gap-2">
-                  <Badge tone={severityTone(ai!.risk)}>{ai!.risk}</Badge>
-                  <Badge tone={ai!.requiresManualReview ? "medium" : "ok"}>
-                    {ai!.requiresManualReview ? "manual review" : "no extra review"}
-                  </Badge>
-                  <Badge tone="neutral">
-                    {ai!.releaseAssessment?.replaceAll("_", " ") || "assessment stored"}
-                  </Badge>
-                </div>
-                {ai!.summary ? (
-                  <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{ai!.summary}</p>
-                ) : null}
-                {ai!.findings?.length ? (
-                  <AiFindingList findings={ai!.findings} />
-                ) : (
-                  <EmptyLine>No assistant findings.</EmptyLine>
-                )}
-              </>
-            ) : (
-              <>
-                <div class="flex flex-wrap gap-2">
-                  <Badge tone="neutral">assistant unavailable</Badge>
-                </div>
-                {ai!.summary ? (
-                  <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{ai!.summary}</p>
-                ) : null}
-              </>
-            )
+          {ai.kind === "complete" ? (
+            <>
+              <div class="flex flex-wrap gap-2">
+                <Badge tone={severityTone(ai.risk)}>{ai.risk}</Badge>
+                <Badge tone={ai.requiresManualReview ? "medium" : "ok"}>
+                  {ai.requiresManualReview ? "manual review" : "no extra review"}
+                </Badge>
+                <Badge tone="neutral">{ai.releaseAssessment.replaceAll("_", " ")}</Badge>
+              </div>
+              {ai.summary ? (
+                <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{ai.summary}</p>
+              ) : null}
+              {ai.findings.length ? (
+                <AiFindingList findings={ai.findings} />
+              ) : (
+                <EmptyLine>No assistant findings.</EmptyLine>
+              )}
+            </>
           ) : (
-            <EmptyLine>No reviewer notes were saved for this review.</EmptyLine>
+            <>
+              <div class="flex flex-wrap gap-2">
+                <Badge tone="neutral">assistant unavailable</Badge>
+              </div>
+              {ai.summary ? (
+                <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{ai.summary}</p>
+              ) : null}
+            </>
           )}
         </ReportSection>
       )}
