@@ -6,12 +6,7 @@ import { rememberDashboardReturnUrl, useQuerySignal } from "../../lib/query-stat
 import { sessionModel } from "../../models/auth";
 import { NpmConnectionModel } from "../../models/npm-connection";
 import { OrganizationModel } from "../../models/organization";
-import {
-  ScanListModel,
-  ScanRequestModel,
-  type ScanDecisionFilter,
-  type ScanListItem,
-} from "../../models/scan";
+import { ScanListModel, type ScanDecisionFilter, type ScanListItem } from "../../models/scan";
 import { StagedPublishesModel } from "../../models/staged-publishes";
 import {
   Alert,
@@ -22,7 +17,6 @@ import {
   Eyebrow,
   Field,
   Input,
-  LinkButton,
   LoadingState,
   MonoDetail,
   Muted,
@@ -38,7 +32,6 @@ export default function DashboardPage() {
   const scans = useModel(ScanListModel);
   const npm = useModel(NpmConnectionModel);
   const organizations = useModel(OrganizationModel);
-  const request = useModel(ScanRequestModel);
   const stagedPublishes = useModel(StagedPublishesModel);
   const sessionChecked = useSignal(false);
 
@@ -92,19 +85,6 @@ export default function DashboardPage() {
     }
   });
 
-  useSignalEffect(() => {
-    if (request.status.value !== "done") return;
-    const id = request.lastResult.value?.scan.id;
-    if (!id) return;
-    void scans.refresh();
-    location.route(`/dashboard/scans/${encodeURIComponent(id)}`);
-  });
-
-  const onSubmit = async (event: Event) => {
-    event.preventDefault();
-    await request.submit();
-  };
-
   const onSignOut = async () => {
     await sessionModel.signOut();
     location.route("/", true);
@@ -147,7 +127,6 @@ export default function DashboardPage() {
 
       {workspaceLoaded ? (
         <>
-          <ReviewRequestCard npm={npm} request={request} onSubmit={onSubmit} />
           <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
           <WorkspaceSetupPanel npm={npm} />
         </>
@@ -186,76 +165,6 @@ async function discoverStagedPublishes(
 ) {
   await stagedPublishes.discover();
   await scans.refresh();
-}
-
-function ReviewRequestCard({
-  npm,
-  request,
-  onSubmit,
-}: {
-  npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
-  request: ReturnType<typeof useModel<typeof ScanRequestModel.prototype>>;
-  onSubmit: (event: Event) => void;
-}) {
-  const status = request.status.value;
-  const stageId = request.stageId.value;
-  const hasConnection = npm.isConnected.value;
-  const hasValidatedConnection = npm.validated.value;
-
-  return (
-    <Card class="p-5 md:p-6 flex flex-col gap-4 border-accent/40">
-      <div class="flex flex-wrap items-start justify-between gap-3">
-        <div class="flex flex-col gap-1.5">
-          <SectionLabel>Request review</SectionLabel>
-          <Muted class="text-[13px] max-w-[720px]">
-            Paste a staged publish ID. We'll compare it with the latest published release and open
-            the saved report when it is ready.
-          </Muted>
-        </div>
-        <Badge tone={status === "scanning" ? "info" : hasValidatedConnection ? "ok" : "info"}>
-          {status === "scanning" ? "running" : hasValidatedConnection ? "ready" : "setup needed"}
-        </Badge>
-      </div>
-      {!hasConnection ? (
-        <Alert tone="info">
-          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>Connect npm access in workspace setup before reviewing staged packages.</span>
-            <LinkButton href="#workspace-setup" variant="secondary" size="sm" class="shrink-0">
-              Open settings
-            </LinkButton>
-          </div>
-        </Alert>
-      ) : !hasValidatedConnection ? (
-        <Alert tone="info">
-          Validate npm access in workspace setup before reviewing staged packages.
-        </Alert>
-      ) : null}
-      <form class="flex flex-col gap-3" onSubmit={onSubmit}>
-        <Field label="Stage ID" for="stageId">
-          <div class="flex flex-col sm:flex-row gap-2">
-            <Input
-              id="stageId"
-              type="text"
-              value={stageId}
-              placeholder="e.g. acme-pkg-1.2.3-stage-abcdef"
-              onInput={(e) => (request.stageId.value = (e.target as HTMLInputElement).value)}
-              disabled={status === "scanning"}
-              autoComplete="off"
-              spellcheck={false}
-            />
-            <Button
-              type="submit"
-              disabled={status === "scanning" || !stageId.trim() || !hasValidatedConnection}
-              class="shrink-0"
-            >
-              {status === "scanning" ? "Reviewing…" : "Review staged publish"}
-            </Button>
-          </div>
-        </Field>
-      </form>
-      {request.error.value ? <Alert tone="critical">{request.error.value}</Alert> : null}
-    </Card>
-  );
 }
 
 function RecentReviewsSection({
@@ -406,7 +315,7 @@ function emptyStateMessage(filter: ScanDecisionFilter): string {
     case "no_publish":
       return "No reviews blocked from publish yet.";
     default:
-      return "No reviews yet. Request one above to start building your release history.";
+      return "No reviews yet. Check npm or wait for auto-discovery to surface staged releases.";
   }
 }
 
