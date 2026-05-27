@@ -10,15 +10,16 @@ export interface AiFinding {
 
 export type AiReviewStatus = "complete" | "invalid" | "unavailable";
 
+export type AiReleaseAssessment =
+  | "nothing_unusual"
+  | "review_recommended"
+  | "suspicious"
+  | "blocked";
+
 export interface AiReview {
   status: AiReviewStatus;
   risk: RiskLevel;
-  releaseAssessment:
-    | "nothing_unusual"
-    | "review_recommended"
-    | "suspicious"
-    | "blocked"
-    | "not_assessed";
+  releaseAssessment: AiReleaseAssessment | "not_assessed";
   summary: string;
   findings: AiFinding[];
   requiresManualReview: boolean;
@@ -33,4 +34,47 @@ export interface SelectiveAiReviewOptions {
   packageJsonDiff: PackageJsonDiff;
   ruleFindings: Finding[];
   previousVersionAvailable: boolean;
+}
+
+export type DisplayedAiResult =
+  | {
+      kind: "complete";
+      model: string | null;
+      summary: string;
+      risk: RiskLevel;
+      releaseAssessment: AiReleaseAssessment;
+      findings: AiFinding[];
+      requiresManualReview: boolean;
+    }
+  | {
+      kind: "unavailable";
+      model: string | null;
+      summary: string;
+      status: Exclude<AiReviewStatus, "complete">;
+    };
+
+// Single safe accessor for AiReview consumers. The fallback shape returned when
+// the assistant did not complete (`status` "invalid" or "unavailable") carries
+// `risk: "low"` and `releaseAssessment: "not_assessed"` — reading those raw
+// would surface "we couldn't review this" as "low risk / nothing unusual."
+// Always route AiReview through this helper before rendering or computing risk.
+export function displayedAiResult(review: AiReview | null | undefined): DisplayedAiResult | null {
+  if (!review) return null;
+  if (review.status === "complete" && review.releaseAssessment !== "not_assessed") {
+    return {
+      kind: "complete",
+      model: review.model,
+      summary: review.summary,
+      risk: review.risk,
+      releaseAssessment: review.releaseAssessment,
+      findings: review.findings,
+      requiresManualReview: review.requiresManualReview,
+    };
+  }
+  return {
+    kind: "unavailable",
+    model: review.model,
+    summary: review.summary,
+    status: review.status === "complete" ? "invalid" : review.status,
+  };
 }
