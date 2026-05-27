@@ -111,6 +111,34 @@ export class SandboxError extends Error {
   }
 }
 
+export function isSandboxError(err: unknown): boolean {
+  return sandboxErrorDetail(err) !== null;
+}
+
+export function sandboxErrorDetail(err: unknown): string | null {
+  if (err instanceof SandboxError) return err.detail;
+  if (!err || typeof err !== "object") return null;
+  const value = err as Record<string, unknown>;
+  if (value.name !== "SandboxError") return null;
+  if (typeof value.detail === "string") return value.detail;
+  if (typeof value.message === "string" && isSerializedSandboxDetail(value.message)) {
+    return value.message;
+  }
+  return null;
+}
+
+function isSerializedSandboxDetail(message: string): boolean {
+  if (!message.trim().startsWith("{")) return false;
+  try {
+    const parsed = JSON.parse(message) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+    const value = parsed as Record<string, unknown>;
+    return typeof value.error === "string" || typeof value.status === "number";
+  } catch {
+    return false;
+  }
+}
+
 export async function downloadInSandbox(
   env: Cloudflare.Env,
   ctx: ExecutionContext,

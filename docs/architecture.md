@@ -27,6 +27,8 @@ Dynamic Worker sandbox
 
 Scan orchestration lives in `server/lib/scan-pipeline.ts` and is shared by both entrypoints. The product path is the queued/background lifecycle: `POST /api/v1/scans` creates a scan, a Queue consumer or local `waitUntil()` job runs the pipeline, and the UI reads status/report data from `GET /api/v1/scans/:id`. `POST /api/v1/scan` remains only as a synchronous compatibility shim during the migration.
 
+The pipeline is **ecosystem-agnostic**: it accepts a `PackageAdapter` (`server/lib/adapters/types.ts`) and delegates everything npm-specific — input parsing, artifact acquisition, baseline selection, deterministic findings, package projection, staged-details summarization — to it. The only adapter today is `npmAdapter` (`server/lib/adapters/npm/`); future adapters slot in by implementing the same interface.
+
 Baseline selection should be tag-aware rather than simply highest-semver. See [`diff-baseline.md`](./diff-baseline.md) for the staged metadata constraints and the recommended default comparison strategy.
 
 ## Trust boundaries
@@ -63,7 +65,7 @@ The dynamic Worker's tar parser is defined in `server/lib/tar-parser.js` and con
 
 ### NpmStageGateway
 
-`NpmStageGateway` is the only component allowed to attach npm authorization. It follows Cloudflare's [outbound Worker pattern for sandbox auth](https://blog.cloudflare.com/sandbox-auth/): the sandbox makes a normal fetch, while a trusted WorkerEntrypoint receives props from the parent Worker and conditionally injects credentials without exposing them to the sandbox.
+`NpmStageGateway` is the only component allowed to attach npm authorization on outbound requests made by the dynamic sandbox. It follows Cloudflare's [outbound Worker pattern for sandbox auth](https://blog.cloudflare.com/sandbox-auth/): the sandbox makes a normal fetch, while a trusted WorkerEntrypoint receives props from the parent Worker and conditionally injects credentials without exposing them to the sandbox.
 
 It should:
 
@@ -75,25 +77,38 @@ It should:
 
 Current code supports encrypted per-organization npm connections only. Scans require the current organization to connect its own credential before any npm staged-package fetch occurs.
 
+### NpmAdapterBroker
+
+`NpmAdapterBroker` (`server/lib/adapters/npm/broker.ts`) keeps scan-pipeline npm credential use out of the generic orchestrator. It extends the same-script `WorkerEntrypoint` pattern: callers obtain a stub via `ctx.exports.NpmAdapterBroker({ props: { organizationId } })` and invoke RPC methods (`fetchPackageMetadata`, `fetchStagedDetails`, `downloadStaged`, `downloadPublished`). Inside each method the broker resolves the connection from D1, confirms it is still validated, decrypts the token, performs the call, and returns the result. The plaintext token does not cross the broker's method boundary into `scan-pipeline.ts`.
+
+The scan pipeline and `scan-job.ts` receive a connection _reference_ — `{ organizationId }` — never the secret. The orchestrator stays credential-blind, so future additions to the pipeline cannot accidentally read, log, or forward the token. The broker uses `NpmStageGateway` internally when running a sandboxed tarball download; the Dynamic Worker that initially downloads, gunzips, and unpacks untrusted tarball bytes receives only scan options and registry URLs, never the npm token itself.
+
+Sandbox download failures raised inside the broker are rethrown as RPC-safe `SandboxError` standard errors with the JSON detail in `message`, because Workers RPC preserves standard error names/messages but drops custom own properties such as `detail`. Callers must use `sandboxErrorDetail()` instead of reading `err.detail` directly.
+
+Credential resolution failures from the broker are terminal scan errors. Only registry metadata fetch failures after a valid credential has been resolved may degrade to a no-baseline scan.
+
+For tests and non-Workers contexts, `createNpmBroker` falls back to a `LocalNpmBroker` that performs the same credential resolution against the host-supplied `db`. This keeps the broker contract identical between production and unit tests.
+
 ## Scan pipeline
 
 Current high-level flow:
 
 1. User submits a `stageId`.
 2. API validates input and resolves the authenticated user's active organization via `requireActiveOrganization`.
-3. Parent Worker loads the staged tarball in a Dynamic Worker and fetches staged metadata (`GET /-/stage/{stageId}`) in parallel in the trusted parent for dist-tag, shasum, and mismatch checks. Current npm staged-view responses are metadata-only; if npm later exposes the prepared manifest, the parser can merge it.
-4. Gateway attaches npm auth only for allowed sandbox npm registry endpoints.
-5. Sandbox extracts bounded file records and tarball-derived package metadata. The package metadata models npm manifest normalization that is inferable from tarball contents, including npm's implicit `scripts.install = "node-gyp rebuild"` when a root `*.gyp` file exists and no `install`/`preinstall` script or `gypfile=false` is declared.
-6. Parent Worker fetches npm package metadata, chooses a tag-aware comparison baseline, and downloads the selected previous published tarball when available.
-7. Sandbox extracts the selected previous tarball.
-8. Parent Worker computes:
+3. `scan-job.ts` looks up the organization's `npm_connections` row, confirms its `validationStatus === "valid"`, and hands a connection reference (`{ organizationId }`) plus the `npmAdapter` to `runScanPipeline`. The plaintext token stays in D1 until the broker needs it.
+4. The pipeline asks the adapter for a broker via `adapter.createBroker(ctx, ref)`. The broker is the only code path that decrypts the npm token.
+5. `adapter.acquireStaged` calls `broker.downloadStaged` (which loads the staged tarball in a Dynamic Worker) and `broker.fetchStagedDetails` (which fetches `GET /-/stage/{stageId}` from the trusted parent for dist-tag, shasum, and mismatch checks) in parallel.
+6. `NpmStageGateway` attaches npm auth only for allowed sandbox npm registry endpoints; the broker passes the token to the gateway via props on instantiation.
+7. The sandbox extracts bounded file records and tarball-derived package metadata. The package metadata models npm manifest normalization that is inferable from tarball contents, including npm's implicit `scripts.install = "node-gyp rebuild"` when a root `*.gyp` file exists and no `install`/`preinstall` script or `gypfile=false` is declared.
+8. `adapter.acquireBaseline` resolves the comparison baseline via `broker.fetchPackageMetadata`, picks a tag-aware previous version, and downloads its tarball through `broker.downloadPublished` when available.
+9. The pipeline computes:
    - package file diff;
-   - package.json diff;
-   - deterministic findings, including implicit npm lifecycle hooks surfaced from tarball shape and warnings when `package.json` cannot be parsed;
-   - release/context annotations for deterministic findings, using package-to-package diff status and changed-line checks where text samples are available;
+   - package.json (manifest) diff;
+   - adapter findings via `adapter.runFindings` — for npm: deterministic findings, package.json diff findings, and staged-metadata-mismatch findings;
+   - release/context annotations for the deterministic findings, using package-to-package diff status and changed-line checks where text samples are available;
    - a risk breakdown where `releaseRisk` is the primary saved scan risk, while `artifactRisk` and `contextRisk` keep full-artifact safety context visible;
    - redacted package/file records.
-9. Parent Worker persists the scan, records audit events, and returns/report renders the result. (AI review is disabled — see "Workers AI" below.)
+10. The pipeline persists the scan, records audit events, and returns/report renders the result. (AI review is gated by the Cloudflare Flagship `ai-review` flag — see "Workers AI" below.)
 
 Current async-capable flow:
 

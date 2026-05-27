@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+vi.mock("cloudflare:workers", () => ({
+  WorkerEntrypoint: class {},
+}));
+
 const dbMock = vi.hoisted(() => ({
   persistScan: vi.fn(async () => ({ persisted: true })),
   recordScanEvent: vi.fn(async () => undefined),
+  getNpmConnection: vi.fn(),
+  createDb: vi.fn(() => ({})),
 }));
 const registryMock = vi.hoisted(() => ({
   fetchPackageMetadata: vi.fn(),
@@ -12,6 +18,9 @@ const sandboxMock = vi.hoisted(() => ({
 }));
 const stagedMock = vi.hoisted(() => ({
   fetchStagedPublishDetails: vi.fn(),
+}));
+const npmConnectionMock = vi.hoisted(() => ({
+  decryptNpmToken: vi.fn(),
 }));
 
 vi.mock("../server/db/index.ts", () => dbMock);
@@ -24,11 +33,23 @@ vi.mock("../server/lib/staged-publishes.ts", async () => ({
   ...(await vi.importActual("../server/lib/staged-publishes.ts")),
   fetchStagedPublishDetails: stagedMock.fetchStagedPublishDetails,
 }));
+vi.mock("../server/lib/npm-connection.ts", async () => ({
+  ...(await vi.importActual("../server/lib/npm-connection.ts")),
+  decryptNpmToken: npmConnectionMock.decryptNpmToken,
+}));
 
 const { runScanPipeline } = await import("../server/lib/scan-pipeline.ts");
+const { npmAdapter } = await import("../server/lib/adapters/npm/index.ts");
 
 describe("scan pipeline baseline selection", () => {
   beforeEach(() => {
+    dbMock.getNpmConnection.mockResolvedValue({
+      registryUrl: "https://registry.npmjs.org",
+      tokenCiphertext: "ct",
+      tokenNonce: "nonce",
+      validationStatus: "valid",
+    });
+    npmConnectionMock.decryptNpmToken.mockResolvedValue("npm_secret_token");
     stagedMock.fetchStagedPublishDetails.mockResolvedValue({
       id: "stage-beta-123",
       packageName: "@scope/pkg",
@@ -92,26 +113,108 @@ describe("scan pipeline baseline selection", () => {
   afterEach(() => {
     dbMock.persistScan.mockClear();
     dbMock.recordScanEvent.mockClear();
+    dbMock.getNpmConnection.mockReset();
+    npmConnectionMock.decryptNpmToken.mockReset();
     registryMock.fetchPackageMetadata.mockReset();
     sandboxMock.downloadInSandbox.mockReset();
     stagedMock.fetchStagedPublishDetails.mockReset();
   });
 
-  test("diffs a staged beta release against the current beta dist-tag target", async () => {
-    const result = await runScanPipeline(
-      {
-        env: { NPM_REGISTRY: "https://registry.npmjs.org" },
-        executionCtx: {},
-        db: {},
-        session: { userId: "user_1" },
-      },
-      {
-        scanId: "scan_1",
+  const baseContext = {
+    env: { NPM_REGISTRY: "https://registry.npmjs.org", DB: {} },
+    executionCtx: {},
+    db: {},
+    session: { userId: "user_1" },
+  };
+
+  test("refuses to decrypt a rotated unvalidated npm connection", async () => {
+    dbMock.getNpmConnection.mockResolvedValue({
+      registryUrl: "https://registry.npmjs.org",
+      tokenCiphertext: "ct",
+      tokenNonce: "nonce",
+      validationStatus: "unvalidated",
+    });
+
+    await expect(
+      runScanPipeline(baseContext, npmAdapter, {
+        scanId: "scan_unvalidated",
         stageId: "stage-beta-123",
         organizationId: "org_1",
-        npmToken: "npm_secret_token",
-      },
-    );
+      }),
+    ).rejects.toThrow("Validate the organization npm token");
+
+    expect(npmConnectionMock.decryptNpmToken).not.toHaveBeenCalled();
+    expect(sandboxMock.downloadInSandbox).not.toHaveBeenCalled();
+    expect(stagedMock.fetchStagedPublishDetails).not.toHaveBeenCalled();
+  });
+
+  test("propagates credential failures during baseline metadata lookup", async () => {
+    dbMock.getNpmConnection
+      .mockResolvedValueOnce({
+        registryUrl: "https://registry.npmjs.org",
+        tokenCiphertext: "ct",
+        tokenNonce: "nonce",
+        validationStatus: "valid",
+      })
+      .mockResolvedValueOnce({
+        registryUrl: "https://registry.npmjs.org",
+        tokenCiphertext: "ct",
+        tokenNonce: "nonce",
+        validationStatus: "valid",
+      })
+      .mockResolvedValueOnce({
+        registryUrl: "https://registry.npmjs.org",
+        tokenCiphertext: "ct",
+        tokenNonce: "nonce",
+        validationStatus: "unvalidated",
+      });
+
+    await expect(
+      runScanPipeline(baseContext, npmAdapter, {
+        scanId: "scan_baseline_unvalidated",
+        stageId: "stage-beta-123",
+        organizationId: "org_1",
+      }),
+    ).rejects.toThrow("Validate the organization npm token");
+
+    expect(registryMock.fetchPackageMetadata).not.toHaveBeenCalled();
+    expect(dbMock.persistScan).not.toHaveBeenCalled();
+  });
+
+  test("propagates deleted credential failures during baseline metadata lookup", async () => {
+    dbMock.getNpmConnection
+      .mockResolvedValueOnce({
+        registryUrl: "https://registry.npmjs.org",
+        tokenCiphertext: "ct",
+        tokenNonce: "nonce",
+        validationStatus: "valid",
+      })
+      .mockResolvedValueOnce({
+        registryUrl: "https://registry.npmjs.org",
+        tokenCiphertext: "ct",
+        tokenNonce: "nonce",
+        validationStatus: "valid",
+      })
+      .mockResolvedValueOnce(null);
+
+    await expect(
+      runScanPipeline(baseContext, npmAdapter, {
+        scanId: "scan_baseline_deleted_connection",
+        stageId: "stage-beta-123",
+        organizationId: "org_1",
+      }),
+    ).rejects.toThrow("Connect an organization npm token");
+
+    expect(registryMock.fetchPackageMetadata).not.toHaveBeenCalled();
+    expect(dbMock.persistScan).not.toHaveBeenCalled();
+  });
+
+  test("diffs a staged beta release against the current beta dist-tag target", async () => {
+    const result = await runScanPipeline(baseContext, npmAdapter, {
+      scanId: "scan_1",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
 
     expect(stagedMock.fetchStagedPublishDetails).toHaveBeenCalledWith(
       "https://registry.npmjs.org",
@@ -138,6 +241,79 @@ describe("scan pipeline baseline selection", () => {
         },
       },
     });
+  });
+
+  test("preserves diff-scoped deterministic findings from the npm adapter", async () => {
+    stagedMock.fetchStagedPublishDetails.mockResolvedValue({
+      id: "stage-diff123",
+      packageName: "pkg",
+      version: "1.0.1",
+      tag: "latest",
+      access: "public",
+      actor: "octocat",
+      actorType: "user",
+      createdAt: "2026-03-16T09:00:00.000Z",
+      shasum: null,
+      packageJson: null,
+    });
+    registryMock.fetchPackageMetadata.mockResolvedValue({
+      versions: {
+        "1.0.0": { dist: { tarball: "https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz" } },
+      },
+      "dist-tags": { latest: "1.0.0" },
+    });
+    sandboxMock.downloadInSandbox.mockImplementation(async (_env, _ctx, options) => {
+      if (options.stageId) {
+        return {
+          files: [
+            {
+              path: "package.json",
+              size: 40,
+              sha256: "staged-pkg",
+              flags: [],
+              textSample: JSON.stringify({ name: "pkg", version: "1.0.1" }),
+            },
+            {
+              path: ".env",
+              size: 31,
+              sha256: "staged-env",
+              flags: [],
+              textSample: "NPM_TOKEN=npm_fakeTokenForTests123",
+            },
+          ],
+          packageJson: { name: "pkg", version: "1.0.1" },
+        };
+      }
+      return {
+        files: [
+          {
+            path: "package.json",
+            size: 40,
+            sha256: "previous-pkg",
+            flags: [],
+            textSample: JSON.stringify({ name: "pkg", version: "1.0.0" }),
+          },
+        ],
+        packageJson: { name: "pkg", version: "1.0.0" },
+      };
+    });
+
+    const result = await runScanPipeline(baseContext, npmAdapter, {
+      scanId: "scan_diff",
+      stageId: "stage-diff123",
+      organizationId: "org_1",
+    });
+
+    expect(result.risk).toBe("critical");
+    expect(result.ruleFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "critical",
+          file: ".env",
+          ruleId: "diff.credential-file-added",
+        }),
+      ]),
+    );
   });
 
   test("suppresses tag baseline selection when staged metadata disagrees with the tarball", async () => {
@@ -170,20 +346,11 @@ describe("scan pipeline baseline selection", () => {
       },
     });
 
-    const result = await runScanPipeline(
-      {
-        env: { NPM_REGISTRY: "https://registry.npmjs.org" },
-        executionCtx: {},
-        db: {},
-        session: { userId: "user_1" },
-      },
-      {
-        scanId: "scan_1",
-        stageId: "stage-beta-123",
-        organizationId: "org_1",
-        npmToken: "npm_secret_token",
-      },
-    );
+    const result = await runScanPipeline(baseContext, npmAdapter, {
+      scanId: "scan_1",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
 
     expect(result.baseline).toMatchObject({
       version: "2.0.0-beta.2",
@@ -242,20 +409,10 @@ describe("scan pipeline baseline selection", () => {
     });
     registryMock.fetchPackageMetadata.mockResolvedValue(null);
 
-    const result = await runScanPipeline(
-      {
-        env: { NPM_REGISTRY: "https://registry.npmjs.org" },
-        executionCtx: {},
-        db: {},
-        session: { userId: "user_1" },
-      },
-      {
-        stageId: "stage-gyp123",
-        organizationId: "org_1",
-        npmToken: "npm_token_0123456789",
-        npmRegistry: "https://registry.npmjs.org",
-      },
-    );
+    const result = await runScanPipeline(baseContext, npmAdapter, {
+      stageId: "stage-gyp123",
+      organizationId: "org_1",
+    });
 
     expect(result.risk).toBe("high");
     expect(result.packageJsonDiff.scripts).toEqual([
@@ -303,24 +460,14 @@ describe("scan pipeline baseline selection", () => {
     });
     registryMock.fetchPackageMetadata.mockResolvedValue(null);
 
-    const result = await runScanPipeline(
-      {
-        env: { NPM_REGISTRY: "https://registry.npmjs.org" },
-        executionCtx: {},
-        db: {},
-        session: { userId: "user_1" },
-      },
-      {
-        stageId: "stage-abc123",
-        organizationId: "org_1",
-        npmToken: "npm_token_0123456789",
-        npmRegistry: "https://registry.npmjs.org",
-      },
-    );
+    const result = await runScanPipeline(baseContext, npmAdapter, {
+      stageId: "stage-abc123",
+      organizationId: "org_1",
+    });
 
     expect(stagedMock.fetchStagedPublishDetails).toHaveBeenCalledWith(
       "https://registry.npmjs.org",
-      "npm_token_0123456789",
+      "npm_secret_token",
       "stage-abc123",
       { allowInsecureLocalhost: false },
     );
@@ -398,21 +545,11 @@ describe("scan pipeline baseline selection", () => {
         };
       });
 
-      await runScanPipeline(
-        {
-          env: { NPM_REGISTRY: "https://registry.npmjs.org" },
-          executionCtx: {},
-          db: {},
-          session: { userId: "user_1" },
-        },
-        {
-          scanId: `scan_${crypto.randomUUID()}`,
-          stageId: "stage-digest123",
-          organizationId: "org_1",
-          npmToken: "npm_token_0123456789",
-          npmRegistry: "https://registry.npmjs.org",
-        },
-      );
+      await runScanPipeline(baseContext, npmAdapter, {
+        scanId: `scan_${crypto.randomUUID()}`,
+        stageId: "stage-digest123",
+        organizationId: "org_1",
+      });
       return dbMock.persistScan.mock.calls[0]?.[1].summary.report.digest;
     };
 
@@ -488,21 +625,11 @@ describe("scan pipeline baseline selection", () => {
       };
     });
 
-    const result = await runScanPipeline(
-      {
-        env: { NPM_REGISTRY: "https://registry.npmjs.org" },
-        executionCtx: {},
-        db: {},
-        session: { userId: "user_1" },
-      },
-      {
-        scanId: "scan_context",
-        stageId: "stage-context123",
-        organizationId: "org_1",
-        npmToken: "npm_token_0123456789",
-        npmRegistry: "https://registry.npmjs.org",
-      },
-    );
+    const result = await runScanPipeline(baseContext, npmAdapter, {
+      scanId: "scan_context",
+      stageId: "stage-context123",
+      organizationId: "org_1",
+    });
 
     const persistedInput = dbMock.persistScan.mock.calls[0]?.[1];
 

@@ -10,10 +10,10 @@ import {
   type ScanSource,
   type WorkspaceSession,
 } from "../db";
-import { decryptNpmToken } from "./npm-connection";
+import { npmAdapter } from "./adapters/npm";
 import { notifyScanCompletion } from "./notify";
 import { runScanPipeline } from "./scan-pipeline";
-import { SandboxError } from "./sandbox";
+import { sandboxErrorDetail } from "./sandbox";
 import type { ScanInput } from "../types";
 
 export interface ScanQueueMessage extends ScanInput {
@@ -69,8 +69,7 @@ export async function executeScanJob(
       throw new Error("Validate the organization npm token before scanning staged publishes.");
     }
 
-    const [orgNpmToken] = await Promise.all([
-      decryptNpmToken(env, npmConnection),
+    await Promise.all([
       markNpmConnectionUsed(db, message.organizationId),
       recordScanEvent(db, {
         organizationId: message.organizationId,
@@ -85,18 +84,13 @@ export async function executeScanJob(
       }),
     ]);
 
-    const result = await runScanPipeline(
-      { env, executionCtx, db, session },
-      {
-        scanId: message.scanId,
-        stageId: message.stageId,
-        maxFiles: message.maxFiles,
-        maxBytesPerFile: message.maxBytesPerFile,
-        organizationId: message.organizationId,
-        npmToken: orgNpmToken,
-        npmRegistry: npmConnection.registryUrl,
-      },
-    );
+    const result = await runScanPipeline({ env, executionCtx, db, session }, npmAdapter, {
+      scanId: message.scanId,
+      stageId: message.stageId,
+      maxFiles: message.maxFiles,
+      maxBytesPerFile: message.maxBytesPerFile,
+      organizationId: message.organizationId,
+    });
     if (message.source === "auto_discovery") {
       executionCtx.waitUntil(
         notifyScanCompletion({
@@ -167,15 +161,16 @@ export async function executeScanJob(
 }
 
 export function classifyScanError(err: unknown): SafeScanError {
-  if (err instanceof SandboxError) {
-    const sandbox = parseSandboxDetail(err.detail);
+  const detail = sandboxErrorDetail(err);
+  if (detail !== null) {
+    const sandbox = parseSandboxDetail(detail);
     return {
       code: sandbox.code,
       message: sandbox.message,
       retryable: sandbox.retryable,
     };
   }
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorMessage(err);
   if (message.includes("Connect an organization npm token")) {
     return {
       code: "npm_connection_missing",
@@ -196,6 +191,15 @@ export function classifyScanError(err: unknown): SafeScanError {
     message: "The scan failed before a report could be generated.",
     retryable: true,
   };
+}
+
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object") {
+    const message = (err as Record<string, unknown>).message;
+    if (typeof message === "string") return message;
+  }
+  return String(err);
 }
 
 function parseSandboxDetail(detail: string) {

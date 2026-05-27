@@ -1,35 +1,27 @@
 import { persistScan, recordScanEvent, type AppDb, type WorkspaceSession } from "../db";
 import { runSelectiveAiReview, type AiReview } from "./ai-review";
-import {
-  fetchPackageMetadata,
-  pickBaselineVersion,
-  type BaselineVersionSelection,
-} from "./registry";
+import type {
+  AdapterBroker,
+  AdapterConnectionRef,
+  AdapterContext,
+  PackageAdapter,
+} from "./adapters/types";
 import {
   annotateFindingsWithDiffStatus,
   createPackageDiff,
-  deterministicFindings,
-  packageJsonDiffFindings,
-  DETERMINISTIC_RULE_IDS,
-  DETERMINISTIC_RULES_VERSION,
   redactFileRecords,
   redactFindings,
   redactJson,
   summarizePackageJsonDiff,
+  DETERMINISTIC_RULES_VERSION,
   type Finding,
-  type PackageJsonSummary,
 } from "./review";
 import { computeScanRiskBreakdown } from "./risk";
-import { downloadInSandbox, type DownloadResult } from "./sandbox";
-import { fetchStagedPublishDetails, type StagedPublishDetails } from "./staged-publishes";
-import { allowInsecureLocalRegistry } from "./npm-connection";
 import type { ScanInput, ScanResult } from "../types";
 
 export interface ScanPipelineOptions extends ScanInput {
   scanId?: string;
   organizationId: string;
-  npmToken?: string;
-  npmRegistry?: string;
 }
 
 export interface ScanPipelineContext {
@@ -39,76 +31,205 @@ export interface ScanPipelineContext {
   session: WorkspaceSession;
 }
 
-export async function runScanPipeline(
+export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
   context: ScanPipelineContext,
+  adapter: PackageAdapter<TInput, TBroker>,
   input: ScanPipelineOptions,
 ): Promise<ScanResult> {
   const { env, executionCtx, db, session } = context;
+  const adapterCtx: AdapterContext = { env, executionCtx, db, session };
+  const adapterInput = adapter.parseInput(input);
+  const connectionRef: AdapterConnectionRef = { organizationId: input.organizationId };
+  const broker = adapter.createBroker(adapterCtx, connectionRef);
 
-  const [staged, stagedDetails] = await Promise.all([
-    downloadInSandbox(env, executionCtx, {
+  try {
+    const staged = await adapter.acquireStaged(adapterCtx, adapterInput, broker);
+    const baseline = await adapter.acquireBaseline(adapterCtx, adapterInput, broker, staged);
+
+    const fileDiff = createPackageDiff(baseline.artifact?.files ?? [], staged.artifact.files);
+    const manifestDiff = redactJson(
+      summarizePackageJsonDiff(baseline.artifact?.manifest, staged.artifact.manifest),
+    );
+    const stagedManifestText =
+      staged.artifact.files.find((file) => file.path === "package.json")?.textSample ?? null;
+
+    const adapterFindings = adapter.runFindings({
+      staged: staged.artifact,
+      baseline: baseline.artifact,
+      details: staged.details,
+      fileDiff,
+      manifestDiff,
+      stagedManifestText,
+    });
+    const ruleFindings = redactFindings(adapterFindings);
+
+    const redactedStagedFiles = redactFileRecords(staged.artifact.files);
+    const redactedPreviousFiles = baseline.artifact
+      ? redactFileRecords(baseline.artifact.files)
+      : [];
+    const redactedStagedManifest = redactJson(staged.artifact.manifest ?? null);
+    const redactedPreviousManifest = redactJson(baseline.artifact?.manifest ?? null);
+    const redactedDetails = redactJson(adapter.summarizeDetails(staged.details));
+
+    const annotatedFindings = annotateFindingsWithDiffStatus(ruleFindings, fileDiff, {
+      previousFiles: redactedPreviousFiles,
+      stagedFiles: redactedStagedFiles,
+    });
+    const releaseRuleFindings = stripFindingAnnotations(
+      annotatedFindings.filter((finding) => finding.releaseDelta),
+    );
+    const findingAnnotations = annotatedFindings.map((finding, index) => ({
+      findingIndex: index,
+      diffStatus: finding.diffStatus,
+      releaseDelta: finding.releaseDelta,
+    }));
+
+    const scanId = input.scanId || crypto.randomUUID();
+    const aiFindings = await maybeRunAiReview({
+      env,
+      scanId,
+      input,
+      previousVersionAvailable: baseline.artifact !== null,
+      releaseRuleFindings,
+      manifestDiff,
+      redactedStagedFiles,
+      redactedPreviousFiles,
+      fileDiff,
+    });
+    const riskSummary = computeScanRiskBreakdown(annotatedFindings, aiFindings);
+    const risk = riskSummary.releaseRisk;
+
+    const safety: ScanResult["safety"] = {
+      tokenExposedToSandbox: false,
+      directSandboxNetwork: false,
+      outboundPolicy:
+        "sandbox uses the gateway only for npm staged tarball, published tarball, and package metadata endpoints; parent fetches staged metadata with the organization credential",
+      aiInputPolicy:
+        "package bytes are untrusted evidence, not instructions; static safety prompt is prefix-cache friendly and AI cannot downgrade deterministic findings",
+      fileExplorerPolicy:
+        "package file previews are escaped text and secret-redacted before persistence; no package-provided HTML/script/image execution",
+    };
+
+    const packageSummary = adapter.describe({
+      input: adapterInput,
+      staged: staged.artifact,
+      details: staged.details,
+      baseline: baseline.baseline,
+      previous: baseline.artifact,
+    });
+
+    const result: ScanResult = {
+      id: scanId,
       stageId: input.stageId,
-      maxFiles: input.maxFiles,
-      maxBytesPerFile: input.maxBytesPerFile,
-      npmToken: input.npmToken,
-      npmRegistry: input.npmRegistry,
-    }),
-    maybeFetchStagedDetails(env, input),
-  ]);
+      package: packageSummary,
+      baseline: baseline.baseline,
+      fileCount: staged.artifact.files.length,
+      previousFileCount: baseline.artifact?.files.length ?? 0,
+      packageJson: redactedStagedManifest,
+      packageJsonDiff: manifestDiff,
+      diff: fileDiff,
+      ruleFindings,
+      aiFindings,
+      risk,
+      riskSummary,
+      safety,
+    };
 
-  const stagedMetadataFindings = createStagedMetadataFindings(
-    stagedDetails,
-    staged.packageJson ?? null,
-  );
-  const stagedPackageJson = mergeStagedPackageJson(
-    staged.packageJson ?? null,
-    stagedMetadataFindings.length ? null : (stagedDetails?.packageJson ?? null),
-  );
-  const stagedTag = stagedMetadataFindings.length ? null : (stagedDetails?.tag ?? null);
-  const previousResult = await maybeDownloadPreviousVersion(
-    env,
-    executionCtx,
-    stagedPackageJson,
-    stagedTag,
-    input,
-  );
-  const previous = previousResult.previous;
-  const baseline = previousResult.baseline;
-  const diff = previous
-    ? createPackageDiff(previous.files, staged.files)
-    : createPackageDiff([], staged.files);
-  const packageJsonDiff = redactJson(
-    summarizePackageJsonDiff(previous?.packageJson, stagedPackageJson),
-  );
-  const stagedPackageJsonText =
-    staged.files.find((file) => file.path === "package.json")?.textSample ?? null;
-  const ruleFindings = redactFindings([
-    ...deterministicFindings(staged.files, diff, stagedPackageJson),
-    ...packageJsonDiffFindings(packageJsonDiff, stagedPackageJsonText),
-    ...stagedMetadataFindings,
-  ]);
-  const redactedStagedFiles = redactFileRecords(staged.files);
-  const redactedPreviousFiles = previous ? redactFileRecords(previous.files) : [];
-  const redactedPackageJson = redactJson(stagedPackageJson ?? null);
-  const redactedPreviousPackageJson = redactJson(previous?.packageJson ?? null);
-  const redactedStagedDetails = redactJson(summarizeStagedDetails(stagedDetails));
-  const reportFindingAnnotations = annotateFindingsWithDiffStatus(ruleFindings, diff, {
-    previousFiles: redactedPreviousFiles,
-    stagedFiles: redactedStagedFiles,
-  });
-  const releaseRuleFindings = stripFindingAnnotations(
-    reportFindingAnnotations.filter((finding) => finding.releaseDelta),
-  );
-  const findingAnnotations = reportFindingAnnotations.map((finding, index) => ({
-    findingIndex: index,
-    diffStatus: finding.diffStatus,
-    releaseDelta: finding.releaseDelta,
-  }));
-  const scanId = input.scanId || crypto.randomUUID();
+    const reportPayload = {
+      version: 1,
+      rulesVersion: DETERMINISTIC_RULES_VERSION,
+      stageId: input.stageId,
+      stagedPublish: redactedDetails,
+      package: result.package,
+      baseline: baseline.baseline,
+      fileCount: result.fileCount,
+      previousFileCount: result.previousFileCount,
+      packageJson: redactedStagedManifest,
+      packageJsonDiff: manifestDiff,
+      diff: fileDiff,
+      ruleFindings,
+      findingAnnotations,
+      aiFindings,
+      risk: riskSummary,
+      safety,
+    };
+    const reportDigest = await sha256Hex(stableJson(reportPayload));
+
+    const persisted = await persistScan(db, {
+      id: scanId,
+      stageId: input.stageId,
+      organizationId: input.organizationId,
+      ownerUserId: session.userId,
+      packageJson: redactedStagedManifest,
+      previousPackageJson: redactedPreviousManifest,
+      risk,
+      status: "complete",
+      summary: {
+        report: {
+          version: reportPayload.version,
+          digest: reportDigest,
+          digestAlgorithm: "sha256",
+          generatedAt: new Date().toISOString(),
+          rulesVersion: reportPayload.rulesVersion,
+        },
+        packageJsonDiff: manifestDiff,
+        diff: fileDiff,
+        risk: riskSummary,
+        stagedPublish: redactedDetails,
+        baseline: baseline.baseline,
+        safety: result.safety,
+      },
+      ai: aiFindings,
+      files: redactedStagedFiles,
+      previousFiles: redactedPreviousFiles,
+      diff: fileDiff,
+      findings: ruleFindings,
+      report: { version: reportPayload.version, digest: reportDigest },
+    });
+
+    if (persisted.persisted) {
+      await recordScanEvent(db, {
+        organizationId: input.organizationId,
+        actorUserId: session.userId,
+        scanId,
+        type: "scan.completed",
+        metadata: {
+          stageId: input.stageId,
+          packageName: result.package.name,
+          stagedVersion: result.package.stagedVersion,
+          stagedTag: result.package.stagedTag,
+          baseline: baseline.baseline,
+          risk,
+          releaseRisk: risk,
+          artifactRisk: riskSummary.artifactRisk,
+          contextRisk: riskSummary.contextRisk,
+        },
+      });
+    }
+
+    return result;
+  } finally {
+    await broker.dispose();
+  }
+}
+
+interface AiReviewArgs {
+  env: Cloudflare.Env;
+  scanId: string;
+  input: ScanPipelineOptions;
+  previousVersionAvailable: boolean;
+  releaseRuleFindings: Finding[];
+  manifestDiff: ReturnType<typeof summarizePackageJsonDiff>;
+  redactedStagedFiles: ReturnType<typeof redactFileRecords>;
+  redactedPreviousFiles: ReturnType<typeof redactFileRecords>;
+  fileDiff: ReturnType<typeof createPackageDiff>;
+}
+
+async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
   // AI review is gated by the Cloudflare Flagship `ai-review` flag in the
   // `drydock` app, evaluated per-organization. Default-off until Flagship
   // returns true for the organization placing the scan.
-  let aiFindings: AiReview = {
+  const disabled: AiReview = {
     status: "unavailable",
     risk: "low",
     releaseAssessment: "not_assessed",
@@ -117,132 +238,23 @@ export async function runScanPipeline(
     requiresManualReview: false,
     model: null,
   };
-  const aiReviewEnabled = env.FLAGS
-    ? await env.FLAGS.getBooleanValue("ai-review", false, {
-        targetingKey: input.organizationId,
-        organizationId: input.organizationId,
+  const aiReviewEnabled = args.env.FLAGS
+    ? await args.env.FLAGS.getBooleanValue("ai-review", false, {
+        targetingKey: args.input.organizationId,
+        organizationId: args.input.organizationId,
       })
     : false;
-  if (aiReviewEnabled) {
-    aiFindings = await runSelectiveAiReview(env, {
-      scanId,
-      files: redactedStagedFiles,
-      previousFiles: redactedPreviousFiles,
-      diff,
-      packageJsonDiff,
-      ruleFindings: releaseRuleFindings,
-      previousVersionAvailable: previous !== null,
-    });
-  }
-  const riskSummary = computeScanRiskBreakdown(reportFindingAnnotations, aiFindings);
-  const risk = riskSummary.releaseRisk;
+  if (!aiReviewEnabled) return disabled;
 
-  const safety: ScanResult["safety"] = {
-    tokenExposedToSandbox: false,
-    directSandboxNetwork: false,
-    outboundPolicy:
-      "sandbox uses the gateway only for npm staged tarball, published tarball, and package metadata endpoints; parent fetches staged metadata with the organization credential",
-    aiInputPolicy:
-      "package bytes are untrusted evidence, not instructions; static safety prompt is prefix-cache friendly and AI cannot downgrade deterministic findings",
-    fileExplorerPolicy:
-      "package file previews are escaped text and secret-redacted before persistence; no package-provided HTML/script/image execution",
-  };
-
-  const result: ScanResult = {
-    id: scanId,
-    stageId: input.stageId,
-    package: {
-      name: stagedPackageJson?.name ?? null,
-      stagedVersion: stagedPackageJson?.version ?? null,
-      stagedTag: stagedDetails?.tag ?? null,
-      previousVersion: previous?.packageJson?.version ?? null,
-    },
-    baseline,
-    fileCount: staged.files.length,
-    previousFileCount: previous?.files.length ?? 0,
-    packageJson: redactedPackageJson,
-    packageJsonDiff,
-    diff,
-    ruleFindings,
-    aiFindings,
-    risk,
-    riskSummary,
-    safety,
-  };
-
-  const reportPayload = {
-    version: 1,
-    rulesVersion: DETERMINISTIC_RULES_VERSION,
-    stageId: input.stageId,
-    stagedPublish: redactedStagedDetails,
-    package: result.package,
-    baseline,
-    fileCount: result.fileCount,
-    previousFileCount: result.previousFileCount,
-    packageJson: redactedPackageJson,
-    packageJsonDiff,
-    diff,
-    ruleFindings,
-    findingAnnotations,
-    aiFindings,
-    risk: riskSummary,
-    safety,
-  };
-  const reportDigest = await sha256Hex(stableJson(reportPayload));
-
-  const persisted = await persistScan(db, {
-    id: scanId,
-    stageId: input.stageId,
-    organizationId: input.organizationId,
-    ownerUserId: session.userId,
-    packageJson: redactedPackageJson,
-    previousPackageJson: redactedPreviousPackageJson,
-    risk,
-    status: "complete",
-    summary: {
-      report: {
-        version: reportPayload.version,
-        digest: reportDigest,
-        digestAlgorithm: "sha256",
-        generatedAt: new Date().toISOString(),
-        rulesVersion: reportPayload.rulesVersion,
-      },
-      packageJsonDiff,
-      diff,
-      risk: riskSummary,
-      stagedPublish: redactedStagedDetails,
-      baseline,
-      safety: result.safety,
-    },
-    ai: aiFindings,
-    files: redactedStagedFiles,
-    previousFiles: redactedPreviousFiles,
-    diff,
-    findings: ruleFindings,
-    report: { version: reportPayload.version, digest: reportDigest },
+  return runSelectiveAiReview(args.env, {
+    scanId: args.scanId,
+    files: args.redactedStagedFiles,
+    previousFiles: args.redactedPreviousFiles,
+    diff: args.fileDiff,
+    packageJsonDiff: args.manifestDiff,
+    ruleFindings: args.releaseRuleFindings,
+    previousVersionAvailable: args.previousVersionAvailable,
   });
-
-  if (persisted.persisted) {
-    await recordScanEvent(db, {
-      organizationId: input.organizationId,
-      actorUserId: session.userId,
-      scanId,
-      type: "scan.completed",
-      metadata: {
-        stageId: input.stageId,
-        packageName: result.package.name,
-        stagedVersion: result.package.stagedVersion,
-        stagedTag: result.package.stagedTag,
-        baseline,
-        risk,
-        releaseRisk: risk,
-        artifactRisk: riskSummary.artifactRisk,
-        contextRisk: riskSummary.contextRisk,
-      },
-    });
-  }
-
-  return result;
 }
 
 function stripFindingAnnotations(
@@ -271,175 +283,4 @@ function stableJson(value: unknown): string {
     .filter(([, item]) => item !== undefined)
     .sort(([a], [b]) => a.localeCompare(b));
   return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
-}
-
-function mergeStagedPackageJson(
-  tarballPackageJson: PackageJsonSummary | null,
-  stagedMetadataPackageJson: PackageJsonSummary | null,
-): PackageJsonSummary | null {
-  if (!tarballPackageJson && !stagedMetadataPackageJson) return null;
-  const scripts = mergeRecord(tarballPackageJson?.scripts, stagedMetadataPackageJson?.scripts);
-  const implicitScripts = mergeRecord(
-    tarballPackageJson?.implicitScripts,
-    stagedMetadataPackageJson?.implicitScripts,
-  );
-  if (
-    stagedMetadataPackageJson?.scripts?.install === "node-gyp rebuild" &&
-    stagedMetadataPackageJson.gypfile === true &&
-    !tarballPackageJson?.scripts?.install &&
-    !tarballPackageJson?.scripts?.preinstall
-  ) {
-    implicitScripts.install = "node-gyp rebuild";
-  }
-
-  return {
-    name: tarballPackageJson?.name ?? stagedMetadataPackageJson?.name,
-    version: tarballPackageJson?.version ?? stagedMetadataPackageJson?.version,
-    ...(Object.keys(scripts).length ? { scripts } : {}),
-    ...(Object.keys(implicitScripts).length ? { implicitScripts } : {}),
-    ...(typeof (stagedMetadataPackageJson?.gypfile ?? tarballPackageJson?.gypfile) === "boolean"
-      ? { gypfile: stagedMetadataPackageJson?.gypfile ?? tarballPackageJson?.gypfile }
-      : {}),
-    ...optionalRecord(
-      "dependencies",
-      mergeRecord(tarballPackageJson?.dependencies, stagedMetadataPackageJson?.dependencies),
-    ),
-    ...optionalRecord(
-      "devDependencies",
-      mergeRecord(tarballPackageJson?.devDependencies, stagedMetadataPackageJson?.devDependencies),
-    ),
-    ...optionalRecord(
-      "peerDependencies",
-      mergeRecord(
-        tarballPackageJson?.peerDependencies,
-        stagedMetadataPackageJson?.peerDependencies,
-      ),
-    ),
-    ...optionalRecord(
-      "optionalDependencies",
-      mergeRecord(
-        tarballPackageJson?.optionalDependencies,
-        stagedMetadataPackageJson?.optionalDependencies,
-      ),
-    ),
-    files: stagedMetadataPackageJson?.files ?? tarballPackageJson?.files,
-    bin: stagedMetadataPackageJson?.bin ?? tarballPackageJson?.bin,
-    main: stagedMetadataPackageJson?.main ?? tarballPackageJson?.main,
-    module: stagedMetadataPackageJson?.module ?? tarballPackageJson?.module,
-    types: stagedMetadataPackageJson?.types ?? tarballPackageJson?.types,
-    exports: stagedMetadataPackageJson?.exports ?? tarballPackageJson?.exports,
-  };
-}
-
-function mergeRecord(
-  before: Record<string, string> | undefined,
-  after: Record<string, string> | undefined,
-): Record<string, string> {
-  return { ...before, ...after };
-}
-
-function optionalRecord(key: string, value: Record<string, string>): Record<string, unknown> {
-  return Object.keys(value).length ? { [key]: value } : {};
-}
-
-async function maybeDownloadPreviousVersion(
-  env: Cloudflare.Env,
-  ctx: ExecutionContext,
-  pkg: PackageJsonSummary | null,
-  stagedTag: string | null,
-  input: ScanInput & { npmToken?: string; npmRegistry?: string },
-): Promise<{ previous: DownloadResult | null; baseline: BaselineVersionSelection }> {
-  if (!pkg?.name || !pkg.version) {
-    return {
-      previous: null,
-      baseline: emptyBaseline(stagedTag, "package-json-missing-name-or-version"),
-    };
-  }
-  const metadata = await fetchPackageMetadata(env, pkg.name, {
-    npmToken: input.npmToken,
-    npmRegistry: input.npmRegistry,
-  }).catch(() => null);
-  if (!metadata) {
-    return { previous: null, baseline: emptyBaseline(stagedTag, "metadata-unavailable") };
-  }
-  const baseline = pickBaselineVersion(metadata, pkg.version, stagedTag);
-  const tarballUrl = baseline.version ? metadata.versions?.[baseline.version]?.dist?.tarball : null;
-  if (!baseline.version || !tarballUrl) {
-    return {
-      previous: null,
-      baseline: baseline.version
-        ? { ...baseline, reason: `${baseline.reason}:no-tarball` }
-        : baseline,
-    };
-  }
-  const previous = await downloadInSandbox(env, ctx, {
-    tarballUrl,
-    maxFiles: input.maxFiles,
-    maxBytesPerFile: input.maxBytesPerFile,
-    npmToken: input.npmToken,
-    npmRegistry: input.npmRegistry,
-  });
-  return { previous, baseline };
-}
-
-async function maybeFetchStagedDetails(
-  env: Cloudflare.Env,
-  input: ScanPipelineOptions,
-): Promise<StagedPublishDetails | null> {
-  if (!input.npmToken) return null;
-  const registry = input.npmRegistry || env.NPM_REGISTRY || "https://registry.npmjs.org";
-  return fetchStagedPublishDetails(registry, input.npmToken, input.stageId, {
-    allowInsecureLocalhost: allowInsecureLocalRegistry(env),
-  }).catch(() => null);
-}
-
-function emptyBaseline(tag: string | null, reason: string): BaselineVersionSelection {
-  return {
-    version: null,
-    tag,
-    source: "none",
-    distTagVersion: null,
-    reason,
-  };
-}
-
-function summarizeStagedDetails(details: StagedPublishDetails | null) {
-  if (!details) return null;
-  return {
-    id: details.id,
-    packageName: details.packageName,
-    version: details.version,
-    tag: details.tag,
-    access: details.access,
-    actor: details.actor,
-    actorType: details.actorType,
-    createdAt: details.createdAt,
-    shasum: details.shasum,
-  };
-}
-
-function createStagedMetadataFindings(
-  details: StagedPublishDetails | null,
-  pkg: PackageJsonSummary | null,
-): Finding[] {
-  if (!details || !pkg) return [];
-  const mismatches: string[] = [];
-  if (details.packageName && pkg.name && details.packageName !== pkg.name) {
-    mismatches.push(`packageName ${details.packageName} != package.json name ${pkg.name}`);
-  }
-  if (details.version && pkg.version && details.version !== pkg.version) {
-    mismatches.push(`version ${details.version} != package.json version ${pkg.version}`);
-  }
-  if (!mismatches.length) return [];
-  return [
-    {
-      severity: "critical",
-      file: "package.json",
-      evidence: mismatches.join("; "),
-      reason:
-        "npm staged metadata does not match the staged tarball package.json, so the release target cannot be trusted",
-      ruleId: DETERMINISTIC_RULE_IDS.stageMetadataMismatch,
-      ruleVersion: DETERMINISTIC_RULES_VERSION,
-    },
-  ];
 }

@@ -47,6 +47,8 @@ Optional fields:
 
 The test intentionally compares exact rule IDs, severities, files, and risk. If a rule change is intentional, update the fixture expectation in the same PR and explain why.
 
+Adapter-level scan tests should include at least one baseline-backed fixture that asserts a `diff.*` rule ID. This keeps ecosystem adapters from accidentally dropping the package diff before deterministic findings run.
+
 ## Initial taxonomy
 
 The first corpus slice covers:

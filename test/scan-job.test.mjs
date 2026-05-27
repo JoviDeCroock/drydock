@@ -41,6 +41,35 @@ describe("scan job retry classification", () => {
     expect(safe).not.toHaveProperty("detail");
   });
 
+  test("classifies sandbox errors that crossed the Worker RPC boundary", () => {
+    const safe = classifyScanError({
+      name: "SandboxError",
+      message: "sandbox download failed",
+      detail: JSON.stringify({ error: "download failed", status: 503 }),
+      remote: true,
+    });
+
+    expect(safe).toMatchObject({
+      code: "sandbox_download_transient",
+      retryable: true,
+    });
+    expect(safe).not.toHaveProperty("detail");
+  });
+
+  test("classifies RPC-safe sandbox errors serialized through message", () => {
+    const safe = classifyScanError({
+      name: "SandboxError",
+      message: JSON.stringify({ error: "archive contains too many files", status: 413 }),
+      remote: true,
+    });
+
+    expect(safe).toEqual({
+      code: "archive_too_many_files",
+      message: "The staged tarball contains more files than the scanner can safely review.",
+      retryable: false,
+    });
+  });
+
   test("does not include raw error messages on generic failures", () => {
     const safe = classifyScanError(new Error("D1_ERROR: column not found"));
     expect(safe).toEqual({
@@ -74,6 +103,19 @@ describe("scan job retry classification", () => {
       ),
     ).toMatchObject({
       code: "staged_tarball_unavailable",
+      retryable: false,
+    });
+  });
+
+  test("does not retry credential failures that crossed the Worker RPC boundary", () => {
+    expect(
+      classifyScanError({
+        name: "Error",
+        message: "Validate the organization npm token before scanning staged publishes.",
+        remote: true,
+      }),
+    ).toMatchObject({
+      code: "npm_connection_unvalidated",
       retryable: false,
     });
   });
