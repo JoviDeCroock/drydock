@@ -627,38 +627,34 @@ function ScanTable({ scans }: { scans: ScanListItem[] }) {
             <Th>Package</Th>
             <Th>Version</Th>
             <Th>Risk</Th>
-            <Th>Evidence</Th>
+            <Th>Changed</Th>
             <Th>Status</Th>
             <Th>Decision</Th>
-            <Th>Updated</Th>
           </tr>
         </thead>
         <tbody>
           {scans.map((scan) => (
             <tr key={scan.id} class="border-b border-border last:border-b-0 hover:bg-surface-2">
               <Td>
-                <div class="flex flex-col gap-1 min-w-[180px]">
-                  <a href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}>
-                    {scan.packageName || scan.stageId}
-                  </a>
-                  <span class="font-mono text-[11px] text-ink-subtle">stage {scan.stageId}</span>
-                </div>
+                <a
+                  href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}
+                  class="min-w-[180px] inline-block"
+                >
+                  {scan.packageName || scan.stageId}
+                </a>
               </Td>
-              <Td class="font-mono text-xs text-ink-muted">
+              <Td class="font-mono text-xs text-ink-muted whitespace-nowrap">
                 {scan.previousVersion || "—"} → {scan.stagedVersion || "—"}
               </Td>
               <Td>
                 <ScanRiskCell scan={scan} />
               </Td>
               <Td>
-                <ScanEvidenceCell scan={scan} />
+                <ScanChangedCell scan={scan} />
               </Td>
               <Td class="font-mono text-xs text-ink-muted">{scan.status}</Td>
               <Td>
                 <DecisionBadge decision={scan.decision} />
-              </Td>
-              <Td class="font-mono text-xs text-ink-muted">
-                {formatDate(scan.completedAt ?? scan.updatedAt ?? scan.createdAt)}
               </Td>
             </tr>
           ))}
@@ -673,40 +669,18 @@ function ScanRiskCell({ scan }: { scan: ScanListItem }) {
     return <span class="font-mono text-xs text-ink-subtle">—</span>;
   }
   const releaseRisk = scan.riskSummary?.releaseRisk ?? scan.risk;
-  const artifactRisk = scan.riskSummary?.artifactRisk ?? scan.risk;
-  return (
-    <div class="flex flex-wrap gap-1.5">
-      <Badge tone={severityTone(releaseRisk)}>
-        {scan.riskSummary ? `release ${releaseRisk}` : releaseRisk}
-      </Badge>
-      {scan.riskSummary && artifactRisk !== releaseRisk ? (
-        <Badge tone="neutral">artifact {artifactRisk}</Badge>
-      ) : null}
-    </div>
-  );
+  return <Badge tone={severityTone(releaseRisk)}>{releaseRisk}</Badge>;
 }
 
-function ScanEvidenceCell({ scan }: { scan: ScanListItem }) {
+function ScanChangedCell({ scan }: { scan: ScanListItem }) {
   if (scan.status !== "complete") {
     return <span class="font-mono text-xs text-ink-subtle">—</span>;
   }
   const changedFiles = scan.changedFileCount ?? 0;
-  const releaseFindings = scan.riskSummary?.releaseFindingCount;
-  const contextFindings = scan.riskSummary?.contextFindingCount;
   return (
-    <div class="font-mono text-xs text-ink-muted">
-      {changedFiles} {pluralize("changed file", changedFiles)}
-      {" · "}
-      {releaseFindings === undefined || contextFindings === undefined ? (
-        <>
-          {scan.findingCount ?? 0} {pluralize("finding", scan.findingCount ?? 0)}
-        </>
-      ) : (
-        <>
-          {releaseFindings} release / {contextFindings} context
-        </>
-      )}
-    </div>
+    <span class="font-mono text-xs text-ink-muted whitespace-nowrap">
+      {changedFiles} {pluralize("file", changedFiles)}
+    </span>
   );
 }
 
