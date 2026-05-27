@@ -81,6 +81,7 @@ Use cards for interactive containment and lists that need table-like edges. Pref
 - The scan detail page exposes the publish decision through a single `Decide` button in the top-right of the page header whenever the scan is `complete`. Clicking it opens a modal with Approve / Block buttons and an optional reason input; submitting records the decision via `POST /api/v1/scans/:id/decision`. Once a decision exists the header shows an `approved` / `blocked` Badge with timestamp next to the trigger, and the button label flips to `Update decision`. The modal surfaces the current decision, prior reason, and any save error so the audit trail stays visible without taking up workbench real estate. The dashboard exposes the same decision as a badge column.
 - Connected workspace setup is collapsed by default, but the closed row must look clickable and include an explicit “Open settings” affordance.
 - Connection metadata is displayed as compact label/value rows, while the editable credential form remains inside a card.
+- Members can read npm connection status, but owner-only credential controls are hidden in shared workspaces.
 - Marketing hero copy is unboxed; feature claims use cards below the headline.
 
 ## Anti-patterns

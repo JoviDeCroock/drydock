@@ -13,6 +13,8 @@ export default function LoginPage() {
   const loading = useSignal(false);
 
   const next = resolveNextPath(location.query?.next);
+  const registerHref =
+    next === "/dashboard" ? "/register" : `/register?next=${encodeURIComponent(next)}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -81,7 +83,7 @@ export default function LoginPage() {
         </form>
 
         <p class="text-[13px] text-ink-muted m-0">
-          New here? <a href="/register">Create an account</a>
+          New here? <a href={registerHref}>Create an account</a>
         </p>
       </Card>
     </PageShell>

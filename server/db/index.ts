@@ -1111,13 +1111,15 @@ function normalizeInviteRow(row: {
   createdAt: Date | string | number;
   updatedAt: Date | string | number;
 }): OrganizationInviteRow {
+  const expired = row.status === "pending" && new Date(row.expiresAt).getTime() <= Date.now();
   return {
     id: row.id,
     organizationId: row.organizationId,
     role: (row.role === "member" ? "member" : "owner") as OrganizationRole,
     email: row.email,
-    status:
-      row.status === "accepted" || row.status === "revoked" || row.status === "expired"
+    status: expired
+      ? "expired"
+      : row.status === "accepted" || row.status === "revoked" || row.status === "expired"
         ? row.status
         : "pending",
     tokenLast4: row.tokenLast4,

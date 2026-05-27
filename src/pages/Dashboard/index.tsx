@@ -109,6 +109,7 @@ export default function DashboardPage() {
 
   const activeOrganization = organizations.active.value;
   const canManageMembers = Boolean(activeOrganization && !activeOrganization.isPersonal);
+  const canManageNpm = activeOrganization?.role === "owner";
 
   return (
     <PageShell
@@ -132,7 +133,7 @@ export default function DashboardPage() {
       {workspaceLoaded ? (
         <>
           <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
-          <WorkspaceSetupPanel npm={npm} />
+          <WorkspaceSetupPanel npm={npm} canManageNpm={canManageNpm} />
         </>
       ) : (
         <LoadingState
@@ -330,8 +331,10 @@ function formatStartedScanLabel(scan: { packageName: string | null; version: str
 
 function WorkspaceSetupPanel({
   npm,
+  canManageNpm,
 }: {
   npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
+  canManageNpm: boolean;
 }) {
   const connection = npm.connection.value;
   return (
@@ -365,7 +368,7 @@ function WorkspaceSetupPanel({
             </div>
           </summary>
           <div class="p-5">
-            <NpmConnectionCard npm={npm} />
+            <NpmConnectionCard npm={npm} canManageNpm={canManageNpm} />
           </div>
         </details>
       </Card>
@@ -375,8 +378,10 @@ function WorkspaceSetupPanel({
 
 function NpmConnectionCard({
   npm,
+  canManageNpm,
 }: {
   npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
+  canManageNpm: boolean;
 }) {
   const connection = npm.connection.value;
   const status = npm.status.value;
@@ -432,86 +437,98 @@ function NpmConnectionCard({
         </div>
       ) : null}
 
-      <form
-        class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_auto] gap-3 items-end"
-        onSubmit={onSave}
-      >
-        <Field label="Connection name" for="npmLabel">
-          <Input
-            id="npmLabel"
-            type="text"
-            value={label}
-            onInput={(e) => (npm.label.value = (e.target as HTMLInputElement).value)}
-            disabled={busy}
-          />
-        </Field>
-        <Field label="Registry" for="npmRegistry">
-          <Input
-            id="npmRegistry"
-            type="url"
-            value={registry}
-            onInput={(e) => (npm.registry.value = (e.target as HTMLInputElement).value)}
-            disabled={busy}
-          />
-        </Field>
-        <Field label={connection ? "New npm token" : "npm token"} for="npmToken">
-          <Input
-            id="npmToken"
-            type="password"
-            value={token}
-            placeholder={connection ? "Paste a new token to rotate" : "npm_..."}
-            onInput={(e) => (npm.token.value = (e.target as HTMLInputElement).value)}
-            disabled={busy}
-            autoComplete="off"
-            spellcheck={false}
-          />
-        </Field>
-        <Button type="submit" disabled={busy || !token.trim()} class="shrink-0">
-          {status === "saving"
-            ? "Saving…"
-            : status === "validating"
-              ? "Checking…"
-              : connection
-                ? "Rotate"
-                : "Save"}
-        </Button>
-      </form>
+      {canManageNpm ? (
+        <>
+          <form
+            class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_auto] gap-3 items-end"
+            onSubmit={onSave}
+          >
+            <Field label="Connection name" for="npmLabel">
+              <Input
+                id="npmLabel"
+                type="text"
+                value={label}
+                onInput={(e) => (npm.label.value = (e.target as HTMLInputElement).value)}
+                disabled={busy}
+              />
+            </Field>
+            <Field label="Registry" for="npmRegistry">
+              <Input
+                id="npmRegistry"
+                type="url"
+                value={registry}
+                onInput={(e) => (npm.registry.value = (e.target as HTMLInputElement).value)}
+                disabled={busy}
+              />
+            </Field>
+            <Field label={connection ? "New npm token" : "npm token"} for="npmToken">
+              <Input
+                id="npmToken"
+                type="password"
+                value={token}
+                placeholder={connection ? "Paste a new token to rotate" : "npm_..."}
+                onInput={(e) => (npm.token.value = (e.target as HTMLInputElement).value)}
+                disabled={busy}
+                autoComplete="off"
+                spellcheck={false}
+              />
+            </Field>
+            <Button type="submit" disabled={busy || !token.trim()} class="shrink-0">
+              {status === "saving"
+                ? "Saving…"
+                : status === "validating"
+                  ? "Checking…"
+                  : connection
+                    ? "Rotate"
+                    : "Save"}
+            </Button>
+          </form>
 
-      <div class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end">
-        <Field label="Stage ID access check" for="validationStageId">
-          <Input
-            id="validationStageId"
-            type="text"
-            value={validationStageId}
-            placeholder="Paste a real stage ID to confirm package access"
-            onInput={(e) => (npm.validationStageId.value = (e.target as HTMLInputElement).value)}
-            disabled={busy || !connection}
-            autoComplete="off"
-            spellcheck={false}
-          />
-        </Field>
-        <Button
-          variant="secondary"
-          onClick={() => void npm.validate()}
-          disabled={busy || !connection}
-          class="shrink-0"
-        >
-          {status === "validating"
-            ? "Checking…"
-            : validationStageId.trim()
-              ? "Check stage access"
-              : "Check npm auth"}
-        </Button>
-      </div>
+          <div class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end">
+            <Field label="Stage ID access check" for="validationStageId">
+              <Input
+                id="validationStageId"
+                type="text"
+                value={validationStageId}
+                placeholder="Paste a real stage ID to confirm package access"
+                onInput={(e) =>
+                  (npm.validationStageId.value = (e.target as HTMLInputElement).value)
+                }
+                disabled={busy || !connection}
+                autoComplete="off"
+                spellcheck={false}
+              />
+            </Field>
+            <Button
+              variant="secondary"
+              onClick={() => void npm.validate()}
+              disabled={busy || !connection}
+              class="shrink-0"
+            >
+              {status === "validating"
+                ? "Checking…"
+                : validationStageId.trim()
+                  ? "Check stage access"
+                  : "Check npm auth"}
+            </Button>
+          </div>
 
-      <Muted class="text-xs">
-        Saving runs the npm auth check automatically. Add a stage ID to prove the token can read
-        that staged release; we do not keep the release archive.
-      </Muted>
+          <Muted class="text-xs">
+            Saving runs the npm auth check automatically. Add a stage ID to prove the token can read
+            that staged release; we do not keep the release archive.
+          </Muted>
+        </>
+      ) : (
+        <Alert tone="info">
+          {connection
+            ? "Only organization owners can rotate, validate, or remove the npm connection."
+            : "Ask an organization owner to connect npm before reviews can run in this workspace."}
+        </Alert>
+      )}
 
       {error ? <Alert tone="critical">{error}</Alert> : null}
 
-      {connection ? (
+      {canManageNpm && connection ? (
         <div class="flex justify-end border-t border-border pt-4">
           <Button variant="danger" size="sm" onClick={() => void npm.remove()} disabled={busy}>
             {status === "deleting" ? "Removing…" : "Disconnect npm"}

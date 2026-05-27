@@ -301,10 +301,10 @@ invitesRoutes.post("/:token/accept", async (c) => {
 
   const invite = await getInviteByTokenHash(db, tokenHash);
   if (!invite) return c.json({ error: "invite not found" }, 404);
-  if (invite.status !== "pending") return c.json({ error: "invite is no longer pending" }, 409);
-  if (new Date(invite.expiresAt).getTime() <= Date.now()) {
+  if (invite.status === "expired" || new Date(invite.expiresAt).getTime() <= Date.now()) {
     return c.json({ error: "invite has expired" }, 410);
   }
+  if (invite.status !== "pending") return c.json({ error: "invite is no longer pending" }, 409);
 
   const { accepted } = await acceptOrganizationInvite(db, { invite, userId: session.userId });
   if (!accepted) return c.json({ error: "invite is no longer pending" }, 409);

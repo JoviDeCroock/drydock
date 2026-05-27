@@ -224,6 +224,12 @@ describe("invites routes", () => {
     const previewBody = (await preview.json()) as { invite: { status: string } };
     expect(previewBody.invite.status).toBe("expired");
 
+    const list = await call(buildTestApp(owner), "GET", `/api/v1/organizations/${org.id}/invites`);
+    const listBody = (await list.json()) as { invites: Array<{ id: string; status: string }> };
+    expect(listBody.invites.find((invite) => invite.id === created.invite.id)?.status).toBe(
+      "expired",
+    );
+
     const accept = await call(
       buildTestApp(invitee),
       "POST",

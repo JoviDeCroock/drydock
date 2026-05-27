@@ -14,6 +14,7 @@ export default function RegisterPage() {
   const loading = useSignal(false);
 
   const next = resolveNextPath(location.query?.next);
+  const loginHref = next === "/dashboard" ? "/login" : `/login?next=${encodeURIComponent(next)}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -95,7 +96,7 @@ export default function RegisterPage() {
         </form>
 
         <p class="text-[13px] text-ink-muted m-0">
-          Already have an account? <a href="/login">Sign in</a>
+          Already have an account? <a href={loginHref}>Sign in</a>
         </p>
       </Card>
     </PageShell>
