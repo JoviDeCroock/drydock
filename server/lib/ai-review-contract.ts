@@ -42,6 +42,8 @@ export const MAX_CHANGED_FILE_MANIFEST = 300;
 export const MAX_TOOL_RESPONSE_CHARS = 16_000;
 export const MAX_TOTAL_TOOL_RESPONSE_CHARS = 48_000;
 export const DEFAULT_TOOL_CHARS = 8_000;
+export const MAX_READ_BATCH_PATHS = 10;
+export const MAX_SEARCH_QUERIES = 5;
 export const MAX_SEARCH_RESULTS = 20;
 export const SEARCH_SNIPPET_RADIUS = 140;
 export const LARGE_FILE_BYTES = 64 * 1024;
@@ -90,29 +92,34 @@ const toolMaxCharsSchema = z
   .min(1)
   .max(MAX_TOOL_RESPONSE_CHARS)
   .default(DEFAULT_TOOL_CHARS)
-  .describe("Maximum characters of package-derived text to return.");
+  .describe("Maximum characters of package-derived text to return per path.");
 
-export const readFileInputSchema = z
+export const readInputSchema = z
   .object({
-    path: toolPathSchema,
-    maxChars: toolMaxCharsSchema,
-  })
-  .strict();
-
-export const readDiffInputSchema = z
-  .object({
-    path: toolPathSchema,
+    paths: z
+      .array(toolPathSchema)
+      .min(1)
+      .max(MAX_READ_BATCH_PATHS)
+      .describe(
+        `Up to ${MAX_READ_BATCH_PATHS} package-relative paths to fetch in one call. Each path returns a unified text diff when previous-version text is available for a changed file, otherwise the staged file text.`,
+      ),
     maxChars: toolMaxCharsSchema,
   })
   .strict();
 
 export const searchFilesInputSchema = z
   .object({
-    query: z
-      .string()
+    queries: z
+      .array(
+        z
+          .string()
+          .min(1)
+          .max(120)
+          .describe("Literal case-insensitive string to search in tool-readable package text."),
+      )
       .min(1)
-      .max(120)
-      .describe("Literal case-insensitive string to search in tool-readable package text."),
+      .max(MAX_SEARCH_QUERIES)
+      .describe(`Up to ${MAX_SEARCH_QUERIES} literal queries to run in one call.`),
     maxResults: z.number().int().min(1).max(MAX_SEARCH_RESULTS).default(10),
   })
   .strict();
