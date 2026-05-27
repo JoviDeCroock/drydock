@@ -224,7 +224,12 @@ export async function listExistingScanStageIds(
   const rows = await db
     .select({ stageId: scans.stageId })
     .from(scans)
-    .where(and(eq(scans.organizationId, organizationId), inArray(scans.stageId, stageIds)));
+    .where(
+      and(
+        inArray(scans.stageId, stageIds),
+        or(eq(scans.organizationId, organizationId), eq(scans.status, "complete")),
+      ),
+    );
   return new Set(rows.map((row) => row.stageId));
 }
 
@@ -268,6 +273,10 @@ export async function markScanFailed(
         inArray(scans.status, [...NON_TERMINAL_STATUSES]),
       ),
     );
+}
+
+export async function discardScanAttempt(db: AppDb, scanId: string, organizationId: string) {
+  await db.delete(scans).where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)));
 }
 
 export async function persistScan(db: AppDb, input: PersistedScanInput) {
