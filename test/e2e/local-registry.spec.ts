@@ -41,10 +41,6 @@ test.beforeAll(async ({ browser, baseURL }) => {
 });
 
 test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseURL }) => {
-  // Check npm discovers every fixture stage in one call and queues a scan for
-  // each. The local dev Worker runs them all on a single JS thread, so leave
-  // generous headroom for the implicit-node-gyp scan to surface its report.
-  test.setTimeout(240_000);
   const { context, page } = await openAuthenticatedPage(browser, baseURL);
   try {
     await page.goto("/dashboard");
@@ -52,20 +48,19 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
       timeout: 30_000,
     });
 
-    const checkNpm = page.getByRole("button", { name: "Check npm" });
-    await expect(checkNpm).toBeEnabled({ timeout: 30_000 });
-    await checkNpm.click();
+    // Run the report assertions first via the synchronous scan API. Check npm
+    // fans out nine concurrent background scans on the dev Worker, and CI's
+    // workerd serializes them so badly that one scan can take minutes to
+    // surface a report — letting that contention happen before the heavy work
+    // is done makes the test unreliable.
+    const created = await scanStage(page, uiStageId);
+    expect(created.status, "implicit-node-gyp sync scan").toBe(200);
+    const scanId = (created.body as { id?: string } | null)?.id;
+    expect(scanId, "scan id present in sync scan response").toBeTruthy();
 
-    // Each row's link text is the stage id until the scan completes and the
-    // pipeline populates packageName, then it flips to the package name. Wait
-    // for that flip so we click into a completed report.
-    const reportLink = page.getByRole("link", { name: "@drydock/e2e-native" });
-    await expect(reportLink).toBeVisible({ timeout: 180_000 });
-    await reportLink.click();
-    await expect(page).toHaveURL(/\/dashboard\/scans\//, { timeout: 30_000 });
-
+    await page.goto(`/dashboard/scans/${scanId}`);
     await expect(page.getByRole("heading", { name: "@drydock/e2e-native" })).toBeVisible({
-      timeout: 30_000,
+      timeout: 60_000,
     });
     await expect(page.getByText("release high").first()).toBeVisible();
     await expect(page.getByText("implicit install: node-gyp rebuild")).toBeVisible();
@@ -74,6 +69,17 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
     await page.screenshot({
       path: path.join(artifactsDir, "implicit-node-gyp-report.png"),
       fullPage: true,
+    });
+
+    // Now exercise Check npm as the live entry point. The button kicks off
+    // discovery and we wait only for the "Started N new reviews" message —
+    // the resulting background scans are exercised by the scenarios below.
+    await page.goto("/dashboard");
+    const checkNpm = page.getByRole("button", { name: "Check npm" });
+    await expect(checkNpm).toBeEnabled({ timeout: 30_000 });
+    await checkNpm.click();
+    await expect(page.getByText(/Started \d+ new reviews? from npm/)).toBeVisible({
+      timeout: 60_000,
     });
   } finally {
     await context.close();
