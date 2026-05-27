@@ -116,8 +116,6 @@ export async function runScanPipeline(
     findings: [],
     requiresManualReview: false,
     model: null,
-    escalated: false,
-    escalationReasons: [],
   };
   const aiReviewEnabled = env.FLAGS
     ? await env.FLAGS.getBooleanValue("ai-review", false, {
@@ -135,17 +133,6 @@ export async function runScanPipeline(
       ruleFindings: releaseRuleFindings,
       previousVersionAvailable: previous !== null,
     });
-    if (aiFindings.escalated) {
-      console.log("ai review escalated to stronger model", {
-        scanId,
-        stageId: input.stageId,
-        organizationId: input.organizationId,
-        packageName: stagedPackageJson?.name ?? null,
-        stagedVersion: stagedPackageJson?.version ?? null,
-        model: aiFindings.model,
-        reasons: aiFindings.escalationReasons,
-      });
-    }
   }
   const riskSummary = computeScanRiskBreakdown(reportFindingAnnotations, aiFindings);
   const risk = riskSummary.releaseRisk;

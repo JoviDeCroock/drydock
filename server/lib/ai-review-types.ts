@@ -23,8 +23,6 @@ export interface AiReview {
   findings: AiFinding[];
   requiresManualReview: boolean;
   model: string | null;
-  escalated: boolean;
-  escalationReasons: string[];
 }
 
 export interface SelectiveAiReviewOptions {
@@ -35,11 +33,4 @@ export interface SelectiveAiReviewOptions {
   packageJsonDiff: PackageJsonDiff;
   ruleFindings: Finding[];
   previousVersionAvailable: boolean;
-}
-
-export interface PreAiEscalationInput {
-  ruleFindings: Finding[];
-  packageJsonDiff: PackageJsonDiff;
-  previousVersionAvailable: boolean;
-  defaultInputTokenEstimate?: number;
 }

@@ -1,13 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  analyzeWithAi,
-  decidePostDefaultEscalation,
-  decidePreAiEscalation,
-  DEFAULT_AI_MODEL,
-  ESCALATION_AI_MODEL,
-  estimateAiReviewInputTokens,
-  runSelectiveAiReview,
-} from "../server/lib/ai-review.ts";
+import { AI_MODEL, analyzeWithAi, runSelectiveAiReview } from "../server/lib/ai-review.ts";
 import { computeScanRisk } from "../server/lib/risk.ts";
 
 const EMPTY_PACKAGE_JSON_DIFF = {
@@ -37,7 +29,7 @@ function completeResponse(overrides = {}) {
 }
 
 // AI review is disabled in production while we work toward a paid-tier offering.
-// Keep the suite here but skipped so the prompt + escalation contract is preserved
+// Keep the suite here but skipped so the prompt + single-model contract is preserved
 // for the eventual re-introduction.
 describe.skip("ai review normalization", () => {
   test("review prompt explicitly treats package contents and dependency changes as hostile evidence", async () => {
@@ -232,127 +224,8 @@ describe.skip("ai review normalization", () => {
     expect(ai.status).toBe("complete");
     expect(computeScanRisk([], ai)).toBe("medium");
   });
-});
 
-describe.skip("escalation decision", () => {
-  test("nothing-unusual input does not pre-escalate", () => {
-    const reasons = decidePreAiEscalation({
-      ruleFindings: [{ severity: "low", file: "a", evidence: "", reason: "" }],
-      packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
-      previousVersionAvailable: true,
-    });
-    expect(reasons).toEqual([]);
-  });
-
-  test("medium-or-higher deterministic finding triggers pre-escalation", () => {
-    const reasons = decidePreAiEscalation({
-      ruleFindings: [{ severity: "medium", file: "a", evidence: "", reason: "" }],
-      packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
-      previousVersionAvailable: true,
-    });
-    expect(reasons).toContain("deterministic finding at medium or higher severity");
-  });
-
-  test("install lifecycle script change triggers pre-escalation", () => {
-    const reasons = decidePreAiEscalation({
-      ruleFindings: [],
-      packageJsonDiff: {
-        ...EMPTY_PACKAGE_JSON_DIFF,
-        scripts: [{ key: "postinstall", status: "added", staged: "node ./hook.js" }],
-      },
-      previousVersionAvailable: true,
-    });
-    expect(reasons).toContain("install-lifecycle script added or modified");
-  });
-
-  test("non-lifecycle script change does not pre-escalate on its own", () => {
-    const reasons = decidePreAiEscalation({
-      ruleFindings: [],
-      packageJsonDiff: {
-        ...EMPTY_PACKAGE_JSON_DIFF,
-        scripts: [{ key: "test", status: "modified", previous: "vitest", staged: "vitest --run" }],
-      },
-      previousVersionAvailable: true,
-    });
-    expect(reasons).toEqual([]);
-  });
-
-  test("dependency change triggers pre-escalation", () => {
-    const reasons = decidePreAiEscalation({
-      ruleFindings: [],
-      packageJsonDiff: {
-        ...EMPTY_PACKAGE_JSON_DIFF,
-        dependencies: [{ key: "lodash", status: "added", staged: "^4.17.21" }],
-      },
-      previousVersionAvailable: true,
-    });
-    expect(reasons).toContain("dependency, peer dependency, or optional dependency changed");
-  });
-
-  test("entrypoint changes trigger pre-escalation", () => {
-    const reasons = decidePreAiEscalation({
-      ruleFindings: [],
-      packageJsonDiff: { ...EMPTY_PACKAGE_JSON_DIFF, entrypointsChanged: true },
-      previousVersionAvailable: true,
-    });
-    expect(reasons).toContain("package entrypoints changed");
-  });
-
-  test("missing previous version triggers pre-escalation", () => {
-    const reasons = decidePreAiEscalation({
-      ruleFindings: [],
-      packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
-      previousVersionAvailable: false,
-    });
-    expect(reasons).toContain("previous-version comparison unavailable");
-  });
-
-  test("post-default escalates when default model marks suspicious", () => {
-    const reasons = decidePostDefaultEscalation({
-      status: "complete",
-      risk: "medium",
-      releaseAssessment: "suspicious",
-      summary: "",
-      findings: [],
-      requiresManualReview: false,
-      model: DEFAULT_AI_MODEL,
-      escalated: false,
-      escalationReasons: [],
-    });
-    expect(reasons).toContain("default model marked release suspicious");
-  });
-
-  test("post-default escalates when default model requests manual review", () => {
-    const reasons = decidePostDefaultEscalation({
-      status: "complete",
-      risk: "medium",
-      releaseAssessment: "review_recommended",
-      summary: "",
-      findings: [],
-      requiresManualReview: true,
-      model: DEFAULT_AI_MODEL,
-      escalated: false,
-      escalationReasons: [],
-    });
-    expect(reasons).toContain("default model requested manual review");
-  });
-
-  test("post-default escalates when default model fails to produce a review", () => {
-    const reasons = decidePostDefaultEscalation({
-      status: "unavailable",
-      risk: "low",
-      releaseAssessment: "not_assessed",
-      summary: "",
-      findings: [],
-      requiresManualReview: false,
-      model: DEFAULT_AI_MODEL,
-      escalated: false,
-      escalationReasons: [],
-    });
-    expect(reasons).toContain("default model review unavailable");
-  });
-
-  test("calm scan uses default model without escalation", async () => {
+  test("runSelectiveAiReview always uses the single Kimi model", async () => {
     const calls = [];
     const review = await runSelectiveAiReview(
       reviewerEnv({
@@ -369,114 +242,7 @@ describe.skip("escalation decision", () => {
         previousVersionAvailable: true,
       },
     );
-    expect(calls).toEqual([DEFAULT_AI_MODEL]);
-    expect(review.model).toBe(DEFAULT_AI_MODEL);
-    expect(review.escalated).toBe(false);
-    expect(review.escalationReasons).toEqual([]);
-  });
-
-  test("large calm scan skips default model when prompt estimate exceeds its context budget", async () => {
-    const files = Array.from({ length: 80 }, (_, index) => ({
-      path: `src/generated-${index}.js`,
-      size: 4096,
-      sha256: `sha-${index}`,
-      flags: [],
-      textSample: "export const value = 1;\n".repeat(200),
-    }));
-    const diff = files.map((file) => ({ path: file.path, status: "modified", flags: [] }));
-    const options = {
-      files,
-      diff,
-      packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
-      ruleFindings: [],
-      previousVersionAvailable: true,
-    };
-    const calls = [];
-    const review = await runSelectiveAiReview(
-      reviewerEnv({
-        run: async (model) => {
-          calls.push(model);
-          return completeResponse();
-        },
-      }),
-      options,
-    );
-
-    expect(estimateAiReviewInputTokens(options)).toBeGreaterThan(24_000);
-    expect(calls).toEqual([ESCALATION_AI_MODEL]);
-    expect(review.model).toBe(ESCALATION_AI_MODEL);
-    expect(review.escalated).toBe(true);
-    expect(review.escalationReasons).toContain("default model context budget exceeded");
-  });
-
-  test("risky deterministic signal skips the default model and runs escalation only", async () => {
-    const calls = [];
-    const review = await runSelectiveAiReview(
-      reviewerEnv({
-        run: async (model) => {
-          calls.push(model);
-          return completeResponse({ risk: "high", releaseAssessment: "review_recommended" });
-        },
-      }),
-      {
-        files: [],
-        diff: [],
-        packageJsonDiff: {
-          ...EMPTY_PACKAGE_JSON_DIFF,
-          scripts: [{ key: "preinstall", status: "added", staged: "curl ..." }],
-        },
-        ruleFindings: [
-          {
-            severity: "critical",
-            file: "package.json",
-            evidence: "preinstall: curl ...",
-            reason: "lifecycle hook",
-          },
-        ],
-        previousVersionAvailable: true,
-      },
-    );
-    expect(calls).toEqual([ESCALATION_AI_MODEL]);
-    expect(review.model).toBe(ESCALATION_AI_MODEL);
-    expect(review.escalated).toBe(true);
-    expect(review.escalationReasons).toContain(
-      "deterministic finding at medium or higher severity",
-    );
-    expect(review.escalationReasons).toContain("install-lifecycle script added or modified");
-  });
-
-  test("default model suspicious assessment triggers a second escalation call", async () => {
-    const calls = [];
-    const review = await runSelectiveAiReview(
-      reviewerEnv({
-        run: async (model) => {
-          calls.push(model);
-          if (model === DEFAULT_AI_MODEL) {
-            return completeResponse({
-              risk: "medium",
-              releaseAssessment: "suspicious",
-              summary: "Something is off.",
-            });
-          }
-          return completeResponse({
-            risk: "high",
-            releaseAssessment: "blocked",
-            summary: "Escalated reviewer confirms.",
-            requiresManualReview: true,
-          });
-        },
-      }),
-      {
-        files: [],
-        diff: [],
-        packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
-        ruleFindings: [],
-        previousVersionAvailable: true,
-      },
-    );
-    expect(calls).toEqual([DEFAULT_AI_MODEL, ESCALATION_AI_MODEL]);
-    expect(review.model).toBe(ESCALATION_AI_MODEL);
-    expect(review.escalated).toBe(true);
-    expect(review.escalationReasons).toContain("default model marked release suspicious");
+    expect(calls).toEqual([AI_MODEL]);
+    expect(review.model).toBe(AI_MODEL);
   });
 });

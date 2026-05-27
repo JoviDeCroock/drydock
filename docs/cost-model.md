@@ -60,22 +60,14 @@ Workers AI is ~90% of the variable cost at every scale above the smallest tier.
 
 AI review is currently disabled in the pipeline; this section documents the design that will return behind a paid tier. The module — `server/lib/ai-review.ts` — and its skipped test suite remain in tree so it can be re-enabled by importing `runSelectiveAiReview` from `scan-pipeline.ts` again.
 
-Kimi is valuable for deep package-security review, but it should not necessarily be the always-on model for every staged release. The scanner's actual security boundary is deterministic analysis plus human npm approval; AI is advisory triage. The intended production posture, implemented in [`server/lib/ai-review.ts`](../server/lib/ai-review.ts), is:
+The scanner's actual security boundary is deterministic analysis plus human npm approval; AI is advisory triage. The intended production posture, implemented in [`server/lib/ai-review.ts`](../server/lib/ai-review.ts), is:
 
 1. run deterministic rules first;
-2. use a cheaper capable model (`DEFAULT_AI_MODEL` = `@cf/qwen/qwen3-30b-a3b-fp8`) for default AI triage;
-3. escalate to Kimi (`ESCALATION_AI_MODEL` = `@cf/moonshotai/kimi-k2.5`) for risky or ambiguous scans.
+2. send the resulting evidence to Kimi (`AI_MODEL` = `@cf/moonshotai/kimi-k2.5`) for AI review.
 
 The reviewer in [`server/lib/ai-review.ts`](../server/lib/ai-review.ts) uses the Vercel AI SDK with the Workers AI provider. The first prompt contains deterministic findings, package.json/package.json diff, and a changed-file manifest. The model can then call app-owned tools to read bounded redacted file samples, read text diffs when previous-version samples are available, search changed/package.json text literally, list focused file subsets, and finally submit the review through a schema-validated `submit_review` tool. The controller enforces max steps, per-tool character caps, a total evidence budget, and scan-ID-suffixed cache affinity; the model never gets raw tarballs, arbitrary filesystem access, network access, or package execution.
 
-`runSelectiveAiReview` decides escalation in two stages:
-
-- **Pre-AI**, based on deterministic signals and request shape: any rule finding at medium or higher, an install-lifecycle script add/modify (`preinstall`, `install`, `postinstall`, `prepare`, `prepack`, `postpack`, `publish`, `prepublish`, `prepublishOnly`), any dependency / peerDep / optionalDep change, any entrypoint change (`bin`, `main`, `module`, `types`, `exports`), a scan where no previous version was available to compare against, or an estimated initial AI manifest that exceeds the default model's context budget. When any pre-AI trigger fires we skip the default model and call the escalation model directly to avoid paying for both passes.
-- **Post-default**, based on the default model's output: a `suspicious` or `blocked` release assessment, `requiresManualReview === true`, or a non-`complete` review status. When any post-default trigger fires we run the escalation model with the same payload and return its review.
-
-The persisted `aiJson` records the model that produced the final review, whether escalation occurred, and the trigger reasons.
-
-Avoid using the cheapest micro model as the primary security reviewer. A very small model can summarize deterministic findings, but supply-chain review needs enough reasoning to notice prompt injection, install-time behavior, dependency lifecycle risk, and entrypoint/package-shape surprises.
+Every scan that opts into AI review goes straight to Kimi — there is no cheaper triage tier and no escalation logic. Avoid swapping in a micro model as the primary security reviewer. Supply-chain review needs enough reasoning to notice prompt injection, install-time behavior, dependency lifecycle risk, and entrypoint/package-shape surprises, and the persisted `aiJson` records which model produced the review.
 
 ## Pricing for margin
 

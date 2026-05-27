@@ -45,7 +45,6 @@ export const DEFAULT_TOOL_CHARS = 8_000;
 export const MAX_SEARCH_RESULTS = 20;
 export const SEARCH_SNIPPET_RADIUS = 140;
 export const LARGE_FILE_BYTES = 64 * 1024;
-export const TOOL_PROMPT_OVERHEAD_CHARS = 5_000;
 
 const severitySchema = z.enum(["info", "low", "medium", "high", "critical"]);
 const riskSchema = z.enum(["low", "medium", "high", "critical"]);

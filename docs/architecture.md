@@ -147,7 +147,7 @@ Raw tarballs should not be retained by default in SaaS. If needed later, make ra
 
 ### Workers AI (disabled)
 
-Workers AI review is currently **disabled in the scan pipeline**. The reviewer module — `server/lib/ai-review.ts`, its two-tier escalation policy (default `@cf/qwen/qwen3-30b-a3b-fp8`, escalation `@cf/moonshotai/kimi-k2.5`), the prompt-injection-resistant system prompt, the AI SDK evidence-tool loop, and the test suite (skipped) — is kept on disk so it can be re-introduced behind a paid tier without re-engineering the contract.
+Workers AI review is currently **disabled in the scan pipeline**. The reviewer module — `server/lib/ai-review.ts`, its single-model policy (`AI_MODEL` = `@cf/moonshotai/kimi-k2.5`), the prompt-injection-resistant system prompt, the AI SDK evidence-tool loop, and the test suite (skipped) — is kept on disk so it can be re-introduced behind a paid tier without re-engineering the contract.
 
 Scans persist `scan.aiJson = null` while AI review is disabled, and the UI omits the reviewer-notes section entirely. Risk is computed exclusively from deterministic findings.
 
