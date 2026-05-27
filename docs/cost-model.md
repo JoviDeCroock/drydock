@@ -8,14 +8,14 @@ Order-of-magnitude estimates for running staged-publish-review on Cloudflare. Nu
 
 A single scan exercises the deterministic pipeline (staged tarball download, previous-version tarball download, deterministic findings, persistence). When AI review is re-enabled it adds the Workers-AI tokens line below.
 
-| Component         | Approx per scan | Notes                                                                                                                                 |
-| ----------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Worker requests   | ~5              | `POST /scans` + queue producer + queue consumer + 2 sandbox spins (staged + previous)                                                 |
-| Worker CPU-ms     | ~3,000          | Dominated by tar parse + sha256 hashing in the sandbox                                                                                |
-| D1 row writes     | ~150            | one scans row + N scan_files + M scan_findings                                                                                        |
-| Workers AI tokens | _disabled_      | When AI review returns: ~20k input / ~500 output, only changed files in, static safety preamble prompt-cached via `AI_CACHE_AFFINITY` |
-| KV write          | 1               | Previous-version parsed payload cached in `COMPARE_CACHE`                                                                             |
-| Queue operations  | 2               | Enqueue + consume                                                                                                                     |
+| Component         | Approx per scan | Notes                                                                                                                                         |
+| ----------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Worker requests   | ~5              | `POST /scans` + queue producer + queue consumer + 2 sandbox spins (staged + previous)                                                         |
+| Worker CPU-ms     | ~3,000          | Dominated by tar parse + sha256 hashing in the sandbox                                                                                        |
+| D1 row writes     | ~150            | one scans row + N scan_files + M scan_findings                                                                                                |
+| Workers AI tokens | _disabled_      | When AI review returns: compact manifest input plus bounded evidence-tool turns; static safety preamble prompt-cached via `AI_CACHE_AFFINITY` |
+| KV write          | 1               | Previous-version parsed payload cached in `COMPARE_CACHE`                                                                                     |
+| Queue operations  | 2               | Enqueue + consume                                                                                                                             |
 
 ## Per scan-detail view
 
@@ -51,7 +51,7 @@ Workers AI is ~90% of the variable cost at every scale above the smallest tier.
 
 ## Where the money goes
 
-- **Workers AI**: dominant at scale. Biggest levers: (a) choose the correct tag-aware comparison baseline so changed files reflect the release channel under review; (b) keep only changed files in the input (already enforced in [`ai-review.ts`](../server/lib/ai-review.ts)); (c) keep the system prompt cache-friendly via `AI_CACHE_AFFINITY`; (d) pick the cheapest model that still produces useful structured output. See [`diff-baseline.md`](./diff-baseline.md).
+- **Workers AI**: dominant at scale. Biggest levers: (a) choose the correct tag-aware comparison baseline so changed files reflect the release channel under review; (b) start AI review with a compact package manifest instead of full changed-file samples; (c) let the model request only targeted redacted file/diff/search evidence through app-owned tools; (d) keep the system prompt cache-friendly via `AI_CACHE_AFFINITY`; (e) pick the cheapest model that still produces useful structured output. See [`diff-baseline.md`](./diff-baseline.md).
 - **D1 storage growth**: ~500 KB–2 MB per scan retained. At 50k scans/mo that's 25–100 GB/mo accumulating. Add a retention/GC policy before this becomes a line item.
 - **KV storage**: trivial. The added `COMPARE_CACHE` is essentially free across any realistic catalog of cached versions; it primarily saves sandbox CPU and tarball egress.
 - **Sandbox compute**: bounded per scan (2 Dynamic Workers, ~3s CPU each). The KV cache means alternate-version diffs in the detail page no longer linearly multiply this cost.
@@ -66,9 +66,11 @@ Kimi is valuable for deep package-security review, but it should not necessarily
 2. use a cheaper capable model (`DEFAULT_AI_MODEL` = `@cf/qwen/qwen3-30b-a3b-fp8`) for default AI triage;
 3. escalate to Kimi (`ESCALATION_AI_MODEL` = `@cf/moonshotai/kimi-k2.5`) for risky or ambiguous scans.
 
+The reviewer in [`server/lib/ai-review.ts`](../server/lib/ai-review.ts) uses the Vercel AI SDK with the Workers AI provider. The first prompt contains deterministic findings, package.json/package.json diff, and a changed-file manifest. The model can then call app-owned tools to read bounded redacted file samples, read text diffs when previous-version samples are available, search changed/package.json text literally, list focused file subsets, and finally submit the review through a schema-validated `submit_review` tool. The controller enforces max steps, per-tool character caps, a total evidence budget, and scan-ID-suffixed cache affinity; the model never gets raw tarballs, arbitrary filesystem access, network access, or package execution.
+
 `runSelectiveAiReview` decides escalation in two stages:
 
-- **Pre-AI**, based on deterministic signals and request shape: any rule finding at medium or higher, an install-lifecycle script add/modify (`preinstall`, `install`, `postinstall`, `prepare`, `prepack`, `postpack`, `publish`, `prepublish`, `prepublishOnly`), any dependency / peerDep / optionalDep change, any entrypoint change (`bin`, `main`, `module`, `types`, `exports`), a scan where no previous version was available to compare against, or an estimated AI input that exceeds the default model's context budget. When any pre-AI trigger fires we skip the default model and call the escalation model directly to avoid paying for both passes.
+- **Pre-AI**, based on deterministic signals and request shape: any rule finding at medium or higher, an install-lifecycle script add/modify (`preinstall`, `install`, `postinstall`, `prepare`, `prepack`, `postpack`, `publish`, `prepublish`, `prepublishOnly`), any dependency / peerDep / optionalDep change, any entrypoint change (`bin`, `main`, `module`, `types`, `exports`), a scan where no previous version was available to compare against, or an estimated initial AI manifest that exceeds the default model's context budget. When any pre-AI trigger fires we skip the default model and call the escalation model directly to avoid paying for both passes.
 - **Post-default**, based on the default model's output: a `suspicious` or `blocked` release assessment, `requiresManualReview === true`, or a non-`complete` review status. When any post-default trigger fires we run the escalation model with the same payload and return its review.
 
 The persisted `aiJson` records the model that produced the final review, whether escalation occurred, and the trigger reasons.
