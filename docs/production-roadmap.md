@@ -126,7 +126,7 @@ Tasks:
 - Store scanner version, deterministic rules version, prompt version, model/provider metadata, and report schema version.
 - Add a report provenance section: package name, staged version, previous version, selected comparison version, stage ID, generated timestamp, artifact digests, and review limitations.
 - Add AI failure states that preserve deterministic findings when AI is unavailable.
-- Store AI latency and provider/model metadata where available, including whether the default model or escalation model reviewed the scan.
+- Store AI latency and provider/model metadata where available.
 - Keep signed/public report URLs deferred, but design exports so signing can wrap the same canonical artifact later.
 
 Exit criteria:

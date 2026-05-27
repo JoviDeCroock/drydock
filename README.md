@@ -27,7 +27,7 @@ See [`docs/architecture.md`](docs/architecture.md), [`docs/security-model.md`](d
   - package metadata JSON
   - published `.tgz` tarballs for previous-version diffing
 - The sandbox gunzips/parses tarballs, returns bounded file metadata and text samples, and the parent Worker runs deterministic checks.
-- AI triage (Workers AI JSON-mode review of changed files only) is **disabled for now**. The reviewer module — including the two-tier escalation policy and prompt-injection-resistant system prompt — lives in `server/lib/ai-review.ts` so it can return behind a paid tier without re-engineering.
+- AI triage (Workers AI JSON-mode review of changed files only) is **disabled for now**. The reviewer module — a single-model (Kimi K2.5) policy and prompt-injection-resistant system prompt — lives in `server/lib/ai-review.ts` so it can return behind a paid tier without re-engineering.
 - The service diffs the staged tarball against the currently published previous version when package metadata is available.
 - Package files are treated as hostile evidence even with AI disabled — file previews are escaped/redacted before persistence, and the planned AI reviewer will not downgrade deterministic findings when it returns.
 - Review results are persisted in Cloudflare D1 through Drizzle ORM.

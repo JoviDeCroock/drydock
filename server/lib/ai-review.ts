@@ -4,121 +4,28 @@ import {
   aiReviewSubmissionSchema,
   MAX_AGENT_STEPS,
   REVIEWER_SYSTEM_PROMPT,
-  TOOL_PROMPT_OVERHEAD_CHARS,
   type AiReviewSubmission,
 } from "./ai-review-contract";
 import { buildAiReviewPayload, createAiReviewTools } from "./ai-review-evidence";
-import type {
-  AiReview,
-  AiReviewStatus,
-  PreAiEscalationInput,
-  SelectiveAiReviewOptions,
-} from "./ai-review-types";
+import type { AiReview, AiReviewStatus, SelectiveAiReviewOptions } from "./ai-review-types";
 
 export type {
   AiFinding,
   AiReview,
   AiReviewStatus,
-  PreAiEscalationInput,
   SelectiveAiReviewOptions,
 } from "./ai-review-types";
 
-// Cheaper triage model used for the default AI review pass. See docs/cost-model.md.
-export const DEFAULT_AI_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
-// Stronger reviewer escalated to for risky/ambiguous scans. See docs/cost-model.md.
-export const ESCALATION_AI_MODEL = "@cf/moonshotai/kimi-k2.5";
+// Single reviewer model. See docs/cost-model.md.
+export const AI_MODEL = "@cf/moonshotai/kimi-k2.5";
 
-const LIFECYCLE_SCRIPT_KEYS = new Set([
-  "preinstall",
-  "install",
-  "postinstall",
-  "prepare",
-  "prepack",
-  "postpack",
-  "publish",
-  "prepublish",
-  "prepublishOnly",
-]);
-
-const RISKY_SEVERITIES = new Set(["medium", "high", "critical"]);
-const DEFAULT_AI_INPUT_TOKEN_BUDGET = 24_000;
-const APPROX_CHARS_PER_TOKEN = 4;
 const DEFAULT_CACHE_AFFINITY = "staged-publish-review-agentic-release-reviewer-v1";
-
-export function decidePreAiEscalation(input: PreAiEscalationInput): string[] {
-  const reasons: string[] = [];
-
-  if (input.ruleFindings.some((finding) => RISKY_SEVERITIES.has(finding.severity))) {
-    reasons.push("deterministic finding at medium or higher severity");
-  }
-  if (input.packageJsonDiff.scripts.some((entry) => LIFECYCLE_SCRIPT_KEYS.has(entry.key))) {
-    reasons.push("install-lifecycle script added or modified");
-  }
-  if (input.packageJsonDiff.dependencies.length > 0) {
-    reasons.push("dependency, peer dependency, or optional dependency changed");
-  }
-  if (input.packageJsonDiff.entrypointsChanged) {
-    reasons.push("package entrypoints changed");
-  }
-  if (!input.previousVersionAvailable) {
-    reasons.push("previous-version comparison unavailable");
-  }
-  if (
-    input.defaultInputTokenEstimate &&
-    input.defaultInputTokenEstimate > DEFAULT_AI_INPUT_TOKEN_BUDGET
-  ) {
-    reasons.push("default model context budget exceeded");
-  }
-
-  return reasons;
-}
-
-export function estimateAiReviewInputTokens(options: SelectiveAiReviewOptions): number {
-  const userPayload = JSON.stringify(buildAiReviewPayload(options));
-  return Math.ceil(
-    (REVIEWER_SYSTEM_PROMPT.length + userPayload.length + TOOL_PROMPT_OVERHEAD_CHARS) /
-      APPROX_CHARS_PER_TOKEN,
-  );
-}
-
-export function decidePostDefaultEscalation(review: AiReview): string[] {
-  const reasons: string[] = [];
-  if (review.status !== "complete") {
-    reasons.push(`default model review ${review.status}`);
-  }
-  if (review.releaseAssessment === "suspicious" || review.releaseAssessment === "blocked") {
-    reasons.push(`default model marked release ${review.releaseAssessment}`);
-  }
-  if (review.status === "complete" && review.requiresManualReview) {
-    reasons.push("default model requested manual review");
-  }
-  return reasons;
-}
 
 export async function runSelectiveAiReview(
   env: Cloudflare.Env,
   options: SelectiveAiReviewOptions,
 ): Promise<AiReview> {
-  const preReasons = decidePreAiEscalation({
-    ruleFindings: options.ruleFindings,
-    packageJsonDiff: options.packageJsonDiff,
-    previousVersionAvailable: options.previousVersionAvailable,
-    defaultInputTokenEstimate: estimateAiReviewInputTokens(options),
-  });
-
-  if (preReasons.length > 0) {
-    const escalated = await analyzeWithAi(env, ESCALATION_AI_MODEL, options);
-    return { ...escalated, escalated: true, escalationReasons: preReasons };
-  }
-
-  const defaultReview = await analyzeWithAi(env, DEFAULT_AI_MODEL, options);
-  const postReasons = decidePostDefaultEscalation(defaultReview);
-  if (postReasons.length === 0) {
-    return defaultReview;
-  }
-
-  const escalated = await analyzeWithAi(env, ESCALATION_AI_MODEL, options);
-  return { ...escalated, escalated: true, escalationReasons: postReasons };
+  return analyzeWithAi(env, AI_MODEL, options);
 }
 
 export async function analyzeWithAi(
@@ -238,8 +145,6 @@ function normalizeParsedReview(model: string, value: unknown): AiReview {
     findings: review.findings,
     requiresManualReview: review.requiresManualReview,
     model,
-    escalated: false,
-    escalationReasons: [],
   };
 }
 
@@ -256,7 +161,5 @@ function fallbackReview(
     findings: [],
     requiresManualReview: false,
     model,
-    escalated: false,
-    escalationReasons: [],
   };
 }
