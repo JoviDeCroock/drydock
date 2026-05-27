@@ -36,7 +36,7 @@ Severity guidance:
 - Low/info: ordinary source/docs/test changes with clear benign purpose and no dangerous capabilities.
 - For plain added dependencies with no other evidence, do not claim they are malicious; call out that dependency lifecycle scripts are not visible here and require manual review only if the dependency/spec/package context is unusual or security-sensitive.`;
 
-export const MAX_AGENT_STEPS = 4;
+export const MAX_AGENT_STEPS = 50;
 export const MAX_INITIAL_PACKAGE_JSON_CHARS = 6_000;
 export const MAX_CHANGED_FILE_MANIFEST = 300;
 export const MAX_TOOL_RESPONSE_CHARS = 16_000;
