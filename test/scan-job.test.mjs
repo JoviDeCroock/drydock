@@ -71,6 +71,7 @@ describe("scan job retry classification", () => {
   });
 
   test("does not include raw error messages on generic failures", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const safe = classifyScanError(new Error("D1_ERROR: column not found"));
     expect(safe).toEqual({
       code: "scan_failed",
@@ -78,6 +79,11 @@ describe("scan job retry classification", () => {
       retryable: true,
     });
     expect(JSON.stringify(safe)).not.toContain("D1_ERROR");
+    expect(errorSpy).toHaveBeenCalledWith("scan.error.unclassified", {
+      event: "scan.error.unclassified",
+      error: { name: "Error" },
+    });
+    errorSpy.mockRestore();
   });
 
   test("does not retry credential and missing-stage sandbox failures", () => {
@@ -150,6 +156,9 @@ describe("executeScanJob idempotency", () => {
   };
 
   beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
     dbMock.getNpmConnection.mockResolvedValue({
       registryUrl: "https://registry.npmjs.org",
       tokenFingerprint: "fp",
@@ -164,6 +173,7 @@ describe("executeScanJob idempotency", () => {
     pipelineMock.runScanPipeline.mockReset();
     npmConnectionMock.decryptNpmToken.mockReset();
     notifyMock.notifyScanCompletion.mockClear();
+    vi.restoreAllMocks();
   });
 
   test("returns null without running the pipeline when claim is rejected", async () => {
@@ -187,6 +197,33 @@ describe("executeScanJob idempotency", () => {
     );
     expect(started).toHaveLength(1);
     expect(pipelineMock.runScanPipeline).toHaveBeenCalledTimes(1);
+  });
+
+  test("emits a structured completion log without token material", async () => {
+    dbMock.claimScanForRun.mockResolvedValue(true);
+    pipelineMock.runScanPipeline.mockResolvedValue({
+      id: message.scanId,
+      risk: "low",
+      package: { name: "@scope/pkg" },
+    });
+
+    await executeScanJob(env, ctx, message, {}, { attempt: 1 });
+
+    expect(console.log).toHaveBeenCalledWith(
+      "scan.job.completed",
+      expect.objectContaining({
+        event: "scan.job.completed",
+        scanId: message.scanId,
+        organizationId: message.organizationId,
+        stageId: message.stageId,
+        source: "manual",
+        attempt: 1,
+        packageName: "@scope/pkg",
+        releaseRisk: "low",
+        durationMs: expect.any(Number),
+      }),
+    );
+    expect(JSON.stringify(console.log.mock.calls)).not.toContain("npm_token");
   });
 
   test("records scan.failed and marks the scan failed on a terminal error in the final attempt", async () => {

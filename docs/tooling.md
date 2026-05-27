@@ -24,6 +24,11 @@
 
 `pnpm lint` (the shorthand without `run`) can collide with workspace forwarding or shell wrappers — always use `pnpm run lint`.
 
+Server-risk changes have a stricter test matrix than the command table alone
+can express. See [`release-safety.md`](./release-safety.md) for the expected
+Worker-route, sandbox invariant, fake-registry e2e, security-corpus, and
+observability coverage by change type.
+
 ## Pre-commit hook
 
 `pnpm install` runs a `prepare` script that points `git config core.hooksPath` at `.githooks/`. The `.githooks/pre-commit` script then runs `pnpm run verify`, so every commit on this repo must pass lint + format + typecheck + tests. CI (`.github/workflows/ci.yml`) runs the same core checks and then installs Chromium and runs `pnpm run test:e2e`.

@@ -12,6 +12,11 @@ The normal end-to-end loop is local and deterministic. It uses fixture packages 
 
 The fake registry writes `.context/e2e-registry/requests.jsonl`. The browser test checks this journal so we can verify authorization headers only appear on expected npm-like endpoints.
 
+Any change to npm staged-publish endpoints, registry metadata handling,
+credential forwarding, or browser-visible scan workflow should add or update a
+fixture scenario and journal assertion in this harness. See
+[`release-safety.md`](./release-safety.md) for the broader test matrix.
+
 ## Commands
 
 ```sh

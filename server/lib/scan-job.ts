@@ -12,6 +12,7 @@ import {
 } from "../db";
 import { npmAdapter } from "./adapters/npm";
 import { notifyScanCompletion } from "./notify";
+import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
 import { runScanPipeline } from "./scan-pipeline";
 import { sandboxErrorDetail } from "./sandbox";
 import type { ScanInput } from "../types";
@@ -43,12 +44,19 @@ export async function executeScanJob(
   db: AppDb = createDb(env.DB),
   options: ExecuteScanJobOptions = {},
 ) {
+  const startedAtMs = Date.now();
+  const attempt = options.attempt ?? 1;
   const session: WorkspaceSession = { userId: message.actorUserId };
   const claimed = await claimScanForRun(db, message.scanId, message.organizationId);
   if (!claimed) {
-    console.warn("scan queue job skipped: scan already terminal", {
+    emitOperationalEvent("warn", "scan.job.skipped", {
       scanId: message.scanId,
-      attempt: options.attempt ?? 1,
+      organizationId: message.organizationId,
+      stageId: message.stageId,
+      source: message.source ?? "manual",
+      attempt,
+      reason: "already_terminal",
+      durationMs: durationMsSince(startedAtMs),
     });
     return null;
   }
@@ -57,7 +65,7 @@ export async function executeScanJob(
     actorUserId: message.actorUserId,
     scanId: message.scanId,
     type: "scan.started",
-    metadata: { stageId: message.stageId, attempt: options.attempt ?? 1 },
+    metadata: { stageId: message.stageId, attempt },
   });
 
   try {
@@ -91,6 +99,16 @@ export async function executeScanJob(
       maxBytesPerFile: message.maxBytesPerFile,
       organizationId: message.organizationId,
     });
+    emitOperationalEvent("info", "scan.job.completed", {
+      scanId: message.scanId,
+      organizationId: message.organizationId,
+      stageId: message.stageId,
+      source: message.source ?? "manual",
+      attempt,
+      durationMs: durationMsSince(startedAtMs),
+      packageName: result.package?.name ?? null,
+      releaseRisk: result.risk,
+    });
     if (message.source === "auto_discovery") {
       executionCtx.waitUntil(
         notifyScanCompletion({
@@ -117,11 +135,21 @@ export async function executeScanJob(
           metadata: {
             scanId: message.scanId,
             stageId: message.stageId,
-            attempt: options.attempt ?? 1,
+            attempt,
             error: safe,
           },
         });
         await discardScanAttempt(db, message.scanId, message.organizationId);
+        emitOperationalEvent("warn", "scan.job.skipped", {
+          scanId: message.scanId,
+          organizationId: message.organizationId,
+          stageId: message.stageId,
+          source: message.source,
+          attempt,
+          reason: "staged_tarball_unavailable",
+          durationMs: durationMsSince(startedAtMs),
+          error: safe,
+        });
       } else {
         await Promise.all([
           markScanFailed(db, message.scanId, message.organizationId, safe),
@@ -130,9 +158,19 @@ export async function executeScanJob(
             actorUserId: message.actorUserId,
             scanId: message.scanId,
             type: "scan.failed",
-            metadata: { stageId: message.stageId, attempt: options.attempt ?? 1, error: safe },
+            metadata: { stageId: message.stageId, attempt, error: safe },
           }),
         ]);
+        emitOperationalEvent("error", "scan.job.failed", {
+          scanId: message.scanId,
+          organizationId: message.organizationId,
+          stageId: message.stageId,
+          source: message.source ?? "manual",
+          attempt,
+          finalAttempt: Boolean(options.finalAttempt),
+          durationMs: durationMsSince(startedAtMs),
+          error: safe,
+        });
         if (message.source === "auto_discovery") {
           executionCtx.waitUntil(
             notifyScanCompletion({
@@ -153,7 +191,16 @@ export async function executeScanJob(
         actorUserId: message.actorUserId,
         scanId: message.scanId,
         type: "scan.retryable_failed",
-        metadata: { stageId: message.stageId, attempt: options.attempt ?? 1, error: safe },
+        metadata: { stageId: message.stageId, attempt, error: safe },
+      });
+      emitOperationalEvent("warn", "scan.job.retryable_failed", {
+        scanId: message.scanId,
+        organizationId: message.organizationId,
+        stageId: message.stageId,
+        source: message.source ?? "manual",
+        attempt,
+        durationMs: durationMsSince(startedAtMs),
+        error: safe,
       });
     }
     throw err;
@@ -185,7 +232,9 @@ export function classifyScanError(err: unknown): SafeScanError {
       retryable: false,
     };
   }
-  console.error("scan job failed", err);
+  emitOperationalEvent("error", "scan.error.unclassified", {
+    error: describeOperationalError(err),
+  });
   return {
     code: "scan_failed",
     message: "The scan failed before a report could be generated.",
