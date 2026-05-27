@@ -154,7 +154,7 @@ Scans persist `scan.aiJson = null` while AI review is disabled, and the UI omits
 When AI review returns it will continue to:
 
 - start from deterministic findings, package.json/package.json diff, and changed-file metadata rather than a bulk dump of every changed file;
-- request targeted redacted file samples, text diffs, literal searches, and file subsets through app-owned AI SDK tools, including unchanged files that a changed `package.json` now exposes as lifecycle-script targets or entrypoints;
+- request targeted redacted evidence through app-owned AI SDK tools — a batched `read` tool that auto-returns a text diff for changed files (and the staged sample otherwise), a batched literal `search_files`, and a `list_files` filter — including unchanged files that a changed `package.json` now exposes as lifecycle-script targets or entrypoints;
 - receive release-delta deterministic findings as authoritative evidence;
 - treat every package-derived string as hostile evidence, not instructions;
 - be limited by controller-enforced step count, per-tool character caps, and total evidence budget;

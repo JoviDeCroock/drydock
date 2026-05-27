@@ -98,17 +98,49 @@ describe("AI review evidence tools", () => {
     const entrypointFiles = await tools.list_files.execute({ filter: "entrypoints" });
     expect(entrypointFiles.files.map((entry) => entry.path)).toEqual(["dist/index.js"]);
 
-    const script = await tools.read_file.execute({
-      path: "scripts/install.js",
+    const reads = await tools.read.execute({
+      paths: ["scripts/install.js", "README.md"],
       maxChars: 200,
     });
+    expect(reads.ok).toBe(true);
+    expect(reads.results).toHaveLength(2);
+
+    const script = reads.results[0];
     expect(script.ok).toBe(true);
     expect(script.status).toBe("unchanged");
-    expect(script.signals).toBeUndefined();
-    expect(script.text).toContain("process.env.NPM_TOKEN");
+    expect(script.kind).toBe("text");
+    expect(script.content).toContain("process.env.NPM_TOKEN");
 
-    const readme = await tools.read_file.execute({ path: "README.md", maxChars: 200 });
+    const readme = reads.results[1];
     expect(readme.ok).toBe(false);
+  });
+
+  test("returns a unified diff for changed files when previous text is available", async () => {
+    const options = reviewOptions();
+    options.previousFiles = options.previousFiles.map((file) =>
+      file.path === "package.json" ? { ...file, textSample: '{"name":"fixture"}' } : file,
+    );
+    const tools = createAiReviewTools(options, () => {});
+
+    const reads = await tools.read.execute({ paths: ["package.json"], maxChars: 4_000 });
+    const entry = reads.results[0];
+    expect(entry.ok).toBe(true);
+    expect(entry.kind).toBe("diff");
+    expect(entry.content).toMatch(/^[+\- ]/m);
+  });
+
+  test("runs multiple literal searches in one call", async () => {
+    const tools = createAiReviewTools(reviewOptions(), () => {});
+
+    const response = await tools.search_files.execute({
+      queries: ["NPM_TOKEN", "postinstall"],
+      maxResults: 5,
+    });
+    expect(response.ok).toBe(true);
+    expect(response.results.map((entry) => entry.query)).toEqual(["NPM_TOKEN", "postinstall"]);
+    const tokenHit = response.results[0];
+    expect(tokenHit.ok).toBe(true);
+    expect(tokenHit.matches.some((match) => match.path === "scripts/install.js")).toBe(true);
   });
 
   test("describes package-json-referenced evidence in the initial payload policy", () => {
