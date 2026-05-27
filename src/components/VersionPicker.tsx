@@ -35,30 +35,38 @@ export function VersionPicker({
       <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
         Compare against
       </span>
-      <select
-        value={selected ?? ""}
-        onChange={handleChange}
-        disabled={disabled || options.length === 0}
-        class={cn(
-          "bg-bg border border-border rounded-md text-[13px] text-ink pl-3 pr-8 py-2 outline-none",
-          "focus:border-accent focus:shadow-[0_0_0_3px_var(--color-accent-soft)]",
-          "disabled:opacity-60 disabled:cursor-not-allowed",
-          "font-mono min-w-[200px]",
-        )}
-      >
-        {!options.length ? <option value="">no published versions</option> : null}
-        {options.map((option) => {
-          const tagSuffix = option.distTags.length ? ` [${option.distTags.join(", ")}]` : "";
-          const defaultSuffix = option.version === defaultVersion ? " (default)" : "";
-          return (
-            <option key={option.version} value={option.version}>
-              {option.version}
-              {tagSuffix}
-              {defaultSuffix}
-            </option>
-          );
-        })}
-      </select>
+      <div class="relative inline-block">
+        <select
+          value={selected ?? ""}
+          onChange={handleChange}
+          disabled={disabled || options.length === 0}
+          class={cn(
+            "appearance-none bg-bg border border-border rounded-md text-[13px] text-ink pl-3 pr-9 py-2 outline-none",
+            "focus:border-accent focus:shadow-[0_0_0_3px_var(--color-accent-soft)]",
+            "disabled:opacity-60 disabled:cursor-not-allowed",
+            "font-mono min-w-[200px] w-full",
+          )}
+        >
+          {!options.length ? <option value="">no published versions</option> : null}
+          {options.map((option) => {
+            const tagSuffix = option.distTags.length ? ` [${option.distTags.join(", ")}]` : "";
+            const defaultSuffix = option.version === defaultVersion ? " (default)" : "";
+            return (
+              <option key={option.version} value={option.version}>
+                {option.version}
+                {tagSuffix}
+                {defaultSuffix}
+              </option>
+            );
+          })}
+        </select>
+        <span
+          aria-hidden="true"
+          class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-ink-muted"
+        >
+          ▾
+        </span>
+      </div>
       <span class="font-mono text-[11px] text-ink-muted">→ staged {stagedVersion || "—"}</span>
       {tagsForSelected.map((tag) => (
         <Badge key={tag} tone="info">
