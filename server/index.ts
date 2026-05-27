@@ -7,6 +7,8 @@ import {
   RateLimitError,
 } from "./db";
 import { createAuth, getAuthSession } from "./lib/auth";
+import { errorMessage } from "./lib/errors";
+import { rateLimitResponse } from "./lib/http";
 import { allowInsecureLocalRegistry } from "./lib/npm-connection";
 import { durationMsSince, emitOperationalEvent } from "./lib/observability";
 import {
@@ -130,11 +132,7 @@ app.use("/api/auth/*", async (c, next) => {
     });
   } catch (err) {
     if (err instanceof RateLimitError) {
-      return c.json(
-        { error: "too many authentication attempts", retryAfterSeconds: err.retryAfterSeconds },
-        429,
-        { "retry-after": String(err.retryAfterSeconds) },
-      );
+      return rateLimitResponse(c, "too many authentication attempts", err);
     }
     throw err;
   }
@@ -207,7 +205,7 @@ app.onError((err, c) => {
     method: c.req.method,
     path: c.req.path,
     name: err instanceof Error ? err.name : "UnknownError",
-    message: err instanceof Error ? err.message : String(err),
+    message: errorMessage(err),
     stack: err instanceof Error ? err.stack : undefined,
   });
   return c.json({ error: "internal error" }, 500);

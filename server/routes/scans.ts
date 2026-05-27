@@ -18,6 +18,7 @@ import {
 } from "../db";
 import { requireActiveOrganization } from "../lib/active-organization";
 import { loadCompare, stripTextSamples } from "../lib/compare-cache";
+import { rateLimitResponse } from "../lib/http";
 import {
   allowInsecureLocalRegistry,
   getOrganizationNpmToken,
@@ -95,11 +96,7 @@ scansRoutes.post("/", async (c) => {
     return c.json({ scan: detail?.scan, queued: Boolean(c.env.SCAN_QUEUE) }, 202);
   } catch (err) {
     if (err instanceof RateLimitError) {
-      return c.json(
-        { error: "scan rate limit exceeded", retryAfterSeconds: err.retryAfterSeconds },
-        429,
-        { "retry-after": String(err.retryAfterSeconds) },
-      );
+      return rateLimitResponse(c, "scan rate limit exceeded", err);
     }
     throw err;
   }
@@ -229,11 +226,7 @@ scansRoutes.get("/:id/versions", async (c) => {
     ]);
   } catch (err) {
     if (err instanceof RateLimitError) {
-      return c.json(
-        { error: "rate limit exceeded", retryAfterSeconds: err.retryAfterSeconds },
-        429,
-        { "retry-after": String(err.retryAfterSeconds) },
-      );
+      return rateLimitResponse(c, "rate limit exceeded", err);
     }
     throw err;
   }
@@ -375,11 +368,7 @@ async function loadCompareArchive(
   } catch (err) {
     if (err instanceof RateLimitError) {
       return {
-        error: c.json(
-          { error: "rate limit exceeded", retryAfterSeconds: err.retryAfterSeconds },
-          429,
-          { "retry-after": String(err.retryAfterSeconds) },
-        ),
+        error: rateLimitResponse(c, "rate limit exceeded", err),
       } as const;
     }
     throw err;

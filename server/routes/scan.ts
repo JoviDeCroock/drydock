@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { RateLimitError, createDb, createScanJob, enforceRateLimit, getNpmConnection } from "../db";
 import { requireActiveOrganization } from "../lib/active-organization";
+import { rateLimitResponse } from "../lib/http";
 import { parseScanInput } from "../lib/scan-input";
 import { executeScanJob } from "../lib/scan-job";
 import { sandboxErrorDetail } from "../lib/sandbox";
@@ -56,11 +57,7 @@ scanRoutes.post("/", async (c) => {
     return c.json(result);
   } catch (err) {
     if (err instanceof RateLimitError) {
-      return c.json(
-        { error: "scan rate limit exceeded", retryAfterSeconds: err.retryAfterSeconds },
-        429,
-        { "retry-after": String(err.retryAfterSeconds) },
-      );
+      return rateLimitResponse(c, "scan rate limit exceeded", err);
     }
     const detail = sandboxErrorDetail(err);
     if (detail !== null) {

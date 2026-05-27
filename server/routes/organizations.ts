@@ -10,6 +10,7 @@ import {
   recordScanEvent,
   renameOrganization,
 } from "../db";
+import { rateLimitResponse } from "../lib/http";
 import type { Bindings, Variables } from "../types";
 
 const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} _\-./]{0,79}$/u;
@@ -50,14 +51,7 @@ organizationsRoutes.post("/", async (c) => {
     return c.json({ organization: { id, name } }, 201);
   } catch (err) {
     if (err instanceof RateLimitError) {
-      return c.json(
-        {
-          error: "organization create rate limit exceeded",
-          retryAfterSeconds: err.retryAfterSeconds,
-        },
-        429,
-        { "retry-after": String(err.retryAfterSeconds) },
-      );
+      return rateLimitResponse(c, "organization create rate limit exceeded", err);
     }
     console.error("organization create failed", err);
     return c.json({ error: "failed to create organization" }, 500);

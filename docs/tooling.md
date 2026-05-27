@@ -73,6 +73,10 @@ The following rules from `@preact/eslint-plugin-signals` are enforced (see [`pre
 
 Use `apiFetch` from `src/models/api.ts` for same-origin JSON requests so active organization headers and `ApiError` handling stay consistent. Use `apiJson` for JSON request bodies instead of repeating `content-type` and `JSON.stringify` at call sites. Use `errorMessage(err)` when model actions need to surface caught errors into a signal.
 
+## Server route helpers
+
+Use `rateLimitResponse` from `server/lib/http.ts` for 429 JSON responses so `retryAfterSeconds` and `retry-after` headers stay consistent. Use `errorMessage(err)` from `server/lib/errors.ts` for server-side caught-error stringification instead of repeating `err instanceof Error ? err.message : String(err)`.
+
 ## Related skills
 
 The `.claude/skills/` directory ships the canonical signals/models reference set used by Claude Code during this migration. The same skills are exposed to agents through the `.agents/skills` symlink:

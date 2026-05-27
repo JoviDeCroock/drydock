@@ -19,6 +19,8 @@ import {
   validateNpmCredential,
 } from "../lib/npm-connection";
 import { isValidStageId } from "../lib/stage-id";
+import { errorMessage } from "../lib/errors";
+import { rateLimitResponse } from "../lib/http";
 import type { Bindings, Variables } from "../types";
 
 export const npmConnectionRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -48,7 +50,10 @@ npmConnectionRoutes.post("/", async (c) => {
       allowInsecureLocalhost: allowInsecureLocalRegistry(c.env),
     });
   } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : "invalid registry URL" }, 400);
+    return c.json(
+      { error: err instanceof Error ? errorMessage(err) : "invalid registry URL" },
+      400,
+    );
   }
   try {
     const db = createDb(c.env.DB);
@@ -85,14 +90,7 @@ npmConnectionRoutes.post("/", async (c) => {
     return c.json({ connection: publicNpmConnection(connection) });
   } catch (err) {
     if (err instanceof RateLimitError) {
-      return c.json(
-        {
-          error: "npm connection save rate limit exceeded",
-          retryAfterSeconds: err.retryAfterSeconds,
-        },
-        429,
-        { "retry-after": String(err.retryAfterSeconds) },
-      );
+      return rateLimitResponse(c, "npm connection save rate limit exceeded", err);
     }
     console.error("npm connection upsert failed", err);
     return c.json({ error: "failed to store npm connection" }, 400);
@@ -145,11 +143,7 @@ npmConnectionRoutes.post("/validate", async (c) => {
     return c.json({ validation, connection: publicNpmConnection(updated) });
   } catch (err) {
     if (err instanceof RateLimitError) {
-      return c.json(
-        { error: "npm validation rate limit exceeded", retryAfterSeconds: err.retryAfterSeconds },
-        429,
-        { "retry-after": String(err.retryAfterSeconds) },
-      );
+      return rateLimitResponse(c, "npm validation rate limit exceeded", err);
     }
     console.error("npm connection validation failed", err);
     return c.json({ error: "failed to validate npm connection" }, 400);

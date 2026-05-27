@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { RateLimitError, createDb, enforceRateLimit, getNpmConnection } from "../db";
 import { requireActiveOrganization } from "../lib/active-organization";
+import { rateLimitResponse } from "../lib/http";
 import { allowInsecureLocalRegistry } from "../lib/npm-connection";
 import {
   InvalidNpmConnectionError,
@@ -25,14 +26,7 @@ stagedPublishesRoutes.post("/scan", async (c) => {
     });
   } catch (err) {
     if (err instanceof RateLimitError) {
-      return c.json(
-        {
-          error: "staged publish discovery rate limit exceeded",
-          retryAfterSeconds: err.retryAfterSeconds,
-        },
-        429,
-        { "retry-after": String(err.retryAfterSeconds) },
-      );
+      return rateLimitResponse(c, "staged publish discovery rate limit exceeded", err);
     }
     throw err;
   }
