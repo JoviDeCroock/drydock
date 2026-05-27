@@ -1,6 +1,7 @@
 import {
   claimScanForRun,
   createDb,
+  discardScanAttempt,
   getNpmConnection,
   markNpmConnectionUsed,
   markScanFailed,
@@ -112,28 +113,45 @@ export async function executeScanJob(
   } catch (err) {
     const safe = classifyScanError(err);
     if (!safe.retryable || options.finalAttempt) {
-      await Promise.all([
-        markScanFailed(db, message.scanId, message.organizationId, safe),
-        recordScanEvent(db, {
+      const skip =
+        message.source === "auto_discovery" && safe.code === "staged_tarball_unavailable";
+      if (skip) {
+        await recordScanEvent(db, {
           organizationId: message.organizationId,
           actorUserId: message.actorUserId,
-          scanId: message.scanId,
-          type: "scan.failed",
-          metadata: { stageId: message.stageId, attempt: options.attempt ?? 1, error: safe },
-        }),
-      ]);
-      if (message.source === "auto_discovery") {
-        executionCtx.waitUntil(
-          notifyScanCompletion({
-            env,
-            db,
+          type: "scan.skipped",
+          metadata: {
             scanId: message.scanId,
-            organizationId: message.organizationId,
-            ownerUserId: message.actorUserId,
-            outcome: "failed",
+            stageId: message.stageId,
+            attempt: options.attempt ?? 1,
             error: safe,
+          },
+        });
+        await discardScanAttempt(db, message.scanId, message.organizationId);
+      } else {
+        await Promise.all([
+          markScanFailed(db, message.scanId, message.organizationId, safe),
+          recordScanEvent(db, {
+            organizationId: message.organizationId,
+            actorUserId: message.actorUserId,
+            scanId: message.scanId,
+            type: "scan.failed",
+            metadata: { stageId: message.stageId, attempt: options.attempt ?? 1, error: safe },
           }),
-        );
+        ]);
+        if (message.source === "auto_discovery") {
+          executionCtx.waitUntil(
+            notifyScanCompletion({
+              env,
+              db,
+              scanId: message.scanId,
+              organizationId: message.organizationId,
+              ownerUserId: message.actorUserId,
+              outcome: "failed",
+              error: safe,
+            }),
+          );
+        }
       }
     } else {
       await recordScanEvent(db, {

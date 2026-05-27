@@ -6,6 +6,7 @@ import {
   createDb,
   createScanJob,
   ensurePersonalOrganization,
+  listExistingScanStageIds,
   markScanFailed,
   persistScan,
 } from "../../server/db";
@@ -143,6 +144,61 @@ describe("scan persistence idempotency", () => {
     expect(second.persisted).toBe(false);
     const final = await readStatus(db, scanId);
     expect(final?.reportDigest).toBe("first");
+  });
+
+  test("listExistingScanStageIds dedupes against another org's completed scan", async () => {
+    const ownerA = await seedUserAndOrg();
+    const ownerB = await seedUserAndOrg();
+    const sharedStageId = `stage-${crypto.randomUUID()}`;
+    const inProgressStageId = `stage-${crypto.randomUUID()}`;
+    const orgBOnlyStageId = `stage-${crypto.randomUUID()}`;
+    const untouchedStageId = `stage-${crypto.randomUUID()}`;
+
+    const completedScanId = `scan_${crypto.randomUUID()}`;
+    await createScanJob(ownerA.db, {
+      id: completedScanId,
+      stageId: sharedStageId,
+      organizationId: ownerA.organizationId,
+      ownerUserId: ownerA.userId,
+    });
+    await claimScanForRun(ownerA.db, completedScanId, ownerA.organizationId);
+    await persistScan(ownerA.db, {
+      ...baseScan,
+      id: completedScanId,
+      stageId: sharedStageId,
+      organizationId: ownerA.organizationId,
+      ownerUserId: ownerA.userId,
+      risk: "low",
+      status: "complete",
+    });
+
+    const inProgressScanId = `scan_${crypto.randomUUID()}`;
+    await createScanJob(ownerA.db, {
+      id: inProgressScanId,
+      stageId: inProgressStageId,
+      organizationId: ownerA.organizationId,
+      ownerUserId: ownerA.userId,
+    });
+
+    const orgBOwnScanId = `scan_${crypto.randomUUID()}`;
+    await createScanJob(ownerB.db, {
+      id: orgBOwnScanId,
+      stageId: orgBOnlyStageId,
+      organizationId: ownerB.organizationId,
+      ownerUserId: ownerB.userId,
+    });
+
+    const known = await listExistingScanStageIds(ownerB.db, ownerB.organizationId, [
+      sharedStageId,
+      inProgressStageId,
+      orgBOnlyStageId,
+      untouchedStageId,
+    ]);
+
+    expect(known.has(sharedStageId)).toBe(true);
+    expect(known.has(orgBOnlyStageId)).toBe(true);
+    expect(known.has(inProgressStageId)).toBe(false);
+    expect(known.has(untouchedStageId)).toBe(false);
   });
 
   test("cross-organization claims and mutations are rejected", async () => {

@@ -7,6 +7,7 @@ vi.mock("cloudflare:workers", () => ({
 const dbMock = vi.hoisted(() => ({
   claimScanForRun: vi.fn(),
   createDb: vi.fn(() => ({})),
+  discardScanAttempt: vi.fn(),
   getNpmConnection: vi.fn(),
   markNpmConnectionUsed: vi.fn(),
   markScanFailed: vi.fn(),
@@ -14,10 +15,14 @@ const dbMock = vi.hoisted(() => ({
 }));
 const pipelineMock = vi.hoisted(() => ({ runScanPipeline: vi.fn() }));
 const npmConnectionMock = vi.hoisted(() => ({ decryptNpmToken: vi.fn() }));
+const notifyMock = vi.hoisted(() => ({
+  notifyScanCompletion: vi.fn().mockResolvedValue(undefined),
+}));
 
 vi.mock("../server/db/index.ts", () => dbMock);
 vi.mock("../server/lib/scan-pipeline.ts", () => pipelineMock);
 vi.mock("../server/lib/npm-connection.ts", () => npmConnectionMock);
+vi.mock("../server/lib/notify.ts", () => notifyMock);
 
 const { classifyScanError, executeScanJob, retryDelaySeconds } =
   await import("../server/lib/scan-job.ts");
@@ -116,6 +121,7 @@ describe("executeScanJob idempotency", () => {
     for (const fn of Object.values(dbMock)) if (typeof fn?.mockReset === "function") fn.mockReset();
     pipelineMock.runScanPipeline.mockReset();
     npmConnectionMock.decryptNpmToken.mockReset();
+    notifyMock.notifyScanCompletion.mockClear();
   });
 
   test("returns null without running the pipeline when claim is rejected", async () => {
@@ -178,6 +184,67 @@ describe("executeScanJob idempotency", () => {
       message: "Validate the organization npm token before scanning staged publishes.",
       retryable: false,
     });
+  });
+
+  test("discards auto-discovered scans when the org's token cannot access the tarball", async () => {
+    dbMock.claimScanForRun.mockResolvedValue(true);
+    pipelineMock.runScanPipeline.mockRejectedValue(
+      new SandboxError(JSON.stringify({ error: "denied", status: 403 })),
+    );
+
+    await expect(
+      executeScanJob(
+        env,
+        ctx,
+        { ...message, source: "auto_discovery" },
+        {},
+        { attempt: 1, finalAttempt: true },
+      ),
+    ).rejects.toBeInstanceOf(SandboxError);
+
+    expect(dbMock.markScanFailed).not.toHaveBeenCalled();
+    expect(dbMock.discardScanAttempt).toHaveBeenCalledWith(
+      {},
+      message.scanId,
+      message.organizationId,
+    );
+    const failed = dbMock.recordScanEvent.mock.calls.filter(
+      ([, payload]) => payload?.type === "scan.failed",
+    );
+    expect(failed).toHaveLength(0);
+    const skipped = dbMock.recordScanEvent.mock.calls.filter(
+      ([, payload]) => payload?.type === "scan.skipped",
+    );
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]?.[1]?.scanId).toBeUndefined();
+    expect(skipped[0]?.[1]?.metadata).toMatchObject({
+      scanId: message.scanId,
+      stageId: message.stageId,
+    });
+    expect(notifyMock.notifyScanCompletion).not.toHaveBeenCalled();
+  });
+
+  test("still marks auto-discovered scans failed for non-tarball-access errors", async () => {
+    dbMock.claimScanForRun.mockResolvedValue(true);
+    pipelineMock.runScanPipeline.mockRejectedValue(
+      new SandboxError(JSON.stringify({ error: "archive contains too many files", status: 413 })),
+    );
+
+    await expect(
+      executeScanJob(
+        env,
+        ctx,
+        { ...message, source: "auto_discovery" },
+        {},
+        { attempt: 1, finalAttempt: true },
+      ),
+    ).rejects.toBeInstanceOf(SandboxError);
+
+    expect(dbMock.discardScanAttempt).not.toHaveBeenCalled();
+    expect(dbMock.markScanFailed).toHaveBeenCalledTimes(1);
+    expect(notifyMock.notifyScanCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "failed" }),
+    );
   });
 
   test("records scan.retryable_failed without marking failed when a retryable error fires before exhaustion", async () => {
