@@ -1,4 +1,5 @@
-import { env } from "cloudflare:test";
+import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
+import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { createDb, ensurePersonalOrganization } from "../../server/db";
 import * as schema from "../../server/db/schema";
@@ -13,6 +14,8 @@ import {
   resolveDeploymentProtectionTarget,
   upsertInstallation,
 } from "../../server/lib/github-app";
+import { githubAppRoutes } from "../../server/routes/github-app";
+import type { Bindings, Variables } from "../../server/types";
 
 async function seedUser(): Promise<{ userId: string; organizationId: string }> {
   const db = createDb(env.DB);
@@ -44,6 +47,42 @@ async function seedInstallation(
     status: overrides.status ?? "active",
     createdByUserId: null,
   });
+}
+
+function buildTestApp(userId: string) {
+  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+  app.use("*", async (c, next) => {
+    c.set("authSession", { userId });
+    await next();
+  });
+  app.route("/api/v1/github-app", githubAppRoutes);
+  return app;
+}
+
+async function callGithubAppRoute(
+  app: Hono<{ Bindings: Bindings; Variables: Variables }>,
+  method: string,
+  path: string,
+  body?: unknown,
+) {
+  const ctx = createExecutionContext();
+  const init: RequestInit = { method };
+  if (body !== undefined) {
+    init.body = JSON.stringify(body);
+    init.headers = { "content-type": "application/json" };
+  }
+  const routeEnv: Bindings = {
+    ...env,
+    GITHUB_APP_ID: "12345",
+    GITHUB_APP_SLUG: "drydock-test",
+    GITHUB_APP_PRIVATE_KEY: "----- placeholder -----",
+    GITHUB_APP_WEBHOOK_SECRET: "webhook-secret-value-1234567890",
+    GITHUB_APP_STATE_SECRET: "0123456789abcdef0123456789abcdef",
+    BETTER_AUTH_SECRET: "fallback-secret-with-enough-entropy-aaaaaaaa",
+  };
+  const res = await app.fetch(new Request(`http://test.local${path}`, init), routeEnv, ctx);
+  await waitOnExecutionContext(ctx);
+  return res;
 }
 
 describe("github-app DB helpers", () => {
@@ -184,6 +223,63 @@ describe("github-app createReleaseTarget", () => {
         createdByUserId: null,
       }),
     ).rejects.toMatchObject({ code: "environment_mismatch" });
+  });
+
+  test("rejects duplicate repository/environment mappings within an organization", async () => {
+    const { organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    const dbInstance = createDb(env.DB);
+
+    await createReleaseTarget(dbInstance, {
+      organizationId,
+      installationRowId: installation.id,
+      ecosystem: "pypi",
+      packageName: "example-a",
+      repositoryId: 1,
+      repositoryFullName: "octo/example",
+      workflowFilename: null,
+      environment: "pypi",
+      pypiTrustedPublisherEnvironment: "pypi",
+      createdByUserId: null,
+    });
+
+    await expect(
+      createReleaseTarget(dbInstance, {
+        organizationId,
+        installationRowId: installation.id,
+        ecosystem: "pypi",
+        packageName: "example-b",
+        repositoryId: 1,
+        repositoryFullName: "octo/example",
+        workflowFilename: null,
+        environment: "pypi",
+        pypiTrustedPublisherEnvironment: "pypi",
+        createdByUserId: null,
+      }),
+    ).rejects.toMatchObject({ code: "environment_already_mapped" });
+  });
+});
+
+describe("github-app routes", () => {
+  test("POST /release-targets requires an explicit PyPI Trusted Publisher environment", async () => {
+    const { userId } = await seedUser();
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      "/api/v1/github-app/release-targets",
+      {
+        installationRowId: "install-row",
+        ecosystem: "pypi",
+        packageName: "example",
+        repositoryFullName: "octo/example",
+        environment: "pypi",
+      },
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: "pypiTrustedPublisherEnvironment is required",
+    });
   });
 });
 

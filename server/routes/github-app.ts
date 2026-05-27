@@ -192,12 +192,15 @@ githubAppRoutes.post("/release-targets", async (c) => {
   const pypiTrustedPublisherEnvironment =
     typeof body.pypiTrustedPublisherEnvironment === "string"
       ? body.pypiTrustedPublisherEnvironment.trim()
-      : environment;
+      : "";
 
   if (!installationRowId) return c.json({ error: "installationRowId is required" }, 400);
   if (!packageName) return c.json({ error: "packageName is required" }, 400);
   if (!repositoryFullName) return c.json({ error: "repositoryFullName is required" }, 400);
   if (!environment) return c.json({ error: "environment is required" }, 400);
+  if (!pypiTrustedPublisherEnvironment) {
+    return c.json({ error: "pypiTrustedPublisherEnvironment is required" }, 400);
+  }
   if (!SUPPORTED_ECOSYSTEMS.includes(ecosystem)) {
     return c.json({ error: `unsupported ecosystem: ${ecosystem}` }, 400);
   }
@@ -352,6 +355,7 @@ function statusForCode(code: GithubAppValidationCode): 400 | 403 | 404 | 409 {
     case "repository_not_accessible":
       return 403;
     case "package_already_mapped":
+    case "environment_already_mapped":
       return 409;
     case "environment_mismatch":
     case "environment_unmapped":

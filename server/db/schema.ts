@@ -240,7 +240,8 @@ export const githubReleaseTargets = sqliteTable(
       table.ecosystem,
       table.packageName,
     ),
-    repoEnvIdx: index("github_release_targets_repo_env_idx").on(
+    orgRepoEnvUniqueIdx: uniqueIndex("github_release_targets_org_repo_env_unique_idx").on(
+      table.organizationId,
       table.repositoryId,
       table.environment,
     ),

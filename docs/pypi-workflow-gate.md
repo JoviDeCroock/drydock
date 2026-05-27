@@ -106,7 +106,9 @@ HTTP surface in `server/routes/github-app.ts`. Two tables back it:
   and `pypi_trusted_publisher_environment`. Drydock requires
   `environment === pypi_trusted_publisher_environment` so the deployment
   protection gate runs against the same job that performs the OIDC token
-  exchange.
+  exchange. A repository/environment pair is unique within an organization
+  because GitHub deployment-protection webhooks identify the pending gate by
+  installation, repository, and environment, not by package name.
 
 ### Endpoints
 
@@ -135,6 +137,8 @@ organization (`x-organization-id` header to scope writes).
 - `environment_mismatch` — the two environment names differ.
 - `package_already_mapped` — `(organizationId, ecosystem, packageName)` already
   has a row.
+- `environment_already_mapped` — `(organizationId, repositoryId, environment)`
+  already has a row, so a deployment-protection webhook would be ambiguous.
 
 ### Webhook resolution
 
@@ -143,7 +147,8 @@ environment })` is the lookup helper a future `deployment_protection_rule`
 webhook will call to find the owning organization and release target. It
 returns `null` for unknown installs, suspended installs, and unmapped
 environments — the caller decides whether that becomes an HTTP 404 or a silent
-skip.
+skip. The database enforces one target per organization/repository/environment
+so this lookup is deterministic.
 
 ### Trust boundary
 

@@ -51,6 +51,7 @@ export type GithubAppValidationCode =
   | "environment_unmapped"
   | "environment_mismatch"
   | "package_already_mapped"
+  | "environment_already_mapped"
   | "unsupported_ecosystem"
   | "invalid_input";
 
@@ -514,6 +515,12 @@ export async function createReleaseTarget(
         `a release target already exists for ${input.ecosystem}/${input.packageName} in this organization`,
       );
     }
+    if (isUniqueEnvironmentConflict(err)) {
+      throw new GithubAppValidationError(
+        "environment_already_mapped",
+        `a release target already exists for ${input.repositoryFullName} environment ${input.environment} in this organization`,
+      );
+    }
     throw err;
   }
   return {
@@ -724,6 +731,22 @@ function readReleaseTargetRow(row: {
 }
 
 function isUniquePackageConflict(err: unknown): boolean {
+  return isUniqueConflict(
+    err,
+    "github_release_targets_org_pkg_unique_idx",
+    "github_release_targets.package_name",
+  );
+}
+
+function isUniqueEnvironmentConflict(err: unknown): boolean {
+  return isUniqueConflict(
+    err,
+    "github_release_targets_org_repo_env_unique_idx",
+    "github_release_targets.environment",
+  );
+}
+
+function isUniqueConflict(err: unknown, indexName: string, columnName: string): boolean {
   const messages: string[] = [];
   let current: unknown = err;
   for (let depth = 0; depth < 4 && current; depth += 1) {
@@ -738,9 +761,8 @@ function isUniquePackageConflict(err: unknown): boolean {
   const combined = messages.join(" | ");
   if (!/UNIQUE/i.test(combined)) return false;
   return (
-    combined.includes("github_release_targets_org_pkg_unique_idx") ||
-    (combined.includes("github_release_targets.organization_id") &&
-      combined.includes("github_release_targets.package_name"))
+    combined.includes(indexName) ||
+    (combined.includes("github_release_targets.organization_id") && combined.includes(columnName))
   );
 }
 
