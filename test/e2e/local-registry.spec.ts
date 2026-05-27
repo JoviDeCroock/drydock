@@ -41,6 +41,10 @@ test.beforeAll(async ({ browser, baseURL }) => {
 });
 
 test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseURL }) => {
+  // Check npm discovers every fixture stage in one call and queues a scan for
+  // each. The local dev Worker runs them all on a single JS thread, so leave
+  // generous headroom for the implicit-node-gyp scan to surface its report.
+  test.setTimeout(240_000);
   const { context, page } = await openAuthenticatedPage(browser, baseURL);
   try {
     await page.goto("/dashboard");
@@ -48,14 +52,20 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
       timeout: 30_000,
     });
 
-    await page.locator("#stageId").fill(uiStageId);
-    const reviewButton = page.getByRole("button", { name: "Review staged publish" });
-    await expect(reviewButton).toBeEnabled();
-    await reviewButton.click();
+    const checkNpm = page.getByRole("button", { name: "Check npm" });
+    await expect(checkNpm).toBeEnabled({ timeout: 30_000 });
+    await checkNpm.click();
+
+    // The row's primary link renders the stage id until the scan completes and
+    // populates packageName, then it flips to "@drydock/e2e-native". Scope by
+    // the always-visible "stage {id}" subtext so either label works.
+    const row = page.getByRole("row").filter({ hasText: uiStageId });
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await row.getByRole("link").click();
     await expect(page).toHaveURL(/\/dashboard\/scans\//, { timeout: 30_000 });
 
     await expect(page.getByRole("heading", { name: "@drydock/e2e-native" })).toBeVisible({
-      timeout: 60_000,
+      timeout: 180_000,
     });
     await expect(page.getByText("release high").first()).toBeVisible();
     await expect(page.getByText("implicit install: node-gyp rebuild")).toBeVisible();
