@@ -14,7 +14,14 @@ declare global {
       BETTER_AUTH_URL?: string;
       AUTH_REQUIRED?: string;
       FLAGS?: Flagship;
+      SEND_EMAIL?: SendEmailBinding;
+      EMAIL_FROM_ADDRESS?: string;
+      EMAIL_FROM_NAME?: string;
     }
+  }
+
+  interface SendEmailBinding {
+    send(message: unknown): Promise<void>;
   }
 
   interface WorkerLoader {

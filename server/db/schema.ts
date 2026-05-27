@@ -63,6 +63,7 @@ export const scans = sqliteTable(
     previousVersion: text("previous_version"),
     risk: text("risk").notNull().default("unknown"),
     status: text("status").notNull().default("pending"),
+    source: text("source").notNull().default("manual"),
     decision: text("decision"),
     decisionReason: text("decision_reason"),
     decidedByUserId: text("decided_by_user_id").references(() => user.id, {

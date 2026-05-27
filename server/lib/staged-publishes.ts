@@ -49,6 +49,7 @@ const STAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,160}$/;
 
 export interface ListStagedPublishesOptions extends NormalizeRegistryUrlOptions {
   perPage?: number;
+  page?: number;
   packageName?: string;
 }
 
@@ -60,6 +61,9 @@ export async function listStagedPublishes(
   const registry = normalizeRegistryUrl(registryUrl, options);
   const perPage = Math.min(Math.max(options.perPage ?? 25, 1), MAX_PER_PAGE);
   const params = new URLSearchParams({ perPage: String(perPage) });
+  if (typeof options.page === "number" && Number.isFinite(options.page)) {
+    params.set("page", String(Math.max(0, Math.floor(options.page))));
+  }
   if (options.packageName) params.set("package", options.packageName);
   const response = await fetch(`${registry}/-/stage?${params.toString()}`, {
     headers: npmStageHeaders(token, "staged-list"),

@@ -1,6 +1,13 @@
 import { Hono } from "hono";
-import { createDb, enforceRateLimit, RateLimitError } from "./db";
+import {
+  createDb,
+  enforceRateLimit,
+  getOrganizationOwnerUserId,
+  listAutoDiscoveryNpmConnections,
+  RateLimitError,
+} from "./db";
 import { createAuth, getAuthSession } from "./lib/auth";
+import { allowInsecureLocalRegistry } from "./lib/npm-connection";
 import {
   classifyScanError,
   executeScanJob,
@@ -8,6 +15,12 @@ import {
   retryDelaySeconds,
   type ScanQueueMessage,
 } from "./lib/scan-job";
+import {
+  discoverAndQueueStagedPublishes,
+  ensureUsableNpmConnection,
+  InvalidNpmConnectionError,
+  StagedPublishesFetchError,
+} from "./lib/staged-publishes-discovery";
 import { npmConnectionRoutes } from "./routes/npm-connection";
 import { organizationsRoutes } from "./routes/organizations";
 import { scanRoutes } from "./routes/scan";
@@ -198,8 +211,73 @@ app.onError((err, c) => {
   return c.json({ error: "internal error" }, 500);
 });
 
+async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: ExecutionContext) {
+  const db = createDb(env.DB);
+  const connections = await listAutoDiscoveryNpmConnections(db);
+  if (!connections.length) return;
+  console.log("staged publishes cron sweep", { organizations: connections.length });
+  const allowInsecureLocalhost = allowInsecureLocalRegistry(env);
+  for (const connection of connections) {
+    const actorUserId =
+      connection.createdByUserId ??
+      (await getOrganizationOwnerUserId(db, connection.organizationId));
+    if (!actorUserId) {
+      console.error("staged publishes cron sweep skipped: organization owner missing", {
+        organizationId: connection.organizationId,
+      });
+      continue;
+    }
+    try {
+      const usable = await ensureUsableNpmConnection({
+        db,
+        env,
+        connection,
+        actorUserId,
+        allowInsecureLocalhost,
+      });
+      const result = await discoverAndQueueStagedPublishes(
+        {
+          db,
+          env,
+          executionCtx: ctx,
+          organizationId: connection.organizationId,
+          actorUserId,
+          source: "auto_discovery",
+          eventSource: "staged_publishes.cron",
+          allowInsecureLocalhost,
+        },
+        usable,
+      );
+      console.log("staged publishes cron sweep result", {
+        organizationId: connection.organizationId,
+        ...result,
+      });
+    } catch (err) {
+      if (err instanceof InvalidNpmConnectionError) {
+        console.log("staged publishes cron sweep skipped: token not valid", {
+          organizationId: connection.organizationId,
+        });
+        continue;
+      }
+      const detail =
+        err instanceof StagedPublishesFetchError
+          ? { status: err.status, detail: err.detail }
+          : err instanceof Error
+            ? { name: err.name, message: err.message }
+            : { message: String(err) };
+      console.error("staged publishes cron sweep failed for organization", {
+        organizationId: connection.organizationId,
+        error: detail,
+      });
+    }
+  }
+}
+
 export default {
   fetch: app.fetch,
+  async scheduled(_event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
+    await runStagedPublishesDiscoveryCron(env, ctx);
+  },
   async queue(batch: MessageBatch<ScanQueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
     for (const message of batch.messages) {
       try {

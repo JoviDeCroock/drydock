@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   fetchStagedPublishDetails,
+  listStagedPublishes,
   parseStagedPublishDetails,
   parseStagedPublishesResponse,
 } from "../server/lib/staged-publishes.ts";
@@ -147,5 +148,22 @@ describe("staged publish metadata", () => {
       version: "0.4.0",
       tag: "next",
     });
+  });
+
+  test("includes page when fetching a staged publish list page", async () => {
+    const fetchMock = vi.fn(async (url, init) => {
+      expect(String(url)).toBe("https://registry.npmjs.org/-/stage?perPage=50&page=2");
+      expect(init.headers.authorization).toBe("Bearer npm_secret_token");
+      expect(init.headers["user-agent"]).toBe("staged-publish-review/staged-list");
+      return Response.json({ items: [], total: 0, perPage: 50, page: 2 });
+    });
+    globalThis.fetch = fetchMock;
+
+    await expect(
+      listStagedPublishes("https://registry.npmjs.org", "npm_secret_token", {
+        perPage: 50,
+        page: 2,
+      }),
+    ).resolves.toMatchObject({ items: [], total: 0, perPage: 50, page: 2 });
   });
 });

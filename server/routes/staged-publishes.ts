@@ -1,21 +1,13 @@
 import { Hono } from "hono";
-import {
-  RateLimitError,
-  createDb,
-  createScanJob,
-  enforceRateLimit,
-  getNpmConnection,
-  listExistingScanStageIds,
-  recordScanEvent,
-} from "../db";
+import { RateLimitError, createDb, enforceRateLimit, getNpmConnection } from "../db";
 import { requireActiveOrganization } from "../lib/active-organization";
-import { allowInsecureLocalRegistry, getOrganizationNpmToken } from "../lib/npm-connection";
+import { allowInsecureLocalRegistry } from "../lib/npm-connection";
 import {
+  InvalidNpmConnectionError,
   StagedPublishesFetchError,
-  listStagedPublishes,
-  type StartedStagedPublishScan,
-} from "../lib/staged-publishes";
-import { executeScanJob, type ScanQueueMessage } from "../lib/scan-job";
+  discoverAndQueueStagedPublishes,
+  ensureUsableNpmConnection,
+} from "../lib/staged-publishes-discovery";
 import type { Bindings, Variables } from "../types";
 
 export const stagedPublishesRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -58,91 +50,37 @@ stagedPublishesRoutes.post("/scan", async (c) => {
       400,
     );
   }
-  const connection = await getOrganizationNpmToken(db, c.env, organizationId);
-  if (!connection) {
-    return c.json(
-      { error: "Connect an organization npm token before discovering staged publishes." },
-      400,
-    );
-  }
 
+  const allowInsecureLocalhost = allowInsecureLocalRegistry(c.env);
   try {
-    const page = await listStagedPublishes(connection.registryUrl, connection.token, {
-      perPage: 50,
-      allowInsecureLocalhost: allowInsecureLocalRegistry(c.env),
-    });
-    const stagedItems = [...new Map(page.items.map((item) => [item.id, item])).values()];
-    const stageIds = stagedItems.map((item) => item.id);
-    const existingStageIds = await listExistingScanStageIds(db, organizationId, stageIds);
-    const scans: StartedStagedPublishScan[] = [];
-
-    for (const item of stagedItems) {
-      const stageId = item.id;
-      if (existingStageIds.has(stageId)) continue;
-      const scanId = crypto.randomUUID();
-      const detail = await createScanJob(db, {
-        id: scanId,
-        stageId,
-        organizationId,
-        ownerUserId: session.userId,
-      });
-      if (!detail) continue;
-      existingStageIds.add(stageId);
-      scans.push({
-        id: scanId,
-        stageId,
-        packageName: item.packageName,
-        version: item.version,
-        tag: item.tag,
-        access: item.access,
-        actor: item.actor,
-        createdAt: item.createdAt,
-      });
-
-      const message: ScanQueueMessage = {
-        stageId,
-        scanId,
-        organizationId,
-        actorUserId: session.userId,
-      };
-      await recordScanEvent(db, {
-        organizationId,
-        actorUserId: session.userId,
-        scanId,
-        type: c.env.SCAN_QUEUE ? "scan.queued" : "scan.backgrounded",
-        metadata: { stageId, source: "staged_publishes.discovery" },
-      });
-      if (c.env.SCAN_QUEUE) {
-        await c.env.SCAN_QUEUE.send(message);
-      } else {
-        c.executionCtx.waitUntil(
-          executeScanJob(c.env, c.executionCtx, message, db, { finalAttempt: true }),
-        );
-      }
-    }
-
-    await recordScanEvent(db, {
-      organizationId,
+    const usable = await ensureUsableNpmConnection({
+      db,
+      env: c.env,
+      connection: savedConnection,
       actorUserId: session.userId,
-      type: "staged_publishes.scans_started",
-      metadata: {
-        found: stageIds.length,
-        created: scans.length,
-        skipped: stageIds.length - scans.length,
-      },
+      allowInsecureLocalhost,
     });
-
-    return c.json(
+    const result = await discoverAndQueueStagedPublishes(
       {
-        found: stageIds.length,
-        created: scans.length,
-        skipped: stageIds.length - scans.length,
-        queued: Boolean(c.env.SCAN_QUEUE),
-        scans,
+        db,
+        env: c.env,
+        executionCtx: c.executionCtx,
+        organizationId,
+        actorUserId: session.userId,
+        source: "manual",
+        eventSource: "staged_publishes.discovery",
+        allowInsecureLocalhost,
       },
-      202,
+      usable,
     );
+    return c.json(result, 202);
   } catch (err) {
+    if (err instanceof InvalidNpmConnectionError) {
+      return c.json(
+        { error: "Validate the organization npm token before discovering staged publishes." },
+        400,
+      );
+    }
     if (err instanceof StagedPublishesFetchError) {
       return c.json(
         {

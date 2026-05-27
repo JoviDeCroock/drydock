@@ -6,9 +6,11 @@ import {
   markScanFailed,
   recordScanEvent,
   type AppDb,
+  type ScanSource,
   type WorkspaceSession,
 } from "../db";
 import { decryptNpmToken } from "./npm-connection";
+import { notifyScanCompletion } from "./notify";
 import { runScanPipeline } from "./scan-pipeline";
 import { SandboxError } from "./sandbox";
 import type { ScanInput } from "../types";
@@ -17,6 +19,7 @@ export interface ScanQueueMessage extends ScanInput {
   scanId: string;
   organizationId: string;
   actorUserId: string;
+  source?: ScanSource;
 }
 
 export const MAX_SCAN_JOB_ATTEMPTS = 3;
@@ -81,7 +84,7 @@ export async function executeScanJob(
       }),
     ]);
 
-    return await runScanPipeline(
+    const result = await runScanPipeline(
       { env, executionCtx, db, session },
       {
         scanId: message.scanId,
@@ -93,6 +96,19 @@ export async function executeScanJob(
         npmRegistry: npmConnection.registryUrl,
       },
     );
+    if (message.source === "auto_discovery") {
+      executionCtx.waitUntil(
+        notifyScanCompletion({
+          env,
+          db,
+          scanId: message.scanId,
+          organizationId: message.organizationId,
+          ownerUserId: message.actorUserId,
+          outcome: "complete",
+        }),
+      );
+    }
+    return result;
   } catch (err) {
     const safe = classifyScanError(err);
     if (!safe.retryable || options.finalAttempt) {
@@ -106,6 +122,19 @@ export async function executeScanJob(
           metadata: { stageId: message.stageId, attempt: options.attempt ?? 1, error: safe },
         }),
       ]);
+      if (message.source === "auto_discovery") {
+        executionCtx.waitUntil(
+          notifyScanCompletion({
+            env,
+            db,
+            scanId: message.scanId,
+            organizationId: message.organizationId,
+            ownerUserId: message.actorUserId,
+            outcome: "failed",
+            error: safe,
+          }),
+        );
+      }
     } else {
       await recordScanEvent(db, {
         organizationId: message.organizationId,
