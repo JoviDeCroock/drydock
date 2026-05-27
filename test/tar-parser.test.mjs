@@ -304,6 +304,29 @@ describe("readTar PAX and GNU long-name handling", () => {
     expect(files.map((f) => f.path)).toEqual(["binding.gyp"]);
     expect(isRootGypPath(files[0].path)).toBe(true);
   });
+
+  test("global PAX path metadata does not override the next entry path", async () => {
+    const paxRecord = "26 path=package/decoy.txt\n";
+    const tar = buildTar([
+      { name: "GlobalPaxHeader", type: "g", body: paxRecord },
+      { name: "package/binding.gyp", body: "{}" },
+    ]);
+    const { files } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["binding.gyp"]);
+    expect(isRootGypPath(files[0].path)).toBe(true);
+  });
+
+  test("global PAX metadata clears pending local path overrides", async () => {
+    const localPaxRecord = "26 path=package/decoy.txt\n";
+    const globalPaxRecord = "22 comment=global-pax\n";
+    const tar = buildTar([
+      { name: "PaxHeader", type: "x", body: localPaxRecord },
+      { name: "GlobalPaxHeader", type: "g", body: globalPaxRecord },
+      { name: "package/binding.gyp", body: "{}" },
+    ]);
+    const { files } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["binding.gyp"]);
+  });
 });
 
 describe("readTar suspicious entries", () => {

@@ -220,14 +220,18 @@ export async function readTar(buffer, maxFiles, maxBytesPerFile, maxTarBytes) {
     if (offset + size > bytes.length) throw new Error("truncated tar entry");
     const body = bytes.subarray(offset, offset + size);
 
-    if (type === "x" || type === "g") {
-      // Local (x) and global (g) PAX header. Global headers normally apply to
-      // every following entry; we only consume the path attribute (if any) for
-      // the next regular entry, matching the previous behaviour.
+    if (type === "x") {
+      // Local PAX header. Its path attribute applies only to the next entry.
       pax = parsePax(body);
       if (pax && typeof pax.path === "string" && !isSafePaxPath(pax.path)) {
         throw new Error("invalid pax path");
       }
+    } else if (type === "g") {
+      // Global PAX metadata does not override the path of following entries.
+      // Ignoring path here keeps scanner paths aligned with tar extraction.
+      parsePax(body);
+      nextLongName = null;
+      pax = null;
     } else if (type === "L") {
       // readString already stops at the first NUL terminator, so the long-name
       // payload is implicitly trimmed at the NUL boundary.
