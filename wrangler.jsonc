@@ -90,6 +90,7 @@
 		"EMAIL_FROM_ADDRESS": "drydock@resynapse.dev",
 		"EMAIL_FROM_NAME": "Drydock",
 		"GITHUB_APP_ID": "3896399",
-		"GITHUB_APP_SLUG": "drydock-review"
+		"GITHUB_APP_SLUG": "drydock-review",
+		"GITHUB_APP_CLIENT_ID": "Iv23lid3JXi9WSYbS6pn"
 	}
 }
