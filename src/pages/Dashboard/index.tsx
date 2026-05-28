@@ -15,10 +15,8 @@ import {
   Card,
   EmptyLine,
   Eyebrow,
-  Field,
-  Input,
+  LinkButton,
   LoadingState,
-  MonoDetail,
   Muted,
   OrgSwitcher,
   PageShell,
@@ -111,6 +109,9 @@ export default function DashboardPage() {
     <PageShell
       headerActions={
         <>
+          <LinkButton variant="ghost" size="sm" href="/dashboard/settings">
+            Settings
+          </LinkButton>
           <OrgSwitcher
             organizations={organizations.organizations.value}
             activeOrganizationId={organizations.activeOrganizationId.value}
@@ -127,8 +128,8 @@ export default function DashboardPage() {
 
       {workspaceLoaded ? (
         <>
+          {!npm.connection.value ? <NpmSetupCallout /> : null}
           <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
-          <WorkspaceSetupPanel npm={npm} />
         </>
       ) : (
         <LoadingState
@@ -324,206 +325,19 @@ function formatStartedScanLabel(scan: { packageName: string | null; version: str
   return scan.packageName || scan.version || null;
 }
 
-function WorkspaceSetupPanel({
-  npm,
-}: {
-  npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
-}) {
-  const connection = npm.connection.value;
+function NpmSetupCallout() {
   return (
-    <section id="workspace-setup" class="scroll-mt-6">
-      <Card as="div" class="p-0 overflow-hidden">
-        <details open={!connection} class="group">
-          <summary class="list-none cursor-pointer px-5 py-4 transition-colors duration-150 ease-out hover:bg-surface-2 group-open:border-b group-open:border-border">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-              <div class="flex flex-col gap-1.5 min-w-0">
-                <SectionLabel>Workspace setup</SectionLabel>
-                <Muted class="text-[13px] m-0">
-                  Manage npm access, credential checks, and workspace safety defaults.
-                </Muted>
-                <MonoDetail
-                  parts={[
-                    <span key="connection">npm {connection ? "connected" : "not connected"}</span>,
-                    <span key="evidence">redacted evidence</span>,
-                    <span key="approval">human approval</span>,
-                  ]}
-                />
-              </div>
-              <div class="flex flex-wrap items-center justify-end gap-2">
-                <Badge tone={connection ? "ok" : "info"}>
-                  {connection ? connection.validationStatus : "connect npm"}
-                </Badge>
-                <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
-                  <span class="group-open:hidden">open settings</span>
-                  <span class="hidden group-open:inline">close settings</span>
-                </span>
-              </div>
-            </div>
-          </summary>
-          <div class="p-5">
-            <NpmConnectionCard npm={npm} />
-          </div>
-        </details>
-      </Card>
-    </section>
-  );
-}
-
-function NpmConnectionCard({
-  npm,
-}: {
-  npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
-}) {
-  const connection = npm.connection.value;
-  const status = npm.status.value;
-  const busy = npm.busy.value;
-  const validated = npm.validated.value;
-  const token = npm.token.value;
-  const label = npm.label.value;
-  const registry = npm.registry.value;
-  const validationStageId = npm.validationStageId.value;
-  const error = npm.error.value;
-
-  const onSave = async (event: Event) => {
-    event.preventDefault();
-    await npm.save();
-  };
-
-  return (
-    <div class="flex flex-col gap-5">
-      <div class="flex flex-wrap items-start justify-between gap-3">
-        <div class="flex flex-col gap-1.5">
-          <SectionLabel>npm access</SectionLabel>
-          <Muted class="text-[13px] max-w-[760px]">
-            Add an organization npm token so reviews can fetch staged packages securely. We encrypt
-            it, hide it after save, and use it only to retrieve release evidence.
-          </Muted>
-        </div>
-        {connection ? (
-          <Badge
-            tone={
-              validated ? "ok" : connection.validationStatus === "invalid" ? "critical" : "info"
-            }
-          >
-            {connection.validationStatus}
-          </Badge>
-        ) : (
-          <Badge tone="info">not connected</Badge>
-        )}
+    <Card as="section" class="p-5 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex flex-col gap-1.5 min-w-0">
+        <SectionLabel>npm not connected</SectionLabel>
+        <Muted class="text-[13px] m-0">
+          Connect npm in settings so Drydock can fetch staged tarballs and run reviews.
+        </Muted>
       </div>
-
-      {connection ? (
-        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-x-6 gap-y-2 border-y border-border py-3">
-          <CompactMetadataRow label="label" value={connection.label} />
-          <CompactMetadataRow label="registry" value={connection.registryUrl} />
-          <CompactMetadataRow label="token" value={`•••• ${connection.tokenLast4 || "stored"}`} />
-          <CompactMetadataRow
-            label="validated"
-            value={connection.validatedAt ? formatDate(connection.validatedAt) : "not yet"}
-          />
-          <CompactMetadataRow
-            label="last used"
-            value={connection.lastUsedAt ? formatDate(connection.lastUsedAt) : "never"}
-          />
-        </div>
-      ) : null}
-
-      <form
-        class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_auto] gap-3 items-end"
-        onSubmit={onSave}
-      >
-        <Field label="Connection name" for="npmLabel">
-          <Input
-            id="npmLabel"
-            type="text"
-            value={label}
-            onInput={(e) => (npm.label.value = (e.target as HTMLInputElement).value)}
-            disabled={busy}
-          />
-        </Field>
-        <Field label="Registry" for="npmRegistry">
-          <Input
-            id="npmRegistry"
-            type="url"
-            value={registry}
-            onInput={(e) => (npm.registry.value = (e.target as HTMLInputElement).value)}
-            disabled={busy}
-          />
-        </Field>
-        <Field label={connection ? "New npm token" : "npm token"} for="npmToken">
-          <Input
-            id="npmToken"
-            type="password"
-            value={token}
-            placeholder={connection ? "Paste a new token to rotate" : "npm_..."}
-            onInput={(e) => (npm.token.value = (e.target as HTMLInputElement).value)}
-            disabled={busy}
-            autoComplete="off"
-            spellcheck={false}
-          />
-        </Field>
-        <Button type="submit" disabled={busy || !token.trim()} class="shrink-0">
-          {status === "saving"
-            ? "Saving…"
-            : status === "validating"
-              ? "Checking…"
-              : connection
-                ? "Rotate"
-                : "Save"}
-        </Button>
-      </form>
-
-      <div class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end">
-        <Field label="Stage ID access check" for="validationStageId">
-          <Input
-            id="validationStageId"
-            type="text"
-            value={validationStageId}
-            placeholder="Paste a real stage ID to confirm package access"
-            onInput={(e) => (npm.validationStageId.value = (e.target as HTMLInputElement).value)}
-            disabled={busy || !connection}
-            autoComplete="off"
-            spellcheck={false}
-          />
-        </Field>
-        <Button
-          variant="secondary"
-          onClick={() => void npm.validate()}
-          disabled={busy || !connection}
-          class="shrink-0"
-        >
-          {status === "validating"
-            ? "Checking…"
-            : validationStageId.trim()
-              ? "Check stage access"
-              : "Check npm auth"}
-        </Button>
-      </div>
-
-      <Muted class="text-xs">
-        Saving runs the npm auth check automatically. Add a stage ID to prove the token can read
-        that staged release; we do not keep the release archive.
-      </Muted>
-
-      {error ? <Alert tone="critical">{error}</Alert> : null}
-
-      {connection ? (
-        <div class="flex justify-end border-t border-border pt-4">
-          <Button variant="danger" size="sm" onClick={() => void npm.remove()} disabled={busy}>
-            {status === "deleting" ? "Removing…" : "Disconnect npm"}
-          </Button>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function CompactMetadataRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div class="grid grid-cols-[92px_minmax(0,1fr)] gap-3 text-[13px] min-w-0">
-      <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">{label}</span>
-      <code class="text-xs text-ink-muted break-all">{value}</code>
-    </div>
+      <LinkButton variant="primary" size="sm" href="/dashboard/settings">
+        Open settings
+      </LinkButton>
+    </Card>
   );
 }
 
@@ -609,12 +423,6 @@ function Th({ children }: { children: ComponentChildren }) {
 
 function Td({ children, class: className }: { children: ComponentChildren; class?: string }) {
   return <td class={`px-4 py-2.5 align-middle ${className || ""}`}>{children}</td>;
-}
-
-function formatDate(value: string | number | Date | null | undefined) {
-  if (value === null || value === undefined) return "—";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
 }
 
 function pluralize(word: string, count: number) {

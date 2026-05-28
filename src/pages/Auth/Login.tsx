@@ -1,6 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
+import { normalizeAuthReturnTo } from "../../lib/auth-return";
 import { sessionModel } from "../../models/auth";
 import { errorMessage } from "../../models/api";
 import { Alert, Button, Card, Eyebrow, Field, Input, PageShell, Muted } from "../../components";
@@ -11,17 +12,18 @@ export default function LoginPage() {
   const password = useSignal("");
   const error = useSignal<string | null>(null);
   const loading = useSignal(false);
+  const returnTo = normalizeAuthReturnTo(location.query.returnTo);
 
   useEffect(() => {
     let cancelled = false;
     void sessionModel.load().then((session) => {
       if (cancelled) return;
-      if (session?.user) location.route("/dashboard", true);
+      if (session?.user) location.route(returnTo, true);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [returnTo]);
 
   const onSubmit = async (event: Event) => {
     event.preventDefault();
@@ -31,7 +33,7 @@ export default function LoginPage() {
     error.value = null;
     try {
       await sessionModel.signIn(submittedEmail, submittedPassword);
-      location.route("/dashboard", true);
+      location.route(returnTo, true);
     } catch (err) {
       error.value = errorMessage(err);
     } finally {
