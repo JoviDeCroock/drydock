@@ -120,9 +120,8 @@ export default function ScanDetailPage() {
     };
   }, [id]);
 
-  // Fetch version metadata as soon as the scan is complete with a package name.
+  // Fetch version metadata as soon as we have a package name (don't wait for complete).
   useSignalEffect(() => {
-    if (model.status.value !== "complete") return;
     if (!model.detail.value?.scan.packageName) return;
     if (model.versions.value) return;
     void model.loadVersions();
@@ -621,11 +620,11 @@ function DiffWorkbench({
   const isBinaryPrev = Boolean(previousMeta?.flags?.includes("binary"));
 
   if (needsPrevious && !compareReady && entry.status !== "unchanged") {
-    return <LoadingLine>Loading previous version metadata</LoadingLine>;
+    return <LoadingLine size="inline">Loading comparison</LoadingLine>;
   }
 
   if (needsPrevious && previousMeta && !isBinaryPrev && !previousContent) {
-    return <LoadingLine size="inline">Loading file</LoadingLine>;
+    return <LoadingLine size="inline">Loading file content</LoadingLine>;
   }
 
   if (!staged && !previousContent && !previousMeta) {

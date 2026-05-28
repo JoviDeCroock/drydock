@@ -343,8 +343,7 @@ export const ScanDetailModel = createModel((id: string) => {
 
     async loadVersions(): Promise<void> {
       const current = this.detail.peek();
-      if (!current || current.scan.status !== "complete") return;
-      if (!current.scan.packageName) return;
+      if (!current?.scan.packageName) return;
       const id = this.scanId.peek();
       this.compareError.value = null;
       try {
