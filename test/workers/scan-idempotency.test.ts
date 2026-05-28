@@ -146,7 +146,7 @@ describe("scan persistence idempotency", () => {
     expect(final?.reportDigest).toBe("first");
   });
 
-  test("listExistingScanStageIds dedupes against another org's completed scan", async () => {
+  test("listExistingScanStageIds only dedupes within the current organization", async () => {
     const ownerA = await seedUserAndOrg();
     const ownerB = await seedUserAndOrg();
     const sharedStageId = `stage-${crypto.randomUUID()}`;
@@ -195,7 +195,7 @@ describe("scan persistence idempotency", () => {
       untouchedStageId,
     ]);
 
-    expect(known.has(sharedStageId)).toBe(true);
+    expect(known.has(sharedStageId)).toBe(false);
     expect(known.has(orgBOnlyStageId)).toBe(true);
     expect(known.has(inProgressStageId)).toBe(false);
     expect(known.has(untouchedStageId)).toBe(false);

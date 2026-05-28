@@ -224,12 +224,7 @@ export async function listExistingScanStageIds(
   const rows = await db
     .select({ stageId: scans.stageId })
     .from(scans)
-    .where(
-      and(
-        inArray(scans.stageId, stageIds),
-        or(eq(scans.organizationId, organizationId), eq(scans.status, "complete")),
-      ),
-    );
+    .where(and(inArray(scans.stageId, stageIds), eq(scans.organizationId, organizationId)));
   return new Set(rows.map((row) => row.stageId));
 }
 

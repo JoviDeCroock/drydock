@@ -2,10 +2,12 @@ import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:
 import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  claimScanForRun,
   createDb,
   createScanJob,
   ensurePersonalOrganization,
   listScans,
+  persistScan,
   updateNpmConnectionValidation,
   upsertNpmConnection,
 } from "../../server/db";
@@ -34,6 +36,16 @@ async function seedUser(): Promise<SeededUser> {
   const organizationId = await ensurePersonalOrganization(db, { userId });
   return { userId, organizationId };
 }
+
+const baseScan = {
+  packageJson: { name: "demo", version: "1.0.0" },
+  diff: [],
+  files: [],
+  findings: [],
+  ai: null,
+  summary: { ok: true },
+  report: { version: 1, digest: "digest-1" },
+};
 
 function buildTestApp(session: { userId: string }) {
   const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -127,5 +139,81 @@ describe("staged publishes route", () => {
     expect(queue.send.mock.calls[0]?.[0]).toMatchObject({ stageId: "stage-new-123" });
     const { scans } = await listScans(db, owner.organizationId);
     expect(scans.map((scan) => scan.stageId)).toContain("stage-new-123");
+  });
+
+  test("POST /scan does not skip a stage id completed by another organization", async () => {
+    const ownerA = await seedUser();
+    const ownerB = await seedUser();
+    const db = createDb(env.DB);
+    const sharedStageId = `stage-${crypto.randomUUID()}`;
+
+    const completedScanId = `scan_${crypto.randomUUID()}`;
+    await createScanJob(db, {
+      id: completedScanId,
+      stageId: sharedStageId,
+      organizationId: ownerA.organizationId,
+      ownerUserId: ownerA.userId,
+    });
+    await claimScanForRun(db, completedScanId, ownerA.organizationId);
+    await persistScan(db, {
+      ...baseScan,
+      id: completedScanId,
+      stageId: sharedStageId,
+      organizationId: ownerA.organizationId,
+      ownerUserId: ownerA.userId,
+      risk: "low",
+      status: "complete",
+    });
+
+    const encrypted = await encryptNpmToken(env, "npm_test_token_0123456789");
+    await upsertNpmConnection(db, {
+      organizationId: ownerB.organizationId,
+      registryUrl: "https://registry.npmjs.org",
+      label: "npm registry",
+      createdByUserId: ownerB.userId,
+      ...encrypted,
+    });
+    await updateNpmConnectionValidation(db, {
+      organizationId: ownerB.organizationId,
+      validationStatus: "valid",
+      validatedAt: new Date(),
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL | Request) => {
+        expect(String(url)).toBe("https://registry.npmjs.org/-/stage?perPage=50");
+        return Response.json({
+          items: [{ id: sharedStageId, packageName: "@org/shared", version: "1.0.0" }],
+          total: 1,
+          perPage: 50,
+          page: 1,
+        });
+      }),
+    );
+    const queue = { send: vi.fn(async () => undefined) };
+    const app = buildTestApp(ownerB);
+    const ctx = createExecutionContext();
+    const res = await app.fetch(
+      new Request("http://test.local/api/v1/staged-publishes/scan", { method: "POST" }),
+      { ...env, SCAN_QUEUE: queue } as unknown as Bindings,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({
+      found: 1,
+      created: 1,
+      skipped: 0,
+      scans: [{ stageId: sharedStageId, packageName: "@org/shared", version: "1.0.0" }],
+    });
+    expect(queue.send).toHaveBeenCalledTimes(1);
+    expect(queue.send.mock.calls[0]?.[0]).toMatchObject({
+      stageId: sharedStageId,
+      organizationId: ownerB.organizationId,
+    });
+    const { scans } = await listScans(db, ownerB.organizationId);
+    expect(scans.map((scan) => scan.stageId)).toContain(sharedStageId);
   });
 });
