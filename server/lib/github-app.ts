@@ -261,8 +261,16 @@ export async function fetchRepository(
   installationId: string,
   fullName: string,
 ): Promise<GithubRepositoryRef> {
+  const repository = parseRepositoryFullName(fullName);
+  if (!repository) {
+    throw new GithubAppValidationError(
+      "invalid_input",
+      "repositoryFullName must be in owner/repo form",
+    );
+  }
   const token = await getInstallationAccessToken(config, installationId);
-  const response = await fetch(`https://api.github.com/repos/${fullName}`, {
+  const repositoryPath = `${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}`;
+  const response = await fetch(`https://api.github.com/repos/${repositoryPath}`, {
     headers: githubInstallationHeaders(token),
   });
   if (response.status === 404) {
@@ -478,6 +486,10 @@ export async function createReleaseTarget(
 ): Promise<ReleaseTargetRecord> {
   validateReleaseTargetShape(input);
   const packageName = normalizePackageName(input.ecosystem, input.packageName);
+  const environment = normalizeGithubEnvironmentName(input.environment);
+  const pypiTrustedPublisherEnvironment = normalizeGithubEnvironmentName(
+    input.pypiTrustedPublisherEnvironment,
+  );
   const installation = await getInstallationForOrganization(
     db,
     input.organizationId,
@@ -508,8 +520,8 @@ export async function createReleaseTarget(
       repositoryId: input.repositoryId,
       repositoryFullName: input.repositoryFullName,
       workflowFilename: input.workflowFilename?.trim() || null,
-      environment: input.environment,
-      pypiTrustedPublisherEnvironment: input.pypiTrustedPublisherEnvironment,
+      environment,
+      pypiTrustedPublisherEnvironment,
       createdByUserId: input.createdByUserId,
       createdAt: now,
       updatedAt: now,
@@ -524,7 +536,7 @@ export async function createReleaseTarget(
     if (isUniqueEnvironmentConflict(err)) {
       throw new GithubAppValidationError(
         "environment_already_mapped",
-        `a release target already exists for ${input.repositoryFullName} environment ${input.environment} in this organization`,
+        `a release target already exists for ${input.repositoryFullName} environment ${environment} in this organization`,
       );
     }
     throw err;
@@ -538,8 +550,8 @@ export async function createReleaseTarget(
     repositoryId: input.repositoryId,
     repositoryFullName: input.repositoryFullName,
     workflowFilename: input.workflowFilename?.trim() || null,
-    environment: input.environment,
-    pypiTrustedPublisherEnvironment: input.pypiTrustedPublisherEnvironment,
+    environment,
+    pypiTrustedPublisherEnvironment,
     createdAt: now,
     updatedAt: now,
   };
@@ -595,6 +607,8 @@ export async function resolveDeploymentProtectionTarget(
   const installation = await getInstallationByExternalId(db, input.installationId);
   if (!installation) return null;
   if (installation.status !== "active") return null;
+  const environment = normalizeGithubEnvironmentName(input.environment);
+  if (!environment) return null;
   const rows = await db
     .select()
     .from(githubReleaseTargets)
@@ -603,7 +617,7 @@ export async function resolveDeploymentProtectionTarget(
         eq(githubReleaseTargets.organizationId, installation.organizationId),
         eq(githubReleaseTargets.installationRowId, installation.id),
         eq(githubReleaseTargets.repositoryId, input.repositoryId),
-        eq(githubReleaseTargets.environment, input.environment),
+        eq(githubReleaseTargets.environment, environment),
       ),
     )
     .limit(1);
@@ -615,7 +629,8 @@ export async function resolveDeploymentProtectionTarget(
 // ── Input validation ─────────────────────────────────────────────────────────
 
 const PACKAGE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,213}$/;
-const REPO_FULL_NAME_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+const REPO_OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
+const REPO_NAME_RE = /^[A-Za-z0-9._-]+$/;
 const ENVIRONMENT_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}$/;
 const WORKFLOW_FILENAME_RE = /^[A-Za-z0-9._-]+\.ya?ml$/;
 
@@ -638,29 +653,39 @@ export function validateReleaseTargetShape(input: CreateReleaseTargetInput) {
   if (
     !input.repositoryFullName ||
     input.repositoryFullName.length > REPO_FULL_NAME_MAX ||
-    !REPO_FULL_NAME_RE.test(input.repositoryFullName)
+    !parseRepositoryFullName(input.repositoryFullName)
   ) {
     throw new GithubAppValidationError(
       "invalid_input",
       "repositoryFullName must be in owner/repo form",
     );
   }
-  if (!input.environment || input.environment.length > ENVIRONMENT_MAX) {
+  const environment = normalizeGithubEnvironmentName(input.environment);
+  const pypiTrustedPublisherEnvironment = normalizeGithubEnvironmentName(
+    input.pypiTrustedPublisherEnvironment,
+  );
+  if (!environment || environment.length > ENVIRONMENT_MAX) {
     throw new GithubAppValidationError("environment_unmapped", "environment is required");
   }
-  if (!ENVIRONMENT_RE.test(input.environment)) {
+  if (!ENVIRONMENT_RE.test(environment)) {
     throw new GithubAppValidationError("invalid_input", "environment has invalid characters");
   }
   if (
-    !input.pypiTrustedPublisherEnvironment ||
-    input.pypiTrustedPublisherEnvironment.length > ENVIRONMENT_MAX
+    !pypiTrustedPublisherEnvironment ||
+    pypiTrustedPublisherEnvironment.length > ENVIRONMENT_MAX
   ) {
     throw new GithubAppValidationError(
       "environment_unmapped",
       "pypiTrustedPublisherEnvironment is required",
     );
   }
-  if (input.environment !== input.pypiTrustedPublisherEnvironment) {
+  if (!ENVIRONMENT_RE.test(pypiTrustedPublisherEnvironment)) {
+    throw new GithubAppValidationError(
+      "invalid_input",
+      "pypiTrustedPublisherEnvironment has invalid characters",
+    );
+  }
+  if (environment !== pypiTrustedPublisherEnvironment) {
     throw new GithubAppValidationError(
       "environment_mismatch",
       "environment must match the PyPI Trusted Publisher environment so the gate runs against the same job",
@@ -781,6 +806,22 @@ function normalizeInstallationStatus(value: string): InstallationStatus {
 function normalizePackageName(ecosystem: SupportedEcosystem, packageName: string): string {
   if (ecosystem === "pypi") return packageName.toLowerCase().replace(/[-_.]+/g, "-");
   return packageName;
+}
+
+function normalizeGithubEnvironmentName(environment: string): string {
+  return environment.trim().toLowerCase();
+}
+
+function parseRepositoryFullName(fullName: string): { owner: string; name: string } | null {
+  if (!fullName || fullName.length > REPO_FULL_NAME_MAX) return null;
+  const parts = fullName.split("/");
+  if (parts.length !== 2) return null;
+  const [owner, name] = parts;
+  if (!owner || !name || owner === "." || owner === ".." || name === "." || name === "..") {
+    return null;
+  }
+  if (!REPO_OWNER_RE.test(owner) || !REPO_NAME_RE.test(name)) return null;
+  return { owner, name };
 }
 
 function githubAppHeaders(jwt: string) {

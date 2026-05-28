@@ -107,7 +107,9 @@ HTTP surface in `server/routes/github-app.ts`. Two tables back it:
   `environment === pypi_trusted_publisher_environment` so the deployment
   protection gate runs against the same job that performs the OIDC token
   exchange. PyPI package names are stored in normalized PEP 503 form so
-  case/separator aliases map to the same release target. A
+  case/separator aliases map to the same release target. GitHub environment
+  names are stored in lowercase because GitHub treats environment names as
+  case-insensitive. A
   repository/environment pair is unique within an organization because GitHub
   deployment-protection webhooks identify the pending gate by installation,
   repository, and environment, not by package name.
@@ -133,7 +135,9 @@ organization (`x-organization-id` header to scope writes).
   belong to the active organization.
 - `installation_inactive` — installation is suspended or uninstalled.
 - `repository_not_accessible` — `GET /repos/:owner/:repo` with an installation
-  token returned 403/404, meaning the install was never granted that repo.
+  token returned 403/404, meaning the install was never granted that repo. The
+  repo name is validated as exactly `owner/repo` before the GitHub API URL is
+  built, so path traversal-like segments cannot escape the repository lookup.
 - `environment_unmapped` — caller did not provide both `environment` and
   `pypiTrustedPublisherEnvironment`.
 - `environment_mismatch` — the two environment names differ.
@@ -149,8 +153,9 @@ environment })` is the lookup helper a future `deployment_protection_rule`
 webhook will call to find the owning organization and release target. It
 returns `null` for unknown installs, suspended installs, and unmapped
 environments — the caller decides whether that becomes an HTTP 404 or a silent
-skip. The database enforces one target per organization/repository/environment
-so this lookup is deterministic.
+skip. The environment is normalized the same way as stored release targets, and
+the database enforces one target per organization/repository/environment so this
+lookup is deterministic.
 
 ### Trust boundary
 

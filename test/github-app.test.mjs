@@ -4,6 +4,7 @@ import {
   GithubAppConfigError,
   GithubAppValidationError,
   buildInstallUrl,
+  fetchRepository,
   generateGithubAppJwt,
   isGithubAppConfigured,
   readGithubAppConfig,
@@ -164,6 +165,8 @@ describe("release target validation", () => {
       { repositoryFullName: "owner/" },
       { repositoryFullName: "owner/repo/extra" },
       { repositoryFullName: "owner/repo!" },
+      { repositoryFullName: "../installation" },
+      { repositoryFullName: "owner/.." },
       { repositoryId: 0 },
       { repositoryId: -5 },
     ];
@@ -176,6 +179,22 @@ describe("release target validation", () => {
         expect(err.code).toBe("invalid_input");
       }
     }
+  });
+
+  test("fetchRepository rejects malformed repo names before issuing GitHub requests", async () => {
+    await expect(
+      fetchRepository(readGithubAppConfig(VALID_ENV), "123", "../installation"),
+    ).rejects.toMatchObject({ code: "invalid_input" });
+  });
+
+  test("treats GitHub environment names as case-insensitive", () => {
+    expect(() =>
+      validateReleaseTargetShape({
+        ...VALID_RELEASE_TARGET,
+        environment: "PyPI-Release",
+        pypiTrustedPublisherEnvironment: "pypi-release",
+      }),
+    ).not.toThrow();
   });
 
   test("rejects bad workflow filenames", () => {
