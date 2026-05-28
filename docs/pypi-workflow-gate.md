@@ -160,9 +160,16 @@ controls whether the deployment protection gate releases that job.
 
 ### Env bindings
 
-`GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY`, and
-`GITHUB_APP_WEBHOOK_SECRET` are required for any GitHub App route to work. The
-private key may be GitHub's downloaded PKCS#1 PEM or a converted PKCS#8 PEM.
+`GITHUB_APP_ID` and `GITHUB_APP_SLUG` are public values and live in
+`wrangler.jsonc` under `vars`. `GITHUB_APP_PRIVATE_KEY` and
+`GITHUB_APP_WEBHOOK_SECRET` are sensitive and need to be set as runtime secrets:
+
+```bash
+wrangler secret put GITHUB_APP_PRIVATE_KEY < drydock.private-key.pem
+echo -n "<webhook-secret>" | wrangler secret put GITHUB_APP_WEBHOOK_SECRET
+```
+
+The private key may be GitHub's downloaded PKCS#1 PEM or a converted PKCS#8 PEM.
 `GITHUB_APP_STATE_SECRET` is optional and falls back to `BETTER_AUTH_SECRET` for
 HMAC-signing the OAuth state.
 
