@@ -174,7 +174,9 @@ What the handler does on each delivery:
 1. Read `X-GitHub-Event`, `X-GitHub-Delivery`, and `X-Hub-Signature-256`.
    Missing required headers, missing/invalid signatures, or empty bodies all
    return 4xx — we fail closed so unsigned or malformed requests cannot bypass
-   the gate.
+   the gate. Bodies are capped before materialization: oversized
+   `Content-Length` values are rejected immediately, and chunked/undeclared
+   bodies are read through a hard streaming byte limit.
 2. HMAC-SHA256 verify the signature against the raw body in constant time.
 3. Parse the payload. The handler accepts two event types:
    - `deployment_protection_rule` (action `requested`) — resolves the

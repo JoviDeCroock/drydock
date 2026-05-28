@@ -50,18 +50,36 @@ githubWebhookRoutes.post("/github", async (c) => {
     return c.json({ error: "missing github webhook headers" }, 400);
   }
 
-  const buffer = await c.req.raw.arrayBuffer();
-  if (buffer.byteLength === 0) {
-    emitOperationalEvent("warn", "github_webhook.empty_body", { deliveryId, eventName });
-    return c.json({ error: "empty webhook body" }, 400);
+  const declaredBodyBytes = parseContentLength(c.req.header("content-length"));
+  if (declaredBodyBytes === "invalid") {
+    emitOperationalEvent("warn", "github_webhook.invalid_content_length", {
+      deliveryId,
+      eventName,
+    });
+    return c.json({ error: "invalid content-length" }, 400);
   }
-  if (buffer.byteLength > MAX_WEBHOOK_BODY_BYTES) {
+  if (declaredBodyBytes !== null && declaredBodyBytes > MAX_WEBHOOK_BODY_BYTES) {
     emitOperationalEvent("warn", "github_webhook.body_too_large", {
       deliveryId,
       eventName,
-      bytes: buffer.byteLength,
+      bytes: declaredBodyBytes,
     });
     return c.json({ error: "webhook body too large" }, 413);
+  }
+
+  const body = await readLimitedWebhookBody(c.req.raw, MAX_WEBHOOK_BODY_BYTES);
+  if (body.tooLarge) {
+    emitOperationalEvent("warn", "github_webhook.body_too_large", {
+      deliveryId,
+      eventName,
+      bytes: body.bytes,
+    });
+    return c.json({ error: "webhook body too large" }, 413);
+  }
+  const buffer = body.buffer;
+  if (buffer.byteLength === 0) {
+    emitOperationalEvent("warn", "github_webhook.empty_body", { deliveryId, eventName });
+    return c.json({ error: "empty webhook body" }, 400);
   }
   const rawBody = new TextDecoder().decode(buffer);
 
@@ -168,4 +186,46 @@ function summarizeOutcome(outcome: WebhookOutcome) {
     return { result: "installation_updated", action: outcome.action };
   }
   return { result: "ignored", reason: outcome.reason };
+}
+
+function parseContentLength(value: string | null | undefined): number | "invalid" | null {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return "invalid";
+  const parsed = Number.parseInt(trimmed, 10);
+  return Number.isSafeInteger(parsed) ? parsed : "invalid";
+}
+
+async function readLimitedWebhookBody(
+  request: Request,
+  maxBytes: number,
+): Promise<{ buffer: Uint8Array; bytes: number; tooLarge: boolean }> {
+  if (!request.body) return { buffer: new Uint8Array(), bytes: 0, tooLarge: false };
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        return { buffer: new Uint8Array(), bytes: total, tooLarge: true };
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const buffer = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    buffer.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { buffer, bytes: total, tooLarge: false };
 }

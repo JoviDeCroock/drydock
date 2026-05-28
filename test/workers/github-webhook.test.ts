@@ -93,6 +93,7 @@ interface SendArgs {
   body: unknown;
   deliveryId?: string;
   signOverride?: string | null;
+  headers?: Record<string, string>;
 }
 
 async function sendWebhook(args: SendArgs) {
@@ -107,6 +108,7 @@ async function sendWebhook(args: SendArgs) {
     "content-type": "application/json",
     "x-github-event": args.eventName,
     "x-github-delivery": deliveryId,
+    ...args.headers,
   };
   if (signature) headers["x-hub-signature-256"] = signature;
 
@@ -268,6 +270,23 @@ describe("POST /webhooks/github", () => {
     );
     await waitOnExecutionContext(ctx);
     expect(res.status).toBe(400);
+  });
+
+  test("returns 413 before reading when content-length exceeds the webhook cap", async () => {
+    const { res } = await sendWebhook({
+      eventName: "deployment_protection_rule",
+      body: { action: "requested" },
+      headers: { "content-length": String(1024 * 1024 + 1) },
+    });
+    expect(res.status).toBe(413);
+  });
+
+  test("returns 413 when a streamed body crosses the webhook cap", async () => {
+    const { res } = await sendWebhook({
+      eventName: "deployment_protection_rule",
+      body: { action: "requested", padding: "x".repeat(1024 * 1024) },
+    });
+    expect(res.status).toBe(413);
   });
 
   test("returns 503 when GitHub App is not configured", async () => {
