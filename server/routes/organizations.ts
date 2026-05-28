@@ -305,6 +305,9 @@ invitesRoutes.post("/:token/accept", async (c) => {
     return c.json({ error: "invite has expired" }, 410);
   }
   if (invite.status !== "pending") return c.json({ error: "invite is no longer pending" }, 409);
+  if (await getOrganizationMembership(db, invite.organizationId, session.userId)) {
+    return c.json({ error: "user is already a member of this organization" }, 409);
+  }
 
   const { accepted } = await acceptOrganizationInvite(db, { invite, userId: session.userId });
   if (!accepted) return c.json({ error: "invite is no longer pending" }, 409);

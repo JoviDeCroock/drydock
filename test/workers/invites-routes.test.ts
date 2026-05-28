@@ -197,6 +197,43 @@ describe("invites routes", () => {
     expect(accept.status).toBe(409);
   });
 
+  test("existing members cannot consume pending invite links", async () => {
+    const owner = await seedUser();
+    const org = await createSharedOrg(owner);
+
+    const create = await call(
+      buildTestApp(owner),
+      "POST",
+      `/api/v1/organizations/${org.id}/invites`,
+      { body: { role: "member" } },
+    );
+    const created = (await create.json()) as { token: string; invite: { id: string } };
+
+    const preview = await call(
+      buildTestApp(owner),
+      "GET",
+      `/api/v1/invites/${encodeURIComponent(created.token)}`,
+    );
+    expect(preview.status).toBe(200);
+    const previewBody = (await preview.json()) as { viewer: { alreadyMember: boolean } };
+    expect(previewBody.viewer.alreadyMember).toBe(true);
+
+    const accept = await call(
+      buildTestApp(owner),
+      "POST",
+      `/api/v1/invites/${encodeURIComponent(created.token)}/accept`,
+    );
+    expect(accept.status).toBe(409);
+
+    const db = createDb(env.DB);
+    const [row] = await db
+      .select({ status: schema.organizationInvites.status })
+      .from(schema.organizationInvites)
+      .where(eq(schema.organizationInvites.id, created.invite.id))
+      .limit(1);
+    expect(row?.status).toBe("pending");
+  });
+
   test("expired invites are not accepted and reported as expired in preview", async () => {
     const owner = await seedUser();
     const invitee = await seedUser();
