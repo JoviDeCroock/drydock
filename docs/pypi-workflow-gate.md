@@ -153,7 +153,8 @@ organization (`x-organization-id` header to scope writes).
   repo name is validated as exactly `owner/repo` before the GitHub API URL is
   built, so path traversal-like segments cannot escape the repository lookup.
 - `environment_unmapped` — caller did not provide both `environment` and
-  `pypiTrustedPublisherEnvironment`.
+  `pypiTrustedPublisherEnvironment`, or the provided environment name exceeds
+  GitHub's 255-character limit.
 - `environment_mismatch` — the two environment names differ.
 - `package_already_mapped` — `(organizationId, ecosystem, packageName)` already
   has a row.

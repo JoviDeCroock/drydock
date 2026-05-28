@@ -25,7 +25,7 @@ const ACCOUNT_LOGIN_MAX = 100;
 const PACKAGE_NAME_MAX = 214;
 const REPO_FULL_NAME_MAX = 140;
 const WORKFLOW_FILENAME_MAX = 200;
-const ENVIRONMENT_MAX = 80;
+const ENVIRONMENT_MAX = 255;
 
 // ── Errors ───────────────────────────────────────────────────────────────────
 
@@ -836,7 +836,6 @@ export async function resolveDeploymentProtectionTarget(
 const PACKAGE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,213}$/;
 const REPO_OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const REPO_NAME_RE = /^[A-Za-z0-9._-]+$/;
-const ENVIRONMENT_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}$/;
 const WORKFLOW_FILENAME_RE = /^[A-Za-z0-9._-]+\.ya?ml$/;
 
 export function validateReleaseTargetShape(input: CreateReleaseTargetInput) {
@@ -870,9 +869,12 @@ export function validateReleaseTargetShape(input: CreateReleaseTargetInput) {
     input.pypiTrustedPublisherEnvironment,
   );
   if (!environment || environment.length > ENVIRONMENT_MAX) {
-    throw new GithubAppValidationError("environment_unmapped", "environment is required");
+    throw new GithubAppValidationError(
+      "environment_unmapped",
+      "environment is required and must not exceed 255 characters",
+    );
   }
-  if (!ENVIRONMENT_RE.test(environment)) {
+  if (hasControlCharacter(environment)) {
     throw new GithubAppValidationError("invalid_input", "environment has invalid characters");
   }
   if (
@@ -881,10 +883,10 @@ export function validateReleaseTargetShape(input: CreateReleaseTargetInput) {
   ) {
     throw new GithubAppValidationError(
       "environment_unmapped",
-      "pypiTrustedPublisherEnvironment is required",
+      "pypiTrustedPublisherEnvironment is required and must not exceed 255 characters",
     );
   }
-  if (!ENVIRONMENT_RE.test(pypiTrustedPublisherEnvironment)) {
+  if (hasControlCharacter(pypiTrustedPublisherEnvironment)) {
     throw new GithubAppValidationError(
       "invalid_input",
       "pypiTrustedPublisherEnvironment has invalid characters",
@@ -1015,6 +1017,14 @@ function normalizePackageName(ecosystem: SupportedEcosystem, packageName: string
 
 function normalizeGithubEnvironmentName(environment: string): string {
   return environment.trim().toLowerCase();
+}
+
+function hasControlCharacter(value: string): boolean {
+  for (const char of value) {
+    const code = char.charCodeAt(0);
+    if (code <= 31 || code === 127) return true;
+  }
+  return false;
 }
 
 function parseRepositoryFullName(fullName: string): { owner: string; name: string } | null {

@@ -265,6 +265,52 @@ describe("release target validation", () => {
     ).not.toThrow();
   });
 
+  test("accepts GitHub environment names with punctuation up to 255 characters", () => {
+    const longEnvironment = "release/" + "a".repeat(247);
+    expect(longEnvironment).toHaveLength(255);
+    expect(() =>
+      validateReleaseTargetShape({
+        ...VALID_RELEASE_TARGET,
+        environment: "release/env: prod #1",
+        pypiTrustedPublisherEnvironment: "release/env: prod #1",
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateReleaseTargetShape({
+        ...VALID_RELEASE_TARGET,
+        environment: longEnvironment,
+        pypiTrustedPublisherEnvironment: longEnvironment,
+      }),
+    ).not.toThrow();
+  });
+
+  test("rejects overlong and control-character environment names", () => {
+    try {
+      const tooLong = "a".repeat(256);
+      validateReleaseTargetShape({
+        ...VALID_RELEASE_TARGET,
+        environment: tooLong,
+        pypiTrustedPublisherEnvironment: tooLong,
+      });
+      throw new Error("expected validation to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(GithubAppValidationError);
+      expect(err.code).toBe("environment_unmapped");
+    }
+
+    try {
+      validateReleaseTargetShape({
+        ...VALID_RELEASE_TARGET,
+        environment: "release\nprod",
+        pypiTrustedPublisherEnvironment: "release\nprod",
+      });
+      throw new Error("expected validation to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(GithubAppValidationError);
+      expect(err.code).toBe("invalid_input");
+    }
+  });
+
   test("rejects bad workflow filenames", () => {
     try {
       validateReleaseTargetShape({ ...VALID_RELEASE_TARGET, workflowFilename: "release.json" });
