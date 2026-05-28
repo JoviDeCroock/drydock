@@ -260,6 +260,29 @@ The private key may be GitHub's downloaded PKCS#1 PEM or a converted PKCS#8 PEM.
 `GITHUB_APP_STATE_SECRET` is optional and falls back to `BETTER_AUTH_SECRET` for
 HMAC-signing the OAuth state.
 
+### GitHub App permissions
+
+Repository permissions the App must request on the repos the org maps to a
+release target:
+
+- **Actions: Read** — list workflow run artifacts and download the
+  artifact ZIP for a pending gate.
+- **Deployments: Read & write** — receive `deployment_protection_rule`
+  webhooks and POST the deployment-protection decision callback.
+- **Metadata: Read** — mandatory for any fine-grained App; backs
+  `GET /repos/{owner}/{repo}` and the future `GET /installation/repositories`
+  repo picker.
+
+Webhook events to subscribe to:
+
+- `deployment_protection_rule` (pending-gate trigger).
+- `installation` (suspend / unsuspend / deleted, so we fail closed on
+  revoked installs).
+
+Account permissions: "Request user authorization (OAuth) during installation"
+must be on so the install callback gets a `code` to confirm the installer
+actually controls the installation. No additional OAuth scopes are required.
+
 ### GitHub App setup URL
 
 The "Setup URL" configured on the GitHub App (under "Identifying and authorizing
@@ -306,17 +329,76 @@ The install flow lives on `/dashboard/settings` (gated behind
    bypass the rules. Empty states link to GitHub App settings (no repos) and
    GitHub Actions environments docs (no environments).
 
+### Resolving artifacts for a pending gate
+
+`server/lib/github-app-artifacts.ts` turns a pending gate into a verified
+release bundle on the trusted control-plane side, then
+`server/lib/release-candidate-pypi.ts` hands each wheel/sdist to the
+credentials-free `downloadInSandboxInline` sandbox path so the same untrusted-
+archive parser the npm pipeline uses produces bounded `FileRecord[]` evidence.
+
+What the resolver enforces, in order:
+
+1. `GET /repos/{owner}/{repo}/actions/runs/{run_id}/artifacts` with an
+   installation token — find the first non-expired artifact named
+   `pypi-release-candidate` (configurable). Requires the **Actions: Read**
+   repository permission on the GitHub App.
+2. `GET /repos/{owner}/{repo}/actions/artifacts/{artifact_id}/zip` follows
+   GitHub's redirect to `*.actions.githubusercontent.com`. The outer ZIP is
+   capped at 25 MiB; Content-Length is rejected before reading, and the
+   streamed body is also bounded.
+3. The outer ZIP is parsed with a focused central-directory walker that
+   reuses the hardened primitives from `server/lib/tar-parser.js`
+   (`findZipEndOfCentralDirectory`, `inflateRawBounded`, `normalizeZipPath`).
+   Traversal paths, ZIP64, oversized entries, and unsupported compression
+   methods are rejected.
+4. The bundle must contain `drydock-manifest.json` at the root. It is parsed
+   with the existing `parsePyPiReleaseManifest` (PEP 503 project name, safe
+   version, ≤20 artifacts, safe artifact paths).
+5. The bundle's wheel/sdist set must exactly match the manifest's declared
+   artifact set — extra wheel/sdist files or missing declared paths fail.
+6. Each declared artifact has its SHA-256 recomputed against the bundle
+   bytes; mismatches reject before any bytes reach the sandbox. The
+   workflow's own `drydock-sha256.txt` is never trusted.
+7. The gate wrapper compares the normalized manifest package name against the
+   mapped `github_release_targets.package_name` before wheel/sdist bytes enter
+   the sandbox. A repo/environment gate for one PyPI project cannot approve a
+   manifest for another project.
+
+Typed errors returned by `WorkflowArtifactError.code`:
+
+- `bundle_unavailable` — workflow run / artifact name is unreachable.
+- `bundle_too_large` — outer ZIP exceeded the size or entry cap.
+- `manifest_missing` — `drydock-manifest.json` not present at root.
+- `manifest_invalid` — manifest JSON / schema validation failed.
+- `manifest_artifact_mismatch` — declared vs. bundled artifact sets differ.
+- `artifact_path_unsafe` — bundle entry path contained traversal segments.
+- `artifact_kind_unsupported` — bundle has a file that isn't `.whl` /
+  `.tar.gz` / `.tgz`, or the kind disagrees with the manifest entry.
+- `artifact_digest_mismatch` — recomputed SHA-256 ≠ manifest sha256.
+- `release_target_mismatch` — normalized manifest package name did not match
+  the release target mapped to the pending gate.
+
+`preparePyPiReleaseCandidateForGate(env, ctx, db, { config, organizationId,
+gateId })` is the gate-aware wrapper. It looks up the gate row, swaps the App
+JWT for a fresh installation access token, and on any failure calls
+`markGateErrored` with the typed error code so the gate cannot advance to
+scanning. The GitHub installation token never enters the sandbox: the parent
+worker downloads the artifact ZIP, validates and digests it, and only the
+verified wheel/sdist bytes cross the trust boundary through
+`downloadInSandboxInline`, which constructs the `NpmStageGateway` with empty
+props (no npm token, no public-artifact allowlist, `subRequests: 0`).
+
 ## Remaining work
 
-- Fetch GitHub Actions artifacts and `drydock-manifest.json` with installation
-  credentials, then call `markGateDecided` / `postDeploymentProtectionDecision`
-  to release or block the publish job.
-- Run the existing PyPI candidate review helper from the gate handler.
+- Wire `preparePyPiReleaseCandidateForGate` into the scan pipeline so a
+  resolved gate runs `pypiAdapter` to completion, persists the report, and
+  calls `markGateDecided` / `postDeploymentProtectionDecision`.
 - Persist workflow-gate reviews separately from npm `stageId` scans or
   generalize the scan schema around `release_candidate` records.
 - Add UI for workflow-gate reviews and GitHub/PyPI setup guidance.
-- Verify artifact digests in the gate path before scanning and record those
-  digests in the report payload.
+- Record the reviewed artifact SHA-256 digests in the persisted report
+  payload (the resolver returns them; the persister doesn't store them yet).
 - Compare against prior PyPI release artifacts by downloading selected
   `files.pythonhosted.org` URLs through the exact public-artifact allowlist.
 

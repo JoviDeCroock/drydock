@@ -166,6 +166,77 @@ function isSerializedSandboxDetail(message: string): boolean {
   }
 }
 
+export interface InlineDownloadOptions {
+  bytes: Uint8Array;
+  format: "tgz" | "zip";
+  maxFiles?: number;
+  maxBytesPerFile?: number;
+}
+
+/**
+ * Inline-bytes sandbox entrypoint. The control plane passes a pre-downloaded
+ * archive directly as the POST body; the sandbox parses it with the same tar/
+ * zip readers it uses for npm tarballs, but no outbound fetch is issued.
+ *
+ * This is the credentials-free counterpart of `downloadInSandbox` — the gateway
+ * is constructed with empty props so even an internally compromised sandbox
+ * could not exfiltrate an npm token (there isn't one in scope). It exists for
+ * the PyPI workflow-gate path, where GitHub installation tokens stay in the
+ * parent worker and the wheel/sdist bytes are the only thing that crosses the
+ * trust boundary.
+ */
+export async function downloadInSandboxInline(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  options: InlineDownloadOptions,
+): Promise<DownloadResult> {
+  if (!options.bytes || options.bytes.byteLength === 0) {
+    throw new SandboxError(JSON.stringify({ error: "inline archive body is empty", status: 400 }));
+  }
+  if (options.bytes.byteLength > MAX_TAR_BYTES) {
+    throw new SandboxError(JSON.stringify({ error: "archive too large", status: 413 }));
+  }
+  const sandbox = env.LOADER.load({
+    compatibilityDate: "2026-05-20",
+    mainModule: "sandbox.js",
+    modules: { "sandbox.js": sandboxSource() },
+    env: {
+      NPM_REGISTRY: env.NPM_REGISTRY || "https://registry.npmjs.org",
+      ARCHIVE_FORMAT: options.format,
+      MAX_FILES: Math.min(options.maxFiles ?? MAX_FILES, MAX_FILES),
+      MAX_BYTES_PER_FILE: Math.min(
+        options.maxBytesPerFile ?? MAX_BYTES_PER_FILE,
+        MAX_BYTES_PER_FILE,
+      ),
+      MAX_TAR_BYTES,
+    },
+    globalOutbound: (
+      ctx as unknown as {
+        exports: { NpmStageGateway(options: { props: NpmStageGatewayProps }): Fetcher };
+      }
+    ).exports.NpmStageGateway({ props: {} }),
+    limits: { cpuMs: 2_000, subRequests: 0 },
+  });
+
+  const body = new ArrayBuffer(options.bytes.byteLength);
+  new Uint8Array(body).set(options.bytes);
+  const response = await sandbox.getEntrypoint().fetch(
+    new Request("https://sandbox.local/download", {
+      method: "POST",
+      body,
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-archive-format": options.format,
+      },
+    }),
+  );
+
+  if (!response.ok) {
+    throw new SandboxError(await response.text());
+  }
+  return (await response.json()) as DownloadResult;
+}
+
 export async function downloadInSandbox(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
@@ -243,18 +314,25 @@ const STAGE_ID_RE = new RegExp(${JSON.stringify(`^${STAGE_ID_PATTERN}$`)});
 
 export default {
   async fetch(request, env) {
-    const { stageId, tarballUrl } = await request.json();
-    if (!tarballUrl && !STAGE_ID_RE.test(stageId)) return json({ error: "invalid stageId" }, 400);
-
-    const registry = env.NPM_REGISTRY || "https://registry.npmjs.org";
-    const url = tarballUrl || registry.replace(/\\/$/, "") + "/-/stage/" + encodeURIComponent(stageId) + "/tarball";
-    const res = await fetch(url, { headers: { accept: "application/octet-stream" } });
-    if (!res.ok) return json({ error: "download failed", status: res.status }, 502);
-
+    const inlineFormat = request.headers.get("x-archive-format");
     const maxTarBytes = env.MAX_TAR_BYTES || 26214400;
-    const contentLength = Number(res.headers.get("content-length") || "0");
-    if (contentLength > maxTarBytes) return json({ error: "tarball too large", status: 413 }, 413);
-    const archiveFormat = env.ARCHIVE_FORMAT || "tgz";
+    const archiveFormat = inlineFormat || env.ARCHIVE_FORMAT || "tgz";
+    let res;
+    if (inlineFormat) {
+      if (archiveFormat !== "zip" && archiveFormat !== "tgz") return json({ error: "invalid inline archive format", status: 400 }, 400);
+      res = new Response(request.body, { status: 200, headers: { "content-type": "application/octet-stream" } });
+    } else {
+      const { stageId, tarballUrl } = await request.json();
+      if (!tarballUrl && !STAGE_ID_RE.test(stageId)) return json({ error: "invalid stageId" }, 400);
+
+      const registry = env.NPM_REGISTRY || "https://registry.npmjs.org";
+      const url = tarballUrl || registry.replace(/\\/$/, "") + "/-/stage/" + encodeURIComponent(stageId) + "/tarball";
+      res = await fetch(url, { headers: { accept: "application/octet-stream" } });
+      if (!res.ok) return json({ error: "download failed", status: res.status }, 502);
+
+      const contentLength = Number(res.headers.get("content-length") || "0");
+      if (contentLength > maxTarBytes) return json({ error: "tarball too large", status: 413 }, 413);
+    }
     if (archiveFormat === "zip") {
       let zip;
       try {
