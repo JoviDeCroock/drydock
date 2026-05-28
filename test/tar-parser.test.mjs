@@ -380,7 +380,7 @@ describe("readTar suspicious entries", () => {
     const sneaky = "package/binding​.gyp";
     const tar = buildTar([{ name: sneaky, body: "{}" }]);
     const { files, suspicious } = await parseFull(tar);
-    expect(files.map((f) => f.path)).toEqual(["binding.gyp"]);
+    expect(files.map((f) => f.path)).toEqual(["binding​.gyp"]);
     expect(suspicious).toHaveLength(1);
     expect(suspicious[0].kind).toBe("unicode-confusable");
     expect(suspicious[0].path).toBe("binding.gyp");
@@ -394,7 +394,7 @@ describe("readTar suspicious entries", () => {
     const sneaky = "package/lib⁄binding.gyp";
     const tar = buildTar([{ name: sneaky, body: "{}" }]);
     const { files, suspicious } = await parseFull(tar);
-    expect(files.map((f) => f.path)).toEqual(["lib/binding.gyp"]);
+    expect(files.map((f) => f.path)).toEqual(["lib⁄binding.gyp"]);
     expect(suspicious).toHaveLength(1);
     expect(suspicious[0].kind).toBe("unicode-confusable");
     expect(suspicious[0].path).toBe("lib/binding.gyp");
@@ -405,13 +405,31 @@ describe("readTar suspicious entries", () => {
     const sneaky = "package／..／payload.js";
     const tar = buildTar([{ name: sneaky, body: "bad\n" }]);
     const { files, suspicious } = await parseFull(tar);
-    expect(files).toEqual([]);
+    expect(files.map((f) => f.path)).toEqual(["package／..／payload.js"]);
     expect(suspicious).toHaveLength(1);
     expect(suspicious[0]).toMatchObject({
       kind: "unicode-confusable",
-      path: "<invalid-path>",
+      path: "package／..／payload.js",
     });
     expect(suspicious[0].detail).toContain("normalized to an unsafe path");
+  });
+
+  test("does not collapse a confusable path with its ASCII twin", async () => {
+    const tar = buildTar([
+      { name: "package/a​.js", body: "process.env.NPM_TOKEN\n" },
+      { name: "package/a.js", body: "ok\n" },
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => [f.path, f.textSample])).toEqual([
+      ["a​.js", "process.env.NPM_TOKEN\n"],
+      ["a.js", "ok\n"],
+    ]);
+    expect(suspicious).toEqual([
+      expect.objectContaining({
+        kind: "unicode-confusable",
+        path: "a.js",
+      }),
+    ]);
   });
 
   test("caps suspicious entries and records a single limit marker", async () => {

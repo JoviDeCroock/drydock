@@ -241,12 +241,13 @@ export async function readTar(buffer, maxFiles, maxBytesPerFile, maxTarBytes) {
       const rawCandidate =
         (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName;
       const canonicalCandidate = canonicalizePath(rawCandidate);
-      const path = normalizeTarPath(canonicalCandidate);
+      const path = normalizeTarPath(rawCandidate);
+      const canonicalPath = normalizeTarPath(canonicalCandidate);
       if (rawCandidate !== canonicalCandidate) {
         addSuspicious({
           kind: "unicode-confusable",
-          path: path || "<invalid-path>",
-          detail: path
+          path: canonicalPath || path || "<invalid-path>",
+          detail: canonicalPath
             ? "path contained zero-width or visually-confusable characters"
             : "path contained zero-width or visually-confusable characters and normalized to an unsafe path",
         });
