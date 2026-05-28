@@ -1,5 +1,5 @@
-import { render } from "preact";
-import { ErrorBoundary, LocationProvider, Route, Router, lazy } from "preact-iso";
+import { hydrate, render } from "preact";
+import { ErrorBoundary, LocationProvider, Route, Router, lazy, prerender as ssr } from "preact-iso";
 import "./style.css";
 
 const LandingPage = lazy(() => import("./pages/Landing"));
@@ -30,6 +30,26 @@ export function App() {
   );
 }
 
-const appElement = document.getElementById("app");
-if (!appElement) throw new Error("App element not found");
-render(<App />, appElement);
+function isPrerenderedRoute(pathname: string) {
+  return (
+    pathname === "/" ||
+    pathname === "/login" ||
+    pathname === "/register" ||
+    pathname.startsWith("/docs")
+  );
+}
+
+if (typeof window !== "undefined") {
+  const appElement = document.getElementById("app");
+  if (!appElement) throw new Error("App element not found");
+  if (isPrerenderedRoute(location.pathname)) {
+    hydrate(<App />, appElement);
+  } else {
+    appElement.innerHTML = "";
+    render(<App />, appElement);
+  }
+}
+
+export async function prerender(data: Record<string, unknown>) {
+  return await ssr(<App {...data} />);
+}
