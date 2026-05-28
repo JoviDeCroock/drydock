@@ -1,5 +1,6 @@
 import type { AppDb } from "../db";
 import { getNpmConnection, markNpmConnectionUsed } from "../db";
+import { errorMessage } from "./errors";
 
 const DEFAULT_REGISTRY = "https://registry.npmjs.org";
 
@@ -228,7 +229,7 @@ async function validateRegistryAuth(registry: string, token: string) {
   } catch (err) {
     return {
       registryAuth: false,
-      detail: err instanceof Error ? err.message : String(err),
+      detail: errorMessage(err),
     };
   }
 }
@@ -247,7 +248,7 @@ async function validateStagedListAccess(registry: string, token: string) {
   } catch (err) {
     return {
       stagedListAccess: false,
-      stagedListDetail: err instanceof Error ? err.message : String(err),
+      stagedListDetail: errorMessage(err),
     };
   }
 }
@@ -269,7 +270,7 @@ async function validateStagedViewAccess(registry: string, token: string, stageId
     return {
       stageId,
       stagedViewAccess: false,
-      stagedViewDetail: err instanceof Error ? err.message : String(err),
+      stagedViewDetail: errorMessage(err),
     };
   }
 }
@@ -294,7 +295,7 @@ async function validateStagedTarballAccess(registry: string, token: string, stag
     return {
       stageId,
       stagedTarballAccess: false,
-      stagedTarballDetail: err instanceof Error ? err.message : String(err),
+      stagedTarballDetail: errorMessage(err),
     };
   }
 }

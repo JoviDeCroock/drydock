@@ -8,6 +8,7 @@ import {
 } from "./ai-review-contract";
 import { buildAiReviewPayload, createAiReviewTools } from "./ai-review-evidence";
 import type { AiReview, AiReviewStatus, SelectiveAiReviewOptions } from "./ai-review-types";
+import { errorMessage } from "./errors";
 
 export type {
   AiFinding,
@@ -81,7 +82,7 @@ export async function analyzeWithAi(
     return fallbackReview(
       model,
       "unavailable",
-      `Assistant review didn't run: ${err instanceof Error ? err.message : String(err)}`,
+      `Assistant review didn't run: ${errorMessage(err)}`,
     );
   }
 }

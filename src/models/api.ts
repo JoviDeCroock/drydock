@@ -34,3 +34,28 @@ export async function apiFetch<T>(input: RequestInfo | URL, init?: RequestInit):
   }
   return data as T;
 }
+
+export function apiJson<T>(
+  input: RequestInfo | URL,
+  body: unknown,
+  init: RequestInit = {},
+): Promise<T> {
+  return apiFetch<T>(input, {
+    method: init.method ?? "POST",
+    ...init,
+    headers: {
+      "content-type": "application/json",
+      ...(init.headers as Record<string, string> | undefined),
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+export function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object") {
+    const message = (err as Record<string, unknown>).message;
+    if (typeof message === "string") return message;
+  }
+  return String(err);
+}
