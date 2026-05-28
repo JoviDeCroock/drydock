@@ -184,10 +184,45 @@ The private key may be GitHub's downloaded PKCS#1 PEM or a converted PKCS#8 PEM.
 `GITHUB_APP_STATE_SECRET` is optional and falls back to `BETTER_AUTH_SECRET` for
 HMAC-signing the OAuth state.
 
+### GitHub App setup URL
+
+The "Setup URL" configured on the GitHub App (under "Identifying and authorizing
+users") must point at the Drydock callback page:
+
+```
+https://<your-drydock-host>/dashboard/settings/github-app/callback
+```
+
+The setup URL must be marked **active** and "Request user authorization (OAuth)
+during installation" must be checked so GitHub appends `code`, `installation_id`,
+`setup_action`, and `state` to the redirect. The callback page reads those four
+parameters and POSTs them to `/api/v1/github-app/install/callback`.
+
+### Front-end
+
+The install flow lives on `/dashboard/settings` (gated behind
+`import.meta.env.DEV` until the workflow-gate path is ready for users):
+
+1. The page calls `GET /api/v1/github-app/config`; when `configured === false`
+   it renders a "not configured yet — ask the operator" notice instead of the
+   install button.
+2. The "Install GitHub App" button calls `POST /api/v1/github-app/install` and
+   navigates to the returned `installUrl`.
+3. After install, GitHub redirects back to
+   `/dashboard/settings/github-app/callback`, which POSTs `state`, `code`,
+   `installationId`, and `setupAction` to
+   `POST /api/v1/github-app/install/callback`. Success refreshes the
+   installation list; typed validation codes
+   (`installation_missing`, `installation_inactive`, `installation_not_active`,
+   etc.) are surfaced inline.
+   If the Drydock session expired while the user was on GitHub, the callback
+   sends them through `/login?returnTo=...`; login only honors same-origin
+   `/dashboard...` return paths before resuming the callback.
+4. Linked installations render with `active` / `suspended` / `uninstalled`
+   status badges.
+
 ## Remaining work
 
-- Add the front-end OAuth flow (install button + callback page) that consumes
-  the existing `/install` and `/install/callback` routes.
 - Replace the free-text `repositoryFullName` field with a dropdown of repos the
   installation can see (`GET /installation/repositories`).
 - Handle `deployment_protection_rule` webhooks (uses `resolveDeploymentProtectionTarget`).
