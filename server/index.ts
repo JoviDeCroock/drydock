@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import {
-  backfillScanListSummaries,
   createDb,
   enforceRateLimit,
   getOrganizationOwnerUserId,
@@ -278,29 +277,10 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
   }
 }
 
-async function runScanListSummariesBackfill(env: Cloudflare.Env) {
-  const db = createDb(env.DB);
-  try {
-    const result = await backfillScanListSummaries(db);
-    if (result.scanned > 0) {
-      emitOperationalEvent("info", "scan.list_summaries.backfilled", {
-        scanned: result.scanned,
-        updated: result.updated,
-      });
-    }
-  } catch (err) {
-    emitOperationalEvent("error", "scan.list_summaries.backfill_failed", {
-      error:
-        err instanceof Error ? { name: err.name, message: err.message } : { message: String(err) },
-    });
-  }
-}
-
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
     await runStagedPublishesDiscoveryCron(env, ctx);
-    await runScanListSummariesBackfill(env);
   },
   async queue(batch: MessageBatch<ScanQueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
     for (const message of batch.messages) {
