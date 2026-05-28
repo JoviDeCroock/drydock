@@ -55,14 +55,12 @@ npmConnectionRoutes.post("/", async (c) => {
     const db = createDb(c.env.DB);
     const session = c.get("authSession");
     const organizationId = await requireActiveOrganization(c, db);
-    const [, encrypted] = await Promise.all([
-      enforceRateLimit(db, {
-        key: `npm-connection:save:${organizationId}`,
-        limit: 20,
-        windowMs: 60 * 60 * 1000,
-      }),
-      encryptNpmToken(c.env, token),
-    ]);
+    await enforceRateLimit(db, {
+      key: `npm-connection:save:${organizationId}`,
+      limit: 20,
+      windowMs: 60 * 60 * 1000,
+    });
+    const encrypted = await encryptNpmToken(c.env, token);
     const [connection] = await Promise.all([
       upsertNpmConnection(db, {
         organizationId,

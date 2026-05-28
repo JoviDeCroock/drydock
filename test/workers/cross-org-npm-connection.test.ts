@@ -27,6 +27,18 @@ async function seedUser(): Promise<SeededUser> {
   return { userId, organizationId };
 }
 
+async function seedRateLimit(keyPrefix: string, count: number, windowMs: number) {
+  const db = createDb(env.DB);
+  const nowMs = Date.now();
+  const bucket = Math.floor(nowMs / windowMs);
+  await db.insert(schema.rateLimits).values({
+    key: `${keyPrefix}:${bucket}`,
+    count,
+    expiresAt: new Date((bucket + 1) * windowMs),
+    updatedAt: new Date(nowMs),
+  });
+}
+
 function buildTestApp(session: { userId: string }) {
   const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
   app.use("*", async (c, next) => {
@@ -106,6 +118,19 @@ describe("npm-connection routes enforce organization boundaries", () => {
     expect(intruderConnection?.label).toBe("intruder registry");
     expect(intruderConnection?.tokenLast4).toBe(INTRUDER_TOKEN.slice(-4));
     expect(ownerConnection?.tokenCiphertext).not.toBe(intruderConnection?.tokenCiphertext);
+  });
+
+  test("POST /npm-connection enforces the save rate limit before storing credentials", async () => {
+    const owner = await seedUser();
+    await seedRateLimit(`npm-connection:save:${owner.organizationId}`, 20, 60 * 60 * 1000);
+
+    const res = await call(buildTestApp(owner), "POST", "/api/v1/npm-connection", {
+      token: OWNER_TOKEN,
+      label: "blocked registry",
+    });
+
+    expect(res.status).toBe(429);
+    expect(await getNpmConnection(createDb(env.DB), owner.organizationId)).toBeNull();
   });
 
   test("POST /npm-connection accepts custom registries for organization connections", async () => {

@@ -224,14 +224,12 @@ scansRoutes.get("/:id/versions", async (c) => {
 
   let connection: Awaited<ReturnType<typeof getOrganizationNpmToken>> = null;
   try {
-    [, connection] = await Promise.all([
-      enforceRateLimit(db, {
-        key: `compare-versions:${session.userId}`,
-        limit: 60,
-        windowMs: 60 * 1000,
-      }),
-      getOrganizationNpmToken(db, c.env, organizationId).catch(() => null),
-    ]);
+    await enforceRateLimit(db, {
+      key: `compare-versions:${session.userId}`,
+      limit: 60,
+      windowMs: 60 * 1000,
+    });
+    connection = await getOrganizationNpmToken(db, c.env, organizationId).catch(() => null);
   } catch (err) {
     if (err instanceof RateLimitError) {
       return c.json(
@@ -341,14 +339,12 @@ scansRoutes.get("/:id/compare", async (c) => {
 
   let connection: Awaited<ReturnType<typeof getOrganizationNpmToken>> = null;
   try {
-    [, connection] = await Promise.all([
-      enforceRateLimit(db, {
-        key: `compare-fetch:${session.userId}`,
-        limit: 30,
-        windowMs: 60 * 1000,
-      }),
-      getOrganizationNpmToken(db, c.env, ctx.organizationId).catch(() => null),
-    ]);
+    await enforceRateLimit(db, {
+      key: `compare-fetch:${session.userId}`,
+      limit: 30,
+      windowMs: 60 * 1000,
+    });
+    connection = await getOrganizationNpmToken(db, c.env, ctx.organizationId).catch(() => null);
   } catch (err) {
     if (err instanceof RateLimitError) {
       return c.json(
@@ -437,14 +433,12 @@ scansRoutes.get("/:id/compare/file", async (c) => {
 
   let connection: Awaited<ReturnType<typeof getOrganizationNpmToken>> = null;
   try {
-    [, connection] = await Promise.all([
-      enforceRateLimit(db, {
-        key: `compare-file:${session.userId}`,
-        limit: 240,
-        windowMs: 60 * 1000,
-      }),
-      getOrganizationNpmToken(db, c.env, ctx.organizationId).catch(() => null),
-    ]);
+    await enforceRateLimit(db, {
+      key: `compare-file:${session.userId}`,
+      limit: 240,
+      windowMs: 60 * 1000,
+    });
+    connection = await getOrganizationNpmToken(db, c.env, ctx.organizationId).catch(() => null);
   } catch (err) {
     if (err instanceof RateLimitError) {
       return c.json(

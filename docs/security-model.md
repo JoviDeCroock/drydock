@@ -53,6 +53,7 @@ Recommended customer guidance:
 
 Implementation requirements:
 
+- Enforce credential-route and compare-route rate limits before starting token encryption, decryption, fingerprinting, registry fetches, or token last-used writes. Do not place protected credential work in the same `Promise.all` as `enforceRateLimit()`, because rejected rate-limit checks do not cancel sibling promises.
 - Store token material encrypted at rest.
 - Show only a label/fingerprint/last-used timestamp after storage.
 - Validate credentials before use.

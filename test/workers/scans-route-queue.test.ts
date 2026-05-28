@@ -34,6 +34,39 @@ async function seedUser(): Promise<SeededUser> {
   return { userId, organizationId };
 }
 
+async function seedRateLimit(keyPrefix: string, count: number, windowMs: number) {
+  const db = createDb(env.DB);
+  const nowMs = Date.now();
+  const bucket = Math.floor(nowMs / windowMs);
+  await db.insert(schema.rateLimits).values({
+    key: `${keyPrefix}:${bucket}`,
+    count,
+    expiresAt: new Date((bucket + 1) * windowMs),
+    updatedAt: new Date(nowMs),
+  });
+}
+
+async function seedCompletedPackageScan(owner: SeededUser) {
+  const db = createDb(env.DB);
+  const now = new Date();
+  const scanId = `scan_${crypto.randomUUID()}`;
+  await db.insert(schema.scans).values({
+    id: scanId,
+    stageId: "stage-route-versions-000001",
+    organizationId: owner.organizationId,
+    ownerUserId: owner.userId,
+    packageName: "@drydock/test-package",
+    stagedVersion: "2.0.0",
+    previousVersion: "1.0.0",
+    risk: "low",
+    status: "complete",
+    source: "manual",
+    createdAt: now,
+    updatedAt: now,
+  });
+  return scanId;
+}
+
 function buildTestApp(session: { userId: string }) {
   const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
   app.use("*", async (c, next) => {
@@ -42,6 +75,23 @@ function buildTestApp(session: { userId: string }) {
   });
   app.route("/api/v1/scans", scansRoutes);
   return app;
+}
+
+async function call(
+  app: Hono<{ Bindings: Bindings; Variables: Variables }>,
+  method: string,
+  path: string,
+  body?: unknown,
+) {
+  const ctx = createExecutionContext();
+  const init: RequestInit = { method };
+  if (body !== undefined) {
+    init.body = JSON.stringify(body);
+    init.headers = { "content-type": "application/json" };
+  }
+  const res = await app.fetch(new Request(`http://test.local${path}`, init), env, ctx);
+  await waitOnExecutionContext(ctx);
+  return res;
 }
 
 async function connectValidNpmToken(owner: SeededUser, token: string) {
@@ -104,6 +154,23 @@ describe("scans route queue behavior", () => {
       .from(schema.scanEvents)
       .where(eq(schema.scanEvents.scanId, body.scan.id));
     expect(events.map((event) => event.type)).toContain("scan.queued");
+  });
+
+  test("GET /scans/:id/versions enforces rate limit before marking npm token used", async () => {
+    const owner = await seedUser();
+    await connectValidNpmToken(owner, "npm_versions_secret_0123456789");
+    const scanId = await seedCompletedPackageScan(owner);
+    await seedRateLimit(`compare-versions:${owner.userId}`, 60, 60 * 1000);
+
+    const res = await call(buildTestApp(owner), "GET", `/api/v1/scans/${scanId}/versions`);
+
+    expect(res.status).toBe(429);
+    const [connection] = await createDb(env.DB)
+      .select({ lastUsedAt: schema.npmConnections.lastUsedAt })
+      .from(schema.npmConnections)
+      .where(eq(schema.npmConnections.organizationId, owner.organizationId))
+      .limit(1);
+    expect(connection?.lastUsedAt).toBeNull();
   });
 
   test("POST /scans rejects client-controlled scan limits before queueing", async () => {
