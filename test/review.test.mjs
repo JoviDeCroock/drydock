@@ -387,6 +387,83 @@ describe("review", () => {
     );
   });
 
+  test("marks implicit node-gyp as release delta when package.json newly enables it", () => {
+    const previous = [
+      {
+        path: "package.json",
+        size: 70,
+        sha256: "pkg-old",
+        flags: [],
+        textSample: JSON.stringify({ name: "pkg", version: "1.0.0", gypfile: false }),
+      },
+      { path: "binding.gyp", size: 2, sha256: "gyp", flags: [], textSample: "{}" },
+    ];
+    const staged = [
+      {
+        path: "package.json",
+        size: 55,
+        sha256: "pkg-new",
+        flags: [],
+        textSample: JSON.stringify({ name: "pkg", version: "1.0.1" }),
+      },
+      { path: "binding.gyp", size: 2, sha256: "gyp", flags: [], textSample: "{}" },
+    ];
+    const diff = createPackageDiff(previous, staged);
+    const findings = deterministicFindings(staged, diff);
+    const annotated = annotateFindingsWithDiffStatus(findings, diff, {
+      previousFiles: previous,
+      stagedFiles: staged,
+    });
+
+    expect(diff.find((entry) => entry.path === "binding.gyp")?.status).toBe("unchanged");
+    expect(annotated).toContainEqual(
+      expect.objectContaining({
+        file: "binding.gyp",
+        ruleId: "install-script.implicit-node-gyp",
+        diffStatus: "unchanged",
+        releaseDelta: true,
+      }),
+    );
+    expect(computeRisk(annotated.filter((finding) => finding.releaseDelta))).toBe("high");
+  });
+
+  test("keeps pre-existing implicit node-gyp findings contextual when only package metadata changes", () => {
+    const previous = [
+      {
+        path: "package.json",
+        size: 55,
+        sha256: "pkg-old",
+        flags: [],
+        textSample: JSON.stringify({ name: "pkg", version: "1.0.0" }),
+      },
+      { path: "binding.gyp", size: 2, sha256: "gyp", flags: [], textSample: "{}" },
+    ];
+    const staged = [
+      {
+        path: "package.json",
+        size: 55,
+        sha256: "pkg-new",
+        flags: [],
+        textSample: JSON.stringify({ name: "pkg", version: "1.0.1" }),
+      },
+      { path: "binding.gyp", size: 2, sha256: "gyp", flags: [], textSample: "{}" },
+    ];
+    const diff = createPackageDiff(previous, staged);
+    const findings = deterministicFindings(staged, diff);
+    const annotated = annotateFindingsWithDiffStatus(findings, diff, {
+      previousFiles: previous,
+      stagedFiles: staged,
+    });
+
+    expect(annotated).toContainEqual(
+      expect.objectContaining({
+        ruleId: "install-script.implicit-node-gyp",
+        diffStatus: "unchanged",
+        releaseDelta: false,
+      }),
+    );
+  });
+
   test("does not flag implicit node-gyp when npm suppressors are present", () => {
     const withPreinstall = [
       {

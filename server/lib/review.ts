@@ -558,6 +558,7 @@ export function annotateFindingsWithDiffStatus<
       diffStatus,
       releaseDelta:
         isReleaseScopedFinding(finding) ||
+        isNewlyEnabledImplicitNodeGypFinding(finding, previousByPath, stagedByPath) ||
         isFindingOnReleaseDelta(
           finding,
           diffStatus,
@@ -578,6 +579,27 @@ function isReleaseScopedFinding(finding: { ruleId?: string | null }): boolean {
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffLargeNewFile ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.tarSuspiciousEntry,
   );
+}
+
+function isNewlyEnabledImplicitNodeGypFinding(
+  finding: { ruleId?: string | null },
+  previousByPath: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
+  stagedByPath: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
+): boolean {
+  if (finding.ruleId !== DETERMINISTIC_RULE_IDS.installScriptImplicitNodeGyp) return false;
+
+  const stagedPackageJson = parsePackageJsonFile(stagedByPath.get("package.json"));
+  if (!hasImplicitNodeGypInstall([...stagedByPath.values()], stagedPackageJson)) return false;
+
+  const previousPackageJson = parsePackageJsonFile(previousByPath.get("package.json"));
+  return !hasImplicitNodeGypInstall([...previousByPath.values()], previousPackageJson);
+}
+
+function parsePackageJsonFile(
+  file: Pick<FileRecord, "textSample"> | undefined,
+): PackageJsonSummary | null {
+  if (!file?.textSample) return null;
+  return safeJson(file.textSample) as PackageJsonSummary | null;
 }
 
 function isFindingOnReleaseDelta(
