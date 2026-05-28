@@ -563,7 +563,7 @@ describe("scan pipeline baseline selection", () => {
     expect(contextDigest).not.toBe(releaseDigest);
   });
 
-  test("persists release risk from the package-to-package delta while keeping artifact context", async () => {
+  test("persists artifact risk as the primary scan risk while keeping release context", async () => {
     stagedMock.fetchStagedPublishDetails.mockResolvedValue({
       id: "stage-context123",
       packageName: "pkg",
@@ -633,7 +633,7 @@ describe("scan pipeline baseline selection", () => {
 
     const persistedInput = dbMock.persistScan.mock.calls[0]?.[1];
 
-    expect(result.risk).toBe("low");
+    expect(result.risk).toBe("high");
     expect(result.riskSummary).toMatchObject({
       artifactRisk: "high",
       releaseRisk: "low",
@@ -649,7 +649,7 @@ describe("scan pipeline baseline selection", () => {
       }),
     );
     expect(persistedInput).toMatchObject({
-      risk: "low",
+      risk: "high",
       summary: {
         risk: {
           artifactRisk: "high",

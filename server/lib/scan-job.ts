@@ -107,7 +107,8 @@ export async function executeScanJob(
       attempt,
       durationMs: durationMsSince(startedAtMs),
       packageName: result.package?.name ?? null,
-      releaseRisk: result.risk,
+      releaseRisk: result.riskSummary.releaseRisk,
+      artifactRisk: result.risk,
     });
     if (message.source === "auto_discovery") {
       executionCtx.waitUntil(

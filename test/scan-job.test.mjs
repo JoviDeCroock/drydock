@@ -165,7 +165,12 @@ describe("executeScanJob idempotency", () => {
       validationStatus: "valid",
     });
     npmConnectionMock.decryptNpmToken.mockResolvedValue("npm_token");
-    pipelineMock.runScanPipeline.mockResolvedValue({ id: message.scanId });
+    pipelineMock.runScanPipeline.mockResolvedValue({
+      id: message.scanId,
+      risk: "low",
+      riskSummary: { releaseRisk: "low" },
+      package: { name: null },
+    });
   });
 
   afterEach(() => {
@@ -203,7 +208,8 @@ describe("executeScanJob idempotency", () => {
     dbMock.claimScanForRun.mockResolvedValue(true);
     pipelineMock.runScanPipeline.mockResolvedValue({
       id: message.scanId,
-      risk: "low",
+      risk: "high",
+      riskSummary: { releaseRisk: "low" },
       package: { name: "@scope/pkg" },
     });
 
@@ -220,6 +226,7 @@ describe("executeScanJob idempotency", () => {
         attempt: 1,
         packageName: "@scope/pkg",
         releaseRisk: "low",
+        artifactRisk: "high",
         durationMs: expect.any(Number),
       }),
     );

@@ -79,7 +79,7 @@ Persist by default:
 - package.json summary and diff;
 - deterministic findings;
 - AI findings (paused — persisted as `null` while AI review is disabled);
-- risk summary split into release, artifact, and context risk so unchanged package hazards do not dominate the package-to-package release verdict;
+- risk summary split into release, artifact, and context risk so `scans.risk` reflects the full artifact while unchanged hazards remain separated from the package-to-package release verdict;
 - safety posture;
 - audit events;
 - future canonical report JSON.
