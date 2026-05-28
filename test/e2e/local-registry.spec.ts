@@ -17,6 +17,7 @@ interface RegistryScenario {
   packageName: string;
   expected: {
     releaseRisk?: string;
+    artifactRisk?: string;
     packageName?: string | null;
     stagedVersion?: string;
     previousVersion?: string | null;
@@ -237,7 +238,10 @@ function isNavigationContextError(err: unknown) {
 function assertScanMatchesScenario(result: any, scenario: RegistryScenario) {
   const expected = scenario.expected;
   expect(result.stageId, scenario.name).toBe(scenario.stageId);
-  expect(result.risk, scenario.name).toBe(expected.releaseRisk);
+  expect(result.risk, scenario.name).toBe(expected.artifactRisk ?? expected.releaseRisk);
+  expect(result.riskSummary?.artifactRisk, scenario.name).toBe(
+    expected.artifactRisk ?? expected.releaseRisk,
+  );
   expect(result.riskSummary?.releaseRisk, scenario.name).toBe(expected.releaseRisk);
   expect(result.package?.name, scenario.name).toBe(
     "packageName" in expected ? expected.packageName : scenario.packageName,

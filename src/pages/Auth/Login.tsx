@@ -2,6 +2,7 @@ import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
 import { sessionModel } from "../../models/auth";
+import { errorMessage } from "../../models/api";
 import { Alert, Button, Card, Eyebrow, Field, Input, PageShell, Muted } from "../../components";
 
 export default function LoginPage() {
@@ -32,7 +33,7 @@ export default function LoginPage() {
       await sessionModel.signIn(submittedEmail, submittedPassword);
       location.route("/dashboard", true);
     } catch (err) {
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = errorMessage(err);
     } finally {
       loading.value = false;
     }

@@ -59,12 +59,10 @@ However, report payloads, report presentation, and AI payload construction shoul
 
 New scan reports persist this split as a risk breakdown in `summary_json.risk`:
 
-- `releaseRisk` is the primary scan risk and is computed from findings annotated as part of the package-to-package delta, plus any complete AI review result when AI review is enabled;
-- `artifactRisk` is computed from the full staged artifact findings, plus any complete AI review result when AI review is enabled, and remains visible as package context;
+- `releaseRisk` is computed from findings annotated as part of the package-to-package delta, plus any complete AI review result when AI review is enabled, and is the focused release-delta verdict;
+- `artifactRisk` is computed from the full staged artifact findings, plus any complete AI review result when AI review is enabled, and is the primary scan risk stored in `scans.risk` so deterministic evidence cannot be hidden by context classification;
 - `contextRisk` covers findings that were not part of the release delta.
 
-The `scans.risk` column now stores `releaseRisk` for new reports. Older reports without `summary_json.risk` are interpreted with the previous behavior, where `scans.risk` is the artifact risk and release/context risk is derived from persisted finding annotations.
+The `scans.risk` column stores `artifactRisk` for new reports. Older reports without `summary_json.risk` are interpreted the same way, and release/context risk is derived from persisted finding annotations.
 
-Implicit behavior introduced by manifest changes is release evidence even when the finding points at unchanged supporting files. For example, if a previous package had a root `binding.gyp` but suppressed npm's implicit `node-gyp rebuild` install hook with `gypfile=false`, and the staged package only removes that suppressor from `package.json`, the high-severity implicit node-gyp finding remains attached to `binding.gyp` for evidence but is still marked as `releaseDelta=true`. If the previous package already had the implicit hook and only unrelated metadata changes, the finding remains contextual.
-
-This avoids hiding persistent risk while keeping the staged-publish review centered on the actual release delta.
+This keeps the staged-publish review centered on the actual release delta without allowing contextual high-risk deterministic evidence to downgrade the primary scan verdict.

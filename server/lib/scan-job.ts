@@ -11,6 +11,7 @@ import {
   type WorkspaceSession,
 } from "../db";
 import { npmAdapter } from "./adapters/npm";
+import { errorMessage } from "./errors";
 import { notifyScanCompletion } from "./notify";
 import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
 import { runScanPipeline } from "./scan-pipeline";
@@ -107,7 +108,8 @@ export async function executeScanJob(
       attempt,
       durationMs: durationMsSince(startedAtMs),
       packageName: result.package?.name ?? null,
-      releaseRisk: result.risk,
+      releaseRisk: result.riskSummary.releaseRisk,
+      artifactRisk: result.risk,
     });
     if (message.source === "auto_discovery") {
       executionCtx.waitUntil(
@@ -240,15 +242,6 @@ export function classifyScanError(err: unknown): SafeScanError {
     message: "The scan failed before a report could be generated.",
     retryable: true,
   };
-}
-
-function errorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (err && typeof err === "object") {
-    const message = (err as Record<string, unknown>).message;
-    if (typeof message === "string") return message;
-  }
-  return String(err);
 }
 
 function parseSandboxDetail(detail: string) {

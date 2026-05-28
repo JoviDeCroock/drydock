@@ -63,6 +63,8 @@ The sandbox must stay small and boring. Do not add package execution, dependency
 
 The dynamic Worker's archive parser is defined in `server/lib/tar-parser.js` and concatenated into the sandbox module by `server/lib/sandbox.ts` via `Function.prototype.toString()`. It covers gzipped tar archives for npm/sdist flows and ZIP archives for PyPI wheels. This keeps the parser code path the one exercised by the unit tests in `test/tar-parser.test.mjs` and `test/zip-parser.test.mjs` instead of sibling string copies that could drift.
 
+`readTar` returns `{ files, suspicious }`. The `suspicious` list carries `tar.suspicious-entry` evidence for non-regular entries (symlinks, hardlinks, devices, FIFOs, reserved typeflags; explicit directories are recorded as informational provenance), duplicate normalized archive paths (parsed with last-write-wins semantics so deterministic checks inspect the bytes consumers are likely to receive), and paths containing zero-width or visually-confusable characters (e.g., a U+200B between `binding` and `.gyp` that could bypass `isRootGypPath` while npm's own extract canonicalizes it on the consumer side). Confusable paths are reported with their canonicalized form as evidence, but file records keep the original normalized archive path so a confusable filename and its ASCII twin remain separate records and both bodies are scanned. Confusable paths are still reported when canonicalization turns them into unsafe traversal paths. Local PAX path overrides are applied to the next entry, while global PAX path metadata is ignored so scanner paths match tar extraction. `isRootGypPath` and `canonicalizePath` strip those characters and fold confusable separators (U+2044, U+2215, U+FF0F) and dots (U+FF0E, U+2024) to their ASCII forms before matching, so the implicit `node-gyp rebuild` rule cannot be dodged with confusables. Ordinary Unicode composition, such as decomposed accents in legitimate filenames, is left intact and is not treated as confusable evidence. Suspicious entries are capped at the same bound as regular files plus one omission marker, so a crafted archive cannot fan out into unbounded persisted findings. Suspicious entries surface as deterministic findings via `tarSuspiciousEntryFindings` in the npm adapter.
+
 ### NpmStageGateway
 
 `NpmStageGateway` is the only component allowed to attach npm authorization on outbound requests made by the dynamic sandbox. It follows Cloudflare's [outbound Worker pattern for sandbox auth](https://blog.cloudflare.com/sandbox-auth/): the sandbox makes a normal fetch, while a trusted WorkerEntrypoint receives props from the parent Worker and conditionally injects credentials without exposing them to the sandbox.
@@ -106,7 +108,7 @@ Current high-level flow:
    - package.json (manifest) diff;
    - adapter findings via `adapter.runFindings` — for npm: deterministic findings, package.json diff findings, and staged-metadata-mismatch findings;
    - release/context annotations for the deterministic findings, using package-to-package diff status and changed-line checks where text samples are available;
-   - a risk breakdown where `releaseRisk` is the primary saved scan risk, while `artifactRisk` and `contextRisk` keep full-artifact safety context visible;
+   - a risk breakdown where `artifactRisk` is the primary saved scan risk, while `releaseRisk` and `contextRisk` keep package-to-package release context visible;
    - redacted package/file records.
 10. The pipeline persists the scan, records audit events, and returns/report renders the result. (AI review is gated by the Cloudflare Flagship `ai-review` flag — see "Workers AI" below.)
 
@@ -223,7 +225,7 @@ Implemented foundation:
 
 - newly completed scans store report metadata inside `summary_json.report`;
 - `digest` is SHA-256 over stable canonical report JSON built from redacted scan evidence, including the deterministic rules version and release/context finding annotations so digests change when the ruleset or visible risk interpretation changes;
-- newly completed scans store `summary_json.risk` with release, artifact, and context risk; `scans.risk` stores the primary release risk for new reports, while old reports without the breakdown are treated as legacy artifact-risk rows;
+- newly completed scans store `summary_json.risk` with release, artifact, and context risk; `scans.risk` stores the primary artifact risk for new reports, while `summary_json.risk.releaseRisk` carries the package-to-package release verdict;
 - each deterministic finding carries `ruleId` and `ruleVersion` (see `DETERMINISTIC_RULES_VERSION` in `server/lib/review.ts`), persisted on `scan_findings.rule_id` / `rule_version`;
 - persisted scan detail renders report version, digest, rules version, package diff, and safety posture (AI review is disabled — see the Workers AI section).
 
@@ -237,6 +239,8 @@ Prepare next for:
 Do not expose public signed report generation until the report payload is stable and access controls are ready.
 
 ## API direction
+
+Stage ID validation is centralized in `server/lib/stage-id.ts` and reused by scan routes, staged-publish helpers, npm-token validation, and the Dynamic Worker source renderer. Keep the accepted shape in that module so route and sandbox behavior cannot drift.
 
 Current API:
 

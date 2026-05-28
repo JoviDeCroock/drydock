@@ -6,6 +6,7 @@ import type {
   PackageJsonDiff,
   PackageJsonSummary,
 } from "../review";
+import type { TarSuspiciousEntry } from "../tar-parser.js";
 
 export interface AdapterContext {
   env: Cloudflare.Env;
@@ -27,6 +28,7 @@ export interface AdapterConnectionRef {
 export interface AcquiredArtifact {
   files: FileRecord[];
   manifest: PackageJsonSummary | null;
+  suspiciousTarEntries?: TarSuspiciousEntry[];
 }
 
 // Adapter-shaped staged metadata gathered alongside the staged artifact.

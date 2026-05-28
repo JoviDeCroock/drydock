@@ -1,3 +1,5 @@
+import { errorMessage } from "./errors";
+
 export interface SendEmailInput {
   to: string;
   subject: string;
@@ -45,7 +47,7 @@ export async function sendNotificationEmail(
     await binding.send(new EmailMessage(fromAddress, recipient, raw));
     return { ok: true };
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
+    const reason = errorMessage(err);
     return { ok: false, reason };
   }
 }
