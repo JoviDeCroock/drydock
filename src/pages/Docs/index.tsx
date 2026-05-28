@@ -44,6 +44,33 @@ export default function DocsPage() {
           </p>
         </header>
 
+        <Card class="p-5 flex flex-col gap-3">
+          <h3 class="text-base font-medium tracking-[-0.005em] m-0">Set it up</h3>
+          <ol class="list-decimal pl-5 m-0 flex flex-col gap-1.5 text-[13px] text-ink-muted leading-[1.55] marker:text-ink-subtle marker:font-mono">
+            <li>
+              Sign in and switch the org picker to the organization that publishes the package.
+            </li>
+            <li>
+              Open <Code>Organization settings → npm access</Code> and paste an automation or
+              granular npm token that can read the org's packages and list staged publishes.
+            </li>
+            <li>
+              Save — Drydock encrypts the token, hashes a fingerprint, and runs the registry auth
+              check. Add a real <Code>stageId</Code> if you want to prove staged-tarball access on
+              the same screen.
+            </li>
+            <li>
+              From here, paste a <Code>stageId</Code> on the dashboard to scan a release on demand,
+              or let the 15-minute auto-discovery cron pick up new staged publishes automatically.
+            </li>
+          </ol>
+          <div class="flex flex-wrap gap-2 pt-1">
+            <LinkButton href="/dashboard/settings" size="sm">
+              Open Organization settings
+            </LinkButton>
+          </div>
+        </Card>
+
         <Card class="p-5 flex flex-col gap-2">
           <h3 class="text-base font-medium tracking-[-0.005em] m-0">The review lifecycle</h3>
           <ol class="list-decimal pl-5 m-0 flex flex-col gap-1.5 text-[13px] text-ink-muted leading-[1.55] marker:text-ink-subtle marker:font-mono">
@@ -126,6 +153,41 @@ export default function DocsPage() {
             PyPI Trusted Publishing via OIDC — does the publish.
           </p>
         </header>
+
+        <Card class="p-5 flex flex-col gap-3">
+          <h3 class="text-base font-medium tracking-[-0.005em] m-0">Set it up</h3>
+          <ol class="list-decimal pl-5 m-0 flex flex-col gap-1.5 text-[13px] text-ink-muted leading-[1.55] marker:text-ink-subtle marker:font-mono">
+            <li>
+              Sign in and switch the org picker to the organization that owns the PyPI project.
+            </li>
+            <li>
+              Open <Code>Organization settings → GitHub App</Code> and install the Drydock GitHub
+              App on the GitHub account that hosts your repository. You'll be redirected to GitHub
+              to pick the account and grant access to the repo, then back to Drydock.
+            </li>
+            <li>
+              In the repository, create a GitHub Environment (e.g. <Code>pypi</Code>) and configure
+              it as a PyPI Trusted Publisher. Drydock attaches its deployment-protection rule to
+              that same environment.
+            </li>
+            <li>
+              Map the repository + environment + PyPI package on the same settings page so the
+              webhook can resolve a delivery to your organization. The mapping is unique per{" "}
+              <Code>(organization, repository, environment)</Code>.
+            </li>
+            <li>
+              Add the build and publish workflow below. The build job writes{" "}
+              <Code>drydock-manifest.json</Code>; the publish job runs in{" "}
+              <Code>environment: pypi</Code> and is blocked until Drydock posts an approval back to
+              GitHub.
+            </li>
+          </ol>
+          <div class="flex flex-wrap gap-2 pt-1">
+            <LinkButton href="/dashboard/settings" size="sm">
+              Open Organization settings
+            </LinkButton>
+          </div>
+        </Card>
 
         <Card class="p-5 flex flex-col gap-3">
           <h3 class="text-base font-medium tracking-[-0.005em] m-0">
