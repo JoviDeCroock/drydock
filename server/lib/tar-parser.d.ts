@@ -24,11 +24,26 @@ export interface ParsedPackageJson {
   exports?: unknown;
 }
 
+export type TarSuspiciousEntryKind = "non-regular" | "duplicate" | "unicode-confusable";
+
+export interface TarSuspiciousEntry {
+  kind: TarSuspiciousEntryKind;
+  path: string;
+  detail: string;
+}
+
+export interface ReadTarResult {
+  files: ParsedFile[];
+  suspicious: TarSuspiciousEntry[];
+}
+
 export function readString(bytes: Uint8Array, start: number, len: number): string;
 export function decodeText(bytes: Uint8Array): string;
 export function isPlainObject(value: unknown): value is Record<string, unknown>;
 export function normalizeStringRecord(value: unknown): Record<string, string>;
 export function normalizeStringList(value: unknown): string[];
+export function canonicalizePath(path: unknown): string;
+export function hasUnicodeConfusables(path: unknown): boolean;
 export function isRootGypPath(path: unknown): boolean;
 export function hasImplicitNodeGypInstall(
   files: Array<{ path?: unknown }> | unknown,
@@ -38,6 +53,7 @@ export function isSafePaxPath(value: unknown): boolean;
 export function normalizeTarPath(rawPath: string | null | undefined): string | null;
 export function normalizeZipPath(rawPath: string | null | undefined): string | null;
 export function parsePax(body: Uint8Array): Record<string, string>;
+export function describeNonRegularType(type: string): string;
 export function sha256Hex(bytes: Uint8Array): Promise<string>;
 export function summarizeFile(
   path: string,
@@ -49,7 +65,7 @@ export function readTar(
   maxFiles: number,
   maxBytesPerFile: number,
   maxTarBytes: number,
-): Promise<ParsedFile[]>;
+): Promise<ReadTarResult>;
 export function readUint16Le(bytes: Uint8Array, offset: number): number;
 export function readUint32Le(bytes: Uint8Array, offset: number): number;
 export function findZipEndOfCentralDirectory(bytes: Uint8Array): number;

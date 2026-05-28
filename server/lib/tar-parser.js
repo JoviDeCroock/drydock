@@ -14,11 +14,17 @@
 //     cross-function calls resolve by the lexical names below.
 
 /** @typedef {{ path: string, size: number, sha256: string, flags: string[], textSample?: string }} ParsedFile */
+/** @typedef {{ kind: "non-regular"|"duplicate"|"unicode-confusable", path: string, detail: string }} TarSuspiciousEntry */
 
 export function readString(bytes, start, len) {
-  let out = "";
-  for (let i = start; i < start + len && bytes[i]; i++) out += String.fromCharCode(bytes[i]);
-  return out;
+  let end = start;
+  const limit = start + len;
+  while (end < limit && bytes[end]) end++;
+  // POSIX tar fields are NUL-terminated bytes with no declared charset, but
+  // modern tars (including npm pack) put UTF-8 in there. Decoding as UTF-8
+  // is needed so Unicode confusable checks see the actual codepoints rather
+  // than per-byte latin-1 fragments.
+  return new TextDecoder("utf-8", { fatal: false }).decode(bytes.subarray(start, end));
 }
 
 export function decodeText(bytes) {
@@ -47,8 +53,29 @@ export function normalizeStringList(value) {
   return value.filter((item) => typeof item === "string");
 }
 
+// Strip zero-width and bidi/format characters and fold visually-confusable
+// separators back to their ASCII forms before path checks. Without this,
+// paths like `binding​.gyp` (zero-width space) or `binding⁄gyp`
+// (fraction slash) would slip past `isRootGypPath` while npm's own extract
+// may canonicalize the entry, producing a reviewer/consumer mismatch.
+export function canonicalizePath(path) {
+  if (typeof path !== "string") return "";
+  return path
+    .replace(/[\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF\u180E]/g, "")
+    .replace(/[\u2044\u2215\uFF0F]/g, "/")
+    .replace(/[\uFF3C]/g, "\\")
+    .replace(/[\uFF0E\u2024]/g, ".");
+}
+
+export function hasUnicodeConfusables(path) {
+  if (typeof path !== "string" || !path) return false;
+  return canonicalizePath(path) !== path;
+}
+
 export function isRootGypPath(path) {
-  return typeof path === "string" && !path.includes("/") && /\.gyp$/i.test(path);
+  if (typeof path !== "string") return false;
+  const canonical = canonicalizePath(path);
+  return !canonical.includes("/") && /\.gyp$/i.test(canonical);
 }
 
 export function hasImplicitNodeGypInstall(files, packageJson) {
@@ -106,6 +133,30 @@ export function parsePax(body) {
   return out;
 }
 
+// Map typeflag bytes to a short label used in tar.suspicious-entry findings.
+// The standard ustar/POSIX values: 0 regular, 1 hardlink, 2 symlink,
+// 3 char device, 4 block device, 5 directory, 6 fifo, 7 contiguous/reserved.
+export function describeNonRegularType(type) {
+  switch (type) {
+    case "1":
+      return "hardlink";
+    case "2":
+      return "symlink";
+    case "3":
+      return "character-device";
+    case "4":
+      return "block-device";
+    case "5":
+      return "directory";
+    case "6":
+      return "fifo";
+    case "7":
+      return "reserved";
+    default:
+      return "non-regular";
+  }
+}
+
 export async function sha256Hex(bytes) {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -130,8 +181,27 @@ export async function readTar(buffer, maxFiles, maxBytesPerFile, maxTarBytes) {
   const nul = String.fromCharCode(0);
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   const files = [];
+  const suspicious = [];
+  const suspiciousLimit = Math.max(1, Number.isFinite(maxFiles) ? maxFiles : 250);
+  let suspiciousLimitReached = false;
+  const seenPaths = new Map();
   let nextLongName = null;
   let pax = null;
+
+  function addSuspicious(entry) {
+    if (suspicious.length < suspiciousLimit) {
+      suspicious.push(entry);
+      return;
+    }
+    if (!suspiciousLimitReached) {
+      suspiciousLimitReached = true;
+      suspicious.push({
+        kind: "non-regular",
+        path: "<archive>",
+        detail: `suspicious entry limit reached (${suspiciousLimit}); additional entries omitted`,
+      });
+    }
+  }
 
   for (let offset = 0; offset + 512 <= bytes.length; ) {
     const header = bytes.subarray(offset, offset + 512);
@@ -150,10 +220,17 @@ export async function readTar(buffer, maxFiles, maxBytesPerFile, maxTarBytes) {
     const body = bytes.subarray(offset, offset + size);
 
     if (type === "x") {
+      // Local PAX header. Its path attribute applies only to the next entry.
       pax = parsePax(body);
       if (pax && typeof pax.path === "string" && !isSafePaxPath(pax.path)) {
         throw new Error("invalid pax path");
       }
+    } else if (type === "g") {
+      // Global PAX metadata does not override the path of following entries.
+      // Ignoring path here keeps scanner paths aligned with tar extraction.
+      parsePax(body);
+      nextLongName = null;
+      pax = null;
     } else if (type === "L") {
       // readString already stops at the first NUL terminator, so the long-name
       // payload is implicitly trimmed at the NUL boundary.
@@ -161,27 +238,58 @@ export async function readTar(buffer, maxFiles, maxBytesPerFile, maxTarBytes) {
       if (!isSafePaxPath(candidate)) throw new Error("invalid long-name path");
       nextLongName = candidate;
     } else if (type === "0" || type === nul) {
-      const path = normalizeTarPath(
-        (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName,
-      );
+      const rawCandidate =
+        (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName;
+      const canonicalCandidate = canonicalizePath(rawCandidate);
+      const path = normalizeTarPath(rawCandidate);
+      const canonicalPath = normalizeTarPath(canonicalCandidate);
+      if (rawCandidate !== canonicalCandidate) {
+        addSuspicious({
+          kind: "unicode-confusable",
+          path: canonicalPath || path || "<invalid-path>",
+          detail: canonicalPath
+            ? "path contained zero-width or visually-confusable characters"
+            : "path contained zero-width or visually-confusable characters and normalized to an unsafe path",
+        });
+      }
       if (path) {
-        if (files.length >= maxFiles) throw new Error("archive contains too many files");
-        files.push(await summarizeFile(path, body, maxBytesPerFile));
+        if (seenPaths.has(path)) {
+          // Match last-write-wins extraction so downstream checks inspect the
+          // bytes consumers are likely to receive, while still surfacing the duplicate.
+          addSuspicious({
+            kind: "duplicate",
+            path,
+            detail: "duplicate path; later entry replaced earlier entry",
+          });
+          const summarized = await summarizeFile(path, body, maxBytesPerFile);
+          files[seenPaths.get(path)] = summarized;
+        } else {
+          if (files.length >= maxFiles) throw new Error("archive contains too many files");
+          const summarized = await summarizeFile(path, body, maxBytesPerFile);
+          seenPaths.set(path, files.length);
+          files.push(summarized);
+        }
       }
       nextLongName = null;
       pax = null;
-    } else if (type === "1" || type === "2") {
-      // Hardlinks and symlinks are skipped so link targets cannot escape the package tree.
-      nextLongName = null;
-      pax = null;
-    } else if (type !== "L") {
+    } else {
+      // Non-regular entry (hardlink, symlink, device, directory, fifo,
+      // reserved). npm publish never emits these; a hand-crafted tar can.
+      const rawCandidate =
+        (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName;
+      const reportedPath = normalizeTarPath(canonicalizePath(rawCandidate)) || rawCandidate || "";
+      addSuspicious({
+        kind: "non-regular",
+        path: reportedPath,
+        detail: `typeflag ${type} (${describeNonRegularType(type)})`,
+      });
       nextLongName = null;
       pax = null;
     }
 
     offset += Math.ceil(size / 512) * 512;
   }
-  return files;
+  return { files, suspicious };
 }
 
 export function readUint16Le(bytes, offset) {

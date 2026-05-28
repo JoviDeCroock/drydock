@@ -3,8 +3,11 @@ import { describe, expect, test } from "vitest";
 import * as tarParser from "../server/lib/tar-parser.js";
 
 const {
+  canonicalizePath,
   decodeText,
   gunzipBounded,
+  hasUnicodeConfusables,
+  isRootGypPath,
   isSafePaxPath,
   normalizeTarPath,
   parsePackageJson,
@@ -79,7 +82,17 @@ function buildTar(entries) {
 
 const PARSE_LIMITS = { maxFiles: 250, maxBytesPerFile: 64 * 1024, maxTarBytes: 25 * 1024 * 1024 };
 
-function parse(tar, limits = PARSE_LIMITS) {
+async function parse(tar, limits = PARSE_LIMITS) {
+  const result = await readTar(
+    tar.buffer,
+    limits.maxFiles,
+    limits.maxBytesPerFile,
+    limits.maxTarBytes,
+  );
+  return result.files;
+}
+
+async function parseFull(tar, limits = PARSE_LIMITS) {
   return readTar(tar.buffer, limits.maxFiles, limits.maxBytesPerFile, limits.maxTarBytes);
 }
 
@@ -213,14 +226,20 @@ describe("readTar path safety", () => {
     }
   });
 
-  test("skips hardlink and symlink entries entirely", async () => {
+  test("skips hardlink and symlink entries entirely and surfaces suspicious entries", async () => {
     const tar = buildTar([
       { name: "package/symlink", type: "2", body: "" },
       { name: "package/hardlink", type: "1", body: "" },
       { name: "package/real.js", body: "real\n" },
     ]);
-    const files = await parse(tar);
+    const { files, suspicious } = await parseFull(tar);
     expect(files.map((f) => f.path)).toEqual(["real.js"]);
+    expect(suspicious.map((entry) => ({ kind: entry.kind, path: entry.path }))).toEqual([
+      { kind: "non-regular", path: "symlink" },
+      { kind: "non-regular", path: "hardlink" },
+    ]);
+    expect(suspicious[0].detail).toMatch(/typeflag 2/);
+    expect(suspicious[1].detail).toMatch(/typeflag 1/);
   });
 });
 
@@ -258,6 +277,226 @@ describe("readTar PAX and GNU long-name handling", () => {
     const evilLongName = "package/leaf\\escape";
     const tar = buildTar([{ name: "././@LongLink", type: "L", body: evilLongName }]);
     await expect(parse(tar)).rejects.toThrow(/invalid long-name path/);
+  });
+
+  test("PAX path override is normalized and reaches isRootGypPath", async () => {
+    // The header points to a nested gyp (lib/binding.gyp, non-root); a PAX
+    // override raises it to root binding.gyp. If the PAX value bypassed
+    // normalizeTarPath or isRootGypPath, the implicit-node-gyp rule could be
+    // dodged. We verify the normalized PAX path is what isRootGypPath sees.
+    const paxRecord = "28 path=package/binding.gyp\n";
+    const tar = buildTar([
+      { name: "PaxHeader", type: "x", body: paxRecord },
+      { name: "package/lib/binding.gyp", body: "{}" },
+    ]);
+    const { files } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["binding.gyp"]);
+    expect(isRootGypPath(files[0].path)).toBe(true);
+  });
+
+  test("PAX path without package/ prefix still treated as root gyp", async () => {
+    const paxRecord = "20 path=binding.gyp\n";
+    const tar = buildTar([
+      { name: "PaxHeader", type: "x", body: paxRecord },
+      { name: "package/lib/decoy.js", body: "{}" },
+    ]);
+    const { files } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["binding.gyp"]);
+    expect(isRootGypPath(files[0].path)).toBe(true);
+  });
+
+  test("global PAX path metadata does not override the next entry path", async () => {
+    const paxRecord = "26 path=package/decoy.txt\n";
+    const tar = buildTar([
+      { name: "GlobalPaxHeader", type: "g", body: paxRecord },
+      { name: "package/binding.gyp", body: "{}" },
+    ]);
+    const { files } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["binding.gyp"]);
+    expect(isRootGypPath(files[0].path)).toBe(true);
+  });
+
+  test("global PAX metadata clears pending local path overrides", async () => {
+    const localPaxRecord = "26 path=package/decoy.txt\n";
+    const globalPaxRecord = "22 comment=global-pax\n";
+    const tar = buildTar([
+      { name: "PaxHeader", type: "x", body: localPaxRecord },
+      { name: "GlobalPaxHeader", type: "g", body: globalPaxRecord },
+      { name: "package/binding.gyp", body: "{}" },
+    ]);
+    const { files } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["binding.gyp"]);
+  });
+});
+
+describe("readTar suspicious entries", () => {
+  for (const [type, label] of [
+    ["1", "hardlink"],
+    ["2", "symlink"],
+    ["3", "character-device"],
+    ["4", "block-device"],
+    ["5", "directory"],
+    ["6", "fifo"],
+    ["7", "reserved"],
+  ]) {
+    test(`surfaces a non-regular entry for typeflag ${type} (${label})`, async () => {
+      const tar = buildTar([
+        { name: `package/weird-${label}`, type, body: "" },
+        { name: "package/real.js", body: "real\n" },
+      ]);
+      const { files, suspicious } = await parseFull(tar);
+      expect(files.map((f) => f.path)).toEqual(["real.js"]);
+      expect(suspicious).toHaveLength(1);
+      expect(suspicious[0]).toMatchObject({
+        kind: "non-regular",
+        path: `weird-${label}`,
+      });
+      expect(suspicious[0].detail).toContain(`typeflag ${type}`);
+      expect(suspicious[0].detail).toContain(label);
+    });
+  }
+
+  test("flags duplicate normalized paths and keeps the last body", async () => {
+    const tar = buildTar([
+      { name: "package/dupe.js", body: "first\n" },
+      { name: "package/dupe.js", body: "second-evil\n" },
+      { name: "package/ok.js", body: "ok\n" },
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["dupe.js", "ok.js"]);
+    // Common tar extraction is last-write-wins, so scan the bytes consumers receive.
+    expect(files[0].textSample).toBe("second-evil\n");
+    expect(suspicious).toHaveLength(1);
+    expect(suspicious[0]).toMatchObject({
+      kind: "duplicate",
+      path: "dupe.js",
+    });
+    expect(suspicious[0].detail).toContain("later entry replaced earlier entry");
+  });
+
+  test("flags zero-width-space confusable in a root gyp path", async () => {
+    // U+200B between "binding" and ".gyp" — visually identical to binding.gyp,
+    // but a naive isRootGypPath without canonicalization would not match.
+    const sneaky = "package/binding​.gyp";
+    const tar = buildTar([{ name: sneaky, body: "{}" }]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["binding​.gyp"]);
+    expect(suspicious).toHaveLength(1);
+    expect(suspicious[0].kind).toBe("unicode-confusable");
+    expect(suspicious[0].path).toBe("binding.gyp");
+    expect(isRootGypPath(files[0].path)).toBe(true);
+  });
+
+  test("flags fraction-slash confusable in a path separator", async () => {
+    // U+2044 fraction slash between "lib" and "binding.gyp" — npm may treat
+    // this as a path separator on extract while the reviewer would see it as
+    // a normal character if not canonicalized.
+    const sneaky = "package/lib⁄binding.gyp";
+    const tar = buildTar([{ name: sneaky, body: "{}" }]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["lib⁄binding.gyp"]);
+    expect(suspicious).toHaveLength(1);
+    expect(suspicious[0].kind).toBe("unicode-confusable");
+    expect(suspicious[0].path).toBe("lib/binding.gyp");
+  });
+
+  test("flags confusable paths that normalize to an unsafe location", async () => {
+    // Fullwidth slashes canonicalize to ASCII separators, exposing traversal.
+    const sneaky = "package／..／payload.js";
+    const tar = buildTar([{ name: sneaky, body: "bad\n" }]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["package／..／payload.js"]);
+    expect(suspicious).toHaveLength(1);
+    expect(suspicious[0]).toMatchObject({
+      kind: "unicode-confusable",
+      path: "package／..／payload.js",
+    });
+    expect(suspicious[0].detail).toContain("normalized to an unsafe path");
+  });
+
+  test("does not collapse a confusable path with its ASCII twin", async () => {
+    const tar = buildTar([
+      { name: "package/a​.js", body: "process.env.NPM_TOKEN\n" },
+      { name: "package/a.js", body: "ok\n" },
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => [f.path, f.textSample])).toEqual([
+      ["a​.js", "process.env.NPM_TOKEN\n"],
+      ["a.js", "ok\n"],
+    ]);
+    expect(suspicious).toEqual([
+      expect.objectContaining({
+        kind: "unicode-confusable",
+        path: "a.js",
+      }),
+    ]);
+  });
+
+  test("caps suspicious entries and records a single limit marker", async () => {
+    const tar = buildTar([
+      { name: "package/one", type: "2", body: "" },
+      { name: "package/two", type: "2", body: "" },
+      { name: "package/three", type: "2", body: "" },
+      { name: "package/four", type: "2", body: "" },
+      { name: "package/real.js", body: "real\n" },
+    ]);
+    const { files, suspicious } = await parseFull(tar, {
+      ...PARSE_LIMITS,
+      maxFiles: 2,
+    });
+    expect(files.map((file) => file.path)).toEqual(["real.js"]);
+    expect(suspicious.map((entry) => entry.path)).toEqual(["one", "two", "<archive>"]);
+    expect(suspicious[2].detail).toContain("additional entries omitted");
+  });
+
+  test("clean ASCII paths produce no suspicious entries", async () => {
+    const tar = buildTar([{ name: "package/binding.gyp", body: "{}" }]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["binding.gyp"]);
+    expect(suspicious).toEqual([]);
+  });
+
+  test("does not flag ordinary decomposed Unicode filenames", async () => {
+    const decomposedName = "cafe\u0301.txt";
+    const tar = buildTar([{ name: `package/${decomposedName}`, body: "ok\n" }]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual([decomposedName]);
+    expect(suspicious).toEqual([]);
+  });
+});
+
+describe("canonicalizePath and isRootGypPath Unicode hardening", () => {
+  test("canonicalizePath strips zero-width and bidi format characters", () => {
+    expect(canonicalizePath("binding​.gyp")).toBe("binding.gyp");
+    expect(canonicalizePath("binding﻿.gyp")).toBe("binding.gyp");
+    expect(canonicalizePath("‮binding.gyp")).toBe("binding.gyp");
+    expect(canonicalizePath("binding‍.gyp")).toBe("binding.gyp");
+  });
+
+  test("canonicalizePath folds confusable separators to ASCII", () => {
+    expect(canonicalizePath("lib⁄binding.gyp")).toBe("lib/binding.gyp"); // fraction
+    expect(canonicalizePath("lib∕binding.gyp")).toBe("lib/binding.gyp"); // division
+    expect(canonicalizePath("lib／binding.gyp")).toBe("lib/binding.gyp"); // fullwidth solidus
+    expect(canonicalizePath("binding．gyp")).toBe("binding.gyp"); // fullwidth dot
+    expect(canonicalizePath("binding․gyp")).toBe("binding.gyp"); // one dot leader
+  });
+
+  test("hasUnicodeConfusables flags only non-ASCII path forms", () => {
+    const decomposedName = "cafe\u0301.txt";
+    expect(hasUnicodeConfusables("binding.gyp")).toBe(false);
+    expect(hasUnicodeConfusables(decomposedName)).toBe(false);
+    expect(canonicalizePath(decomposedName)).toBe(decomposedName);
+    expect(hasUnicodeConfusables("binding​.gyp")).toBe(true);
+    expect(hasUnicodeConfusables("lib⁄binding.gyp")).toBe(true);
+  });
+
+  test("isRootGypPath matches confusable forms after canonicalization", () => {
+    expect(isRootGypPath("binding.gyp")).toBe(true);
+    expect(isRootGypPath("binding​.gyp")).toBe(true);
+    expect(isRootGypPath("binding．gyp")).toBe(true);
+    expect(isRootGypPath("lib/binding.gyp")).toBe(false);
+    // Confusable slash still indicates a separator — not a root gyp.
+    expect(isRootGypPath("lib⁄binding.gyp")).toBe(false);
   });
 });
 
@@ -400,11 +639,14 @@ describe("rendered sandbox parser source", () => {
     "decodeText",
     "isPlainObject",
     "normalizeStringRecord",
+    "canonicalizePath",
+    "hasUnicodeConfusables",
     "isRootGypPath",
     "hasImplicitNodeGypInstall",
     "isSafePaxPath",
     "normalizeTarPath",
     "parsePax",
+    "describeNonRegularType",
     "sha256Hex",
     "summarizeFile",
     "readTar",

@@ -1,5 +1,6 @@
 import { diffLines } from "diff";
 import { hasImplicitNodeGypInstall, isRootGypPath, normalizeStringRecord } from "./tar-parser.js";
+import type { TarSuspiciousEntry } from "./tar-parser.js";
 
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 
@@ -25,7 +26,7 @@ export interface Finding {
 // way that should invalidate cached scan reports. Stored alongside each
 // finding so historical reports can be traced back to the ruleset that
 // produced them.
-export const DETERMINISTIC_RULES_VERSION = "1.4.0";
+export const DETERMINISTIC_RULES_VERSION = "1.5.0";
 
 export const DETERMINISTIC_RULE_IDS = {
   installScriptPreinstall: "install-script.preinstall",
@@ -45,6 +46,7 @@ export const DETERMINISTIC_RULE_IDS = {
   dependencyUnusualSpec: "dependency.unusual-spec",
   dependencyOptionalAdded: "dependency.optional-added",
   stageMetadataMismatch: "stage.metadata-mismatch",
+  tarSuspiciousEntry: "tar.suspicious-entry",
 } as const;
 
 export interface PackageJsonSummary {
@@ -376,6 +378,41 @@ export function deterministicFindings(
   return findings;
 }
 
+export function tarSuspiciousEntryFindings(
+  entries: TarSuspiciousEntry[] | undefined | null,
+): Finding[] {
+  if (!entries || !entries.length) return [];
+  return entries.map((entry) => ({
+    severity: tarSuspiciousSeverity(entry),
+    file: entry.path || "<unknown>",
+    evidence: `${entry.kind}: ${entry.detail}`,
+    reason: tarSuspiciousReason(entry),
+    ruleId: DETERMINISTIC_RULE_IDS.tarSuspiciousEntry,
+    ruleVersion: DETERMINISTIC_RULES_VERSION,
+  }));
+}
+
+function tarSuspiciousSeverity(entry: TarSuspiciousEntry): Finding["severity"] {
+  if (entry.kind === "non-regular") {
+    return entry.detail.includes("(directory)") ? "info" : "high";
+  }
+  return "medium";
+}
+
+function tarSuspiciousReason(entry: TarSuspiciousEntry): string {
+  switch (entry.kind) {
+    case "non-regular":
+      if (entry.detail.includes("(directory)")) {
+        return "archive contains an explicit directory entry; npm pack normally emits regular file records, so this is recorded for provenance but does not by itself indicate executable or link behavior";
+      }
+      return "npm publish only emits regular files; symlinks, hardlinks, devices, FIFOs, directories, or reserved entries in a tarball indicate a hand-crafted archive that may target the consumer's filesystem on extract";
+    case "duplicate":
+      return "two entries share the same normalized path; last-write-wins extraction means a benign first entry can mask a malicious second";
+    case "unicode-confusable":
+      return "path contains zero-width or visually-confusable characters; the consumer's tar implementation may canonicalize this differently than the reviewer and let it bypass deterministic file checks";
+  }
+}
+
 export function createPackageDiff(
   previousFiles: FileRecord[],
   stagedFiles: FileRecord[],
@@ -538,7 +575,8 @@ function isReleaseScopedFinding(finding: { ruleId?: string | null }): boolean {
     finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyUnusualSpec ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyOptionalAdded ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffCredentialFileAdded ||
-    finding.ruleId === DETERMINISTIC_RULE_IDS.diffLargeNewFile,
+    finding.ruleId === DETERMINISTIC_RULE_IDS.diffLargeNewFile ||
+    finding.ruleId === DETERMINISTIC_RULE_IDS.tarSuspiciousEntry,
   );
 }
 

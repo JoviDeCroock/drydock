@@ -6,6 +6,7 @@ import {
   deterministicFindings,
   packageJsonDiffFindings,
   summarizePackageJsonDiff,
+  tarSuspiciousEntryFindings,
 } from "../server/lib/review.ts";
 
 describe("review", () => {
@@ -439,6 +440,36 @@ describe("review", () => {
     );
     expect(findings).not.toContainEqual(
       expect.objectContaining({ ruleId: "install-script.implicit-node-gyp" }),
+    );
+  });
+
+  test("keeps tar directory entries informational", () => {
+    const findings = tarSuspiciousEntryFindings([
+      {
+        kind: "non-regular",
+        path: "<unknown>",
+        detail: "typeflag 5 (directory)",
+      },
+      {
+        kind: "non-regular",
+        path: "link",
+        detail: "typeflag 2 (symlink)",
+      },
+    ]);
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        severity: "info",
+        evidence: "non-regular: typeflag 5 (directory)",
+        ruleId: "tar.suspicious-entry",
+      }),
+    );
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        severity: "high",
+        evidence: "non-regular: typeflag 2 (symlink)",
+        ruleId: "tar.suspicious-entry",
+      }),
     );
   });
 
