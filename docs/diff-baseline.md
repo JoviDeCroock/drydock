@@ -65,4 +65,6 @@ New scan reports persist this split as a risk breakdown in `summary_json.risk`:
 
 The `scans.risk` column now stores `releaseRisk` for new reports. Older reports without `summary_json.risk` are interpreted with the previous behavior, where `scans.risk` is the artifact risk and release/context risk is derived from persisted finding annotations.
 
+Implicit behavior introduced by manifest changes is release evidence even when the finding points at unchanged supporting files. For example, if a previous package had a root `binding.gyp` but suppressed npm's implicit `node-gyp rebuild` install hook with `gypfile=false`, and the staged package only removes that suppressor from `package.json`, the high-severity implicit node-gyp finding remains attached to `binding.gyp` for evidence but is still marked as `releaseDelta=true`. If the previous package already had the implicit hook and only unrelated metadata changes, the finding remains contextual.
+
 This avoids hiding persistent risk while keeping the staged-publish review centered on the actual release delta.
