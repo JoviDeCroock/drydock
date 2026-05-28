@@ -155,33 +155,6 @@ describe("denormalized scan list summaries", () => {
     expect(row?.riskSummary?.artifactRisk).toBe("high");
   });
 
-  test("listScans falls back to child rows when a legacy scan has no denormalized fields", async () => {
-    const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const db = createDb(env.DB);
-
-    // Simulate a legacy row that pre-dates the denormalization columns.
-    await db
-      .update(schema.scans)
-      .set({ changedFileCount: null, findingCount: null, riskSummaryJson: null })
-      .where(eq(schema.scans.id, scanId));
-
-    const res = await fetchScans(buildTestApp(owner));
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      scans: Array<{
-        id: string;
-        changedFileCount: number;
-        findingCount: number;
-        riskSummary: { artifactRisk: string } | null;
-      }>;
-    };
-    const row = body.scans.find((scan) => scan.id === scanId);
-    expect(row?.changedFileCount).toBe(2);
-    expect(row?.findingCount).toBe(1);
-    expect(row?.riskSummary?.artifactRisk).toBe("high");
-  });
-
   test("backfillScanListSummaries fills missing fields and is idempotent", async () => {
     const owner = await seedUser();
     const scanId = await seedCompletedScan(owner);

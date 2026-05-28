@@ -535,50 +535,31 @@ export async function listScans(
 
   if (!page.length) return { scans: [], nextCursor };
 
-  const legacyIds = page
-    .filter(
-      (row) =>
-        row.status === "complete" &&
-        (row.changedFileCount === null ||
-          row.findingCount === null ||
-          row.riskSummaryJson === null),
-    )
-    .map((row) => row.id);
-
-  const legacySummaries = legacyIds.length
-    ? await computeLegacyListSummaries(db, legacyIds)
-    : new Map<string, LegacyListSummary>();
-
   return {
-    scans: page.map((row) => {
-      const legacy = legacySummaries.get(row.id);
-      const denormalizedRisk = readScanRiskBreakdown(row.riskSummaryJson);
-      return {
-        id: row.id,
-        stageId: row.stageId,
-        organizationId: row.organizationId,
-        ownerUserId: row.ownerUserId,
-        packageName: row.packageName,
-        stagedVersion: row.stagedVersion,
-        previousVersion: row.previousVersion,
-        risk: row.risk,
-        status: row.status,
-        decision: row.decision,
-        decisionReason: row.decisionReason,
-        decidedByUserId: row.decidedByUserId,
-        decidedAt: row.decidedAt,
-        changedFileCount: row.changedFileCount ?? legacy?.changedFileCount ?? 0,
-        findingCount: row.findingCount ?? legacy?.findingCount ?? 0,
-        riskSummary:
-          row.status === "complete" ? (denormalizedRisk ?? legacy?.riskSummary ?? null) : null,
-        reportVersion: row.reportVersion,
-        reportDigest: row.reportDigest,
-        startedAt: row.startedAt,
-        completedAt: row.completedAt,
-        createdAt: row.createdAt,
-        updatedAt: row.updatedAt,
-      };
-    }),
+    scans: page.map((row) => ({
+      id: row.id,
+      stageId: row.stageId,
+      organizationId: row.organizationId,
+      ownerUserId: row.ownerUserId,
+      packageName: row.packageName,
+      stagedVersion: row.stagedVersion,
+      previousVersion: row.previousVersion,
+      risk: row.risk,
+      status: row.status,
+      decision: row.decision,
+      decisionReason: row.decisionReason,
+      decidedByUserId: row.decidedByUserId,
+      decidedAt: row.decidedAt,
+      changedFileCount: row.changedFileCount ?? 0,
+      findingCount: row.findingCount ?? 0,
+      riskSummary: row.status === "complete" ? readScanRiskBreakdown(row.riskSummaryJson) : null,
+      reportVersion: row.reportVersion,
+      reportDigest: row.reportDigest,
+      startedAt: row.startedAt,
+      completedAt: row.completedAt,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    })),
     nextCursor,
   };
 }
