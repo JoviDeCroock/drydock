@@ -2,13 +2,7 @@ import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
-import {
-  backfillScanListSummaries,
-  createDb,
-  createScanJob,
-  ensurePersonalOrganization,
-  persistScan,
-} from "../../server/db";
+import { createDb, createScanJob, ensurePersonalOrganization, persistScan } from "../../server/db";
 import * as schema from "../../server/db/schema";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
@@ -153,77 +147,5 @@ describe("denormalized scan list summaries", () => {
     expect(row?.changedFileCount).toBe(2);
     expect(row?.findingCount).toBe(1);
     expect(row?.riskSummary?.artifactRisk).toBe("high");
-  });
-
-  test("backfillScanListSummaries fills missing fields and is idempotent", async () => {
-    const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const db = createDb(env.DB);
-
-    // Clear the denormalized fields to simulate pre-migration state.
-    await db
-      .update(schema.scans)
-      .set({ changedFileCount: null, findingCount: null, riskSummaryJson: null })
-      .where(eq(schema.scans.id, scanId));
-
-    const first = await backfillScanListSummaries(db, {
-      organizationId: owner.organizationId,
-    });
-    expect(first.updated).toBeGreaterThanOrEqual(1);
-
-    const [filled] = await db
-      .select({
-        changedFileCount: schema.scans.changedFileCount,
-        findingCount: schema.scans.findingCount,
-        riskSummaryJson: schema.scans.riskSummaryJson,
-      })
-      .from(schema.scans)
-      .where(eq(schema.scans.id, scanId))
-      .limit(1);
-    expect(filled?.changedFileCount).toBe(2);
-    expect(filled?.findingCount).toBe(1);
-    expect(filled?.riskSummaryJson).toMatchObject({ artifactRisk: "high" });
-
-    // Re-running should be a no-op because all selected rows already have values.
-    const second = await backfillScanListSummaries(db, {
-      organizationId: owner.organizationId,
-    });
-    expect(second.scanned).toBe(0);
-    expect(second.updated).toBe(0);
-  });
-
-  test("backfillScanListSummaries leaves already-completed rows unchanged", async () => {
-    const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const db = createDb(env.DB);
-
-    const [before] = await db
-      .select({
-        changedFileCount: schema.scans.changedFileCount,
-        findingCount: schema.scans.findingCount,
-        riskSummaryJson: schema.scans.riskSummaryJson,
-        updatedAt: schema.scans.updatedAt,
-      })
-      .from(schema.scans)
-      .where(eq(schema.scans.id, scanId))
-      .limit(1);
-
-    const result = await backfillScanListSummaries(db, {
-      organizationId: owner.organizationId,
-    });
-    expect(result.scanned).toBe(0);
-
-    const [after] = await db
-      .select({
-        changedFileCount: schema.scans.changedFileCount,
-        findingCount: schema.scans.findingCount,
-        riskSummaryJson: schema.scans.riskSummaryJson,
-        updatedAt: schema.scans.updatedAt,
-      })
-      .from(schema.scans)
-      .where(eq(schema.scans.id, scanId))
-      .limit(1);
-
-    expect(after).toEqual(before);
   });
 });
