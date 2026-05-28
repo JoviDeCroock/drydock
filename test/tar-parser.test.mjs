@@ -437,6 +437,14 @@ describe("readTar suspicious entries", () => {
     expect(files.map((f) => f.path)).toEqual(["binding.gyp"]);
     expect(suspicious).toEqual([]);
   });
+
+  test("does not flag ordinary decomposed Unicode filenames", async () => {
+    const decomposedName = "cafe\u0301.txt";
+    const tar = buildTar([{ name: `package/${decomposedName}`, body: "ok\n" }]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual([decomposedName]);
+    expect(suspicious).toEqual([]);
+  });
 });
 
 describe("canonicalizePath and isRootGypPath Unicode hardening", () => {
@@ -456,7 +464,10 @@ describe("canonicalizePath and isRootGypPath Unicode hardening", () => {
   });
 
   test("hasUnicodeConfusables flags only non-ASCII path forms", () => {
+    const decomposedName = "cafe\u0301.txt";
     expect(hasUnicodeConfusables("binding.gyp")).toBe(false);
+    expect(hasUnicodeConfusables(decomposedName)).toBe(false);
+    expect(canonicalizePath(decomposedName)).toBe(decomposedName);
     expect(hasUnicodeConfusables("binding​.gyp")).toBe(true);
     expect(hasUnicodeConfusables("lib⁄binding.gyp")).toBe(true);
   });

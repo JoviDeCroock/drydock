@@ -61,7 +61,6 @@ export function normalizeStringList(value) {
 export function canonicalizePath(path) {
   if (typeof path !== "string") return "";
   return path
-    .normalize("NFC")
     .replace(/[\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF\u180E]/g, "")
     .replace(/[\u2044\u2215\uFF0F]/g, "/")
     .replace(/[\uFF3C]/g, "\\")
