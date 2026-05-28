@@ -16,8 +16,10 @@ import {
   fetchInstallationMetadata,
   fetchRepository,
   isGithubAppConfigured,
+  listInstallationRepositories,
   listInstallationsForOrganization,
   listReleaseTargetsForOrganization,
+  listRepositoryEnvironments,
   readGithubAppConfig,
   signOAuthState,
   upsertInstallation,
@@ -158,6 +160,64 @@ githubAppRoutes.get("/installations", async (c) => {
   const installations = await listInstallationsForOrganization(db, organizationId);
   return c.json({ installations: installations.map(publicInstallation) });
 });
+
+githubAppRoutes.get("/installations/:installationRowId/repositories", async (c) => {
+  let config: GithubAppConfig;
+  try {
+    config = readGithubAppConfig(c.env);
+  } catch (err) {
+    return configErrorResponse(c, err);
+  }
+  const db = createDb(c.env.DB);
+  const organizationId = await requireActiveOrganization(c, db);
+  const installationRowId = c.req.param("installationRowId");
+  try {
+    const installation = await ensureInstallationOwnedBy(db, organizationId, installationRowId);
+    const repositories = await listInstallationRepositories(config, installation.installationId);
+    return c.json({
+      repositories: repositories.map((repo) => ({
+        id: repo.id,
+        fullName: repo.fullName,
+        defaultBranch: repo.defaultBranch ?? null,
+      })),
+    });
+  } catch (err) {
+    return validationErrorResponse(c, err);
+  }
+});
+
+githubAppRoutes.get(
+  "/installations/:installationRowId/repositories/:owner/:repo/environments",
+  async (c) => {
+    let config: GithubAppConfig;
+    try {
+      config = readGithubAppConfig(c.env);
+    } catch (err) {
+      return configErrorResponse(c, err);
+    }
+    const db = createDb(c.env.DB);
+    const organizationId = await requireActiveOrganization(c, db);
+    const installationRowId = c.req.param("installationRowId");
+    const owner = c.req.param("owner");
+    const repo = c.req.param("repo");
+    if (!owner || !repo) {
+      return c.json({ error: "owner and repo are required" }, 400);
+    }
+    try {
+      const installation = await ensureInstallationOwnedBy(db, organizationId, installationRowId);
+      const environments = await listRepositoryEnvironments(
+        config,
+        installation.installationId,
+        `${owner}/${repo}`,
+      );
+      return c.json({
+        environments: environments.map((environment) => ({ name: environment.name })),
+      });
+    } catch (err) {
+      return validationErrorResponse(c, err);
+    }
+  },
+);
 
 githubAppRoutes.get("/release-targets", async (c) => {
   const db = createDb(c.env.DB);

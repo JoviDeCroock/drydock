@@ -16,6 +16,31 @@ export interface PublicGithubAppInstallation {
   updatedAt: string;
 }
 
+export interface PublicReleaseTarget {
+  id: string;
+  organizationId: string;
+  installationRowId: string;
+  ecosystem: "pypi";
+  packageName: string;
+  repositoryId: number;
+  repositoryFullName: string;
+  workflowFilename: string | null;
+  environment: string;
+  pypiTrustedPublisherEnvironment: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InstallationRepository {
+  id: number;
+  fullName: string;
+  defaultBranch: string | null;
+}
+
+export interface RepositoryEnvironment {
+  name: string;
+}
+
 export interface GithubAppConfigState {
   configured: boolean;
   appSlug?: string;
@@ -47,6 +72,10 @@ export interface CallbackQuery {
   setupAction: string;
 }
 
+export type ReleaseTargetFormStatus = "idle" | "submitting";
+export type RepositoryListStatus = "idle" | "loading" | "error";
+export type EnvironmentListStatus = "idle" | "loading" | "error";
+
 export const GithubAppModel = createModel(() => {
   const config = signal<GithubAppConfigState | null>(null);
   const installations = signal<PublicGithubAppInstallation[]>([]);
@@ -57,9 +86,113 @@ export const GithubAppModel = createModel(() => {
   const configLoaded = signal(false);
   const installationsLoaded = signal(false);
 
+  const releaseTargets = signal<PublicReleaseTarget[]>([]);
+  const releaseTargetsLoaded = signal(false);
+  const releaseTargetsError = signal<string | null>(null);
+
+  const formInstallationRowId = signal<string>("");
+  const formPackageName = signal<string>("");
+  const formRepositoryFullName = signal<string>("");
+  const formEnvironment = signal<string>("");
+  const formPypiTrustedPublisherEnvironment = signal<string>("");
+  const formWorkflowFilename = signal<string>("");
+  const formStatus = signal<ReleaseTargetFormStatus>("idle");
+  const formError = signal<string | null>(null);
+
+  const repositoryCache = signal<Record<string, InstallationRepository[]>>({});
+  const repositoryStatus = signal<Record<string, RepositoryListStatus>>({});
+  const repositoryErrors = signal<Record<string, string>>({});
+
+  const environmentCache = signal<Record<string, RepositoryEnvironment[]>>({});
+  const environmentStatus = signal<Record<string, EnvironmentListStatus>>({});
+  const environmentErrors = signal<Record<string, string>>({});
+
   const busy = computed(() => status.value !== "idle");
   const notConfigured = computed(() => config.value?.configured === false);
-  const loaded = computed(() => configLoaded.value && installationsLoaded.value);
+  const loaded = computed(
+    () => configLoaded.value && installationsLoaded.value && releaseTargetsLoaded.value,
+  );
+  const formSubmitting = computed(() => formStatus.value === "submitting");
+
+  const activeRepositories = computed<InstallationRepository[]>(() => {
+    const id = formInstallationRowId.value;
+    const cache = repositoryCache.value;
+    return id ? (cache[id] ?? []) : [];
+  });
+  const activeRepositoryStatus = computed<RepositoryListStatus>(() => {
+    const id = formInstallationRowId.value;
+    const statusMap = repositoryStatus.value;
+    return id ? (statusMap[id] ?? "idle") : "idle";
+  });
+  const activeRepositoryError = computed<string | null>(() => {
+    const id = formInstallationRowId.value;
+    const errors = repositoryErrors.value;
+    return id ? (errors[id] ?? null) : null;
+  });
+
+  const environmentCacheKey = computed<string>(() => {
+    const installationId = formInstallationRowId.value;
+    const repo = formRepositoryFullName.value;
+    return installationId && repo ? `${installationId}::${repo}` : "";
+  });
+  const activeEnvironments = computed<RepositoryEnvironment[]>(() => {
+    const key = environmentCacheKey.value;
+    const cache = environmentCache.value;
+    return key ? (cache[key] ?? []) : [];
+  });
+  const activeEnvironmentStatus = computed<EnvironmentListStatus>(() => {
+    const key = environmentCacheKey.value;
+    const statusMap = environmentStatus.value;
+    return key ? (statusMap[key] ?? "idle") : "idle";
+  });
+  const activeEnvironmentError = computed<string | null>(() => {
+    const key = environmentCacheKey.value;
+    const errors = environmentErrors.value;
+    return key ? (errors[key] ?? null) : null;
+  });
+
+  const formValid = computed(
+    () =>
+      formInstallationRowId.value.trim() !== "" &&
+      formPackageName.value.trim() !== "" &&
+      formRepositoryFullName.value.trim() !== "" &&
+      formEnvironment.value.trim() !== "" &&
+      formPypiTrustedPublisherEnvironment.value.trim() !== "" &&
+      formEnvironment.value.trim().toLowerCase() ===
+        formPypiTrustedPublisherEnvironment.value.trim().toLowerCase(),
+  );
+
+  function setRepositoryStatus(installationRowId: string, value: RepositoryListStatus) {
+    repositoryStatus.value = { ...repositoryStatus.peek(), [installationRowId]: value };
+  }
+
+  function setRepositoryError(installationRowId: string, message: string | null) {
+    const next = { ...repositoryErrors.peek() };
+    if (message) next[installationRowId] = message;
+    else delete next[installationRowId];
+    repositoryErrors.value = next;
+  }
+
+  function setEnvironmentStatus(key: string, value: EnvironmentListStatus) {
+    environmentStatus.value = { ...environmentStatus.peek(), [key]: value };
+  }
+
+  function setEnvironmentError(key: string, message: string | null) {
+    const next = { ...environmentErrors.peek() };
+    if (message) next[key] = message;
+    else delete next[key];
+    environmentErrors.value = next;
+  }
+
+  function clearForm() {
+    formInstallationRowId.value = "";
+    formPackageName.value = "";
+    formRepositoryFullName.value = "";
+    formEnvironment.value = "";
+    formPypiTrustedPublisherEnvironment.value = "";
+    formWorkflowFilename.value = "";
+    formError.value = null;
+  }
 
   return {
     config,
@@ -73,6 +206,28 @@ export const GithubAppModel = createModel(() => {
     busy,
     notConfigured,
     loaded,
+
+    releaseTargets,
+    releaseTargetsLoaded,
+    releaseTargetsError,
+
+    formInstallationRowId,
+    formPackageName,
+    formRepositoryFullName,
+    formEnvironment,
+    formPypiTrustedPublisherEnvironment,
+    formWorkflowFilename,
+    formStatus,
+    formError,
+    formSubmitting,
+    formValid,
+
+    activeRepositories,
+    activeRepositoryStatus,
+    activeRepositoryError,
+    activeEnvironments,
+    activeEnvironmentStatus,
+    activeEnvironmentError,
 
     async loadConfig(): Promise<void> {
       try {
@@ -99,6 +254,157 @@ export const GithubAppModel = createModel(() => {
         installationsLoaded.value = true;
       }
     },
+
+    async loadReleaseTargets(): Promise<void> {
+      try {
+        const data = await apiFetch<{ releaseTargets: PublicReleaseTarget[] }>(
+          "/api/v1/github-app/release-targets",
+        );
+        releaseTargets.value = data.releaseTargets;
+        releaseTargetsError.value = null;
+      } catch (err) {
+        releaseTargetsError.value = errorMessage(err);
+        releaseTargets.value = [];
+      } finally {
+        releaseTargetsLoaded.value = true;
+      }
+    },
+
+    async loadInstallationRepositories(
+      installationRowId: string,
+      { force = false }: { force?: boolean } = {},
+    ): Promise<void> {
+      if (!installationRowId) return;
+      if (!force && repositoryCache.peek()[installationRowId]) return;
+      setRepositoryStatus(installationRowId, "loading");
+      setRepositoryError(installationRowId, null);
+      try {
+        const data = await apiFetch<{ repositories: InstallationRepository[] }>(
+          `/api/v1/github-app/installations/${encodeURIComponent(installationRowId)}/repositories`,
+        );
+        repositoryCache.value = {
+          ...repositoryCache.peek(),
+          [installationRowId]: data.repositories,
+        };
+        setRepositoryStatus(installationRowId, "idle");
+      } catch (err) {
+        setRepositoryError(installationRowId, errorMessage(err));
+        setRepositoryStatus(installationRowId, "error");
+      }
+    },
+
+    async loadRepositoryEnvironments(
+      installationRowId: string,
+      repositoryFullName: string,
+      { force = false }: { force?: boolean } = {},
+    ): Promise<void> {
+      if (!installationRowId || !repositoryFullName) return;
+      const key = `${installationRowId}::${repositoryFullName}`;
+      if (!force && environmentCache.peek()[key]) return;
+      setEnvironmentStatus(key, "loading");
+      setEnvironmentError(key, null);
+      const [owner, repo] = repositoryFullName.split("/", 2);
+      if (!owner || !repo) {
+        setEnvironmentError(key, "repository must be in owner/repo form");
+        setEnvironmentStatus(key, "error");
+        return;
+      }
+      try {
+        const data = await apiFetch<{ environments: RepositoryEnvironment[] }>(
+          `/api/v1/github-app/installations/${encodeURIComponent(installationRowId)}/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/environments`,
+        );
+        environmentCache.value = { ...environmentCache.peek(), [key]: data.environments };
+        setEnvironmentStatus(key, "idle");
+      } catch (err) {
+        setEnvironmentError(key, errorMessage(err));
+        setEnvironmentStatus(key, "error");
+      }
+    },
+
+    selectInstallation(installationRowId: string) {
+      formInstallationRowId.value = installationRowId;
+      formRepositoryFullName.value = "";
+      formEnvironment.value = "";
+      formPypiTrustedPublisherEnvironment.value = "";
+      formError.value = null;
+      if (installationRowId) {
+        void this.loadInstallationRepositories(installationRowId);
+      }
+    },
+
+    selectRepository(repositoryFullName: string) {
+      formRepositoryFullName.value = repositoryFullName;
+      formEnvironment.value = "";
+      formPypiTrustedPublisherEnvironment.value = "";
+      formError.value = null;
+      const installationRowId = formInstallationRowId.value;
+      if (installationRowId && repositoryFullName) {
+        void this.loadRepositoryEnvironments(installationRowId, repositoryFullName);
+      }
+    },
+
+    selectEnvironment(environment: string) {
+      formEnvironment.value = environment;
+      // PyPI trusted-publisher environment must match the GitHub environment by
+      // default — keep it in sync until the user edits the field directly.
+      formPypiTrustedPublisherEnvironment.value = environment;
+      formError.value = null;
+    },
+
+    setPypiTrustedPublisherEnvironment(environment: string) {
+      formPypiTrustedPublisherEnvironment.value = environment;
+      formError.value = null;
+    },
+
+    async createReleaseTarget(): Promise<PublicReleaseTarget | null> {
+      if (formSubmitting.value) return null;
+      formStatus.value = "submitting";
+      formError.value = null;
+      try {
+        const payload: Record<string, string> = {
+          installationRowId: formInstallationRowId.value.trim(),
+          ecosystem: "pypi",
+          packageName: formPackageName.value.trim(),
+          repositoryFullName: formRepositoryFullName.value.trim(),
+          environment: formEnvironment.value.trim(),
+          pypiTrustedPublisherEnvironment: formPypiTrustedPublisherEnvironment.value.trim(),
+        };
+        const workflowFilename = formWorkflowFilename.value.trim();
+        if (workflowFilename) payload.workflowFilename = workflowFilename;
+        const data = await apiJson<{ releaseTarget: PublicReleaseTarget }>(
+          "/api/v1/github-app/release-targets",
+          payload,
+        );
+        const next = [
+          data.releaseTarget,
+          ...releaseTargets.peek().filter((row) => row.id !== data.releaseTarget.id),
+        ];
+        releaseTargets.value = next;
+        clearForm();
+        return data.releaseTarget;
+      } catch (err) {
+        formError.value = errorMessage(err);
+        return null;
+      } finally {
+        formStatus.value = "idle";
+      }
+    },
+
+    async deleteReleaseTarget(id: string): Promise<boolean> {
+      try {
+        await apiFetch<{ ok: true }>(
+          `/api/v1/github-app/release-targets/${encodeURIComponent(id)}`,
+          { method: "DELETE" },
+        );
+        releaseTargets.value = releaseTargets.peek().filter((row) => row.id !== id);
+        return true;
+      } catch (err) {
+        releaseTargetsError.value = errorMessage(err);
+        return false;
+      }
+    },
+
+    clearForm,
 
     async startInstall(): Promise<void> {
       status.value = "starting";

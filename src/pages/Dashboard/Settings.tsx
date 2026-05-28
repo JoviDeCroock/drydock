@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import { useModel, useSignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
@@ -9,6 +10,7 @@ import {
   GithubAppModel,
   type InstallationStatus,
   type PublicGithubAppInstallation,
+  type PublicReleaseTarget,
 } from "../../models/github-app";
 import {
   Alert,
@@ -54,7 +56,11 @@ export default function SettingsPage() {
       sessionChecked.value = true;
       const loaders: Promise<unknown>[] = [organizations.load(), npm.load()];
       if (GITHUB_APP_UI_ENABLED) {
-        loaders.push(githubApp.loadConfig(), githubApp.loadInstallations());
+        loaders.push(
+          githubApp.loadConfig(),
+          githubApp.loadInstallations(),
+          githubApp.loadReleaseTargets(),
+        );
       }
       await Promise.all(loaders);
     })();
@@ -65,7 +71,10 @@ export default function SettingsPage() {
 
   const reloadActiveOrgScopedData = async () => {
     const loaders: Promise<unknown>[] = [npm.load()];
-    if (GITHUB_APP_UI_ENABLED) loaders.push(githubApp.loadInstallations());
+    if (GITHUB_APP_UI_ENABLED) {
+      githubApp.clearForm();
+      loaders.push(githubApp.loadInstallations(), githubApp.loadReleaseTargets());
+    }
     await Promise.all(loaders);
   };
 
@@ -159,11 +168,16 @@ function GithubAppSection({
 }) {
   const configured = githubApp.config.value?.configured === true;
   const appSlug = githubApp.config.value?.appSlug;
-  const installations = githubApp.installations.value;
+  const installations: PublicGithubAppInstallation[] = githubApp.installations.value;
   const status = githubApp.status.value;
   const error = githubApp.error.value;
   const lastLinked = githubApp.lastLinked.value;
   const busy = githubApp.busy.value;
+  const releaseTargets: PublicReleaseTarget[] = githubApp.releaseTargets.value;
+  const releaseTargetsError = githubApp.releaseTargetsError.value;
+  const activeInstallations = installations.filter(
+    (row: PublicGithubAppInstallation) => row.status === "active",
+  );
 
   const onInstall = () => {
     void githubApp.startInstall();
@@ -249,7 +263,330 @@ function GithubAppSection({
           </div>
         )}
       </div>
+
+      <div class="border-t border-border">
+        <div class="px-5 py-4 flex items-center justify-between gap-3">
+          <SectionLabel>PyPI release targets</SectionLabel>
+          <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+            {releaseTargets.length} mapped
+          </span>
+        </div>
+        {activeInstallations.length ? (
+          <ReleaseTargetForm githubApp={githubApp} activeInstallations={activeInstallations} />
+        ) : (
+          <div class="px-5 pb-5">
+            <Muted class="text-[13px] m-0">
+              Install the GitHub App on an organization with the repo you want to gate before
+              mapping a release target.
+            </Muted>
+          </div>
+        )}
+        {releaseTargetsError ? (
+          <div class="px-5 pb-5">
+            <Alert tone="critical">{releaseTargetsError}</Alert>
+          </div>
+        ) : null}
+        {releaseTargets.length ? (
+          <ReleaseTargetList
+            releaseTargets={releaseTargets}
+            installations={installations}
+            onDelete={(id) => void githubApp.deleteReleaseTarget(id)}
+          />
+        ) : null}
+      </div>
     </Card>
+  );
+}
+
+function ReleaseTargetForm({
+  githubApp,
+  activeInstallations,
+}: {
+  githubApp: ReturnType<typeof useModel<typeof GithubAppModel.prototype>>;
+  activeInstallations: PublicGithubAppInstallation[];
+}) {
+  const installationRowId = githubApp.formInstallationRowId.value;
+  const packageName = githubApp.formPackageName.value;
+  const repositoryFullName = githubApp.formRepositoryFullName.value;
+  const environment = githubApp.formEnvironment.value;
+  const trustedPublisherEnv = githubApp.formPypiTrustedPublisherEnvironment.value;
+  const workflowFilename = githubApp.formWorkflowFilename.value;
+  const formError = githubApp.formError.value;
+  const submitting = githubApp.formSubmitting.value;
+  const formValid = githubApp.formValid.value;
+
+  const repositories = githubApp.activeRepositories.value;
+  const repositoryStatus = githubApp.activeRepositoryStatus.value;
+  const repositoryError = githubApp.activeRepositoryError.value;
+  const environments = githubApp.activeEnvironments.value;
+  const environmentStatus = githubApp.activeEnvironmentStatus.value;
+  const environmentError = githubApp.activeEnvironmentError.value;
+
+  const onSubmit = async (event: Event) => {
+    event.preventDefault();
+    await githubApp.createReleaseTarget();
+  };
+
+  const trustedPublisherDiffers =
+    environment.trim().toLowerCase() !== trustedPublisherEnv.trim().toLowerCase() &&
+    trustedPublisherEnv.trim() !== "";
+
+  return (
+    <form class="px-5 pb-5 flex flex-col gap-4" onSubmit={onSubmit}>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Field label="Installation" for="releaseTargetInstallation">
+          <Select
+            id="releaseTargetInstallation"
+            value={installationRowId}
+            disabled={submitting}
+            onChange={(value) => githubApp.selectInstallation(value)}
+          >
+            <option value="">Pick an installation…</option>
+            {activeInstallations.map((row) => (
+              <option key={row.id} value={row.id}>
+                {row.accountLogin} · installation {row.installationId}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="PyPI package name" for="releaseTargetPackage">
+          <Input
+            id="releaseTargetPackage"
+            type="text"
+            value={packageName}
+            placeholder="example-package"
+            onInput={(e) =>
+              (githubApp.formPackageName.value = (e.target as HTMLInputElement).value)
+            }
+            disabled={submitting}
+            autoComplete="off"
+            spellcheck={false}
+          />
+        </Field>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Field label="Repository" for="releaseTargetRepo">
+          <Select
+            id="releaseTargetRepo"
+            value={repositoryFullName}
+            disabled={submitting || !installationRowId || repositoryStatus === "loading"}
+            onChange={(value) => githubApp.selectRepository(value)}
+          >
+            <option value="">
+              {!installationRowId
+                ? "Pick an installation first…"
+                : repositoryStatus === "loading"
+                  ? "Loading repositories…"
+                  : repositories.length
+                    ? "Pick a repository…"
+                    : "No repositories visible"}
+            </option>
+            {repositories.map((repo: { id: number; fullName: string }) => (
+              <option key={repo.id} value={repo.fullName}>
+                {repo.fullName}
+              </option>
+            ))}
+          </Select>
+          {repositoryError ? (
+            <Muted class="text-[12px] mt-1.5 text-danger">{repositoryError}</Muted>
+          ) : null}
+          {installationRowId &&
+          !repositoryError &&
+          repositoryStatus === "idle" &&
+          !repositories.length ? (
+            <Muted class="text-[12px] mt-1.5">
+              This installation has no accessible repositories. Grant the GitHub App access to a
+              repository in{" "}
+              <a
+                class="underline"
+                href="https://github.com/settings/installations"
+                target="_blank"
+                rel="noreferrer"
+              >
+                GitHub App settings
+              </a>{" "}
+              and refresh.
+            </Muted>
+          ) : null}
+        </Field>
+        <Field label="GitHub environment" for="releaseTargetEnv">
+          <Select
+            id="releaseTargetEnv"
+            value={environment}
+            disabled={submitting || !repositoryFullName || environmentStatus === "loading"}
+            onChange={(value) => githubApp.selectEnvironment(value)}
+          >
+            <option value="">
+              {!repositoryFullName
+                ? "Pick a repository first…"
+                : environmentStatus === "loading"
+                  ? "Loading environments…"
+                  : environments.length
+                    ? "Pick an environment…"
+                    : "No environments configured"}
+            </option>
+            {environments.map((env: { name: string }) => (
+              <option key={env.name} value={env.name}>
+                {env.name}
+              </option>
+            ))}
+          </Select>
+          {environmentError ? (
+            <Muted class="text-[12px] mt-1.5 text-danger">{environmentError}</Muted>
+          ) : null}
+          {repositoryFullName &&
+          !environmentError &&
+          environmentStatus === "idle" &&
+          !environments.length ? (
+            <Muted class="text-[12px] mt-1.5">
+              No environments on this repo yet. Create one in{" "}
+              <a
+                class="underline"
+                href="https://docs.github.com/en/actions/deployment/targeting-different-environments/managing-environments-for-deployment"
+                target="_blank"
+                rel="noreferrer"
+              >
+                GitHub Actions environments
+              </a>
+              , then refresh.
+            </Muted>
+          ) : null}
+        </Field>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Field label="PyPI Trusted Publisher environment" for="releaseTargetTrustedPublisher">
+          <Input
+            id="releaseTargetTrustedPublisher"
+            type="text"
+            value={trustedPublisherEnv}
+            placeholder="Defaults to the GitHub environment"
+            onInput={(e) =>
+              githubApp.setPypiTrustedPublisherEnvironment((e.target as HTMLInputElement).value)
+            }
+            disabled={submitting || !environment}
+            autoComplete="off"
+            spellcheck={false}
+          />
+          <Muted class="text-[12px] mt-1.5 m-0">
+            Defaults to the GitHub environment so the gate runs against the same job as the Trusted
+            Publisher exchange. Edit only if you renamed the publisher environment.
+          </Muted>
+          {trustedPublisherDiffers ? (
+            <Muted class="text-[12px] mt-1.5 text-danger">
+              Must match the GitHub environment exactly.
+            </Muted>
+          ) : null}
+        </Field>
+        <Field label="Workflow filename (optional)" for="releaseTargetWorkflow">
+          <Input
+            id="releaseTargetWorkflow"
+            type="text"
+            value={workflowFilename}
+            placeholder="release.yml"
+            onInput={(e) =>
+              (githubApp.formWorkflowFilename.value = (e.target as HTMLInputElement).value)
+            }
+            disabled={submitting}
+            autoComplete="off"
+            spellcheck={false}
+          />
+        </Field>
+      </div>
+
+      {formError ? <Alert tone="critical">{formError}</Alert> : null}
+
+      <div class="flex items-center gap-3">
+        <Button type="submit" disabled={submitting || !formValid}>
+          {submitting ? "Mapping…" : "Map release target"}
+        </Button>
+        <Muted class="text-[12px] m-0">
+          Drydock revalidates installation, repo access, and environment names before saving.
+        </Muted>
+      </div>
+    </form>
+  );
+}
+
+function ReleaseTargetList({
+  releaseTargets,
+  installations,
+  onDelete,
+}: {
+  releaseTargets: PublicReleaseTarget[];
+  installations: PublicGithubAppInstallation[];
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <ul class="m-0 p-0 list-none border-t border-border">
+      {releaseTargets.map((target) => {
+        const installation = installations.find((row) => row.id === target.installationRowId);
+        return (
+          <li
+            key={target.id}
+            class="border-b border-border last:border-b-0 px-5 py-4 flex flex-wrap items-center justify-between gap-3"
+          >
+            <div class="flex flex-col gap-1.5 min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-mono text-[14px] font-medium">{target.packageName}</span>
+                <Badge tone="info">{target.ecosystem}</Badge>
+              </div>
+              <MonoDetail
+                parts={[
+                  <span key="repo">{target.repositoryFullName}</span>,
+                  <span key="env">env {target.environment}</span>,
+                  ...(target.workflowFilename
+                    ? [<span key="workflow">{target.workflowFilename}</span>]
+                    : []),
+                  <span key="install">
+                    via {installation?.accountLogin ?? "unknown"} ·{" "}
+                    {installation?.installationId ?? target.installationRowId}
+                  </span>,
+                ]}
+              />
+            </div>
+            <Button variant="danger" size="sm" onClick={() => onDelete(target.id)} class="shrink-0">
+              Remove
+            </Button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function Select({
+  id,
+  value,
+  disabled,
+  onChange,
+  children,
+}: {
+  id?: string;
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+  children: ComponentChildren;
+}) {
+  return (
+    <div class="relative inline-block w-full">
+      <select
+        id={id}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange((event.currentTarget as HTMLSelectElement).value)}
+        class="appearance-none w-full bg-bg border border-border rounded-md text-[13px] text-ink pl-3 pr-9 py-2 outline-none transition-[border-color,box-shadow] duration-150 ease-out focus:border-accent focus:shadow-[0_0_0_3px_var(--color-accent-soft)] disabled:opacity-60 disabled:cursor-not-allowed"
+      >
+        {children}
+      </select>
+      <span
+        aria-hidden="true"
+        class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-ink-muted"
+      >
+        ▾
+      </span>
+    </div>
   );
 }
 

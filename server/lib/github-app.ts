@@ -416,6 +416,95 @@ export async function fetchRepository(
   return { id: data.id, fullName: data.full_name, defaultBranch: data.default_branch };
 }
 
+export async function listInstallationRepositories(
+  config: GithubAppConfig,
+  installationId: string,
+): Promise<GithubRepositoryRef[]> {
+  const token = await getInstallationAccessToken(config, installationId);
+  const repositories: GithubRepositoryRef[] = [];
+  let url = "https://api.github.com/installation/repositories?per_page=100";
+
+  for (let page = 0; page < 10 && url; page += 1) {
+    const response = await fetch(url, { headers: githubInstallationHeaders(token) });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new GithubAppValidationError(
+        "repository_not_accessible",
+        `installation repositories lookup failed (${response.status}): ${text.slice(0, 200)}`,
+      );
+    }
+    const data = (await response.json()) as {
+      repositories?: {
+        id?: number;
+        full_name?: string;
+        default_branch?: string;
+      }[];
+    };
+    for (const repo of data.repositories ?? []) {
+      if (typeof repo.id !== "number" || typeof repo.full_name !== "string") continue;
+      repositories.push({
+        id: repo.id,
+        fullName: repo.full_name,
+        defaultBranch: typeof repo.default_branch === "string" ? repo.default_branch : undefined,
+      });
+    }
+    url = nextLink(response.headers.get("link"));
+  }
+
+  repositories.sort((a, b) => a.fullName.localeCompare(b.fullName));
+  return repositories;
+}
+
+export interface GithubEnvironmentRef {
+  name: string;
+}
+
+export async function listRepositoryEnvironments(
+  config: GithubAppConfig,
+  installationId: string,
+  fullName: string,
+): Promise<GithubEnvironmentRef[]> {
+  const repository = parseRepositoryFullName(fullName);
+  if (!repository) {
+    throw new GithubAppValidationError(
+      "invalid_input",
+      "repositoryFullName must be in owner/repo form",
+    );
+  }
+  const token = await getInstallationAccessToken(config, installationId);
+  const repositoryPath = `${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}`;
+  const environments: GithubEnvironmentRef[] = [];
+  let url = `https://api.github.com/repos/${repositoryPath}/environments?per_page=100`;
+
+  for (let page = 0; page < 10 && url; page += 1) {
+    const response = await fetch(url, { headers: githubInstallationHeaders(token) });
+    if (response.status === 404) {
+      throw new GithubAppValidationError(
+        "repository_not_accessible",
+        `repository ${fullName} is not accessible to installation ${installationId}`,
+      );
+    }
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new GithubAppValidationError(
+        "repository_not_accessible",
+        `environments lookup for ${fullName} failed (${response.status}): ${text.slice(0, 200)}`,
+      );
+    }
+    const data = (await response.json()) as {
+      environments?: { name?: string }[];
+    };
+    for (const environment of data.environments ?? []) {
+      if (typeof environment.name === "string" && environment.name) {
+        environments.push({ name: environment.name });
+      }
+    }
+    url = nextLink(response.headers.get("link"));
+  }
+
+  return environments;
+}
+
 // ── DB-backed service ────────────────────────────────────────────────────────
 
 export interface InstallationRecord {
