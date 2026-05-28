@@ -30,12 +30,12 @@ export function App() {
   );
 }
 
-function isPrerenderedRoute(pathname: string) {
+export function isPrerenderedRoute(pathname: string) {
+  const canonicalPathname =
+    pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+
   return (
-    pathname === "/" ||
-    pathname === "/login" ||
-    pathname === "/register" ||
-    pathname.startsWith("/docs")
+    canonicalPathname === "/" || canonicalPathname === "/login" || canonicalPathname === "/register"
   );
 }
 
