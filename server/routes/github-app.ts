@@ -21,6 +21,7 @@ import {
   readGithubAppConfig,
   signOAuthState,
   upsertInstallation,
+  verifyUserCanAccessInstallation,
   verifyOAuthState,
 } from "../lib/github-app";
 import type { Bindings, Variables } from "../types";
@@ -86,15 +87,18 @@ githubAppRoutes.post("/install/callback", async (c) => {
 
   const body = (await c.req.json().catch(() => ({}))) as {
     state?: unknown;
+    code?: unknown;
     installationId?: unknown;
     setupAction?: unknown;
   };
   const state = typeof body.state === "string" ? body.state.trim() : "";
+  const code = typeof body.code === "string" ? body.code.trim() : "";
   const installationId = typeof body.installationId === "string" ? body.installationId.trim() : "";
   const setupAction =
     typeof body.setupAction === "string" ? body.setupAction.trim().toLowerCase() : "install";
 
   if (!state) return c.json({ error: "state is required" }, 400);
+  if (!code) return c.json({ error: "code is required" }, 400);
   if (!installationId) return c.json({ error: "installationId is required" }, 400);
   if (!/^\d+$/.test(installationId)) {
     return c.json({ error: "installationId must be the numeric GitHub installation id" }, 400);
@@ -117,6 +121,7 @@ githubAppRoutes.post("/install/callback", async (c) => {
   }
 
   try {
+    await verifyUserCanAccessInstallation(config, { code, installationId });
     const metadata = await fetchInstallationMetadata(config, installationId);
     if (setupAction === "request" || metadata.installationId !== installationId) {
       return c.json({ error: "installation not yet active on GitHub" }, 409);
@@ -350,6 +355,8 @@ function statusForCode(code: GithubAppValidationCode): 400 | 403 | 404 | 409 {
   switch (code) {
     case "installation_missing":
       return 404;
+    case "installation_not_authorized":
+      return 403;
     case "installation_inactive":
       return 409;
     case "repository_not_accessible":

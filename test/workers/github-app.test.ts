@@ -1,6 +1,6 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { Hono } from "hono";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb, ensurePersonalOrganization } from "../../server/db";
 import * as schema from "../../server/db/schema";
 import {
@@ -16,6 +16,8 @@ import {
 } from "../../server/lib/github-app";
 import { githubAppRoutes } from "../../server/routes/github-app";
 import type { Bindings, Variables } from "../../server/types";
+
+const originalFetch = globalThis.fetch;
 
 async function seedUser(): Promise<{ userId: string; organizationId: string }> {
   const db = createDb(env.DB);
@@ -75,6 +77,8 @@ async function callGithubAppRoute(
     ...env,
     GITHUB_APP_ID: "12345",
     GITHUB_APP_SLUG: "drydock-test",
+    GITHUB_APP_CLIENT_ID: "client-id",
+    GITHUB_APP_CLIENT_SECRET: "client-secret",
     GITHUB_APP_PRIVATE_KEY: "----- placeholder -----",
     GITHUB_APP_WEBHOOK_SECRET: "webhook-secret-value-1234567890",
     GITHUB_APP_STATE_SECRET: "0123456789abcdef0123456789abcdef",
@@ -84,6 +88,10 @@ async function callGithubAppRoute(
   await waitOnExecutionContext(ctx);
   return res;
 }
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
 
 describe("github-app DB helpers", () => {
   test("upsertInstallation links an installation to the calling organization", async () => {
@@ -351,6 +359,65 @@ describe("github-app routes", () => {
     expect(await res.json()).toMatchObject({
       error: "pypiTrustedPublisherEnvironment is required",
     });
+  });
+
+  test("POST /install/callback requires the GitHub user OAuth code", async () => {
+    const { userId } = await seedUser();
+    const installRes = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      "/api/v1/github-app/install",
+    );
+    const { state } = (await installRes.json()) as { state: string };
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      "/api/v1/github-app/install/callback",
+      {
+        state,
+        installationId: "123",
+        setupAction: "install",
+      },
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "code is required" });
+  });
+
+  test("POST /install/callback refuses installation ids the GitHub user cannot access", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installRes = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      "/api/v1/github-app/install",
+    );
+    const { state } = (await installRes.json()) as { state: string };
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ access_token: "user-token" }))
+      .mockResolvedValueOnce(
+        Response.json({
+          installations: [{ id: 456, account: { login: "octo", type: "Organization" } }],
+        }),
+      );
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      "/api/v1/github-app/install/callback",
+      {
+        state,
+        code: "callback-code",
+        installationId: "123",
+        setupAction: "install",
+      },
+    );
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ code: "installation_not_authorized" });
+    const installations = await listInstallationsForOrganization(createDb(env.DB), organizationId);
+    expect(installations).toHaveLength(0);
   });
 });
 

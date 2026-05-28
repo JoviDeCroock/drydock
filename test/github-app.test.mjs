@@ -1,21 +1,28 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import {
   GithubAppConfigError,
   GithubAppValidationError,
   buildInstallUrl,
+  exchangeGithubUserCode,
   fetchRepository,
   generateGithubAppJwt,
   isGithubAppConfigured,
+  listUserAccessibleInstallations,
   readGithubAppConfig,
   signOAuthState,
   validateReleaseTargetShape,
+  verifyUserCanAccessInstallation,
   verifyOAuthState,
 } from "../server/lib/github-app.ts";
+
+const originalFetch = globalThis.fetch;
 
 const VALID_ENV = {
   GITHUB_APP_ID: "12345",
   GITHUB_APP_SLUG: "drydock-test",
+  GITHUB_APP_CLIENT_ID: "client-id",
+  GITHUB_APP_CLIENT_SECRET: "client-secret",
   GITHUB_APP_PRIVATE_KEY: "----- placeholder -----",
   GITHUB_APP_WEBHOOK_SECRET: "webhook-secret-value-1234567890",
   GITHUB_APP_STATE_SECRET: "0123456789abcdef0123456789abcdef",
@@ -35,11 +42,19 @@ const VALID_RELEASE_TARGET = {
   createdByUserId: null,
 };
 
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
 describe("github app config", () => {
   test("isGithubAppConfigured is true only when every env var is present", () => {
     expect(isGithubAppConfigured(VALID_ENV)).toBe(true);
     expect(isGithubAppConfigured({ ...VALID_ENV, GITHUB_APP_ID: "" })).toBe(false);
     expect(isGithubAppConfigured({ ...VALID_ENV, GITHUB_APP_SLUG: undefined })).toBe(false);
+    expect(isGithubAppConfigured({ ...VALID_ENV, GITHUB_APP_CLIENT_ID: undefined })).toBe(false);
+    expect(isGithubAppConfigured({ ...VALID_ENV, GITHUB_APP_CLIENT_SECRET: undefined })).toBe(
+      false,
+    );
     expect(isGithubAppConfigured({ ...VALID_ENV, GITHUB_APP_PRIVATE_KEY: undefined })).toBe(false);
     expect(isGithubAppConfigured({ ...VALID_ENV, GITHUB_APP_WEBHOOK_SECRET: undefined })).toBe(
       false,
@@ -78,6 +93,59 @@ describe("github app config", () => {
     const config = readGithubAppConfig({ ...VALID_ENV, GITHUB_APP_PRIVATE_KEY: privateKeyPem });
     const jwt = await generateGithubAppJwt(config);
     expect(jwt.split(".")).toHaveLength(3);
+  });
+});
+
+describe("github user authorization", () => {
+  test("exchanges the callback code with the GitHub App client credentials", async () => {
+    const fetchMock = vi.fn(async (_url, init) => {
+      expect(init.method).toBe("POST");
+      expect(init.body.toString()).toContain("client_id=client-id");
+      expect(init.body.toString()).toContain("client_secret=client-secret");
+      expect(init.body.toString()).toContain("code=callback-code");
+      return Response.json({ access_token: "user-token" });
+    });
+    globalThis.fetch = fetchMock;
+
+    await expect(
+      exchangeGithubUserCode(readGithubAppConfig(VALID_ENV), "callback-code"),
+    ).resolves.toBe("user-token");
+  });
+
+  test("lists installations accessible to a GitHub user token", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        installations: [
+          { id: 123, account: { login: "octo", type: "Organization" } },
+          { id: "456", account: { login: "personal", type: "User" } },
+        ],
+      }),
+    );
+    globalThis.fetch = fetchMock;
+
+    await expect(listUserAccessibleInstallations("user-token")).resolves.toEqual([
+      { id: "123", accountLogin: "octo", accountType: "Organization" },
+      { id: "456", accountLogin: "personal", accountType: "User" },
+    ]);
+  });
+
+  test("rejects installation ids that are not visible to the GitHub user token", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ access_token: "user-token" }))
+      .mockResolvedValueOnce(
+        Response.json({
+          installations: [{ id: 123, account: { login: "octo", type: "Organization" } }],
+        }),
+      );
+    globalThis.fetch = fetchMock;
+
+    await expect(
+      verifyUserCanAccessInstallation(readGithubAppConfig(VALID_ENV), {
+        code: "callback-code",
+        installationId: "999",
+      }),
+    ).rejects.toMatchObject({ code: "installation_not_authorized" });
   });
 });
 

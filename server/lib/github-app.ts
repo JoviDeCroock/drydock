@@ -5,6 +5,8 @@ import { githubAppInstallations, githubReleaseTargets } from "../db/schema";
 export interface GithubAppEnv {
   GITHUB_APP_ID?: string;
   GITHUB_APP_SLUG?: string;
+  GITHUB_APP_CLIENT_ID?: string;
+  GITHUB_APP_CLIENT_SECRET?: string;
   GITHUB_APP_PRIVATE_KEY?: string;
   GITHUB_APP_WEBHOOK_SECRET?: string;
   GITHUB_APP_STATE_SECRET?: string;
@@ -47,6 +49,7 @@ export class GithubAppValidationError extends Error {
 export type GithubAppValidationCode =
   | "installation_missing"
   | "installation_inactive"
+  | "installation_not_authorized"
   | "repository_not_accessible"
   | "environment_unmapped"
   | "environment_mismatch"
@@ -60,6 +63,8 @@ export type GithubAppValidationCode =
 export interface GithubAppConfig {
   appId: string;
   appSlug: string;
+  clientId: string;
+  clientSecret: string;
   privateKeyPem: string;
   webhookSecret: string;
   stateSecret: string;
@@ -68,11 +73,15 @@ export interface GithubAppConfig {
 export function readGithubAppConfig(env: GithubAppEnv): GithubAppConfig {
   const appId = env.GITHUB_APP_ID?.trim();
   const appSlug = env.GITHUB_APP_SLUG?.trim();
+  const clientId = env.GITHUB_APP_CLIENT_ID?.trim();
+  const clientSecret = env.GITHUB_APP_CLIENT_SECRET?.trim();
   const privateKeyPem = env.GITHUB_APP_PRIVATE_KEY?.trim();
   const webhookSecret = env.GITHUB_APP_WEBHOOK_SECRET?.trim();
   const stateSecret = env.GITHUB_APP_STATE_SECRET?.trim() || env.BETTER_AUTH_SECRET;
   if (!appId) throw new GithubAppConfigError("GITHUB_APP_ID is required");
   if (!appSlug) throw new GithubAppConfigError("GITHUB_APP_SLUG is required");
+  if (!clientId) throw new GithubAppConfigError("GITHUB_APP_CLIENT_ID is required");
+  if (!clientSecret) throw new GithubAppConfigError("GITHUB_APP_CLIENT_SECRET is required");
   if (!privateKeyPem) throw new GithubAppConfigError("GITHUB_APP_PRIVATE_KEY is required");
   if (!webhookSecret) throw new GithubAppConfigError("GITHUB_APP_WEBHOOK_SECRET is required");
   if (!stateSecret || stateSecret.length < 32) {
@@ -80,7 +89,7 @@ export function readGithubAppConfig(env: GithubAppEnv): GithubAppConfig {
       "GITHUB_APP_STATE_SECRET (or BETTER_AUTH_SECRET fallback) must be at least 32 characters",
     );
   }
-  return { appId, appSlug, privateKeyPem, webhookSecret, stateSecret };
+  return { appId, appSlug, clientId, clientSecret, privateKeyPem, webhookSecret, stateSecret };
 }
 
 export function isGithubAppConfigured(env: GithubAppEnv): boolean {
@@ -152,6 +161,113 @@ export async function verifyOAuthState(
 
 export function buildInstallUrl(config: GithubAppConfig, state: string): string {
   return `https://github.com/apps/${encodeURIComponent(config.appSlug)}/installations/new?state=${encodeURIComponent(state)}`;
+}
+
+// ── GitHub App user authorization ────────────────────────────────────────────
+
+export async function exchangeGithubUserCode(
+  config: GithubAppConfig,
+  code: string,
+): Promise<string> {
+  const response = await fetch("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": "drydock-app",
+    },
+    body: new URLSearchParams({
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      code,
+    }),
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new GithubAppValidationError(
+      "invalid_input",
+      `GitHub OAuth code exchange failed (${response.status}): ${text.slice(0, 200)}`,
+    );
+  }
+
+  const data = (await response.json()) as {
+    access_token?: string;
+    error?: string;
+    error_description?: string;
+  };
+  if (data.error || !data.access_token) {
+    throw new GithubAppValidationError(
+      "invalid_input",
+      data.error_description || data.error || "GitHub OAuth code exchange did not return a token",
+    );
+  }
+  return data.access_token;
+}
+
+export interface GithubUserInstallationRef {
+  id: string;
+  accountLogin: string;
+  accountType: string;
+}
+
+export async function listUserAccessibleInstallations(
+  userAccessToken: string,
+): Promise<GithubUserInstallationRef[]> {
+  const installations: GithubUserInstallationRef[] = [];
+  let url = "https://api.github.com/user/installations?per_page=100";
+
+  for (let page = 0; page < 10 && url; page += 1) {
+    const response = await fetch(url, {
+      headers: githubUserHeaders(userAccessToken),
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new GithubAppValidationError(
+        "invalid_input",
+        `GitHub user installation lookup failed (${response.status}): ${text.slice(0, 200)}`,
+      );
+    }
+    const data = (await response.json()) as {
+      installations?: {
+        id?: number | string;
+        account?: { login?: string; type?: string } | null;
+      }[];
+    };
+    for (const installation of data.installations ?? []) {
+      const id =
+        typeof installation.id === "number"
+          ? String(installation.id)
+          : typeof installation.id === "string"
+            ? installation.id
+            : "";
+      if (!id) continue;
+      installations.push({
+        id,
+        accountLogin:
+          typeof installation.account?.login === "string" ? installation.account.login : "",
+        accountType:
+          typeof installation.account?.type === "string" ? installation.account.type : "",
+      });
+    }
+    url = nextLink(response.headers.get("link"));
+  }
+
+  return installations;
+}
+
+export async function verifyUserCanAccessInstallation(
+  config: GithubAppConfig,
+  input: { code: string; installationId: string },
+): Promise<void> {
+  const userAccessToken = await exchangeGithubUserCode(config, input.code);
+  const installations = await listUserAccessibleInstallations(userAccessToken);
+  const authorized = installations.some((installation) => installation.id === input.installationId);
+  if (!authorized) {
+    throw new GithubAppValidationError(
+      "installation_not_authorized",
+      "GitHub user authorization does not include this installation",
+    );
+  }
 }
 
 // ── GitHub App JWT + installation access token ───────────────────────────────
@@ -840,6 +956,24 @@ function githubInstallationHeaders(token: string) {
     "User-Agent": "drydock-app",
     "X-GitHub-Api-Version": "2022-11-28",
   };
+}
+
+function githubUserHeaders(token: string) {
+  return {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/vnd.github+json",
+    "User-Agent": "drydock-app",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+}
+
+function nextLink(linkHeader: string | null): string {
+  if (!linkHeader) return "";
+  for (const part of linkHeader.split(",")) {
+    const match = part.match(/<([^>]+)>;\s*rel="next"/);
+    if (match?.[1]) return match[1];
+  }
+  return "";
 }
 
 async function importPrivateKey(pem: string): Promise<CryptoKey> {

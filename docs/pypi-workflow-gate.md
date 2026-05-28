@@ -122,9 +122,13 @@ organization (`x-organization-id` header to scope writes).
 - `GET /config` — exposes `{ configured, appSlug }` so the UI can build install
   URLs without holding GitHub App secrets.
 - `POST /install` — returns a signed install URL plus the HMAC state token.
-- `POST /install/callback` — verifies the state token, calls
-  `GET /app/installations/:id` with the App JWT, and stores the resulting
-  `account_login` + `account_type`.
+- `POST /install/callback` — verifies the state token, exchanges the GitHub
+  OAuth `code` for a user-to-server token, confirms the
+  submitted installation appears in `GET /user/installations`, then calls
+  `GET /app/installations/:id` with the App JWT and stores the resulting
+  `account_login` + `account_type`. The GitHub App must enable "Request user
+  authorization (OAuth) during installation" so the setup callback includes
+  this `code`; the installation ID alone is treated as untrusted.
 - `GET /installations` — lists every installation linked to the active org.
 - `GET /release-targets`, `POST /release-targets`,
   `DELETE /release-targets/:id` — CRUD over the mapping.
@@ -165,13 +169,15 @@ controls whether the deployment protection gate releases that job.
 
 ### Env bindings
 
-`GITHUB_APP_ID` and `GITHUB_APP_SLUG` are public values and live in
-`wrangler.jsonc` under `vars`. `GITHUB_APP_PRIVATE_KEY` and
-`GITHUB_APP_WEBHOOK_SECRET` are sensitive and need to be set as runtime secrets:
+`GITHUB_APP_ID`, `GITHUB_APP_SLUG`, and `GITHUB_APP_CLIENT_ID` are public values
+and live in `wrangler.jsonc` under `vars`. `GITHUB_APP_PRIVATE_KEY`,
+`GITHUB_APP_WEBHOOK_SECRET`, and `GITHUB_APP_CLIENT_SECRET` are sensitive and
+need to be set as runtime secrets:
 
 ```bash
 wrangler secret put GITHUB_APP_PRIVATE_KEY < drydock.private-key.pem
 echo -n "<webhook-secret>" | wrangler secret put GITHUB_APP_WEBHOOK_SECRET
+echo -n "<client-secret>" | wrangler secret put GITHUB_APP_CLIENT_SECRET
 ```
 
 The private key may be GitHub's downloaded PKCS#1 PEM or a converted PKCS#8 PEM.
