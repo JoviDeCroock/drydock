@@ -186,6 +186,69 @@ export const npmConnections = sqliteTable(
   }),
 );
 
+export const githubAppInstallations = sqliteTable(
+  "github_app_installations",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    installationId: text("installation_id").notNull(),
+    accountLogin: text("account_login").notNull(),
+    accountType: text("account_type").notNull(),
+    targetType: text("target_type").notNull().default("Organization"),
+    status: text("status").notNull().default("active"),
+    suspendedAt: integer("suspended_at", { mode: "timestamp_ms" }),
+    uninstalledAt: integer("uninstalled_at", { mode: "timestamp_ms" }),
+    createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    installedAt: integer("installed_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    installationUniqueIdx: uniqueIndex("github_app_installations_installation_unique_idx").on(
+      table.installationId,
+    ),
+    orgIdx: index("github_app_installations_org_idx").on(table.organizationId),
+  }),
+);
+
+export const githubReleaseTargets = sqliteTable(
+  "github_release_targets",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    installationRowId: text("installation_row_id")
+      .notNull()
+      .references(() => githubAppInstallations.id, { onDelete: "cascade" }),
+    ecosystem: text("ecosystem").notNull(),
+    packageName: text("package_name").notNull(),
+    repositoryId: integer("repository_id").notNull(),
+    repositoryFullName: text("repository_full_name").notNull(),
+    workflowFilename: text("workflow_filename"),
+    environment: text("environment").notNull(),
+    pypiTrustedPublisherEnvironment: text("pypi_trusted_publisher_environment").notNull(),
+    createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    orgPackageUniqueIdx: uniqueIndex("github_release_targets_org_pkg_unique_idx").on(
+      table.organizationId,
+      table.ecosystem,
+      table.packageName,
+    ),
+    orgRepoEnvUniqueIdx: uniqueIndex("github_release_targets_org_repo_env_unique_idx").on(
+      table.organizationId,
+      table.repositoryId,
+      table.environment,
+    ),
+    installationIdx: index("github_release_targets_installation_idx").on(table.installationRowId),
+  }),
+);
+
 export const session = sqliteTable("session", {
   id: text("id").primaryKey(),
   expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),

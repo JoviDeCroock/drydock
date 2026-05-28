@@ -24,6 +24,7 @@ import {
   InvalidNpmConnectionError,
   StagedPublishesFetchError,
 } from "./lib/staged-publishes-discovery";
+import { githubAppRoutes } from "./routes/github-app";
 import { npmConnectionRoutes } from "./routes/npm-connection";
 import { organizationsRoutes } from "./routes/organizations";
 import { scanRoutes } from "./routes/scan";
@@ -185,6 +186,8 @@ app.get("/api", (c) =>
       npmConnection: "GET/POST/DELETE /api/v1/npm-connection; POST /api/v1/npm-connection/validate",
       organizations:
         "GET /api/v1/organizations; POST /api/v1/organizations; PATCH /api/v1/organizations/:id",
+      githubApp:
+        "GET /api/v1/github-app/config; POST /api/v1/github-app/install; POST /api/v1/github-app/install/callback; GET /api/v1/github-app/installations; GET/POST /api/v1/github-app/release-targets; DELETE /api/v1/github-app/release-targets/:id",
       health: "GET /api/health",
     },
     auth: "Better Auth is required for every non-auth API endpoint.",
@@ -192,6 +195,7 @@ app.get("/api", (c) =>
   }),
 );
 
+app.route("/api/v1/github-app", githubAppRoutes);
 app.route("/api/v1/npm-connection", npmConnectionRoutes);
 app.route("/api/v1/organizations", organizationsRoutes);
 app.route("/api/v1/scan", scanRoutes);
