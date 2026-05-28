@@ -3,6 +3,7 @@ import { ErrorBoundary, LocationProvider, Route, Router, lazy, prerender as ssr 
 import "./style.css";
 
 const LandingPage = lazy(() => import("./pages/Landing"));
+const DocsPage = lazy(() => import("./pages/Docs"));
 const LoginPage = lazy(() => import("./pages/Auth/Login"));
 const RegisterPage = lazy(() => import("./pages/Auth/Register"));
 const DashboardPage = lazy(() => import("./pages/Dashboard"));
@@ -17,6 +18,7 @@ export function App() {
       <ErrorBoundary onError={(error) => console.error(error)}>
         <Router>
           <Route path="/" component={LandingPage} />
+          <Route path="/docs" component={DocsPage} />
           <Route path="/login" component={LoginPage} />
           <Route path="/register" component={RegisterPage} />
           <Route path="/dashboard" component={DashboardPage} />
