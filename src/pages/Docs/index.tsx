@@ -60,8 +60,9 @@ export default function DocsPage() {
               the same screen.
             </li>
             <li>
-              From here, paste a <Code>stageId</Code> on the dashboard to scan a release on demand,
-              or let the 15-minute auto-discovery cron pick up new staged publishes automatically.
+              From here, hit <Code>Check npm</Code> on the dashboard to discover open staged
+              publishes on demand, or let the 15-minute auto-discovery cron pick them up
+              automatically.
             </li>
           </ol>
           <div class="flex flex-wrap gap-2 pt-1">
@@ -75,9 +76,10 @@ export default function DocsPage() {
           <h3 class="text-base font-medium tracking-[-0.005em] m-0">The review lifecycle</h3>
           <ol class="list-decimal pl-5 m-0 flex flex-col gap-1.5 text-[13px] text-ink-muted leading-[1.55] marker:text-ink-subtle marker:font-mono">
             <li>
-              A maintainer (or our auto-discovery cron) submits a <Code>stageId</Code> to{" "}
-              <Code>POST /api/v1/scans</Code>. The scan is queued and the UI starts polling its
-              status.
+              A new staged publish is discovered — the 15-minute auto-discovery cron sweeps the
+              org's open stages, or a maintainer clicks <Code>Check npm</Code> on the dashboard. The
+              worker queues a scan for any <Code>stageId</Code> it hasn't seen before and the UI
+              starts polling its status.
             </li>
             <li>
               The worker resolves the active organization's npm connection. The plaintext token
