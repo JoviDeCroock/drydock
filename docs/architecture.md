@@ -108,7 +108,7 @@ Current high-level flow:
    - package.json (manifest) diff;
    - adapter findings via `adapter.runFindings` — for npm: deterministic findings, package.json diff findings, and staged-metadata-mismatch findings;
    - release/context annotations for the deterministic findings, using package-to-package diff status and changed-line checks where text samples are available;
-   - a risk breakdown where `releaseRisk` is the primary saved scan risk, while `artifactRisk` and `contextRisk` keep full-artifact safety context visible;
+   - a risk breakdown where `artifactRisk` is the primary saved scan risk, while `releaseRisk` and `contextRisk` keep package-to-package release context visible;
    - redacted package/file records.
 10. The pipeline persists the scan, records audit events, and returns/report renders the result. (AI review is gated by the Cloudflare Flagship `ai-review` flag — see "Workers AI" below.)
 
@@ -225,7 +225,7 @@ Implemented foundation:
 
 - newly completed scans store report metadata inside `summary_json.report`;
 - `digest` is SHA-256 over stable canonical report JSON built from redacted scan evidence, including the deterministic rules version and release/context finding annotations so digests change when the ruleset or visible risk interpretation changes;
-- newly completed scans store `summary_json.risk` with release, artifact, and context risk; `scans.risk` stores the primary release risk for new reports, while old reports without the breakdown are treated as legacy artifact-risk rows;
+- newly completed scans store `summary_json.risk` with release, artifact, and context risk; `scans.risk` stores the primary artifact risk for new reports, while `summary_json.risk.releaseRisk` carries the package-to-package release verdict;
 - each deterministic finding carries `ruleId` and `ruleVersion` (see `DETERMINISTIC_RULES_VERSION` in `server/lib/review.ts`), persisted on `scan_findings.rule_id` / `rule_version`;
 - persisted scan detail renders report version, digest, rules version, package diff, and safety posture (AI review is disabled — see the Workers AI section).
 

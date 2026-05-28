@@ -99,7 +99,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       fileDiff,
     });
     const riskSummary = computeScanRiskBreakdown(annotatedFindings, aiFindings);
-    const risk = riskSummary.releaseRisk;
+    const risk = riskSummary.artifactRisk;
 
     const safety: ScanResult["safety"] = {
       tokenExposedToSandbox: false,
@@ -202,8 +202,8 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
           stagedTag: result.package.stagedTag,
           baseline: baseline.baseline,
           risk,
-          releaseRisk: risk,
-          artifactRisk: riskSummary.artifactRisk,
+          releaseRisk: riskSummary.releaseRisk,
+          artifactRisk: risk,
           contextRisk: riskSummary.contextRisk,
           durationMs: durationMsSince(pipelineStartedAtMs),
         },
@@ -217,8 +217,8 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       adapterId: adapter.id,
       durationMs: durationMsSince(pipelineStartedAtMs),
       packageName: result.package.name,
-      releaseRisk: risk,
-      artifactRisk: riskSummary.artifactRisk,
+      releaseRisk: riskSummary.releaseRisk,
+      artifactRisk: risk,
       contextRisk: riskSummary.contextRisk,
       fileCount: result.fileCount,
       previousFileCount: result.previousFileCount,
