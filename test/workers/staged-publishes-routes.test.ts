@@ -128,4 +128,55 @@ describe("staged publishes route", () => {
     const { scans } = await listScans(db, owner.organizationId);
     expect(scans.map((scan) => scan.stageId)).toContain("stage-new-123");
   });
+
+  test("POST /scan caps one oversized registry page to 50 queued scans", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const encrypted = await encryptNpmToken(env, "npm_test_token_0123456789");
+    await upsertNpmConnection(db, {
+      organizationId: owner.organizationId,
+      registryUrl: "https://registry.npmjs.org",
+      label: "npm registry",
+      createdByUserId: owner.userId,
+      ...encrypted,
+    });
+    await updateNpmConnectionValidation(db, {
+      organizationId: owner.organizationId,
+      validationStatus: "valid",
+      validatedAt: new Date(),
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL | Request) => {
+        expect(String(url)).toBe("https://registry.npmjs.org/-/stage?perPage=50");
+        return Response.json({
+          items: Array.from({ length: 80 }, (_, index) => ({
+            id: `stage-overflow-${String(index).padStart(3, "0")}`,
+            packageName: `@org/pkg-${index}`,
+            version: "1.0.0",
+          })),
+          total: 80,
+          perPage: 50,
+          page: 0,
+        });
+      }),
+    );
+    const queue = { send: vi.fn(async () => undefined) };
+    const app = buildTestApp(owner);
+    const ctx = createExecutionContext();
+    const res = await app.fetch(
+      new Request("http://test.local/api/v1/staged-publishes/scan", { method: "POST" }),
+      { ...env, SCAN_QUEUE: queue } as unknown as Bindings,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { found: number; created: number; skipped: number };
+    expect(body).toMatchObject({ found: 50, created: 50, skipped: 0 });
+    expect(queue.send).toHaveBeenCalledTimes(50);
+    const { scans } = await listScans(db, owner.organizationId, { limit: 100 });
+    expect(scans.filter((scan) => scan.stageId.startsWith("stage-overflow-")).length).toBe(50);
+  });
 });

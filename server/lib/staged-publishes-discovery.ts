@@ -17,6 +17,8 @@ import {
   type StartedStagedPublishScan,
 } from "./staged-publishes";
 
+const MAX_STAGED_PUBLISH_DISCOVERY_SCANS = 50;
+
 export interface DiscoverStagedPublishesInput {
   db: AppDb;
   env: Cloudflare.Env;
@@ -121,6 +123,7 @@ export async function discoverAndQueueStagedPublishes(
 
   const stagedItems = await listAllStagedPublishes(connection, {
     perPage: 50,
+    maxItems: MAX_STAGED_PUBLISH_DISCOVERY_SCANS,
     allowInsecureLocalhost,
   });
   await markNpmConnectionUsed(db, organizationId);
@@ -210,15 +213,16 @@ export async function discoverAndQueueStagedPublishes(
 
 async function listAllStagedPublishes(
   connection: TokenForDiscovery,
-  options: { perPage: number; allowInsecureLocalhost?: boolean },
+  options: { perPage: number; maxItems: number; allowInsecureLocalhost?: boolean },
 ): Promise<StagedPublishItem[]> {
   const byId = new Map<string, StagedPublishItem>();
   let page = await listStagedPublishes(connection.registryUrl, connection.token, options);
-  for (const item of page.items) byId.set(item.id, item);
+  addStagedItemsUntilLimit(byId, page.items, options.maxItems);
 
   const perPage = page.perPage ?? options.perPage;
   let nextPage = typeof page.page === "number" ? page.page + 1 : 1;
   for (let pagesFetched = 1; pagesFetched < 100; pagesFetched++) {
+    if (byId.size >= options.maxItems) break;
     if (page.total !== null && byId.size >= page.total) break;
     if (page.items.length < perPage) break;
 
@@ -227,11 +231,22 @@ async function listAllStagedPublishes(
       page: nextPage,
     });
     if (!page.items.length) break;
-    for (const item of page.items) byId.set(item.id, item);
+    addStagedItemsUntilLimit(byId, page.items, options.maxItems);
     nextPage = typeof page.page === "number" ? page.page + 1 : nextPage + 1;
   }
 
   return [...byId.values()];
+}
+
+function addStagedItemsUntilLimit(
+  byId: Map<string, StagedPublishItem>,
+  items: StagedPublishItem[],
+  maxItems: number,
+) {
+  for (const item of items) {
+    if (byId.size >= maxItems) break;
+    if (!byId.has(item.id)) byId.set(item.id, item);
+  }
 }
 
 export { StagedPublishesFetchError };

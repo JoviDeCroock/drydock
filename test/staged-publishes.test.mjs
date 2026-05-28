@@ -126,6 +126,29 @@ describe("staged publish metadata", () => {
     });
   });
 
+  test("caps parsed staged publish list items to the requested page size", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        items: Array.from({ length: 80 }, (_, index) => ({
+          id: `stage-overflow-${String(index).padStart(3, "0")}`,
+          packageName: `pkg-${index}`,
+          version: "1.0.0",
+        })),
+        total: 80,
+        perPage: 50,
+        page: 0,
+      }),
+    );
+    globalThis.fetch = fetchMock;
+
+    const page = await listStagedPublishes("https://registry.npmjs.org", "npm_secret_token", {
+      perPage: 50,
+    });
+
+    expect(page.items).toHaveLength(50);
+    expect(page.items.at(-1)?.id).toBe("stage-overflow-049");
+  });
+
   test("fetches staged details from the stage view endpoint", async () => {
     const fetchMock = vi.fn(async (url, init) => {
       expect(String(url)).toBe("https://registry.npmjs.org/-/stage/stage-next-123");

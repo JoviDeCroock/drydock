@@ -45,6 +45,7 @@ export interface StagedPublishesScanResponse {
 }
 
 const MAX_PER_PAGE = 100;
+export const MAX_STAGED_PUBLISHES_PER_RESPONSE = MAX_PER_PAGE;
 const STAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,160}$/;
 
 export interface ListStagedPublishesOptions extends NormalizeRegistryUrlOptions {
@@ -73,7 +74,7 @@ export async function listStagedPublishes(
     throw new StagedPublishesFetchError(response.status, detail.slice(0, 200));
   }
   const data = (await response.json().catch(() => null)) as unknown;
-  return parseStagedPublishesResponse(data);
+  return parseStagedPublishesResponse(data, { maxItems: perPage });
 }
 
 export async function fetchStagedPublishDetails(
@@ -107,11 +108,16 @@ export class StagedPublishesFetchError extends Error {
   }
 }
 
-export function parseStagedPublishesResponse(data: unknown): StagedPublishesPage {
+export function parseStagedPublishesResponse(
+  data: unknown,
+  options: { maxItems?: number } = {},
+): StagedPublishesPage {
   const root = isRecord(data) ? data : {};
   const rawItems = Array.isArray(root.items) ? root.items : [];
+  const maxItems = clampItemLimit(options.maxItems ?? MAX_STAGED_PUBLISHES_PER_RESPONSE);
   const items: StagedPublishItem[] = [];
   for (const entry of rawItems) {
+    if (items.length >= maxItems) break;
     const item = parseStagedPublishItem(entry);
     if (item) items.push(item);
   }
@@ -151,6 +157,11 @@ function parseStagedPublishItem(value: unknown, fallbackId?: string): StagedPubl
     createdAt: readString(value.createdAt) ?? readString(value.created_at),
     shasum: readString(value.shasum),
   };
+}
+
+function clampItemLimit(value: number): number {
+  if (!Number.isFinite(value)) return MAX_STAGED_PUBLISHES_PER_RESPONSE;
+  return Math.min(Math.max(Math.floor(value), 0), MAX_STAGED_PUBLISHES_PER_RESPONSE);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
