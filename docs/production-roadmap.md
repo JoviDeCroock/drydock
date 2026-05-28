@@ -264,7 +264,11 @@ Implemented foundation:
 Remaining tasks:
 
 - Add GitHub App installation, repository, workflow, and environment mapping.
-- Handle GitHub `deployment_protection_rule` webhooks for the PyPI environment.
+- ~~Handle GitHub `deployment_protection_rule` webhooks for the PyPI
+  environment.~~ Implemented: `POST /webhooks/github` verifies the App secret,
+  resolves the release-target mapping, persists a pending gate, and exposes
+  `markGateDecided` + `postDeploymentProtectionDecision` for the future review
+  pipeline to release or block the publish job.
 - Fetch GitHub Actions artifacts and the required `drydock-manifest.json`.
 - Verify artifact SHA-256 digests before review and before publish.
 - Persist workflow-gate reviews without overloading npm `stage_id`.

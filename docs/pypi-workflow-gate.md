@@ -153,13 +153,74 @@ organization (`x-organization-id` header to scope writes).
 ### Webhook resolution
 
 `resolveDeploymentProtectionTarget(db, { installationId, repositoryId,
-environment })` is the lookup helper a future `deployment_protection_rule`
-webhook will call to find the owning organization and release target. It
-returns `null` for unknown installs, suspended installs, and unmapped
-environments — the caller decides whether that becomes an HTTP 404 or a silent
-skip. The environment is normalized the same way as stored release targets, and
-the database enforces one target per organization/repository/environment so this
+environment })` is the lookup helper the `deployment_protection_rule` webhook
+calls to find the owning organization and release target. It returns `null`
+for unknown installs, suspended installs, and unmapped environments — the
+caller decides whether that becomes an HTTP 404 or a silent skip. The
+environment is normalized the same way as stored release targets, and the
+database enforces one target per organization/repository/environment so this
 lookup is deterministic.
+
+## Deployment-protection webhook
+
+The webhook endpoint is `POST /webhooks/github`. It is mounted outside the
+Better Auth middleware so GitHub can deliver to it directly; the trust
+boundary is the GitHub App webhook secret. Configure the GitHub App to send
+deliveries to `https://<drydock-host>/webhooks/github` with the same secret
+that is stored in `GITHUB_APP_WEBHOOK_SECRET`.
+
+What the handler does on each delivery:
+
+1. Read `X-GitHub-Event`, `X-GitHub-Delivery`, and `X-Hub-Signature-256`.
+   Missing required headers, missing/invalid signatures, or empty bodies all
+   return 4xx — we fail closed so unsigned or malformed requests cannot bypass
+   the gate.
+2. HMAC-SHA256 verify the signature against the raw body in constant time.
+3. Parse the payload. The handler accepts two event types:
+   - `deployment_protection_rule` (action `requested`) — resolves the
+     `(installationId, repositoryId, environment)` triple against the
+     release-target table, then inserts a `github_workflow_gates` row in
+     `pending` state. Insertion is keyed on `delivery_id`, so GitHub
+     retries with the same delivery are idempotent.
+   - `installation` (actions `suspend` / `unsuspend` / `deleted`) — updates
+     the installation row's status so subsequent webhook deliveries fail
+     closed if GitHub later revokes access.
+4. Audit the resolved gate via `scan_events`
+   (`github_workflow_gate.requested`).
+
+Deliveries that resolve to no release target are ack'd with HTTP 200 + an
+`ignored` body. GitHub considers that a successful delivery, so the webhook
+log stays clean even when other GitHub Apps the org installs send events to
+the same URL.
+
+### Posting the decision back to GitHub
+
+`postDeploymentProtectionDecision` reads the stored
+`deployment_callback_url`, swaps the App JWT for an installation access token,
+and POSTs `{ state, environment_name, comment }`. The callback URL is
+re-validated before the request — only `https://api.github.com/repos/<owner>/
+<repo>/actions/runs/<run_id>/deployment_protection_rule` URLs are accepted, so
+a spoofed `deployment_callback_url` in the original webhook cannot redirect
+the approval to an attacker-controlled host. The comment is truncated to 140
+characters and is what GitHub renders in the Actions run log, so it carries
+the link to the Drydock report.
+
+`markGateDecided` is the only transition out of `pending`: it succeeds
+exactly once thanks to the `status = 'pending'` WHERE clause, so even if the
+PyPI candidate review completes more than once we will only call GitHub a
+single time. The companion `markGateErrored` records failures (e.g. inability
+to fetch the manifest, scan pipeline crash) without consuming the gate, so
+the operator can retry once the underlying issue is fixed.
+
+### Trust boundary (webhook)
+
+- Signatures are required. There is no "trust the header" fallback.
+- Callback URLs are pinned to `api.github.com` and the deployment-protection
+  path; spoofed URLs are rejected even when the signature is valid.
+- The decision API uses a fresh installation access token; no long-lived
+  PyPI credential ever touches Drydock.
+- `markGateDecided` is a CAS on the pending status, so a race between
+  webhook retries and the review pipeline cannot double-approve.
 
 ### Trust boundary
 
@@ -190,9 +251,9 @@ HMAC-signing the OAuth state.
   the existing `/install` and `/install/callback` routes.
 - Replace the free-text `repositoryFullName` field with a dropdown of repos the
   installation can see (`GET /installation/repositories`).
-- Handle `deployment_protection_rule` webhooks (uses `resolveDeploymentProtectionTarget`).
 - Fetch GitHub Actions artifacts and `drydock-manifest.json` with installation
-  credentials.
+  credentials, then call `markGateDecided` / `postDeploymentProtectionDecision`
+  to release or block the publish job.
 - Run the existing PyPI candidate review helper from the gate handler.
 - Persist workflow-gate reviews separately from npm `stageId` scans or
   generalize the scan schema around `release_candidate` records.

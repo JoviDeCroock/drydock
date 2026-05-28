@@ -252,6 +252,50 @@ export const githubReleaseTargets = sqliteTable(
   }),
 );
 
+export const githubWorkflowGates = sqliteTable(
+  "github_workflow_gates",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    installationRowId: text("installation_row_id")
+      .notNull()
+      .references(() => githubAppInstallations.id, { onDelete: "cascade" }),
+    releaseTargetId: text("release_target_id")
+      .notNull()
+      .references(() => githubReleaseTargets.id, { onDelete: "cascade" }),
+    deliveryId: text("delivery_id").notNull(),
+    repositoryId: integer("repository_id").notNull(),
+    repositoryFullName: text("repository_full_name").notNull(),
+    environment: text("environment").notNull(),
+    runId: integer("run_id").notNull(),
+    deploymentId: integer("deployment_id"),
+    deploymentCallbackUrl: text("deployment_callback_url").notNull(),
+    eventAction: text("event_action").notNull(),
+    status: text("status").notNull().default("pending"),
+    decision: text("decision"),
+    decisionComment: text("decision_comment"),
+    reportUrl: text("report_url"),
+    scanId: text("scan_id").references(() => scans.id, { onDelete: "set null" }),
+    failureReason: text("failure_reason"),
+    requestedAt: integer("requested_at", { mode: "timestamp_ms" }).notNull(),
+    decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    deliveryUniqueIdx: uniqueIndex("github_workflow_gates_delivery_unique_idx").on(
+      table.deliveryId,
+    ),
+    orgStatusIdx: index("github_workflow_gates_org_status_idx").on(
+      table.organizationId,
+      table.status,
+    ),
+    releaseTargetIdx: index("github_workflow_gates_release_target_idx").on(table.releaseTargetId),
+  }),
+);
+
 export const session = sqliteTable("session", {
   id: text("id").primaryKey(),
   expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),

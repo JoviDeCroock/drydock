@@ -25,6 +25,7 @@ import {
   StagedPublishesFetchError,
 } from "./lib/staged-publishes-discovery";
 import { githubAppRoutes } from "./routes/github-app";
+import { githubWebhookRoutes } from "./routes/github-webhooks";
 import { npmConnectionRoutes } from "./routes/npm-connection";
 import { organizationsRoutes } from "./routes/organizations";
 import { scanRoutes } from "./routes/scan";
@@ -73,6 +74,12 @@ app.use("*", async (c, next) => {
   if (c.res.status < 200 || c.res.status > 599) return;
   applySecurityHeaders(c);
 });
+
+// GitHub App webhooks are signed by GitHub itself, not Better Auth, and arrive
+// without an Origin/Referer header. They must be mounted before the auth and
+// CSRF middleware below — the signature verification inside the handler is the
+// trust boundary.
+app.route("/webhooks", githubWebhookRoutes);
 
 app.use("/api/*", async (c, next) => {
   try {
@@ -188,6 +195,7 @@ app.get("/api", (c) =>
         "GET /api/v1/organizations; POST /api/v1/organizations; PATCH /api/v1/organizations/:id",
       githubApp:
         "GET /api/v1/github-app/config; POST /api/v1/github-app/install; POST /api/v1/github-app/install/callback; GET /api/v1/github-app/installations; GET/POST /api/v1/github-app/release-targets; DELETE /api/v1/github-app/release-targets/:id",
+      githubWebhooks: "POST /webhooks/github (signed by GitHub App webhook secret)",
       health: "GET /api/health",
     },
     auth: "Better Auth is required for every non-auth API endpoint.",
