@@ -16,6 +16,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply staged-publish-review --local",
     "db:migrate:remote": "wrangler d1 migrations apply staged-publish-review --remote",
+    "db:backfill:scan-list-summaries:local": "wrangler d1 execute staged-publish-review --local --file scripts/backfill-scan-list-summaries.sql",
+    "db:backfill:scan-list-summaries:remote": "wrangler d1 execute staged-publish-review --remote --file scripts/backfill-scan-list-summaries.sql",
     "test": "vitest run --config vitest.config.ts && vitest run --config vitest.workers.config.ts",
     "test:node": "vitest run --config vitest.config.ts",
     "test:workers": "vitest run --config vitest.workers.config.ts",

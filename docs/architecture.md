@@ -150,6 +150,8 @@ D1 stores canonical application state:
 
 D1 should not become a raw artifact store.
 
+Dashboard list rendering (`GET /api/v1/scans`) reads only compact metadata. `persistScan` denormalizes `changed_file_count`, `finding_count`, and `risk_summary_json` onto each `scans` row when a scan completes, so the list route no longer joins `scan_files`/`scan_findings`. Rows that pre-date the denormalization columns are backfilled by running `pnpm run db:backfill:scan-list-summaries:remote` (script in `scripts/backfill-scan-list-summaries.sql`), which lifts `risk_summary_json` from `summary_json.risk` and aggregates the counts from `scan_files`/`scan_findings`; the list route shows zero counts and a `null` risk summary for any row still missing them. The scan-detail route (`GET /api/v1/scans/:id`) still loads the full file/finding evidence.
+
 ### R2
 
 R2 is the target store for durable derived artifacts:

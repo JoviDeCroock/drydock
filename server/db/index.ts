@@ -20,7 +20,7 @@ import {
   normalizeFindingDiffStatus,
   normalizeRisk,
 } from "../lib/review";
-import { normalizeScanRiskBreakdown } from "../lib/risk";
+import { normalizeScanRiskBreakdown, type ScanRiskBreakdown } from "../lib/risk";
 import type { DiffEntry, FileRecord, Finding, PackageJsonSummary } from "../lib/review";
 
 export type AppDb = ReturnType<typeof drizzle<typeof schema>>;
@@ -46,6 +46,7 @@ export interface PersistedScanInput {
   previousFiles?: FileRecord[];
   diff: DiffEntry[];
   findings: Finding[];
+  riskSummary?: ScanRiskBreakdown;
   report?: { version: number; digest: string };
 }
 
@@ -307,14 +308,24 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     ruleId: finding.ruleId ?? null,
     ruleVersion: finding.ruleVersion ?? null,
   }));
-  const findingAnnotations = annotateFindingsWithDiffStatus(findingRows, input.diff, {
+  const annotatedFindings = annotateFindingsWithDiffStatus(findingRows, input.diff, {
     previousFiles: input.previousFiles ?? [],
     stagedFiles: input.files,
-  }).map((finding) => ({
+  });
+  const findingAnnotations = annotatedFindings.map((finding) => ({
     id: finding.id,
     diffStatus: finding.diffStatus,
     releaseDelta: finding.releaseDelta,
   }));
+
+  const isComplete = input.status === "complete";
+  const changedFileCount = isComplete ? countChangedFileEntries(input.diff) : null;
+  const findingCount = isComplete ? findingRows.length : null;
+  const riskSummary: ScanRiskBreakdown | null = isComplete
+    ? (input.riskSummary ??
+      readPersistedListRiskSummary(input.summary) ??
+      deriveListRiskSummary(input.risk, annotatedFindings))
+    : null;
 
   const scanValues = {
     id: input.id,
@@ -329,6 +340,9 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     summaryJson: withFindingAnnotations(input.summary, findingAnnotations),
     aiJson: input.ai,
     errorJson: null,
+    changedFileCount,
+    findingCount,
+    riskSummaryJson: riskSummary,
     reportVersion: input.report?.version ?? null,
     reportDigest: input.report?.digest ?? null,
     completedAt: now,
@@ -347,6 +361,9 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
       summaryJson: scanValues.summaryJson,
       aiJson: scanValues.aiJson,
       errorJson: scanValues.errorJson,
+      changedFileCount: scanValues.changedFileCount,
+      findingCount: scanValues.findingCount,
+      riskSummaryJson: scanValues.riskSummaryJson,
       reportVersion: scanValues.reportVersion,
       reportDigest: scanValues.reportDigest,
       completedAt: scanValues.completedAt,
@@ -495,7 +512,9 @@ export async function listScans(
       decisionReason: scans.decisionReason,
       decidedByUserId: scans.decidedByUserId,
       decidedAt: scans.decidedAt,
-      summaryJson: scans.summaryJson,
+      changedFileCount: scans.changedFileCount,
+      findingCount: scans.findingCount,
+      riskSummaryJson: scans.riskSummaryJson,
       reportVersion: scans.reportVersion,
       reportDigest: scans.reportDigest,
       startedAt: scans.startedAt,
@@ -514,90 +533,112 @@ export async function listScans(
   const nextCursor =
     hasMore && last ? { createdAtMs: new Date(last.createdAt).getTime(), id: last.id } : null;
 
-  const scanIds = page.map((row) => row.id);
-  if (!scanIds.length) return { scans: [], nextCursor };
-
-  const [files, findings] = await Promise.all([
-    db
-      .select({ scanId: scanFiles.scanId, path: scanFiles.path, status: scanFiles.status })
-      .from(scanFiles)
-      .where(inArray(scanFiles.scanId, scanIds)),
-    db
-      .select({
-        scanId: scanFindings.scanId,
-        id: scanFindings.id,
-        severity: scanFindings.severity,
-        file: scanFindings.file,
-        line: scanFindings.line,
-        ruleId: scanFindings.ruleId,
-      })
-      .from(scanFindings)
-      .where(inArray(scanFindings.scanId, scanIds)),
-  ]);
-  const filesByScan = new Map<string, Array<{ path: string; status: string }>>();
-  const changedFileCounts = new Map<string, number>();
-  for (const file of files) {
-    const list = filesByScan.get(file.scanId) ?? [];
-    list.push(file);
-    filesByScan.set(file.scanId, list);
-    if (!CHANGED_FILE_STATUSES.has(file.status)) continue;
-    changedFileCounts.set(file.scanId, (changedFileCounts.get(file.scanId) ?? 0) + 1);
-  }
-  const findingsByScan = new Map<
-    string,
-    Array<{
-      id: string;
-      severity: string;
-      file: string;
-      line: number | null;
-      ruleId: string | null;
-    }>
-  >();
-  const findingCounts = new Map<string, number>();
-  for (const finding of findings) {
-    const list = findingsByScan.get(finding.scanId) ?? [];
-    list.push(finding);
-    findingsByScan.set(finding.scanId, list);
-    findingCounts.set(finding.scanId, (findingCounts.get(finding.scanId) ?? 0) + 1);
-  }
+  if (!page.length) return { scans: [], nextCursor };
 
   return {
-    scans: page.map((row) => {
-      const { summaryJson, ...scan } = row;
-      return {
-        ...scan,
-        changedFileCount: countChangedFiles(summaryJson, changedFileCounts.get(row.id) ?? 0),
-        findingCount: findingCounts.get(row.id) ?? 0,
-        riskSummary:
-          row.status === "complete"
-            ? summarizeScanRisk(
-                row.risk,
-                annotateFindingsWithDiffStatus(
-                  findingsByScan.get(row.id) ?? [],
-                  diffForFindingAnnotations(summaryJson, filesByScan.get(row.id) ?? []),
-                  { persistedAnnotations: readFindingAnnotations(summaryJson) },
-                ),
-                summaryJson,
-              )
-            : null,
-      };
-    }),
+    scans: page.map((row) => ({
+      id: row.id,
+      stageId: row.stageId,
+      organizationId: row.organizationId,
+      ownerUserId: row.ownerUserId,
+      packageName: row.packageName,
+      stagedVersion: row.stagedVersion,
+      previousVersion: row.previousVersion,
+      risk: row.risk,
+      status: row.status,
+      decision: row.decision,
+      decisionReason: row.decisionReason,
+      decidedByUserId: row.decidedByUserId,
+      decidedAt: row.decidedAt,
+      changedFileCount: row.changedFileCount ?? 0,
+      findingCount: row.findingCount ?? 0,
+      riskSummary: row.status === "complete" ? readScanRiskBreakdown(row.riskSummaryJson) : null,
+      reportVersion: row.reportVersion,
+      reportDigest: row.reportDigest,
+      startedAt: row.startedAt,
+      completedAt: row.completedAt,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    })),
     nextCursor,
+  };
+}
+
+function readScanRiskBreakdown(value: unknown): ScanRiskSummary | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Partial<Record<keyof ScanRiskSummary, unknown>>;
+  if (
+    typeof item.artifactRisk !== "string" ||
+    typeof item.releaseRisk !== "string" ||
+    typeof item.contextRisk !== "string" ||
+    typeof item.releaseFindingCount !== "number" ||
+    typeof item.contextFindingCount !== "number" ||
+    typeof item.unknownFindingCount !== "number"
+  ) {
+    return null;
+  }
+  return {
+    artifactRisk: normalizeRisk(item.artifactRisk),
+    releaseRisk: normalizeRisk(item.releaseRisk),
+    contextRisk: normalizeRisk(item.contextRisk),
+    releaseFindingCount: Math.max(0, Math.floor(item.releaseFindingCount)),
+    contextFindingCount: Math.max(0, Math.floor(item.contextFindingCount)),
+    unknownFindingCount: Math.max(0, Math.floor(item.unknownFindingCount)),
   };
 }
 
 const CHANGED_FILE_STATUSES = new Set(["added", "removed", "modified"]);
 
-function countChangedFiles(summaryJson: unknown, fallback: number): number {
-  const summary = summaryJson && typeof summaryJson === "object" ? summaryJson : null;
-  if (!summary || Array.isArray(summary)) return fallback;
-  const diff = (summary as { diff?: unknown }).diff;
-  if (!Array.isArray(diff)) return fallback;
-  return diff.reduce((count, entry) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return count;
+function countChangedFileEntries(diff: Array<{ status?: unknown }>): number {
+  let count = 0;
+  for (const entry of diff) {
+    if (!entry || typeof entry !== "object") continue;
     const status = (entry as { status?: unknown }).status;
-    return typeof status === "string" && CHANGED_FILE_STATUSES.has(status) ? count + 1 : count;
-  }, 0);
+    if (typeof status === "string" && CHANGED_FILE_STATUSES.has(status)) count += 1;
+  }
+  return count;
+}
+
+function deriveListRiskSummary(
+  persistedRisk: string,
+  findings: Array<{ severity?: string | null; releaseDelta: boolean; diffStatus: string }>,
+): ScanRiskBreakdown {
+  const releaseFindings = findings.filter((finding) => finding.releaseDelta);
+  const contextFindings = findings.filter((finding) => !finding.releaseDelta);
+  const unknownFindingCount = contextFindings.filter(
+    (finding) => finding.diffStatus === "unknown",
+  ).length;
+  return {
+    artifactRisk: normalizeRisk(persistedRisk),
+    releaseRisk: computeRisk(releaseFindings),
+    contextRisk: computeRisk(contextFindings),
+    releaseFindingCount: releaseFindings.length,
+    contextFindingCount: contextFindings.length,
+    unknownFindingCount,
+  };
+}
+
+function readPersistedListRiskSummary(summaryJson: unknown): ScanRiskBreakdown | null {
+  const partial = readPersistedRiskBreakdown(summaryJson);
+  if (
+    !partial ||
+    partial.artifactRisk === undefined ||
+    partial.releaseRisk === undefined ||
+    partial.contextRisk === undefined ||
+    partial.releaseFindingCount === undefined ||
+    partial.contextFindingCount === undefined ||
+    partial.unknownFindingCount === undefined
+  ) {
+    return null;
+  }
+  return {
+    artifactRisk: partial.artifactRisk,
+    releaseRisk: partial.releaseRisk,
+    contextRisk: partial.contextRisk,
+    releaseFindingCount: partial.releaseFindingCount,
+    contextFindingCount: partial.contextFindingCount,
+    unknownFindingCount: partial.unknownFindingCount,
+  };
 }
 
 export interface RecordScanDecisionInput {
