@@ -429,7 +429,7 @@ describe("fetchReleaseBundleWithToken", () => {
   test("drops the installation token on the redirect to the storage host", async () => {
     const fixture = await buildFixture();
     const storageUrl =
-      "https://prod-eastus.actions.githubusercontent.com/blob/candidate.zip?sig=abc";
+      "https://productionresultssa4.blob.core.windows.net/actions-results/run/artifacts/candidate.zip?sig=abc";
     const calls: { url: string; authorization: string | null }[] = [];
     vi.stubGlobal(
       "fetch",
@@ -535,6 +535,15 @@ describe("evaluateGithubArtifactEgress", () => {
       credentialed: false,
       host: "actions.githubusercontent.com",
     });
+    expect(
+      evaluateGithubArtifactEgress(
+        "https://productionresultssa4.blob.core.windows.net/actions-results/run/artifacts/x.zip?sig=1",
+      ),
+    ).toEqual({
+      allowed: true,
+      credentialed: false,
+      host: "blob.core.windows.net",
+    });
   });
 
   test("blocks other hosts and non-https schemes", () => {
@@ -543,6 +552,9 @@ describe("evaluateGithubArtifactEgress", () => {
     // A look-alike host must not satisfy the suffix check.
     expect(
       evaluateGithubArtifactEgress("https://actions.githubusercontent.com.evil.com/x").allowed,
+    ).toBe(false);
+    expect(
+      evaluateGithubArtifactEgress("https://productionresultssa4.blob.core.windows.net/x").allowed,
     ).toBe(false);
     expect(evaluateGithubArtifactEgress("not a url").allowed).toBe(false);
   });

@@ -81,16 +81,16 @@ export interface GithubArtifactEgressPolicy {
   allowed: boolean;
   /** Whether the installation token may be attached to this request. */
   credentialed: boolean;
-  host: "api.github.com" | "actions.githubusercontent.com" | "blocked";
+  host: "api.github.com" | "actions.githubusercontent.com" | "blob.core.windows.net" | "blocked";
 }
 
 /**
  * Mirrors the `NpmStageGateway` credential policy for the GitHub artifact path.
  * The installation token is only ever attached to `api.github.com`. The
  * artifact-download endpoint answers with a 302 to a short-lived signed URL on
- * `*.actions.githubusercontent.com`; that hop carries its own auth in the URL,
- * so the token is dropped before the request is issued. Every other host is
- * blocked outright, so a spoofed `Location` cannot exfiltrate the token to an
+ * GitHub's artifact storage hosts; that hop carries its own auth in the URL, so
+ * the token is dropped before the request is issued. Every other host is blocked
+ * outright, so a spoofed `Location` cannot exfiltrate the token to an
  * attacker-controlled origin.
  */
 export function evaluateGithubArtifactEgress(requestUrl: string): GithubArtifactEgressPolicy {
@@ -109,6 +109,9 @@ export function evaluateGithubArtifactEgress(requestUrl: string): GithubArtifact
   }
   if (host === "actions.githubusercontent.com" || host.endsWith(".actions.githubusercontent.com")) {
     return { allowed: true, credentialed: false, host: "actions.githubusercontent.com" };
+  }
+  if (host.endsWith(".blob.core.windows.net") && url.pathname.startsWith("/actions-results/")) {
+    return { allowed: true, credentialed: false, host: "blob.core.windows.net" };
   }
   return { allowed: false, credentialed: false, host: "blocked" };
 }
