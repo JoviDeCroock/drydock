@@ -102,8 +102,8 @@ fixtures in the same PR whenever a rule family's coverage changes (`PYPI_RULES_V
 `DETERMINISTIC_RULES_VERSION` in `review.ts`). The shared `code.*` rules were made Python-aware in
 `1.6.0` (subprocess/os.system, urllib.request/requests/socket, exec/`__import__`/base64-decode,
 os.environ/getpass/keyring); `pypi.*` grew `startup-hook`, `record-mismatch`, and `unusual-dependency`
-in `0.2.0`, and `setup-install-command` was upgraded to fire on top-level install-time code, not just
-`cmdclass`.
+in `0.2.0`, and `setup-install-command` was upgraded to fire on the top-level sdist `setup.py`
+install-time code, not just `cmdclass`.
 
 ### Fixture format
 

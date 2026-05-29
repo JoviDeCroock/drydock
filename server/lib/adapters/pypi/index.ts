@@ -591,9 +591,7 @@ function pyPiReleaseFindings(
             "release gates need package name and version metadata to prove the artifact matches the reviewed manifest",
         }),
       );
-      continue;
-    }
-    if (normalizePyPiProjectName(summary.name) !== manifestName) {
+    } else if (normalizePyPiProjectName(summary.name) !== manifestName) {
       findings.push(
         tag("metadataMismatch", {
           severity: "critical",
@@ -603,7 +601,7 @@ function pyPiReleaseFindings(
         }),
       );
     }
-    if (summary.version !== manifest.version) {
+    if (summary.version && summary.version !== manifest.version) {
       findings.push(
         tag("metadataMismatch", {
           severity: "critical",
@@ -688,7 +686,7 @@ function pyPiReleaseFindings(
           }),
         );
       }
-      if (/(^|\/)setup\.py$/i.test(file.path)) {
+      if (artifact.kind === "sdist" && /^setup\.py$/i.test(file.path)) {
         const setupText = file.textSample ?? "";
         const matchedInstallCommand = SETUP_INSTALL_COMMAND_PATTERNS.some((pattern) =>
           pattern.test(setupText),

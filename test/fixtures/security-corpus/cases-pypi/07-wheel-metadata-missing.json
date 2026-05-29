@@ -42,6 +42,11 @@
       "ruleId": "pypi.metadata-missing",
       "severity": "medium",
       "file": "dist/demo_package-1.2.0-py3-none-any.whl/METADATA"
+    },
+    {
+      "ruleId": "pypi.wheel-record-missing",
+      "severity": "medium",
+      "file": "dist/demo_package-1.2.0-py3-none-any.whl/RECORD"
     }
   ]
 }
