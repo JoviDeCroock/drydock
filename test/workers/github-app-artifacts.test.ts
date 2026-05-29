@@ -337,6 +337,29 @@ describe("fetchReleaseBundleWithToken", () => {
     });
   });
 
+  test("artifact_kind_unsupported when the bundle has an undeclared dist file", async () => {
+    const fixture = await buildFixture({
+      extraEntries: [{ path: "dist/demo_package-1.2.0.zip", body: "not reviewed" }],
+    });
+    stubGithubFetch({ bundleZip: fixture.bundleZip });
+
+    await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({
+      code: "artifact_kind_unsupported",
+    });
+  });
+
+  test("allows the workflow checksum support file outside the manifest", async () => {
+    const fixture = await buildFixture({
+      extraEntries: [{ path: "drydock-sha256.txt", body: "placeholder\n" }],
+    });
+    stubGithubFetch({ bundleZip: fixture.bundleZip });
+
+    const bundle = await fetchReleaseBundleWithToken(TOKEN, source());
+
+    expect(bundle.artifacts).toHaveLength(1);
+    expect(bundle.artifacts[0]?.path).toBe(fixture.wheel.path);
+  });
+
   test("manifest_artifact_mismatch when manifest declares a path the bundle omits", async () => {
     const realWheel = makeWheelBytes("demo-package", "1.2.0");
     const realSha = await sha256Hex(realWheel.bytes);

@@ -64,6 +64,7 @@ export class WorkflowArtifactError extends Error {
 
 const DEFAULT_ARTIFACT_NAME = "pypi-release-candidate";
 const MANIFEST_FILENAME = "drydock-manifest.json";
+const ALLOWED_SUPPORT_FILENAMES = new Set(["drydock-sha256.txt"]);
 
 const MAX_OUTER_ZIP_BYTES = 25 * 1024 * 1024;
 const MAX_OUTER_ZIP_ENTRIES = 256;
@@ -127,11 +128,13 @@ export async function fetchReleaseBundleWithToken(
   const manifestRaw = new TextDecoder("utf-8", { fatal: false }).decode(manifestEntry.bytes);
   const manifest = parseAndValidateManifest(manifestRaw);
 
-  // Reject anything beyond the manifest + recognized artifacts before digesting.
+  // Reject anything beyond the manifest, declared artifacts, and explicit
+  // support files before digesting.
   const declaredPaths = new Set(manifest.artifacts.map((entry) => entry.path));
   const candidateArtifacts: ResolvedReleaseFile[] = [];
   for (const entry of entries) {
     if (entry.path === MANIFEST_FILENAME) continue;
+    if (ALLOWED_SUPPORT_FILENAMES.has(entry.path)) continue;
     if (declaredPaths.has(entry.path)) continue;
     if (inferPyPiArtifactKind(entry.path) !== null) {
       throw new WorkflowArtifactError(
@@ -139,6 +142,10 @@ export async function fetchReleaseBundleWithToken(
         `bundle includes ${entry.path} which is not declared in ${MANIFEST_FILENAME}`,
       );
     }
+    throw new WorkflowArtifactError(
+      "artifact_kind_unsupported",
+      `bundle includes unsupported file ${entry.path}`,
+    );
   }
 
   for (const declared of manifest.artifacts) {
