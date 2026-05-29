@@ -735,7 +735,13 @@ function pyPiReleaseFindings(
 // sample was truncated, since an incomplete path list would flag legitimate files.
 function undeclaredWheelFiles(artifact: PyPiPreparedArtifact, recordPath: string): FileRecord[] {
   const recordFile = artifact.files.find((file) => file.path === recordPath);
-  if (!recordFile?.textSample || recordFile.flags.includes("truncated")) return [];
+  if (
+    !recordFile ||
+    recordFile.textSample === undefined ||
+    recordFile.flags.includes("truncated")
+  ) {
+    return [];
+  }
   const declared = new Set<string>();
   for (const line of recordFile.textSample.split(/\r?\n/)) {
     if (!line.trim()) continue;
@@ -749,7 +755,6 @@ function undeclaredWheelFiles(artifact: PyPiPreparedArtifact, recordPath: string
     }
     if (path) declared.add(path);
   }
-  if (!declared.size) return [];
   return artifact.files.filter((file) => !declared.has(file.path));
 }
 

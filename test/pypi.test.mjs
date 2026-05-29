@@ -224,6 +224,46 @@ describe("PyPI artifact summaries and review", () => {
     );
   });
 
+  test("treats an empty wheel RECORD as declaring no files", () => {
+    const manifest = parsePyPiReleaseManifest({
+      schema: "drydock.release-artifacts.v1",
+      ecosystem: "pypi",
+      package: "demo-package",
+      version: "1.2.0",
+      artifacts: [{ path: "dist/demo_package-1.2.0-py3-none-any.whl", sha256: "a".repeat(64) }],
+    });
+    const review = createPyPiReleaseCandidateReview({
+      manifest,
+      artifacts: [
+        {
+          path: "dist/demo_package-1.2.0-py3-none-any.whl",
+          files: [
+            file(
+              "demo_package-1.2.0.dist-info/METADATA",
+              "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
+            ),
+            file(
+              "demo_package-1.2.0.dist-info/WHEEL",
+              "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+            ),
+            file("demo_package-1.2.0.dist-info/RECORD", "\n\n"),
+            file("demo_package/payload.py", "# undeclared payload\n"),
+          ],
+        },
+      ],
+    });
+
+    expect(review.ruleFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          ruleId: "pypi.record-mismatch",
+          file: "dist/demo_package-1.2.0-py3-none-any.whl/demo_package/payload.py",
+        }),
+      ]),
+    );
+  });
+
   test("only treats the top-level sdist setup.py as install-time code", () => {
     const manifest = parsePyPiReleaseManifest({
       schema: "drydock.release-artifacts.v1",
