@@ -10,6 +10,9 @@ export default function LoginPage() {
   const location = useLocation();
   const email = useSignal("");
   const password = useSignal("");
+  const code = useSignal("");
+  const useBackup = useSignal(false);
+  const step = useSignal<"credentials" | "twoFactor">("credentials");
   const error = useSignal<string | null>(null);
   const loading = useSignal(false);
   const needsVerificationFor = useSignal<string | null>(null);
@@ -37,7 +40,15 @@ export default function LoginPage() {
     loading.value = true;
     error.value = null;
     try {
-      await sessionModel.signIn(submittedEmail, submittedPassword, returnTo);
+      const { twoFactorRequired } = await sessionModel.signIn(
+        submittedEmail,
+        submittedPassword,
+        returnTo,
+      );
+      if (twoFactorRequired) {
+        step.value = "twoFactor";
+        return;
+      }
       location.route(returnTo, true);
     } catch (err) {
       // The server re-sends a verification link on an unverified sign-in, so
@@ -69,6 +80,22 @@ export default function LoginPage() {
     }
   };
 
+  const onVerify = async (event: Event) => {
+    event.preventDefault();
+    const submittedCode = code.value.trim();
+    const backup = useBackup.value;
+    loading.value = true;
+    error.value = null;
+    try {
+      await sessionModel.completeTwoFactorSignIn(submittedCode, { backup });
+      location.route(returnTo, true);
+    } catch (err) {
+      error.value = errorMessage(err);
+    } finally {
+      loading.value = false;
+    }
+  };
+
   if (needsVerificationFor.value) {
     return (
       <PageShell width="narrow">
@@ -95,6 +122,59 @@ export default function LoginPage() {
               Back to sign in
             </a>
           </p>
+        </Card>
+      </PageShell>
+    );
+  }
+
+  if (step.value === "twoFactor") {
+    return (
+      <PageShell width="narrow">
+        <Card class="flex flex-col gap-4">
+          <Eyebrow>Two-factor authentication</Eyebrow>
+          <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Verify it's you</h1>
+          <Muted class="text-[13px] m-0">
+            {useBackup.value
+              ? "Enter one of your saved backup recovery codes."
+              : "Enter the 6-digit code from your authenticator app."}
+          </Muted>
+
+          <form class="flex flex-col gap-4 mt-2" onSubmit={onVerify}>
+            <Field
+              label={useBackup.value ? "Backup code" : "Authentication code"}
+              for="twofactor-code"
+            >
+              <Input
+                id="twofactor-code"
+                type="text"
+                value={code}
+                inputmode={useBackup.value ? "text" : "numeric"}
+                autocomplete="one-time-code"
+                autoFocus
+                required
+                onInput={(e) => (code.value = (e.target as HTMLInputElement).value)}
+              />
+            </Field>
+
+            {error.value ? <Alert tone="critical">{error.value}</Alert> : null}
+
+            <Button type="submit" disabled={loading.value}>
+              {loading.value ? "Verifying…" : "Verify"}
+            </Button>
+          </form>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            class="self-start"
+            onClick={() => {
+              useBackup.value = !useBackup.value;
+              code.value = "";
+              error.value = null;
+            }}
+          >
+            {useBackup.value ? "Use an authenticator code instead" : "Use a backup code instead"}
+          </Button>
         </Card>
       </PageShell>
     );

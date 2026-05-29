@@ -160,6 +160,9 @@ app.all("/api/auth/*", (c) => {
 });
 
 function authIpLimit(path: string): { bucket: string; max: number; windowMs: number } | null {
+  if (path.startsWith("/api/auth/two-factor")) {
+    return { bucket: "two-factor", max: 10, windowMs: 15 * 60 * 1000 };
+  }
   if (path.startsWith("/api/auth/sign-in")) {
     return { bucket: "sign-in", max: 10, windowMs: 15 * 60 * 1000 };
   }

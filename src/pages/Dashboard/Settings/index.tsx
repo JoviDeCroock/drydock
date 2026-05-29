@@ -28,6 +28,7 @@ import { NotificationRecipientsSection } from "./NotificationRecipientsSection";
 import { NpmConnectionSection } from "./NpmConnectionSection";
 import { OrganizationMembersSection } from "./OrganizationMembersSection";
 import { SettingsNav, isSettingsTab, type SettingsTab } from "./SettingsNav";
+import { TwoFactorSection } from "./TwoFactorSection";
 
 export default function SettingsPage() {
   const location = useLocation();
@@ -140,11 +141,14 @@ export default function SettingsPage() {
 
           <div class="min-w-0 flex flex-col gap-6">
             {tab === "general" ? (
-              <GeneralSection
-                organizations={organizations}
-                currentUserRole={activeRole(organizations)}
-                onDeleted={reloadActiveOrgScopedData}
-              />
+              <>
+                <GeneralSection
+                  organizations={organizations}
+                  currentUserRole={activeRole(organizations)}
+                  onDeleted={reloadActiveOrgScopedData}
+                />
+                <TwoFactorSection />
+              </>
             ) : null}
             {tab === "members" ? (
               <OrganizationMembersSection
