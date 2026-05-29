@@ -162,7 +162,7 @@ const JS_DYNAMIC_EVALUATION_PATTERNS = [
 const PYTHON_DYNAMIC_EVALUATION_PATTERNS = [
   /(?<!\.)\bexec\s*\(/,
   /\b__import__\s*\(/,
-  /\bimportlib\b/,
+  /\bimportlib\.import_module\s*\(/,
   /\bmarshal\.loads\s*\(/,
   /(?<!\.)\bcompile\s*\(/,
   /\bbase64\.b(?:64|32|16)decode\s*\(/,

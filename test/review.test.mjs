@@ -94,6 +94,48 @@ describe("review", () => {
     expect(findings.some((finding) => finding.ruleId === "code.dynamic-evaluation")).toBe(false);
   });
 
+  test("does not treat importlib.metadata as Python dynamic evaluation", () => {
+    const staged = [
+      {
+        path: "demo_package/_version.py",
+        size: 90,
+        sha256: "version",
+        flags: [],
+        textSample:
+          'from importlib.metadata import version\n__version__ = version("demo-package")\n',
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged), null, {
+      codePatternSet: "python",
+    });
+
+    expect(findings.some((finding) => finding.ruleId === "code.dynamic-evaluation")).toBe(false);
+  });
+
+  test("detects Python dynamic import execution", () => {
+    const staged = [
+      {
+        path: "demo_package/loader.py",
+        size: 90,
+        sha256: "loader",
+        flags: [],
+        textSample: 'import importlib\nplugin = importlib.import_module("demo_package.plugin")\n',
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged), null, {
+      codePatternSet: "python",
+    });
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "code.dynamic-evaluation",
+          file: "demo_package/loader.py",
+        }),
+      ]),
+    );
+  });
+
   test("adds best-effort line numbers and diff annotations to findings", () => {
     const before = [
       {
