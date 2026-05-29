@@ -21,7 +21,15 @@ export default defineConfig(({ mode }) => {
       },
     },
     plugins: [
-      preact(),
+      preact({
+        prerender: {
+          enabled: true,
+          renderTarget: "#app",
+          additionalPrerenderRoutes: ["/login", "/register"],
+          previewMiddlewareEnabled: true,
+          previewMiddlewareFallback: "/404",
+        },
+      }),
       tailwindcss(),
       ...(mode === "test"
         ? []
