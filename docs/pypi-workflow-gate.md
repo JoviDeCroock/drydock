@@ -419,9 +419,9 @@ and the consumer re-checks gate status, so a re-enqueue is safe.
 1. Read the GitHub App config. A `GithubAppConfigError` leaves the gate pending
    and returns without retrying (a misconfigured app won't fix itself on retry).
 2. Load the gate. A gate that is already `approved`/`rejected` triggers a
-   best-effort **redelivery** of the stored decision to GitHub (idempotent
-   re-POST) instead of re-running the review; a non-pending, non-decided status
-   is skipped with a warning.
+   **redelivery** of the stored decision to GitHub (idempotent re-POST) instead
+   of re-running the review; callback failures rethrow so the queue retries. A
+   non-pending, non-decided status is skipped with a warning.
 3. Record `github_workflow_gate.received`.
 4. Call `preparePyPiReleaseCandidateForGate` to resolve + verify the bundle.
    - A `WorkflowArtifactError` (incl. a tampered `artifact_digest_mismatch`)

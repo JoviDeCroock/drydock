@@ -292,9 +292,9 @@ async function rejectGateForArtifactError(
 }
 
 /**
- * Best-effort re-delivery of a gate that a previous delivery already decided.
- * Swallows callback errors so an already-decided gate cannot trap the queue in
- * a retry loop — the decision is durable in the row regardless.
+ * Re-delivery of a gate that a previous delivery already decided. Callback
+ * errors are rethrown so the queue can retry until GitHub receives the durable
+ * decision.
  */
 async function redeliverGateDecision(
   config: GithubAppConfig,
@@ -314,6 +314,7 @@ async function redeliverGateDecision(
       gateId: gate.id,
       error: describeOperationalError(err),
     });
+    throw err;
   }
 }
 

@@ -483,4 +483,49 @@ describe("executeWorkflowGateJob", () => {
     expect(scenario.decisionCalls).toHaveLength(2);
     expect(scenario.decisionCalls[1].state).toBe("approved");
   });
+
+  test("retries a failed redelivery for an already-decided gate", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9204",
+      repositoryId: 72005,
+      runId: 11111,
+    });
+    const scenario = await buildScenario(11111, { digestMatches: true });
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const sandboxEnv = buildEnv(bindings, loaderMock.binding);
+    const db = createDb(env.DB);
+    const message = {
+      kind: "workflow_gate" as const,
+      organizationId: seeded.organizationId,
+      gateId: seeded.gateId,
+    };
+
+    await executeWorkflowGateJob(sandboxEnv, ctx, message, db);
+    const loaderCallsAfterFirst = loaderMock.calls.length;
+    expect(scenario.decisionCalls).toHaveLength(1);
+
+    const redeliveryFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({
+          token: "ghs_install_token",
+          expires_at: "2099-01-01T00:00:00Z",
+        });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        return new Response("try again", { status: 503 });
+      }
+      throw new Error(`unexpected fetch in redelivery test: ${request.url}`);
+    });
+    vi.stubGlobal("fetch", redeliveryFetch);
+
+    await expect(executeWorkflowGateJob(sandboxEnv, ctx, message, db)).rejects.toThrow(
+      "GitHub deployment protection decision failed (503)",
+    );
+
+    expect(loaderMock.calls.length).toBe(loaderCallsAfterFirst);
+    expect(redeliveryFetch).toHaveBeenCalledTimes(2);
+  });
 });
