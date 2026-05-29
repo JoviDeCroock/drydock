@@ -137,7 +137,7 @@ const NETWORK_ACCESS_PATTERNS = [
   /\bXMLHttpRequest\b/,
   /\baxios\s*\./,
   // Python network sinks.
-  /\burllib(?:\.request)?\b/,
+  /\burllib\.request\b/,
   /\brequests\.(?:get|post|put|patch|delete|request)\b/,
   /\bhttp\.client\b/,
   /\bhttplib\b/,

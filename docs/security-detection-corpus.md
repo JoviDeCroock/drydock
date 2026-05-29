@@ -100,9 +100,10 @@ The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RUL
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
 fixtures in the same PR whenever a rule family's coverage changes (`PYPI_RULES_VERSION` in the adapter,
 `DETERMINISTIC_RULES_VERSION` in `review.ts`). The shared `code.*` rules were made Python-aware in
-`1.6.0` (subprocess/os.system, urllib/requests/socket, exec/`__import__`/base64-decode, os.environ/
-getpass/keyring); `pypi.*` grew `startup-hook`, `record-mismatch`, and `unusual-dependency` in `0.2.0`,
-and `setup-install-command` was upgraded to fire on top-level install-time code, not just `cmdclass`.
+`1.6.0` (subprocess/os.system, urllib.request/requests/socket, exec/`__import__`/base64-decode,
+os.environ/getpass/keyring); `pypi.*` grew `startup-hook`, `record-mismatch`, and `unusual-dependency`
+in `0.2.0`, and `setup-install-command` was upgraded to fire on top-level install-time code, not just
+`cmdclass`.
 
 ### Fixture format
 
@@ -134,7 +135,7 @@ file paths differently — `test/pypi.test.mjs` is the live oracle.
   artifact path, then `/`, then the file's in-archive path. For **sdists** the in-archive path is first
   root-stripped (`demo_package-1.2.0/setup.py` → `setup.py`). The `.dist-info` directory is **not**
   normalized.
-  - wheel `.pth`: `dist/demo_package-1.2.0-py3-none-any.whl/demo_package/inject.pth`
+  - wheel install-root `.pth`: `dist/demo_package-1.2.0-py3-none-any.whl/inject.pth`
   - sdist `setup.py`: `dist/demo_package-1.2.0.tar.gz/setup.py`
   - wheel METADATA: `dist/demo_package-1.2.0-py3-none-any.whl/demo_package-1.2.0.dist-info/METADATA`
 - **Scheme B — shared `file.*`/`code.*`/`diff.*` findings.** `artifactDiffNamespace(artifact)` + `/` +
@@ -146,8 +147,12 @@ file paths differently — `test/pypi.test.mjs` is the live oracle.
   - shared finding on wheel METADATA (as a diff entry): `wheel/py3-none-any/.dist-info/METADATA`
 
 A single file can fire findings from both families with different paths — e.g. an sdist `setup.py` with
-top-level `os.system`/`urllib` produces `pypi.setup-install-command` at `dist/…tar.gz/setup.py` (Scheme A)
-**and** `code.process-execution`/`code.network-access` at `sdist/setup.py` (Scheme B). List both tuples.
+top-level `os.system`/`urllib.request` produces `pypi.setup-install-command` at
+`dist/…tar.gz/setup.py` (Scheme A) **and** `code.process-execution`/`code.network-access` at
+`sdist/setup.py` (Scheme B). List both tuples.
+For startup-hook fixtures, only files installed at Python's site root are expected to fire:
+top-level wheel files and wheel `.data/{purelib,platlib}/` files count; package-internal files such as
+`demo_package/sitecustomize.py` or `demo_package/inject.pth` do not.
 
 ### Known coverage gaps (PyPI)
 

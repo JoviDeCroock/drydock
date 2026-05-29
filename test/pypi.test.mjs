@@ -111,7 +111,7 @@ describe("PyPI artifact summaries and review", () => {
               "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
             ),
             file("demo_package-1.2.0.dist-info/RECORD", "demo_package/__init__.py,,\n"),
-            file("demo_package/sitecustomize.pth", "import demo_package.bootstrap\n"),
+            file("sitecustomize.pth", "import demo_package.bootstrap\n"),
           ],
         },
         {
@@ -137,7 +137,7 @@ describe("PyPI artifact summaries and review", () => {
         expect.objectContaining({
           severity: "high",
           ruleId: "pypi.pth-execution",
-          file: "dist/demo_package-1.2.0-py3-none-any.whl/demo_package/sitecustomize.pth",
+          file: "dist/demo_package-1.2.0-py3-none-any.whl/sitecustomize.pth",
         }),
         expect.objectContaining({
           severity: "high",

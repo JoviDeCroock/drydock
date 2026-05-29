@@ -42,7 +42,7 @@
           "size": 200,
           "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
           "flags": [],
-          "textSample": "demo_package/__init__.py,sha256=abc,12\ndemo_package-1.2.0.dist-info/METADATA,,\ndemo_package-1.2.0.dist-info/WHEEL,,\ndemo_package-1.2.0.dist-info/RECORD,,\n"
+          "textSample": "demo_package/__init__.py,sha256=abc,12\ndemo_package/inject.pth,,\ndemo_package/sitecustomize.py,,\ndemo_package-1.2.0.dist-info/METADATA,,\ndemo_package-1.2.0.dist-info/WHEEL,,\ndemo_package-1.2.0.dist-info/RECORD,,\n"
         },
         {
           "path": "demo_package/__init__.py",
@@ -50,6 +50,20 @@
           "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
           "flags": [],
           "textSample": "__version__ = \"1.2.0\"\n"
+        },
+        {
+          "path": "demo_package/inject.pth",
+          "size": 30,
+          "sha256": "4545454545454545454545454545454545454545454545454545454545454545",
+          "flags": [],
+          "textSample": "import demo_package.bootstrap\n"
+        },
+        {
+          "path": "demo_package/sitecustomize.py",
+          "size": 22,
+          "sha256": "4646464646464646464646464646464646464646464646464646464646464646",
+          "flags": [],
+          "textSample": "VALUE = \"package-local\"\n"
         }
       ]
     },

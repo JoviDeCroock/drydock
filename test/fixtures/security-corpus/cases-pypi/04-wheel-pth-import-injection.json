@@ -38,10 +38,10 @@
           "size": 200,
           "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
           "flags": [],
-          "textSample": "demo_package/inject.pth,,\ndemo_package-1.2.0.dist-info/METADATA,,\ndemo_package-1.2.0.dist-info/WHEEL,,\ndemo_package-1.2.0.dist-info/RECORD,,\n"
+          "textSample": "inject.pth,,\ndemo_package-1.2.0.dist-info/METADATA,,\ndemo_package-1.2.0.dist-info/WHEEL,,\ndemo_package-1.2.0.dist-info/RECORD,,\n"
         },
         {
-          "path": "demo_package/inject.pth",
+          "path": "inject.pth",
           "size": 32,
           "sha256": "aaaa1111111111111111111111111111111111111111111111111111111111aa",
           "flags": [],
@@ -55,7 +55,7 @@
     {
       "ruleId": "pypi.pth-execution",
       "severity": "high",
-      "file": "dist/demo_package-1.2.0-py3-none-any.whl/demo_package/inject.pth"
+      "file": "dist/demo_package-1.2.0-py3-none-any.whl/inject.pth"
     }
   ]
 }

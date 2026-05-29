@@ -657,7 +657,7 @@ function pyPiReleaseFindings(
   for (const artifact of artifacts) {
     for (const file of artifact.files) {
       const filePath = namespacedPath(artifact.path, file.path);
-      if (/\.pth$/i.test(file.path)) {
+      if (/\.pth$/i.test(file.path) && isPythonInstallRootFile(artifact, file.path)) {
         const hasImportLine = Boolean(
           file.textSample?.split(/\r?\n/).some((line) => /^\s*import\s+/.test(line)),
         );
@@ -674,7 +674,10 @@ function pyPiReleaseFindings(
           }),
         );
       }
-      if (/(^|\/)(sitecustomize|usercustomize)\.py$/i.test(file.path)) {
+      if (
+        /(^|\/)(sitecustomize|usercustomize)\.py$/i.test(file.path) &&
+        isPythonInstallRootFile(artifact, file.path)
+      ) {
         findings.push(
           tag("startupHook", {
             severity: "high",
@@ -748,6 +751,13 @@ function undeclaredWheelFiles(artifact: PyPiPreparedArtifact, recordPath: string
   }
   if (!declared.size) return [];
   return artifact.files.filter((file) => !declared.has(file.path));
+}
+
+function isPythonInstallRootFile(artifact: PyPiPreparedArtifact, filePath: string): boolean {
+  const normalized = filePath.replace(/^\/+/, "");
+  if (!normalized.includes("/")) return true;
+  if (artifact.kind !== "wheel") return false;
+  return /^[^/]+\.data\/(?:purelib|platlib)\/[^/]+$/i.test(normalized);
 }
 
 function tag(
