@@ -13,6 +13,7 @@ export { Card, CollapsibleCard, SummaryCard } from "./Card";
 export type { SummaryCardTone, SummaryCardValue } from "./Card";
 export { PageShell } from "./PageShell";
 export { BrandMark } from "./BrandMark";
+export { AikidoMark, AikidoFootnote, AikidoPartnerStrip } from "./AikidoPartner";
 export {
   Eyebrow,
   SectionLabel,

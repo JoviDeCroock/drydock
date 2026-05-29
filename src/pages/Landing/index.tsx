@@ -3,6 +3,8 @@ import { useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { sessionModel } from "../../models/auth";
 import {
+  AikidoMark,
+  AikidoPartnerStrip,
   Badge,
   Card,
   Eyebrow,
@@ -64,6 +66,8 @@ export default function LandingPage() {
           </Show>
         </div>
       </section>
+
+      <AikidoPartnerStrip />
 
       <ScanPreview />
 
@@ -128,10 +132,16 @@ function ScanPreview() {
               <span key="status">complete</span>,
             ]}
           />
-          <div class="flex flex-wrap items-center gap-2">
-            <Badge tone="critical">block manual approval</Badge>
-            <Badge tone="critical">release critical</Badge>
-            <Badge tone="medium">2 findings</Badge>
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center gap-2">
+              <Badge tone="critical">block manual approval</Badge>
+              <Badge tone="critical">release critical</Badge>
+              <Badge tone="medium">2 findings</Badge>
+            </div>
+            <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle inline-flex items-center gap-2">
+              reviewed with
+              <AikidoMark size="xs" />
+            </span>
           </div>
           <SeverityBar counts={{ critical: 1, medium: 1 }} class="max-w-[420px]" />
         </header>
