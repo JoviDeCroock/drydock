@@ -7,12 +7,7 @@ import {
   readUint32Le,
 } from "./tar-parser.js";
 import { getInstallationAccessToken, type GithubAppConfig } from "./github-app";
-import {
-  inferPyPiArtifactKind,
-  parsePyPiReleaseManifest,
-  type PyPiArtifactKind,
-  type PyPiReleaseManifest,
-} from "./adapters/pypi/index";
+import { inferPyPiArtifactKind, type PyPiArtifactKind } from "./adapters/pypi/index";
 
 // ── Public surface ───────────────────────────────────────────────────────────
 
@@ -31,8 +26,6 @@ export interface ResolvedReleaseFile {
 }
 
 export interface ResolvedReleaseBundle {
-  manifest: PyPiReleaseManifest;
-  manifestRaw: string;
   artifacts: ResolvedReleaseFile[];
   artifactId: number;
   artifactName: string;
@@ -42,13 +35,11 @@ export interface ResolvedReleaseBundle {
 export type WorkflowArtifactErrorCode =
   | "bundle_unavailable"
   | "bundle_too_large"
-  | "manifest_missing"
-  | "manifest_invalid"
-  | "manifest_artifact_mismatch"
+  | "bundle_empty"
   | "release_target_mismatch"
   | "artifact_path_unsafe"
-  | "artifact_kind_unsupported"
-  | "artifact_digest_mismatch";
+  | "artifact_identity_missing"
+  | "artifact_identity_inconsistent";
 
 export class WorkflowArtifactError extends Error {
   constructor(
@@ -63,13 +54,11 @@ export class WorkflowArtifactError extends Error {
 // ── Configuration ────────────────────────────────────────────────────────────
 
 const DEFAULT_ARTIFACT_NAME = "pypi-release-candidate";
-const MANIFEST_FILENAME = "drydock-manifest.json";
-const ALLOWED_SUPPORT_FILENAMES = new Set(["drydock-sha256.txt"]);
 
 const MAX_OUTER_ZIP_BYTES = 25 * 1024 * 1024;
 const MAX_OUTER_ZIP_ENTRIES = 256;
 const MAX_PER_ENTRY_BYTES = 25 * 1024 * 1024;
-const MAX_MANIFEST_BYTES = 64 * 1024;
+const MAX_RELEASE_ARTIFACTS = 20;
 const MAX_LIST_PAGES = 4;
 const MAX_DOWNLOAD_REDIRECTS = 4;
 
@@ -123,6 +112,13 @@ export function evaluateGithubArtifactEgress(requestUrl: string): GithubArtifact
  * gate-aware caller is responsible for swapping the GitHub App JWT for a fresh
  * installation token; isolating that step lets us test artifact ingestion
  * without supplying a real RSA private key.
+ *
+ * There is no `drydock-manifest.json` contract: the release set is whatever
+ * wheel/sdist files the bundle contains. Identity (`package`/`version`) is
+ * derived from the artifacts themselves downstream
+ * (`server/lib/release-candidate-pypi.ts`) once the bytes have been parsed in
+ * the sandbox. This stage only collects the artifact bytes and recomputes their
+ * SHA-256; non-artifact files in the bundle are ignored.
  */
 export async function fetchReleaseBundleWithToken(
   installationToken: string,
@@ -153,77 +149,31 @@ export async function fetchReleaseBundleWithToken(
   );
 
   const entries = await extractOuterZipEntries(zipBytes);
-  const manifestEntry = entries.find((entry) => entry.path === MANIFEST_FILENAME);
-  if (!manifestEntry) {
-    throw new WorkflowArtifactError(
-      "manifest_missing",
-      `artifact bundle did not contain ${MANIFEST_FILENAME}`,
-    );
-  }
-  if (manifestEntry.bytes.byteLength > MAX_MANIFEST_BYTES) {
-    throw new WorkflowArtifactError(
-      "manifest_invalid",
-      `${MANIFEST_FILENAME} exceeds ${MAX_MANIFEST_BYTES} bytes`,
-    );
-  }
 
-  const manifestRaw = new TextDecoder("utf-8", { fatal: false }).decode(manifestEntry.bytes);
-  const manifest = parseAndValidateManifest(manifestRaw);
-
-  // Reject anything beyond the manifest, declared artifacts, and explicit
-  // support files before digesting.
-  const declaredPaths = new Set(manifest.artifacts.map((entry) => entry.path));
+  // The release set is every wheel/sdist in the bundle. Non-artifact files
+  // (checksums, READMEs, anything else upload-artifact happened to include) are
+  // ignored — they are never scanned, so they cannot influence the review.
   const candidateArtifacts: ResolvedReleaseFile[] = [];
   for (const entry of entries) {
-    if (entry.path === MANIFEST_FILENAME) continue;
-    if (ALLOWED_SUPPORT_FILENAMES.has(entry.path)) continue;
-    if (declaredPaths.has(entry.path)) continue;
-    if (inferPyPiArtifactKind(entry.path) !== null) {
-      throw new WorkflowArtifactError(
-        "manifest_artifact_mismatch",
-        `bundle includes ${entry.path} which is not declared in ${MANIFEST_FILENAME}`,
-      );
-    }
+    const kind = inferPyPiArtifactKind(entry.path);
+    if (!kind) continue;
+    const sha256 = await sha256Hex(entry.bytes);
+    candidateArtifacts.push({ path: entry.path, bytes: entry.bytes, sha256, kind });
+  }
+  if (candidateArtifacts.length === 0) {
     throw new WorkflowArtifactError(
-      "artifact_kind_unsupported",
-      `bundle includes unsupported file ${entry.path}`,
+      "bundle_empty",
+      "artifact bundle contained no wheel or sdist files",
     );
   }
-
-  for (const declared of manifest.artifacts) {
-    const entry = entries.find((candidate) => candidate.path === declared.path);
-    if (!entry) {
-      throw new WorkflowArtifactError(
-        "manifest_artifact_mismatch",
-        `bundle is missing artifact ${declared.path} declared in ${MANIFEST_FILENAME}`,
-      );
-    }
-    const kind = inferPyPiArtifactKind(entry.path);
-    if (!kind) {
-      throw new WorkflowArtifactError(
-        "artifact_kind_unsupported",
-        `${entry.path} is not a wheel or sdist`,
-      );
-    }
-    if (kind !== declared.kind) {
-      throw new WorkflowArtifactError(
-        "artifact_kind_unsupported",
-        `${entry.path} kind ${kind} does not match manifest kind ${declared.kind}`,
-      );
-    }
-    const sha256 = await sha256Hex(entry.bytes);
-    if (sha256 !== declared.sha256.toLowerCase()) {
-      throw new WorkflowArtifactError(
-        "artifact_digest_mismatch",
-        `${entry.path} sha256 ${sha256} != manifest sha256`,
-      );
-    }
-    candidateArtifacts.push({ path: entry.path, bytes: entry.bytes, sha256, kind });
+  if (candidateArtifacts.length > MAX_RELEASE_ARTIFACTS) {
+    throw new WorkflowArtifactError(
+      "bundle_too_large",
+      `artifact bundle contains more than ${MAX_RELEASE_ARTIFACTS} wheel/sdist files`,
+    );
   }
 
   return {
-    manifest,
-    manifestRaw,
     artifacts: candidateArtifacts,
     artifactId: artifact.id,
     artifactName: artifact.name,
@@ -517,25 +467,6 @@ function containsPathTraversal(rawPath: string): boolean {
   if (rawPath.startsWith("../") || rawPath.includes("/../") || rawPath.endsWith("/..")) return true;
   if (/^[A-Za-z]:/.test(rawPath)) return true;
   return false;
-}
-
-// ── Manifest validation ──────────────────────────────────────────────────────
-
-function parseAndValidateManifest(raw: string): PyPiReleaseManifest {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new WorkflowArtifactError("manifest_invalid", "drydock-manifest.json is not valid JSON");
-  }
-  try {
-    return parsePyPiReleaseManifest(parsed);
-  } catch (err) {
-    throw new WorkflowArtifactError(
-      "manifest_invalid",
-      err instanceof Error ? err.message : "manifest validation failed",
-    );
-  }
 }
 
 // ── Shared helpers ───────────────────────────────────────────────────────────

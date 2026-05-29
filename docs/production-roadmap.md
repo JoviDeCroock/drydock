@@ -269,8 +269,15 @@ Remaining tasks:
   resolves the release-target mapping, persists a pending gate, and exposes
   `markGateDecided` + `postDeploymentProtectionDecision` for the future review
   pipeline to release or block the publish job.
-- Fetch GitHub Actions artifacts and the required `drydock-manifest.json`.
-- Verify artifact SHA-256 digests before review and before publish.
+- ~~Fetch GitHub Actions artifacts and the required `drydock-manifest.json`.~~
+  Implemented without a manifest file: `fetchReleaseBundleForGate` downloads the
+  run's artifact bundle and collects every wheel/sdist, and
+  `preparePyPiReleaseCandidateForGate` derives the release set (package name,
+  version, and SHA-256 digests) from the artifact bytes themselves. There is no
+  `drydock-manifest.json` contract.
+- Recompute artifact SHA-256 digests from the bundle bytes for review evidence.
+  (There is no maintainer-declared digest to verify against; the publish-side
+  digest-match check is intentionally gone — see `pypi-workflow-gate.md`.)
 - Persist workflow-gate reviews without overloading npm `stage_id`.
 - Download previous PyPI release artifacts from `files.pythonhosted.org` for comparison.
 - Add UI for PyPI setup, gate status, and review reports.
@@ -279,7 +286,7 @@ Exit criteria:
 
 - A GitHub Actions PyPI publish job waits on Drydock through a GitHub Environment gate.
 - Drydock reviews all candidate wheels/sdists and compares them to the selected previous PyPI release.
-- The publish job verifies the reviewed manifest digest and publishes with PyPI Trusted Publishing only after gate approval.
+- The publish job uploads the exact reviewed wheel/sdist bytes with PyPI Trusted Publishing only after gate approval.
 
 ## Deferred work
 
