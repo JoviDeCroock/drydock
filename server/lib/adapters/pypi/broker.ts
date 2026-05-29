@@ -22,6 +22,15 @@ export interface PyPiBroker extends AdapterBroker {
 
 const PYPI_METADATA_REGISTRY = "https://pypi.org/pypi";
 
+function isAllowedPublicPyPiArtifactUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && parsed.hostname === "files.pythonhosted.org";
+  } catch {
+    return false;
+  }
+}
+
 // PyPI public artifacts carry no credentials, so unlike the npm broker this is a
 // plain object rather than a WorkerEntrypoint. The sandbox download path is
 // pulled in dynamically so node-env logic tests can import this module without
@@ -45,6 +54,9 @@ export function createPyPiBroker(ctx: AdapterContext, _ref: AdapterConnectionRef
       artifact: PyPiPublicArtifactRef,
       opts?: PyPiBrokerDownloadOptions,
     ): Promise<DownloadResult> {
+      if (!isAllowedPublicPyPiArtifactUrl(artifact.url)) {
+        throw new Error("PyPI public artifact URL is not allowed");
+      }
       const { downloadInSandbox } = await import("../../sandbox");
       // No npm token is passed: the gateway sees only this single pinned URL on
       // its public-artifact allowlist, so it forwards the request uncredentialed.

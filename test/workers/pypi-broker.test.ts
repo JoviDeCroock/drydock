@@ -117,6 +117,21 @@ describe("createPyPiBroker public artifact download", () => {
     ).rejects.toThrow();
     expect(loader.loads).toHaveLength(0);
   });
+
+  test("rejects foreign HTTPS artifact URLs before loading the sandbox", async () => {
+    const loader = buildLoaderMock();
+    const { ctx, gatewayProps } = buildCtxWithGateway();
+    const broker = createPyPiBroker(brokerCtx(ctx, loader.binding), { organizationId: "org_1" });
+
+    await expect(
+      broker.downloadPublicArtifact({
+        url: "https://example.com/packages/a.whl",
+        kind: "wheel",
+      }),
+    ).rejects.toThrow(/not allowed/);
+    expect(loader.loads).toHaveLength(0);
+    expect(gatewayProps).toHaveLength(0);
+  });
 });
 
 describe("createPyPiBroker project metadata", () => {

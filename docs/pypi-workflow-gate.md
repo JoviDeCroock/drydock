@@ -432,10 +432,10 @@ Downloads are bounded and credential-free:
   wheels don't trigger dozens of downloads; at most one artifact per namespace
   is pulled.
 - `PyPiBroker.downloadPublicArtifact` runs each fetch through
-  `downloadInSandbox` with no npm token and a public-artifact allowlist pinned
-  to the single URL being fetched, so the `NpmStageGateway` forwards the
-  request uncredentialed. PyPI artifacts never receive npm credentials or
-  arbitrary egress.
+  `downloadInSandbox` only after re-validating the artifact host, with no npm
+  token and a public-artifact allowlist pinned to the single URL being fetched,
+  so the `NpmStageGateway` forwards the request uncredentialed. PyPI artifacts
+  never receive npm credentials or arbitrary egress.
 
 The downloaded wheel/sdist files are flattened through the same wheel/sdist
 namespaces as the candidate, so `createPackageDiff` reports changed/unchanged
