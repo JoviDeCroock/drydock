@@ -109,9 +109,13 @@ export interface FindingAnnotationOptions {
   persistedAnnotations?: Map<string, FindingDiffAnnotation>;
 }
 
+export interface DeterministicFindingOptions {
+  codePatternSet?: "javascript" | "python";
+}
+
 const LIFECYCLE_SCRIPTS = ["preinstall", "install", "postinstall", "prepare"];
 const RISK_RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2, critical: 3 };
-const PROCESS_EXECUTION_PATTERNS = [
+const JS_PROCESS_EXECUTION_PATTERNS = [
   /\bchild_process\b/,
   /\bexecSync\b/,
   /\bexecFileSync\b/,
@@ -122,7 +126,8 @@ const PROCESS_EXECUTION_PATTERNS = [
   /\bnc\s/,
   /\bbash\s+-c/,
   /\bpowershell\s/,
-  // Python process/shell sinks.
+];
+const PYTHON_PROCESS_EXECUTION_PATTERNS = [
   /\bsubprocess\b/,
   /\bos\.system\s*\(/,
   /\bos\.popen\s*\(/,
@@ -130,13 +135,14 @@ const PROCESS_EXECUTION_PATTERNS = [
   /\bpty\.spawn\s*\(/,
   /\bcommands\.getoutput\s*\(/,
 ];
-const NETWORK_ACCESS_PATTERNS = [
+const JS_NETWORK_ACCESS_PATTERNS = [
   /\brequire\(["'](?:node:)?(?:http|https|net|dns)["']\)/,
   /\bfrom\s+["'](?:node:)?(?:http|https|net|dns)["']/,
   /\bfetch\s*\(/,
   /\bXMLHttpRequest\b/,
   /\baxios\s*\./,
-  // Python network sinks.
+];
+const PYTHON_NETWORK_ACCESS_PATTERNS = [
   /\burllib\.request\b/,
   /\brequests\.(?:get|post|put|patch|delete|request)\b/,
   /\bhttp\.client\b/,
@@ -146,15 +152,14 @@ const NETWORK_ACCESS_PATTERNS = [
   /\bsmtplib\b/,
   /\burlopen\s*\(/,
 ];
-const DYNAMIC_EVALUATION_PATTERNS = [
+const JS_DYNAMIC_EVALUATION_PATTERNS = [
   /\beval\s*\(/,
   /\bnew\s+Function\s*\(/,
   /\bWebAssembly\.compile\s*\(/,
   /\batob\s*\(/,
   /\bBuffer\.from\s*\([^,]+,\s*["']base64["']\s*\)/,
-  // Python dynamic-eval and obfuscation primitives. The lookbehind keeps the
-  // bare `exec(`/`compile(` builtins from matching JS method calls such as
-  // `regex.exec(` or `WebAssembly.compile(` (already covered above).
+];
+const PYTHON_DYNAMIC_EVALUATION_PATTERNS = [
   /(?<!\.)\bexec\s*\(/,
   /\b__import__\s*\(/,
   /\bimportlib\b/,
@@ -166,14 +171,15 @@ const DYNAMIC_EVALUATION_PATTERNS = [
   /\bcodecs\.decode\s*\(/,
   /\bbytes\.fromhex\s*\(/,
 ];
-const CREDENTIAL_ACCESS_PATTERNS = [
+const JS_CREDENTIAL_ACCESS_PATTERNS = [
   /\bprocess\.env\b/,
   /\bnpm_config_/,
   /\bNPM_TOKEN\b/,
   /\bGITHUB_TOKEN\b/,
   /\bAWS_SECRET\b/,
   /\bPRIVATE_KEY\b/,
-  // Python credential/environment access.
+];
+const PYTHON_CREDENTIAL_ACCESS_PATTERNS = [
   /\bos\.environ\b/,
   /\bos\.getenv\s*\(/,
   /\bgetpass\b/,
@@ -183,13 +189,26 @@ const CREDENTIAL_ACCESS_PATTERNS = [
   /\.netrc/,
 ];
 
-// Process-execution, network, and dynamic-evaluation capability in one set.
+const JS_PATTERN_SET = {
+  processExecution: JS_PROCESS_EXECUTION_PATTERNS,
+  networkAccess: JS_NETWORK_ACCESS_PATTERNS,
+  dynamicEvaluation: JS_DYNAMIC_EVALUATION_PATTERNS,
+  credentialAccess: JS_CREDENTIAL_ACCESS_PATTERNS,
+};
+const PYTHON_PATTERN_SET = {
+  processExecution: PYTHON_PROCESS_EXECUTION_PATTERNS,
+  networkAccess: PYTHON_NETWORK_ACCESS_PATTERNS,
+  dynamicEvaluation: PYTHON_DYNAMIC_EVALUATION_PATTERNS,
+  credentialAccess: PYTHON_CREDENTIAL_ACCESS_PATTERNS,
+};
+
+// Python process-execution, network, and dynamic-evaluation capability in one set.
 // Reused by ecosystem adapters that need to know whether a file executes code
 // (e.g. a PyPI sdist's setup.py, which pip runs at install time).
-export const EXECUTION_CAPABILITY_PATTERNS = [
-  ...PROCESS_EXECUTION_PATTERNS,
-  ...NETWORK_ACCESS_PATTERNS,
-  ...DYNAMIC_EVALUATION_PATTERNS,
+export const PYTHON_EXECUTION_CAPABILITY_PATTERNS = [
+  ...PYTHON_PROCESS_EXECUTION_PATTERNS,
+  ...PYTHON_NETWORK_ACCESS_PATTERNS,
+  ...PYTHON_DYNAMIC_EVALUATION_PATTERNS,
 ];
 
 const SECRET_PATTERNS: Array<[RegExp, string]> = [
@@ -221,8 +240,10 @@ export function deterministicFindings(
   files: FileRecord[],
   diff: DiffEntry[] = [],
   packageJsonSummary?: PackageJsonSummary | null,
+  options: DeterministicFindingOptions = {},
 ): Finding[] {
   const findings: Finding[] = [];
+  const patterns = options.codePatternSet === "python" ? PYTHON_PATTERN_SET : JS_PATTERN_SET;
   const diffByPath = new Map(diff.map((entry) => [entry.path, entry]));
   const packageJsonFile = files.find((file) => file.path === "package.json" && file.textSample);
   const rawPackageJson = packageJsonFile?.textSample
@@ -291,46 +312,46 @@ export function deterministicFindings(
     const changed = diffByPath.get(file.path)?.status;
     const changedPrefix = changed && changed !== "unchanged" ? `new/changed ${changed} file: ` : "";
 
-    if (PROCESS_EXECUTION_PATTERNS.some((pattern) => pattern.test(sample))) {
+    if (patterns.processExecution.some((pattern) => pattern.test(sample))) {
       findings.push(
         tag("codeProcessExecution", {
           severity: "high",
           file: file.path,
-          line: firstMatchingLine(sample, PROCESS_EXECUTION_PATTERNS),
+          line: firstMatchingLine(sample, patterns.processExecution),
           evidence: `${changedPrefix}process or shell execution`,
           reason: "package may execute arbitrary commands",
         }),
       );
     }
-    if (NETWORK_ACCESS_PATTERNS.some((pattern) => pattern.test(sample))) {
+    if (patterns.networkAccess.some((pattern) => pattern.test(sample))) {
       findings.push(
         tag("codeNetworkAccess", {
           severity: changed === "added" ? "high" : "medium",
           file: file.path,
-          line: firstMatchingLine(sample, NETWORK_ACCESS_PATTERNS),
+          line: firstMatchingLine(sample, patterns.networkAccess),
           evidence: `${changedPrefix}network-capable code path`,
           reason:
             "unexpected network access in package code can be used for exfiltration or staged payload retrieval",
         }),
       );
     }
-    if (DYNAMIC_EVALUATION_PATTERNS.some((pattern) => pattern.test(sample))) {
+    if (patterns.dynamicEvaluation.some((pattern) => pattern.test(sample))) {
       findings.push(
         tag("codeDynamicEvaluation", {
           severity: changed === "added" ? "high" : "medium",
           file: file.path,
-          line: firstMatchingLine(sample, DYNAMIC_EVALUATION_PATTERNS),
+          line: firstMatchingLine(sample, patterns.dynamicEvaluation),
           evidence: `${changedPrefix}dynamic code or obfuscation primitive`,
           reason: "common malware and obfuscation technique",
         }),
       );
     }
-    if (CREDENTIAL_ACCESS_PATTERNS.some((pattern) => pattern.test(sample))) {
+    if (patterns.credentialAccess.some((pattern) => pattern.test(sample))) {
       findings.push(
         tag("codeCredentialAccess", {
           severity: changed === "added" ? "high" : "medium",
           file: file.path,
-          line: firstMatchingLine(sample, CREDENTIAL_ACCESS_PATTERNS),
+          line: firstMatchingLine(sample, patterns.credentialAccess),
           evidence: `${changedPrefix}secret/environment access`,
           reason: "package may read credentials from the install environment",
         }),
@@ -704,7 +725,7 @@ function splitComparableLines(text: string): string[] {
 }
 
 function findingPatternMatchesChangedLine(
-  finding: { ruleId?: string | null },
+  finding: { file: string; ruleId?: string | null },
   stagedText: string | undefined,
   changedLines: Set<number>,
 ): boolean {
@@ -723,16 +744,17 @@ function findingPatternMatchesChangedLine(
   return false;
 }
 
-function patternsForFinding(finding: { ruleId?: string | null }): RegExp[] {
+function patternsForFinding(finding: { file: string; ruleId?: string | null }): RegExp[] {
+  const patterns = finding.file.endsWith(".py") ? PYTHON_PATTERN_SET : JS_PATTERN_SET;
   switch (finding.ruleId) {
     case DETERMINISTIC_RULE_IDS.codeProcessExecution:
-      return PROCESS_EXECUTION_PATTERNS;
+      return patterns.processExecution;
     case DETERMINISTIC_RULE_IDS.codeNetworkAccess:
-      return NETWORK_ACCESS_PATTERNS;
+      return patterns.networkAccess;
     case DETERMINISTIC_RULE_IDS.codeDynamicEvaluation:
-      return DYNAMIC_EVALUATION_PATTERNS;
+      return patterns.dynamicEvaluation;
     case DETERMINISTIC_RULE_IDS.codeCredentialAccess:
-      return CREDENTIAL_ACCESS_PATTERNS;
+      return patterns.credentialAccess;
     case DETERMINISTIC_RULE_IDS.fileSecretContent:
       return SECRET_PATTERNS.map(([pattern]) => pattern);
     default:

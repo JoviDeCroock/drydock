@@ -99,11 +99,12 @@ A PyPI review runs two rule families over the staged artifacts:
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
 fixtures in the same PR whenever a rule family's coverage changes (`PYPI_RULES_VERSION` in the adapter,
-`DETERMINISTIC_RULES_VERSION` in `review.ts`). The shared `code.*` rules were made Python-aware in
-`1.6.0` (subprocess/os.system, urllib.request/requests/socket, exec/`__import__`/base64-decode,
-os.environ/getpass/keyring); `pypi.*` grew `startup-hook`, `record-mismatch`, and `unusual-dependency`
-in `0.2.0`, and `setup-install-command` was upgraded to fire on the top-level sdist `setup.py`
-install-time code, not just `cmdclass`.
+`DETERMINISTIC_RULES_VERSION` in `review.ts`). The PyPI adapter opts the shared `code.*` rules into
+Python-aware matching in `1.6.0` (subprocess/os.system, urllib.request/requests/socket,
+exec/`__import__`/base64-decode, os.environ/getpass/keyring) while npm keeps the JavaScript matcher;
+`pypi.*` grew `startup-hook`, `record-mismatch`, and `unusual-dependency` in `0.2.0`, and
+`setup-install-command` was upgraded to fire on the top-level sdist `setup.py` install-time code, not
+just `cmdclass`.
 
 ### Fixture format
 

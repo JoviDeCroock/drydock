@@ -2,7 +2,7 @@ import {
   computeRisk,
   createPackageDiff,
   deterministicFindings,
-  EXECUTION_CAPABILITY_PATTERNS,
+  PYTHON_EXECUTION_CAPABILITY_PATTERNS,
   redactFindings,
   summarizePackageJsonDiff,
   type DiffEntry,
@@ -178,7 +178,9 @@ export const pypiAdapter: PackageAdapter<PyPiAdapterInput, PyPiBroker> = {
   runFindings(args) {
     const details = args.details as PyPiAdapterDetails;
     return [
-      ...deterministicFindings(args.staged.files, args.fileDiff, null),
+      ...deterministicFindings(args.staged.files, args.fileDiff, null, {
+        codePatternSet: "python",
+      }),
       ...pyPiReleaseFindings(details.manifest, details.preparedArtifacts),
     ];
   },
@@ -691,7 +693,7 @@ function pyPiReleaseFindings(
         const matchedInstallCommand = SETUP_INSTALL_COMMAND_PATTERNS.some((pattern) =>
           pattern.test(setupText),
         );
-        const matchedExecution = EXECUTION_CAPABILITY_PATTERNS.some((pattern) =>
+        const matchedExecution = PYTHON_EXECUTION_CAPABILITY_PATTERNS.some((pattern) =>
           pattern.test(setupText),
         );
         if (matchedInstallCommand || matchedExecution) {
@@ -701,7 +703,7 @@ function pyPiReleaseFindings(
               file: filePath,
               line: firstMatchingLine(setupText, [
                 ...SETUP_INSTALL_COMMAND_PATTERNS,
-                ...EXECUTION_CAPABILITY_PATTERNS,
+                ...PYTHON_EXECUTION_CAPABILITY_PATTERNS,
               ]),
               evidence: matchedInstallCommand
                 ? "setup.py custom install command"

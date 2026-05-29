@@ -79,6 +79,21 @@ describe("review", () => {
     );
   });
 
+  test("does not apply Python capability patterns to JavaScript packages", () => {
+    const staged = [
+      {
+        path: "template.js",
+        size: 60,
+        sha256: "template",
+        flags: [],
+        textSample: "export function render(template) {\n  return compile(template);\n}\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings.some((finding) => finding.ruleId === "code.dynamic-evaluation")).toBe(false);
+  });
+
   test("adds best-effort line numbers and diff annotations to findings", () => {
     const before = [
       {
