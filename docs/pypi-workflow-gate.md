@@ -130,6 +130,18 @@ organization (`x-organization-id` header to scope writes).
   authorization (OAuth) during installation" so the setup callback includes
   this `code`; the installation ID alone is treated as untrusted.
 - `GET /installations` — lists every installation linked to the active org.
+- `GET /installations/:installationRowId/repositories` — proxies
+  `GET /installation/repositories` via the installation token so the UI can
+  surface a dropdown of repos the install can see, without holding GitHub App
+  credentials. It follows GitHub pagination until exhausted. Returns
+  `{ repositories: [{ id, fullName, defaultBranch }] }`.
+- `GET /installations/:installationRowId/repositories/:owner/:repo/environments`
+  — proxies `GET /repos/:owner/:repo/environments` via the installation token
+  so the UI can surface a dropdown of GitHub Environments configured on the
+  selected repo. Returns `{ environments: [{ name }] }`. Both routes call
+  `ensureInstallationOwnedBy` first, so foreign installation IDs return
+  `installation_missing` before any GitHub call is made, and both are
+  rate-limited before minting an installation token or calling GitHub.
 - `GET /release-targets`, `POST /release-targets`,
   `DELETE /release-targets/:id` — CRUD over the mapping.
 
@@ -143,7 +155,8 @@ organization (`x-organization-id` header to scope writes).
   repo name is validated as exactly `owner/repo` before the GitHub API URL is
   built, so path traversal-like segments cannot escape the repository lookup.
 - `environment_unmapped` — caller did not provide both `environment` and
-  `pypiTrustedPublisherEnvironment`.
+  `pypiTrustedPublisherEnvironment`, or the provided environment name exceeds
+  GitHub's 255-character limit.
 - `environment_mismatch` — the two environment names differ.
 - `package_already_mapped` — `(organizationId, ecosystem, packageName)` already
   has a row.
@@ -283,11 +296,18 @@ The install flow lives on `/dashboard/settings` (gated behind
    `/dashboard...` return paths before resuming the callback.
 4. Linked installations render with `active` / `suspended` / `uninstalled`
    status badges.
+5. Below the linked installations, a "PyPI release targets" form lets the user
+   register a `(package, repo, environment)` mapping. Installation, repository,
+   and environment are dropdowns populated from the new proxy endpoints; the
+   PyPI Trusted Publisher environment defaults to the selected GitHub
+   environment but stays editable so the user can confirm before saving. The
+   server still revalidates installation ownership, repo access, and
+   environment-name equality on `POST /release-targets`, so the UI cannot
+   bypass the rules. Empty states link to GitHub App settings (no repos) and
+   GitHub Actions environments docs (no environments).
 
 ## Remaining work
 
-- Replace the free-text `repositoryFullName` field with a dropdown of repos the
-  installation can see (`GET /installation/repositories`).
 - Fetch GitHub Actions artifacts and `drydock-manifest.json` with installation
   credentials, then call `markGateDecided` / `postDeploymentProtectionDecision`
   to release or block the publish job.

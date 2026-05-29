@@ -18,6 +18,30 @@ import { githubAppRoutes } from "../../server/routes/github-app";
 import type { Bindings, Variables } from "../../server/types";
 
 const originalFetch = globalThis.fetch;
+const GITHUB_APP_PROXY_LIMIT = 60;
+const GITHUB_APP_PROXY_WINDOW_MS = 60 * 1000;
+
+let testPrivateKeyPem: string | null = null;
+async function getTestPrivateKeyPem(): Promise<string> {
+  if (testPrivateKeyPem) return testPrivateKeyPem;
+  const keyPair = (await crypto.subtle.generateKey(
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["sign", "verify"],
+  )) as CryptoKeyPair;
+  const pkcs8 = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
+  let binary = "";
+  for (const byte of new Uint8Array(pkcs8)) binary += String.fromCharCode(byte);
+  const base64 = btoa(binary);
+  const lines = base64.match(/.{1,64}/g)?.join("\n") ?? base64;
+  testPrivateKeyPem = `-----BEGIN PRIVATE KEY-----\n${lines}\n-----END PRIVATE KEY-----`;
+  return testPrivateKeyPem;
+}
 
 async function seedUser(): Promise<{ userId: string; organizationId: string }> {
   const db = createDb(env.DB);
@@ -51,6 +75,19 @@ async function seedInstallation(
   });
 }
 
+async function seedRateLimit(key: string, count: number, windowMs: number) {
+  const db = createDb(env.DB);
+  const nowMs = Date.now();
+  const bucket = Math.floor(nowMs / windowMs);
+  const now = new Date(nowMs);
+  await db.insert(schema.rateLimits).values({
+    key: `${key}:${bucket}`,
+    count,
+    expiresAt: new Date((bucket + 1) * windowMs),
+    updatedAt: now,
+  });
+}
+
 function buildTestApp(userId: string) {
   const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
   app.use("*", async (c, next) => {
@@ -79,7 +116,7 @@ async function callGithubAppRoute(
     GITHUB_APP_SLUG: "drydock-test",
     GITHUB_APP_CLIENT_ID: "client-id",
     GITHUB_APP_CLIENT_SECRET: "client-secret",
-    GITHUB_APP_PRIVATE_KEY: "----- placeholder -----",
+    GITHUB_APP_PRIVATE_KEY: await getTestPrivateKeyPem(),
     GITHUB_APP_WEBHOOK_SECRET: "webhook-secret-value-1234567890",
     GITHUB_APP_STATE_SECRET: "0123456789abcdef0123456789abcdef",
     BETTER_AUTH_SECRET: "fallback-secret-with-enough-entropy-aaaaaaaa",
@@ -383,6 +420,192 @@ describe("github-app routes", () => {
 
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: "code is required" });
+  });
+
+  test("GET /installations/:id/repositories proxies the install token to GitHub", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ token: "install-token" }))
+      .mockResolvedValueOnce(
+        Response.json({
+          repositories: [
+            { id: 11, full_name: "octo/alpha", default_branch: "main" },
+            { id: 22, full_name: "octo/beta" },
+          ],
+        }),
+      );
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "GET",
+      `/api/v1/github-app/installations/${installation.id}/repositories`,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      repositories: [
+        { id: 11, fullName: "octo/alpha", defaultBranch: "main" },
+        { id: 22, fullName: "octo/beta", defaultBranch: null },
+      ],
+    });
+  });
+
+  test("GET /installations/:id/repositories follows GitHub pagination until exhausted", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ token: "install-token" }))
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            repositories: [{ id: 22, full_name: "octo/beta" }],
+          },
+          {
+            headers: {
+              link: '<https://api.github.com/installation/repositories?per_page=100&page=2>; rel="next"',
+            },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          repositories: [{ id: 11, full_name: "octo/alpha", default_branch: "main" }],
+        }),
+      );
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "GET",
+      `/api/v1/github-app/installations/${installation.id}/repositories`,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      repositories: [
+        { id: 11, fullName: "octo/alpha", defaultBranch: "main" },
+        { id: 22, fullName: "octo/beta", defaultBranch: null },
+      ],
+    });
+
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(3);
+    expect(String(calls[2][0])).toBe(
+      "https://api.github.com/installation/repositories?per_page=100&page=2",
+    );
+  });
+
+  test("GET /installations/:id/repositories rejects installs the org does not own", async () => {
+    const { userId } = await seedUser();
+    const other = await seedUser();
+    const installation = await seedInstallation(other.organizationId);
+    globalThis.fetch = vi.fn();
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "GET",
+      `/api/v1/github-app/installations/${installation.id}/repositories`,
+    );
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ code: "installation_missing" });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  test("GET /installations/:id/repositories rate limits GitHub proxy calls", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    await seedRateLimit(
+      `github-app:repositories:${organizationId}:${installation.id}`,
+      GITHUB_APP_PROXY_LIMIT,
+      GITHUB_APP_PROXY_WINDOW_MS,
+    );
+    globalThis.fetch = vi.fn();
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "GET",
+      `/api/v1/github-app/installations/${installation.id}/repositories`,
+    );
+
+    expect(res.status).toBe(429);
+    expect(await res.json()).toMatchObject({
+      error: "GitHub repository lookup rate limit exceeded",
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  test("GET /installations/:id/repositories/:owner/:repo/environments proxies the install token", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ token: "install-token" }))
+      .mockResolvedValueOnce(
+        Response.json({
+          environments: [{ name: "pypi" }, { name: "staging" }],
+        }),
+      );
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "GET",
+      `/api/v1/github-app/installations/${installation.id}/repositories/octo/alpha/environments`,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      environments: [{ name: "pypi" }, { name: "staging" }],
+    });
+
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(String(calls[1][0])).toBe(
+      "https://api.github.com/repos/octo/alpha/environments?per_page=100",
+    );
+  });
+
+  test("GET /installations/:id/repositories/:owner/:repo/environments returns 403 when repo is unreachable", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ token: "install-token" }))
+      .mockResolvedValueOnce(new Response("not found", { status: 404 }));
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "GET",
+      `/api/v1/github-app/installations/${installation.id}/repositories/octo/gone/environments`,
+    );
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ code: "repository_not_accessible" });
+  });
+
+  test("GET /installations/:id/repositories/:owner/:repo/environments rate limits GitHub proxy calls", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    await seedRateLimit(
+      `github-app:environments:${organizationId}:${installation.id}:octo/alpha`,
+      GITHUB_APP_PROXY_LIMIT,
+      GITHUB_APP_PROXY_WINDOW_MS,
+    );
+    globalThis.fetch = vi.fn();
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "GET",
+      `/api/v1/github-app/installations/${installation.id}/repositories/octo/alpha/environments`,
+    );
+
+    expect(res.status).toBe(429);
+    expect(await res.json()).toMatchObject({
+      error: "GitHub environment lookup rate limit exceeded",
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   test("POST /install/callback refuses installation ids the GitHub user cannot access", async () => {

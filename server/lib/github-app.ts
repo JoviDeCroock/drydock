@@ -25,7 +25,7 @@ const ACCOUNT_LOGIN_MAX = 100;
 const PACKAGE_NAME_MAX = 214;
 const REPO_FULL_NAME_MAX = 140;
 const WORKFLOW_FILENAME_MAX = 200;
-const ENVIRONMENT_MAX = 80;
+const ENVIRONMENT_MAX = 255;
 
 // ── Errors ───────────────────────────────────────────────────────────────────
 
@@ -416,6 +416,103 @@ export async function fetchRepository(
   return { id: data.id, fullName: data.full_name, defaultBranch: data.default_branch };
 }
 
+export async function listInstallationRepositories(
+  config: GithubAppConfig,
+  installationId: string,
+): Promise<GithubRepositoryRef[]> {
+  const token = await getInstallationAccessToken(config, installationId);
+  const repositories: GithubRepositoryRef[] = [];
+  let url = "https://api.github.com/installation/repositories?per_page=100";
+
+  const seenUrls = new Set<string>();
+  while (url) {
+    if (seenUrls.has(url)) {
+      throw new GithubAppValidationError(
+        "repository_not_accessible",
+        "installation repositories lookup returned a repeated pagination link",
+      );
+    }
+    seenUrls.add(url);
+    const response = await fetch(url, { headers: githubInstallationHeaders(token) });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new GithubAppValidationError(
+        "repository_not_accessible",
+        `installation repositories lookup failed (${response.status}): ${text.slice(0, 200)}`,
+      );
+    }
+    const data = (await response.json()) as {
+      repositories?: {
+        id?: number;
+        full_name?: string;
+        default_branch?: string;
+      }[];
+    };
+    for (const repo of data.repositories ?? []) {
+      if (typeof repo.id !== "number" || typeof repo.full_name !== "string") continue;
+      repositories.push({
+        id: repo.id,
+        fullName: repo.full_name,
+        defaultBranch: typeof repo.default_branch === "string" ? repo.default_branch : undefined,
+      });
+    }
+    url = nextLink(response.headers.get("link"));
+  }
+
+  repositories.sort((a, b) => a.fullName.localeCompare(b.fullName));
+  return repositories;
+}
+
+export interface GithubEnvironmentRef {
+  name: string;
+}
+
+export async function listRepositoryEnvironments(
+  config: GithubAppConfig,
+  installationId: string,
+  fullName: string,
+): Promise<GithubEnvironmentRef[]> {
+  const repository = parseRepositoryFullName(fullName);
+  if (!repository) {
+    throw new GithubAppValidationError(
+      "invalid_input",
+      "repositoryFullName must be in owner/repo form",
+    );
+  }
+  const token = await getInstallationAccessToken(config, installationId);
+  const repositoryPath = `${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}`;
+  const environments: GithubEnvironmentRef[] = [];
+  let url = `https://api.github.com/repos/${repositoryPath}/environments?per_page=100`;
+
+  for (let page = 0; page < 10 && url; page += 1) {
+    const response = await fetch(url, { headers: githubInstallationHeaders(token) });
+    if (response.status === 404) {
+      throw new GithubAppValidationError(
+        "repository_not_accessible",
+        `repository ${fullName} is not accessible to installation ${installationId}`,
+      );
+    }
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new GithubAppValidationError(
+        "repository_not_accessible",
+        `environments lookup for ${fullName} failed (${response.status}): ${text.slice(0, 200)}`,
+      );
+    }
+    const data = (await response.json()) as {
+      environments?: { name?: string }[];
+    };
+    for (const environment of data.environments ?? []) {
+      if (typeof environment.name === "string" && environment.name) {
+        environments.push({ name: environment.name });
+      }
+    }
+    url = nextLink(response.headers.get("link"));
+  }
+
+  return environments;
+}
+
 // ── DB-backed service ────────────────────────────────────────────────────────
 
 export interface InstallationRecord {
@@ -747,7 +844,6 @@ export async function resolveDeploymentProtectionTarget(
 const PACKAGE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,213}$/;
 const REPO_OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const REPO_NAME_RE = /^[A-Za-z0-9._-]+$/;
-const ENVIRONMENT_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}$/;
 const WORKFLOW_FILENAME_RE = /^[A-Za-z0-9._-]+\.ya?ml$/;
 
 export function validateReleaseTargetShape(input: CreateReleaseTargetInput) {
@@ -781,9 +877,12 @@ export function validateReleaseTargetShape(input: CreateReleaseTargetInput) {
     input.pypiTrustedPublisherEnvironment,
   );
   if (!environment || environment.length > ENVIRONMENT_MAX) {
-    throw new GithubAppValidationError("environment_unmapped", "environment is required");
+    throw new GithubAppValidationError(
+      "environment_unmapped",
+      "environment is required and must not exceed 255 characters",
+    );
   }
-  if (!ENVIRONMENT_RE.test(environment)) {
+  if (hasControlCharacter(environment)) {
     throw new GithubAppValidationError("invalid_input", "environment has invalid characters");
   }
   if (
@@ -792,10 +891,10 @@ export function validateReleaseTargetShape(input: CreateReleaseTargetInput) {
   ) {
     throw new GithubAppValidationError(
       "environment_unmapped",
-      "pypiTrustedPublisherEnvironment is required",
+      "pypiTrustedPublisherEnvironment is required and must not exceed 255 characters",
     );
   }
-  if (!ENVIRONMENT_RE.test(pypiTrustedPublisherEnvironment)) {
+  if (hasControlCharacter(pypiTrustedPublisherEnvironment)) {
     throw new GithubAppValidationError(
       "invalid_input",
       "pypiTrustedPublisherEnvironment has invalid characters",
@@ -926,6 +1025,14 @@ function normalizePackageName(ecosystem: SupportedEcosystem, packageName: string
 
 function normalizeGithubEnvironmentName(environment: string): string {
   return environment.trim().toLowerCase();
+}
+
+function hasControlCharacter(value: string): boolean {
+  for (const char of value) {
+    const code = char.charCodeAt(0);
+    if (code <= 31 || code === 127) return true;
+  }
+  return false;
 }
 
 function parseRepositoryFullName(fullName: string): { owner: string; name: string } | null {
