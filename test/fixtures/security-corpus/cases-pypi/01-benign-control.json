@@ -1,0 +1,85 @@
+{
+  "id": "pypi-benign-control",
+  "title": "clean wheel + sdist version bump raises nothing",
+  "category": "control",
+  "intent": "a well-formed release with matching metadata, complete RECORD, and no active code must stay low risk",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "path": "dist/demo_package-1.2.0.tar.gz",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+      "files": [
+        {
+          "path": "demo_package-1.2.0.dist-info/METADATA",
+          "size": 96,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\nRequires-Dist: requests>=2\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/WHEEL",
+          "size": 60,
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "flags": [],
+          "textSample": "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/RECORD",
+          "size": 200,
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "flags": [],
+          "textSample": "demo_package/__init__.py,sha256=abc,12\ndemo_package-1.2.0.dist-info/METADATA,,\ndemo_package-1.2.0.dist-info/WHEEL,,\ndemo_package-1.2.0.dist-info/RECORD,,\n"
+        },
+        {
+          "path": "demo_package/__init__.py",
+          "size": 24,
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+          "flags": [],
+          "textSample": "__version__ = \"1.2.0\"\n"
+        }
+      ]
+    },
+    {
+      "path": "dist/demo_package-1.2.0.tar.gz",
+      "files": [
+        {
+          "path": "demo_package-1.2.0/PKG-INFO",
+          "size": 64,
+          "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0/setup.py",
+          "size": 80,
+          "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+          "flags": [],
+          "textSample": "from setuptools import setup\n\nsetup(name=\"demo-package\", version=\"1.2.0\")\n"
+        },
+        {
+          "path": "demo_package-1.2.0/demo_package/__init__.py",
+          "size": 24,
+          "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+          "flags": [],
+          "textSample": "__version__ = \"1.2.0\"\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": []
+}

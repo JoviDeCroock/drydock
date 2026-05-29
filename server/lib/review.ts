@@ -26,7 +26,7 @@ export interface Finding {
 // way that should invalidate cached scan reports. Stored alongside each
 // finding so historical reports can be traced back to the ruleset that
 // produced them.
-export const DETERMINISTIC_RULES_VERSION = "1.5.0";
+export const DETERMINISTIC_RULES_VERSION = "1.6.0";
 
 export const DETERMINISTIC_RULE_IDS = {
   installScriptPreinstall: "install-script.preinstall",
@@ -122,6 +122,13 @@ const PROCESS_EXECUTION_PATTERNS = [
   /\bnc\s/,
   /\bbash\s+-c/,
   /\bpowershell\s/,
+  // Python process/shell sinks.
+  /\bsubprocess\b/,
+  /\bos\.system\s*\(/,
+  /\bos\.popen\s*\(/,
+  /\bPopen\s*\(/,
+  /\bpty\.spawn\s*\(/,
+  /\bcommands\.getoutput\s*\(/,
 ];
 const NETWORK_ACCESS_PATTERNS = [
   /\brequire\(["'](?:node:)?(?:http|https|net|dns)["']\)/,
@@ -129,6 +136,15 @@ const NETWORK_ACCESS_PATTERNS = [
   /\bfetch\s*\(/,
   /\bXMLHttpRequest\b/,
   /\baxios\s*\./,
+  // Python network sinks.
+  /\burllib(?:\.request)?\b/,
+  /\brequests\.(?:get|post|put|patch|delete|request)\b/,
+  /\bhttp\.client\b/,
+  /\bhttplib\b/,
+  /\bsocket\.socket\s*\(/,
+  /\bftplib\b/,
+  /\bsmtplib\b/,
+  /\burlopen\s*\(/,
 ];
 const DYNAMIC_EVALUATION_PATTERNS = [
   /\beval\s*\(/,
@@ -136,6 +152,19 @@ const DYNAMIC_EVALUATION_PATTERNS = [
   /\bWebAssembly\.compile\s*\(/,
   /\batob\s*\(/,
   /\bBuffer\.from\s*\([^,]+,\s*["']base64["']\s*\)/,
+  // Python dynamic-eval and obfuscation primitives. The lookbehind keeps the
+  // bare `exec(`/`compile(` builtins from matching JS method calls such as
+  // `regex.exec(` or `WebAssembly.compile(` (already covered above).
+  /(?<!\.)\bexec\s*\(/,
+  /\b__import__\s*\(/,
+  /\bimportlib\b/,
+  /\bmarshal\.loads\s*\(/,
+  /(?<!\.)\bcompile\s*\(/,
+  /\bbase64\.b(?:64|32|16)decode\s*\(/,
+  /\bzlib\.decompress\s*\(/,
+  /\blzma\.decompress\s*\(/,
+  /\bcodecs\.decode\s*\(/,
+  /\bbytes\.fromhex\s*\(/,
 ];
 const CREDENTIAL_ACCESS_PATTERNS = [
   /\bprocess\.env\b/,
@@ -144,6 +173,23 @@ const CREDENTIAL_ACCESS_PATTERNS = [
   /\bGITHUB_TOKEN\b/,
   /\bAWS_SECRET\b/,
   /\bPRIVATE_KEY\b/,
+  // Python credential/environment access.
+  /\bos\.environ\b/,
+  /\bos\.getenv\s*\(/,
+  /\bgetpass\b/,
+  /\bkeyring\b/,
+  /\.aws\/credentials/,
+  /\.ssh\/id_/,
+  /\.netrc/,
+];
+
+// Process-execution, network, and dynamic-evaluation capability in one set.
+// Reused by ecosystem adapters that need to know whether a file executes code
+// (e.g. a PyPI sdist's setup.py, which pip runs at install time).
+export const EXECUTION_CAPABILITY_PATTERNS = [
+  ...PROCESS_EXECUTION_PATTERNS,
+  ...NETWORK_ACCESS_PATTERNS,
+  ...DYNAMIC_EVALUATION_PATTERNS,
 ];
 
 const SECRET_PATTERNS: Array<[RegExp, string]> = [
@@ -245,11 +291,7 @@ export function deterministicFindings(
     const changed = diffByPath.get(file.path)?.status;
     const changedPrefix = changed && changed !== "unchanged" ? `new/changed ${changed} file: ` : "";
 
-    if (
-      /\b(child_process|execSync|execFileSync|spawn\(|spawnSync\(|curl\s|wget\s|nc\s|bash\s+-c|powershell\s)/.test(
-        sample,
-      )
-    ) {
+    if (PROCESS_EXECUTION_PATTERNS.some((pattern) => pattern.test(sample))) {
       findings.push(
         tag("codeProcessExecution", {
           severity: "high",
@@ -260,11 +302,7 @@ export function deterministicFindings(
         }),
       );
     }
-    if (
-      /\b(require\(["'](?:node:)?(?:http|https|net|dns)["']\)|from\s+["'](?:node:)?(?:http|https|net|dns)["']|fetch\s*\(|XMLHttpRequest|axios\s*\.)/.test(
-        sample,
-      )
-    ) {
+    if (NETWORK_ACCESS_PATTERNS.some((pattern) => pattern.test(sample))) {
       findings.push(
         tag("codeNetworkAccess", {
           severity: changed === "added" ? "high" : "medium",
@@ -276,13 +314,7 @@ export function deterministicFindings(
         }),
       );
     }
-    if (
-      /\beval\s*\(/.test(sample) ||
-      /\bnew\s+Function\s*\(/.test(sample) ||
-      /\bWebAssembly\.compile\s*\(/.test(sample) ||
-      /\batob\s*\(/.test(sample) ||
-      /\bBuffer\.from\s*\([^,]+,\s*["']base64["']\s*\)/.test(sample)
-    ) {
+    if (DYNAMIC_EVALUATION_PATTERNS.some((pattern) => pattern.test(sample))) {
       findings.push(
         tag("codeDynamicEvaluation", {
           severity: changed === "added" ? "high" : "medium",
@@ -293,9 +325,7 @@ export function deterministicFindings(
         }),
       );
     }
-    if (
-      /\b(process\.env|npm_config_|NPM_TOKEN|GITHUB_TOKEN|AWS_SECRET|PRIVATE_KEY)\b/.test(sample)
-    ) {
+    if (CREDENTIAL_ACCESS_PATTERNS.some((pattern) => pattern.test(sample))) {
       findings.push(
         tag("codeCredentialAccess", {
           severity: changed === "added" ? "high" : "medium",

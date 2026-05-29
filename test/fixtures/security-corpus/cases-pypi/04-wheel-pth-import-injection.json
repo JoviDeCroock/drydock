@@ -1,0 +1,61 @@
+{
+  "id": "pypi-wheel-pth-import-injection",
+  "title": "wheel ships a .pth file with an import line",
+  "category": "startup-hook",
+  "intent": ".pth import lines execute on interpreter startup once the wheel is installed",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+      "files": [
+        {
+          "path": "demo_package-1.2.0.dist-info/METADATA",
+          "size": 64,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/WHEEL",
+          "size": 60,
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "flags": [],
+          "textSample": "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/RECORD",
+          "size": 200,
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "flags": [],
+          "textSample": "demo_package/inject.pth,,\ndemo_package-1.2.0.dist-info/METADATA,,\ndemo_package-1.2.0.dist-info/WHEEL,,\ndemo_package-1.2.0.dist-info/RECORD,,\n"
+        },
+        {
+          "path": "demo_package/inject.pth",
+          "size": 32,
+          "sha256": "aaaa1111111111111111111111111111111111111111111111111111111111aa",
+          "flags": [],
+          "textSample": "import demo_package.bootstrap\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "pypi.pth-execution",
+      "severity": "high",
+      "file": "dist/demo_package-1.2.0-py3-none-any.whl/demo_package/inject.pth"
+    }
+  ]
+}

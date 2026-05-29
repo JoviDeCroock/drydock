@@ -1,0 +1,71 @@
+{
+  "id": "pypi-wheel-native-extension",
+  "title": "wheel bundles native extension artifacts",
+  "category": "native-artifact",
+  "intent": "native extensions are hard to audit; .pyd fires the PyPI rule while .so/.dll fall to the shared native rule",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+      "files": [
+        {
+          "path": "demo_package-1.2.0.dist-info/METADATA",
+          "size": 64,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/WHEEL",
+          "size": 60,
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "flags": [],
+          "textSample": "Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: py3-none-any\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/RECORD",
+          "size": 220,
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "flags": [],
+          "textSample": "demo_package/_speedups.pyd,,\ndemo_package/_speedups.so,,\ndemo_package-1.2.0.dist-info/METADATA,,\ndemo_package-1.2.0.dist-info/WHEEL,,\ndemo_package-1.2.0.dist-info/RECORD,,\n"
+        },
+        {
+          "path": "demo_package/_speedups.pyd",
+          "size": 2048,
+          "sha256": "dddd1111111111111111111111111111111111111111111111111111111111dd",
+          "flags": ["binary"]
+        },
+        {
+          "path": "demo_package/_speedups.so",
+          "size": 2048,
+          "sha256": "eeee1111111111111111111111111111111111111111111111111111111111ee",
+          "flags": ["binary"]
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "pypi.native-artifact",
+      "severity": "high",
+      "file": "dist/demo_package-1.2.0-py3-none-any.whl/demo_package/_speedups.pyd"
+    },
+    {
+      "ruleId": "file.native-artifact",
+      "severity": "high",
+      "file": "wheel/py3-none-any/demo_package/_speedups.so"
+    }
+  ]
+}

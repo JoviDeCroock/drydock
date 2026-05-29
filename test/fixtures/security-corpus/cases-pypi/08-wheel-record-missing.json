@@ -1,0 +1,54 @@
+{
+  "id": "pypi-wheel-record-missing",
+  "title": "wheel without a .dist-info/RECORD file",
+  "category": "metadata-integrity",
+  "intent": "wheel RECORD metadata is needed to audit the installed file manifest and detect tampering",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+      "files": [
+        {
+          "path": "demo_package-1.2.0.dist-info/METADATA",
+          "size": 64,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/WHEEL",
+          "size": 60,
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "flags": [],
+          "textSample": "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+        },
+        {
+          "path": "demo_package/__init__.py",
+          "size": 24,
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+          "flags": [],
+          "textSample": "__version__ = \"1.2.0\"\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedFindings": [
+    {
+      "ruleId": "pypi.wheel-record-missing",
+      "severity": "medium",
+      "file": "dist/demo_package-1.2.0-py3-none-any.whl/RECORD"
+    }
+  ]
+}

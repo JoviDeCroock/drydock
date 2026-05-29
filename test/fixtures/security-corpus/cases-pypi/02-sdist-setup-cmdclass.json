@@ -1,0 +1,47 @@
+{
+  "id": "pypi-sdist-setup-cmdclass",
+  "title": "sdist setup.py custom install command",
+  "category": "install-time-code",
+  "intent": "a custom cmdclass install command runs arbitrary code on pip install of an sdist",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0.tar.gz",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0.tar.gz",
+      "files": [
+        {
+          "path": "demo_package-1.2.0/PKG-INFO",
+          "size": 64,
+          "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0/setup.py",
+          "size": 140,
+          "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+          "flags": [],
+          "textSample": "from setuptools import setup\nfrom setuptools.command.install import install\n\nsetup(name=\"demo-package\", version=\"1.2.0\", cmdclass={\"install\": install})\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "pypi.setup-install-command",
+      "severity": "high",
+      "file": "dist/demo_package-1.2.0.tar.gz/setup.py"
+    }
+  ]
+}

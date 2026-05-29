@@ -1,0 +1,57 @@
+{
+  "id": "pypi-sdist-setup-body-exec",
+  "title": "sdist setup.py executes process and network code at top level",
+  "category": "install-time-code",
+  "intent": "top-level process/network calls in setup.py run on pip install and must fire the upgraded setup rule plus shared code rules",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0.tar.gz",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0.tar.gz",
+      "files": [
+        {
+          "path": "demo_package-1.2.0/PKG-INFO",
+          "size": 64,
+          "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0/setup.py",
+          "size": 200,
+          "sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+          "flags": [],
+          "textSample": "import os\nimport urllib.request\nfrom setuptools import setup\n\nos.system(\"id\")\nurllib.request.urlopen(\"https://example.invalid/ping\")\nsetup(name=\"demo-package\", version=\"1.2.0\")\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "pypi.setup-install-command",
+      "severity": "high",
+      "file": "dist/demo_package-1.2.0.tar.gz/setup.py"
+    },
+    {
+      "ruleId": "code.process-execution",
+      "severity": "high",
+      "file": "sdist/setup.py"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "high",
+      "file": "sdist/setup.py"
+    }
+  ]
+}

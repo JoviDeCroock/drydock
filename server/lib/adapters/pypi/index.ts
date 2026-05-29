@@ -2,6 +2,7 @@ import {
   computeRisk,
   createPackageDiff,
   deterministicFindings,
+  EXECUTION_CAPABILITY_PATTERNS,
   redactFindings,
   summarizePackageJsonDiff,
   type DiffEntry,
@@ -21,16 +22,29 @@ import type {
 } from "../types";
 
 export const PYPI_RELEASE_MANIFEST_SCHEMA = "drydock.release-artifacts.v1";
-export const PYPI_RULES_VERSION = "0.1.0";
+export const PYPI_RULES_VERSION = "0.2.0";
 
 export const PYPI_RULE_IDS = {
   metadataMissing: "pypi.metadata-missing",
   metadataMismatch: "pypi.metadata-mismatch",
   wheelRecordMissing: "pypi.wheel-record-missing",
+  recordMismatch: "pypi.record-mismatch",
   pthExecution: "pypi.pth-execution",
+  startupHook: "pypi.startup-hook",
   setupInstallCommand: "pypi.setup-install-command",
+  unusualDependency: "pypi.unusual-dependency",
   nativeArtifact: "pypi.native-artifact",
 } as const;
+
+const SETUP_INSTALL_COMMAND_PATTERNS = [
+  /\bcmdclass\b/,
+  /\bsetuptools\.command\.install\b/,
+  /\bdistutils\.command\.install\b/,
+];
+
+// PEP 508 direct references (`name @ <scheme>://…`). PyPI forbids these in
+// uploaded metadata, so their presence in Requires-Dist is itself anomalous.
+const DIRECT_REFERENCE_REQUIREMENT_RE = /@\s*[a-z][a-z0-9+.-]*:\/\//i;
 
 export type PyPiArtifactKind = "wheel" | "sdist";
 
@@ -609,6 +623,35 @@ function pyPiReleaseFindings(
         }),
       );
     }
+
+    const directReferenceDeps = summary.requiresDist.filter((requirement) =>
+      DIRECT_REFERENCE_REQUIREMENT_RE.test(requirement),
+    );
+    if (directReferenceDeps.length) {
+      findings.push(
+        tag("unusualDependency", {
+          severity: "high",
+          file: metadataEvidencePath,
+          evidence: `direct-reference dependency: ${directReferenceDeps.join(", ")}`,
+          reason:
+            "PEP 508 direct-URL/VCS dependencies bypass the PyPI registry and pull unreviewed code from an arbitrary location",
+        }),
+      );
+    }
+
+    if (artifact.kind === "wheel" && summary.wheel?.recordPath) {
+      for (const undeclared of undeclaredWheelFiles(artifact, summary.wheel.recordPath)) {
+        findings.push(
+          tag("recordMismatch", {
+            severity: "high",
+            file: namespacedPath(artifact.path, undeclared.path),
+            evidence: `${undeclared.path} is present in the wheel but not listed in RECORD`,
+            reason:
+              "files absent from the wheel RECORD can be installed without integrity tracking and indicate archive tampering",
+          }),
+        );
+      }
+    }
   }
 
   for (const artifact of artifacts) {
@@ -631,26 +674,42 @@ function pyPiReleaseFindings(
           }),
         );
       }
-      if (
-        /(^|\/)setup\.py$/i.test(file.path) &&
-        /\b(cmdclass|setuptools\.command\.install|distutils\.command\.install)\b/.test(
-          file.textSample ?? "",
-        )
-      ) {
+      if (/(^|\/)(sitecustomize|usercustomize)\.py$/i.test(file.path)) {
         findings.push(
-          tag("setupInstallCommand", {
+          tag("startupHook", {
             severity: "high",
             file: filePath,
-            line: firstMatchingLine(file.textSample, [
-              /\bcmdclass\b/,
-              /\bsetuptools\.command\.install\b/,
-              /\bdistutils\.command\.install\b/,
-            ]),
-            evidence: "setup.py custom install command",
+            evidence: `${file.path.split("/").at(-1)} runs automatically on interpreter startup`,
             reason:
-              "custom Python install commands can run maintainer-controlled code during package installation",
+              "sitecustomize.py and usercustomize.py execute on every Python startup once installed, a common persistence hook",
           }),
         );
+      }
+      if (/(^|\/)setup\.py$/i.test(file.path)) {
+        const setupText = file.textSample ?? "";
+        const matchedInstallCommand = SETUP_INSTALL_COMMAND_PATTERNS.some((pattern) =>
+          pattern.test(setupText),
+        );
+        const matchedExecution = EXECUTION_CAPABILITY_PATTERNS.some((pattern) =>
+          pattern.test(setupText),
+        );
+        if (matchedInstallCommand || matchedExecution) {
+          findings.push(
+            tag("setupInstallCommand", {
+              severity: "high",
+              file: filePath,
+              line: firstMatchingLine(setupText, [
+                ...SETUP_INSTALL_COMMAND_PATTERNS,
+                ...EXECUTION_CAPABILITY_PATTERNS,
+              ]),
+              evidence: matchedInstallCommand
+                ? "setup.py custom install command"
+                : "setup.py executes code at install time",
+              reason:
+                "pip runs setup.py when installing an sdist, so process, network, or dynamic-eval code there runs on the consumer machine",
+            }),
+          );
+        }
       }
       if (/\.(pyd)$/i.test(file.path)) {
         findings.push(
@@ -667,6 +726,28 @@ function pyPiReleaseFindings(
   }
 
   return findings;
+}
+
+// Files present in the wheel but absent from its RECORD. Skips when the RECORD
+// sample was truncated, since an incomplete path list would flag legitimate files.
+function undeclaredWheelFiles(artifact: PyPiPreparedArtifact, recordPath: string): FileRecord[] {
+  const recordFile = artifact.files.find((file) => file.path === recordPath);
+  if (!recordFile?.textSample || recordFile.flags.includes("truncated")) return [];
+  const declared = new Set<string>();
+  for (const line of recordFile.textSample.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let path: string;
+    if (line.startsWith('"')) {
+      const close = line.indexOf('"', 1);
+      path = close > 0 ? line.slice(1, close) : line;
+    } else {
+      const comma = line.indexOf(",");
+      path = comma >= 0 ? line.slice(0, comma) : line;
+    }
+    if (path) declared.add(path);
+  }
+  if (!declared.size) return [];
+  return artifact.files.filter((file) => !declared.has(file.path));
 }
 
 function tag(

