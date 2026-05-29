@@ -1,4 +1,4 @@
-import { Card, Eyebrow, LinkButton, PageShell, SectionLabel } from "../../components";
+import { Alert, Badge, Card, Eyebrow, LinkButton, PageShell, SectionLabel } from "../../components";
 
 export default function DocsPage() {
   return (
@@ -16,16 +16,17 @@ export default function DocsPage() {
           How Drydock guards a publish.
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-          Two release shapes exist in the wild: registries that own a staged artifact before
-          publish, and registries that don't. Drydock reviews each one with the primitive that fits
-          it, and never holds a publish credential.
+          Drydock reviews what a release ships before it goes public, and never holds your publish
+          credential. How it hooks in depends on the registry: npm hands Drydock a staged tarball to
+          inspect; PyPI has no staged artifact, so a GitHub Actions gate holds the publish until the
+          build is reviewed.
         </p>
         <nav class="flex flex-wrap gap-3 mt-2 font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
           <a class="text-accent hover:text-accent-hover" href="#staged-publishing">
-            → Staged publishing
+            → Staged publishing (npm)
           </a>
           <a class="text-accent hover:text-accent-hover" href="#action-gating">
-            → Action-based review gating
+            → Workflow gating (PyPI)
           </a>
         </nav>
       </section>
@@ -76,14 +77,14 @@ export default function DocsPage() {
           <h3 class="text-base font-medium tracking-[-0.005em] m-0">The review lifecycle</h3>
           <ol class="list-decimal pl-5 m-0 flex flex-col gap-1.5 text-[13px] text-ink-muted leading-[1.55] marker:text-ink-subtle marker:font-mono">
             <li>
-              A new staged publish is discovered — the 15-minute auto-discovery cron sweeps the
-              org's open stages, or a maintainer clicks <Code>Check npm</Code> on the dashboard. The
-              worker queues a scan for any <Code>stageId</Code> it hasn't seen before and the UI
-              starts polling its status.
+              A new staged publish is discovered (see Auto-discovery below). The worker queues a
+              scan for any <Code>stageId</Code> it hasn't seen before, and the UI starts polling
+              that scan's status.
             </li>
             <li>
-              The worker resolves the active organization's npm connection. The plaintext token
-              stays in D1 until the npm adapter broker needs it.
+              The worker resolves the active organization's npm connection. The token is stored
+              encrypted with AES-256-GCM in D1 and is decrypted only at the moment the npm adapter
+              needs to authenticate a registry request.
             </li>
             <li>
               A short-lived sandbox Worker downloads the staged tarball from{" "}
@@ -143,7 +144,10 @@ export default function DocsPage() {
 
       <article id="action-gating" class="flex flex-col gap-6 max-w-[880px]">
         <header class="flex flex-col gap-3">
-          <SectionLabel>Action-based review gating — PyPI &amp; GitHub Actions</SectionLabel>
+          <SectionLabel>
+            Action-based review gating — PyPI &amp; GitHub Actions{" "}
+            <Badge tone="info">Preview</Badge>
+          </SectionLabel>
           <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0">
             When the registry can't hold the candidate, the workflow does.
           </h2>
@@ -154,6 +158,12 @@ export default function DocsPage() {
             the reviewed artifact digests are approved. The same maintainer-controlled credential —
             PyPI Trusted Publishing via OIDC — does the publish.
           </p>
+          <Alert tone="info">
+            This is the design we're building toward. The review engine and the GitHub
+            deployment-protection webhook already exist, but connecting a GitHub App and gating a
+            real publish end-to-end is still rolling out. The steps below describe the intended
+            setup.
+          </Alert>
         </header>
 
         <Card class="p-5 flex flex-col gap-3">
