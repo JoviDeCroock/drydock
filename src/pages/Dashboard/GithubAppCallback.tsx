@@ -3,7 +3,6 @@ import { useModel, useSignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
 import { isGithubAppUiEnabled } from "../../lib/github-app-ui";
 import { sessionModel } from "../../models/auth";
-import { activeOrganizationId } from "../../models/active-organization";
 import { OrganizationModel } from "../../models/organization";
 import {
   GithubAppModel,
@@ -36,10 +35,6 @@ export default function GithubAppCallbackPage() {
   const queryError = useSignal<string | null>(null);
 
   useEffect(() => {
-    if (!isGithubAppUiEnabled(activeOrganizationId.peek())) {
-      location.route(SETTINGS_PATH, true);
-      return;
-    }
     let cancelled = false;
     void (async () => {
       const data = await sessionModel.load();
@@ -52,6 +47,10 @@ export default function GithubAppCallbackPage() {
       }
       await organizations.load();
       if (cancelled) return;
+      if (!isGithubAppUiEnabled(organizations.activeOrganizationId.peek())) {
+        location.route(SETTINGS_PATH, true);
+        return;
+      }
 
       const parsed = parseCallbackQuery(window.location.search);
       if (typeof parsed === "string") {
