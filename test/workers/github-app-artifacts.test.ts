@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
+  evaluateGithubArtifactEgress,
   fetchReleaseBundleWithToken,
   type WorkflowArtifactSource,
 } from "../../server/lib/github-app-artifacts";
@@ -423,5 +424,126 @@ describe("fetchReleaseBundleWithToken", () => {
     await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({
       code: "artifact_path_unsafe",
     });
+  });
+
+  test("drops the installation token on the redirect to the storage host", async () => {
+    const fixture = await buildFixture();
+    const storageUrl =
+      "https://prod-eastus.actions.githubusercontent.com/blob/candidate.zip?sig=abc";
+    const calls: { url: string; authorization: string | null }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        calls.push({ url: request.url, authorization: request.headers.get("authorization") });
+        if (request.url.includes("/actions/runs/")) {
+          return new Response(
+            JSON.stringify({
+              total_count: 1,
+              artifacts: [
+                {
+                  id: ARTIFACT_ID,
+                  name: ARTIFACT_NAME,
+                  size_in_bytes: fixture.bundleZip.length,
+                  expired: false,
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (request.url.endsWith(`/actions/artifacts/${ARTIFACT_ID}/zip`)) {
+          return new Response(null, { status: 302, headers: { location: storageUrl } });
+        }
+        if (request.url === storageUrl) {
+          return new Response(fixture.bundleZip, {
+            status: 200,
+            headers: {
+              "content-type": "application/zip",
+              "content-length": String(fixture.bundleZip.length),
+            },
+          });
+        }
+        throw new Error(`unexpected fetch in test: ${request.url}`);
+      }),
+    );
+
+    const bundle = await fetchReleaseBundleWithToken(TOKEN, source());
+    expect(bundle.artifacts).toHaveLength(1);
+
+    const apiCalls = calls.filter((call) => call.url.startsWith("https://api.github.com/"));
+    const storageCalls = calls.filter((call) => call.url === storageUrl);
+    expect(apiCalls.length).toBeGreaterThan(0);
+    expect(apiCalls.every((call) => call.authorization === `Bearer ${TOKEN}`)).toBe(true);
+    expect(storageCalls).toHaveLength(1);
+    expect(storageCalls[0]?.authorization).toBeNull();
+  });
+
+  test("fails closed without leaking the token when a download redirects off the allowlist", async () => {
+    const fixture = await buildFixture();
+    const evilUrl = "https://evil.example.com/candidate.zip";
+    const calls: { url: string; authorization: string | null }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        calls.push({ url: request.url, authorization: request.headers.get("authorization") });
+        if (request.url.includes("/actions/runs/")) {
+          return new Response(
+            JSON.stringify({
+              total_count: 1,
+              artifacts: [
+                {
+                  id: ARTIFACT_ID,
+                  name: ARTIFACT_NAME,
+                  size_in_bytes: fixture.bundleZip.length,
+                  expired: false,
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (request.url.endsWith(`/actions/artifacts/${ARTIFACT_ID}/zip`)) {
+          return new Response(null, { status: 302, headers: { location: evilUrl } });
+        }
+        throw new Error(`unexpected fetch in test: ${request.url}`);
+      }),
+    );
+
+    await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({
+      code: "bundle_unavailable",
+    });
+    expect(calls.some((call) => call.url === evilUrl)).toBe(false);
+  });
+});
+
+describe("evaluateGithubArtifactEgress", () => {
+  test("credentials only api.github.com", () => {
+    expect(evaluateGithubArtifactEgress("https://api.github.com/repos/o/r/actions")).toEqual({
+      allowed: true,
+      credentialed: true,
+      host: "api.github.com",
+    });
+  });
+
+  test("allows the artifact storage host without credentials", () => {
+    expect(
+      evaluateGithubArtifactEgress("https://prod.actions.githubusercontent.com/blob/x.zip?sig=1"),
+    ).toEqual({
+      allowed: true,
+      credentialed: false,
+      host: "actions.githubusercontent.com",
+    });
+  });
+
+  test("blocks other hosts and non-https schemes", () => {
+    expect(evaluateGithubArtifactEgress("https://evil.example.com/x.zip").allowed).toBe(false);
+    expect(evaluateGithubArtifactEgress("http://api.github.com/x").allowed).toBe(false);
+    // A look-alike host must not satisfy the suffix check.
+    expect(
+      evaluateGithubArtifactEgress("https://actions.githubusercontent.com.evil.com/x").allowed,
+    ).toBe(false);
+    expect(evaluateGithubArtifactEgress("not a url").allowed).toBe(false);
   });
 });

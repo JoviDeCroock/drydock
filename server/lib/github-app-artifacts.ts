@@ -71,8 +71,47 @@ const MAX_OUTER_ZIP_ENTRIES = 256;
 const MAX_PER_ENTRY_BYTES = 25 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_LIST_PAGES = 4;
+const MAX_DOWNLOAD_REDIRECTS = 4;
 
 const REPOSITORY_FULL_NAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
+
+// ── Egress allowlist ─────────────────────────────────────────────────────────
+
+export interface GithubArtifactEgressPolicy {
+  allowed: boolean;
+  /** Whether the installation token may be attached to this request. */
+  credentialed: boolean;
+  host: "api.github.com" | "actions.githubusercontent.com" | "blocked";
+}
+
+/**
+ * Mirrors the `NpmStageGateway` credential policy for the GitHub artifact path.
+ * The installation token is only ever attached to `api.github.com`. The
+ * artifact-download endpoint answers with a 302 to a short-lived signed URL on
+ * `*.actions.githubusercontent.com`; that hop carries its own auth in the URL,
+ * so the token is dropped before the request is issued. Every other host is
+ * blocked outright, so a spoofed `Location` cannot exfiltrate the token to an
+ * attacker-controlled origin.
+ */
+export function evaluateGithubArtifactEgress(requestUrl: string): GithubArtifactEgressPolicy {
+  let url: URL;
+  try {
+    url = new URL(requestUrl);
+  } catch {
+    return { allowed: false, credentialed: false, host: "blocked" };
+  }
+  if (url.protocol !== "https:") {
+    return { allowed: false, credentialed: false, host: "blocked" };
+  }
+  const host = url.hostname.toLowerCase();
+  if (host === "api.github.com") {
+    return { allowed: true, credentialed: true, host: "api.github.com" };
+  }
+  if (host === "actions.githubusercontent.com" || host.endsWith(".actions.githubusercontent.com")) {
+    return { allowed: true, credentialed: false, host: "actions.githubusercontent.com" };
+  }
+  return { allowed: false, credentialed: false, host: "blocked" };
+}
 
 // ── Entry points ─────────────────────────────────────────────────────────────
 
@@ -258,7 +297,10 @@ async function findRunArtifact(
         };
       }
     }
-    url = nextLink(response.headers.get("link"));
+    const next = nextLink(response.headers.get("link"));
+    // Only follow pagination that stays on the credentialed GitHub API host so
+    // a forged `Link` header cannot redirect the token-bearing listing call.
+    url = next && evaluateGithubArtifactEgress(next).host === "api.github.com" ? next : null;
   }
   throw new WorkflowArtifactError(
     "bundle_unavailable",
@@ -272,13 +314,58 @@ async function downloadArtifactZip(
   artifactId: number,
 ): Promise<Uint8Array> {
   const [owner, repo] = repositoryFullName.split("/");
-  const url =
+  let target =
     `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}` +
     `/actions/artifacts/${artifactId}/zip`;
-  const response = await fetch(url, {
-    headers: githubInstallationHeaders(token),
-    redirect: "follow",
-  });
+
+  // GitHub answers `/zip` with a 302 to a signed URL on
+  // `*.actions.githubusercontent.com`. We follow redirects by hand
+  // (`redirect: "manual"`) so the installation token is attached only when the
+  // egress policy says the host is credentialed (`api.github.com`) and is
+  // dropped on the hop to the storage host. A redirect to any other host fails
+  // closed before the request is issued, so the token cannot leak.
+  let response: Response | null = null;
+  for (let hop = 0; hop <= MAX_DOWNLOAD_REDIRECTS; hop += 1) {
+    const policy = evaluateGithubArtifactEgress(target);
+    if (!policy.allowed) {
+      throw new WorkflowArtifactError(
+        "bundle_unavailable",
+        "artifact download target is not on the egress allowlist",
+      );
+    }
+    const headers: Record<string, string> = { "User-Agent": "drydock-app" };
+    if (policy.credentialed) {
+      headers.Authorization = `Bearer ${token}`;
+      headers.Accept = "application/vnd.github+json";
+      headers["X-GitHub-Api-Version"] = "2022-11-28";
+    }
+    const hopResponse = await fetch(target, { headers, redirect: "manual" });
+    if (hopResponse.status < 300 || hopResponse.status >= 400) {
+      response = hopResponse;
+      break;
+    }
+    const location = hopResponse.headers.get("location");
+    if (!location) {
+      throw new WorkflowArtifactError(
+        "bundle_unavailable",
+        "artifact download redirect had no Location header",
+      );
+    }
+    try {
+      target = new URL(location, target).toString();
+    } catch {
+      throw new WorkflowArtifactError(
+        "bundle_unavailable",
+        "artifact download redirect Location is not a valid URL",
+      );
+    }
+  }
+  if (!response) {
+    throw new WorkflowArtifactError(
+      "bundle_unavailable",
+      "artifact download exceeded the redirect limit",
+    );
+  }
   if (!response.ok) {
     throw new WorkflowArtifactError(
       "bundle_unavailable",

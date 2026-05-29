@@ -343,10 +343,16 @@ What the resolver enforces, in order:
    installation token — find the first non-expired artifact named
    `pypi-release-candidate` (configurable). Requires the **Actions: Read**
    repository permission on the GitHub App.
-2. `GET /repos/{owner}/{repo}/actions/artifacts/{artifact_id}/zip` follows
-   GitHub's redirect to `*.actions.githubusercontent.com`. The outer ZIP is
-   capped at 25 MiB; Content-Length is rejected before reading, and the
-   streamed body is also bounded.
+2. `GET /repos/{owner}/{repo}/actions/artifacts/{artifact_id}/zip` answers with
+   a 302 to a signed URL on `*.actions.githubusercontent.com`. The redirect is
+   followed manually (`redirect: "manual"`) through an egress allowlist
+   (`evaluateGithubArtifactEgress`, mirroring the `NpmStageGateway` credential
+   policy): the installation token is attached only to `api.github.com` and is
+   dropped on the hop to the storage host, which carries its own auth in the
+   URL. A redirect to any other host fails closed with `bundle_unavailable`
+   before the request is issued, so a spoofed `Location` cannot leak the token.
+   The outer ZIP is capped at 25 MiB; Content-Length is rejected before
+   reading, and the streamed body is also bounded.
 3. The outer ZIP is parsed with a focused central-directory walker that
    reuses the hardened primitives from `server/lib/tar-parser.js`
    (`findZipEndOfCentralDirectory`, `inflateRawBounded`, `normalizeZipPath`).
