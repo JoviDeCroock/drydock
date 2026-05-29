@@ -753,8 +753,8 @@ function undeclaredWheelFiles(artifact: PyPiPreparedArtifact, recordPath: string
 
 function isPythonInstallRootFile(artifact: PyPiPreparedArtifact, filePath: string): boolean {
   const normalized = filePath.replace(/^\/+/, "");
-  if (!normalized.includes("/")) return true;
   if (artifact.kind !== "wheel") return false;
+  if (!normalized.includes("/")) return true;
   return /^[^/]+\.data\/(?:purelib|platlib)\/[^/]+$/i.test(normalized);
 }
 

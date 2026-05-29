@@ -286,6 +286,34 @@ describe("PyPI artifact summaries and review", () => {
     );
   });
 
+  test("does not treat sdist root files as installed startup hooks", () => {
+    const manifest = parsePyPiReleaseManifest({
+      schema: "drydock.release-artifacts.v1",
+      ecosystem: "pypi",
+      package: "demo-package",
+      version: "1.2.0",
+      artifacts: [{ path: "dist/demo_package-1.2.0.tar.gz", sha256: "b".repeat(64) }],
+    });
+    const review = createPyPiReleaseCandidateReview({
+      manifest,
+      artifacts: [
+        {
+          path: "dist/demo_package-1.2.0.tar.gz",
+          files: [
+            file(
+              "demo_package-1.2.0/PKG-INFO",
+              "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
+            ),
+            file("demo_package-1.2.0/sitecustomize.py", "# source helper\n"),
+            file("demo_package-1.2.0/inject.pth", "import demo_package.bootstrap\n"),
+          ],
+        },
+      ],
+    });
+
+    expect(review.ruleFindings).toEqual([]);
+  });
+
   test("detects secret-looking content before redacting PyPI evidence", () => {
     const manifest = parsePyPiReleaseManifest({
       schema: "drydock.release-artifacts.v1",
