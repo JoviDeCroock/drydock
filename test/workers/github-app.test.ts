@@ -437,6 +437,51 @@ describe("github-app routes", () => {
     });
   });
 
+  test("GET /installations/:id/repositories follows GitHub pagination until exhausted", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ token: "install-token" }))
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            repositories: [{ id: 22, full_name: "octo/beta" }],
+          },
+          {
+            headers: {
+              link: '<https://api.github.com/installation/repositories?per_page=100&page=2>; rel="next"',
+            },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          repositories: [{ id: 11, full_name: "octo/alpha", default_branch: "main" }],
+        }),
+      );
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "GET",
+      `/api/v1/github-app/installations/${installation.id}/repositories`,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      repositories: [
+        { id: 11, fullName: "octo/alpha", defaultBranch: "main" },
+        { id: 22, fullName: "octo/beta", defaultBranch: null },
+      ],
+    });
+
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(3);
+    expect(String(calls[2][0])).toBe(
+      "https://api.github.com/installation/repositories?per_page=100&page=2",
+    );
+  });
+
   test("GET /installations/:id/repositories rejects installs the org does not own", async () => {
     const { userId } = await seedUser();
     const other = await seedUser();

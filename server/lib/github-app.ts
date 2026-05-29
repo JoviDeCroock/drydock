@@ -424,7 +424,15 @@ export async function listInstallationRepositories(
   const repositories: GithubRepositoryRef[] = [];
   let url = "https://api.github.com/installation/repositories?per_page=100";
 
-  for (let page = 0; page < 10 && url; page += 1) {
+  const seenUrls = new Set<string>();
+  while (url) {
+    if (seenUrls.has(url)) {
+      throw new GithubAppValidationError(
+        "repository_not_accessible",
+        "installation repositories lookup returned a repeated pagination link",
+      );
+    }
+    seenUrls.add(url);
     const response = await fetch(url, { headers: githubInstallationHeaders(token) });
     if (!response.ok) {
       const text = await response.text().catch(() => "");

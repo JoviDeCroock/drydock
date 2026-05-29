@@ -133,7 +133,8 @@ organization (`x-organization-id` header to scope writes).
 - `GET /installations/:installationRowId/repositories` — proxies
   `GET /installation/repositories` via the installation token so the UI can
   surface a dropdown of repos the install can see, without holding GitHub App
-  credentials. Returns `{ id, fullName, defaultBranch }`.
+  credentials. It follows GitHub pagination until exhausted. Returns
+  `{ id, fullName, defaultBranch }`.
 - `GET /installations/:installationRowId/repositories/:owner/:repo/environments`
   — proxies `GET /repos/:owner/:repo/environments` via the installation token
   so the UI can surface a dropdown of GitHub Environments configured on the
