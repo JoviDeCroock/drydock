@@ -67,7 +67,7 @@ All under the Better Auth base path `/api/auth` and handled by `auth.handler`:
 - `two_factor` table — one row per enrolled user:
   - `id` (text, PK)
   - `secret` (text) — symmetrically encrypted by Better Auth, never the raw base32
-  - `backup_codes` (text) — hashed
+  - `backup_codes` (text) — symmetrically encrypted by Better Auth
   - `verified` (integer, boolean mode) — `true` after the first successful TOTP verification;
     the plugin requires this column
   - `user_id` (text, FK → `user.id`, `ON DELETE CASCADE`)
