@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { RateLimitError, createDb, enforceRateLimit, recordScanEvent } from "../db";
 import { requireActiveOrganization } from "../lib/active-organization";
+import { rateLimitResponse } from "../lib/http";
 import {
   GithubAppConfigError,
   GithubAppValidationError,
@@ -31,6 +32,9 @@ import type { Bindings, Variables } from "../types";
 type RouteContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 
 export const githubAppRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+const GITHUB_APP_PROXY_LIMIT = 60;
+const GITHUB_APP_PROXY_WINDOW_MS = 60 * 1000;
 
 githubAppRoutes.get("/config", (c) => {
   const configured = isGithubAppConfigured(c.env);
@@ -173,6 +177,18 @@ githubAppRoutes.get("/installations/:installationRowId/repositories", async (c) 
   const installationRowId = c.req.param("installationRowId");
   try {
     const installation = await ensureInstallationOwnedBy(db, organizationId, installationRowId);
+    try {
+      await enforceRateLimit(db, {
+        key: `github-app:repositories:${organizationId}:${installation.id}`,
+        limit: GITHUB_APP_PROXY_LIMIT,
+        windowMs: GITHUB_APP_PROXY_WINDOW_MS,
+      });
+    } catch (err) {
+      if (err instanceof RateLimitError) {
+        return rateLimitResponse(c, "GitHub repository lookup rate limit exceeded", err);
+      }
+      throw err;
+    }
     const repositories = await listInstallationRepositories(config, installation.installationId);
     return c.json({
       repositories: repositories.map((repo) => ({
@@ -205,6 +221,18 @@ githubAppRoutes.get(
     }
     try {
       const installation = await ensureInstallationOwnedBy(db, organizationId, installationRowId);
+      try {
+        await enforceRateLimit(db, {
+          key: `github-app:environments:${organizationId}:${installation.id}:${owner}/${repo}`,
+          limit: GITHUB_APP_PROXY_LIMIT,
+          windowMs: GITHUB_APP_PROXY_WINDOW_MS,
+        });
+      } catch (err) {
+        if (err instanceof RateLimitError) {
+          return rateLimitResponse(c, "GitHub environment lookup rate limit exceeded", err);
+        }
+        throw err;
+      }
       const environments = await listRepositoryEnvironments(
         config,
         installation.installationId,

@@ -18,6 +18,8 @@ import { githubAppRoutes } from "../../server/routes/github-app";
 import type { Bindings, Variables } from "../../server/types";
 
 const originalFetch = globalThis.fetch;
+const GITHUB_APP_PROXY_LIMIT = 60;
+const GITHUB_APP_PROXY_WINDOW_MS = 60 * 1000;
 
 let testPrivateKeyPem: string | null = null;
 async function getTestPrivateKeyPem(): Promise<string> {
@@ -70,6 +72,19 @@ async function seedInstallation(
     targetType: "Organization",
     status: overrides.status ?? "active",
     createdByUserId: null,
+  });
+}
+
+async function seedRateLimit(key: string, count: number, windowMs: number) {
+  const db = createDb(env.DB);
+  const nowMs = Date.now();
+  const bucket = Math.floor(nowMs / windowMs);
+  const now = new Date(nowMs);
+  await db.insert(schema.rateLimits).values({
+    key: `${key}:${bucket}`,
+    count,
+    expiresAt: new Date((bucket + 1) * windowMs),
+    updatedAt: now,
   });
 }
 
@@ -499,6 +514,29 @@ describe("github-app routes", () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
+  test("GET /installations/:id/repositories rate limits GitHub proxy calls", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    await seedRateLimit(
+      `github-app:repositories:${organizationId}:${installation.id}`,
+      GITHUB_APP_PROXY_LIMIT,
+      GITHUB_APP_PROXY_WINDOW_MS,
+    );
+    globalThis.fetch = vi.fn();
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "GET",
+      `/api/v1/github-app/installations/${installation.id}/repositories`,
+    );
+
+    expect(res.status).toBe(429);
+    expect(await res.json()).toMatchObject({
+      error: "GitHub repository lookup rate limit exceeded",
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
   test("GET /installations/:id/repositories/:owner/:repo/environments proxies the install token", async () => {
     const { userId, organizationId } = await seedUser();
     const installation = await seedInstallation(organizationId);
@@ -545,6 +583,29 @@ describe("github-app routes", () => {
 
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ code: "repository_not_accessible" });
+  });
+
+  test("GET /installations/:id/repositories/:owner/:repo/environments rate limits GitHub proxy calls", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    await seedRateLimit(
+      `github-app:environments:${organizationId}:${installation.id}:octo/alpha`,
+      GITHUB_APP_PROXY_LIMIT,
+      GITHUB_APP_PROXY_WINDOW_MS,
+    );
+    globalThis.fetch = vi.fn();
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "GET",
+      `/api/v1/github-app/installations/${installation.id}/repositories/octo/alpha/environments`,
+    );
+
+    expect(res.status).toBe(429);
+    expect(await res.json()).toMatchObject({
+      error: "GitHub environment lookup rate limit exceeded",
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   test("POST /install/callback refuses installation ids the GitHub user cannot access", async () => {

@@ -134,13 +134,14 @@ organization (`x-organization-id` header to scope writes).
   `GET /installation/repositories` via the installation token so the UI can
   surface a dropdown of repos the install can see, without holding GitHub App
   credentials. It follows GitHub pagination until exhausted. Returns
-  `{ id, fullName, defaultBranch }`.
+  `{ repositories: [{ id, fullName, defaultBranch }] }`.
 - `GET /installations/:installationRowId/repositories/:owner/:repo/environments`
   — proxies `GET /repos/:owner/:repo/environments` via the installation token
   so the UI can surface a dropdown of GitHub Environments configured on the
-  selected repo. Returns `{ name }[]`. Both routes call
+  selected repo. Returns `{ environments: [{ name }] }`. Both routes call
   `ensureInstallationOwnedBy` first, so foreign installation IDs return
-  `installation_missing` before any GitHub call is made.
+  `installation_missing` before any GitHub call is made, and both are
+  rate-limited before minting an installation token or calling GitHub.
 - `GET /release-targets`, `POST /release-targets`,
   `DELETE /release-targets/:id` — CRUD over the mapping.
 
