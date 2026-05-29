@@ -21,12 +21,13 @@ The repo now has a backend-only PyPI foundation in `server/lib/adapters/pypi/ind
 - recognizes wheel (`.whl`) and sdist (`.tar.gz`, `.tgz`) artifacts;
 - parses wheel `METADATA`, `WHEEL`, and `RECORD` evidence from ZIP archives;
 - strips the common root directory from sdists before reading `PKG-INFO`;
-- compares flattened candidate artifact files against optional previous artifacts using stable wheel/sdist namespaces instead of versioned artifact filenames;
+- compares flattened candidate artifact files against the previous PyPI release using stable wheel/sdist namespaces instead of versioned artifact filenames (callers may inject explicit `previousArtifacts`, otherwise the adapter resolves and downloads the baseline itself);
 - requires every artifact in the bundle to agree on the normalized package name and version before forming a reviewable release;
 - adds PyPI-specific deterministic findings for metadata mismatches, missing wheel `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, and `.pyd` native extensions;
 - fetches PyPI project metadata from `GET /pypi/<project>/json`;
 - selects a default PyPI baseline release from `info.version`, falling back to newest non-yanked upload time;
 - extracts wheel/sdist download metadata and SHA-256 digests from non-yanked PyPI release files;
+- downloads the baseline wheel/sdist artifacts whose namespace matches a staged artifact through a credential-free `PyPiBroker`, so completed reviews show changed/unchanged files against the selected previous release;
 - restricts public PyPI artifact downloads to `https://files.pythonhosted.org`.
 
 The sandbox parser now supports safe ZIP archive parsing for wheels in addition to npm-style gzipped tar archives. ZIP downloads are read through a bounded stream before parsing; ZIP parsing then reads the central directory, accepts stored and deflated entries, rejects traversal paths and Zip64, enforces file/expanded-size caps, and keeps package contents as bounded text samples or binary metadata.
@@ -412,6 +413,34 @@ public-artifact allowlist, `subRequests: 0`). Because identity is derived from
 the sandbox-parsed metadata, the release-target match happens after parsing
 rather than before.
 
+### Baseline acquisition
+
+`pypiAdapter.acquireBaseline` resolves the previous release the candidate is
+diffed against. When the caller supplies `previousArtifacts` (the inline-bytes
+path used by `createPyPiReleaseCandidateReview`) those files are used directly.
+Otherwise the adapter fetches `GET /pypi/<project>/json` through the
+`PyPiBroker`, picks the baseline via `pickPyPiBaselineRelease` (`info.version`,
+falling back to the newest non-yanked upload time), and downloads the baseline
+artifacts.
+
+Downloads are bounded and credential-free:
+
+- `selectPyPiReleaseArtifacts` drops yanked files, and the URLs are filtered to
+  `https://files.pythonhosted.org` (`isAllowedPyPiArtifactUrl`).
+- Only baseline artifacts whose filename-derived namespace matches a staged
+  artifact namespace are fetched, so popular projects with dozens of platform
+  wheels don't trigger dozens of downloads; at most one artifact per namespace
+  is pulled.
+- `PyPiBroker.downloadPublicArtifact` runs each fetch through
+  `downloadInSandbox` with no npm token and a public-artifact allowlist pinned
+  to the single URL being fetched, so the `NpmStageGateway` forwards the
+  request uncredentialed. PyPI artifacts never receive npm credentials or
+  arbitrary egress.
+
+The downloaded wheel/sdist files are flattened through the same wheel/sdist
+namespaces as the candidate, so `createPackageDiff` reports changed/unchanged
+files across versions.
+
 ## Remaining work
 
 - Wire `preparePyPiReleaseCandidateForGate` into the scan pipeline so a
@@ -422,8 +451,6 @@ rather than before.
 - Add UI for workflow-gate reviews and GitHub/PyPI setup guidance.
 - Record the reviewed artifact SHA-256 digests in the persisted report
   payload (the resolver returns them; the persister doesn't store them yet).
-- Compare against prior PyPI release artifacts by downloading selected
-  `files.pythonhosted.org` URLs through the exact public-artifact allowlist.
 
 Until those items land, the PyPI code is a review engine foundation and
 testable backend slice, not an end-to-end publish gate.

@@ -10,6 +10,7 @@ import {
   preparePyPiArtifact,
   selectPyPiReleaseArtifacts,
 } from "../server/lib/adapters/pypi/index.ts";
+import { createPackageDiff } from "../server/lib/review.ts";
 
 function file(path, textSample, extra = {}) {
   return {
@@ -20,6 +21,48 @@ function file(path, textSample, extra = {}) {
     textSample,
     ...extra,
   };
+}
+
+const adapterCtx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user_1" } };
+
+// Network-free PyPI broker. Tests inject the project metadata and a map of
+// artifact-url -> parsed files so the adapter download path can be exercised
+// without touching pypi.org or the sandbox loader.
+function stubBroker({ metadata = null, downloads = {} } = {}) {
+  const calls = [];
+  return {
+    calls,
+    broker: {
+      async fetchProjectMetadata() {
+        return metadata;
+      },
+      async downloadPublicArtifact(artifact) {
+        calls.push(artifact);
+        const files = downloads[artifact.url];
+        if (!files) throw new Error(`unexpected download for ${artifact.url}`);
+        return { files, packageJson: null };
+      },
+      dispose() {},
+    },
+  };
+}
+
+function wheelArtifactFiles(version) {
+  return [
+    file(
+      `demo_package-${version}.dist-info/METADATA`,
+      `Metadata-Version: 2.3\nName: demo-package\nVersion: ${version}\n`,
+    ),
+    file(
+      `demo_package-${version}.dist-info/WHEEL`,
+      "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+      { sha256: "sha-wheel-metadata" },
+    ),
+    file(`demo_package-${version}.dist-info/RECORD`, "demo_package/__init__.py,,\n", {
+      sha256: "sha-wheel-record",
+    }),
+    file("demo_package/__init__.py", "VALUE = 1\n", { sha256: "sha-init-shared" }),
+  ];
 }
 
 describe("PyPI release manifests", () => {
@@ -344,10 +387,13 @@ describe("PyPI artifact summaries and review", () => {
         },
       ],
     });
-    const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user_1" } };
-    const broker = pypiAdapter.createBroker(ctx, { organizationId: "org_1" });
-    const staged = await pypiAdapter.acquireStaged(ctx, input, broker);
-    const baseline = await pypiAdapter.acquireBaseline(ctx, input, broker, staged);
+    const created = pypiAdapter.createBroker(adapterCtx, { organizationId: "org_1" });
+    expect(typeof created.fetchProjectMetadata).toBe("function");
+    expect(typeof created.downloadPublicArtifact).toBe("function");
+
+    const { broker, calls } = stubBroker({ metadata: null });
+    const staged = await pypiAdapter.acquireStaged(adapterCtx, input, broker);
+    const baseline = await pypiAdapter.acquireBaseline(adapterCtx, input, broker, staged);
     const summary = pypiAdapter.describe({
       input,
       staged: staged.artifact,
@@ -368,10 +414,13 @@ describe("PyPI artifact summaries and review", () => {
       "wheel/py3-none-any/.dist-info/WHEEL",
       "wheel/py3-none-any/.dist-info/RECORD",
     ]);
+    // No published metadata available -> no baseline download attempted.
+    expect(calls).toHaveLength(0);
+    expect(baseline.artifact).toBeNull();
     expect(baseline.baseline).toMatchObject({
       version: null,
       source: "none",
-      reason: "no-previous-artifacts",
+      reason: "metadata-unavailable",
     });
   });
 });
@@ -465,5 +514,145 @@ describe("PyPI registry metadata helpers", () => {
     expect(isAllowedPyPiArtifactUrl("https://files.pythonhosted.org/packages/demo.whl")).toBe(true);
     expect(isAllowedPyPiArtifactUrl("https://example.com/packages/demo.whl")).toBe(false);
     expect(isAllowedPyPiArtifactUrl("http://files.pythonhosted.org/packages/demo.whl")).toBe(false);
+  });
+});
+
+describe("PyPI baseline acquisition through the broker", () => {
+  const candidateManifest = (artifacts) =>
+    parsePyPiReleaseManifest({
+      schema: "drydock.release-artifacts.v1",
+      ecosystem: "pypi",
+      package: "demo-package",
+      version: "1.2.0",
+      artifacts,
+    });
+
+  test("downloads the selected previous release and namespaces baseline files for diffing", async () => {
+    const wheelUrl = "https://files.pythonhosted.org/packages/demo_package-1.1.0-py3-none-any.whl";
+    const manifest = candidateManifest([
+      { path: "dist/demo_package-1.2.0-py3-none-any.whl", sha256: "a".repeat(64) },
+    ]);
+    const input = pypiAdapter.parseInput({
+      manifest,
+      artifacts: [
+        { path: "dist/demo_package-1.2.0-py3-none-any.whl", files: wheelArtifactFiles("1.2.0") },
+      ],
+    });
+    const { broker, calls } = stubBroker({
+      metadata: {
+        info: { version: "1.1.0" },
+        releases: {
+          "1.1.0": [
+            {
+              filename: "demo_package-1.1.0-py3-none-any.whl",
+              packagetype: "bdist_wheel",
+              url: wheelUrl,
+              digests: { sha256: "c".repeat(64) },
+              upload_time_iso_8601: "2026-02-01T00:00:00.000Z",
+            },
+          ],
+        },
+      },
+      downloads: { [wheelUrl]: wheelArtifactFiles("1.1.0") },
+    });
+
+    const staged = await pypiAdapter.acquireStaged(adapterCtx, input, broker);
+    const baseline = await pypiAdapter.acquireBaseline(adapterCtx, input, broker, staged);
+
+    expect(calls).toEqual([{ url: wheelUrl, kind: "wheel" }]);
+    expect(baseline.baseline).toMatchObject({
+      version: "1.1.0",
+      source: "latest-published",
+      reason: "project-json-info-version",
+    });
+
+    const diff = createPackageDiff(baseline.artifact.files, staged.artifact.files);
+    expect(diff).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "wheel/py3-none-any/demo_package/__init__.py",
+          status: "unchanged",
+        }),
+        expect.objectContaining({
+          path: "wheel/py3-none-any/.dist-info/METADATA",
+          status: "modified",
+        }),
+      ]),
+    );
+  });
+
+  test("skips yanked baseline files and only downloads staged artifact namespaces", async () => {
+    const wheelUrl = "https://files.pythonhosted.org/packages/demo_package-1.1.0-py3-none-any.whl";
+    const manifest = candidateManifest([
+      { path: "dist/demo_package-1.2.0-py3-none-any.whl", sha256: "a".repeat(64) },
+      { path: "dist/demo_package-1.2.0.tar.gz", sha256: "b".repeat(64) },
+    ]);
+    const input = pypiAdapter.parseInput({
+      manifest,
+      artifacts: [
+        { path: "dist/demo_package-1.2.0-py3-none-any.whl", files: wheelArtifactFiles("1.2.0") },
+        {
+          path: "dist/demo_package-1.2.0.tar.gz",
+          files: [
+            file(
+              "demo_package-1.2.0/PKG-INFO",
+              "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
+            ),
+            file("demo_package-1.2.0/demo_package/__init__.py", "VALUE = 1\n", {
+              sha256: "sha-sdist-init",
+            }),
+          ],
+        },
+      ],
+    });
+    const { broker, calls } = stubBroker({
+      metadata: {
+        info: { version: "1.1.0" },
+        releases: {
+          "1.1.0": [
+            {
+              filename: "demo_package-1.1.0-py3-none-any.whl",
+              packagetype: "bdist_wheel",
+              url: wheelUrl,
+              digests: { sha256: "c".repeat(64) },
+              upload_time_iso_8601: "2026-02-01T00:00:00.000Z",
+            },
+            {
+              filename: "demo_package-1.1.0.tar.gz",
+              packagetype: "sdist",
+              url: "https://files.pythonhosted.org/packages/demo_package-1.1.0.tar.gz",
+              digests: { sha256: "d".repeat(64) },
+              upload_time_iso_8601: "2026-02-01T00:00:00.000Z",
+              yanked: true,
+            },
+            {
+              filename: "demo_package-1.1.0-cp39-cp39-manylinux1_x86_64.whl",
+              packagetype: "bdist_wheel",
+              url: "https://files.pythonhosted.org/packages/demo_package-1.1.0-cp39-cp39-manylinux1_x86_64.whl",
+              digests: { sha256: "e".repeat(64) },
+              upload_time_iso_8601: "2026-02-01T00:00:00.000Z",
+            },
+            {
+              filename: "demo_package-1.1.0-py3-none-any.whl",
+              packagetype: "bdist_wheel",
+              url: "https://evil.example.com/demo_package-1.1.0-py3-none-any.whl",
+              digests: { sha256: "f".repeat(64) },
+              upload_time_iso_8601: "2026-02-01T00:00:00.000Z",
+            },
+          ],
+        },
+      },
+      downloads: { [wheelUrl]: wheelArtifactFiles("1.1.0") },
+    });
+
+    const staged = await pypiAdapter.acquireStaged(adapterCtx, input, broker);
+    const baseline = await pypiAdapter.acquireBaseline(adapterCtx, input, broker, staged);
+
+    // Yanked sdist, off-host wheel, and the unstaged manylinux namespace are all
+    // excluded; only the staged py3-none-any wheel is fetched.
+    expect(calls).toEqual([{ url: wheelUrl, kind: "wheel" }]);
+    expect(
+      baseline.artifact.files.every((entry) => entry.path.startsWith("wheel/py3-none-any/")),
+    ).toBe(true);
   });
 });
