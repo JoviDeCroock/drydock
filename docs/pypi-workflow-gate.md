@@ -2,7 +2,7 @@
 
 PyPI support uses a different product shape from npm staged publishing.
 
-npm owns a pending staged tarball, so Drydock can fetch `/-/stage/<stage-id>/tarball` and leave final approval in npm. PyPI does not expose an equivalent registry-staged artifact. The PyPI path is therefore **workflow gate mode**: CI builds wheels/sdists first, uploads a manifest plus artifacts for review, and a GitHub Environment blocks the publish job until the reviewed artifact digests are approved.
+npm owns a pending staged tarball, so Drydock can fetch `/-/stage/<stage-id>/tarball` and leave final approval in npm. PyPI does not expose an equivalent registry-staged artifact. The PyPI path is therefore **workflow gate mode**: CI builds wheels/sdists first, uploads them as a `pypi-release-candidate` bundle for review, and a GitHub Environment blocks the publish job until the reviewed release is approved. There is no `drydock-manifest.json` to write — the release set is whatever wheels/sdists the bundle contains, and the package identity is derived from the artifacts themselves.
 
 Official references:
 
@@ -15,14 +15,14 @@ Official references:
 
 The repo now has a backend-only PyPI foundation in `server/lib/adapters/pypi/index.ts`:
 
-- validates `drydock.release-artifacts.v1` manifests for `ecosystem: "pypi"`;
+- derives a `drydock.release-artifacts.v1` release set from the uploaded artifacts (identity from wheel `METADATA` / sdist `PKG-INFO`, digests recomputed from the bytes) — there is no maintainer-declared manifest;
 - exposes a `PackageAdapter` implementation compatible with the pluggable scan pipeline introduced for npm;
 - normalizes PyPI project names using the PEP 503-style `[-_.]+ -> -` convention;
 - recognizes wheel (`.whl`) and sdist (`.tar.gz`, `.tgz`) artifacts;
 - parses wheel `METADATA`, `WHEEL`, and `RECORD` evidence from ZIP archives;
 - strips the common root directory from sdists before reading `PKG-INFO`;
 - compares flattened candidate artifact files against optional previous artifacts using stable wheel/sdist namespaces instead of versioned artifact filenames;
-- requires the reviewed artifact path set to exactly match the manifest artifact path set;
+- requires every artifact in the bundle to agree on the normalized package name and version before forming a reviewable release;
 - adds PyPI-specific deterministic findings for metadata mismatches, missing wheel `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, and `.pyd` native extensions;
 - fetches PyPI project metadata from `GET /pypi/<project>/json`;
 - selects a default PyPI baseline release from `info.version`, falling back to newest non-yanked upload time;
@@ -31,30 +31,37 @@ The repo now has a backend-only PyPI foundation in `server/lib/adapters/pypi/ind
 
 The sandbox parser now supports safe ZIP archive parsing for wheels in addition to npm-style gzipped tar archives. ZIP downloads are read through a bounded stream before parsing; ZIP parsing then reads the central directory, accepts stored and deflated entries, rejects traversal paths and Zip64, enforces file/expanded-size caps, and keeps package contents as bounded text samples or binary metadata.
 
-## Manifest contract
+## Release set derivation
 
-The manifest is the boundary between the GitHub workflow and Drydock:
+There is no manifest file. The boundary between the GitHub workflow and Drydock
+is simply the `pypi-release-candidate` artifact bundle: CI uploads `dist/*` and
+Drydock treats every `.whl` / `.tar.gz` / `.tgz` in the bundle as the release
+set. The reviewable identity is derived internally into the same
+`drydock.release-artifacts.v1` shape the rest of the pipeline consumes:
 
-```json
-{
-  "schema": "drydock.release-artifacts.v1",
-  "ecosystem": "pypi",
-  "package": "example-package",
-  "version": "1.2.3",
-  "artifacts": [
-    {
-      "path": "dist/example_package-1.2.3-py3-none-any.whl",
-      "sha256": "..."
-    },
-    {
-      "path": "dist/example_package-1.2.3.tar.gz",
-      "sha256": "..."
-    }
-  ]
-}
-```
+- `package` / `version` come from each wheel's `METADATA` and each sdist's
+  `PKG-INFO`. Every artifact must expose a `Name`/`Version` and agree on the
+  normalized (PEP 503) name and the version, so a foreign or version-skewed file
+  in `dist/` is rejected, not silently shipped.
+- each artifact's `sha256` is recomputed server-side from the bundle bytes.
 
-The publish job must verify these digests immediately before publishing. A reviewed wheel/sdist must be the exact file uploaded to PyPI; rebuilding after the gate breaks the security boundary.
+### Trust tradeoff (deliberate)
+
+Dropping the manifest removes the maintainer's explicit "ship exactly these N
+files, at these digests" declaration. There is no externally-declared digest to
+compare against, so the publish-side digest-match check disappears. Byte
+integrity between review and publish rests on GitHub artifact immutability plus
+the publish job never rebuilding (it only downloads the reviewed artifact).
+What keeps this safe:
+
+- cross-artifact identity consistency (a foreign or version-skewed wheel cannot
+  sneak into the release set);
+- the release-target name match still applies;
+- a bundle whose artifacts cannot be identified (no `METADATA`/`PKG-INFO`
+  `Name`/`Version`) is rejected rather than guessed.
+
+A reviewed wheel/sdist must be the exact file uploaded to PyPI; rebuilding after
+the gate breaks the security boundary.
 
 ## Target workflow
 
@@ -65,15 +72,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: python -m build
-      - run: sha256sum dist/* > drydock-sha256.txt
-      - run: python scripts/write-drydock-manifest.py
       - uses: actions/upload-artifact@v4
         with:
           name: pypi-release-candidate
-          path: |
-            dist/*
-            drydock-manifest.json
-            drydock-sha256.txt
+          path: dist/*
 
   publish:
     needs: build-release-artifacts
@@ -85,11 +87,13 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: pypi-release-candidate
-      - run: sha256sum --check drydock-sha256.txt
       - uses: pypa/gh-action-pypi-publish@release/v1
 ```
 
-PyPI strongly encourages configuring a GitHub Environment for Trusted Publishers. Drydock should attach to that same environment as a GitHub custom deployment protection rule when the GitHub App work lands.
+No manifest-writing or checksum step is required — CI just builds and uploads
+`dist/*`. PyPI strongly encourages configuring a GitHub Environment for Trusted
+Publishers. Drydock attaches to that same environment as a GitHub custom
+deployment protection rule.
 
 ## GitHub App mapping
 
@@ -224,8 +228,9 @@ the link to the Drydock report.
 exactly once thanks to the `status = 'pending'` WHERE clause, so even if the
 PyPI candidate review completes more than once we will only call GitHub a
 single time. The companion `markGateErrored` records failures (e.g. inability
-to fetch the manifest, scan pipeline crash) without consuming the gate, so
-the operator can retry once the underlying issue is fixed.
+to fetch the artifact bundle, unidentifiable artifacts, scan pipeline crash)
+without consuming the gate, so the operator can retry once the underlying
+issue is fixed.
 
 ### Trust boundary (webhook)
 
@@ -337,11 +342,12 @@ a new deploy gate. The same helper guards the
 
 ### Resolving artifacts for a pending gate
 
-`server/lib/github-app-artifacts.ts` turns a pending gate into a verified
-release bundle on the trusted control-plane side, then
+`server/lib/github-app-artifacts.ts` turns a pending gate into a release bundle
+of recomputed-SHA-256 wheel/sdist bytes on the trusted control-plane side, then
 `server/lib/release-candidate-pypi.ts` hands each wheel/sdist to the
 credentials-free `downloadInSandboxInline` sandbox path so the same untrusted-
-archive parser the npm pipeline uses produces bounded `FileRecord[]` evidence.
+archive parser the npm pipeline uses produces bounded `FileRecord[]` evidence,
+and derives the release identity from that parsed metadata.
 
 What the resolver enforces, in order:
 
@@ -366,31 +372,32 @@ What the resolver enforces, in order:
    (`findZipEndOfCentralDirectory`, `inflateRawBounded`, `normalizeZipPath`).
    Traversal paths, ZIP64, oversized entries, and unsupported compression
    methods are rejected.
-4. The bundle must contain `drydock-manifest.json` at the root. It is parsed
-   with the existing `parsePyPiReleaseManifest` (PEP 503 project name, safe
-   version, ≤20 artifacts, safe artifact paths).
-5. The bundle's wheel/sdist set must exactly match the manifest's declared
-   artifact set — extra wheel/sdist files or missing declared paths fail.
-6. Each declared artifact has its SHA-256 recomputed against the bundle
-   bytes; mismatches reject before any bytes reach the sandbox. The
-   workflow's own `drydock-sha256.txt` is never trusted.
-7. The gate wrapper compares the normalized manifest package name against the
-   mapped `github_release_targets.package_name` before wheel/sdist bytes enter
-   the sandbox. A repo/environment gate for one PyPI project cannot approve a
-   manifest for another project.
+4. Every `.whl` / `.tar.gz` / `.tgz` entry becomes the release set; its SHA-256
+   is recomputed from the bundle bytes. Non-artifact files are ignored. A bundle
+   with no wheels/sdists is `bundle_empty`; more than 20 is `bundle_too_large`.
+5. Each wheel/sdist's bytes cross into the credentials-free sandbox, which
+   parses `METADATA`/`PKG-INFO` into bounded evidence.
+6. The release identity is derived from that parsed metadata: every artifact
+   must expose a `Name`/`Version` and agree on the normalized package name and
+   the version. The synthesized `drydock.release-artifacts.v1` shape (PEP 503
+   project name, safe version, ≤20 artifacts, safe artifact paths) is then
+   re-validated before scanning.
+7. The gate wrapper compares the derived normalized package name against the
+   mapped `github_release_targets.package_name`. A repo/environment gate for one
+   PyPI project cannot approve a release for another project.
 
 Typed errors returned by `WorkflowArtifactError.code`:
 
 - `bundle_unavailable` — workflow run / artifact name is unreachable.
-- `bundle_too_large` — outer ZIP exceeded the size or entry cap.
-- `manifest_missing` — `drydock-manifest.json` not present at root.
-- `manifest_invalid` — manifest JSON / schema validation failed.
-- `manifest_artifact_mismatch` — declared vs. bundled artifact sets differ.
+- `bundle_too_large` — outer ZIP exceeded the size/entry cap, or the bundle held
+  more than 20 wheel/sdist files.
+- `bundle_empty` — the bundle contained no `.whl` / `.tar.gz` / `.tgz` files.
 - `artifact_path_unsafe` — bundle entry path contained traversal segments.
-- `artifact_kind_unsupported` — bundle has a file that isn't `.whl` /
-  `.tar.gz` / `.tgz`, or the kind disagrees with the manifest entry.
-- `artifact_digest_mismatch` — recomputed SHA-256 ≠ manifest sha256.
-- `release_target_mismatch` — normalized manifest package name did not match
+- `artifact_identity_missing` — an artifact exposed no usable `Name`/`Version`
+  (or the derived identity failed validation).
+- `artifact_identity_inconsistent` — artifacts disagreed on the normalized
+  package name or the version.
+- `release_target_mismatch` — derived normalized package name did not match
   the release target mapped to the pending gate.
 
 `preparePyPiReleaseCandidateForGate(env, ctx, db, { config, organizationId,
@@ -398,10 +405,12 @@ gateId })` is the gate-aware wrapper. It looks up the gate row, swaps the App
 JWT for a fresh installation access token, and on any failure calls
 `markGateErrored` with the typed error code so the gate cannot advance to
 scanning. The GitHub installation token never enters the sandbox: the parent
-worker downloads the artifact ZIP, validates and digests it, and only the
-verified wheel/sdist bytes cross the trust boundary through
-`downloadInSandboxInline`, which constructs the `NpmStageGateway` with empty
-props (no npm token, no public-artifact allowlist, `subRequests: 0`).
+worker downloads the artifact ZIP and recomputes digests, and only the
+wheel/sdist bytes cross the trust boundary through `downloadInSandboxInline`,
+which constructs the `NpmStageGateway` with empty props (no npm token, no
+public-artifact allowlist, `subRequests: 0`). Because identity is derived from
+the sandbox-parsed metadata, the release-target match happens after parsing
+rather than before.
 
 ## Remaining work
 

@@ -150,45 +150,28 @@ function makeWheelBytes(name: string, version: string): FakeWheel {
   return { bytes: wheelBytes, path };
 }
 
+// The bundle no longer carries a `drydock-manifest.json`: the release set is
+// simply the wheel/sdist files the bundle contains.
 async function buildFixture(opts?: {
   extraEntries?: ZipEntry[];
   mutateWheel?: (bytes: Uint8Array) => Uint8Array;
-  omitManifest?: boolean;
-  manifestRaw?: string;
-  declareWheelKind?: "wheel" | "sdist";
+  includeWheel?: boolean;
 }): Promise<{
   wheel: FakeWheel;
-  manifestRaw: string;
+  wheelSha: string;
   bundleZip: Uint8Array;
 }> {
   const wheel = makeWheelBytes("demo-package", "1.2.0");
   const wheelBytes = opts?.mutateWheel ? opts.mutateWheel(wheel.bytes) : wheel.bytes;
   const wheelSha = await sha256Hex(wheelBytes);
 
-  const manifestObject = {
-    schema: "drydock.release-artifacts.v1",
-    ecosystem: "pypi",
-    package: "demo-package",
-    version: "1.2.0",
-    artifacts: [
-      {
-        path: wheel.path,
-        sha256: wheelSha,
-        // The PyPI adapter's parsePyPiReleaseManifest infers kind from the
-        // suffix; we don't include "kind" in the JSON.
-      },
-    ],
-  };
-  const manifestRaw = opts?.manifestRaw ?? JSON.stringify(manifestObject, null, 2);
-
   const entries: ZipEntry[] = [];
-  if (!opts?.omitManifest) {
-    entries.push({ path: "drydock-manifest.json", body: manifestRaw });
+  if (opts?.includeWheel !== false) {
+    entries.push({ path: wheel.path, body: wheelBytes });
   }
-  entries.push({ path: wheel.path, body: wheelBytes });
   if (opts?.extraEntries) entries.push(...opts.extraEntries);
   const bundleZip = makeZip(entries);
-  return { wheel: { bytes: wheelBytes, path: wheel.path }, manifestRaw, bundleZip };
+  return { wheel: { bytes: wheelBytes, path: wheel.path }, wheelSha, bundleZip };
 }
 
 // ── Fetch stub ───────────────────────────────────────────────────────────────
@@ -258,21 +241,78 @@ function source(): WorkflowArtifactSource {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("fetchReleaseBundleWithToken", () => {
-  test("returns the manifest and verified wheel bytes on the happy path", async () => {
+  test("returns the verified wheel bytes on the happy path", async () => {
     const fixture = await buildFixture();
     const calls = stubGithubFetch({ bundleZip: fixture.bundleZip });
 
     const bundle = await fetchReleaseBundleWithToken(TOKEN, source());
 
-    expect(bundle.manifest.package).toBe("demo-package");
-    expect(bundle.manifest.version).toBe("1.2.0");
     expect(bundle.artifactName).toBe(ARTIFACT_NAME);
     expect(bundle.artifactId).toBe(ARTIFACT_ID);
     expect(bundle.artifacts).toHaveLength(1);
     expect(bundle.artifacts[0]?.path).toBe(fixture.wheel.path);
     expect(bundle.artifacts[0]?.kind).toBe("wheel");
     expect(bundle.artifacts[0]?.bytes).toEqual(fixture.wheel.bytes);
+    expect(bundle.artifacts[0]?.sha256).toBe(fixture.wheelSha);
     expect(calls.every((call) => call.authorization === `Bearer ${TOKEN}`)).toBe(true);
+  });
+
+  test("collects every wheel and sdist in the bundle as the release set", async () => {
+    const sdistPath = "dist/demo_package-1.2.0.tar.gz";
+    const sdistBytes = new TextEncoder().encode("opaque sdist bytes");
+    const fixture = await buildFixture({
+      extraEntries: [{ path: sdistPath, body: sdistBytes }],
+    });
+    stubGithubFetch({ bundleZip: fixture.bundleZip });
+
+    const bundle = await fetchReleaseBundleWithToken(TOKEN, source());
+
+    const paths = bundle.artifacts.map((artifact) => artifact.path).sort();
+    expect(paths).toEqual([sdistPath, fixture.wheel.path].sort());
+    const sdist = bundle.artifacts.find((artifact) => artifact.path === sdistPath);
+    expect(sdist?.kind).toBe("sdist");
+    expect(sdist?.sha256).toBe(await sha256Hex(sdistBytes));
+  });
+
+  test("ignores non-artifact files in the bundle", async () => {
+    const fixture = await buildFixture({
+      extraEntries: [
+        { path: "drydock-sha256.txt", body: "placeholder\n" },
+        { path: "dist/demo_package-1.2.0.zip", body: "not a wheel or sdist" },
+        { path: "README.md", body: "# notes\n" },
+      ],
+    });
+    stubGithubFetch({ bundleZip: fixture.bundleZip });
+
+    const bundle = await fetchReleaseBundleWithToken(TOKEN, source());
+
+    expect(bundle.artifacts).toHaveLength(1);
+    expect(bundle.artifacts[0]?.path).toBe(fixture.wheel.path);
+  });
+
+  test("bundle_empty when the bundle has no wheel or sdist files", async () => {
+    const fixture = await buildFixture({
+      includeWheel: false,
+      extraEntries: [{ path: "drydock-sha256.txt", body: "placeholder\n" }],
+    });
+    stubGithubFetch({ bundleZip: fixture.bundleZip });
+
+    await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({
+      code: "bundle_empty",
+    });
+  });
+
+  test("bundle_too_large when the bundle declares more than 20 artifacts", async () => {
+    const entries: ZipEntry[] = [];
+    for (let index = 0; index < 21; index += 1) {
+      entries.push({ path: `dist/demo_package-1.2.${index}.tar.gz`, body: `sdist ${index}` });
+    }
+    const bundleZip = makeZip(entries);
+    stubGithubFetch({ bundleZip });
+
+    await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({
+      code: "bundle_too_large",
+    });
   });
 
   test("bundle_unavailable when no artifact with that name exists", async () => {
@@ -308,117 +348,9 @@ describe("fetchReleaseBundleWithToken", () => {
     });
   });
 
-  test("manifest_missing when the zip lacks drydock-manifest.json", async () => {
-    const fixture = await buildFixture({ omitManifest: true });
-    stubGithubFetch({ bundleZip: fixture.bundleZip });
-
-    await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({
-      code: "manifest_missing",
-    });
-  });
-
-  test("manifest_invalid when the manifest JSON is malformed", async () => {
-    const fixture = await buildFixture({ manifestRaw: "{ not json" });
-    stubGithubFetch({ bundleZip: fixture.bundleZip });
-
-    await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({
-      code: "manifest_invalid",
-    });
-  });
-
-  test("manifest_artifact_mismatch when the bundle has an extra wheel not declared in the manifest", async () => {
-    const sneaky = makeWheelBytes("evil-package", "9.9.9");
-    const fixture = await buildFixture({
-      extraEntries: [{ path: sneaky.path, body: sneaky.bytes }],
-    });
-    stubGithubFetch({ bundleZip: fixture.bundleZip });
-
-    await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({
-      code: "manifest_artifact_mismatch",
-    });
-  });
-
-  test("artifact_kind_unsupported when the bundle has an undeclared dist file", async () => {
-    const fixture = await buildFixture({
-      extraEntries: [{ path: "dist/demo_package-1.2.0.zip", body: "not reviewed" }],
-    });
-    stubGithubFetch({ bundleZip: fixture.bundleZip });
-
-    await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({
-      code: "artifact_kind_unsupported",
-    });
-  });
-
-  test("allows the workflow checksum support file outside the manifest", async () => {
-    const fixture = await buildFixture({
-      extraEntries: [{ path: "drydock-sha256.txt", body: "placeholder\n" }],
-    });
-    stubGithubFetch({ bundleZip: fixture.bundleZip });
-
-    const bundle = await fetchReleaseBundleWithToken(TOKEN, source());
-
-    expect(bundle.artifacts).toHaveLength(1);
-    expect(bundle.artifacts[0]?.path).toBe(fixture.wheel.path);
-  });
-
-  test("manifest_artifact_mismatch when manifest declares a path the bundle omits", async () => {
-    const realWheel = makeWheelBytes("demo-package", "1.2.0");
-    const realSha = await sha256Hex(realWheel.bytes);
-    const declaredButAbsent = "dist/demo_package-1.2.0-py3-none-any.whl";
-    const manifestRaw = JSON.stringify({
-      schema: "drydock.release-artifacts.v1",
-      ecosystem: "pypi",
-      package: "demo-package",
-      version: "1.2.0",
-      artifacts: [
-        { path: declaredButAbsent, sha256: realSha },
-        {
-          path: "dist/demo_package-1.2.0.tar.gz",
-          sha256: "b".repeat(64),
-        },
-      ],
-    });
-    const bundle = makeZip([
-      { path: "drydock-manifest.json", body: manifestRaw },
-      { path: declaredButAbsent, body: realWheel.bytes },
-    ]);
-    stubGithubFetch({ bundleZip: bundle });
-
-    await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({
-      code: "manifest_artifact_mismatch",
-    });
-  });
-
-  test("artifact_digest_mismatch when a declared artifact's bytes differ from the manifest sha256", async () => {
-    const fixture = await buildFixture({
-      mutateWheel: (bytes) => {
-        // After we mutate, the manifest sha256 (computed over original bytes
-        // in `buildFixture`) won't match the bundled bytes. Build the
-        // manifest before mutation, mutate after.
-        return bytes;
-      },
-    });
-    // Replace the wheel entry with a tampered copy that does not match the
-    // recorded sha256.
-    const tamperedWheel = makeWheelBytes("demo-package", "1.2.0").bytes;
-    tamperedWheel[tamperedWheel.length - 5] ^= 0xff;
-    const tamperedBundle = makeZip([
-      { path: "drydock-manifest.json", body: fixture.manifestRaw },
-      { path: fixture.wheel.path, body: tamperedWheel },
-    ]);
-    stubGithubFetch({ bundleZip: tamperedBundle });
-
-    await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({
-      code: "artifact_digest_mismatch",
-    });
-  });
-
   test("artifact_path_unsafe when the bundle includes a traversal path", async () => {
     const sneaky = makeWheelBytes("demo-package", "1.2.0");
-    const bundle = makeZip([
-      { path: "drydock-manifest.json", body: "{}" },
-      { path: "../../etc/passwd", body: sneaky.bytes },
-    ]);
+    const bundle = makeZip([{ path: "../../etc/passwd", body: sneaky.bytes }]);
     stubGithubFetch({ bundleZip: bundle });
 
     await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({

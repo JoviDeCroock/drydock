@@ -10,7 +10,6 @@ import {
 } from "../../server/lib/github-app";
 import { getGateForOrganization } from "../../server/lib/github-app-webhook";
 import { preparePyPiReleaseCandidateForGate } from "../../server/lib/release-candidate-pypi";
-import { WorkflowArtifactError } from "../../server/lib/github-app-artifacts";
 
 const WEBHOOK_SECRET = "webhook-secret-value-1234567890";
 
@@ -162,13 +161,33 @@ function crc32(bytes: Uint8Array): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+type SandboxFile = {
+  path: string;
+  size: number;
+  sha256: string;
+  flags: string[];
+  textSample?: string;
+};
+
+// A `.dist-info/METADATA` record the way the sandbox surfaces it after parsing a
+// wheel; identity derivation reads Name/Version from this textSample.
+function metadataFile(name: string, version: string): SandboxFile {
+  const slug = name.replace(/-/g, "_");
+  return {
+    path: `${slug}-${version}.dist-info/METADATA`,
+    size: 64,
+    sha256: "ab".repeat(32),
+    flags: [],
+    textSample: `Metadata-Version: 2.3\nName: ${name}\nVersion: ${version}\n`,
+  };
 }
 
-function buildLoaderMock() {
+// `fileSets[i]` is what the sandbox returns for the i-th artifact it parses, in
+// bundle order. The mock clamps to the last entry so single-set callers can omit
+// extras.
+function buildLoaderMock(fileSets: SandboxFile[][]) {
   const calls: { format: string | null; bodySize: number }[] = [];
+  let index = 0;
   return {
     calls,
     binding: {
@@ -179,21 +198,12 @@ function buildLoaderMock() {
               format: request.headers.get("x-archive-format"),
               bodySize: (await request.arrayBuffer()).byteLength,
             });
-            return new Response(
-              JSON.stringify({
-                files: [
-                  {
-                    path: "stub.txt",
-                    size: 1,
-                    sha256: "00",
-                    flags: [],
-                    textSample: "x",
-                  },
-                ],
-                packageJson: null,
-              }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            );
+            const files = fileSets[Math.min(index, fileSets.length - 1)] ?? [];
+            index += 1;
+            return new Response(JSON.stringify({ files, packageJson: null }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
           }),
         }),
       })),
@@ -226,39 +236,14 @@ function buildConfigBindings(): Record<string, string> {
   };
 }
 
-interface ScenarioOpts {
-  digestMatches: boolean;
-  manifestPackage?: string;
-}
-
-async function buildScenario(runId: number, opts: ScenarioOpts) {
-  const wheelPath = "dist/demo_package-1.2.0-py3-none-any.whl";
-  const wheelBytes = makeZip([
-    {
-      path: "demo_package-1.2.0.dist-info/METADATA",
-      body: "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
-    },
-    {
-      path: "demo_package-1.2.0.dist-info/WHEEL",
-      body: "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
-    },
-    {
-      path: "demo_package-1.2.0.dist-info/RECORD",
-      body: "",
-    },
-  ]);
-  const declaredSha = opts.digestMatches ? await sha256Hex(wheelBytes) : "0".repeat(64);
-  const manifestRaw = JSON.stringify({
-    schema: "drydock.release-artifacts.v1",
-    ecosystem: "pypi",
-    package: opts.manifestPackage ?? "demo-package",
-    version: "1.2.0",
-    artifacts: [{ path: wheelPath, sha256: declaredSha }],
-  });
-  const bundleZip = makeZip([
-    { path: "drydock-manifest.json", body: manifestRaw },
-    { path: wheelPath, body: wheelBytes },
-  ]);
+// The bundle contains only the wheel/sdist files — no `drydock-manifest.json`.
+// The wheel bytes here are opaque: the sandbox is mocked, so identity comes from
+// the loader's returned METADATA rather than these bytes.
+async function buildScenario(runId: number, opts?: { artifactPaths?: string[] }) {
+  const artifactPaths = opts?.artifactPaths ?? ["dist/demo_package-1.2.0-py3-none-any.whl"];
+  const bundleZip = makeZip(
+    artifactPaths.map((path) => ({ path, body: `opaque bytes for ${path}` })),
+  );
 
   const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init);
@@ -293,20 +278,20 @@ async function buildScenario(runId: number, opts: ScenarioOpts) {
     throw new Error(`unexpected fetch in test: ${request.url}`);
   });
   vi.stubGlobal("fetch", fetchSpy);
-  return { fetchSpy, manifestRaw, wheelPath, wheelBytes };
+  return { fetchSpy, artifactPaths };
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("preparePyPiReleaseCandidateForGate", () => {
-  test("returns a PyPiAdapterInput for a pending gate with a matching manifest", async () => {
+  test("derives the release identity from the artifacts for a matching gate", async () => {
     const seeded = await seedGateForTest({
       installationExternalId: "9100",
       repositoryId: 71001,
       runId: 7777,
     });
-    const scenario = await buildScenario(7777, { digestMatches: true });
-    const loaderMock = buildLoaderMock();
+    const scenario = await buildScenario(7777);
+    const loaderMock = buildLoaderMock([[metadataFile("demo-package", "1.2.0")]]);
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const config = readGithubAppConfig({
@@ -327,26 +312,31 @@ describe("preparePyPiReleaseCandidateForGate", () => {
     });
 
     expect(result.gate.id).toBe(seeded.gateId);
-    expect(result.bundle.manifest.package).toBe("demo-package");
+    expect(result.adapterInput.manifest.package).toBe("demo-package");
+    expect(result.adapterInput.manifest.version).toBe("1.2.0");
+    expect(result.adapterInput.manifest.artifacts).toHaveLength(1);
+    expect(result.adapterInput.manifest.artifacts[0].path).toBe(scenario.artifactPaths[0]);
     expect(result.adapterInput.artifacts).toHaveLength(1);
-    expect(result.adapterInput.artifacts[0].path).toBe(scenario.wheelPath);
+    expect(result.adapterInput.artifacts[0].path).toBe(scenario.artifactPaths[0]);
     expect(result.adapterInput.artifacts[0].files).toHaveLength(1);
     expect(loaderMock.calls).toHaveLength(1);
     expect(loaderMock.calls[0].format).toBe("zip");
-    expect(loaderMock.calls[0].bodySize).toBe(scenario.wheelBytes.byteLength);
 
     const refreshed = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
     expect(refreshed?.status).toBe("pending");
   });
 
-  test("marks the gate errored when the manifest digest does not match the wheel bytes", async () => {
+  test("marks the gate errored when an artifact exposes no Name/Version", async () => {
     const seeded = await seedGateForTest({
       installationExternalId: "9101",
       repositoryId: 71002,
       runId: 8888,
     });
-    await buildScenario(8888, { digestMatches: false });
-    const loaderMock = buildLoaderMock();
+    await buildScenario(8888);
+    // The sandbox returns a file with no usable PyPI metadata.
+    const loaderMock = buildLoaderMock([
+      [{ path: "demo_package/__init__.py", size: 1, sha256: "00", flags: [], textSample: "x" }],
+    ]);
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const config = readGithubAppConfig({
@@ -366,24 +356,62 @@ describe("preparePyPiReleaseCandidateForGate", () => {
         organizationId: seeded.organizationId,
         gateId: seeded.gateId,
       }),
-    ).rejects.toBeInstanceOf(WorkflowArtifactError);
+    ).rejects.toMatchObject({ code: "artifact_identity_missing" });
 
     const refreshed = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
     expect(refreshed?.status).toBe("pending");
-    expect(refreshed?.failureReason).toBe("artifact_digest_mismatch");
+    expect(refreshed?.failureReason).toBe("artifact_identity_missing");
   });
 
-  test("marks the gate errored when the manifest package does not match the release target", async () => {
+  test("marks the gate errored when artifacts disagree on identity", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9104",
+      repositoryId: 71005,
+      runId: 11111,
+    });
+    await buildScenario(11111, {
+      artifactPaths: ["dist/demo_package-1.2.0-py3-none-any.whl", "dist/demo_package-1.3.0.tar.gz"],
+    });
+    // The wheel and sdist disagree on version: a version-skewed file must be
+    // rejected rather than silently shipped.
+    const loaderMock = buildLoaderMock([
+      [metadataFile("demo-package", "1.2.0")],
+      [{ ...metadataFile("demo-package", "1.3.0"), path: "demo_package-1.3.0/PKG-INFO" }],
+    ]);
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const config = readGithubAppConfig({
+      ...bindings,
+      BETTER_AUTH_SECRET: bindings.BETTER_AUTH_SECRET,
+    });
+    const sandboxEnv = {
+      ...env,
+      ...bindings,
+      LOADER: loaderMock.binding as unknown as WorkerLoader,
+    } as Cloudflare.Env;
+
+    const db = createDb(env.DB);
+    await expect(
+      preparePyPiReleaseCandidateForGate(sandboxEnv, ctx, db, {
+        config,
+        organizationId: seeded.organizationId,
+        gateId: seeded.gateId,
+      }),
+    ).rejects.toMatchObject({ code: "artifact_identity_inconsistent" });
+
+    const refreshed = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(refreshed?.status).toBe("pending");
+    expect(refreshed?.failureReason).toBe("artifact_identity_inconsistent");
+  });
+
+  test("marks the gate errored when the derived package does not match the release target", async () => {
     const seeded = await seedGateForTest({
       installationExternalId: "9102",
       repositoryId: 71003,
       runId: 9999,
     });
-    await buildScenario(9999, {
-      digestMatches: true,
-      manifestPackage: "other-package",
-    });
-    const loaderMock = buildLoaderMock();
+    await buildScenario(9999);
+    const loaderMock = buildLoaderMock([[metadataFile("other-package", "1.2.0")]]);
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const config = readGithubAppConfig({
@@ -405,7 +433,6 @@ describe("preparePyPiReleaseCandidateForGate", () => {
       }),
     ).rejects.toMatchObject({ code: "release_target_mismatch" });
 
-    expect(loaderMock.calls).toHaveLength(0);
     const refreshed = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
     expect(refreshed?.status).toBe("pending");
     expect(refreshed?.failureReason).toBe("release_target_mismatch");
@@ -422,7 +449,7 @@ describe("preparePyPiReleaseCandidateForGate", () => {
       ...bindings,
       BETTER_AUTH_SECRET: bindings.BETTER_AUTH_SECRET,
     });
-    const loaderMock = buildLoaderMock();
+    const loaderMock = buildLoaderMock([[metadataFile("demo-package", "1.2.0")]]);
     const ctx = buildCtxWithGateway();
     const sandboxEnv = {
       ...env,
