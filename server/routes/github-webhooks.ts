@@ -138,6 +138,17 @@ githubWebhookRoutes.post("/github", async (c) => {
   try {
     const outcome = await applyGithubWebhookEvent(db, parsed, { deliveryId });
     await recordOutcomeAudit(db, deliveryId, eventName, outcome);
+    // Hand a pending gate to the queue consumer that runs the PyPI review and
+    // posts the deployment decision. Guarded because the binding is optional in
+    // tests/local; GitHub retries a non-2xx delivery and the consumer is
+    // idempotent (it re-checks the gate status), so a re-enqueue is safe.
+    if (outcome.kind === "gate_pending" && c.env.SCAN_QUEUE) {
+      await c.env.SCAN_QUEUE.send({
+        kind: "workflow_gate",
+        organizationId: outcome.gate.organizationId,
+        gateId: outcome.gate.id,
+      });
+    }
     return c.json({ ok: true, ...summarizeOutcome(outcome) });
   } catch (err) {
     emitOperationalEvent("error", "github_webhook.apply_failed", {

@@ -25,6 +25,24 @@ export interface ScanQueueMessage extends ScanInput {
   source?: ScanSource;
 }
 
+/**
+ * A resolved PyPI workflow gate to review. The gate row already holds the
+ * installation, release target, run, and callback URL, so the message only
+ * needs to point at it. `kind` discriminates this from the npm scan messages
+ * that flow over the same queue.
+ */
+export interface WorkflowGateQueueMessage {
+  kind: "workflow_gate";
+  organizationId: string;
+  gateId: string;
+}
+
+export type QueueMessage = ScanQueueMessage | WorkflowGateQueueMessage;
+
+export function isWorkflowGateMessage(message: QueueMessage): message is WorkflowGateQueueMessage {
+  return "kind" in message && message.kind === "workflow_gate";
+}
+
 export const MAX_SCAN_JOB_ATTEMPTS = 3;
 
 export interface SafeScanError {

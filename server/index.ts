@@ -10,14 +10,20 @@ import { createAuth, getAuthSession } from "./lib/auth";
 import { errorMessage } from "./lib/errors";
 import { rateLimitResponse } from "./lib/http";
 import { allowInsecureLocalRegistry } from "./lib/npm-connection";
-import { durationMsSince, emitOperationalEvent } from "./lib/observability";
+import {
+  describeOperationalError,
+  durationMsSince,
+  emitOperationalEvent,
+} from "./lib/observability";
 import {
   classifyScanError,
   executeScanJob,
+  isWorkflowGateMessage,
   MAX_SCAN_JOB_ATTEMPTS,
   retryDelaySeconds,
-  type ScanQueueMessage,
+  type QueueMessage,
 } from "./lib/scan-job";
+import { executeWorkflowGateJob } from "./lib/workflow-gate-job";
 import {
   discoverAndQueueStagedPublishes,
   ensureUsableNpmConnection,
@@ -290,9 +296,42 @@ export default {
   async scheduled(_event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
     await runStagedPublishesDiscoveryCron(env, ctx);
   },
-  async queue(batch: MessageBatch<ScanQueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
+  async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
     for (const message of batch.messages) {
       const messageStartedAtMs = Date.now();
+      if (isWorkflowGateMessage(message.body)) {
+        const gateMessage = message.body;
+        try {
+          await executeWorkflowGateJob(env, ctx, gateMessage);
+          emitOperationalEvent("info", "workflow_gate.queue.message.completed", {
+            organizationId: gateMessage.organizationId,
+            gateId: gateMessage.gateId,
+            attempt: message.attempts,
+            durationMs: durationMsSince(messageStartedAtMs),
+          });
+        } catch (err) {
+          if (message.attempts < MAX_SCAN_JOB_ATTEMPTS) {
+            message.retry({ delaySeconds: retryDelaySeconds(message.attempts) });
+            emitOperationalEvent("warn", "workflow_gate.queue.retry_scheduled", {
+              organizationId: gateMessage.organizationId,
+              gateId: gateMessage.gateId,
+              attempt: message.attempts,
+              nextDelaySeconds: retryDelaySeconds(message.attempts),
+              durationMs: durationMsSince(messageStartedAtMs),
+              error: describeOperationalError(err),
+            });
+          } else {
+            emitOperationalEvent("error", "workflow_gate.queue.message_failed", {
+              organizationId: gateMessage.organizationId,
+              gateId: gateMessage.gateId,
+              attempt: message.attempts,
+              durationMs: durationMsSince(messageStartedAtMs),
+              error: describeOperationalError(err),
+            });
+          }
+        }
+        continue;
+      }
       try {
         await executeScanJob(env, ctx, message.body, undefined, {
           attempt: message.attempts,
