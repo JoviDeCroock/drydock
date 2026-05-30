@@ -136,15 +136,17 @@ export default function DocsPage() {
             <Prose>
               PyPI does not expose a staged tarball. The publish job itself becomes the boundary: CI
               builds the wheels and sdists, uploads them as a release candidate, and a GitHub
-              Environment with a Drydock-owned deployment protection rule blocks the publish job
-              until the reviewed release candidate is approved. The same maintainer-controlled
-              credential — PyPI Trusted Publishing via OIDC — does the publish.
+              Environment with a Drydock-owned deployment protection rule holds the publish job.
+              Drydock reviews the candidate and records a recommendation, but never approves on its
+              own — a maintainer approves or rejects from the review workbench, and only then is the
+              held job released or blocked. The publish runs on the workflow's own PyPI Trusted
+              Publishing credential via OIDC; Drydock never holds it.
             </Prose>
             <Alert tone="info">
               The full gate runs in production today: Drydock fetches the release candidate, reviews
-              it, and posts the approve-or-block decision back to GitHub. It is still early access —
-              connecting the GitHub App is limited to allowlisted organizations while the setup and
-              review UI are finished. The steps below describe the flow.
+              it, and surfaces an approve/reject decision in the workbench — a maintainer makes the
+              call, and Drydock relays it to GitHub. It is still early access: connecting the GitHub
+              App is limited to allowlisted organizations. The steps below describe the flow.
             </Alert>
           </div>
 
@@ -172,8 +174,8 @@ export default function DocsPage() {
                 <>
                   Add the build and publish workflow below. The build job uploads the wheels and
                   sdists as a <Code>pypi-release-candidate</Code> bundle; the publish job runs in{" "}
-                  <Code>environment: pypi</Code> and is blocked until Drydock posts an approval back
-                  to GitHub.
+                  <Code>environment: pypi</Code> and stays blocked until a maintainer approves the
+                  review in Drydock.
                 </>,
               ]}
             />
@@ -229,8 +231,9 @@ export default function DocsPage() {
               No manifest or checksum step is required — CI just builds and uploads{" "}
               <Code>dist/*</Code>. The <Code>environment: pypi</Code> line is the gate: configure
               the same environment in PyPI Trusted Publishers and attach Drydock as a custom
-              deployment protection rule on it. The publish job is blocked until Drydock posts a
-              decision back, then publishes the downloaded bundle with whatever tool you prefer.
+              deployment protection rule on it. The publish job stays blocked until a maintainer
+              approves the review in Drydock, then publishes the downloaded bundle with whatever
+              tool you prefer.
             </Prose>
           </Subsection>
 
@@ -245,17 +248,26 @@ export default function DocsPage() {
                 </>,
                 <>
                   The handler resolves the <Code>(installationId, repositoryId, environment)</Code>{" "}
-                  triple against the organization's release-target table. Deliveries that don't
-                  match a mapped target are acknowledged but ignored.
+                  triple against the organization's release-target table and persists a{" "}
+                  <Code>pending</Code> <Code>github_workflow_gates</Code> row keyed on the GitHub
+                  delivery ID, so retries are idempotent. Deliveries that don't match a mapped
+                  target are acknowledged but ignored.
                 </>,
                 <>
-                  Matched deliveries persist a <Code>github_workflow_gates</Code> row keyed on the
-                  GitHub delivery ID, so retries are idempotent. Drydock then derives the release
-                  set from the uploaded bundle, recomputing each artifact's sha256, and runs the
-                  scan pipeline against it.
+                  Drydock derives the release set from the uploaded bundle, recomputes each
+                  artifact's sha256, runs the scan pipeline, and records an advisory recommendation.
+                  The review never posts to GitHub — it leaves the gate <Code>pending</Code> and
+                  hands off to a human.
                 </>,
                 <>
-                  The decision is posted back to GitHub at{" "}
+                  A maintainer opens the review in the diff-first workbench at{" "}
+                  <Code>/dashboard/scans/:id</Code> and approves or rejects. Only that decision is
+                  posted back to GitHub, releasing or blocking the held publish job. A bundle whose
+                  artifacts can't be verified is auto-rejected fail-closed — no human is needed to
+                  block something Drydock can't identify.
+                </>,
+                <>
+                  The decision callback hits{" "}
                   <Code>
                     POST
                     /repos/&lt;owner&gt;/&lt;repo&gt;/actions/runs/&lt;run_id&gt;/deployment_protection_rule
@@ -265,8 +277,9 @@ export default function DocsPage() {
                   the webhook payload is rejected even when the signature is valid.
                 </>,
                 <>
-                  The transition out of <Code>pending</Code> is a single conditional update, so even
-                  if the review pipeline runs more than once Drydock calls GitHub exactly once.
+                  The transition out of <Code>pending</Code> is a single compare-and-set, so a
+                  double-submit or a race between a human decision and the fail-closed reject calls
+                  GitHub exactly once.
                 </>,
               ]}
             />
