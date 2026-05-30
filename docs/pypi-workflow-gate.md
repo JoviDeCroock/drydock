@@ -305,14 +305,9 @@ parameters and POSTs them to `/api/v1/github-app/install/callback`.
 
 ### Front-end
 
-The install flow lives on `/dashboard/settings`, gated by
-`isGithubAppUiEnabled` in `src/lib/github-app-ui.ts` until the workflow-gate
-path is ready for users. It is enabled in dev (`import.meta.env.DEV`) and, in
-production, only for the organizations listed in `GITHUB_APP_UI_ALLOWLIST` —
-the per-org escape hatch for production testing before GA. The gate is
-evaluated against the active organization, so it can be flipped per org without
-a new deploy gate. The same helper guards the
-`/dashboard/settings/github-app/callback` page:
+The install flow lives on `/dashboard/settings` and is generally available for
+every organization. The `/dashboard/settings/github-app/callback` page completes
+the install:
 
 1. The page calls `GET /api/v1/github-app/config`; when `configured === false`
    it renders a "not configured yet — ask the operator" notice instead of the
