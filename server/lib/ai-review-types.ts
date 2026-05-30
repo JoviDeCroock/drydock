@@ -1,4 +1,5 @@
 import type { DiffEntry, FileRecord, Finding, PackageJsonDiff, RiskLevel } from "./review";
+import type { AiReviewEcosystem } from "./ai-review-contract";
 
 export interface AiFinding {
   severity: "info" | "low" | "medium" | "high" | "critical";
@@ -28,6 +29,7 @@ export interface AiReview {
 
 export interface SelectiveAiReviewOptions {
   scanId?: string;
+  ecosystem: AiReviewEcosystem | string;
   files: FileRecord[];
   previousFiles?: FileRecord[];
   diff: DiffEntry[];

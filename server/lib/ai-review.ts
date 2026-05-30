@@ -2,8 +2,8 @@ import { generateText, hasToolCall, stepCountIs } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
 import {
   aiReviewSubmissionSchema,
+  buildReviewerSystemPrompt,
   MAX_AGENT_STEPS,
-  REVIEWER_SYSTEM_PROMPT,
   type AiReviewSubmission,
 } from "./ai-review-contract";
 import { buildAiReviewPayload, createAiReviewTools } from "./ai-review-evidence";
@@ -56,7 +56,7 @@ export async function analyzeWithAi(
 
     const result = await generateText({
       model: languageModel,
-      system: REVIEWER_SYSTEM_PROMPT,
+      system: buildReviewerSystemPrompt(options.ecosystem),
       messages: [{ role: "user", content: JSON.stringify(payload) }],
       tools,
       stopWhen: [hasToolCall("submit_review"), stepCountIs(MAX_AGENT_STEPS)],

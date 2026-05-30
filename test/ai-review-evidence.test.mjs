@@ -39,6 +39,7 @@ function reviewOptions() {
   ];
 
   return {
+    ecosystem: "npm",
     files,
     previousFiles: files,
     diff: [
@@ -147,8 +148,44 @@ describe("AI review evidence tools", () => {
     const payload = buildAiReviewPayload(reviewOptions());
 
     expect(payload.toolPolicy.toolsMayRead).toContain(
-      "package.json-referenced script/entrypoint files",
+      "manifest-referenced script/entrypoint files",
     );
     expect(payload.changedFileManifest.map((entry) => entry.path)).toEqual(["package.json"]);
+  });
+
+  test("labels PyPI review payloads with the ecosystem-specific task", () => {
+    const payload = buildAiReviewPayload({
+      ...reviewOptions(),
+      ecosystem: "pypi",
+      files: [
+        file(
+          "wheel/py3-none-any/.dist-info/METADATA",
+          "Name: fixture\nVersion: 1.0.1\nRequires-Dist: requests\n",
+        ),
+      ],
+      previousFiles: [],
+      diff: [
+        {
+          path: "wheel/py3-none-any/.dist-info/METADATA",
+          status: "added",
+          stagedSize: 56,
+          stagedSha256: "sha-wheel-metadata",
+          flags: [],
+        },
+      ],
+      packageJsonDiff: {
+        name: "fixture",
+        previousVersion: "1.0.0",
+        stagedVersion: "1.0.1",
+        scripts: [],
+        dependencies: [],
+        entrypointsChanged: false,
+      },
+    });
+
+    expect(payload.ecosystem).toBe("pypi");
+    expect(payload.task).toContain("PyPI release candidate");
+    expect(payload.task).toContain("workflow gate");
+    expect(payload.packageJson).toBeNull();
   });
 });

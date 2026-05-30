@@ -27,7 +27,7 @@ Dynamic Worker sandbox
 
 Scan orchestration lives in `server/lib/scan-pipeline.ts` and is shared by both entrypoints. The product path is the queued/background lifecycle: `POST /api/v1/scans` creates a scan, a Queue consumer or local `waitUntil()` job runs the pipeline, and the UI reads status/report data from `GET /api/v1/scans/:id`. `POST /api/v1/scan` remains only as a synchronous compatibility shim during the migration.
 
-The pipeline is **ecosystem-agnostic**: it accepts a `PackageAdapter` (`server/lib/adapters/types.ts`) and delegates everything npm-specific — input parsing, artifact acquisition, baseline selection, deterministic findings, package projection, staged-details summarization — to it. The only adapter today is `npmAdapter` (`server/lib/adapters/npm/`); future adapters slot in by implementing the same interface.
+The pipeline is **ecosystem-agnostic**: it accepts a `PackageAdapter` (`server/lib/adapters/types.ts`) and delegates ecosystem-specific behavior — input parsing, artifact acquisition, baseline selection, deterministic findings, package projection, staged-details summarization — to it. The npm adapter (`server/lib/adapters/npm/`) backs staged publishes today, and the backend PyPI adapter (`server/lib/adapters/pypi/`) backs workflow-gate release-candidate reviews.
 
 Baseline selection should be tag-aware rather than simply highest-semver. See [`diff-baseline.md`](./diff-baseline.md) for the staged metadata constraints and the recommended default comparison strategy.
 
@@ -174,13 +174,13 @@ All `AiReview` consumers must route the persisted record through `displayedAiRes
 
 When AI review returns it will continue to:
 
-- start from deterministic findings, package.json/package.json diff, and changed-file metadata rather than a bulk dump of every changed file;
-- request targeted redacted evidence through app-owned AI SDK tools — a batched `read` tool that auto-returns a text diff for changed files (and the staged sample otherwise), a batched literal `search_files`, and a `list_files` filter — including unchanged files that a changed `package.json` now exposes as lifecycle-script targets or entrypoints;
+- start from deterministic findings, the normalized manifest diff, and changed-file metadata rather than a bulk dump of every changed file;
+- request targeted redacted evidence through app-owned AI SDK tools — a batched `read` tool that auto-returns a text diff for changed files (and the staged sample otherwise), a batched literal `search_files`, and a `list_files` filter — including unchanged files when a recognized manifest field exposes them as lifecycle-script targets or entrypoints;
 - receive release-delta deterministic findings as authoritative evidence;
 - treat every package-derived string as hostile evidence, not instructions;
 - be limited by controller-enforced step count, per-tool character caps, and total evidence budget;
 - suffix Workers AI cache affinity with the scan ID so prompt/cache reuse is scan-scoped;
-- explicitly check npm supply-chain hazards such as lifecycle scripts, added dependencies whose own postinstall/install hooks are not visible in the staged tarball, entrypoint changes, credential access, network/process execution, obfuscation, and native artifacts;
+- build the reviewer system prompt from a shared prompt-injection-resistant safety preamble plus an ecosystem-specific checklist. npm reviews focus on lifecycle scripts, dependency lifecycle risk, entrypoint changes, credential access, network/process execution, obfuscation, and native artifacts. PyPI reviews focus on wheel/sdist metadata integrity, RECORD consistency, setup.py/build-backend execution, `.pth`/startup hooks, Requires-Dist dependency risk, credential access, network/process execution, obfuscation, and native artifacts;
 - submit schema-constrained JSON through the `submit_review` tool;
 - raise risk or add context only when the returned review is complete, schema-valid, and includes findings or an explicit manual-review flag;
 - be unable to approve a release or downgrade deterministic findings.

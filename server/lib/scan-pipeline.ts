@@ -95,6 +95,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       env,
       scanId,
       input,
+      ecosystem: adapter.id,
       previousVersionAvailable: baseline.artifact !== null,
       releaseRuleFindings,
       manifestDiff,
@@ -251,6 +252,7 @@ interface AiReviewArgs {
   env: Cloudflare.Env;
   scanId: string;
   input: ScanPipelineOptions;
+  ecosystem: string;
   previousVersionAvailable: boolean;
   releaseRuleFindings: Finding[];
   manifestDiff: ReturnType<typeof summarizePackageJsonDiff>;
@@ -284,6 +286,7 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
   try {
     const review = await runSelectiveAiReview(args.env, {
       scanId: args.scanId,
+      ecosystem: args.ecosystem,
       files: args.redactedStagedFiles,
       previousFiles: args.redactedPreviousFiles,
       diff: args.fileDiff,
