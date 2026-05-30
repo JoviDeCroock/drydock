@@ -99,7 +99,7 @@ deployment protection rule.
 ## GitHub App mapping
 
 The GitHub App installation + repository/environment mapping that connects an
-organization to its workflow gates lives in `server/lib/github-app.ts` with the
+organization to its workflow gates lives in `server/lib/github-app/` with the
 HTTP surface in `server/routes/github-app.ts`. Two tables back it:
 
 - `github_app_installations` — one row per installation an org has authorized
@@ -343,7 +343,7 @@ a new deploy gate. The same helper guards the
 
 ### Resolving artifacts for a pending gate
 
-`server/lib/github-app-artifacts.ts` turns a pending gate into a release bundle
+`server/lib/github-app/artifacts.ts` turns a pending gate into a release bundle
 of recomputed-SHA-256 wheel/sdist bytes on the trusted control-plane side, then
 `server/lib/release-candidate-pypi.ts` hands each wheel/sdist to the
 credentials-free `downloadInSandboxInline` sandbox path so the same untrusted-

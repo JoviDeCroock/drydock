@@ -5,10 +5,10 @@ import { createDb, ensurePersonalOrganization } from "../../server/db";
 import * as schema from "../../server/db/schema";
 import {
   createReleaseTarget,
+  getGateForOrganization,
   readGithubAppConfig,
   upsertInstallation,
 } from "../../server/lib/github-app";
-import { getGateForOrganization } from "../../server/lib/github-app-webhook";
 import { preparePyPiReleaseCandidateForGate } from "../../server/lib/release-candidate-pypi";
 
 const WEBHOOK_SECRET = "webhook-secret-value-1234567890";

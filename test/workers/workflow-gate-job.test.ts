@@ -4,8 +4,11 @@ import { generateKeyPairSync } from "node:crypto";
 import { createDb, ensurePersonalOrganization, getScan } from "../../server/db";
 import * as schema from "../../server/db/schema";
 import { eq } from "drizzle-orm";
-import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app";
-import { getGateForOrganization } from "../../server/lib/github-app-webhook";
+import {
+  createReleaseTarget,
+  getGateForOrganization,
+  upsertInstallation,
+} from "../../server/lib/github-app";
 import { executeWorkflowGateJob } from "../../server/lib/workflow-gate-job";
 import worker from "../../server/index";
 

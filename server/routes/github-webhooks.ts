@@ -1,16 +1,14 @@
 import { Hono } from "hono";
 import { createDb, enforceRateLimit, RateLimitError, recordScanEvent } from "../db";
 import {
+  applyGithubWebhookEvent,
   GithubAppConfigError,
   isGithubAppConfigured,
-  readGithubAppConfig,
-} from "../lib/github-app";
-import {
-  applyGithubWebhookEvent,
   parseGithubWebhookEvent,
+  readGithubAppConfig,
   verifyGithubWebhookSignature,
   type WebhookOutcome,
-} from "../lib/github-app-webhook";
+} from "../lib/github-app";
 import { emitOperationalEvent } from "../lib/observability";
 import type { Bindings, Variables } from "../types";
 

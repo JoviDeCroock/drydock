@@ -14,7 +14,7 @@ import {
   validateReleaseTargetShape,
   verifyUserCanAccessInstallation,
   verifyOAuthState,
-} from "../server/lib/github-app.ts";
+} from "../server/lib/github-app/index.ts";
 
 const originalFetch = globalThis.fetch;
 

@@ -3,7 +3,7 @@ import {
   evaluateGithubArtifactEgress,
   fetchReleaseBundleWithToken,
   type WorkflowArtifactSource,
-} from "../../server/lib/github-app-artifacts";
+} from "../../server/lib/github-app";
 
 const TOKEN = "ghs_installation_test_token";
 const REPO = "octo/example";
