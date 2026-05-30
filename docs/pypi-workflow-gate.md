@@ -149,6 +149,22 @@ organization (`x-organization-id` header to scope writes).
   rate-limited before minting an installation token or calling GitHub.
 - `GET /release-targets`, `POST /release-targets`,
   `DELETE /release-targets/:id` — CRUD over the mapping.
+- `GET /workflow-gates/by-scan/:scanId` — resolves the gate a persisted review
+  belongs to so the scan workbench can render gate status and the decision
+  controls. Returns the public gate shape (no `deployment_callback_url`); 404
+  when the scan is not a gate review or belongs to another org.
+- `POST /workflow-gates/:gateId/decision` — records a maintainer's
+  `{ decision: "approved" | "rejected", comment? }` and releases/blocks the held
+  GitHub job. `markGateDecided` is the single CAS out of `pending`, so a
+  double-submit (or a race with the fail-closed artifact reject) returns 409.
+  Approval requires the gate to be linked to a completed `workflow_gate` scan;
+  rejection is allowed without one so maintainers can still fail closed.
+  Delivery to GitHub is scheduled immediately after the CAS, before best-effort
+  scan/audit mirroring, and is handed to the gate job (over `SCAN_QUEUE`, with
+  inline fallback) so the decided gate posts its stored decision. The decision is
+  also mirrored onto the underlying scan as `publish` for approved gates or
+  `no_publish` for rejected gates when that write succeeds. Rate-limited to
+  60/min per org.
 
 `POST /release-targets` enforces every validation listed in issue #114:
 
@@ -226,12 +242,13 @@ characters and is what GitHub renders in the Actions run log, so it carries
 the link to the Drydock report.
 
 `markGateDecided` is the only transition out of `pending`: it succeeds
-exactly once thanks to the `status = 'pending'` WHERE clause, so even if the
-PyPI candidate review completes more than once we will only call GitHub a
-single time. The companion `markGateErrored` records failures (e.g. inability
-to fetch the artifact bundle, unidentifiable artifacts, scan pipeline crash)
-without consuming the gate, so the operator can retry once the underlying
-issue is fixed.
+exactly once thanks to the `status = 'pending'` WHERE clause. Its callers are
+the maintainer decision route, the fail-closed artifact reject, and (never the
+review itself) — so a double-submit, or a race between a human decision and the
+fail-closed reject, only calls GitHub a single time. The companion
+`markGateErrored` records failures (e.g. inability to fetch the artifact bundle,
+unidentifiable artifacts, scan pipeline crash) without consuming the gate, so
+the operator can retry once the underlying issue is fixed.
 
 ### Trust boundary (webhook)
 
@@ -335,6 +352,26 @@ the install:
    environment-name equality on `POST /release-targets`, so the UI cannot
    bypass the rules. Empty states link to GitHub App settings (no repos) and
    GitHub Actions environments docs (no environments).
+6. Above the release-targets form, a "PyPI gate setup" guide walks through
+   installing the App, adding a GitHub Environment custom deployment protection
+   rule, and matching the PyPI Trusted Publisher environment. It states plainly
+   that approval releases or blocks the held GitHub job and that publishing
+   happens through the workflow's Trusted Publishing OIDC exchange — Drydock
+   never holds or sees PyPI credentials.
+
+### Gate review workbench
+
+A gate review is an ordinary persisted scan, so it opens in the same diff-first
+workbench at `/dashboard/scans/<scanId>`. When the scan's `source` is
+`workflow_gate`, the page calls `GET /workflow-gates/by-scan/:scanId` and, for a
+gate still `pending`, renders approve/reject controls wired to
+`POST /workflow-gates/:gateId/decision`. The release recommendation copy is
+gate-targeted (it talks about releasing/blocking the held GitHub job rather than
+publishing to npm) but the deterministic findings, package diff, and risk
+surface are identical to npm reviews. A decided gate shows its stored decision
+and comment instead of the controls. Failed review scans also resolve their
+linked gate so the workbench can show the held GitHub job context instead of a
+detached failure.
 
 ### Resolving artifacts for a pending gate
 
@@ -454,37 +491,48 @@ and the consumer re-checks gate status, so a re-enqueue is safe.
 2. Load the gate. A gate that is already `approved`/`rejected` triggers a
    **redelivery** of the stored decision to GitHub (idempotent re-POST) instead
    of re-running the review; callback failures rethrow so the queue retries. A
-   non-pending, non-decided status is skipped with a warning.
+   pending gate with an attached completed review is skipped because it is
+   waiting for a human decision; a pending gate with an attached failed review
+   is retried and relinked to the new scan if the retry succeeds. A non-pending,
+   non-decided status is skipped with a warning.
 3. Record `github_workflow_gate.received`.
 4. Call `preparePyPiReleaseCandidateForGate` to resolve + verify the bundle.
-   - A `WorkflowArtifactError` (incl. a tampered `artifact_digest_mismatch`)
-     **rejects** the gate with a generic comment, records
-     `github_workflow_gate.rejected`, and POSTs the rejection. `prepare`
-     already recorded the typed `failureReason` and kept the gate pending, so
-     the `markGateDecided` CAS still fires.
+   - A `WorkflowArtifactError` (e.g. `bundle_unavailable`,
+     `artifact_identity_inconsistent`, or `release_target_mismatch`)
+     **rejects** the gate fail-closed with a generic comment, records
+     `github_workflow_gate.rejected`, and POSTs the rejection — no human is
+     needed to block an artifact that cannot be verified. `prepare` already
+     recorded the typed `failureReason` and kept the gate pending, so the
+     `markGateDecided` CAS still fires.
    - Any other error (sandbox/review failure) leaves the gate **pending**,
      records `github_workflow_gate.review_failed`, and returns without POSTing —
-     we never auto-approve on error, and the operator can retry.
+     the operator can retry.
 5. Resolve the organization owner (so the persisted scan has an owner). A
    missing owner records `review_failed` and leaves the gate pending.
 6. Create a scan job (`source: "workflow_gate"`, synthetic
-   `stageId: "workflow-gate:<gateId>"`), link it to the gate via
-   `attachScanToGate`, and run `runScanPipeline` with the `pypiAdapter` over the
-   verified manifest + artifacts. A pipeline throw marks the scan failed,
-   records `review_failed`, and leaves the gate pending.
-7. Map the release risk to a decision: `high`/`critical` → **rejected**,
-   otherwise **approved**. Record `github_workflow_gate.reviewed`.
-8. `markGateDecided` (CAS on `pending`) stores the decision, comment, and report
-   URL (`<BETTER_AUTH_URL>/dashboard/scans/<scanId>`); a `null` return means a
-   concurrent delivery already decided the gate, so we stop. Otherwise
-   `postDeploymentProtectionDecision` POSTs the approve/reject callback and we
-   record `github_workflow_gate.approved` / `.rejected` plus
-   `github_workflow_gate.decided`.
+   `stageId: "workflow-gate:<gateId>"`), claim the gate's `scanId` with a CAS
+   against the scan link the worker observed, and run `runScanPipeline` with the
+   `pypiAdapter` over the verified manifest + artifacts. If another delivery
+   already claimed the gate, the worker deletes its just-created pending scan
+   and exits. A pipeline throw marks the linked scan failed, records
+   `review_failed`, and leaves the gate pending; a later retry can replace that
+   failed link with a completed scan.
+7. Compute an **advisory** recommendation from the release risk
+   (`recommendationForReleaseRisk`: `high`/`critical` → `rejected`, otherwise
+   `approved`) and record `github_workflow_gate.reviewed` with it. Then link the
+   scan to the gate via `attachScanToGate` and **leave the gate pending** — the
+   review never posts to GitHub.
 
-Because `markGateDecided` is the single CAS out of `pending`, a fresh-decision
-POST failure rethrows so the queue retries; the retry then falls into the
-already-decided redelivery path (step 2) rather than re-running the review or
-double-deciding.
+The job never auto-approves a release: approving releases the GitHub job and
+publishing happens immediately through Trusted Publishing/OIDC, which is too
+late to reverse. A maintainer drives the actual decision from the scan
+workbench via `POST /workflow-gates/:gateId/decision`; the recommendation
+recorded in step 7 is advisory only. Once decided, the gate job's redelivery
+path (step 2) is what POSTs the stored decision to GitHub. The decision route
+schedules that redelivery immediately after `markGateDecided`, before scan
+decision mirroring or audit events, so post-CAS bookkeeping cannot strand the
+held GitHub job behind a future 409; callback failure rethrows so the queue
+retries rather than re-running the review or double-deciding.
 
 The persisted review is an ordinary `scans` row scoped to the org with
 `source: "workflow_gate"`, reachable at `/dashboard/scans/<scanId>` — no
@@ -493,9 +541,10 @@ schema change was needed.
 
 ## Remaining work
 
-- Add UI for workflow-gate reviews and GitHub/PyPI setup guidance.
 - Record the reviewed artifact SHA-256 digests in the persisted report
   payload (the resolver returns them; the persister doesn't store them yet).
 
-Until those items land, the PyPI code is a review engine foundation and
-testable backend slice, not an end-to-end publish gate.
+The end-to-end path now works: a maintainer can configure a gate from settings,
+the webhook holds the publish job, the review surfaces in the workbench, and the
+approve/reject decision releases or blocks the job. The digest-persistence item
+above is an audit-trail enrichment, not a gap in the gate.

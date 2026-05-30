@@ -200,7 +200,7 @@ app.get("/api", (c) =>
       organizations:
         "GET /api/v1/organizations; POST /api/v1/organizations; PATCH /api/v1/organizations/:id",
       githubApp:
-        "GET /api/v1/github-app/config; POST /api/v1/github-app/install; POST /api/v1/github-app/install/callback; GET /api/v1/github-app/installations; GET/POST /api/v1/github-app/release-targets; DELETE /api/v1/github-app/release-targets/:id",
+        "GET /api/v1/github-app/config; POST /api/v1/github-app/install; POST /api/v1/github-app/install/callback; GET /api/v1/github-app/installations; GET/POST /api/v1/github-app/release-targets; DELETE /api/v1/github-app/release-targets/:id; GET /api/v1/github-app/workflow-gates/by-scan/:scanId; POST /api/v1/github-app/workflow-gates/:gateId/decision",
       githubWebhooks: "POST /webhooks/github (signed by GitHub App webhook secret)",
       health: "GET /api/health",
     },

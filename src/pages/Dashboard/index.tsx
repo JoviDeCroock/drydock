@@ -360,12 +360,12 @@ function ScanTable({ scans }: { scans: ScanListItem[] }) {
           {scans.map((scan) => (
             <tr key={scan.id} class="border-b border-border last:border-b-0 hover:bg-surface-2">
               <Td>
-                <a
-                  href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}
-                  class="min-w-[180px] inline-block"
-                >
-                  {scan.packageName || scan.stageId}
-                </a>
+                <span class="flex items-center gap-2 min-w-[180px]">
+                  <a href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}>
+                    {scan.packageName || scan.stageId}
+                  </a>
+                  {scan.source === "workflow_gate" ? <Badge tone="neutral">gate</Badge> : null}
+                </span>
               </Td>
               <Td class="font-mono text-xs text-ink-muted whitespace-nowrap">
                 {scan.previousVersion || "—"} → {scan.stagedVersion || "—"}

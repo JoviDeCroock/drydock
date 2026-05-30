@@ -6,6 +6,12 @@ import type {
   PackageJsonSummary,
 } from "../../server/lib/review";
 import { apiFetch, apiJson, errorMessage } from "./api";
+import {
+  decideWorkflowGate,
+  getWorkflowGateByScan,
+  type PublicWorkflowGate,
+  type WorkflowGateDecision,
+} from "./github-app";
 
 export interface ScanVersionsResponse {
   packageName: string | null;
@@ -42,6 +48,7 @@ export interface ScanRiskSummary {
 export interface ScanListItem {
   id: string;
   stageId: string;
+  source?: string | null;
   organizationId?: string | null;
   ownerUserId?: string | null;
   packageName: string | null;
@@ -245,7 +252,12 @@ export const ScanDetailModel = createModel((id: string) => {
   const compareError = signal<string | null>(null);
   const decisionStatus = signal<DecisionStatus>("idle");
   const decisionError = signal<string | null>(null);
+  const gate = signal<PublicWorkflowGate | null>(null);
+  const gateLoaded = signal(false);
+  const gateDecisionStatus = signal<DecisionStatus>("idle");
+  const gateDecisionError = signal<string | null>(null);
 
+  const isWorkflowGate = computed(() => detail.value?.scan.source === "workflow_gate");
   const status = computed(() => detail.value?.scan.status ?? null);
   const isPolling = computed(() => status.value === "pending" || status.value === "running");
   const isDefaultComparison = computed(() => {
@@ -323,6 +335,11 @@ export const ScanDetailModel = createModel((id: string) => {
     compareError,
     decisionStatus,
     decisionError,
+    gate,
+    gateLoaded,
+    gateDecisionStatus,
+    gateDecisionError,
+    isWorkflowGate,
     status,
     isPolling,
     isDefaultComparison,
@@ -378,6 +395,41 @@ export const ScanDetailModel = createModel((id: string) => {
       } catch (err) {
         this.decisionError.value = errorMessage(err);
         this.decisionStatus.value = "error";
+      }
+    },
+
+    async loadGate(): Promise<void> {
+      const current = this.detail.peek();
+      if (current && current.scan.source !== "workflow_gate") {
+        this.gateLoaded.value = true;
+        return;
+      }
+      const id = this.scanId.peek();
+      try {
+        const gate = await getWorkflowGateByScan(id);
+        this.gate.value = gate;
+        this.gateLoaded.value = gate !== null;
+      } catch (err) {
+        this.gateDecisionError.value = errorMessage(err);
+        this.gateLoaded.value = false;
+      }
+    },
+
+    async decideGate(decision: WorkflowGateDecision, comment: string | null): Promise<void> {
+      const current = this.gate.peek();
+      if (!current) return;
+      this.gateDecisionStatus.value = "saving";
+      this.gateDecisionError.value = null;
+      try {
+        const { gate: updated } = await decideWorkflowGate(current.id, decision, comment);
+        this.gate.value = updated;
+        this.gateDecisionStatus.value = "idle";
+        // The decision also writes the scan's publish/no_publish decision and an
+        // audit event server-side; refresh so the workbench reflects both.
+        await this.load();
+      } catch (err) {
+        this.gateDecisionError.value = errorMessage(err);
+        this.gateDecisionStatus.value = "error";
       }
     },
 

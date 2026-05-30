@@ -14,6 +14,7 @@ export function ReleaseRecommendation({
   diffCount,
   findingsWithDiffStatus,
   usePersistedRiskSummary,
+  isWorkflowGate,
 }: {
   detail: PersistedScanDetail;
   summary: PersistedSummary;
@@ -21,6 +22,7 @@ export function ReleaseRecommendation({
   diffCount: number;
   findingsWithDiffStatus: FindingWithDiffStatus[];
   usePersistedRiskSummary: boolean;
+  isWorkflowGate: boolean;
 }) {
   if (detail.scan.status !== "complete") return null;
 
@@ -37,7 +39,12 @@ export function ReleaseRecommendation({
       ? detail.riskSummary.releaseFindingCount
       : changedFindings.length;
   const aiFindings: AiFinding[] = ai?.kind === "complete" ? ai.findings : [];
-  const recommendation = getReleaseRecommendation(artifactRisk, releaseRisk, releaseFindingCount);
+  const recommendation = getReleaseRecommendation(
+    artifactRisk,
+    releaseRisk,
+    releaseFindingCount,
+    isWorkflowGate ? "gate" : "npm",
+  );
   const evidence = buildRecommendationEvidence(
     detail,
     summary,

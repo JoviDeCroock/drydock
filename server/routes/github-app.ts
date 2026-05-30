@@ -1,7 +1,20 @@
 import { Hono, type Context } from "hono";
-import { RateLimitError, createDb, enforceRateLimit, recordScanEvent } from "../db";
+import {
+  RateLimitError,
+  createDb,
+  enforceRateLimit,
+  getScan,
+  recordScanDecision,
+  recordScanEvent,
+} from "../db";
 import { requireActiveOrganization } from "../lib/active-organization";
 import { rateLimitResponse } from "../lib/http";
+import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
+import {
+  buildHumanDecisionComment,
+  buildReportUrl,
+  executeWorkflowGateJob,
+} from "../lib/workflow-gate-job";
 import {
   GithubAppConfigError,
   GithubAppValidationError,
@@ -11,16 +24,20 @@ import {
   type InstallationRecord,
   type ReleaseTargetRecord,
   type SupportedEcosystem,
+  type WorkflowGateRecord,
   buildInstallUrl,
   createReleaseTarget,
   deleteReleaseTarget,
   fetchInstallationMetadata,
   fetchRepository,
+  getGateByScanId,
+  getGateForOrganization,
   isGithubAppConfigured,
   listInstallationRepositories,
   listInstallationsForOrganization,
   listReleaseTargetsForOrganization,
   listRepositoryEnvironments,
+  markGateDecided,
   readGithubAppConfig,
   signOAuthState,
   upsertInstallation,
@@ -370,6 +387,137 @@ githubAppRoutes.delete("/release-targets/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+const GATE_DECISIONS = ["approved", "rejected"] as const;
+type GateDecision = (typeof GATE_DECISIONS)[number];
+const GATE_DECISION_SET = new Set<GateDecision>(GATE_DECISIONS);
+const GATE_DECISION_COMMENT_MAX = 500;
+
+githubAppRoutes.get("/workflow-gates/by-scan/:scanId", async (c) => {
+  const db = createDb(c.env.DB);
+  const organizationId = await requireActiveOrganization(c, db);
+  const scanId = c.req.param("scanId");
+  const gate = await getGateByScanId(db, organizationId, scanId);
+  if (!gate) return c.json({ error: "not found" }, 404);
+  return c.json({ gate: publicWorkflowGate(gate) });
+});
+
+// Record a maintainer's decision and release/block the GitHub Actions job.
+// The CAS in `markGateDecided` is the single transition out of `pending`, so a
+// double-submit (or a race with the fail-closed artifact reject) returns 409.
+// Posting the decision to GitHub is delegated to the gate job, which sees the
+// now-decided gate and delivers its stored decision — either over the queue or
+// inline when no queue is bound.
+githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as Partial<{
+    decision: string;
+    comment: string;
+  }>;
+  if (!GATE_DECISION_SET.has(body.decision as GateDecision)) {
+    return c.json({ error: "decision must be 'approved' or 'rejected'" }, 400);
+  }
+  const decision = body.decision as GateDecision;
+  const comment = typeof body.comment === "string" ? body.comment.trim() : "";
+  if (comment.length > GATE_DECISION_COMMENT_MAX) {
+    return c.json({ error: `comment must be <= ${GATE_DECISION_COMMENT_MAX} characters` }, 400);
+  }
+
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = await requireActiveOrganization(c, db);
+  try {
+    await enforceRateLimit(db, {
+      key: `github-app:gate-decision:${organizationId}`,
+      limit: 60,
+      windowMs: 60 * 1000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return rateLimitResponse(c, "gate decision rate limit exceeded", err);
+    }
+    throw err;
+  }
+
+  const gateId = c.req.param("gateId");
+  const existing = await getGateForOrganization(db, organizationId, gateId);
+  if (!existing) return c.json({ error: "not found" }, 404);
+  if (decision === "approved") {
+    if (!existing.scanId) {
+      return c.json({ error: "approval requires a completed workflow-gate review" }, 409);
+    }
+    const scan = await getScan(db, existing.scanId, organizationId);
+    if (!scan || scan.scan.source !== "workflow_gate" || scan.scan.status !== "complete") {
+      return c.json({ error: "approval requires a completed workflow-gate review" }, 409);
+    }
+  }
+
+  const reportUrl = buildReportUrl(c.env, existing.scanId);
+  const decided = await markGateDecided(db, {
+    gateId,
+    decision,
+    comment: comment || buildHumanDecisionComment(decision, reportUrl),
+    reportUrl,
+  });
+  if (!decided) {
+    return c.json({ error: "gate has already been decided" }, 409);
+  }
+
+  // Schedule delivery immediately after the CAS. Everything below is
+  // bookkeeping; if it throws, the durable gate decision still has a path to
+  // GitHub instead of getting stuck behind a future 409.
+  const message = { kind: "workflow_gate" as const, organizationId, gateId };
+  c.executionCtx.waitUntil(deliverGateDecisionJob(c, db, message));
+
+  // Mirror the decision onto the underlying scan so the workbench audit trail
+  // and decision filters stay consistent (approved → publish, rejected →
+  // no_publish). Best effort: only applies once the review scan is complete.
+  try {
+    if (decided.scanId) {
+      await recordScanDecision(db, {
+        scanId: decided.scanId,
+        organizationId,
+        actorUserId: session.userId,
+        decision: decision === "approved" ? "publish" : "no_publish",
+        reason: comment || null,
+      });
+    }
+
+    await recordScanEvent(db, {
+      organizationId,
+      actorUserId: session.userId,
+      scanId: decided.scanId,
+      type:
+        decision === "approved" ? "github_workflow_gate.approved" : "github_workflow_gate.rejected",
+      metadata: { gateId, decidedBy: "human", reportUrl },
+    });
+  } catch (err) {
+    emitOperationalEvent("warn", "github_workflow_gate.decision_bookkeeping_failed", {
+      organizationId,
+      gateId,
+      decision,
+      error: describeOperationalError(err),
+    });
+  }
+
+  return c.json({ gate: publicWorkflowGate(decided) });
+});
+
+async function deliverGateDecisionJob(
+  c: RouteContext,
+  db: ReturnType<typeof createDb>,
+  message: { kind: "workflow_gate"; organizationId: string; gateId: string },
+) {
+  if (c.env.SCAN_QUEUE) {
+    try {
+      await c.env.SCAN_QUEUE.send(message);
+      return;
+    } catch {
+      // Fall back to an inline redelivery attempt so a transient queue-send
+      // failure after markGateDecided does not leave the GitHub job held.
+    }
+  }
+  await executeWorkflowGateJob(c.env, c.executionCtx, message, db);
+}
+
 async function ensureInstallationOwnedBy(
   db: ReturnType<typeof createDb>,
   organizationId: string,
@@ -419,6 +567,29 @@ function publicReleaseTarget(record: ReleaseTargetRecord) {
     workflowFilename: record.workflowFilename,
     environment: record.environment,
     pypiTrustedPublisherEnvironment: record.pypiTrustedPublisherEnvironment,
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+  };
+}
+
+// Excludes the deployment callback URL (and other GitHub-internal identifiers)
+// so the credentialed egress target is never exposed to the browser.
+function publicWorkflowGate(record: WorkflowGateRecord) {
+  return {
+    id: record.id,
+    organizationId: record.organizationId,
+    releaseTargetId: record.releaseTargetId,
+    repositoryFullName: record.repositoryFullName,
+    environment: record.environment,
+    runId: record.runId,
+    status: record.status,
+    decision: record.decision,
+    decisionComment: record.decisionComment,
+    reportUrl: record.reportUrl,
+    scanId: record.scanId,
+    failureReason: record.failureReason,
+    requestedAt: record.requestedAt.toISOString(),
+    decidedAt: record.decidedAt ? record.decidedAt.toISOString() : null,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   };

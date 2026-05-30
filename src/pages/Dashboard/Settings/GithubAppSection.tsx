@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { useModel } from "@preact/signals";
 import { formatTimestamp } from "../../../lib/format";
 import {
@@ -103,6 +104,8 @@ export function GithubAppSection({
             You'll be sent to GitHub to pick which account to install on, then returned here.
           </Muted>
         </div>
+
+        <PypiGateSetupGuide />
       </div>
 
       <div class="border-t border-border">
@@ -248,4 +251,89 @@ function installationStatusTone(status: InstallationStatus): BadgeTone {
     case "uninstalled":
       return "critical";
   }
+}
+
+function PypiGateSetupGuide() {
+  return (
+    <div class="border border-border rounded-lg bg-surface-2 px-4 py-3 flex flex-col gap-4">
+      <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+        pypi gate setup
+      </span>
+      <ol class="m-0 p-0 list-none flex flex-col gap-3">
+        <SetupStep
+          index="01"
+          title="Install the GitHub App"
+          detail="Install Drydock on the GitHub organization that owns the release repository, using the button below. This lets Drydock read the held deployment and post the approve/reject decision back to GitHub."
+        />
+        <SetupStep
+          index="02"
+          title="Add a deployment protection rule"
+          detail={
+            <>
+              In the repository, open (or create) the GitHub Actions environment your publish job
+              deploys to, then enable Drydock as a custom deployment protection rule so the publish
+              job pauses for review. See{" "}
+              <a
+                class="underline"
+                href="https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-custom-deployment-protection-rules"
+                target="_blank"
+                rel="noreferrer"
+              >
+                custom deployment protection rules
+              </a>
+              .
+            </>
+          }
+        />
+        <SetupStep
+          index="03"
+          title="Match the PyPI Trusted Publisher environment"
+          detail={
+            <>
+              On PyPI, configure a Trusted Publisher for the same repository and workflow, and set
+              its environment name to match the GitHub environment exactly. The workflow keeps its
+              own OIDC trust with PyPI. See{" "}
+              <a
+                class="underline"
+                href="https://docs.pypi.org/trusted-publishers/"
+                target="_blank"
+                rel="noreferrer"
+              >
+                PyPI Trusted Publishers
+              </a>
+              .
+            </>
+          }
+        />
+      </ol>
+      <Muted as="p" class="text-[12px] leading-[1.55] m-0">
+        Drydock reviews the release candidate and your approval releases or blocks the held GitHub
+        job. Publishing happens through the workflow's Trusted Publishing OIDC exchange{" "}
+        <span class="font-mono text-ink-subtle">→</span> Drydock never holds or sees PyPI
+        credentials.
+      </Muted>
+    </div>
+  );
+}
+
+function SetupStep({
+  index,
+  title,
+  detail,
+}: {
+  index: string;
+  title: string;
+  detail: ComponentChildren;
+}) {
+  return (
+    <li class="grid grid-cols-[28px_minmax(0,1fr)] gap-3 items-baseline min-w-0">
+      <span class="font-mono text-[11px] text-ink-subtle tabular-nums">{index}</span>
+      <div class="flex flex-col gap-1 min-w-0">
+        <span class="text-[13px] font-medium text-ink">{title}</span>
+        <Muted as="p" class="text-[12px] leading-[1.55] m-0">
+          {detail}
+        </Muted>
+      </div>
+    </li>
+  );
 }

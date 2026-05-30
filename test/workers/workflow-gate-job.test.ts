@@ -1,15 +1,20 @@
 import { createExecutionContext, env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
-import { createDb, ensurePersonalOrganization, getScan } from "../../server/db";
+import { createDb, createScanJob, ensurePersonalOrganization, getScan } from "../../server/db";
 import * as schema from "../../server/db/schema";
 import { eq } from "drizzle-orm";
 import {
   createReleaseTarget,
+  attachScanToGate,
   getGateForOrganization,
+  markGateDecided,
   upsertInstallation,
 } from "../../server/lib/github-app";
-import { executeWorkflowGateJob } from "../../server/lib/workflow-gate-job";
+import {
+  executeWorkflowGateJob,
+  recommendationForReleaseRisk,
+} from "../../server/lib/workflow-gate-job";
 import worker from "../../server/index";
 
 const WEBHOOK_SECRET = "webhook-secret-value-1234567890";
@@ -361,10 +366,78 @@ async function scanEventTypes(organizationId: string, gateId: string): Promise<s
     .map((row) => row.type);
 }
 
+async function gateEventMetadata(
+  organizationId: string,
+  gateId: string,
+  type: string,
+): Promise<Record<string, unknown> | undefined> {
+  const db = createDb(env.DB);
+  const rows = await db
+    .select({ type: schema.scanEvents.type, metadataJson: schema.scanEvents.metadataJson })
+    .from(schema.scanEvents)
+    .where(eq(schema.scanEvents.organizationId, organizationId));
+  const match = rows.find((row) => {
+    const meta = row.metadataJson as { gateId?: string } | null;
+    return row.type === type && meta?.gateId === gateId;
+  });
+  return match?.metadataJson as Record<string, unknown> | undefined;
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
+describe("recommendationForReleaseRisk", () => {
+  test("recommends rejection only for high and critical release risk", () => {
+    expect(recommendationForReleaseRisk("high")).toBe("rejected");
+    expect(recommendationForReleaseRisk("critical")).toBe("rejected");
+    expect(recommendationForReleaseRisk("low")).toBe("approved");
+    expect(recommendationForReleaseRisk("medium")).toBe("approved");
+  });
+});
+
+describe("workflow gate scan attachment", () => {
+  test("claims a pending gate only when the observed scan link still matches", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9210",
+      repositoryId: 72011,
+      runId: 16161,
+    });
+    const db = createDb(env.DB);
+    const firstScanId = crypto.randomUUID();
+    const secondScanId = crypto.randomUUID();
+    for (const scanId of [firstScanId, secondScanId]) {
+      await createScanJob(db, {
+        id: scanId,
+        stageId: `workflow-gate:${seeded.gateId}`,
+        organizationId: seeded.organizationId,
+        ownerUserId: seeded.userId,
+        source: "workflow_gate",
+      });
+    }
+
+    await expect(attachScanToGate(db, seeded.gateId, firstScanId, null)).resolves.toBe(true);
+    await expect(attachScanToGate(db, seeded.gateId, secondScanId, null)).resolves.toBe(false);
+
+    const gateAfterLostClaim = await getGateForOrganization(
+      db,
+      seeded.organizationId,
+      seeded.gateId,
+    );
+    expect(gateAfterLostClaim?.scanId).toBe(firstScanId);
+    await expect(attachScanToGate(db, seeded.gateId, secondScanId, firstScanId)).resolves.toBe(
+      true,
+    );
+
+    const gateAfterRetryClaim = await getGateForOrganization(
+      db,
+      seeded.organizationId,
+      seeded.gateId,
+    );
+    expect(gateAfterRetryClaim?.scanId).toBe(secondScanId);
+  });
+});
+
 describe("executeWorkflowGateJob", () => {
-  test("approves a clean candidate, persists the scan, and posts an approval", async () => {
+  test("reviews a clean candidate and leaves the gate pending with an approve recommendation", async () => {
     const seeded = await seedGateForTest({
       installationExternalId: "9200",
       repositoryId: 72001,
@@ -384,24 +457,30 @@ describe("executeWorkflowGateJob", () => {
       db,
     );
 
+    // Drydock never auto-approves: a clean review leaves the gate pending for a
+    // human and posts no decision to GitHub.
     const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
-    expect(gate?.status).toBe("approved");
-    expect(gate?.decision).toBe("approved");
+    expect(gate?.status).toBe("pending");
+    expect(gate?.decision).toBeNull();
     expect(gate?.scanId).toBeTruthy();
-    expect(gate?.reportUrl).toBe(`${REPORT_BASE_URL}/dashboard/scans/${gate?.scanId}`);
-
-    expect(scenario.decisionCalls).toHaveLength(1);
-    expect(scenario.decisionCalls[0].state).toBe("approved");
-    expect(scenario.decisionCalls[0].environment_name).toBe("pypi");
+    expect(scenario.decisionCalls).toHaveLength(0);
 
     const persisted = await getScan(db, gate!.scanId!, seeded.organizationId);
     expect(persisted?.scan.status).toBe("complete");
     expect(persisted?.scan.source).toBe("workflow_gate");
 
+    const reviewed = await gateEventMetadata(
+      seeded.organizationId,
+      seeded.gateId,
+      "github_workflow_gate.reviewed",
+    );
+    expect(reviewed?.recommendation).toBe("approved");
+
     const types = await scanEventTypes(seeded.organizationId, seeded.gateId);
     expect(types).toContain("github_workflow_gate.received");
     expect(types).toContain("github_workflow_gate.reviewed");
-    expect(types).toContain("github_workflow_gate.approved");
+    expect(types).not.toContain("github_workflow_gate.approved");
+    expect(types).not.toContain("github_workflow_gate.rejected");
   });
 
   test("rejects the deployment when an artifact path is unsafe", async () => {
@@ -439,7 +518,7 @@ describe("executeWorkflowGateJob", () => {
     expect(types).toContain("github_workflow_gate.rejected");
   });
 
-  test("rejects candidate-specific PyPI findings via release risk", async () => {
+  test("leaves a high-risk candidate pending with a reject recommendation", async () => {
     const seeded = await seedGateForTest({
       installationExternalId: "9206",
       repositoryId: 72007,
@@ -459,11 +538,20 @@ describe("executeWorkflowGateJob", () => {
       db,
     );
 
+    // High release risk only drives the workbench recommendation; the deployment
+    // stays pending until a human blocks it, so no decision is posted.
     const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
-    expect(gate?.status).toBe("rejected");
-    expect(gate?.decision).toBe("rejected");
-    expect(scenario.decisionCalls).toHaveLength(1);
-    expect(scenario.decisionCalls[0].state).toBe("rejected");
+    expect(gate?.status).toBe("pending");
+    expect(gate?.decision).toBeNull();
+    expect(gate?.scanId).toBeTruthy();
+    expect(scenario.decisionCalls).toHaveLength(0);
+
+    const reviewed = await gateEventMetadata(
+      seeded.organizationId,
+      seeded.gateId,
+      "github_workflow_gate.reviewed",
+    );
+    expect(reviewed?.recommendation).toBe("rejected");
 
     const persisted = await getScan(db, gate!.scanId!, seeded.organizationId);
     expect(persisted?.scan.riskSummaryJson).toMatchObject({
@@ -509,6 +597,100 @@ describe("executeWorkflowGateJob", () => {
     expect(types).not.toContain("github_workflow_gate.rejected");
   });
 
+  test("links a failed pipeline scan back to the pending gate and allows retry", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9208",
+      repositoryId: 72009,
+      runId: 14141,
+    });
+    const scenario = await buildScenario(14141, { digestMatches: true });
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const sandboxEnv = {
+      ...buildEnv(bindings, loaderMock.binding),
+      FLAGS: {
+        getBooleanValue: vi.fn(async () => {
+          throw new Error("flag service unavailable");
+        }),
+      },
+    } as Cloudflare.Env;
+    const db = createDb(env.DB);
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.status).toBe("pending");
+    expect(gate?.scanId).toBeTruthy();
+    expect(scenario.decisionCalls).toHaveLength(0);
+
+    const persisted = await getScan(db, gate!.scanId!, seeded.organizationId);
+    expect(persisted?.scan.status).toBe("failed");
+    expect(persisted?.scan.source).toBe("workflow_gate");
+
+    const types = await scanEventTypes(seeded.organizationId, seeded.gateId);
+    expect(types).toContain("github_workflow_gate.review_failed");
+
+    const retryEnv = buildEnv(bindings, loaderMock.binding);
+    const loaderCallsAfterFailure = loaderMock.calls.length;
+    await executeWorkflowGateJob(
+      retryEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    const retriedGate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(retriedGate?.status).toBe("pending");
+    expect(retriedGate?.scanId).toBeTruthy();
+    expect(retriedGate?.scanId).not.toBe(gate?.scanId);
+    expect(loaderMock.calls.length).toBeGreaterThan(loaderCallsAfterFailure);
+    expect(scenario.decisionCalls).toHaveLength(0);
+
+    const retriedScan = await getScan(db, retriedGate!.scanId!, seeded.organizationId);
+    expect(retriedScan?.scan.status).toBe("complete");
+    expect(retriedScan?.scan.source).toBe("workflow_gate");
+  });
+
+  test("does not re-review a pending gate that already has a scan attached", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9207",
+      repositoryId: 72008,
+      runId: 13131,
+    });
+    const scenario = await buildScenario(13131, { digestMatches: true });
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const sandboxEnv = buildEnv(bindings, loaderMock.binding);
+    const db = createDb(env.DB);
+    const message = {
+      kind: "workflow_gate" as const,
+      organizationId: seeded.organizationId,
+      gateId: seeded.gateId,
+    };
+
+    await executeWorkflowGateJob(sandboxEnv, ctx, message, db);
+    const loaderCallsAfterFirst = loaderMock.calls.length;
+    const gateAfterFirst = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gateAfterFirst?.status).toBe("pending");
+    expect(gateAfterFirst?.scanId).toBeTruthy();
+
+    // Re-enqueue while the gate is still pending its human decision: the gate
+    // keeps its scan and the artifacts are not re-parsed.
+    await executeWorkflowGateJob(sandboxEnv, ctx, message, db);
+    expect(loaderMock.calls.length).toBe(loaderCallsAfterFirst);
+    expect(scenario.decisionCalls).toHaveLength(0);
+
+    const gateAfterSecond = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gateAfterSecond?.scanId).toBe(gateAfterFirst?.scanId);
+  });
+
   test("re-delivers the decision for an already-decided gate without re-running the review", async () => {
     const seeded = await seedGateForTest({
       installationExternalId: "9203",
@@ -529,14 +711,24 @@ describe("executeWorkflowGateJob", () => {
 
     await executeWorkflowGateJob(sandboxEnv, ctx, message, db);
     const loaderCallsAfterFirst = loaderMock.calls.length;
-    expect(scenario.decisionCalls).toHaveLength(1);
+    // The review leaves the gate pending — no decision is posted yet.
+    expect(scenario.decisionCalls).toHaveLength(0);
+
+    // A maintainer approves the gate from the workbench.
+    const decided = await markGateDecided(db, {
+      gateId: seeded.gateId,
+      decision: "approved",
+      comment: "ship it",
+      reportUrl: null,
+    });
+    expect(decided).toBeTruthy();
 
     await executeWorkflowGateJob(sandboxEnv, ctx, message, db);
 
-    // Second delivery must re-post the stored decision but not re-parse artifacts.
+    // The re-enqueue must re-post the stored decision but not re-parse artifacts.
     expect(loaderMock.calls.length).toBe(loaderCallsAfterFirst);
-    expect(scenario.decisionCalls).toHaveLength(2);
-    expect(scenario.decisionCalls[1].state).toBe("approved");
+    expect(scenario.decisionCalls).toHaveLength(1);
+    expect(scenario.decisionCalls[0].state).toBe("approved");
   });
 
   test("retries a failed redelivery for an already-decided gate", async () => {
@@ -559,7 +751,14 @@ describe("executeWorkflowGateJob", () => {
 
     await executeWorkflowGateJob(sandboxEnv, ctx, message, db);
     const loaderCallsAfterFirst = loaderMock.calls.length;
-    expect(scenario.decisionCalls).toHaveLength(1);
+    expect(scenario.decisionCalls).toHaveLength(0);
+
+    await markGateDecided(db, {
+      gateId: seeded.gateId,
+      decision: "approved",
+      comment: "ship it",
+      reportUrl: null,
+    });
 
     const redeliveryFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -603,7 +802,14 @@ describe("executeWorkflowGateJob", () => {
     };
 
     await executeWorkflowGateJob(sandboxEnv, ctx, body, db);
-    expect(scenario.decisionCalls).toHaveLength(1);
+    expect(scenario.decisionCalls).toHaveLength(0);
+
+    await markGateDecided(db, {
+      gateId: seeded.gateId,
+      decision: "approved",
+      comment: "ship it",
+      reportUrl: null,
+    });
 
     vi.stubGlobal(
       "fetch",
