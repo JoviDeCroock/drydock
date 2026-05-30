@@ -22,7 +22,7 @@ export function getReleaseRecommendation(
       label: "block manual approval",
       tone: releaseRisk === "critical" ? "critical" : "high",
       copy: isGate
-        ? "Reject this gate until the highlighted release evidence has been reviewed and resolved."
+        ? "Do not approve until the highlighted release evidence has been reviewed and resolved."
         : "Do not approve this staged publish until the highlighted release evidence has been reviewed and resolved outside this tool.",
     };
   }
@@ -49,7 +49,7 @@ export function getReleaseRecommendation(
     label: "likely safe",
     tone: "ok",
     copy: isGate
-      ? "No blocking deterministic signals were found; your decision below releases or blocks the held GitHub job."
+      ? "No blocking deterministic signals were found; your decision releases or blocks the held GitHub job."
       : "No blocking deterministic signals were found; approval still remains a maintainer action in npm.",
   };
 }
