@@ -41,8 +41,8 @@ The pipeline cross-checks staged detail package name/version against the staged 
 AI review is disabled in the current pipeline, but when it returns it should remain diff-first:
 
 - deterministic findings stay authoritative and are computed before AI;
-- AI sees package-json diff, release-delta deterministic findings, changed-file diff, and bounded samples for changed files only;
-- unchanged files should not be sent as AI review evidence unless a deterministic rule needs context;
+- AI sees the ecosystem id, normalized manifest diff, release-delta deterministic findings, changed-file diff, and bounded samples for changed files only;
+- unchanged files should not be sent as AI review evidence unless a deterministic rule needs context or a recognized manifest field newly references that file;
 - changed files should be ranked so high-signal files are kept when caps are hit.
 
 Tag-aware baseline selection is the largest low-risk token reducer because it prevents channel releases from appearing as a broad diff against the wrong published artifact. It improves the evidence for both humans and models without reducing deterministic coverage of the staged artifact itself.

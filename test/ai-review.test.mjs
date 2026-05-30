@@ -5,6 +5,10 @@ import {
   displayedAiResult,
   runSelectiveAiReview,
 } from "../server/lib/ai-review.ts";
+import {
+  buildReviewerSystemPrompt,
+  normalizeAiReviewEcosystem,
+} from "../server/lib/ai-review-contract.ts";
 import { computeScanRisk } from "../server/lib/risk.ts";
 
 const EMPTY_PACKAGE_JSON_DIFF = {
@@ -33,6 +37,38 @@ function completeResponse(overrides = {}) {
   };
 }
 
+describe("AI review prompt selection", () => {
+  test("builds the npm prompt when the adapter-derived ecosystem is npm", () => {
+    const prompt = buildReviewerSystemPrompt("npm");
+
+    expect(prompt).toContain("Ecosystem: npm.");
+    expect(prompt).toContain("postinstall");
+    expect(prompt).toContain("Dependency supply-chain changes");
+    expect(prompt).toContain("can execute their own lifecycle scripts");
+    expect(prompt).not.toContain("Ecosystem: PyPI.");
+  });
+
+  test("adds PyPI-specific package artifact review guidance", () => {
+    const prompt = buildReviewerSystemPrompt("pypi");
+
+    expect(prompt).toContain("Ecosystem: PyPI.");
+    expect(prompt).toContain("wheel METADATA, WHEEL, RECORD");
+    expect(prompt).toContain("setup.py custom install commands");
+    expect(prompt).toContain(".pth files with import lines");
+    expect(prompt).toContain("Requires-Dist");
+    expect(prompt).not.toContain("optionalDependencies");
+  });
+
+  test("falls back to generic package guidance for unknown adapters", () => {
+    const prompt = buildReviewerSystemPrompt("rubygems");
+
+    expect(normalizeAiReviewEcosystem("rubygems")).toBe("generic");
+    expect(normalizeAiReviewEcosystem(undefined)).toBe("generic");
+    expect(prompt).toContain("Ecosystem: generic package release.");
+    expect(prompt).toContain("If ecosystem-specific semantics are needed and unavailable");
+  });
+});
+
 // AI review is disabled in production while we work toward a paid-tier offering.
 // Keep the suite here but skipped so the prompt + single-model contract is preserved
 // for the eventual re-introduction.
@@ -48,6 +84,7 @@ describe.skip("ai review normalization", () => {
       }),
       "test-model",
       {
+        ecosystem: "npm",
         files: [
           {
             path: "package/README.md",
@@ -94,6 +131,7 @@ describe.skip("ai review normalization", () => {
       }),
       "test-model",
       {
+        ecosystem: "npm",
         files: [],
         diff: [],
         packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
@@ -118,6 +156,7 @@ describe.skip("ai review normalization", () => {
       }),
       "test-model",
       {
+        ecosystem: "npm",
         files: [],
         diff: [],
         packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
@@ -157,6 +196,7 @@ describe.skip("ai review normalization", () => {
       }),
       "test-model",
       {
+        ecosystem: "npm",
         files: [],
         diff: [],
         packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
@@ -193,6 +233,7 @@ describe.skip("ai review normalization", () => {
       }),
       "test-model",
       {
+        ecosystem: "npm",
         files: [],
         diff: [],
         packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
@@ -218,6 +259,7 @@ describe.skip("ai review normalization", () => {
       }),
       "test-model",
       {
+        ecosystem: "npm",
         files: [],
         diff: [],
         packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
@@ -240,6 +282,7 @@ describe.skip("ai review normalization", () => {
         },
       }),
       {
+        ecosystem: "npm",
         files: [],
         diff: [],
         packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
