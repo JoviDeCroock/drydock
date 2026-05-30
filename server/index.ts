@@ -9,6 +9,7 @@ import {
 import { createAuth, getAuthSession } from "./lib/auth";
 import { errorMessage } from "./lib/errors";
 import { rateLimitResponse } from "./lib/http";
+import { runArtifactBackfillSweep } from "./lib/artifact-backfill";
 import { allowInsecureLocalRegistry } from "./lib/npm-connection";
 import {
   describeOperationalError,
@@ -295,6 +296,13 @@ export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
     await runStagedPublishesDiscoveryCron(env, ctx);
+    try {
+      await runArtifactBackfillSweep(env, createDb(env.DB));
+    } catch (err) {
+      emitOperationalEvent("error", "scan.artifact.backfill_sweep_failed", {
+        error: describeOperationalError(err),
+      });
+    }
   },
   async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
     for (const message of batch.messages) {

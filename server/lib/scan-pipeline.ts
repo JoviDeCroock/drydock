@@ -1,5 +1,18 @@
-import { persistScan, recordScanEvent, type AppDb, type WorkspaceSession } from "../db";
+import {
+  markScanArtifactBacked,
+  persistScan,
+  recordScanEvent,
+  type AppDb,
+  type WorkspaceSession,
+} from "../db";
 import { runSelectiveAiReview, type AiReview } from "./ai-review";
+import { sha256Hex, stableJson } from "./canonical-json";
+import {
+  buildPipelineArtifactBundle,
+  ScanArtifactError,
+  scanArtifactFileSamples,
+  writeScanArtifact,
+} from "./scan-artifacts";
 import type {
   AdapterBroker,
   AdapterConnectionRef,
@@ -161,6 +174,22 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
     };
     const reportDigest = await sha256Hex(stableJson(reportPayload));
 
+    const summaryJson = {
+      report: {
+        version: reportPayload.version,
+        digest: reportDigest,
+        digestAlgorithm: "sha256",
+        generatedAt: new Date().toISOString(),
+        rulesVersion: reportPayload.rulesVersion,
+      },
+      packageJsonDiff: manifestDiff,
+      diff: fileDiff,
+      risk: riskSummary,
+      stagedPublish: redactedDetails,
+      baseline: baseline.baseline,
+      safety: result.safety,
+    };
+
     const persisted = await persistScan(db, {
       id: scanId,
       stageId: input.stageId,
@@ -170,21 +199,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       previousPackageJson: redactedPreviousManifest,
       risk,
       status: "complete",
-      summary: {
-        report: {
-          version: reportPayload.version,
-          digest: reportDigest,
-          digestAlgorithm: "sha256",
-          generatedAt: new Date().toISOString(),
-          rulesVersion: reportPayload.rulesVersion,
-        },
-        packageJsonDiff: manifestDiff,
-        diff: fileDiff,
-        risk: riskSummary,
-        stagedPublish: redactedDetails,
-        baseline: baseline.baseline,
-        safety: result.safety,
-      },
+      summary: summaryJson,
       ai: aiFindings,
       files: redactedStagedFiles,
       previousFiles: redactedPreviousFiles,
@@ -196,6 +211,17 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
     });
 
     if (persisted.persisted) {
+      await writeScanArtifactForCompletedScan({
+        env,
+        db,
+        scanId,
+        organizationId: input.organizationId,
+        reportVersion: reportPayload.version,
+        reportDigest,
+        reportPayload,
+        summary: summaryJson,
+        files: redactedStagedFiles,
+      });
       await recordScanEvent(db, {
         organizationId: input.organizationId,
         actorUserId: session.userId,
@@ -324,16 +350,59 @@ function stripFindingAnnotations(
   }));
 }
 
-async function sha256Hex(value: string) {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+interface WriteScanArtifactArgs {
+  env: Cloudflare.Env;
+  db: AppDb;
+  scanId: string;
+  organizationId: string;
+  reportVersion: number;
+  reportDigest: string;
+  reportPayload: unknown;
+  summary: unknown;
+  files: Array<{ path: string; textSample?: string | null }>;
 }
 
-function stableJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, item]) => item !== undefined)
-    .sort(([a], [b]) => a.localeCompare(b));
-  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
+/**
+ * Dual-write the completed scan's derived evidence to R2 alongside D1. Best
+ * effort: D1 already holds the authoritative copy, so a missing binding or any
+ * R2/verification failure is logged and swallowed — the scan stays D1-only and
+ * shadow-read falls back automatically. The row is only marked artifact-backed
+ * after the bundle is digest-verified.
+ */
+async function writeScanArtifactForCompletedScan(args: WriteScanArtifactArgs): Promise<void> {
+  const bucket = args.env.ARTIFACTS;
+  if (!bucket) return;
+  try {
+    const bundle = buildPipelineArtifactBundle({
+      scanId: args.scanId,
+      organizationId: args.organizationId,
+      reportVersion: args.reportVersion,
+      reportDigest: args.reportDigest,
+      reportPayload: args.reportPayload,
+      summary: args.summary,
+      fileSamples: scanArtifactFileSamples(args.files),
+    });
+    const written = await writeScanArtifact(bucket, bundle);
+    await markScanArtifactBacked(args.db, {
+      scanId: args.scanId,
+      organizationId: args.organizationId,
+      storageVersion: written.storageVersion,
+      key: written.key,
+      digest: written.digest,
+      size: written.size,
+    });
+    emitOperationalEvent("info", "scan.artifact.written", {
+      scanId: args.scanId,
+      organizationId: args.organizationId,
+      storageVersion: written.storageVersion,
+      size: written.size,
+    });
+  } catch (err) {
+    emitOperationalEvent("error", "scan.artifact.write_failed", {
+      scanId: args.scanId,
+      organizationId: args.organizationId,
+      code: err instanceof ScanArtifactError ? err.code : undefined,
+      error: describeOperationalError(err),
+    });
+  }
 }

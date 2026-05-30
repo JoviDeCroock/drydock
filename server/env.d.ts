@@ -6,6 +6,8 @@ declare global {
       LOADER: WorkerLoader;
       DB: D1Database;
       COMPARE_CACHE?: KVNamespace;
+      ARTIFACTS?: R2Bucket;
+      ARTIFACT_BACKFILL?: string;
       SCAN_QUEUE?: Queue<import("./lib/scan-job").QueueMessage>;
       NPM_REGISTRY: string;
       ALLOW_INSECURE_LOCAL_REGISTRY?: string;

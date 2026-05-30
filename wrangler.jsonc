@@ -44,6 +44,12 @@
 			"id": "b47f398d73b4446fbb4a7be3c4f1081a"
 		}
 	],
+	"r2_buckets": [
+		{
+			"binding": "ARTIFACTS",
+			"bucket_name": "staged-publish-review-artifacts"
+		}
+	],
 	"queues": {
 		"producers": [
 			{

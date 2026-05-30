@@ -45,6 +45,7 @@ Workers AI is ~90% of the variable cost at every scale above the smallest tier.
 - **Workers Paid plan**: $5/mo base, 10M requests + 30M CPU-ms included, then $0.30/M req and $0.02/M CPU-ms.
 - **D1**: 50M writes + 25B reads/mo included on the paid plan, $1/M writes and $0.001/1k reads beyond. Storage $0.75/GB-mo.
 - **KV**: $0.50/M reads, $5/M writes, $0.50/GB-mo storage. ~5 MB per cached `package@version` entry.
+- **R2**: $0.015/GB-mo storage, $4.50/M Class A (writes) and $0.36/M Class B (reads) operations, no egress fee. One scan-artifact bundle write + read-back per scan, plus one read per detail view.
 - **Queues**: $0.40/M operations.
 - **Workers AI (current default Kimi K2.5)**: $0.60/M input + $0.10/M cached input + $3.00/M output tokens on the current Cloudflare pricing page. Kimi K2.6 is more expensive at $0.95/M input + $0.16/M cached input + $4.00/M output. Confirm against current Cloudflare AI pricing before sizing margins.
 - **Dynamic Workers / Worker Loader**: treated as regular Worker billing; Cloudflare hasn't published a separate model at the time of writing.
@@ -52,7 +53,7 @@ Workers AI is ~90% of the variable cost at every scale above the smallest tier.
 ## Where the money goes
 
 - **Workers AI**: dominant at scale. Biggest levers: (a) choose the correct tag-aware comparison baseline so changed files reflect the release channel under review; (b) start AI review with a compact package manifest instead of full changed-file samples; (c) let the model request only targeted redacted file/diff/search evidence through app-owned tools; (d) keep the system prompt cache-friendly via `AI_CACHE_AFFINITY`; (e) pick the cheapest model that still produces useful structured output. See [`diff-baseline.md`](./diff-baseline.md).
-- **D1 storage growth**: ~500 KB–2 MB per scan retained. At 50k scans/mo that's 25–100 GB/mo accumulating. Add a retention/GC policy before this becomes a line item.
+- **D1 storage growth**: ~500 KB–2 MB per scan retained. At 50k scans/mo that's 25–100 GB/mo accumulating. The heavy derived evidence (canonical report, redacted file samples, diff/summary snapshot) now dual-writes to one R2 bundle per scan at $0.015/GB-mo storage — far cheaper than D1's $0.75/GB-mo — so the long-term plan is to compact those columns out of D1 once backfill + shadow-read have soaked. See [`r2-artifacts.md`](./r2-artifacts.md). Until compaction, both stores hold the payload, so this is a deferred saving, not a realized one. Add a retention/GC policy that deletes both D1 metadata and the R2 object before this becomes a line item.
 - **KV storage**: trivial. The added `COMPARE_CACHE` is essentially free across any realistic catalog of cached versions; it primarily saves sandbox CPU and tarball egress.
 - **Sandbox compute**: bounded per scan (2 Dynamic Workers, ~3s CPU each). The KV cache means alternate-version diffs in the detail page no longer linearly multiply this cost.
 

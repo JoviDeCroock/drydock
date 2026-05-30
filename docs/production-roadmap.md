@@ -41,24 +41,25 @@ Open validation question:
 
 ## Phase 6 — R2 derived artifacts
 
-Status: not started. R2 is not required for private beta if D1 deletion/retention for current redacted samples is implemented, but it becomes important for larger reports, exports, and future signing.
+Status: first rollout shipped (dual-write + shadow-read + backfill). D1 compaction is the remaining step and is deliberately deferred. See [`r2-artifacts.md`](./r2-artifacts.md) for the full design, key format, bundle schema, and rollback path.
 
 Goals:
 
 - Move larger report artifacts out of D1.
 - Preserve useful evidence without default raw tarball retention.
 
-Tasks:
+Done in this rollout:
 
-- Add R2 binding and production bucket provisioning docs.
-- Store derived/redacted artifacts:
-  - canonical report JSON;
-  - manifest JSON;
-  - redacted changed-file samples;
-  - diff JSON.
-- Store R2 object references in D1.
-- Add retention cleanup strategy and deletion workflow that removes both D1 metadata and R2 objects.
-- Document object key format, access rules, and expected object sizes.
+- R2 binding (`ARTIFACTS`) and production bucket provisioning docs.
+- One digest-verified bundle object per scan holding the canonical report JSON, the redacted summary/diff snapshot, and redacted changed-file samples.
+- D1 carries the R2 reference columns (`artifact_storage_version`, `artifact_key`, `artifact_digest`, `artifact_size`); a row is only marked artifact-backed after read-back digest verification.
+- Shadow-read: `getScan` prefers the R2 bundle and falls back to D1 on a missing object, digest mismatch, or any read error (dropping the binding is the rollback toggle).
+- Resumable, idempotent backfill of old completed scans, gated behind `ARTIFACT_BACKFILL` and off by default.
+
+Deferred (separate explicit step):
+
+- D1 compaction — no existing scan data is deleted in the first rollout. Compaction happens only after a backfill + shadow-read soak.
+- Retention cleanup / deletion workflow that removes both D1 metadata and R2 objects.
 
 Default policy:
 
@@ -68,7 +69,7 @@ Default policy:
 
 Exit criteria:
 
-- D1 remains metadata-focused.
+- D1 remains metadata-focused. (Met for new columns; full compaction pending.)
 - Report artifacts are retrievable for persisted scans.
 - Artifact storage follows the documented safe default.
 

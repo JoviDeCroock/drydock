@@ -141,6 +141,7 @@ D1 stores canonical application state:
 - Better Auth users/sessions/accounts;
 - organizations and organization members;
 - scan rows, lifecycle status, timestamps, structured errors, and report digest metadata;
+- R2 artifact references (`artifact_storage_version`, `artifact_key`, `artifact_digest`, `artifact_size`) for scans whose derived evidence has been written to R2;
 - scan file manifests;
 - findings;
 - audit events;
@@ -154,13 +155,21 @@ Dashboard list rendering (`GET /api/v1/scans`) reads only compact metadata. `per
 
 ### R2
 
-R2 is the target store for durable derived artifacts:
+R2 (`ARTIFACTS` binding) stores durable derived artifacts. The first rollout
+bundles each scan's heavy derived evidence into one digest-verified object —
+`reports/{org}/{scan}/v{version}.json` — holding:
 
 - canonical report JSON;
-- redacted package manifests;
+- redacted summary/diff snapshot (`summary_json`);
 - changed-file safe text samples;
-- generated diff JSON;
 - future signed-report payloads.
+
+Completed scans dual-write the bundle to R2 alongside D1; `getScan` shadow-reads
+it (preferring R2, falling back to D1 on any miss/mismatch); an
+`ARTIFACT_BACKFILL`-gated sweep backfills old scans. No D1 data is deleted yet —
+compaction is a deferred follow-up. Full design, key format, digest verification,
+and rollback path: [`r2-artifacts.md`](./r2-artifacts.md). `server/lib/scan-artifacts.ts`
+holds the storage primitives and is intentionally free of D1 imports.
 
 Raw tarballs should not be retained by default in SaaS. If needed later, make raw retention an explicit organization setting with a short TTL, access logging, and clear warnings.
 

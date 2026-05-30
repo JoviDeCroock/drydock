@@ -10,6 +10,7 @@
   - `lib/review.ts` — Deterministic findings, package diff, package.json diff, risk computation. Shared types are imported by both server and UI.
   - `lib/ai-review.ts` — Workers AI JSON-mode reviewer. Currently **disabled in the pipeline**; kept on disk for a planned paid-tier re-introduction. Do not wire it back into `scan-pipeline.ts` without a feature decision.
   - `lib/registry.ts` — npm metadata fetch + previous-version selection.
+  - `lib/scan-artifacts.ts` — R2 bundle storage primitives (key format, build/write/read, digest verification). No D1 imports — callers persist the returned key/digest/size. `lib/artifact-backfill.ts` runs the `ARTIFACT_BACKFILL`-gated catch-up sweep. See `docs/r2-artifacts.md`.
   - `lib/auth.ts` — Better Auth instance (D1 + Drizzle). Auth is required for every non-auth `/api/*` endpoint.
   - `db/` — Drizzle schema + persistence helpers (scans, scan_files, scan_findings, better-auth tables).
   - `env.d.ts` — `Cloudflare.Env` bindings. Regenerate with `npm run cf-typegen` if `wrangler.jsonc` changes.

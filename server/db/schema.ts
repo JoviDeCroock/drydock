@@ -78,6 +78,10 @@ export const scans = sqliteTable(
     riskSummaryJson: text("risk_summary_json", { mode: "json" }),
     reportVersion: integer("report_version"),
     reportDigest: text("report_digest"),
+    artifactStorageVersion: integer("artifact_storage_version"),
+    artifactKey: text("artifact_key"),
+    artifactDigest: text("artifact_digest"),
+    artifactSize: integer("artifact_size"),
     startedAt: integer("started_at", { mode: "timestamp_ms" }),
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
@@ -91,6 +95,11 @@ export const scans = sqliteTable(
     orgDecisionCreatedIdx: index("scans_org_decision_created_idx").on(
       table.organizationId,
       table.decision,
+      table.createdAt,
+    ),
+    artifactBackfillIdx: index("scans_artifact_backfill_idx").on(
+      table.status,
+      table.artifactStorageVersion,
       table.createdAt,
     ),
   }),

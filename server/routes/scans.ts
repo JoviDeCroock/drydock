@@ -164,16 +164,22 @@ scansRoutes.post("/:id/decision", async (c) => {
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
 
-  const updated = await recordScanDecision(db, {
-    scanId: c.req.param("id"),
-    organizationId,
-    actorUserId: session.userId,
-    decision: body.decision as ScanDecision,
-    reason,
-  });
+  const updated = await recordScanDecision(
+    db,
+    {
+      scanId: c.req.param("id"),
+      organizationId,
+      actorUserId: session.userId,
+      decision: body.decision as ScanDecision,
+      reason,
+    },
+    { artifacts: c.env.ARTIFACTS },
+  );
 
   if (!updated) {
-    const existing = await getScan(db, c.req.param("id"), organizationId);
+    const existing = await getScan(db, c.req.param("id"), organizationId, {
+      artifacts: c.env.ARTIFACTS,
+    });
     if (!existing) return c.json({ error: "not found" }, 404);
     return c.json({ error: "decision can only be set on completed scans" }, 409);
   }
@@ -185,7 +191,9 @@ scansRoutes.get("/:id", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
-  const scan = await getScan(db, c.req.param("id"), organizationId);
+  const scan = await getScan(db, c.req.param("id"), organizationId, {
+    artifacts: c.env.ARTIFACTS,
+  });
   if (!scan) return c.json({ error: "not found" }, 404);
   if (c.req.query("poll") !== "1") {
     await recordScanEvent(db, {
@@ -307,7 +315,7 @@ async function resolveCompareContext(
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
-  const scan = await getScan(db, scanId, organizationId);
+  const scan = await getScan(db, scanId, organizationId, { artifacts: c.env.ARTIFACTS });
   if (!scan) return { error: c.json({ error: "not found" }, 404) } as const;
   if (!scan.scan.packageName)
     return { error: c.json({ error: "scan has no package name" }, 400) } as const;

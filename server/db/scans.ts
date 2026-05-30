@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, or } from "drizzle-orm";
 import {
   annotateFindingsWithDiffStatus,
   type CodePatternSet,
@@ -11,7 +11,9 @@ import {
   normalizeRisk,
   type PackageJsonSummary,
 } from "../lib/review";
+import { emitOperationalEvent } from "../lib/observability";
 import { normalizeScanRiskBreakdown, type ScanRiskBreakdown } from "../lib/risk";
+import { readScanArtifact, ScanArtifactError, scanArtifactSampleMap } from "../lib/scan-artifacts";
 import type { AppDb } from "./client";
 import { recordScanEvent, redactScanEventForClient } from "./events";
 import { scanEvents, scanFiles, scanFindings, scans } from "./schema";
@@ -274,6 +276,90 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
   return { persisted: true as const };
 }
 
+export interface MarkScanArtifactBackedInput {
+  scanId: string;
+  organizationId: string;
+  storageVersion: number;
+  key: string;
+  digest: string;
+  size: number;
+}
+
+export async function markScanArtifactBacked(db: AppDb, input: MarkScanArtifactBackedInput) {
+  await db
+    .update(scans)
+    .set({
+      artifactStorageVersion: input.storageVersion,
+      artifactKey: input.key,
+      artifactDigest: input.digest,
+      artifactSize: input.size,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(scans.id, input.scanId), eq(scans.organizationId, input.organizationId)));
+}
+
+export interface ScanArtifactBackfillCandidate {
+  id: string;
+  organizationId: string;
+  reportVersion: number | null;
+  reportDigest: string | null;
+  summaryJson: unknown;
+  files: Array<{ path: string; textSample: string | null }>;
+}
+
+/**
+ * Completed scans that have not yet been written to R2, oldest first. Backfill
+ * is naturally idempotent: a successful write sets `artifact_storage_version`,
+ * which removes the scan from this candidate set on the next sweep.
+ */
+export async function listScanArtifactBackfillCandidates(
+  db: AppDb,
+  limit: number,
+): Promise<ScanArtifactBackfillCandidate[]> {
+  const scanRows = await db
+    .select({
+      id: scans.id,
+      organizationId: scans.organizationId,
+      reportVersion: scans.reportVersion,
+      reportDigest: scans.reportDigest,
+      summaryJson: scans.summaryJson,
+    })
+    .from(scans)
+    .where(
+      and(
+        eq(scans.status, "complete"),
+        isNull(scans.artifactStorageVersion),
+        isNotNull(scans.organizationId),
+      ),
+    )
+    .orderBy(asc(scans.createdAt), asc(scans.id))
+    .limit(Math.max(1, Math.floor(limit)));
+
+  if (!scanRows.length) return [];
+
+  const ids = scanRows.map((row) => row.id);
+  const fileRows = await db
+    .select({ scanId: scanFiles.scanId, path: scanFiles.path, textSample: scanFiles.textSample })
+    .from(scanFiles)
+    .where(inArray(scanFiles.scanId, ids));
+
+  const filesByScan = new Map<string, Array<{ path: string; textSample: string | null }>>();
+  for (const file of fileRows) {
+    const list = filesByScan.get(file.scanId) ?? [];
+    list.push({ path: file.path, textSample: file.textSample });
+    filesByScan.set(file.scanId, list);
+  }
+
+  return scanRows.map((row) => ({
+    id: row.id,
+    organizationId: row.organizationId as string,
+    reportVersion: row.reportVersion,
+    reportDigest: row.reportDigest,
+    summaryJson: row.summaryJson,
+    files: filesByScan.get(row.id) ?? [],
+  }));
+}
+
 function withFindingAnnotations(
   summary: unknown,
   annotations: Array<{ id: string; diffStatus: string; releaseDelta: boolean }>,
@@ -525,7 +611,11 @@ export interface RecordScanDecisionInput {
   reason?: string | null;
 }
 
-export async function recordScanDecision(db: AppDb, input: RecordScanDecisionInput) {
+export async function recordScanDecision(
+  db: AppDb,
+  input: RecordScanDecisionInput,
+  options: GetScanOptions = {},
+) {
   const now = new Date();
   const reason = input.reason?.trim() ? input.reason.trim() : null;
   const updated = await db
@@ -556,11 +646,66 @@ export async function recordScanDecision(db: AppDb, input: RecordScanDecisionInp
     metadata: { decision: input.decision, reason },
   });
 
-  return getScan(db, input.scanId, input.organizationId);
+  return getScan(db, input.scanId, input.organizationId, options);
 }
 
-export async function getScan(db: AppDb, id: string, organizationId: string) {
-  const [scanRows, files, findings, events] = await Promise.all([
+export interface GetScanOptions {
+  artifacts?: R2Bucket;
+}
+
+/**
+ * Shadow-read: when a scan is artifact-backed and an R2 binding is available,
+ * hydrate redacted file text samples from the verified bundle, preferring R2 and
+ * falling back to the D1 rows on a missing object, digest mismatch, or any read
+ * error. The fallback is what keeps reads correct before D1 compaction and what
+ * makes "flip reads back to D1" the rollback path (drop the binding).
+ */
+async function hydrateScanFileSamples<T extends { path: string; textSample: string | null }>(
+  scan: {
+    id: string;
+    organizationId: string | null;
+    artifactStorageVersion: number | null;
+    artifactKey: string | null;
+    artifactDigest: string | null;
+  },
+  files: T[],
+  bucket: R2Bucket | undefined,
+): Promise<T[]> {
+  if (!bucket || scan.artifactStorageVersion == null || !scan.artifactKey) return files;
+  try {
+    const bundle = await readScanArtifact(bucket, {
+      key: scan.artifactKey,
+      expectedDigest: scan.artifactDigest,
+    });
+    if (!bundle) {
+      emitOperationalEvent("warn", "scan.artifact.read_fallback", {
+        scanId: scan.id,
+        organizationId: scan.organizationId,
+        reason: "artifact_missing",
+      });
+      return files;
+    }
+    const sampleMap = scanArtifactSampleMap(bundle);
+    return files.map((file) =>
+      sampleMap.has(file.path) ? { ...file, textSample: sampleMap.get(file.path) ?? null } : file,
+    );
+  } catch (err) {
+    emitOperationalEvent("warn", "scan.artifact.read_fallback", {
+      scanId: scan.id,
+      organizationId: scan.organizationId,
+      reason: err instanceof ScanArtifactError ? err.code : "read_error",
+    });
+    return files;
+  }
+}
+
+export async function getScan(
+  db: AppDb,
+  id: string,
+  organizationId: string,
+  options: GetScanOptions = {},
+) {
+  const [scanRows, fileRows, findings, events] = await Promise.all([
     db
       .select()
       .from(scans)
@@ -576,6 +721,7 @@ export async function getScan(db: AppDb, id: string, organizationId: string) {
   ]);
   const scan = scanRows[0];
   if (!scan) return null;
+  const files = await hydrateScanFileSamples(scan, fileRows, options.artifacts);
   const diff = diffForFindingAnnotations(scan.summaryJson, files);
   const annotatedFindings = annotateFindingsWithDiffStatus(findings, diff, {
     persistedAnnotations: readFindingAnnotations(scan.summaryJson),
