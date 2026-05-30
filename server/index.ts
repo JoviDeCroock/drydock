@@ -212,6 +212,17 @@ app.get("/api", (c) =>
 app.route("/api/v1/github-app", githubAppRoutes);
 app.route("/api/v1/npm-connection", npmConnectionRoutes);
 app.route("/api/v1/organizations", organizationsRoutes);
+// Two scan-submit surfaces, both sharing executeScanJob/runScanPipeline; they
+// differ only in how the caller waits for the result:
+//   /api/v1/scan  (scanRoutes)  — synchronous shim: runs the pipeline inline
+//     and returns the full result in one 200 response. Kept for compatibility
+//     and exercised by route/e2e tests; the browser UI does not call it.
+//   /api/v1/scans (scansRoutes) — queued/background product path: creates a
+//     pending scan, returns 202, and runs the pipeline on SCAN_QUEUE (or a
+//     waitUntil() fallback in local/dev). The UI polls GET /api/v1/scans/:id.
+// The automated paths don't go through either HTTP route: scheduled discovery
+// (the cron + /staged-publishes/scan) and the GitHub gate enqueue onto the same
+// SCAN_QUEUE directly.
 app.route("/api/v1/scan", scanRoutes);
 app.route("/api/v1/scans", scansRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);

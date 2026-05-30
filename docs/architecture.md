@@ -124,6 +124,15 @@ Current async-capable flow:
 
 `POST /api/v1/scan` remains a synchronous compatibility route while the product moves to the persisted report surface.
 
+### Two scan-submit surfaces
+
+Both submit routes share `executeScanJob` / `runScanPipeline` and differ only in how the caller waits for the result:
+
+- `POST /api/v1/scans` (plural) is the product path. It creates a `pending` scan, returns `202`, and runs the pipeline asynchronously on `SCAN_QUEUE` (or a `waitUntil()` fallback in local/dev). The UI then polls `GET /api/v1/scans/:id`.
+- `POST /api/v1/scan` (singular) is a synchronous compatibility shim. It runs the pipeline inline and returns the full result in one `200` response. It is retained for compatibility and exercised by route/e2e tests; the browser UI no longer calls it.
+
+Neither HTTP route is on the automated paths: scheduled discovery (the `*/15` cron and `POST /api/v1/staged-publishes/scan`) and the GitHub deployment-protection gate both enqueue messages onto the same `SCAN_QUEUE` directly.
+
 ## Scheduled auto-discovery
 
 A `*/15 * * * *` cron trigger runs `runStagedPublishesDiscoveryCron` in `server/index.ts`. The handler sweeps every npm connection whose `validation_status` is either `valid` or `unvalidated`, attempting to validate any `unvalidated` token against the npm registry before using it (and persisting the resulting `valid`/`invalid` status). Tokens with `validation_status = "invalid"` are skipped without contacting the registry, so a known-bad token never adds noise or burn rate against npm. Discovery itself is shared with the manual `POST /api/v1/staged-publishes/scan` route through `server/lib/staged-publishes-discovery.ts`; it paginates staged-list results, deduplicates stage IDs across pages, and removes a just-created pending scan if Queue dispatch fails so the next sweep can retry discovery cleanly.

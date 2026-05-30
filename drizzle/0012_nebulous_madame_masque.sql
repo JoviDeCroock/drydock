@@ -1,0 +1,1 @@
+CREATE INDEX `scan_findings_scan_severity_idx` ON `scan_findings` (`scan_id`,`severity`);
