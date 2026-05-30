@@ -26,33 +26,41 @@ import type { RiskLevel } from "./review";
 import { runScanPipeline } from "./scan-pipeline";
 import { classifyScanError, type WorkflowGateQueueMessage } from "./scan-job";
 
-// A release whose changed (release-delta) findings reach these levels must not
-// auto-publish; everything below is approved. The threshold is intentionally a
-// product decision held in one place so it is easy to tune.
+// A release whose changed (release-delta) findings reach these levels is
+// recommended for rejection in the workbench; everything below is recommended
+// for approval. This is advisory only — a human drives the actual decision.
+// The threshold is a product decision held in one place so it is easy to tune.
 const BLOCKING_RISKS: ReadonlySet<RiskLevel> = new Set<RiskLevel>(["high", "critical"]);
 
-function decisionForReleaseRisk(releaseRisk: RiskLevel): "approved" | "rejected" {
+export function recommendationForReleaseRisk(releaseRisk: RiskLevel): "approved" | "rejected" {
   return BLOCKING_RISKS.has(releaseRisk) ? "rejected" : "approved";
 }
 
 /**
- * Review a resolved PyPI workflow gate end to end and tell GitHub whether the
- * deployment may proceed.
+ * Review a resolved PyPI workflow gate end to end and leave it pending for a
+ * human decision.
  *
  * Trust boundary: the installation token never enters the sandbox. Artifact
  * bytes are fetched + SHA-256-verified in the control plane (`prepare…`), then
  * the credentials-free sandbox parser turns them into evidence the existing
  * deterministic rules run against via `runScanPipeline`.
  *
+ * Decision model: a maintainer drives the gate from the workbench. A successful
+ * review records a `reviewed` event carrying an advisory recommendation and
+ * leaves the gate PENDING — Drydock never auto-approves, because approving
+ * releases the GitHub job and publishing happens immediately via Trusted
+ * Publishing/OIDC (too late to reverse).
+ *
  * Failure handling matches the gate contract:
- *  - Artifact-level problems (`WorkflowArtifactError`, including a tampered
- *    manifest digest) → the deployment is REJECTED with a generic comment.
+ *  - Artifact-level problems (`WorkflowArtifactError`, e.g. an unverifiable
+ *    bundle, inconsistent artifact identity, or a release-target mismatch) →
+ *    the deployment is REJECTED with a generic comment (fail-closed; no human
+ *    in the loop is needed to block).
  *  - Review/processing errors → the deployment is left PENDING (never
  *    auto-approved on error); the failure is recorded and surfaced.
- *  - The GitHub callback is delivered idempotently: `markGateDecided` is a CAS
- *    on the pending row, and an already-decided gate re-delivers its stored
- *    decision so a transient callback failure can be retried without re-running
- *    the review.
+ *  - Re-enqueues are idempotent: a gate that already has a scan attached is not
+ *    re-reviewed, and an already-decided gate re-delivers its stored decision so
+ *    a transient callback failure can be retried without re-running the review.
  */
 export async function executeWorkflowGateJob(
   env: Cloudflare.Env,
@@ -100,6 +108,18 @@ export async function executeWorkflowGateJob(
       organizationId,
       gateId,
       reason: `status_${gate.status}`,
+    });
+    return;
+  }
+
+  // A prior delivery already reviewed this gate and attached its scan; it is
+  // waiting on a human decision. Re-enqueues (GitHub redelivery, queue retry)
+  // must not re-run the pipeline.
+  if (gate.scanId) {
+    emitOperationalEvent("info", "github_workflow_gate.job_skipped", {
+      organizationId,
+      gateId,
+      reason: "already_reviewed",
     });
     return;
   }
@@ -180,7 +200,6 @@ export async function executeWorkflowGateJob(
     ownerUserId,
     source: "workflow_gate",
   });
-  await attachScanToGate(db, gate.id, scanId);
 
   let result;
   try {
@@ -216,8 +235,7 @@ export async function executeWorkflowGateJob(
   }
 
   const releaseRisk = result.riskSummary.releaseRisk;
-  const decision = decisionForReleaseRisk(releaseRisk);
-  const reportUrl = buildReportUrl(env, scanId);
+  const recommendation = recommendationForReleaseRisk(releaseRisk);
 
   await recordScanEvent(db, {
     organizationId,
@@ -226,7 +244,7 @@ export async function executeWorkflowGateJob(
     type: "github_workflow_gate.reviewed",
     metadata: {
       gateId: gate.id,
-      decision,
+      recommendation,
       releaseRisk,
       artifactRisk: result.risk,
       contextRisk: result.riskSummary.contextRisk,
@@ -235,34 +253,18 @@ export async function executeWorkflowGateJob(
     },
   });
 
-  const comment = buildDecisionComment(decision, result.package.name, releaseRisk, reportUrl);
-  const decided = await markGateDecided(db, { gateId: gate.id, decision, comment, reportUrl });
-  if (!decided) {
-    // Another delivery decided this gate first; it owns the callback.
-    emitOperationalEvent("info", "github_workflow_gate.decision_skipped", {
-      organizationId,
-      gateId,
-      reason: "already_decided",
-    });
-    return;
-  }
+  // Link the gate to its completed review and leave it PENDING. A maintainer
+  // drives the decision from the workbench; the recommendation above is
+  // advisory. Attaching last means a transient pipeline failure leaves
+  // gate.scanId unset so a retry re-runs the review.
+  await attachScanToGate(db, gate.id, scanId);
 
-  await deliverGateDecision(config, db, decided);
-
-  await recordScanEvent(db, {
-    organizationId,
-    actorUserId: ownerUserId,
-    scanId,
-    type:
-      decision === "approved" ? "github_workflow_gate.approved" : "github_workflow_gate.rejected",
-    metadata: { gateId: gate.id, releaseRisk, reportUrl },
-  });
-  emitOperationalEvent("info", "github_workflow_gate.decided", {
+  emitOperationalEvent("info", "github_workflow_gate.review_ready", {
     organizationId,
     gateId,
     scanId,
-    decision,
     releaseRisk,
+    recommendation,
     durationMs: durationMsSince(startedAtMs),
   });
 }
@@ -364,20 +366,21 @@ async function getInstallationExternalId(
   return row?.installationId ?? null;
 }
 
-function buildReportUrl(env: Cloudflare.Env, scanId: string): string | null {
+export function buildReportUrl(env: Cloudflare.Env, scanId: string | null): string | null {
   const base = env.BETTER_AUTH_URL?.trim();
-  if (!base) return null;
+  if (!base || !scanId) return null;
   return `${base.replace(/\/$/, "")}/dashboard/scans/${scanId}`;
 }
 
-function buildDecisionComment(
+/**
+ * The comment GitHub renders in the Actions run log when a maintainer decides a
+ * gate from the workbench. Trimmed to 140 chars by the callback POST.
+ */
+export function buildHumanDecisionComment(
   decision: "approved" | "rejected",
-  packageName: string | null,
-  releaseRisk: RiskLevel,
   reportUrl: string | null,
 ): string {
-  const subject = packageName ? `${packageName}` : "this release";
   const verb = decision === "approved" ? "approved" : "blocked";
-  const head = `Drydock ${verb} ${subject} (release risk: ${releaseRisk}).`;
+  const head = `A Drydock maintainer ${verb} this release.`;
   return reportUrl ? `${head} Review: ${reportUrl}` : head;
 }

@@ -31,6 +31,53 @@ export interface PublicReleaseTarget {
   updatedAt: string;
 }
 
+export type WorkflowGateStatus = "pending" | "approved" | "rejected" | "errored";
+export type WorkflowGateDecision = "approved" | "rejected";
+
+export interface PublicWorkflowGate {
+  id: string;
+  organizationId: string;
+  releaseTargetId: string;
+  repositoryFullName: string;
+  environment: string;
+  runId: number;
+  status: WorkflowGateStatus;
+  decision: WorkflowGateDecision | null;
+  decisionComment: string | null;
+  reportUrl: string | null;
+  scanId: string | null;
+  failureReason: string | null;
+  requestedAt: string;
+  decidedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Returns null when no gate is mapped to the scan (404) so callers can treat a
+// plain manual/auto-discovery scan and a not-yet-loaded gate the same way.
+export async function getWorkflowGateByScan(scanId: string): Promise<PublicWorkflowGate | null> {
+  try {
+    const data = await apiFetch<{ gate: PublicWorkflowGate }>(
+      `/api/v1/github-app/workflow-gates/by-scan/${encodeURIComponent(scanId)}`,
+    );
+    return data.gate;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+export function decideWorkflowGate(
+  gateId: string,
+  decision: WorkflowGateDecision,
+  comment: string | null,
+): Promise<{ gate: PublicWorkflowGate }> {
+  return apiJson<{ gate: PublicWorkflowGate }>(
+    `/api/v1/github-app/workflow-gates/${encodeURIComponent(gateId)}/decision`,
+    comment ? { decision, comment } : { decision },
+  );
+}
+
 export interface InstallationRepository {
   id: number;
   fullName: string;

@@ -313,6 +313,7 @@ export interface ListScansResult {
   scans: Array<{
     id: string;
     stageId: string;
+    source: string;
     organizationId: string | null;
     ownerUserId: string | null;
     packageName: string | null;
@@ -370,6 +371,7 @@ export async function listScans(
     .select({
       id: scans.id,
       stageId: scans.stageId,
+      source: scans.source,
       organizationId: scans.organizationId,
       ownerUserId: scans.ownerUserId,
       packageName: scans.packageName,
@@ -408,6 +410,7 @@ export async function listScans(
     scans: page.map((row) => ({
       id: row.id,
       stageId: row.stageId,
+      source: row.source,
       organizationId: row.organizationId,
       ownerUserId: row.ownerUserId,
       packageName: row.packageName,

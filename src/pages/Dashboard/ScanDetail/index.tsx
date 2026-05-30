@@ -5,6 +5,7 @@ import { getDashboardReturnUrl, useQuerySignal } from "../../../lib/query-state"
 import { formatDateTime } from "../../../lib/format";
 import { sessionModel } from "../../../models/auth";
 import { ScanDetailModel, type PersistedScanDetail, type ScanDecision } from "../../../models/scan";
+import type { WorkflowGateDecision } from "../../../models/github-app";
 import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review-types";
 import {
   annotateFindingsWithDiffStatus as annotateReviewFindingsWithDiffStatus,
@@ -30,6 +31,7 @@ import {
   severityTone,
 } from "../../../components";
 import { DecisionDialog } from "./DecisionDialog";
+import { GateContextPanel, GateDecisionDialog } from "./GateDecisionDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
 import { RiskSignalsSection } from "./FindingsSection";
 import { ReleaseRecommendation } from "./ReleaseRecommendation";
@@ -45,6 +47,7 @@ export default function ScanDetailPage() {
   const fileFilter = useSignal("");
   const changedFilesOnly = useSignal(true);
   const decisionDialogOpen = useSignal(false);
+  const gateDialogOpen = useSignal(false);
 
   // Two-way bind filter state to query params. The text filter is debounced
   // because it fires on every keystroke; the rest write through immediately.
@@ -92,6 +95,20 @@ export default function ScanDetailPage() {
     if (!model.detail.value?.scan.packageName) return;
     if (model.versions.value) return;
     void model.loadVersions();
+  });
+
+  // Load the workflow gate once the review completes — the gate only points at
+  // this scan after the pipeline succeeds (attach-last), so waiting for
+  // "complete" guarantees the by-scan lookup resolves.
+  useSignalEffect(() => {
+    if (!model.isWorkflowGate.value) return;
+    if (model.status.value !== "complete") return;
+    if (model.gateLoaded.value) return;
+    void model.loadGate();
+    const retryTimer = window.setInterval(() => {
+      if (!model.gateLoaded.peek()) void model.loadGate();
+    }, 2500);
+    return () => window.clearInterval(retryTimer);
   });
 
   const summary = useComputed(() => asPersistedSummary(model.detail.value?.scan.summaryJson));
@@ -200,6 +217,9 @@ export default function ScanDetailPage() {
   const hasRuleFindings = Boolean(detail?.findings.length);
   const workbenchGridClass = "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-4";
 
+  const isWorkflowGate = model.isWorkflowGate.value;
+  const gate = model.gate.value;
+
   const handleDecisionSubmit = async (decision: ScanDecision, reason: string | null) => {
     await model.setDecision(decision, reason);
     if (model.decisionStatus.peek() === "idle") {
@@ -207,16 +227,31 @@ export default function ScanDetailPage() {
     }
   };
 
+  const handleGateDecision = async (decision: WorkflowGateDecision, comment: string | null) => {
+    await model.decideGate(decision, comment);
+    if (model.gateDecisionStatus.peek() === "idle") {
+      gateDialogOpen.value = false;
+    }
+  };
+
+  // npm scans become decidable once complete; gate scans only while the gate is
+  // still pending (the decision is a one-way release/block of the GitHub job).
+  const onDecideClick = isWorkflowGate
+    ? gate?.status === "pending"
+      ? () => (gateDialogOpen.value = true)
+      : undefined
+    : detail?.scan.status === "complete"
+      ? () => (decisionDialogOpen.value = true)
+      : undefined;
+
   return (
     <PageShell>
-      <ScanDetailHeader
-        detail={detail}
-        onDecideClick={
-          detail?.scan.status === "complete" ? () => (decisionDialogOpen.value = true) : undefined
-        }
-      />
+      <ScanDetailHeader detail={detail} onDecideClick={onDecideClick} />
 
       {error ? <Alert tone="critical">{error}</Alert> : null}
+      {isWorkflowGate && detail ? (
+        <GateContextPanel gate={gate} packageName={detail.scan.packageName} />
+      ) : null}
       {detail?.scan.status === "failed" ? (
         <ScanFailureAlert errorJson={detail.scan.errorJson} />
       ) : null}
@@ -235,6 +270,7 @@ export default function ScanDetailPage() {
               diffCount={diffEntries.value.filter((entry) => entry.status !== "unchanged").length}
               findingsWithDiffStatus={findingsWithDiffStatus.value}
               usePersistedRiskSummary={model.isDefaultComparison.value || !compare}
+              isWorkflowGate={isWorkflowGate}
             />
 
             {detail.scan.packageName ? (
@@ -323,7 +359,7 @@ export default function ScanDetailPage() {
         ) : null
       ) : null}
 
-      {detail && detail.scan.status === "complete" ? (
+      {detail && detail.scan.status === "complete" && !isWorkflowGate ? (
         <DecisionDialog
           open={decisionDialogOpen.value}
           onClose={() => (decisionDialogOpen.value = false)}
@@ -333,6 +369,18 @@ export default function ScanDetailPage() {
           status={model.decisionStatus.value}
           error={model.decisionError.value}
           onSubmit={handleDecisionSubmit}
+        />
+      ) : null}
+
+      {detail && isWorkflowGate && gate ? (
+        <GateDecisionDialog
+          open={gateDialogOpen.value}
+          onClose={() => (gateDialogOpen.value = false)}
+          gate={gate}
+          packageName={detail.scan.packageName}
+          status={model.gateDecisionStatus.value}
+          error={model.gateDecisionError.value}
+          onSubmit={handleGateDecision}
         />
       ) : null}
     </PageShell>
@@ -378,7 +426,7 @@ function ScanDetailHeader({
           <LoadingLine size="inline">Loading saved review</LoadingLine>
         )}
       </div>
-      {onDecideClick ? (
+      {decision || onDecideClick ? (
         <div class="flex flex-wrap items-start gap-3">
           {decision ? (
             <div class="flex flex-col items-end gap-1">
@@ -392,9 +440,11 @@ function ScanDetailHeader({
               ) : null}
             </div>
           ) : null}
-          <Button variant={decision ? "secondary" : "primary"} onClick={onDecideClick}>
-            {decision ? "Update decision" : "Decide"}
-          </Button>
+          {onDecideClick ? (
+            <Button variant={decision ? "secondary" : "primary"} onClick={onDecideClick}>
+              {decision ? "Update decision" : "Decide"}
+            </Button>
+          ) : null}
         </div>
       ) : null}
     </header>

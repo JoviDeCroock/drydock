@@ -1,12 +1,13 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { createDb, ensurePersonalOrganization } from "../../server/db";
+import { createDb, createScanJob, ensurePersonalOrganization } from "../../server/db";
 import * as schema from "../../server/db/schema";
 import {
   GithubAppValidationError,
   createReleaseTarget,
   deleteReleaseTarget,
+  getGateForOrganization,
   getInstallationByExternalId,
   listInstallationsForOrganization,
   listReleaseTargetsForOrganization,
@@ -827,5 +828,212 @@ describe("github-app cleanup helpers", () => {
 
     const aListAfter = await listReleaseTargetsForOrganization(dbInstance, a.organizationId);
     expect(aListAfter).toHaveLength(0);
+  });
+});
+
+// Seeds a pending gate (installation + release target + gate row). Pass
+// `attachScan` with the org owner's user id to also create a real `scans` row
+// and link it via the gate's `scanId` FK — required for the by-scan lookups.
+async function seedGate(
+  organizationId: string,
+  overrides: {
+    status?: "pending" | "approved" | "rejected" | "errored";
+    decision?: "approved" | "rejected" | null;
+    attachScan?: { ownerUserId: string };
+  } = {},
+) {
+  const db = createDb(env.DB);
+  const now = new Date();
+  const installation = await seedInstallation(organizationId);
+  const runId = Math.floor(Math.random() * 1e6) + 1;
+  const releaseTarget = await createReleaseTarget(db, {
+    organizationId,
+    installationRowId: installation.id,
+    ecosystem: "pypi",
+    packageName: `pkg-${crypto.randomUUID().slice(0, 8)}`,
+    repositoryId: Math.floor(Math.random() * 1e6) + 1,
+    repositoryFullName: "octo/example",
+    workflowFilename: null,
+    environment: "pypi",
+    pypiTrustedPublisherEnvironment: "pypi",
+    createdByUserId: null,
+  });
+  const gateId = crypto.randomUUID();
+  let scanId: string | null = null;
+  if (overrides.attachScan) {
+    scanId = `scan_${crypto.randomUUID()}`;
+    await createScanJob(db, {
+      id: scanId,
+      stageId: `workflow-gate:${gateId}`,
+      organizationId,
+      ownerUserId: overrides.attachScan.ownerUserId,
+      source: "workflow_gate",
+    });
+  }
+  await db.insert(schema.githubWorkflowGates).values({
+    id: gateId,
+    organizationId,
+    installationRowId: installation.id,
+    releaseTargetId: releaseTarget.id,
+    deliveryId: crypto.randomUUID(),
+    repositoryId: releaseTarget.repositoryId,
+    repositoryFullName: "octo/example",
+    environment: "pypi",
+    runId,
+    deploymentId: 909,
+    deploymentCallbackUrl: `https://api.github.com/repos/octo/example/actions/runs/${runId}/deployment_protection_rule`,
+    eventAction: "requested",
+    status: overrides.status ?? "pending",
+    decision: overrides.decision ?? null,
+    scanId,
+    requestedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+  return { gateId, scanId, installation, releaseTarget, runId };
+}
+
+describe("github-app workflow-gate decision route", () => {
+  test("rejects a decision that is not approved/rejected", async () => {
+    const { userId, organizationId } = await seedUser();
+    const { gateId } = await seedGate(organizationId);
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "maybe" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: "decision must be 'approved' or 'rejected'",
+    });
+  });
+
+  test("rejects a comment that exceeds the length limit", async () => {
+    const { userId, organizationId } = await seedUser();
+    const { gateId } = await seedGate(organizationId);
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", comment: "x".repeat(501) },
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: "comment must be <= 500 characters",
+    });
+  });
+
+  test("returns 404 for a gate the organization does not own", async () => {
+    const caller = await seedUser();
+    const other = await seedUser();
+    const { gateId } = await seedGate(other.organizationId);
+    globalThis.fetch = vi.fn();
+
+    const res = await callGithubAppRoute(
+      buildTestApp(caller.userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved" },
+    );
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ error: "not found" });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  test("decides a pending gate once, posts to GitHub, and 409s a double-submit", async () => {
+    const { userId, organizationId } = await seedUser();
+    const { gateId } = await seedGate(organizationId);
+    const decisionCalls: { state: string }[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        decisionCalls.push((await request.json()) as { state: string });
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected fetch in decision test: ${request.url}`);
+    });
+
+    const first = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", comment: "ship it" },
+    );
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({
+      gate: { status: "approved", decision: "approved" },
+    });
+
+    const stored = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
+    expect(stored?.status).toBe("approved");
+    expect(decisionCalls).toHaveLength(1);
+    expect(decisionCalls[0].state).toBe("approved");
+
+    const second = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "rejected" },
+    );
+    expect(second.status).toBe(409);
+    expect(await second.json()).toMatchObject({ error: "gate has already been decided" });
+    // The CAS lost the second transition, so no extra callback is posted.
+    expect(decisionCalls).toHaveLength(1);
+  });
+});
+
+describe("github-app workflow-gate by-scan route", () => {
+  test("returns 404 when no gate references the scan", async () => {
+    const { userId } = await seedUser();
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "GET",
+      `/api/v1/github-app/workflow-gates/by-scan/scan_${crypto.randomUUID()}`,
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ error: "not found" });
+  });
+
+  test("returns the gate for its scan without exposing the deployment callback URL", async () => {
+    const { userId, organizationId } = await seedUser();
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "GET",
+      `/api/v1/github-app/workflow-gates/by-scan/${scanId}`,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { gate: Record<string, unknown> };
+    expect(body.gate.id).toBe(gateId);
+    expect(body.gate.scanId).toBe(scanId);
+    expect(body.gate).not.toHaveProperty("deploymentCallbackUrl");
+  });
+
+  test("does not leak gates across organizations", async () => {
+    const caller = await seedUser();
+    const other = await seedUser();
+    const { scanId } = await seedGate(other.organizationId, {
+      attachScan: { ownerUserId: other.userId },
+    });
+
+    const res = await callGithubAppRoute(
+      buildTestApp(caller.userId),
+      "GET",
+      `/api/v1/github-app/workflow-gates/by-scan/${scanId}`,
+    );
+    expect(res.status).toBe(404);
   });
 });

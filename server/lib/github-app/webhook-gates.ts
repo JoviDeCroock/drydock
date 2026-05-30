@@ -105,6 +105,24 @@ export async function getGateForOrganization(
   return row ? readGateRow(row) : null;
 }
 
+export async function getGateByScanId(
+  db: AppDb,
+  organizationId: string,
+  scanId: string,
+): Promise<WorkflowGateRecord | null> {
+  const [row] = await db
+    .select()
+    .from(githubWorkflowGates)
+    .where(
+      and(
+        eq(githubWorkflowGates.scanId, scanId),
+        eq(githubWorkflowGates.organizationId, organizationId),
+      ),
+    )
+    .limit(1);
+  return row ? readGateRow(row) : null;
+}
+
 export async function attachScanToGate(db: AppDb, gateId: string, scanId: string): Promise<void> {
   const now = new Date();
   await db
