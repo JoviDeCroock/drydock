@@ -14,17 +14,15 @@ import {
 } from "./adapters/pypi/index";
 import {
   fetchReleaseBundleForGate,
-  WorkflowArtifactError,
+  getGateForOrganization,
+  type GithubAppConfig,
+  markGateErrored,
   type ResolvedReleaseBundle,
   type ResolvedReleaseFile,
+  WorkflowArtifactError,
   type WorkflowArtifactSource,
-} from "./github-app-artifacts";
-import { type GithubAppConfig } from "./github-app";
-import {
-  getGateForOrganization,
-  markGateErrored,
   type WorkflowGateRecord,
-} from "./github-app-webhook";
+} from "./github-app";
 import { describeOperationalError, emitOperationalEvent } from "./observability";
 import { downloadInSandboxInline, type DownloadResult } from "./sandbox";
 

@@ -9,15 +9,17 @@ import {
 } from "../db";
 import { githubAppInstallations } from "../db/schema";
 import { pypiAdapter } from "./adapters/pypi/index";
-import { WorkflowArtifactError } from "./github-app-artifacts";
-import { GithubAppConfigError, readGithubAppConfig, type GithubAppConfig } from "./github-app";
 import {
   attachScanToGate,
+  GithubAppConfigError,
+  type GithubAppConfig,
   getGateForOrganization,
   markGateDecided,
   postDeploymentProtectionDecision,
+  readGithubAppConfig,
+  WorkflowArtifactError,
   type WorkflowGateRecord,
-} from "./github-app-webhook";
+} from "./github-app";
 import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
 import { preparePyPiReleaseCandidateForGate } from "./release-candidate-pypi";
 import type { RiskLevel } from "./review";

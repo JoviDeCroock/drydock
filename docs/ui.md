@@ -56,7 +56,7 @@ Reach for these before writing one-off classes:
 
 ## Release diff workbench
 
-The scan detail page (`src/pages/Dashboard/ScanDetail.tsx`) hosts the release diff workbench. The layout is intentionally document-shaped rather than dashboard-card-heavy:
+The scan detail page (`src/pages/Dashboard/ScanDetail/index.tsx`) hosts the release diff workbench. The layout is intentionally document-shaped rather than dashboard-card-heavy:
 
 1. Completed reports lead with a compact recommendation block: block manual approval, review carefully, package context only, or likely safe. The recommendation is derived from persisted release risk rather than deterministic finding count alone, so a complete assistant review that raises release risk cannot be shown as clear just because deterministic release-delta findings are empty. Its copy keeps npm approval outside the product.
 2. The report summary is a compact badge row plus mono metadata line. Summary tiles are avoided here so status, stage ID, file counts, assistant assessment, and report version do not compete with the diff.

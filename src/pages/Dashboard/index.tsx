@@ -3,6 +3,7 @@ import { useEffect } from "preact/hooks";
 import { useSignal, useModel, useSignalEffect } from "@preact/signals";
 import { useLocation } from "preact-iso";
 import { rememberDashboardReturnUrl, useQuerySignal } from "../../lib/query-state";
+import { pluralize } from "../../lib/format";
 import { sessionModel } from "../../models/auth";
 import { NpmConnectionModel } from "../../models/npm-connection";
 import { OrganizationModel } from "../../models/organization";
@@ -423,10 +424,6 @@ function Th({ children }: { children: ComponentChildren }) {
 
 function Td({ children, class: className }: { children: ComponentChildren; class?: string }) {
   return <td class={`px-4 py-2.5 align-middle ${className || ""}`}>{children}</td>;
-}
-
-function pluralize(word: string, count: number) {
-  return count === 1 ? word : `${word}s`;
 }
 
 function ScanFreshnessIndicator({ at }: { at: number }) {

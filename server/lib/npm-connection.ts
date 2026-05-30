@@ -1,5 +1,6 @@
 import type { AppDb } from "../db";
 import { getNpmConnection, markNpmConnectionUsed } from "../db";
+import { base64UrlDecode, base64UrlEncode } from "./crypto-utils";
 import { errorMessage } from "./errors";
 
 const DEFAULT_REGISTRY = "https://registry.npmjs.org";
@@ -340,18 +341,4 @@ async function encryptionKey(env: Cloudflare.Env, version: "v0" | "v1") {
 async function tokenFingerprint(token: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
   return base64UrlEncode(new Uint8Array(digest));
-}
-
-function base64UrlEncode(bytes: Uint8Array) {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-
-function base64UrlDecode(value: string) {
-  const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((value.length + 3) % 4);
-  const binary = atob(padded);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return bytes;
 }
