@@ -8,6 +8,7 @@ import {
   getScan,
   markScanArtifactBacked,
   persistScan,
+  SCAN_ARTIFACT_BACKFILL_MIN_COMPLETED_AGE_MS,
 } from "../../server/db";
 import * as schema from "../../server/db/schema";
 import { sha256Hex, stableJson } from "../../server/lib/canonical-json";
@@ -81,6 +82,16 @@ async function seedCompletedScan(
     report: { version: 1, digest: "report-digest" },
   });
   return scanId;
+}
+
+async function ageScanForBackfill(scanId: string): Promise<void> {
+  const db = createDb(env.DB);
+  await db
+    .update(schema.scans)
+    .set({
+      completedAt: new Date(Date.now() - SCAN_ARTIFACT_BACKFILL_MIN_COMPLETED_AGE_MS - 60_000),
+    })
+    .where(eq(schema.scans.id, scanId));
 }
 
 /** Env shim exposing only the bindings the backfill sweep reads. */
@@ -280,6 +291,22 @@ describe("R2 scan artifact backfill", () => {
     expect(result).toEqual({ considered: 0, written: 0, failed: 0 });
   });
 
+  test("skips freshly completed scans so live dual-write can finish", async () => {
+    const owner = await seedUser();
+    const scanId = await seedCompletedScan(owner);
+    const db = createDb(env.DB);
+
+    const result = await runArtifactBackfillSweep(backfillEnv(true), db, { batchSize: 100 });
+    expect(result.considered).toBe(0);
+
+    const [row] = await db
+      .select({ artifactStorageVersion: schema.scans.artifactStorageVersion })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId))
+      .limit(1);
+    expect(row?.artifactStorageVersion).toBeNull();
+  });
+
   test("backfills completed scans in idempotent batches", async () => {
     const db = createDb(env.DB);
     // Drain any candidates left behind by earlier tests so the batch counts
@@ -296,6 +323,7 @@ describe("R2 scan artifact backfill", () => {
       await seedCompletedScan(owner),
       await seedCompletedScan(owner),
     ];
+    for (const scanId of scanIds) await ageScanForBackfill(scanId);
 
     // First batch of two leaves one candidate behind.
     const first = await runArtifactBackfillSweep(backfillEnv(true), db, { batchSize: 2 });

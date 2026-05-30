@@ -307,14 +307,19 @@ export interface ScanArtifactBackfillCandidate {
   files: Array<{ path: string; textSample: string | null }>;
 }
 
+export const SCAN_ARTIFACT_BACKFILL_MIN_COMPLETED_AGE_MS = 60 * 60 * 1000;
+
 /**
- * Completed scans that have not yet been written to R2, oldest first. Backfill
- * is naturally idempotent: a successful write sets `artifact_storage_version`,
- * which removes the scan from this candidate set on the next sweep.
+ * Older completed scans that have not yet been written to R2, oldest first.
+ * The completed-at age gate keeps the catch-up sweep away from scans whose live
+ * pipeline dual-write may still be in flight. Backfill is naturally idempotent:
+ * a successful write sets `artifact_storage_version`, which removes the scan
+ * from this candidate set on the next sweep.
  */
 export async function listScanArtifactBackfillCandidates(
   db: AppDb,
   limit: number,
+  completedBefore = new Date(Date.now() - SCAN_ARTIFACT_BACKFILL_MIN_COMPLETED_AGE_MS),
 ): Promise<ScanArtifactBackfillCandidate[]> {
   const scanRows = await db
     .select({
@@ -330,6 +335,8 @@ export async function listScanArtifactBackfillCandidates(
         eq(scans.status, "complete"),
         isNull(scans.artifactStorageVersion),
         isNotNull(scans.organizationId),
+        isNotNull(scans.completedAt),
+        lt(scans.completedAt, completedBefore),
       ),
     )
     .orderBy(asc(scans.createdAt), asc(scans.id))

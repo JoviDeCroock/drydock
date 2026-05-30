@@ -108,7 +108,10 @@ authoritative in D1 until compaction, so finding-annotation logic is unchanged.
 
 `runArtifactBackfillSweep` (in the Worker `scheduled` handler, after the
 staged-publish discovery cron) writes one batch of old completed scans that have
-no `artifact_storage_version` yet, oldest first. It is **gated behind
+no `artifact_storage_version` yet, oldest first. Candidates must have
+`completed_at` at least one hour in the past so the catch-up sweep does not race
+the live pipeline's same-key dual-write for a freshly completed scan. It is
+**gated behind
 `ARTIFACT_BACKFILL`** and off by default. Backfill is naturally idempotent: a
 successful write sets `artifact_storage_version`, removing the scan from the next
 sweep's candidate set, so repeated runs converge without double-writing. The
@@ -117,7 +120,8 @@ sweep logs `scan.artifact.backfill_failed` per failure and a
 never breaks the discovery cron.
 
 `listScanArtifactBackfillCandidates` selects `status = "complete"` scans where
-`artifact_storage_version IS NULL` and `organization_id IS NOT NULL`. The
+`artifact_storage_version IS NULL`, `organization_id IS NOT NULL`, and
+`completed_at` is older than the one-hour cutoff. The
 `scans_artifact_backfill_idx` index (`status, artifact_storage_version,
 created_at`) backs the candidate query.
 
