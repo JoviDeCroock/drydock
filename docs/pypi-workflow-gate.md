@@ -157,6 +157,8 @@ organization (`x-organization-id` header to scope writes).
   `{ decision: "approved" | "rejected", comment? }` and releases/blocks the held
   GitHub job. `markGateDecided` is the single CAS out of `pending`, so a
   double-submit (or a race with the fail-closed artifact reject) returns 409.
+  Approval requires the gate to be linked to a completed `workflow_gate` scan;
+  rejection is allowed without one so maintainers can still fail closed.
   Delivery to GitHub is scheduled immediately after the CAS, before best-effort
   scan/audit mirroring, and is handed to the gate job (over `SCAN_QUEUE`, with
   inline fallback) so the decided gate posts its stored decision. The decision is
@@ -372,7 +374,9 @@ gate still `pending`, renders approve/reject controls wired to
 gate-targeted (it talks about releasing/blocking the held GitHub job rather than
 publishing to npm) but the deterministic findings, package diff, and risk
 surface are identical to npm reviews. A decided gate shows its stored decision
-and comment instead of the controls.
+and comment instead of the controls. Failed review scans also resolve their
+linked gate so the workbench can show the held GitHub job context instead of a
+detached failure.
 
 ### Resolving artifacts for a pending gate
 

@@ -97,12 +97,12 @@ export default function ScanDetailPage() {
     void model.loadVersions();
   });
 
-  // Load the workflow gate once the review completes — the gate only points at
-  // this scan after the pipeline succeeds (attach-last), so waiting for
-  // "complete" guarantees the by-scan lookup resolves.
+  // Load the workflow gate once the review reaches a terminal state. Completed
+  // and failed scans may both be linked to the pending gate so the workbench can
+  // show the held GitHub job context.
   useSignalEffect(() => {
     if (!model.isWorkflowGate.value) return;
-    if (model.status.value !== "complete") return;
+    if (model.status.value !== "complete" && model.status.value !== "failed") return;
     if (model.gateLoaded.value) return;
     void model.loadGate();
     const retryTimer = window.setInterval(() => {

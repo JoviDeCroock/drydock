@@ -1,7 +1,13 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { createDb, createScanJob, ensurePersonalOrganization } from "../../server/db";
+import {
+  createDb,
+  createScanJob,
+  ensurePersonalOrganization,
+  markScanFailed,
+  persistScan,
+} from "../../server/db";
 import * as schema from "../../server/db/schema";
 import {
   GithubAppValidationError,
@@ -893,6 +899,30 @@ async function seedGate(
   return { gateId, scanId, installation, releaseTarget, runId };
 }
 
+async function completeWorkflowGateScan(input: {
+  organizationId: string;
+  ownerUserId: string;
+  gateId: string;
+  scanId: string;
+}) {
+  await persistScan(createDb(env.DB), {
+    id: input.scanId,
+    stageId: `workflow-gate:${input.gateId}`,
+    organizationId: input.organizationId,
+    ownerUserId: input.ownerUserId,
+    packageJson: { name: "pkg", version: "1.0.0" },
+    previousPackageJson: null,
+    risk: "low",
+    status: "complete",
+    summary: { diff: [] },
+    ai: null,
+    files: [],
+    previousFiles: [],
+    diff: [],
+    findings: [],
+  });
+}
+
 describe("github-app workflow-gate decision route", () => {
   test("rejects a decision that is not approved/rejected", async () => {
     const { userId, organizationId } = await seedUser();
@@ -946,9 +976,61 @@ describe("github-app workflow-gate decision route", () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  test("decides a pending gate once, posts to GitHub, and 409s a double-submit", async () => {
+  test("rejects approval when the gate has no completed review scan", async () => {
     const { userId, organizationId } = await seedUser();
     const { gateId } = await seedGate(organizationId);
+    globalThis.fetch = vi.fn();
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved" },
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      error: "approval requires a completed workflow-gate review",
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  test("rejects approval when the linked review scan failed", async () => {
+    const { userId, organizationId } = await seedUser();
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await markScanFailed(createDb(env.DB), scanId!, organizationId, {
+      code: "review_failed",
+      message: "review failed",
+    });
+    globalThis.fetch = vi.fn();
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved" },
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      error: "approval requires a completed workflow-gate review",
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  test("decides a pending gate once, posts to GitHub, and 409s a double-submit", async () => {
+    const { userId, organizationId } = await seedUser();
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await completeWorkflowGateScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      scanId: scanId!,
+    });
     const decisionCalls: { state: string }[] = [];
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);

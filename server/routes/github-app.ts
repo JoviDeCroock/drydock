@@ -3,6 +3,7 @@ import {
   RateLimitError,
   createDb,
   enforceRateLimit,
+  getScan,
   recordScanDecision,
   recordScanEvent,
 } from "../db";
@@ -439,6 +440,15 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   const gateId = c.req.param("gateId");
   const existing = await getGateForOrganization(db, organizationId, gateId);
   if (!existing) return c.json({ error: "not found" }, 404);
+  if (decision === "approved") {
+    if (!existing.scanId) {
+      return c.json({ error: "approval requires a completed workflow-gate review" }, 409);
+    }
+    const scan = await getScan(db, existing.scanId, organizationId);
+    if (!scan || scan.scan.source !== "workflow_gate" || scan.scan.status !== "complete") {
+      return c.json({ error: "approval requires a completed workflow-gate review" }, 409);
+    }
+  }
 
   const reportUrl = buildReportUrl(c.env, existing.scanId);
   const decided = await markGateDecided(db, {
