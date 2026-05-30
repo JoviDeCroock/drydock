@@ -3,6 +3,7 @@ import { ErrorBoundary, LocationProvider, Route, Router, lazy, prerender as ssr 
 import "./style.css";
 
 const LandingPage = lazy(() => import("./pages/Landing"));
+const DocsPage = lazy(() => import("./pages/Docs"));
 const LoginPage = lazy(() => import("./pages/Auth/Login"));
 const RegisterPage = lazy(() => import("./pages/Auth/Register"));
 const DashboardPage = lazy(() => import("./pages/Dashboard"));
@@ -17,6 +18,7 @@ export function App() {
       <ErrorBoundary onError={(error) => console.error(error)}>
         <Router>
           <Route path="/" component={LandingPage} />
+          <Route path="/docs" component={DocsPage} />
           <Route path="/login" component={LoginPage} />
           <Route path="/register" component={RegisterPage} />
           <Route path="/dashboard" component={DashboardPage} />
@@ -35,7 +37,10 @@ export function isPrerenderedRoute(pathname: string) {
     pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
 
   return (
-    canonicalPathname === "/" || canonicalPathname === "/login" || canonicalPathname === "/register"
+    canonicalPathname === "/" ||
+    canonicalPathname === "/login" ||
+    canonicalPathname === "/register" ||
+    canonicalPathname === "/docs"
   );
 }
 
@@ -51,5 +56,17 @@ if (typeof window !== "undefined") {
 }
 
 export async function prerender(data: Record<string, unknown>) {
-  return await ssr(<App {...data} />);
+  const result = await ssr(<App {...data} />);
+
+  // The prerender crawler follows every rendered <a href> as a route to prerender.
+  // Keep it to the statically prerendered set so conditional links (e.g. the docs
+  // page's authenticated "Open settings" link) don't generate stray HTML.
+  const links = new Set<string>();
+  for (const href of result.links ?? []) {
+    if (isPrerenderedRoute(new URL(href, "http://localhost").pathname)) {
+      links.add(href);
+    }
+  }
+
+  return { ...result, links };
 }
