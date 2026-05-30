@@ -1,9 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { useModel, useSignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
-import { isGithubAppUiEnabled } from "../../lib/github-app-ui";
 import { sessionModel } from "../../models/auth";
-import { OrganizationModel } from "../../models/organization";
 import {
   GithubAppModel,
   type CallbackError,
@@ -30,7 +28,6 @@ type CallbackPhase = "checking-session" | "verifying" | "success" | "error";
 export default function GithubAppCallbackPage() {
   const location = useLocation();
   const githubApp = useModel(GithubAppModel);
-  const organizations = useModel(OrganizationModel);
   const phase = useSignal<CallbackPhase>("checking-session");
   const queryError = useSignal<string | null>(null);
 
@@ -43,12 +40,6 @@ export default function GithubAppCallbackPage() {
         // Preserve return path so the user lands back here after login.
         const returnTo = `${SETTINGS_PATH}/github-app/callback${window.location.search}`;
         location.route(`/login?returnTo=${encodeURIComponent(returnTo)}`, true);
-        return;
-      }
-      await organizations.load();
-      if (cancelled) return;
-      if (!isGithubAppUiEnabled(organizations.activeOrganizationId.peek())) {
-        location.route(SETTINGS_PATH, true);
         return;
       }
 
