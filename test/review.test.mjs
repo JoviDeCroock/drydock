@@ -453,6 +453,28 @@ describe("review", () => {
     );
   });
 
+  test("matches glob entries in package.json files allowlist", () => {
+    const staged = [
+      {
+        path: "package.json",
+        size: 77,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({ name: "pkg", version: "1.0.1", files: ["dist/*.js"] }),
+      },
+      { path: "dist/index.js", size: 20, sha256: "dist-js", flags: [], textSample: "export {};" },
+      { path: "dist/style.css", size: 9, sha256: "dist-css", flags: [], textSample: "body {}" },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({ file: "dist/style.css", ruleId: "file.outside-files-list" }),
+    );
+    expect(findings).not.toContainEqual(
+      expect.objectContaining({ file: "dist/index.js", ruleId: "file.outside-files-list" }),
+    );
+  });
+
   test("flags newly added optional dependencies", () => {
     const stagedPackageJsonText = `{
   "name": "pkg",

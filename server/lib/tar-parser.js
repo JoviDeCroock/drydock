@@ -361,6 +361,7 @@ export async function readZipArchive(buffer, maxFiles, maxBytesPerFile, maxArchi
   const files = [];
   let expandedBytes = 0;
   let offset = centralDirectoryOffset;
+  const pathDecoder = new TextDecoder("utf-8", { fatal: false });
   for (let index = 0; index < entryCount; index += 1) {
     if (offset + 46 > bytes.length || readUint32Le(bytes, offset) !== 0x02014b50) {
       throw new Error("invalid zip central directory");
@@ -376,9 +377,7 @@ export async function readZipArchive(buffer, maxFiles, maxBytesPerFile, maxArchi
     const fileNameEnd = fileNameStart + fileNameLength;
     if (fileNameEnd > bytes.length) throw new Error("truncated zip filename");
 
-    const rawPath = new TextDecoder("utf-8", { fatal: false }).decode(
-      bytes.subarray(fileNameStart, fileNameEnd),
-    );
+    const rawPath = pathDecoder.decode(bytes.subarray(fileNameStart, fileNameEnd));
     const path = normalizeZipPath(rawPath);
     offset = fileNameEnd + extraLength + commentLength;
 

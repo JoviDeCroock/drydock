@@ -32,10 +32,28 @@ function packageFilesEntryMatches(entry: string, path: string): boolean {
   return path === normalized || path.startsWith(`${normalized}/`);
 }
 
+const GLOB_PATTERN_CACHE_LIMIT = 128;
+const globPatternCache = new Map<string, RegExp>();
+
 function globLikePackageFilesEntryMatches(entry: string, path: string): boolean {
+  let pattern = globPatternCache.get(entry);
+  if (pattern) {
+    globPatternCache.delete(entry);
+    globPatternCache.set(entry, pattern);
+    return pattern.test(path);
+  }
+
   const escaped = entry
     .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
     .replace(/\*\*/g, ".*")
     .replace(/\*/g, "[^/]*");
-  return new RegExp(`^${escaped}$`).test(path);
+  pattern = new RegExp(`^${escaped}$`);
+
+  if (globPatternCache.size >= GLOB_PATTERN_CACHE_LIMIT) {
+    const oldestEntry = globPatternCache.keys().next().value;
+    if (oldestEntry) globPatternCache.delete(oldestEntry);
+  }
+  globPatternCache.set(entry, pattern);
+
+  return pattern.test(path);
 }
