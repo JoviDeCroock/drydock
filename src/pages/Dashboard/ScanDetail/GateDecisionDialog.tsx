@@ -63,9 +63,7 @@ export function GateContextPanel({
             for <code>{packageName}</code>
           </>
         ) : null}
-        . Drydock reviewed the release candidate it built — approving releases the held job and
-        publishing proceeds through PyPI Trusted Publishing (OIDC). Drydock never holds PyPI
-        credentials and never uploads the package itself.
+        .
       </p>
       {gate ? (
         <MonoDetail
