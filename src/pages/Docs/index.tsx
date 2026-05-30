@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { Alert, Badge, Card, Eyebrow, LinkButton, PageShell, SectionLabel } from "../../components";
+import { Alert, Badge, Eyebrow, LinkButton, PageShell, SectionLabel } from "../../components";
 
 export default function DocsPage() {
   return (
@@ -123,27 +123,6 @@ export default function DocsPage() {
               registry.
             </Prose>
           </Subsection>
-
-          <TrustBoundary
-            items={[
-              <>
-                The npm token only attaches to allowed registry endpoints (staged tarball, staged
-                details, registry metadata). The gateway is the single chokepoint.
-              </>,
-              <>
-                The sandbox sees package bytes, not credentials. It cannot reach the internet except
-                through the gateway, and the gateway refuses to attach auth on arbitrary origins.
-              </>,
-              <>
-                Reports persist redacted evidence: file paths, bounded text samples, deterministic
-                finding records. Raw tarballs are not retained.
-              </>,
-              <>
-                Deterministic findings are authoritative. Nothing downstream — including any future
-                AI commentary — can downgrade them.
-              </>,
-            ]}
-          />
         </section>
 
         <section id="workflow-gating" class="flex flex-col gap-8 scroll-mt-6">
@@ -292,30 +271,6 @@ export default function DocsPage() {
               ]}
             />
           </Subsection>
-
-          <TrustBoundary
-            items={[
-              <>
-                Drydock never holds a PyPI credential or an OIDC token. The publish job exchanges
-                its own OIDC identity with PyPI directly.
-              </>,
-              <>
-                The release-target mapping is unique per{" "}
-                <Code>(organization, repository, environment)</Code> so a webhook can never
-                ambiguously resolve to two organizations.
-              </>,
-              <>
-                Every artifact in the bundle must agree on the normalized package name and version,
-                so a foreign or version-skewed wheel can't slip into the release set. A bundle whose
-                artifacts can't be identified is rejected, not guessed.
-              </>,
-              <>
-                Installation lifecycle events (<Code>suspend</Code>, <Code>unsuspend</Code>,{" "}
-                <Code>deleted</Code>) update the installation row, so later deliveries on a revoked
-                install fail closed automatically.
-              </>,
-            ]}
-          />
         </section>
 
         <section class="flex flex-col gap-4 border-t border-border pt-10">
@@ -362,21 +317,6 @@ function Steps({ items }: { items: ComponentChildren[] }) {
         </li>
       ))}
     </ol>
-  );
-}
-
-function TrustBoundary({ items }: { items: ComponentChildren[] }) {
-  return (
-    <Card class="p-5 flex flex-col gap-3">
-      <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
-        Trust boundary
-      </span>
-      <ul class="list-disc pl-5 m-0 flex flex-col gap-2 text-[13px] text-ink-muted leading-[1.55] marker:text-ink-subtle">
-        {items.map((item, index) => (
-          <li key={index}>{item}</li>
-        ))}
-      </ul>
-    </Card>
   );
 }
 
