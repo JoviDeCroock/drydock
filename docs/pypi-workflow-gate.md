@@ -515,11 +515,13 @@ and the consumer re-checks gate status, so a re-enqueue is safe.
 5. Resolve the organization owner (so the persisted scan has an owner). A
    missing owner records `review_failed` and leaves the gate pending.
 6. Create a scan job (`source: "workflow_gate"`, synthetic
-   `stageId: "workflow-gate:<gateId>"`) and run `runScanPipeline` with the
-   `pypiAdapter` over the verified manifest + artifacts. A pipeline throw marks
-   the scan failed, links that failed scan to the gate so the workbench can
-   resolve gate context, records `review_failed`, and leaves the gate pending;
-   a later retry can replace that link with a completed scan.
+   `stageId: "workflow-gate:<gateId>"`), claim the gate's `scanId` with a CAS
+   against the scan link the worker observed, and run `runScanPipeline` with the
+   `pypiAdapter` over the verified manifest + artifacts. If another delivery
+   already claimed the gate, the worker deletes its just-created pending scan
+   and exits. A pipeline throw marks the linked scan failed, records
+   `review_failed`, and leaves the gate pending; a later retry can replace that
+   failed link with a completed scan.
 7. Compute an **advisory** recommendation from the release risk
    (`recommendationForReleaseRisk`: `high`/`critical` → `rejected`, otherwise
    `approved`) and record `github_workflow_gate.reviewed` with it. Then link the

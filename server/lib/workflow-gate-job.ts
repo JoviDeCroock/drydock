@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import {
   createDb,
   createScanJob,
+  deletePendingScanJob,
   getOrganizationOwnerUserId,
   markScanFailed,
   recordScanEvent,
@@ -220,6 +221,17 @@ export async function executeWorkflowGateJob(
     ownerUserId,
     source: "workflow_gate",
   });
+  const claimedGate = await attachScanToGate(db, gate.id, scanId, gate.scanId);
+  if (!claimedGate) {
+    await deletePendingScanJob(db, scanId, organizationId);
+    emitOperationalEvent("info", "github_workflow_gate.job_skipped", {
+      organizationId,
+      gateId,
+      scanId,
+      reason: "scan_claim_lost",
+    });
+    return;
+  }
 
   let result;
   try {
@@ -237,10 +249,6 @@ export async function executeWorkflowGateJob(
   } catch (err) {
     const safe = classifyScanError(err);
     await markScanFailed(db, scanId, organizationId, safe);
-    // The scan is already visible to the organization. Keep the gate linked so
-    // the workbench can resolve gate context for the failed review instead of
-    // leaving a detached workflow-gate scan behind.
-    await attachScanToGate(db, gate.id, scanId);
     await recordScanEvent(db, {
       organizationId,
       actorUserId: ownerUserId,
@@ -277,10 +285,10 @@ export async function executeWorkflowGateJob(
     },
   });
 
-  // Link the gate to its completed review and leave it PENDING. A maintainer
+  // Keep the completed review linked and leave the gate PENDING. A maintainer
   // drives the decision from the workbench; the recommendation above is
   // advisory.
-  await attachScanToGate(db, gate.id, scanId);
+  await attachScanToGate(db, gate.id, scanId, scanId);
 
   emitOperationalEvent("info", "github_workflow_gate.review_ready", {
     organizationId,

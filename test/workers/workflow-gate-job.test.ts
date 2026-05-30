@@ -1,11 +1,12 @@
 import { createExecutionContext, env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
-import { createDb, ensurePersonalOrganization, getScan } from "../../server/db";
+import { createDb, createScanJob, ensurePersonalOrganization, getScan } from "../../server/db";
 import * as schema from "../../server/db/schema";
 import { eq } from "drizzle-orm";
 import {
   createReleaseTarget,
+  attachScanToGate,
   getGateForOrganization,
   markGateDecided,
   upsertInstallation,
@@ -390,6 +391,48 @@ describe("recommendationForReleaseRisk", () => {
     expect(recommendationForReleaseRisk("critical")).toBe("rejected");
     expect(recommendationForReleaseRisk("low")).toBe("approved");
     expect(recommendationForReleaseRisk("medium")).toBe("approved");
+  });
+});
+
+describe("workflow gate scan attachment", () => {
+  test("claims a pending gate only when the observed scan link still matches", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9210",
+      repositoryId: 72011,
+      runId: 16161,
+    });
+    const db = createDb(env.DB);
+    const firstScanId = crypto.randomUUID();
+    const secondScanId = crypto.randomUUID();
+    for (const scanId of [firstScanId, secondScanId]) {
+      await createScanJob(db, {
+        id: scanId,
+        stageId: `workflow-gate:${seeded.gateId}`,
+        organizationId: seeded.organizationId,
+        ownerUserId: seeded.userId,
+        source: "workflow_gate",
+      });
+    }
+
+    await expect(attachScanToGate(db, seeded.gateId, firstScanId, null)).resolves.toBe(true);
+    await expect(attachScanToGate(db, seeded.gateId, secondScanId, null)).resolves.toBe(false);
+
+    const gateAfterLostClaim = await getGateForOrganization(
+      db,
+      seeded.organizationId,
+      seeded.gateId,
+    );
+    expect(gateAfterLostClaim?.scanId).toBe(firstScanId);
+    await expect(attachScanToGate(db, seeded.gateId, secondScanId, firstScanId)).resolves.toBe(
+      true,
+    );
+
+    const gateAfterRetryClaim = await getGateForOrganization(
+      db,
+      seeded.organizationId,
+      seeded.gateId,
+    );
+    expect(gateAfterRetryClaim?.scanId).toBe(secondScanId);
   });
 });
 

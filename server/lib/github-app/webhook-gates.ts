@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { AppDb } from "../../db";
 import { githubWorkflowGates } from "../../db/schema";
 import type { InstallationRecord, ReleaseTargetRecord } from "./persistence";
@@ -123,12 +123,30 @@ export async function getGateByScanId(
   return row ? readGateRow(row) : null;
 }
 
-export async function attachScanToGate(db: AppDb, gateId: string, scanId: string): Promise<void> {
+export async function attachScanToGate(
+  db: AppDb,
+  gateId: string,
+  scanId: string,
+  expectedPreviousScanId?: string | null,
+): Promise<boolean> {
   const now = new Date();
-  await db
+  const conditions = [
+    eq(githubWorkflowGates.id, gateId),
+    eq(githubWorkflowGates.status, "pending"),
+  ];
+  if (expectedPreviousScanId !== undefined) {
+    conditions.push(
+      expectedPreviousScanId === null
+        ? isNull(githubWorkflowGates.scanId)
+        : eq(githubWorkflowGates.scanId, expectedPreviousScanId),
+    );
+  }
+  const updated = await db
     .update(githubWorkflowGates)
     .set({ scanId, updatedAt: now })
-    .where(and(eq(githubWorkflowGates.id, gateId), eq(githubWorkflowGates.status, "pending")));
+    .where(and(...conditions))
+    .returning({ id: githubWorkflowGates.id });
+  return updated.length > 0;
 }
 
 interface DecideGateInput {
