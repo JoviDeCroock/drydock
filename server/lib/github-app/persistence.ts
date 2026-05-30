@@ -27,12 +27,9 @@ export interface ReleaseTargetRecord {
   organizationId: string;
   installationRowId: string;
   ecosystem: SupportedEcosystem;
-  packageName: string;
   repositoryId: number;
   repositoryFullName: string;
-  workflowFilename: string | null;
   environment: string;
-  pypiTrustedPublisherEnvironment: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -178,12 +175,9 @@ export interface CreateReleaseTargetInput {
   organizationId: string;
   installationRowId: string;
   ecosystem: SupportedEcosystem;
-  packageName: string;
   repositoryId: number;
   repositoryFullName: string;
-  workflowFilename?: string | null;
   environment: string;
-  pypiTrustedPublisherEnvironment: string;
   createdByUserId: string | null;
 }
 
@@ -192,11 +186,7 @@ export async function createReleaseTarget(
   input: CreateReleaseTargetInput,
 ): Promise<ReleaseTargetRecord> {
   validateReleaseTargetShape(input);
-  const packageName = normalizePackageName(input.ecosystem, input.packageName);
   const environment = normalizeGithubEnvironmentName(input.environment);
-  const pypiTrustedPublisherEnvironment = normalizeGithubEnvironmentName(
-    input.pypiTrustedPublisherEnvironment,
-  );
   const installation = await getInstallationForOrganization(
     db,
     input.organizationId,
@@ -223,23 +213,14 @@ export async function createReleaseTarget(
       organizationId: input.organizationId,
       installationRowId: input.installationRowId,
       ecosystem: input.ecosystem,
-      packageName,
       repositoryId: input.repositoryId,
       repositoryFullName: input.repositoryFullName,
-      workflowFilename: input.workflowFilename?.trim() || null,
       environment,
-      pypiTrustedPublisherEnvironment,
       createdByUserId: input.createdByUserId,
       createdAt: now,
       updatedAt: now,
     });
   } catch (err) {
-    if (isUniquePackageConflict(err)) {
-      throw new GithubAppValidationError(
-        "package_already_mapped",
-        `a release target already exists for ${input.ecosystem}/${packageName} in this organization`,
-      );
-    }
     if (isUniqueEnvironmentConflict(err)) {
       throw new GithubAppValidationError(
         "environment_already_mapped",
@@ -253,12 +234,9 @@ export async function createReleaseTarget(
     organizationId: input.organizationId,
     installationRowId: input.installationRowId,
     ecosystem: input.ecosystem,
-    packageName,
     repositoryId: input.repositoryId,
     repositoryFullName: input.repositoryFullName,
-    workflowFilename: input.workflowFilename?.trim() || null,
     environment,
-    pypiTrustedPublisherEnvironment,
     createdAt: now,
     updatedAt: now,
   };
@@ -366,12 +344,9 @@ function readReleaseTargetRow(row: {
   organizationId: string;
   installationRowId: string;
   ecosystem: string;
-  packageName: string;
   repositoryId: number;
   repositoryFullName: string;
-  workflowFilename: string | null;
   environment: string;
-  pypiTrustedPublisherEnvironment: string;
   createdAt: Date | string | number;
   updatedAt: Date | string | number;
 }): ReleaseTargetRecord {
@@ -380,23 +355,12 @@ function readReleaseTargetRow(row: {
     organizationId: row.organizationId,
     installationRowId: row.installationRowId,
     ecosystem: row.ecosystem as SupportedEcosystem,
-    packageName: row.packageName,
     repositoryId: row.repositoryId,
     repositoryFullName: row.repositoryFullName,
-    workflowFilename: row.workflowFilename,
     environment: row.environment,
-    pypiTrustedPublisherEnvironment: row.pypiTrustedPublisherEnvironment,
     createdAt: new Date(row.createdAt),
     updatedAt: new Date(row.updatedAt),
   };
-}
-
-function isUniquePackageConflict(err: unknown): boolean {
-  return isUniqueConflict(
-    err,
-    "github_release_targets_org_pkg_unique_idx",
-    "github_release_targets.package_name",
-  );
 }
 
 function isUniqueEnvironmentConflict(err: unknown): boolean {
@@ -430,9 +394,4 @@ function isUniqueConflict(err: unknown, indexName: string, columnName: string): 
 function normalizeInstallationStatus(value: string): InstallationStatus {
   if (value === "suspended" || value === "uninstalled" || value === "active") return value;
   return "active";
-}
-
-function normalizePackageName(ecosystem: SupportedEcosystem, packageName: string): string {
-  if (ecosystem === "pypi") return packageName.toLowerCase().replace(/[-_.]+/g, "-");
-  return packageName;
 }

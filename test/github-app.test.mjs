@@ -33,12 +33,9 @@ const VALID_RELEASE_TARGET = {
   organizationId: "org_1",
   installationRowId: "inst_1",
   ecosystem: "pypi",
-  packageName: "example-package",
   repositoryId: 42,
   repositoryFullName: "octo/example",
-  workflowFilename: null,
   environment: "pypi-release",
-  pypiTrustedPublisherEnvironment: "pypi-release",
   createdByUserId: null,
 };
 
@@ -190,25 +187,11 @@ describe("release target validation", () => {
     expect(() => validateReleaseTargetShape(VALID_RELEASE_TARGET)).not.toThrow();
   });
 
-  test("flags an environment that does not match the trusted publisher environment", () => {
-    try {
-      validateReleaseTargetShape({
-        ...VALID_RELEASE_TARGET,
-        pypiTrustedPublisherEnvironment: "different",
-      });
-      throw new Error("expected validation to throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(GithubAppValidationError);
-      expect(err.code).toBe("environment_mismatch");
-    }
-  });
-
   test("flags a missing environment as unmapped", () => {
     try {
       validateReleaseTargetShape({
         ...VALID_RELEASE_TARGET,
         environment: "",
-        pypiTrustedPublisherEnvironment: "",
       });
       throw new Error("expected validation to throw");
     } catch (err) {
@@ -260,7 +243,6 @@ describe("release target validation", () => {
       validateReleaseTargetShape({
         ...VALID_RELEASE_TARGET,
         environment: "PyPI-Release",
-        pypiTrustedPublisherEnvironment: "pypi-release",
       }),
     ).not.toThrow();
   });
@@ -272,14 +254,12 @@ describe("release target validation", () => {
       validateReleaseTargetShape({
         ...VALID_RELEASE_TARGET,
         environment: "release/env: prod #1",
-        pypiTrustedPublisherEnvironment: "release/env: prod #1",
       }),
     ).not.toThrow();
     expect(() =>
       validateReleaseTargetShape({
         ...VALID_RELEASE_TARGET,
         environment: longEnvironment,
-        pypiTrustedPublisherEnvironment: longEnvironment,
       }),
     ).not.toThrow();
   });
@@ -290,7 +270,6 @@ describe("release target validation", () => {
       validateReleaseTargetShape({
         ...VALID_RELEASE_TARGET,
         environment: tooLong,
-        pypiTrustedPublisherEnvironment: tooLong,
       });
       throw new Error("expected validation to throw");
     } catch (err) {
@@ -302,31 +281,11 @@ describe("release target validation", () => {
       validateReleaseTargetShape({
         ...VALID_RELEASE_TARGET,
         environment: "release\nprod",
-        pypiTrustedPublisherEnvironment: "release\nprod",
       });
       throw new Error("expected validation to throw");
     } catch (err) {
       expect(err).toBeInstanceOf(GithubAppValidationError);
       expect(err.code).toBe("invalid_input");
     }
-  });
-
-  test("rejects bad workflow filenames", () => {
-    try {
-      validateReleaseTargetShape({ ...VALID_RELEASE_TARGET, workflowFilename: "release.json" });
-      throw new Error("expected validation to throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(GithubAppValidationError);
-      expect(err.code).toBe("invalid_input");
-    }
-  });
-
-  test("accepts a workflow filename when it ends with .yml or .yaml", () => {
-    expect(() =>
-      validateReleaseTargetShape({ ...VALID_RELEASE_TARGET, workflowFilename: "release.yml" }),
-    ).not.toThrow();
-    expect(() =>
-      validateReleaseTargetShape({ ...VALID_RELEASE_TARGET, workflowFilename: "release.yaml" }),
-    ).not.toThrow();
   });
 });

@@ -1,6 +1,7 @@
+import { useEffect } from "preact/hooks";
 import { useModel } from "@preact/signals";
 import { GithubAppModel, type PublicGithubAppInstallation } from "../../../models/github-app";
-import { Alert, Button, Field, Input, Muted, Select } from "../../../components";
+import { Alert, Button, Field, Muted, Select } from "../../../components";
 
 type GithubApp = ReturnType<typeof useModel<typeof GithubAppModel.prototype>>;
 
@@ -12,100 +13,46 @@ export function ReleaseTargetForm({
   activeInstallations: PublicGithubAppInstallation[];
 }) {
   const installationRowId = githubApp.formInstallationRowId.value;
-  const packageName = githubApp.formPackageName.value;
-  const environment = githubApp.formEnvironment.value;
-  const trustedPublisherEnv = githubApp.formPypiTrustedPublisherEnvironment.value;
-  const workflowFilename = githubApp.formWorkflowFilename.value;
   const formError = githubApp.formError.value;
   const submitting = githubApp.formSubmitting.value;
   const formValid = githubApp.formValid.value;
+
+  // Default to the first active installation, but keep the picker available for
+  // organizations that have linked multiple GitHub App installations.
+  const installationIds = activeInstallations.map((row) => row.id).join(",");
+  useEffect(() => {
+    const stillValid = activeInstallations.some((row) => row.id === installationRowId);
+    if (!stillValid && activeInstallations.length) {
+      githubApp.selectInstallation(activeInstallations[0].id);
+    }
+  }, [installationIds, installationRowId]);
 
   const onSubmit = async (event: Event) => {
     event.preventDefault();
     await githubApp.createReleaseTarget();
   };
 
-  const trustedPublisherDiffers =
-    environment.trim().toLowerCase() !== trustedPublisherEnv.trim().toLowerCase() &&
-    trustedPublisherEnv.trim() !== "";
-
   return (
     <form class="px-5 pb-5 flex flex-col gap-4" onSubmit={onSubmit}>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Field label="Installation" for="releaseTargetInstallation">
-          <Select
-            id="releaseTargetInstallation"
-            value={installationRowId}
-            disabled={submitting}
-            onChange={(value) => githubApp.selectInstallation(value)}
-          >
-            <option value="">Pick an installation…</option>
-            {activeInstallations.map((row) => (
-              <option key={row.id} value={row.id}>
-                {row.accountLogin} · installation {row.installationId}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="PyPI package name" for="releaseTargetPackage">
-          <Input
-            id="releaseTargetPackage"
-            type="text"
-            value={packageName}
-            placeholder="example-package"
-            onInput={(e) =>
-              (githubApp.formPackageName.value = (e.target as HTMLInputElement).value)
-            }
-            disabled={submitting}
-            autoComplete="off"
-            spellcheck={false}
-          />
-        </Field>
-      </div>
+      <Field label="Installation" for="releaseTargetInstallation">
+        <Select
+          id="releaseTargetInstallation"
+          value={installationRowId}
+          disabled={submitting}
+          onChange={(value) => githubApp.selectInstallation(value)}
+        >
+          <option value="">Pick an installation...</option>
+          {activeInstallations.map((row) => (
+            <option key={row.id} value={row.id}>
+              {row.accountLogin} · installation {row.installationId}
+            </option>
+          ))}
+        </Select>
+      </Field>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <RepositorySelector githubApp={githubApp} />
         <EnvironmentSelector githubApp={githubApp} />
-      </div>
-
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Field label="PyPI Trusted Publisher environment" for="releaseTargetTrustedPublisher">
-          <Input
-            id="releaseTargetTrustedPublisher"
-            type="text"
-            value={trustedPublisherEnv}
-            placeholder="Defaults to the GitHub environment"
-            onInput={(e) =>
-              githubApp.setPypiTrustedPublisherEnvironment((e.target as HTMLInputElement).value)
-            }
-            disabled={submitting || !environment}
-            autoComplete="off"
-            spellcheck={false}
-          />
-          <Muted class="text-[12px] mt-1.5 m-0">
-            Defaults to the GitHub environment so the gate runs against the same job as the Trusted
-            Publisher exchange. Edit only if you renamed the publisher environment.
-          </Muted>
-          {trustedPublisherDiffers ? (
-            <Muted class="text-[12px] mt-1.5 text-danger">
-              Must match the GitHub environment exactly.
-            </Muted>
-          ) : null}
-        </Field>
-        <Field label="Workflow filename (optional)" for="releaseTargetWorkflow">
-          <Input
-            id="releaseTargetWorkflow"
-            type="text"
-            value={workflowFilename}
-            placeholder="release.yml"
-            onInput={(e) =>
-              (githubApp.formWorkflowFilename.value = (e.target as HTMLInputElement).value)
-            }
-            disabled={submitting}
-            autoComplete="off"
-            spellcheck={false}
-          />
-        </Field>
       </div>
 
       {formError ? <Alert tone="critical">{formError}</Alert> : null}

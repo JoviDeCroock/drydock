@@ -63,12 +63,9 @@ async function seedGateForTest(opts: {
     organizationId,
     installationRowId: installation.id,
     ecosystem: "pypi",
-    packageName: "demo-package",
     repositoryId: opts.repositoryId,
     repositoryFullName: "octo/example",
-    workflowFilename: null,
     environment: "pypi",
-    pypiTrustedPublisherEnvironment: "pypi",
     createdByUserId: null,
   });
 

@@ -1,17 +1,13 @@
 import {
   ENVIRONMENT_MAX,
   GithubAppValidationError,
-  PACKAGE_NAME_MAX,
   REPO_FULL_NAME_MAX,
   SUPPORTED_ECOSYSTEMS,
-  WORKFLOW_FILENAME_MAX,
 } from "./config";
 import type { CreateReleaseTargetInput } from "./persistence";
 
-const PACKAGE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,213}$/;
 const REPO_OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const REPO_NAME_RE = /^[A-Za-z0-9._-]+$/;
-const WORKFLOW_FILENAME_RE = /^[A-Za-z0-9._-]+\.ya?ml$/;
 
 export function validateReleaseTargetShape(input: CreateReleaseTargetInput) {
   if (!SUPPORTED_ECOSYSTEMS.includes(input.ecosystem)) {
@@ -19,12 +15,6 @@ export function validateReleaseTargetShape(input: CreateReleaseTargetInput) {
       "unsupported_ecosystem",
       `unsupported ecosystem: ${input.ecosystem}`,
     );
-  }
-  if (!input.packageName || input.packageName.length > PACKAGE_NAME_MAX) {
-    throw new GithubAppValidationError("invalid_input", "packageName is required");
-  }
-  if (!PACKAGE_NAME_RE.test(input.packageName)) {
-    throw new GithubAppValidationError("invalid_input", "packageName has invalid characters");
   }
   if (!Number.isInteger(input.repositoryId) || input.repositoryId <= 0) {
     throw new GithubAppValidationError("invalid_input", "repositoryId must be a positive integer");
@@ -40,9 +30,6 @@ export function validateReleaseTargetShape(input: CreateReleaseTargetInput) {
     );
   }
   const environment = normalizeGithubEnvironmentName(input.environment);
-  const pypiTrustedPublisherEnvironment = normalizeGithubEnvironmentName(
-    input.pypiTrustedPublisherEnvironment,
-  );
   if (!environment || environment.length > ENVIRONMENT_MAX) {
     throw new GithubAppValidationError(
       "environment_unmapped",
@@ -51,38 +38,6 @@ export function validateReleaseTargetShape(input: CreateReleaseTargetInput) {
   }
   if (hasControlCharacter(environment)) {
     throw new GithubAppValidationError("invalid_input", "environment has invalid characters");
-  }
-  if (
-    !pypiTrustedPublisherEnvironment ||
-    pypiTrustedPublisherEnvironment.length > ENVIRONMENT_MAX
-  ) {
-    throw new GithubAppValidationError(
-      "environment_unmapped",
-      "pypiTrustedPublisherEnvironment is required and must not exceed 255 characters",
-    );
-  }
-  if (hasControlCharacter(pypiTrustedPublisherEnvironment)) {
-    throw new GithubAppValidationError(
-      "invalid_input",
-      "pypiTrustedPublisherEnvironment has invalid characters",
-    );
-  }
-  if (environment !== pypiTrustedPublisherEnvironment) {
-    throw new GithubAppValidationError(
-      "environment_mismatch",
-      "environment must match the PyPI Trusted Publisher environment so the gate runs against the same job",
-    );
-  }
-  if (input.workflowFilename) {
-    if (input.workflowFilename.length > WORKFLOW_FILENAME_MAX) {
-      throw new GithubAppValidationError("invalid_input", "workflowFilename is too long");
-    }
-    if (!WORKFLOW_FILENAME_RE.test(input.workflowFilename)) {
-      throw new GithubAppValidationError(
-        "invalid_input",
-        "workflowFilename must look like 'release.yml'",
-      );
-    }
   }
 }
 

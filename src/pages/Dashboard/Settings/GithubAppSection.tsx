@@ -48,15 +48,15 @@ export function GithubAppSection({
           <div class="flex flex-col gap-1.5 max-w-[760px]">
             <SectionLabel>GitHub App</SectionLabel>
             <Muted class="text-[13px] m-0">
-              Install the Drydock GitHub App on your organization so PyPI releases gated by a GitHub
-              Actions environment can be approved here. We never ask for PyPI credentials — the
-              workflow keeps its OIDC trust with PyPI and Drydock only acts as the
+              Install the Drydock GitHub App on your organization so releases gated by a GitHub
+              Actions environment can be approved here. Drydock never asks for publish credentials —
+              your workflow keeps its own OIDC/Trusted Publishing trust and Drydock only acts as the
               deployment-protection approver.
             </Muted>
             <MonoDetail
               parts={[
-                <span key="ecosystem">pypi workflow gate</span>,
-                <span key="oidc">no pypi credentials</span>,
+                <span key="ecosystem">workflow gate</span>,
+                <span key="oidc">no publish credentials</span>,
                 <span key="env">github environment required</span>,
               ]}
             />
@@ -126,7 +126,7 @@ export function GithubAppSection({
 
       <div class="border-t border-border">
         <div class="px-5 py-4 flex items-center justify-between gap-3">
-          <SectionLabel>PyPI release targets</SectionLabel>
+          <SectionLabel>Release targets</SectionLabel>
           <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
             {releaseTargets.length} mapped
           </span>
@@ -178,16 +178,12 @@ function ReleaseTargetList({
           >
             <div class="flex flex-col gap-1.5 min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
-                <span class="font-mono text-[14px] font-medium">{target.packageName}</span>
+                <span class="font-mono text-[14px] font-medium">{target.repositoryFullName}</span>
                 <Badge tone="info">{target.ecosystem}</Badge>
               </div>
               <MonoDetail
                 parts={[
-                  <span key="repo">{target.repositoryFullName}</span>,
                   <span key="env">env {target.environment}</span>,
-                  ...(target.workflowFilename
-                    ? [<span key="workflow">{target.workflowFilename}</span>]
-                    : []),
                   <span key="install">
                     via {installation?.accountLogin ?? "unknown"} ·{" "}
                     {installation?.installationId ?? target.installationRowId}
@@ -257,7 +253,7 @@ function PypiGateSetupGuide() {
   return (
     <div class="border border-border rounded-lg bg-surface-2 px-4 py-3 flex flex-col gap-4">
       <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
-        pypi gate setup
+        gate setup
       </span>
       <ol class="m-0 p-0 list-none flex flex-col gap-3">
         <SetupStep

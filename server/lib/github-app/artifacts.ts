@@ -32,7 +32,6 @@ export type WorkflowArtifactErrorCode =
   | "bundle_unavailable"
   | "bundle_too_large"
   | "bundle_empty"
-  | "release_target_mismatch"
   | "artifact_path_unsafe"
   | "artifact_identity_missing"
   | "artifact_identity_inconsistent";

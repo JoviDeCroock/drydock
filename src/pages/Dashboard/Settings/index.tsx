@@ -135,7 +135,7 @@ function SettingsHeader() {
       <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Integrations &amp; access</h1>
       <Muted class="text-[14px] leading-[1.55] m-0">
         Connect npm so Drydock can fetch staged tarballs, and install the GitHub App so it can gate
-        PyPI workflow releases for this organization.
+        workflow releases for this organization.
       </Muted>
     </header>
   );

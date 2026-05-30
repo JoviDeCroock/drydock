@@ -92,6 +92,13 @@
       "when": 1780120417792,
       "tag": "0012_nebulous_madame_masque",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1780124308761,
+      "tag": "0013_simple_blue_blade",
+      "breakpoints": true
     }
   ]
 }

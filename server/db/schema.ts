@@ -233,22 +233,14 @@ export const githubReleaseTargets = sqliteTable(
       .notNull()
       .references(() => githubAppInstallations.id, { onDelete: "cascade" }),
     ecosystem: text("ecosystem").notNull(),
-    packageName: text("package_name").notNull(),
     repositoryId: integer("repository_id").notNull(),
     repositoryFullName: text("repository_full_name").notNull(),
-    workflowFilename: text("workflow_filename"),
     environment: text("environment").notNull(),
-    pypiTrustedPublisherEnvironment: text("pypi_trusted_publisher_environment").notNull(),
     createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => ({
-    orgPackageUniqueIdx: uniqueIndex("github_release_targets_org_pkg_unique_idx").on(
-      table.organizationId,
-      table.ecosystem,
-      table.packageName,
-    ),
     orgRepoEnvUniqueIdx: uniqueIndex("github_release_targets_org_repo_env_unique_idx").on(
       table.organizationId,
       table.repositoryId,

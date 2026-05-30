@@ -18,9 +18,7 @@ export type InstallationStatus = (typeof INSTALLATION_STATUSES)[number];
 // GitHub places a 64KB limit on installation_target/account_login; we cap shorter to
 // keep state/state-payloads bounded.
 export const ACCOUNT_LOGIN_MAX = 100;
-export const PACKAGE_NAME_MAX = 214;
 export const REPO_FULL_NAME_MAX = 140;
-export const WORKFLOW_FILENAME_MAX = 200;
 export const ENVIRONMENT_MAX = 255;
 
 // ── Errors ───────────────────────────────────────────────────────────────────
@@ -48,8 +46,6 @@ export type GithubAppValidationCode =
   | "installation_not_authorized"
   | "repository_not_accessible"
   | "environment_unmapped"
-  | "environment_mismatch"
-  | "package_already_mapped"
   | "environment_already_mapped"
   | "unsupported_ecosystem"
   | "invalid_input";

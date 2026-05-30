@@ -191,12 +191,9 @@ describe("github-app createReleaseTarget", () => {
         organizationId,
         installationRowId: "missing-install",
         ecosystem: "pypi",
-        packageName: "example",
         repositoryId: 1,
         repositoryFullName: "octo/example",
-        workflowFilename: null,
         environment: "pypi",
-        pypiTrustedPublisherEnvironment: "pypi",
         createdByUserId: null,
       }),
     ).rejects.toMatchObject({ code: "installation_missing" });
@@ -212,104 +209,12 @@ describe("github-app createReleaseTarget", () => {
         organizationId,
         installationRowId: installation.id,
         ecosystem: "pypi",
-        packageName: "example",
         repositoryId: 1,
         repositoryFullName: "octo/example",
-        workflowFilename: null,
         environment: "pypi",
-        pypiTrustedPublisherEnvironment: "pypi",
         createdByUserId: null,
       }),
     ).rejects.toMatchObject({ code: "installation_inactive" });
-  });
-
-  test("rejects duplicate (org, ecosystem, package) mappings", async () => {
-    const { organizationId } = await seedUser();
-    const installation = await seedInstallation(organizationId);
-    const dbInstance = createDb(env.DB);
-
-    await createReleaseTarget(dbInstance, {
-      organizationId,
-      installationRowId: installation.id,
-      ecosystem: "pypi",
-      packageName: "example",
-      repositoryId: 1,
-      repositoryFullName: "octo/example",
-      workflowFilename: null,
-      environment: "pypi",
-      pypiTrustedPublisherEnvironment: "pypi",
-      createdByUserId: null,
-    });
-
-    await expect(
-      createReleaseTarget(dbInstance, {
-        organizationId,
-        installationRowId: installation.id,
-        ecosystem: "pypi",
-        packageName: "example",
-        repositoryId: 2,
-        repositoryFullName: "octo/example-2",
-        workflowFilename: null,
-        environment: "pypi",
-        pypiTrustedPublisherEnvironment: "pypi",
-        createdByUserId: null,
-      }),
-    ).rejects.toMatchObject({ code: "package_already_mapped" });
-  });
-
-  test("normalizes equivalent PyPI package names before enforcing uniqueness", async () => {
-    const { organizationId } = await seedUser();
-    const installation = await seedInstallation(organizationId);
-    const dbInstance = createDb(env.DB);
-
-    const target = await createReleaseTarget(dbInstance, {
-      organizationId,
-      installationRowId: installation.id,
-      ecosystem: "pypi",
-      packageName: "Example.Package",
-      repositoryId: 1,
-      repositoryFullName: "octo/example",
-      workflowFilename: null,
-      environment: "pypi",
-      pypiTrustedPublisherEnvironment: "pypi",
-      createdByUserId: null,
-    });
-
-    expect(target.packageName).toBe("example-package");
-    await expect(
-      createReleaseTarget(dbInstance, {
-        organizationId,
-        installationRowId: installation.id,
-        ecosystem: "pypi",
-        packageName: "example_package",
-        repositoryId: 2,
-        repositoryFullName: "octo/example-2",
-        workflowFilename: null,
-        environment: "pypi-2",
-        pypiTrustedPublisherEnvironment: "pypi-2",
-        createdByUserId: null,
-      }),
-    ).rejects.toMatchObject({ code: "package_already_mapped" });
-  });
-
-  test("rejects environment mismatch with the trusted publisher environment", async () => {
-    const { organizationId } = await seedUser();
-    const installation = await seedInstallation(organizationId);
-
-    await expect(
-      createReleaseTarget(createDb(env.DB), {
-        organizationId,
-        installationRowId: installation.id,
-        ecosystem: "pypi",
-        packageName: "example",
-        repositoryId: 1,
-        repositoryFullName: "octo/example",
-        workflowFilename: null,
-        environment: "drydock",
-        pypiTrustedPublisherEnvironment: "pypi",
-        createdByUserId: null,
-      }),
-    ).rejects.toMatchObject({ code: "environment_mismatch" });
   });
 
   test("rejects duplicate repository/environment mappings within an organization", async () => {
@@ -321,12 +226,9 @@ describe("github-app createReleaseTarget", () => {
       organizationId,
       installationRowId: installation.id,
       ecosystem: "pypi",
-      packageName: "example-a",
       repositoryId: 1,
       repositoryFullName: "octo/example",
-      workflowFilename: null,
       environment: "pypi",
-      pypiTrustedPublisherEnvironment: "pypi",
       createdByUserId: null,
     });
 
@@ -335,12 +237,9 @@ describe("github-app createReleaseTarget", () => {
         organizationId,
         installationRowId: installation.id,
         ecosystem: "pypi",
-        packageName: "example-b",
         repositoryId: 1,
         repositoryFullName: "octo/example",
-        workflowFilename: null,
         environment: "pypi",
-        pypiTrustedPublisherEnvironment: "pypi",
         createdByUserId: null,
       }),
     ).rejects.toMatchObject({ code: "environment_already_mapped" });
@@ -355,28 +254,21 @@ describe("github-app createReleaseTarget", () => {
       organizationId,
       installationRowId: installation.id,
       ecosystem: "pypi",
-      packageName: "example-a",
       repositoryId: 1,
       repositoryFullName: "octo/example",
-      workflowFilename: null,
       environment: "PyPI",
-      pypiTrustedPublisherEnvironment: "pypi",
       createdByUserId: null,
     });
 
     expect(target.environment).toBe("pypi");
-    expect(target.pypiTrustedPublisherEnvironment).toBe("pypi");
     await expect(
       createReleaseTarget(dbInstance, {
         organizationId,
         installationRowId: installation.id,
         ecosystem: "pypi",
-        packageName: "example-b",
         repositoryId: 1,
         repositoryFullName: "octo/example",
-        workflowFilename: null,
         environment: "PYPI",
-        pypiTrustedPublisherEnvironment: "pypi",
         createdByUserId: null,
       }),
     ).rejects.toMatchObject({ code: "environment_already_mapped" });
@@ -384,7 +276,7 @@ describe("github-app createReleaseTarget", () => {
 });
 
 describe("github-app routes", () => {
-  test("POST /release-targets requires an explicit PyPI Trusted Publisher environment", async () => {
+  test("POST /release-targets requires a repository full name", async () => {
     const { userId } = await seedUser();
     const res = await callGithubAppRoute(
       buildTestApp(userId),
@@ -393,15 +285,13 @@ describe("github-app routes", () => {
       {
         installationRowId: "install-row",
         ecosystem: "pypi",
-        packageName: "example",
-        repositoryFullName: "octo/example",
         environment: "pypi",
       },
     );
 
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({
-      error: "pypiTrustedPublisherEnvironment is required",
+      error: "repositoryFullName is required",
     });
   });
 
@@ -661,12 +551,9 @@ describe("resolveDeploymentProtectionTarget", () => {
       organizationId,
       installationRowId: installation.id,
       ecosystem: "pypi",
-      packageName: "example",
       repositoryId: 9001,
       repositoryFullName: "octo/example",
-      workflowFilename: "release.yml",
       environment: "pypi",
-      pypiTrustedPublisherEnvironment: "pypi",
       createdByUserId: null,
     });
 
@@ -690,12 +577,9 @@ describe("resolveDeploymentProtectionTarget", () => {
       organizationId,
       installationRowId: installation.id,
       ecosystem: "pypi",
-      packageName: "example-case",
       repositoryId: 9002,
       repositoryFullName: "octo/example-case",
-      workflowFilename: "release.yml",
       environment: "PyPI",
-      pypiTrustedPublisherEnvironment: "pypi",
       createdByUserId: null,
     });
 
@@ -716,12 +600,9 @@ describe("resolveDeploymentProtectionTarget", () => {
       organizationId,
       installationRowId: installation.id,
       ecosystem: "pypi",
-      packageName: "example",
       repositoryId: 42,
       repositoryFullName: "octo/example",
-      workflowFilename: null,
       environment: "pypi",
-      pypiTrustedPublisherEnvironment: "pypi",
       createdByUserId: null,
     });
 
@@ -743,12 +624,9 @@ describe("resolveDeploymentProtectionTarget", () => {
       organizationId,
       installationRowId: targetInstallation.id,
       ecosystem: "pypi",
-      packageName: "example",
       repositoryId: 42,
       repositoryFullName: "octo/example",
-      workflowFilename: null,
       environment: "pypi",
-      pypiTrustedPublisherEnvironment: "pypi",
       createdByUserId: null,
     });
 
@@ -768,12 +646,9 @@ describe("resolveDeploymentProtectionTarget", () => {
       organizationId,
       installationRowId: installation.id,
       ecosystem: "pypi",
-      packageName: "example",
       repositoryId: 77,
       repositoryFullName: "octo/example",
-      workflowFilename: null,
       environment: "pypi",
-      pypiTrustedPublisherEnvironment: "pypi",
       createdByUserId: null,
     });
 
@@ -800,24 +675,18 @@ describe("github-app cleanup helpers", () => {
       organizationId: a.organizationId,
       installationRowId: installA.id,
       ecosystem: "pypi",
-      packageName: "shared-name",
       repositoryId: 1,
       repositoryFullName: "octo/a",
-      workflowFilename: null,
       environment: "pypi",
-      pypiTrustedPublisherEnvironment: "pypi",
       createdByUserId: null,
     });
     await createReleaseTarget(dbInstance, {
       organizationId: b.organizationId,
       installationRowId: installB.id,
       ecosystem: "pypi",
-      packageName: "shared-name",
       repositoryId: 2,
       repositoryFullName: "octo/b",
-      workflowFilename: null,
       environment: "pypi",
-      pypiTrustedPublisherEnvironment: "pypi",
       createdByUserId: null,
     });
 
@@ -856,12 +725,9 @@ async function seedGate(
     organizationId,
     installationRowId: installation.id,
     ecosystem: "pypi",
-    packageName: `pkg-${crypto.randomUUID().slice(0, 8)}`,
     repositoryId: Math.floor(Math.random() * 1e6) + 1,
     repositoryFullName: "octo/example",
-    workflowFilename: null,
     environment: "pypi",
-    pypiTrustedPublisherEnvironment: "pypi",
     createdByUserId: null,
   });
   const gateId = crypto.randomUUID();
