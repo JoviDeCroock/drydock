@@ -234,10 +234,14 @@ export default function ScanDetailPage() {
     }
   };
 
-  // npm scans become decidable once complete; gate scans only while the gate is
-  // still pending (the decision is a one-way release/block of the GitHub job).
+  const gateReviewComplete = detail?.scan.status === "complete";
+  const gateReviewFailed = detail?.scan.status === "failed";
+
+  // npm scans become decidable once complete; gate scans are decidable while
+  // pending after the review either completes or fails. Failed reviews can only
+  // be rejected because approval releases the held GitHub job.
   const onDecideClick = isWorkflowGate
-    ? gate?.status === "pending"
+    ? gate?.status === "pending" && (gateReviewComplete || gateReviewFailed)
       ? () => (gateDialogOpen.value = true)
       : undefined
     : detail?.scan.status === "complete"
@@ -380,6 +384,7 @@ export default function ScanDetailPage() {
           packageName={detail.scan.packageName}
           status={model.gateDecisionStatus.value}
           error={model.gateDecisionError.value}
+          canApprove={detail.scan.status === "complete"}
           onSubmit={handleGateDecision}
         />
       ) : null}

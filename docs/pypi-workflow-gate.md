@@ -496,7 +496,10 @@ and the consumer re-checks gate status, so a re-enqueue is safe.
 2. Load the gate. A gate that is already `approved`/`rejected` triggers a
    **redelivery** of the stored decision to GitHub (idempotent re-POST) instead
    of re-running the review; callback failures rethrow so the queue retries. A
-   non-pending, non-decided status is skipped with a warning.
+   pending gate with an attached completed review is skipped because it is
+   waiting for a human decision; a pending gate with an attached failed review
+   is retried and relinked to the new scan if the retry succeeds. A non-pending,
+   non-decided status is skipped with a warning.
 3. Record `github_workflow_gate.received`.
 4. Call `preparePyPiReleaseCandidateForGate` to resolve + verify the bundle.
    - A `WorkflowArtifactError` (e.g. `bundle_unavailable`,
@@ -515,7 +518,8 @@ and the consumer re-checks gate status, so a re-enqueue is safe.
    `stageId: "workflow-gate:<gateId>"`) and run `runScanPipeline` with the
    `pypiAdapter` over the verified manifest + artifacts. A pipeline throw marks
    the scan failed, links that failed scan to the gate so the workbench can
-   resolve gate context, records `review_failed`, and leaves the gate pending.
+   resolve gate context, records `review_failed`, and leaves the gate pending;
+   a later retry can replace that link with a completed scan.
 7. Compute an **advisory** recommendation from the release risk
    (`recommendationForReleaseRisk`: `high`/`critical` → `rejected`, otherwise
    `approved`) and record `github_workflow_gate.reviewed` with it. Then link the

@@ -7,7 +7,7 @@ import {
   recordScanEvent,
   type AppDb,
 } from "../db";
-import { githubAppInstallations } from "../db/schema";
+import { githubAppInstallations, scans } from "../db/schema";
 import { pypiAdapter } from "./adapters/pypi/index";
 import {
   attachScanToGate,
@@ -58,9 +58,10 @@ export function recommendationForReleaseRisk(releaseRisk: RiskLevel): "approved"
  *    in the loop is needed to block).
  *  - Review/processing errors → the deployment is left PENDING (never
  *    auto-approved on error); the failure is recorded and surfaced.
- *  - Re-enqueues are idempotent: a gate that already has a scan attached is not
- *    re-reviewed, and an already-decided gate re-delivers its stored decision so
- *    a transient callback failure can be retried without re-running the review.
+ *  - Re-enqueues are idempotent: a gate with a completed review attached is not
+ *    re-reviewed, a failed attached review can be retried, and an
+ *    already-decided gate re-delivers its stored decision so a transient
+ *    callback failure can be retried without re-running the review.
  */
 export async function executeWorkflowGateJob(
   env: Cloudflare.Env,
@@ -112,16 +113,35 @@ export async function executeWorkflowGateJob(
     return;
   }
 
-  // A prior delivery already reviewed this gate and attached its scan; it is
-  // waiting on a human decision. Re-enqueues (GitHub redelivery, queue retry)
-  // must not re-run the pipeline.
   if (gate.scanId) {
-    emitOperationalEvent("info", "github_workflow_gate.job_skipped", {
+    const attachedScan = await getAttachedGateScan(db, organizationId, gate.scanId);
+    if (attachedScan?.status === "complete") {
+      // A prior delivery already reviewed this gate and attached its completed
+      // scan; it is waiting on a human decision. Re-enqueues must not re-run the
+      // pipeline.
+      emitOperationalEvent("info", "github_workflow_gate.job_skipped", {
+        organizationId,
+        gateId,
+        scanId: gate.scanId,
+        reason: "already_reviewed",
+      });
+      return;
+    }
+    if (attachedScan?.status === "pending" || attachedScan?.status === "running") {
+      emitOperationalEvent("info", "github_workflow_gate.job_skipped", {
+        organizationId,
+        gateId,
+        scanId: gate.scanId,
+        reason: `scan_${attachedScan.status}`,
+      });
+      return;
+    }
+    emitOperationalEvent("info", "github_workflow_gate.review_retrying", {
       organizationId,
       gateId,
-      reason: "already_reviewed",
+      scanId: gate.scanId,
+      priorStatus: attachedScan?.status ?? "missing",
     });
-    return;
   }
 
   await recordScanEvent(db, {
@@ -296,6 +316,20 @@ async function rejectGateForArtifactError(
     type: "github_workflow_gate.rejected",
     metadata: { gateId: gate.id, reason: error.code },
   });
+}
+
+async function getAttachedGateScan(
+  db: AppDb,
+  organizationId: string,
+  scanId: string,
+): Promise<{ status: string; source: string } | null> {
+  const [row] = await db
+    .select({ status: scans.status, source: scans.source })
+    .from(scans)
+    .where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)))
+    .limit(1);
+  if (!row || row.source !== "workflow_gate") return null;
+  return row;
 }
 
 /**

@@ -554,7 +554,7 @@ describe("executeWorkflowGateJob", () => {
     expect(types).not.toContain("github_workflow_gate.rejected");
   });
 
-  test("links a failed pipeline scan back to the pending gate", async () => {
+  test("links a failed pipeline scan back to the pending gate and allows retry", async () => {
     const seeded = await seedGateForTest({
       installationExternalId: "9208",
       repositoryId: 72009,
@@ -592,6 +592,26 @@ describe("executeWorkflowGateJob", () => {
 
     const types = await scanEventTypes(seeded.organizationId, seeded.gateId);
     expect(types).toContain("github_workflow_gate.review_failed");
+
+    const retryEnv = buildEnv(bindings, loaderMock.binding);
+    const loaderCallsAfterFailure = loaderMock.calls.length;
+    await executeWorkflowGateJob(
+      retryEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    const retriedGate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(retriedGate?.status).toBe("pending");
+    expect(retriedGate?.scanId).toBeTruthy();
+    expect(retriedGate?.scanId).not.toBe(gate?.scanId);
+    expect(loaderMock.calls.length).toBeGreaterThan(loaderCallsAfterFailure);
+    expect(scenario.decisionCalls).toHaveLength(0);
+
+    const retriedScan = await getScan(db, retriedGate!.scanId!, seeded.organizationId);
+    expect(retriedScan?.scan.status).toBe("complete");
+    expect(retriedScan?.scan.source).toBe("workflow_gate");
   });
 
   test("does not re-review a pending gate that already has a scan attached", async () => {

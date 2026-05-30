@@ -95,6 +95,7 @@ export function GateDecisionDialog({
   packageName,
   status,
   error,
+  canApprove,
   onSubmit,
 }: {
   open: boolean;
@@ -103,6 +104,7 @@ export function GateDecisionDialog({
   packageName: string | null;
   status: DecisionStatus;
   error: string | null;
+  canApprove: boolean;
   onSubmit: (decision: WorkflowGateDecision, comment: string | null) => void | Promise<void>;
 }) {
   const commentDraft = useSignal("");
@@ -165,14 +167,21 @@ export function GateDecisionDialog({
         </Muted>
       ) : (
         <div class="flex flex-wrap gap-2">
-          <Button onClick={() => submit("approved")} disabled={saving}>
-            {saving ? "Submitting…" : "Approve & release"}
-          </Button>
+          {canApprove ? (
+            <Button onClick={() => submit("approved")} disabled={saving}>
+              {saving ? "Submitting…" : "Approve & release"}
+            </Button>
+          ) : null}
           <Button variant="danger" onClick={() => submit("rejected")} disabled={saving}>
             {saving ? "Submitting…" : "Reject & block"}
           </Button>
         </div>
       )}
+      {!decided && !canApprove ? (
+        <Muted class="m-0 text-[13px]">
+          Approval requires a completed review. Rejecting blocks the held GitHub job.
+        </Muted>
+      ) : null}
       {error ? <Alert tone="critical">{error}</Alert> : null}
     </Dialog>
   );
