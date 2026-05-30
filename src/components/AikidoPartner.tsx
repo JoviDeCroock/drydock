@@ -62,23 +62,9 @@ export function AikidoPartnerStrip({ class: className }: { class?: string }) {
         className,
       )}
     >
-      <div class="flex flex-col gap-2 min-w-0">
-        <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-accent">
-          Exclusive security partner
-        </span>
-        <p class="text-[13px] leading-[1.55] text-ink-muted m-0 max-w-[560px]">
-          Drydock partners with{" "}
-          <a
-            href={AIKIDO_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            class="text-ink underline decoration-border-strong underline-offset-2 hover:decoration-accent"
-          >
-            Aikido Security
-          </a>{" "}
-          — every staged release is reviewed with their backing.
-        </p>
-      </div>
+      <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-accent">
+        Exclusive security partner
+      </span>
       <a
         href={AIKIDO_URL}
         target="_blank"
