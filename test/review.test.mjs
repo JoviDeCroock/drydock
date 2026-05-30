@@ -320,6 +320,35 @@ describe("review", () => {
     });
   });
 
+  test("keeps PyPI adapter findings release scoped even when paths use artifact namespaces", () => {
+    const diff = [
+      {
+        path: "wheel/py3-none-any/sitecustomize.py",
+        status: "added",
+        stagedSize: 7,
+        stagedSha256: "hook",
+        flags: [],
+      },
+    ];
+    const annotated = annotateFindingsWithDiffStatus(
+      [
+        {
+          severity: "high",
+          file: "dist/demo_package-1.2.0-py3-none-any.whl/sitecustomize.py",
+          evidence: "sitecustomize.py runs automatically on interpreter startup",
+          reason: "startup hook",
+          ruleId: "pypi.startup-hook",
+        },
+      ],
+      diff,
+    );
+
+    expect(annotated[0]).toMatchObject({
+      diffStatus: "unknown",
+      releaseDelta: true,
+    });
+  });
+
   test("package json diff summarizes release-review sensitive fields", () => {
     const summary = summarizePackageJsonDiff(
       {

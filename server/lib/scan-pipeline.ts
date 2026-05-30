@@ -187,6 +187,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       previousFiles: redactedPreviousFiles,
       diff: fileDiff,
       findings: ruleFindings,
+      codePatternSet: adapter.codePatternSet,
       riskSummary,
       report: { version: reportPayload.version, digest: reportDigest },
     });
