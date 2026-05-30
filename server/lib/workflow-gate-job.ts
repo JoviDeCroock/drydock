@@ -21,6 +21,7 @@ import {
   WorkflowArtifactError,
   type WorkflowGateRecord,
 } from "./github-app";
+import { notifyWorkflowGateReview } from "./notify";
 import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
 import { preparePyPiReleaseCandidateForGate } from "./release-candidate-pypi";
 import type { RiskLevel } from "./review";
@@ -289,6 +290,34 @@ export async function executeWorkflowGateJob(
   // drives the decision from the workbench; the recommendation above is
   // advisory.
   await attachScanToGate(db, gate.id, scanId, scanId);
+
+  // Tell the maintainer there is a gate to decide. This is the only review-ready
+  // transition for the gate (a re-delivery short-circuits above at
+  // `already_reviewed`), so it produces exactly one email. Delivery is
+  // best-effort: a failure is recorded inside the notifier and must never fail
+  // or stall the held deployment.
+  try {
+    await notifyWorkflowGateReview({
+      env,
+      db,
+      organizationId,
+      ownerUserId,
+      gateId: gate.id,
+      repositoryFullName: gate.repositoryFullName,
+      environment: gate.environment,
+      scanId,
+      packageName: result.package.name,
+      version: result.package.stagedVersion,
+      releaseRisk,
+    });
+  } catch (err) {
+    emitOperationalEvent("warn", "github_workflow_gate.notification_error", {
+      organizationId,
+      gateId,
+      scanId,
+      error: describeOperationalError(err),
+    });
+  }
 
   emitOperationalEvent("info", "github_workflow_gate.review_ready", {
     organizationId,

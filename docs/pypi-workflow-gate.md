@@ -522,6 +522,34 @@ and the consumer re-checks gate status, so a re-enqueue is safe.
    `approved`) and record `github_workflow_gate.reviewed` with it. Then link the
    scan to the gate via `attachScanToGate` and **leave the gate pending** — the
    review never posts to GitHub.
+8. Email the maintainer that a gate is parked pending their decision
+   (`notifyWorkflowGateReview` in `server/lib/notify.ts`). Because Drydock never
+   auto-decides, this email is the only proactive signal that a held GitHub
+   deployment is waiting on a human.
+
+### Notifying the maintainer
+
+Step 8 is the gate equivalent of the npm scan-completion email. It reuses the
+`sendNotificationEmail` primitive and goes to the organization owner
+(`getOrganizationOwnerUserId` → `getUserContact`; recipient/role resolution will
+follow the org membership model as that lands). The body carries only the
+release identity (`package@version`), the computed release risk, the repository,
+the environment, and a deep link to the review at
+`/dashboard/scans/<scanId>` — never a token, header, callback URL, or artifact
+bytes, per the observability rules in `AGENTS.md`.
+
+Delivery is best-effort and **never blocks or fails the gate**: the outcome is
+recorded as a `github_workflow_gate.notification_sent` or
+`github_workflow_gate.notification_failed` `scan_events` row (mirroring the
+`scan.notification_*` pattern), and a thrown send error is swallowed into a
+`github_workflow_gate.notification_error` operational event.
+
+The email is **send-once per gate**. Step 8 sits on the single review-ready
+transition, and a GitHub re-delivery of the same `deployment_protection_rule`
+event short-circuits earlier at the `already_reviewed` guard (a pending gate
+with a completed attached scan is never re-reviewed), so one review-ready gate
+produces exactly one email. A failed first review records no email; a later
+retry that succeeds sends the one email when it reaches review-ready.
 
 The job never auto-approves a release: approving releases the GitHub job and
 publishing happens immediately through Trusted Publishing/OIDC, which is too
