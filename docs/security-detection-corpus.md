@@ -80,3 +80,104 @@ The corpus deliberately records some product gaps instead of hiding them:
 3. Add exact expected findings and risk.
 4. If the scenario is important but not yet detected, add `coverageGaps` and assert the current diff-only behavior where possible.
 5. Run `pnpm run test:node -- security-corpus.test.mjs` before opening the PR.
+
+## PyPI corpus
+
+The PyPI adapter (`server/lib/adapters/pypi/index.ts`) has its own golden corpus under
+`test/fixtures/security-corpus/cases-pypi/`, evaluated by `test/security-corpus-pypi.test.mjs`. It is a
+separate harness, not an extension of the npm one, because PyPI findings legitimately carry two rule
+versions (see the invariant below).
+
+### Rule families and versions
+
+A PyPI review runs two rule families over the staged artifacts:
+
+- `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.2.0`).
+- shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
+  `DETERMINISTIC_RULES_VERSION` (currently `1.6.0`).
+
+The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
+other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
+fixtures in the same PR whenever a rule family's coverage changes (`PYPI_RULES_VERSION` in the adapter,
+`DETERMINISTIC_RULES_VERSION` in `review.ts`). The PyPI adapter opts the shared `code.*` rules into
+Python-aware matching in `1.6.0` (subprocess/os.system, urllib.request/requests/socket,
+exec/`__import__`/base64-decode, os.environ/getpass/keyring) while npm keeps the JavaScript matcher;
+the same Python matcher must be used when annotating modified-file findings so release-risk
+classification stays consistent for extensionless Python files. `pypi.*` grew `startup-hook`,
+`record-mismatch`, and `unusual-dependency` in `0.2.0`, and
+`setup-install-command` was upgraded to fire on the top-level sdist `setup.py` install-time code, not
+just `cmdclass`.
+
+### Fixture format
+
+Required fields:
+
+- `id`, `title`, `category`, `intent` — metadata.
+- `manifest` — parsed by `parsePyPiReleaseManifest`: schema `drydock.release-artifacts.v1`, ecosystem
+  `pypi`, `package`, `version`, and `artifacts[{path, sha256 (64 hex), url?}]`.
+- `artifacts` — `[{path, files: FileRecord[]}]`. Artifact paths must **exactly** match the manifest's
+  artifact paths or `assertManifestArtifactSet` throws.
+- `expectedRisk` — expected risk from `computeRisk()`.
+- `expectedFindings` — exact `{ruleId, severity, file}` entries.
+
+Optional fields:
+
+- `previousArtifacts` — previous-version `[{path, files}]`; enables `diff.*` findings.
+- `coverageGaps` — documented-only blind spots (not asserted).
+
+`FileRecord = {path, size, sha256, flags[], textSample?}`. A wheel fixture should include a
+`*.dist-info/WHEEL` file with a `Tag:` header so the diff namespace is deterministic; binary artifacts
+use `flags: ["binary"]` and omit `textSample`.
+
+### The two `expectedFindings[].file` namespacing schemes
+
+This is the most error-prone part of authoring fixtures. `pypi.*` findings and shared findings namespace
+file paths differently — `test/pypi.test.mjs` is the live oracle.
+
+- **Scheme A — `pypi.*` findings.** `namespacedPath(artifactPath, rawFilePath)`: the literal manifest
+  artifact path, then `/`, then the file's in-archive path. For **sdists** the in-archive path is first
+  root-stripped (`demo_package-1.2.0/setup.py` → `setup.py`). The `.dist-info` directory is **not**
+  normalized.
+  - wheel install-root `.pth`: `dist/demo_package-1.2.0-py3-none-any.whl/inject.pth`
+  - sdist `setup.py`: `dist/demo_package-1.2.0.tar.gz/setup.py`
+  - wheel METADATA: `dist/demo_package-1.2.0-py3-none-any.whl/demo_package-1.2.0.dist-info/METADATA`
+- **Scheme B — shared `file.*`/`code.*`/`diff.*` findings.** `artifactDiffNamespace(artifact)` + `/` +
+  `normalizePyPiDiffFilePath(rootStrippedPath)`. The namespace is `sdist` for sdists and
+  `wheel/<WHEEL Tag headers, sorted, joined with +>` for wheels (falling back to the `.whl` filename's
+  last three tags). `normalizePyPiDiffFilePath` collapses `<name>.dist-info/` → `.dist-info/`.
+  - shared finding on a wheel module: `wheel/py3-none-any/demo_package/collect.py`
+  - shared finding on a sdist `setup.py`: `sdist/setup.py`
+  - shared finding on wheel METADATA (as a diff entry): `wheel/py3-none-any/.dist-info/METADATA`
+
+A single file can fire findings from both families with different paths — e.g. an sdist `setup.py` with
+top-level `os.system`/`urllib.request` produces `pypi.setup-install-command` at
+`dist/…tar.gz/setup.py` (Scheme A) **and** `code.process-execution`/`code.network-access` at
+`sdist/setup.py` (Scheme B). List both tuples.
+For startup-hook fixtures, only files installed at Python's site root are expected to fire:
+top-level wheel files and wheel `.data/{purelib,platlib}/` files count; package-internal files such as
+`demo_package/sitecustomize.py` or `demo_package/inject.pth` do not.
+
+### Known coverage gaps (PyPI)
+
+The corpus records these intentional blind spots rather than hiding them:
+
+- RECORD **hash** verification: only undeclared-file detection ships. RECORD digests are
+  `sha256=<base64url-nopad>` while `FileRecord.sha256` is hex, so digest comparison needs a format
+  conversion that is deferred. Truncated RECORD samples are skipped to avoid false positives.
+- `[build-system] backend-path` / PEP 517 in-tree build backends (arbitrary code at build time) are not
+  flagged; moderate false-positive risk with maturin/Cython.
+- Credential → network **taint chains**: capability tokens are flagged individually, not proven
+  source-to-sink.
+- Typosquatting / dependency-confusion name distance, maintainer/transfer signals, and package
+  reputation are not modeled (need registry intelligence; high false-positive risk).
+- `Requires-Dist` **diffing** between versions, `entry_points`/`console_scripts`, wheel `*.data/scripts/`,
+  and `.pyc`-only distribution are not yet analyzed.
+- Native `.so`/`.pyd` presence stays high severity but is a known false-positive source for legitimate
+  compiled packages (NumPy etc.).
+- Regexes are not a parser: even Python-aware, obfuscation can evade the `code.*` rules.
+
+### Running
+
+- PyPI corpus only: `pnpm run test:node -- security-corpus-pypi.test.mjs`
+- Regression net after a rules-version bump: `pnpm run test:node -- security-corpus.test.mjs pypi.test.mjs`
+- Full pre-commit parity: `pnpm run verify`

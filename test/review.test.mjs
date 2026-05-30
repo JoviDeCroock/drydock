@@ -79,6 +79,63 @@ describe("review", () => {
     );
   });
 
+  test("does not apply Python capability patterns to JavaScript packages", () => {
+    const staged = [
+      {
+        path: "template.js",
+        size: 60,
+        sha256: "template",
+        flags: [],
+        textSample: "export function render(template) {\n  return compile(template);\n}\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings.some((finding) => finding.ruleId === "code.dynamic-evaluation")).toBe(false);
+  });
+
+  test("does not treat importlib.metadata as Python dynamic evaluation", () => {
+    const staged = [
+      {
+        path: "demo_package/_version.py",
+        size: 90,
+        sha256: "version",
+        flags: [],
+        textSample:
+          'from importlib.metadata import version\n__version__ = version("demo-package")\n',
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged), null, {
+      codePatternSet: "python",
+    });
+
+    expect(findings.some((finding) => finding.ruleId === "code.dynamic-evaluation")).toBe(false);
+  });
+
+  test("detects Python dynamic import execution", () => {
+    const staged = [
+      {
+        path: "demo_package/loader.py",
+        size: 90,
+        sha256: "loader",
+        flags: [],
+        textSample: 'import importlib\nplugin = importlib.import_module("demo_package.plugin")\n',
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged), null, {
+      codePatternSet: "python",
+    });
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "code.dynamic-evaluation",
+          file: "demo_package/loader.py",
+        }),
+      ]),
+    );
+  });
+
   test("adds best-effort line numbers and diff annotations to findings", () => {
     const before = [
       {
@@ -220,6 +277,43 @@ describe("review", () => {
     });
 
     expect(annotated.find((finding) => finding.ruleId === "code.network-access")).toMatchObject({
+      line: 1,
+      diffStatus: "modified",
+      releaseDelta: true,
+    });
+  });
+
+  test("uses Python annotation patterns for extensionless modified files", () => {
+    const previous = [
+      {
+        path: "scripts/post_install",
+        size: 100,
+        sha256: "old",
+        flags: [],
+        textSample:
+          "import urllib.request\nurllib.request.urlopen('https://example.invalid/existing')\nvalue = 1\n",
+      },
+    ];
+    const staged = [
+      {
+        path: "scripts/post_install",
+        size: 160,
+        sha256: "new",
+        flags: [],
+        textSample:
+          "import urllib.request\nurllib.request.urlopen('https://example.invalid/existing')\nvalue = 2\nurllib.request.urlopen('https://example.invalid/new')\n",
+      },
+    ];
+    const diff = createPackageDiff(previous, staged);
+    const findings = deterministicFindings(staged, diff, null, { codePatternSet: "python" });
+    const annotated = annotateFindingsWithDiffStatus(findings, diff, {
+      previousFiles: previous,
+      stagedFiles: staged,
+      codePatternSet: "python",
+    });
+
+    expect(annotated.find((finding) => finding.ruleId === "code.network-access")).toMatchObject({
+      file: "scripts/post_install",
       line: 1,
       diffStatus: "modified",
       releaseDelta: true,

@@ -154,7 +154,7 @@ describe("PyPI artifact summaries and review", () => {
               "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
             ),
             file("demo_package-1.2.0.dist-info/RECORD", "demo_package/__init__.py,,\n"),
-            file("demo_package/sitecustomize.pth", "import demo_package.bootstrap\n"),
+            file("sitecustomize.pth", "import demo_package.bootstrap\n"),
           ],
         },
         {
@@ -180,7 +180,7 @@ describe("PyPI artifact summaries and review", () => {
         expect.objectContaining({
           severity: "high",
           ruleId: "pypi.pth-execution",
-          file: "dist/demo_package-1.2.0-py3-none-any.whl/demo_package/sitecustomize.pth",
+          file: "dist/demo_package-1.2.0-py3-none-any.whl/sitecustomize.pth",
         }),
         expect.objectContaining({
           severity: "high",
@@ -221,6 +221,180 @@ describe("PyPI artifact summaries and review", () => {
         ruleId: "pypi.metadata-mismatch",
       }),
     );
+  });
+
+  test("keeps auditing wheel RECORD entries when METADATA is missing", () => {
+    const manifest = parsePyPiReleaseManifest({
+      schema: "drydock.release-artifacts.v1",
+      ecosystem: "pypi",
+      package: "demo-package",
+      version: "1.2.0",
+      artifacts: [{ path: "dist/demo_package-1.2.0-py3-none-any.whl", sha256: "a".repeat(64) }],
+    });
+    const review = createPyPiReleaseCandidateReview({
+      manifest,
+      artifacts: [
+        {
+          path: "dist/demo_package-1.2.0-py3-none-any.whl",
+          files: [
+            file(
+              "demo_package-1.2.0.dist-info/WHEEL",
+              "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+            ),
+            file(
+              "demo_package-1.2.0.dist-info/RECORD",
+              "demo_package-1.2.0.dist-info/WHEEL,,\ndemo_package-1.2.0.dist-info/RECORD,,\n",
+            ),
+            file("demo_package/payload.py", "# undeclared payload\n"),
+          ],
+        },
+      ],
+    });
+
+    expect(review.ruleFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "medium",
+          ruleId: "pypi.metadata-missing",
+          file: "dist/demo_package-1.2.0-py3-none-any.whl/METADATA",
+        }),
+        expect.objectContaining({
+          severity: "high",
+          ruleId: "pypi.record-mismatch",
+          file: "dist/demo_package-1.2.0-py3-none-any.whl/demo_package/payload.py",
+        }),
+      ]),
+    );
+  });
+
+  test("treats an empty wheel RECORD as declaring no files", () => {
+    const manifest = parsePyPiReleaseManifest({
+      schema: "drydock.release-artifacts.v1",
+      ecosystem: "pypi",
+      package: "demo-package",
+      version: "1.2.0",
+      artifacts: [{ path: "dist/demo_package-1.2.0-py3-none-any.whl", sha256: "a".repeat(64) }],
+    });
+    const review = createPyPiReleaseCandidateReview({
+      manifest,
+      artifacts: [
+        {
+          path: "dist/demo_package-1.2.0-py3-none-any.whl",
+          files: [
+            file(
+              "demo_package-1.2.0.dist-info/METADATA",
+              "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
+            ),
+            file(
+              "demo_package-1.2.0.dist-info/WHEEL",
+              "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+            ),
+            file("demo_package-1.2.0.dist-info/RECORD", "\n\n"),
+            file("demo_package/payload.py", "# undeclared payload\n"),
+          ],
+        },
+      ],
+    });
+
+    expect(review.ruleFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          ruleId: "pypi.record-mismatch",
+          file: "dist/demo_package-1.2.0-py3-none-any.whl/demo_package/payload.py",
+        }),
+      ]),
+    );
+  });
+
+  test("only treats the top-level sdist setup.py as install-time code", () => {
+    const manifest = parsePyPiReleaseManifest({
+      schema: "drydock.release-artifacts.v1",
+      ecosystem: "pypi",
+      package: "demo-package",
+      version: "1.2.0",
+      artifacts: [
+        { path: "dist/demo_package-1.2.0-py3-none-any.whl", sha256: "a".repeat(64) },
+        { path: "dist/demo_package-1.2.0.tar.gz", sha256: "b".repeat(64) },
+      ],
+    });
+    const review = createPyPiReleaseCandidateReview({
+      manifest,
+      artifacts: [
+        {
+          path: "dist/demo_package-1.2.0-py3-none-any.whl",
+          files: [
+            file(
+              "demo_package-1.2.0.dist-info/METADATA",
+              "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
+            ),
+            file(
+              "demo_package-1.2.0.dist-info/WHEEL",
+              "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+            ),
+            file(
+              "demo_package-1.2.0.dist-info/RECORD",
+              "demo_package/setup.py,,\ndemo_package-1.2.0.dist-info/METADATA,,\ndemo_package-1.2.0.dist-info/WHEEL,,\ndemo_package-1.2.0.dist-info/RECORD,,\n",
+            ),
+            file("demo_package/setup.py", 'import os\nos.system("id")\n'),
+          ],
+        },
+        {
+          path: "dist/demo_package-1.2.0.tar.gz",
+          files: [
+            file(
+              "demo_package-1.2.0/PKG-INFO",
+              "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
+            ),
+            file("demo_package-1.2.0/demo_package/setup.py", 'import os\nos.system("id")\n'),
+          ],
+        },
+      ],
+    });
+
+    expect(
+      review.ruleFindings.some((finding) => finding.ruleId === "pypi.setup-install-command"),
+    ).toBe(false);
+    expect(review.ruleFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "code.process-execution",
+          file: "wheel/py3-none-any/demo_package/setup.py",
+        }),
+        expect.objectContaining({
+          ruleId: "code.process-execution",
+          file: "sdist/demo_package/setup.py",
+        }),
+      ]),
+    );
+  });
+
+  test("does not treat sdist root files as installed startup hooks", () => {
+    const manifest = parsePyPiReleaseManifest({
+      schema: "drydock.release-artifacts.v1",
+      ecosystem: "pypi",
+      package: "demo-package",
+      version: "1.2.0",
+      artifacts: [{ path: "dist/demo_package-1.2.0.tar.gz", sha256: "b".repeat(64) }],
+    });
+    const review = createPyPiReleaseCandidateReview({
+      manifest,
+      artifacts: [
+        {
+          path: "dist/demo_package-1.2.0.tar.gz",
+          files: [
+            file(
+              "demo_package-1.2.0/PKG-INFO",
+              "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
+            ),
+            file("demo_package-1.2.0/sitecustomize.py", "# source helper\n"),
+            file("demo_package-1.2.0/inject.pth", "import demo_package.bootstrap\n"),
+          ],
+        },
+      ],
+    });
+
+    expect(review.ruleFindings).toEqual([]);
   });
 
   test("detects secret-looking content before redacting PyPI evidence", () => {
