@@ -167,11 +167,15 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 interface LoaderMockOptions {
   fail?: boolean;
   metadataName?: string;
+  recordText?: string;
 }
 
 function buildLoaderMock(opts: LoaderMockOptions = {}) {
   const calls: { format: string | null; bodySize: number }[] = [];
   const metadataName = opts.metadataName ?? "demo-package";
+  const recordText =
+    opts.recordText ??
+    "demo_package-1.2.0.dist-info/METADATA,,\ndemo_package-1.2.0.dist-info/WHEEL,,\ndemo_package-1.2.0.dist-info/RECORD,,\n";
   return {
     calls,
     binding: {
@@ -199,11 +203,18 @@ function buildLoaderMock(opts: LoaderMockOptions = {}) {
                     textSample: `Metadata-Version: 2.3\nName: ${metadataName}\nVersion: 1.2.0\n`,
                   },
                   {
+                    path: "demo_package-1.2.0.dist-info/WHEEL",
+                    size: 60,
+                    sha256: "02",
+                    flags: [],
+                    textSample: "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+                  },
+                  {
                     path: "demo_package-1.2.0.dist-info/RECORD",
-                    size: 1,
+                    size: recordText.length,
                     sha256: "01",
                     flags: [],
-                    textSample: "",
+                    textSample: recordText,
                   },
                 ],
                 packageJson: null,
@@ -253,7 +264,9 @@ interface ScenarioOpts {
 }
 
 async function buildScenario(runId: number, opts: ScenarioOpts) {
-  const wheelPath = "dist/demo_package-1.2.0-py3-none-any.whl";
+  const wheelPath = opts.digestMatches
+    ? "dist/demo_package-1.2.0-py3-none-any.whl"
+    : "../demo_package-1.2.0-py3-none-any.whl";
   const wheelBytes = makeZip([
     {
       path: "demo_package-1.2.0.dist-info/METADATA",
@@ -388,7 +401,7 @@ describe("executeWorkflowGateJob", () => {
     expect(types).toContain("github_workflow_gate.approved");
   });
 
-  test("rejects the deployment when the manifest digest is tampered", async () => {
+  test("rejects the deployment when an artifact path is unsafe", async () => {
     const seeded = await seedGateForTest({
       installationExternalId: "9201",
       repositoryId: 72002,
@@ -410,7 +423,7 @@ describe("executeWorkflowGateJob", () => {
 
     const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
     expect(gate?.status).toBe("rejected");
-    expect(gate?.failureReason).toBe("artifact_digest_mismatch");
+    expect(gate?.failureReason).toBe("artifact_path_unsafe");
     expect(gate?.scanId).toBeNull();
 
     expect(scenario.decisionCalls).toHaveLength(1);
@@ -423,14 +436,14 @@ describe("executeWorkflowGateJob", () => {
     expect(types).toContain("github_workflow_gate.rejected");
   });
 
-  test("rejects candidate-specific PyPI critical findings via release risk", async () => {
+  test("rejects candidate-specific PyPI findings via release risk", async () => {
     const seeded = await seedGateForTest({
       installationExternalId: "9206",
       repositoryId: 72007,
       runId: 12121,
     });
     const scenario = await buildScenario(12121, { digestMatches: true });
-    const loaderMock = buildLoaderMock({ metadataName: "different-package" });
+    const loaderMock = buildLoaderMock({ recordText: "" });
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const sandboxEnv = buildEnv(bindings, loaderMock.binding);
@@ -451,11 +464,11 @@ describe("executeWorkflowGateJob", () => {
 
     const persisted = await getScan(db, gate!.scanId!, seeded.organizationId);
     expect(persisted?.scan.riskSummaryJson).toMatchObject({
-      artifactRisk: "critical",
-      releaseRisk: "critical",
+      artifactRisk: "high",
+      releaseRisk: "high",
     });
     expect(persisted?.findings).toContainEqual(
-      expect.objectContaining({ ruleId: "pypi.metadata-mismatch", severity: "critical" }),
+      expect.objectContaining({ ruleId: "pypi.record-mismatch", severity: "high" }),
     );
   });
 

@@ -16,6 +16,7 @@ import { personalOrganizationId } from "../lib/ownership";
 import {
   annotateFindingsWithDiffStatus,
   computeRisk,
+  type CodePatternSet,
   type FindingDiffAnnotation,
   normalizeFindingDiffStatus,
   normalizeRisk,
@@ -46,6 +47,7 @@ export interface PersistedScanInput {
   previousFiles?: FileRecord[];
   diff: DiffEntry[];
   findings: Finding[];
+  codePatternSet?: CodePatternSet;
   riskSummary?: ScanRiskBreakdown;
   report?: { version: number; digest: string };
 }
@@ -311,6 +313,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
   const annotatedFindings = annotateFindingsWithDiffStatus(findingRows, input.diff, {
     previousFiles: input.previousFiles ?? [],
     stagedFiles: input.files,
+    codePatternSet: input.codePatternSet,
   });
   const findingAnnotations = annotatedFindings.map((finding) => ({
     id: finding.id,

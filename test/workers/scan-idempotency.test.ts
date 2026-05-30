@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import {
   claimScanForRun,
+  getScan,
   createDb,
   createScanJob,
   ensurePersonalOrganization,
@@ -11,6 +12,7 @@ import {
   persistScan,
 } from "../../server/db";
 import * as schema from "../../server/db/schema";
+import { createPackageDiff } from "../../server/lib/review";
 
 async function seedUserAndOrg() {
   const db = createDb(env.DB);
@@ -144,6 +146,70 @@ describe("scan persistence idempotency", () => {
     expect(second.persisted).toBe(false);
     const final = await readStatus(db, scanId);
     expect(final?.reportDigest).toBe("first");
+  });
+
+  test("persistScan preserves Python pattern annotations for extensionless files", async () => {
+    const { db, organizationId, userId } = await seedUserAndOrg();
+    const scanId = `scan_${crypto.randomUUID()}`;
+    const stageId = "stage-python-patterns";
+    const previousFiles = [
+      {
+        path: "scripts/post_install",
+        size: 100,
+        sha256: "old",
+        flags: [],
+        textSample:
+          "import urllib.request\nurllib.request.urlopen('https://example.invalid/existing')\nvalue = 1\n",
+      },
+    ];
+    const files = [
+      {
+        path: "scripts/post_install",
+        size: 160,
+        sha256: "new",
+        flags: [],
+        textSample:
+          "import urllib.request\nurllib.request.urlopen('https://example.invalid/existing')\nvalue = 2\nurllib.request.urlopen('https://example.invalid/new')\n",
+      },
+    ];
+    const diff = createPackageDiff(previousFiles, files);
+
+    await createScanJob(db, {
+      id: scanId,
+      stageId,
+      organizationId,
+      ownerUserId: userId,
+    });
+    await claimScanForRun(db, scanId, organizationId);
+    await persistScan(db, {
+      ...baseScan,
+      id: scanId,
+      stageId,
+      organizationId,
+      ownerUserId: userId,
+      risk: "high",
+      status: "complete",
+      previousFiles,
+      files,
+      diff,
+      findings: [
+        {
+          severity: "medium",
+          file: "scripts/post_install",
+          line: 1,
+          evidence: "network-capable code path",
+          reason: "new Python network sink was added later in the file",
+          ruleId: "code.network-access",
+        },
+      ],
+      codePatternSet: "python",
+    });
+
+    const scan = await getScan(db, scanId, organizationId);
+    expect(scan?.findings[0]).toMatchObject({
+      diffStatus: "modified",
+      releaseDelta: true,
+    });
   });
 
   test("listExistingScanStageIds dedupes against another org's completed scan", async () => {
