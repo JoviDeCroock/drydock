@@ -352,6 +352,14 @@ function buildEnv(bindings: Record<string, string>, loaderBinding: unknown): Clo
   } as Cloudflare.Env;
 }
 
+function buildEnvWithEmail(
+  bindings: Record<string, string>,
+  loaderBinding: unknown,
+  sendEmail: SendEmailBinding,
+): Cloudflare.Env {
+  return { ...buildEnv(bindings, loaderBinding), SEND_EMAIL: sendEmail } as Cloudflare.Env;
+}
+
 async function scanEventTypes(organizationId: string, gateId: string): Promise<string[]> {
   const db = createDb(env.DB);
   const rows = await db
@@ -837,5 +845,176 @@ describe("executeWorkflowGateJob", () => {
       "GitHub deployment protection decision failed (503)",
     );
     expect(retry).not.toHaveBeenCalled();
+  });
+
+  test("emails the maintainer once when a clean review leaves the gate pending", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9220",
+      repositoryId: 72021,
+      runId: 17171,
+    });
+    await buildScenario(17171, { digestMatches: true });
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const send = vi.fn(async () => undefined);
+    const sandboxEnv = buildEnvWithEmail(bindings, loaderMock.binding, { send });
+    const db = createDb(env.DB);
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    expect(send).toHaveBeenCalledTimes(1);
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.status).toBe("pending");
+
+    const types = await scanEventTypes(seeded.organizationId, seeded.gateId);
+    expect(types).toContain("github_workflow_gate.notification_sent");
+    expect(types).not.toContain("github_workflow_gate.notification_failed");
+
+    const meta = await gateEventMetadata(
+      seeded.organizationId,
+      seeded.gateId,
+      "github_workflow_gate.notification_sent",
+    );
+    expect(meta).toMatchObject({ channel: "email", releaseRisk: "low" });
+  });
+
+  test("does not email again when the same gate is re-delivered", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9221",
+      repositoryId: 72022,
+      runId: 18181,
+    });
+    await buildScenario(18181, { digestMatches: true });
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const send = vi.fn(async () => undefined);
+    const sandboxEnv = buildEnvWithEmail(bindings, loaderMock.binding, { send });
+    const db = createDb(env.DB);
+    const message = {
+      kind: "workflow_gate" as const,
+      organizationId: seeded.organizationId,
+      gateId: seeded.gateId,
+    };
+
+    await executeWorkflowGateJob(sandboxEnv, ctx, message, db);
+    expect(send).toHaveBeenCalledTimes(1);
+
+    // GitHub re-delivers the same deployment_protection_rule event: the gate is
+    // skipped at `already_reviewed`, so no second email is sent.
+    await executeWorkflowGateJob(sandboxEnv, ctx, message, db);
+    expect(send).toHaveBeenCalledTimes(1);
+
+    const sentEvents = (await scanEventTypes(seeded.organizationId, seeded.gateId)).filter(
+      (type) => type === "github_workflow_gate.notification_sent",
+    );
+    expect(sentEvents).toHaveLength(1);
+  });
+
+  test("does not email when the gate is decided before notification", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9223",
+      repositoryId: 72024,
+      runId: 20202,
+    });
+    const scenario = await buildScenario(20202, { digestMatches: true });
+    const db = createDb(env.DB);
+    const triggerName = `reject_gate_after_reviewed_${crypto.randomUUID().replaceAll("-", "_")}`;
+    await env.DB.prepare(`
+      CREATE TRIGGER ${triggerName}
+      AFTER INSERT ON scan_events
+      WHEN NEW.type = 'github_workflow_gate.reviewed'
+      BEGIN
+        UPDATE github_workflow_gates
+        SET status = 'rejected',
+            decision = 'rejected',
+            decision_comment = 'blocked during review',
+            decided_at = 1,
+            updated_at = 1
+        WHERE id = json_extract(NEW.metadata_json, '$.gateId')
+          AND status = 'pending';
+      END
+    `).run();
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const send = vi.fn(async () => undefined);
+    const sandboxEnv = buildEnvWithEmail(bindings, loaderMock.binding, { send });
+
+    try {
+      await executeWorkflowGateJob(
+        sandboxEnv,
+        ctx,
+        { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+        db,
+      );
+    } finally {
+      await env.DB.prepare(`DROP TRIGGER IF EXISTS ${triggerName}`).run();
+    }
+
+    expect(send).not.toHaveBeenCalled();
+    expect(scenario.decisionCalls).toHaveLength(0);
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.status).toBe("rejected");
+    expect(gate?.scanId).toBeTruthy();
+
+    const persisted = await getScan(db, gate!.scanId!, seeded.organizationId);
+    expect(persisted?.scan.status).toBe("complete");
+
+    const types = await scanEventTypes(seeded.organizationId, seeded.gateId);
+    expect(types).not.toContain("github_workflow_gate.notification_sent");
+    expect(types).not.toContain("github_workflow_gate.notification_failed");
+  });
+
+  test("records a notification failure without blocking the gate when delivery fails", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9222",
+      repositoryId: 72023,
+      runId: 19191,
+    });
+    const scenario = await buildScenario(19191, { digestMatches: true });
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const send = vi.fn(async () => {
+      throw new Error("smtp down");
+    });
+    const sandboxEnv = buildEnvWithEmail(bindings, loaderMock.binding, { send });
+    const db = createDb(env.DB);
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    // The held deployment is unaffected: the review is still attached and the
+    // gate is still pending a human decision.
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.status).toBe("pending");
+    expect(gate?.scanId).toBeTruthy();
+    expect(scenario.decisionCalls).toHaveLength(0);
+
+    const persisted = await getScan(db, gate!.scanId!, seeded.organizationId);
+    expect(persisted?.scan.status).toBe("complete");
+
+    const types = await scanEventTypes(seeded.organizationId, seeded.gateId);
+    expect(types).toContain("github_workflow_gate.notification_failed");
+    expect(types).not.toContain("github_workflow_gate.notification_sent");
+
+    const meta = await gateEventMetadata(
+      seeded.organizationId,
+      seeded.gateId,
+      "github_workflow_gate.notification_failed",
+    );
+    expect(meta?.reason).toBeTruthy();
   });
 });
