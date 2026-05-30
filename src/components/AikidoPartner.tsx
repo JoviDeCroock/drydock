@@ -58,7 +58,7 @@ export function AikidoPartnerStrip({ class: className }: { class?: string }) {
     <section
       aria-label="Security partner"
       class={cn(
-        "rounded-lg border border-border bg-surface px-5 py-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-6",
+        "rounded-lg border border-border bg-surface px-6 py-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between md:gap-8",
         className,
       )}
     >
@@ -76,17 +76,23 @@ export function AikidoPartnerStrip({ class: className }: { class?: string }) {
           >
             Aikido Security
           </a>{" "}
-          — our exclusive security vendor sponsor. Every release is reviewed with their backing.
+          — every staged release is reviewed with their backing.
         </p>
       </div>
       <a
         href={AIKIDO_URL}
         target="_blank"
         rel="noopener noreferrer"
-        class="shrink-0 self-start md:self-center hover:opacity-80 transition-opacity duration-150 ease-out"
+        class="group shrink-0 self-start md:self-center inline-flex flex-col items-start md:items-end gap-1.5"
         aria-label="Visit Aikido Security"
       >
-        <AikidoMark size="lg" />
+        <AikidoMark
+          size="md"
+          class="opacity-90 transition-opacity duration-150 ease-out group-hover:opacity-100"
+        />
+        <span class="font-mono text-[10px] tracking-[0.05em] text-ink-subtle transition-colors duration-150 ease-out group-hover:text-ink-muted">
+          aikido.dev →
+        </span>
       </a>
     </section>
   );

@@ -34,19 +34,17 @@ export function PageShell({
     >
       {brand ? (
         <div class="flex flex-wrap items-center justify-between gap-3">
-          <div class="flex items-center gap-3">
+          <div class="flex items-center gap-2.5">
             <BrandMark href="/" size="sm" />
-            <span aria-hidden class="text-ink-subtle text-[12px] select-none">
-              ×
-            </span>
+            <span aria-hidden class="h-3.5 w-px bg-border-strong" />
             <a
               href={AIKIDO_URL}
               target="_blank"
               rel="noopener noreferrer"
-              class="inline-flex items-center hover:opacity-80 transition-opacity duration-150 ease-out"
+              class="inline-flex items-center opacity-90 hover:opacity-100 transition-opacity duration-150 ease-out"
               title="Aikido Security — exclusive security partner"
             >
-              <AikidoMark size="sm" />
+              <AikidoMark size="xs" />
             </a>
           </div>
           <div class="flex items-center gap-2">
