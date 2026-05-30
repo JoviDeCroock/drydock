@@ -15,18 +15,14 @@ export function PageShell({
 }: {
   class?: string;
   children: ComponentChildren;
-  width?: "narrow" | "wide";
+  width?: "narrow" | "doc" | "wide";
   brand?: boolean;
   headerActions?: ComponentChildren;
 }) {
+  const maxWidth =
+    width === "narrow" ? "max-w-[640px]" : width === "doc" ? "max-w-[880px]" : "max-w-[1160px]";
   return (
-    <main
-      class={cn(
-        "mx-auto w-full px-6 pt-6 pb-24 flex flex-col gap-6",
-        width === "narrow" ? "max-w-[640px]" : "max-w-[1160px]",
-        className,
-      )}
-    >
+    <main class={cn("mx-auto w-full px-6 pt-6 pb-24 flex flex-col gap-6", maxWidth, className)}>
       {brand ? (
         <div class="flex flex-wrap items-center justify-between gap-3">
           <BrandMark href="/" size="sm" />

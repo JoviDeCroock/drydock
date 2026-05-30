@@ -5,7 +5,7 @@ The visual system is defined in [`DESIGN.md`](../DESIGN.md). This file documents
 ## Stack
 
 - **Tailwind CSS v4** via `@tailwindcss/vite` (registered in `vite.config.ts`).
-- **Preact prerendering** via `@preact/preset-vite` for the public landing and auth pages. The client hydration gate in `src/index.tsx` must match both slashless paths and Cloudflare's canonical folder-index URLs (`/login/`, `/register/`) for generated `*/index.html` pages.
+- **Preact prerendering** via `@preact/preset-vite` for the public landing, auth, and docs pages. The client hydration gate in `src/index.tsx` must match both slashless paths and Cloudflare's canonical folder-index URLs (`/login/`, `/register/`, `/docs/`) for generated `*/index.html` pages.
 - **Design tokens** declared in `src/style.css` with `@theme` — colors, fonts, shadows. Light is the default; dark mode is overridden inside `@media (prefers-color-scheme: dark) { @theme { … } }`. Every Tailwind utility that references a token (`bg-bg`, `text-ink`, `border-border`, `bg-accent`, `bg-danger-soft`, etc.) flips automatically with the system theme.
 - **No CSS-in-JS.** No external utility libraries.
 

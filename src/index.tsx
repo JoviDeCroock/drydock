@@ -37,7 +37,10 @@ export function isPrerenderedRoute(pathname: string) {
     pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
 
   return (
-    canonicalPathname === "/" || canonicalPathname === "/login" || canonicalPathname === "/register"
+    canonicalPathname === "/" ||
+    canonicalPathname === "/login" ||
+    canonicalPathname === "/register" ||
+    canonicalPathname === "/docs"
   );
 }
 
@@ -53,5 +56,17 @@ if (typeof window !== "undefined") {
 }
 
 export async function prerender(data: Record<string, unknown>) {
-  return await ssr(<App {...data} />);
+  const result = await ssr(<App {...data} />);
+
+  // The prerender crawler follows every rendered <a href> as a route to prerender.
+  // Keep it to the statically prerendered set so conditional links (e.g. the docs
+  // page's authenticated "Open settings" link) don't generate stray HTML.
+  const links = new Set<string>();
+  for (const href of result.links ?? []) {
+    if (isPrerenderedRoute(new URL(href, "http://localhost").pathname)) {
+      links.add(href);
+    }
+  }
+
+  return { ...result, links };
 }

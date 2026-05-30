@@ -8,11 +8,12 @@ describe("isPrerenderedRoute", () => {
     expect(isPrerenderedRoute("/login/")).toBe(true);
     expect(isPrerenderedRoute("/register")).toBe(true);
     expect(isPrerenderedRoute("/register/")).toBe(true);
+    expect(isPrerenderedRoute("/docs")).toBe(true);
+    expect(isPrerenderedRoute("/docs/")).toBe(true);
   });
 
   it("does not hydrate pages that are not prerendered by the build", () => {
     expect(isPrerenderedRoute("/dashboard")).toBe(false);
-    expect(isPrerenderedRoute("/docs")).toBe(false);
     expect(isPrerenderedRoute("/docs/intro")).toBe(false);
   });
 });
