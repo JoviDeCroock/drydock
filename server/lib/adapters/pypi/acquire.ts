@@ -79,14 +79,15 @@ export async function acquireBaselinePyPi(
     });
   }
 
-  const downloaded: PyPiArtifactInput[] = [];
-  for (const artifact of comparable) {
-    const result = await broker.downloadPublicArtifact({
-      url: artifact.url,
-      kind: artifact.kind,
-    });
-    downloaded.push({ path: artifact.filename, files: result.files });
-  }
+  const downloaded: PyPiArtifactInput[] = await Promise.all(
+    comparable.map(async (artifact) => {
+      const result = await broker.downloadPublicArtifact({
+        url: artifact.url,
+        kind: artifact.kind,
+      });
+      return { path: artifact.filename, files: result.files };
+    }),
+  );
 
   const preparedArtifacts = downloaded.map(preparePyPiArtifact);
   return {

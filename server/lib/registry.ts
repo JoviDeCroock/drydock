@@ -105,19 +105,22 @@ function pickSemverFallbackVersion(
   versionsByName: Record<string, unknown>,
   stagedVersion: string,
 ): { version: string; source: "semver-predecessor" | "highest-published"; reason: string } | null {
-  const candidates = Object.keys(versionsByName).filter(
-    (version) => version !== stagedVersion && parseSemver(version),
-  );
+  const candidates: { version: string; parsed: ParsedSemver }[] = [];
+  for (const version of Object.keys(versionsByName)) {
+    if (version === stagedVersion) continue;
+    const parsed = parseSemver(version);
+    if (parsed) candidates.push({ version, parsed });
+  }
   if (!candidates.length) return null;
-  candidates.sort(compareSemver);
+  candidates.sort((a, b) => compareParsedSemver(a.parsed, b.parsed));
 
   const staged = parseSemver(stagedVersion);
   if (staged) {
-    const predecessors = candidates.filter((version) => compareSemver(version, stagedVersion) < 0);
+    const predecessors = candidates.filter((c) => compareParsedSemver(c.parsed, staged) < 0);
     const previous = predecessors.at(-1);
     if (previous) {
       return {
-        version: previous,
+        version: previous.version,
         source: "semver-predecessor",
         reason: "semver-predecessor",
       };
@@ -125,7 +128,7 @@ function pickSemverFallbackVersion(
   }
 
   return {
-    version: candidates.at(-1)!,
+    version: candidates.at(-1)!.version,
     source: "highest-published",
     reason: "highest-published-fallback",
   };

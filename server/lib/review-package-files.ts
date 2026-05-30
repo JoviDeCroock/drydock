@@ -32,10 +32,17 @@ function packageFilesEntryMatches(entry: string, path: string): boolean {
   return path === normalized || path.startsWith(`${normalized}/`);
 }
 
+const globPatternCache = new Map<string, RegExp>();
+
 function globLikePackageFilesEntryMatches(entry: string, path: string): boolean {
-  const escaped = entry
-    .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*\*/g, ".*")
-    .replace(/\*/g, "[^/]*");
-  return new RegExp(`^${escaped}$`).test(path);
+  let pattern = globPatternCache.get(entry);
+  if (!pattern) {
+    const escaped = entry
+      .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+      .replace(/\*\*/g, ".*")
+      .replace(/\*/g, "[^/]*");
+    pattern = new RegExp(`^${escaped}$`);
+    globPatternCache.set(entry, pattern);
+  }
+  return pattern.test(path);
 }
