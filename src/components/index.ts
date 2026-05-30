@@ -2,6 +2,7 @@ export { cn } from "./cn";
 export { Button, LinkButton } from "./Button";
 export type { ButtonVariant, ButtonSize } from "./Button";
 export { Input } from "./Input";
+export { Select } from "./Select";
 export { Field, Label } from "./Field";
 export { Badge, severityTone, statusTone } from "./Badge";
 export type { Severity, Status, BadgeTone } from "./Badge";
