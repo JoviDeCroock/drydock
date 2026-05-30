@@ -158,6 +158,7 @@ const PYPI_ARTIFACT_LIMIT = 20;
 
 export const pypiAdapter: PackageAdapter<PyPiAdapterInput, PyPiBroker> = {
   id: "pypi",
+  codePatternSet: "python",
 
   parseInput(raw: unknown): PyPiAdapterInput {
     return parsePyPiAdapterInput(raw);

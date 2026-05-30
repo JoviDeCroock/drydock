@@ -102,7 +102,9 @@ fixtures in the same PR whenever a rule family's coverage changes (`PYPI_RULES_V
 `DETERMINISTIC_RULES_VERSION` in `review.ts`). The PyPI adapter opts the shared `code.*` rules into
 Python-aware matching in `1.6.0` (subprocess/os.system, urllib.request/requests/socket,
 exec/`__import__`/base64-decode, os.environ/getpass/keyring) while npm keeps the JavaScript matcher;
-`pypi.*` grew `startup-hook`, `record-mismatch`, and `unusual-dependency` in `0.2.0`, and
+the same Python matcher must be used when annotating modified-file findings so release-risk
+classification stays consistent for extensionless Python files. `pypi.*` grew `startup-hook`,
+`record-mismatch`, and `unusual-dependency` in `0.2.0`, and
 `setup-install-command` was upgraded to fire on the top-level sdist `setup.py` install-time code, not
 just `cmdclass`.
 

@@ -283,6 +283,43 @@ describe("review", () => {
     });
   });
 
+  test("uses Python annotation patterns for extensionless modified files", () => {
+    const previous = [
+      {
+        path: "scripts/post_install",
+        size: 100,
+        sha256: "old",
+        flags: [],
+        textSample:
+          "import urllib.request\nurllib.request.urlopen('https://example.invalid/existing')\nvalue = 1\n",
+      },
+    ];
+    const staged = [
+      {
+        path: "scripts/post_install",
+        size: 160,
+        sha256: "new",
+        flags: [],
+        textSample:
+          "import urllib.request\nurllib.request.urlopen('https://example.invalid/existing')\nvalue = 2\nurllib.request.urlopen('https://example.invalid/new')\n",
+      },
+    ];
+    const diff = createPackageDiff(previous, staged);
+    const findings = deterministicFindings(staged, diff, null, { codePatternSet: "python" });
+    const annotated = annotateFindingsWithDiffStatus(findings, diff, {
+      previousFiles: previous,
+      stagedFiles: staged,
+      codePatternSet: "python",
+    });
+
+    expect(annotated.find((finding) => finding.ruleId === "code.network-access")).toMatchObject({
+      file: "scripts/post_install",
+      line: 1,
+      diffStatus: "modified",
+      releaseDelta: true,
+    });
+  });
+
   test("package json diff summarizes release-review sensitive fields", () => {
     const summary = summarizePackageJsonDiff(
       {

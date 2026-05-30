@@ -76,6 +76,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
     const annotatedFindings = annotateFindingsWithDiffStatus(ruleFindings, fileDiff, {
       previousFiles: redactedPreviousFiles,
       stagedFiles: redactedStagedFiles,
+      codePatternSet: adapter.codePatternSet,
     });
     const releaseRuleFindings = stripFindingAnnotations(
       annotatedFindings.filter((finding) => finding.releaseDelta),

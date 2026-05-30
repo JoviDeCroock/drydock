@@ -1,5 +1,6 @@
 import type { AppDb, WorkspaceSession } from "../../db";
 import type {
+  CodePatternSet,
   DiffEntry,
   FileRecord,
   Finding,
@@ -85,6 +86,9 @@ export interface AdapterBroker {
 export interface PackageAdapter<TInput = unknown, TBroker extends AdapterBroker = AdapterBroker> {
   /** Stable id used in persistence + logs. */
   readonly id: string;
+
+  /** Code-pattern family used when classifying changed-line findings. */
+  readonly codePatternSet?: CodePatternSet;
 
   /** Validate the route/queue payload into the adapter's typed input shape. */
   parseInput(raw: unknown): TInput;

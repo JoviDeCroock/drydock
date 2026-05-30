@@ -107,10 +107,13 @@ export interface FindingAnnotationOptions {
   previousFiles?: Array<Pick<FileRecord, "path" | "textSample" | "flags">>;
   stagedFiles?: Array<Pick<FileRecord, "path" | "textSample" | "flags">>;
   persistedAnnotations?: Map<string, FindingDiffAnnotation>;
+  codePatternSet?: CodePatternSet;
 }
 
+export type CodePatternSet = "javascript" | "python";
+
 export interface DeterministicFindingOptions {
-  codePatternSet?: "javascript" | "python";
+  codePatternSet?: CodePatternSet;
 }
 
 const LIFECYCLE_SCRIPTS = ["preinstall", "install", "postinstall", "prepare"];
@@ -243,7 +246,7 @@ export function deterministicFindings(
   options: DeterministicFindingOptions = {},
 ): Finding[] {
   const findings: Finding[] = [];
-  const patterns = options.codePatternSet === "python" ? PYTHON_PATTERN_SET : JS_PATTERN_SET;
+  const patterns = codePatternsFor(options.codePatternSet);
   const diffByPath = new Map(diff.map((entry) => [entry.path, entry]));
   const packageJsonFile = files.find((file) => file.path === "package.json" && file.textSample);
   const rawPackageJson = packageJsonFile?.textSample
@@ -616,6 +619,7 @@ export function annotateFindingsWithDiffStatus<
           previousByPath,
           stagedByPath,
           changedLineCache,
+          options.codePatternSet,
         ),
     };
   });
@@ -659,6 +663,7 @@ function isFindingOnReleaseDelta(
   previousByPath: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
   stagedByPath: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
   changedLineCache: Map<string, Set<number> | null>,
+  codePatternSet: CodePatternSet | undefined,
 ): boolean {
   if (diffStatus === "added") return true;
   if (diffStatus !== "modified") return false;
@@ -676,6 +681,7 @@ function isFindingOnReleaseDelta(
     finding,
     stagedByPath.get(finding.file)?.textSample,
     changedLines,
+    codePatternSet,
   );
 }
 
@@ -728,9 +734,10 @@ function findingPatternMatchesChangedLine(
   finding: { file: string; ruleId?: string | null },
   stagedText: string | undefined,
   changedLines: Set<number>,
+  codePatternSet: CodePatternSet | undefined,
 ): boolean {
   if (!stagedText) return false;
-  const patterns = patternsForFinding(finding);
+  const patterns = patternsForFinding(finding, codePatternSet);
   if (!patterns.length) return false;
   const lines = splitComparableLines(stagedText);
   for (const lineNumber of changedLines) {
@@ -744,8 +751,15 @@ function findingPatternMatchesChangedLine(
   return false;
 }
 
-function patternsForFinding(finding: { file: string; ruleId?: string | null }): RegExp[] {
-  const patterns = finding.file.endsWith(".py") ? PYTHON_PATTERN_SET : JS_PATTERN_SET;
+function patternsForFinding(
+  finding: { file: string; ruleId?: string | null },
+  codePatternSet: CodePatternSet | undefined,
+): RegExp[] {
+  const patterns = codePatternSet
+    ? codePatternsFor(codePatternSet)
+    : finding.file.endsWith(".py")
+      ? PYTHON_PATTERN_SET
+      : JS_PATTERN_SET;
   switch (finding.ruleId) {
     case DETERMINISTIC_RULE_IDS.codeProcessExecution:
       return patterns.processExecution;
@@ -760,6 +774,10 @@ function patternsForFinding(finding: { file: string; ruleId?: string | null }): 
     default:
       return [];
   }
+}
+
+function codePatternsFor(codePatternSet: CodePatternSet | undefined): typeof JS_PATTERN_SET {
+  return codePatternSet === "python" ? PYTHON_PATTERN_SET : JS_PATTERN_SET;
 }
 
 export function isReleaseDeltaStatus(status: FindingDiffStatus): boolean {
