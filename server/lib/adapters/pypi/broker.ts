@@ -1,6 +1,6 @@
 import type { DownloadResult } from "../../sandbox";
 import type { AdapterBroker, AdapterConnectionRef, AdapterContext } from "../types";
-import type { PyPiArtifactKind, PyPiProjectMetadata } from "./index";
+import type { PyPiArtifactKind, PyPiProjectMetadata } from "./types";
 
 export interface PyPiBrokerDownloadOptions {
   maxFiles?: number;
