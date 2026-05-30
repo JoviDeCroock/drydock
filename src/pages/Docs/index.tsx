@@ -159,10 +159,10 @@ export default function DocsPage() {
             PyPI Trusted Publishing via OIDC — does the publish.
           </p>
           <Alert tone="info">
-            This is the design we're building toward. The review engine and the GitHub
-            deployment-protection webhook already exist, but connecting a GitHub App and gating a
-            real publish end-to-end is still rolling out. The steps below describe the intended
-            setup.
+            The full gate runs in production today: Drydock fetches the release candidate, reviews
+            it, and posts the approve-or-block decision back to GitHub. It is still early access —
+            connecting the GitHub App is limited to allowlisted organizations while the setup and
+            review UI are finished. The steps below describe the flow.
           </Alert>
         </header>
 
