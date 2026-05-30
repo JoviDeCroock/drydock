@@ -13,13 +13,12 @@ import {
 } from "../../review";
 import type {
   AcquiredArtifact,
-  AdapterBroker,
-  AdapterConnectionRef,
   AdapterContext,
   BaselineInfo,
   PackageAdapter,
   StagedDetails,
 } from "../types";
+import { createPyPiBroker, type PyPiBroker } from "./broker";
 
 export const PYPI_RELEASE_MANIFEST_SCHEMA = "drydock.release-artifacts.v1";
 export const PYPI_RULES_VERSION = "0.2.0";
@@ -116,8 +115,6 @@ export interface PyPiAdapterDetails {
   preparedArtifacts: PyPiPreparedArtifact[];
 }
 
-export type PyPiBroker = AdapterBroker;
-
 export interface PyPiProjectMetadata {
   info?: { name?: string; version?: string };
   releases?: Record<string, PyPiReleaseFile[]>;
@@ -172,8 +169,8 @@ export const pypiAdapter: PackageAdapter<PyPiAdapterInput, PyPiBroker> = {
     return acquireStagedPyPi(input);
   },
 
-  async acquireBaseline(_ctx, input, _broker) {
-    return acquireBaselinePyPi(input);
+  async acquireBaseline(ctx, input, broker, staged) {
+    return acquireBaselinePyPi(ctx, input, broker, staged);
   },
 
   runFindings(args) {
@@ -205,12 +202,6 @@ export const pypiAdapter: PackageAdapter<PyPiAdapterInput, PyPiBroker> = {
     };
   },
 };
-
-export function createPyPiBroker(_ctx: AdapterContext, _ref: AdapterConnectionRef): PyPiBroker {
-  return {
-    dispose(): void {},
-  };
-}
 
 export function normalizePyPiProjectName(name: string): string {
   return name.toLowerCase().replace(/[-_.]+/g, "-");
@@ -350,7 +341,7 @@ export function createPyPiReleaseCandidateReview(input: {
 }): PyPiReleaseCandidateReview {
   const adapterInput = pypiAdapter.parseInput(input);
   const staged = acquireStagedPyPi(adapterInput);
-  const baseline = acquireBaselinePyPi(adapterInput);
+  const baseline = baselineFromPreviousArtifacts(adapterInput);
   const diff = createPackageDiff(baseline.artifact?.files ?? [], staged.artifact.files);
   const ruleFindings = redactFindings(
     pypiAdapter.runFindings({
@@ -406,65 +397,126 @@ function acquireStagedPyPi(input: PyPiAdapterInput): {
   };
 }
 
-function acquireBaselinePyPi(input: PyPiAdapterInput): {
-  artifact: AcquiredArtifact | null;
-  baseline: BaselineInfo;
-} {
+async function acquireBaselinePyPi(
+  ctx: AdapterContext,
+  input: PyPiAdapterInput,
+  broker: PyPiBroker,
+  staged: { artifact: AcquiredArtifact; details: StagedDetails },
+): Promise<{ artifact: AcquiredArtifact | null; baseline: BaselineInfo }> {
   if (input.previousArtifacts?.length) {
-    const preparedArtifacts = input.previousArtifacts.map(preparePyPiArtifact);
-    const manifest = packageJsonSummaryFor(input.manifest, preparedArtifacts);
-    return {
-      artifact: {
-        files: flattenPyPiArtifactFiles(preparedArtifacts),
-        manifest,
-      },
-      baseline: {
-        version: manifest.version ?? null,
-        tag: null,
-        source: "latest-published",
-        distTagVersion: null,
-        reason: "provided-previous-artifacts",
-      },
-    };
+    return baselineFromPreviousArtifacts(input);
   }
 
-  if (input.metadata) {
-    const selection = pickPyPiBaselineRelease(input.metadata, input.manifest.version);
-    return {
-      artifact: null,
-      baseline: {
-        version: selection.version,
-        tag: null,
-        source: selection.source,
-        distTagVersion: null,
-        reason: `${selection.reason}:not-downloaded`,
-      },
-    };
+  const metadata = input.metadata ?? (await broker.fetchProjectMetadata(input.manifest.package));
+  if (!metadata) return emptyPyPiBaseline("metadata-unavailable");
+
+  const selection = pickPyPiBaselineRelease(metadata, input.manifest.version);
+  if (!selection.version) {
+    return emptyPyPiBaseline(selection.reason, { source: selection.source });
   }
 
+  const stagedNamespaces = stagedArtifactNamespaces(staged.details);
+  const comparable = selectComparableBaselineArtifacts(
+    selectPyPiReleaseArtifacts(metadata, selection.version).filter((artifact) =>
+      isAllowedPyPiArtifactUrl(artifact.url),
+    ),
+    stagedNamespaces,
+  );
+  if (!comparable.length) {
+    return emptyPyPiBaseline(`${selection.reason}:no-comparable-artifacts`, {
+      version: selection.version,
+      source: selection.source,
+    });
+  }
+
+  const downloaded: PyPiArtifactInput[] = [];
+  for (const artifact of comparable) {
+    const result = await broker.downloadPublicArtifact({
+      url: artifact.url,
+      kind: artifact.kind,
+    });
+    downloaded.push({ path: artifact.filename, files: result.files });
+  }
+
+  const preparedArtifacts = downloaded.map(preparePyPiArtifact);
   return {
-    artifact: null,
+    artifact: {
+      files: flattenPyPiArtifactFiles(preparedArtifacts),
+      manifest: packageJsonSummaryFor(input.manifest, preparedArtifacts),
+    },
     baseline: {
-      version: null,
+      version: selection.version,
       tag: null,
-      source: "none",
+      source: selection.source,
       distTagVersion: null,
-      reason: "no-previous-artifacts",
+      reason: selection.reason,
     },
   };
 }
 
-export async function fetchPyPiProjectMetadata(
-  projectName: string,
-  options: { registryUrl?: string } = {},
-): Promise<PyPiProjectMetadata> {
-  if (!isValidPyPiProjectName(projectName)) throw new Error("invalid PyPI project name");
-  const registry = (options.registryUrl || "https://pypi.org/pypi").replace(/\/$/, "");
-  const res = await fetch(`${registry}/${encodeURIComponent(projectName)}/json`, {
-    headers: { accept: "application/json" },
-  });
-  if (!res.ok) throw new Error(`PyPI metadata fetch failed: ${res.status}`);
-  return (await res.json()) as PyPiProjectMetadata;
+function baselineFromPreviousArtifacts(input: PyPiAdapterInput): {
+  artifact: AcquiredArtifact | null;
+  baseline: BaselineInfo;
+} {
+  if (!input.previousArtifacts?.length) return emptyPyPiBaseline("no-previous-artifacts");
+  const preparedArtifacts = input.previousArtifacts.map(preparePyPiArtifact);
+  const manifest = packageJsonSummaryFor(input.manifest, preparedArtifacts);
+  return {
+    artifact: {
+      files: flattenPyPiArtifactFiles(preparedArtifacts),
+      manifest,
+    },
+    baseline: {
+      version: manifest.version ?? null,
+      tag: null,
+      source: "latest-published",
+      distTagVersion: null,
+      reason: "provided-previous-artifacts",
+    },
+  };
+}
+
+function emptyPyPiBaseline(
+  reason: string,
+  opts: { version?: string | null; source?: PyPiBaselineSelectionSource } = {},
+): { artifact: null; baseline: BaselineInfo } {
+  return {
+    artifact: null,
+    baseline: {
+      version: opts.version ?? null,
+      tag: null,
+      source: opts.source ?? "none",
+      distTagVersion: null,
+      reason,
+    },
+  };
+}
+
+// Download selection runs before any bytes are fetched, so it can only key off
+// the public filename. Both the staged artifact paths and the candidate
+// baseline filenames are reduced to the same filename-derived namespace, which
+// bounds downloads to the wheel/sdist shapes that are actually staged. The diff
+// itself re-derives namespaces from parsed WHEEL tags via artifactDiffNamespace.
+function stagedArtifactNamespaces(details: StagedDetails): Set<string> {
+  const d = details as PyPiAdapterDetails;
+  return new Set(
+    d.preparedArtifacts.map((artifact) => filenameArtifactNamespace(artifact.path, artifact.kind)),
+  );
+}
+
+function selectComparableBaselineArtifacts(
+  artifacts: PyPiRemoteArtifact[],
+  stagedNamespaces: Set<string>,
+): PyPiRemoteArtifact[] {
+  const seen = new Set<string>();
+  const selected: PyPiRemoteArtifact[] = [];
+  for (const artifact of artifacts) {
+    const namespace = filenameArtifactNamespace(artifact.filename, artifact.kind);
+    if (!stagedNamespaces.has(namespace) || seen.has(namespace)) continue;
+    seen.add(namespace);
+    selected.push(artifact);
+  }
+  return selected;
 }
 
 export function pickPyPiBaselineRelease(
@@ -810,7 +862,15 @@ function artifactDiffNamespace(artifact: PyPiPreparedArtifact): string {
   if (artifact.kind === "sdist") return "sdist";
   const tags = artifact.summary.wheel?.tags ?? [];
   if (tags.length) return `wheel/${tags.slice().sort().map(safeDiffPathPart).join("+")}`;
-  const filename = artifact.path.split("/").at(-1) ?? "";
+  return wheelFilenameNamespace(artifact.path);
+}
+
+function filenameArtifactNamespace(pathOrFilename: string, kind: PyPiArtifactKind): string {
+  return kind === "sdist" ? "sdist" : wheelFilenameNamespace(pathOrFilename);
+}
+
+function wheelFilenameNamespace(pathOrFilename: string): string {
+  const filename = pathOrFilename.split("/").at(-1) ?? "";
   const wheelTags = filename
     .replace(/\.whl$/i, "")
     .split("-")

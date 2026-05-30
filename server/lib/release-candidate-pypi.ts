@@ -3,9 +3,14 @@ import type { AppDb } from "../db";
 import { githubAppInstallations, githubReleaseTargets } from "../db/schema";
 import {
   normalizePyPiProjectName,
+  parsePyPiReleaseManifest,
+  preparePyPiArtifact,
+  PYPI_RELEASE_MANIFEST_SCHEMA,
   type PyPiAdapterInput,
   type PyPiArtifactInput,
   type PyPiArtifactKind,
+  type PyPiPreparedArtifact,
+  type PyPiReleaseManifest,
 } from "./adapters/pypi/index";
 import {
   fetchReleaseBundleForGate,
@@ -39,12 +44,14 @@ export interface PreparedPyPiReleaseCandidate {
  *
  * Step 1 (`fetchReleaseBundleForGate`) lives entirely in the control plane:
  * the GitHub installation token is used to list and download artifact bytes,
- * the outer ZIP is parsed with hardened limits, the manifest is validated,
- * and every wheel/sdist SHA-256 is recomputed and compared to the manifest.
+ * the outer ZIP is parsed with hardened limits, and every wheel/sdist SHA-256
+ * is recomputed from the bundle bytes.
  *
  * Step 2 hands each wheel/sdist's bytes to the credentials-free
  * `downloadInSandboxInline` path so the same untrusted-archive parser the npm
- * pipeline uses produces bounded `FileRecord[]` evidence.
+ * pipeline uses produces bounded `FileRecord[]` evidence, then derives the
+ * release identity from the parsed `METADATA`/`PKG-INFO` (see
+ * `deriveReleaseManifest`).
  */
 export async function preparePyPiReleaseCandidate(
   env: Cloudflare.Env,
@@ -65,10 +72,77 @@ async function preparePyPiReleaseCandidateFromBundle(
     const files = await parseArtifactBytes(env, ctx, artifact);
     artifacts.push({ path: artifact.path, files });
   }
+  const prepared = artifacts.map(preparePyPiArtifact);
+  const manifest = deriveReleaseManifest(bundle, prepared);
   return {
-    adapterInput: { manifest: bundle.manifest, artifacts },
+    adapterInput: { manifest, artifacts },
     bundle,
   };
+}
+
+/**
+ * Synthesize the `PyPiReleaseManifest` the rest of the pipeline consumes from
+ * the artifacts themselves. There is no maintainer-declared manifest: identity
+ * comes from each wheel's `METADATA` / sdist's `PKG-INFO`, and the SHA-256 is
+ * the digest already recomputed from the bundle bytes.
+ *
+ * Every artifact must expose a `Name`/`Version` and agree on the normalized
+ * (PEP 503) name and the version, so a foreign or version-skewed file slipped
+ * into the bundle is rejected rather than silently shipped.
+ */
+function deriveReleaseManifest(
+  bundle: ResolvedReleaseBundle,
+  prepared: PyPiPreparedArtifact[],
+): PyPiReleaseManifest {
+  let name: string | null = null;
+  let normalizedName: string | null = null;
+  let version: string | null = null;
+  for (const artifact of prepared) {
+    const { summary } = artifact;
+    if (!summary.name || !summary.version) {
+      throw new WorkflowArtifactError(
+        "artifact_identity_missing",
+        `${artifact.path} does not expose a PyPI Name/Version in its metadata`,
+      );
+    }
+    const normalized = normalizePyPiProjectName(summary.name);
+    if (name === null) {
+      name = summary.name;
+      normalizedName = normalized;
+      version = summary.version;
+      continue;
+    }
+    if (normalized !== normalizedName) {
+      throw new WorkflowArtifactError(
+        "artifact_identity_inconsistent",
+        `${artifact.path} package ${summary.name} disagrees with ${name}`,
+      );
+    }
+    if (summary.version !== version) {
+      throw new WorkflowArtifactError(
+        "artifact_identity_inconsistent",
+        `${artifact.path} version ${summary.version} disagrees with ${version}`,
+      );
+    }
+  }
+
+  // `prepared` is non-empty: the resolver throws `bundle_empty` when a bundle
+  // has no wheels/sdists, so `name`/`version` are always set here.
+  const candidate = {
+    schema: PYPI_RELEASE_MANIFEST_SCHEMA,
+    ecosystem: "pypi",
+    package: name,
+    version,
+    artifacts: bundle.artifacts.map((file) => ({ path: file.path, sha256: file.sha256 })),
+  };
+  try {
+    return parsePyPiReleaseManifest(candidate);
+  } catch (err) {
+    throw new WorkflowArtifactError(
+      "artifact_identity_missing",
+      err instanceof Error ? err.message : "derived release identity is not valid",
+    );
+  }
 }
 
 export interface PrepareForGateInput {
@@ -157,14 +231,14 @@ export async function preparePyPiReleaseCandidateForGate(
       runId: gate.runId,
       artifactName: input.artifactName,
     });
-    const manifestPackage = normalizePyPiProjectName(bundle.manifest.package);
-    if (manifestPackage !== releaseTarget.packageName) {
+    const prepared = await preparePyPiReleaseCandidateFromBundle(env, ctx, bundle);
+    const derivedPackage = normalizePyPiProjectName(prepared.adapterInput.manifest.package);
+    if (derivedPackage !== releaseTarget.packageName) {
       throw new WorkflowArtifactError(
         "release_target_mismatch",
-        `manifest package ${manifestPackage} does not match release target ${releaseTarget.packageName}`,
+        `derived package ${derivedPackage} does not match release target ${releaseTarget.packageName}`,
       );
     }
-    const prepared = await preparePyPiReleaseCandidateFromBundle(env, ctx, bundle);
     return { ...prepared, gate };
   } catch (err) {
     const reason = err instanceof WorkflowArtifactError ? err.code : "preparation_failed";

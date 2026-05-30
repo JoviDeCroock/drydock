@@ -1,6 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { useModel, useSignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
+import { isGithubAppUiEnabled } from "../../lib/github-app-ui";
 import { sessionModel } from "../../models/auth";
 import { OrganizationModel } from "../../models/organization";
 import {
@@ -23,7 +24,6 @@ import {
 
 const SETTINGS_PATH = "/dashboard/settings";
 const SUCCESS_REDIRECT_MS = 1500;
-const GITHUB_APP_UI_ENABLED = import.meta.env.DEV;
 
 type CallbackPhase = "checking-session" | "verifying" | "success" | "error";
 
@@ -35,10 +35,6 @@ export default function GithubAppCallbackPage() {
   const queryError = useSignal<string | null>(null);
 
   useEffect(() => {
-    if (!GITHUB_APP_UI_ENABLED) {
-      location.route(SETTINGS_PATH, true);
-      return;
-    }
     let cancelled = false;
     void (async () => {
       const data = await sessionModel.load();
@@ -51,6 +47,10 @@ export default function GithubAppCallbackPage() {
       }
       await organizations.load();
       if (cancelled) return;
+      if (!isGithubAppUiEnabled(organizations.activeOrganizationId.peek())) {
+        location.route(SETTINGS_PATH, true);
+        return;
+      }
 
       const parsed = parseCallbackQuery(window.location.search);
       if (typeof parsed === "string") {

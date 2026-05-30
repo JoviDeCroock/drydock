@@ -69,7 +69,7 @@ export interface CreateScanJobInput {
   source?: ScanSource;
 }
 
-export const SCAN_SOURCES = ["manual", "auto_discovery"] as const;
+export const SCAN_SOURCES = ["manual", "auto_discovery", "workflow_gate"] as const;
 export type ScanSource = (typeof SCAN_SOURCES)[number];
 
 export interface AuditEventInput {

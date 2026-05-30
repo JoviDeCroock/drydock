@@ -6,7 +6,7 @@ declare global {
       LOADER: WorkerLoader;
       DB: D1Database;
       COMPARE_CACHE?: KVNamespace;
-      SCAN_QUEUE?: Queue<import("./lib/scan-job").ScanQueueMessage>;
+      SCAN_QUEUE?: Queue<import("./lib/scan-job").QueueMessage>;
       NPM_REGISTRY: string;
       ALLOW_INSECURE_LOCAL_REGISTRY?: string;
       NPM_CONNECTIONS_ENCRYPTION_KEY?: string;
