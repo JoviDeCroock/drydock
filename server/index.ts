@@ -328,6 +328,7 @@ export default {
               durationMs: durationMsSince(messageStartedAtMs),
               error: describeOperationalError(err),
             });
+            throw err;
           }
         }
         continue;

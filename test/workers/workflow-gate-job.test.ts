@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app";
 import { getGateForOrganization } from "../../server/lib/github-app-webhook";
 import { executeWorkflowGateJob } from "../../server/lib/workflow-gate-job";
+import worker from "../../server/index";
 
 const WEBHOOK_SECRET = "webhook-secret-value-1234567890";
 const REPORT_BASE_URL = "https://drydock.test";
@@ -165,10 +166,12 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 
 interface LoaderMockOptions {
   fail?: boolean;
+  metadataName?: string;
 }
 
 function buildLoaderMock(opts: LoaderMockOptions = {}) {
   const calls: { format: string | null; bodySize: number }[] = [];
+  const metadataName = opts.metadataName ?? "demo-package";
   return {
     calls,
     binding: {
@@ -193,7 +196,7 @@ function buildLoaderMock(opts: LoaderMockOptions = {}) {
                     size: 40,
                     sha256: "00",
                     flags: [],
-                    textSample: "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
+                    textSample: `Metadata-Version: 2.3\nName: ${metadataName}\nVersion: 1.2.0\n`,
                   },
                   {
                     path: "demo_package-1.2.0.dist-info/RECORD",
@@ -420,6 +423,42 @@ describe("executeWorkflowGateJob", () => {
     expect(types).toContain("github_workflow_gate.rejected");
   });
 
+  test("rejects candidate-specific PyPI critical findings via release risk", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9206",
+      repositoryId: 72007,
+      runId: 12121,
+    });
+    const scenario = await buildScenario(12121, { digestMatches: true });
+    const loaderMock = buildLoaderMock({ metadataName: "different-package" });
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const sandboxEnv = buildEnv(bindings, loaderMock.binding);
+    const db = createDb(env.DB);
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.status).toBe("rejected");
+    expect(gate?.decision).toBe("rejected");
+    expect(scenario.decisionCalls).toHaveLength(1);
+    expect(scenario.decisionCalls[0].state).toBe("rejected");
+
+    const persisted = await getScan(db, gate!.scanId!, seeded.organizationId);
+    expect(persisted?.scan.riskSummaryJson).toMatchObject({
+      artifactRisk: "critical",
+      releaseRisk: "critical",
+    });
+    expect(persisted?.findings).toContainEqual(
+      expect.objectContaining({ ruleId: "pypi.metadata-mismatch", severity: "critical" }),
+    );
+  });
+
   test("leaves the deployment pending and visible when the review errors", async () => {
     const seeded = await seedGateForTest({
       installationExternalId: "9202",
@@ -527,5 +566,54 @@ describe("executeWorkflowGateJob", () => {
 
     expect(loaderMock.calls.length).toBe(loaderCallsAfterFirst);
     expect(redeliveryFetch).toHaveBeenCalledTimes(2);
+  });
+
+  test("throws final workflow-gate queue callback failure so the message can reach the DLQ", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9205",
+      repositoryId: 72006,
+      runId: 11112,
+    });
+    const scenario = await buildScenario(11112, { digestMatches: true });
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const sandboxEnv = buildEnv(bindings, loaderMock.binding);
+    const db = createDb(env.DB);
+    const body = {
+      kind: "workflow_gate" as const,
+      organizationId: seeded.organizationId,
+      gateId: seeded.gateId,
+    };
+
+    await executeWorkflowGateJob(sandboxEnv, ctx, body, db);
+    expect(scenario.decisionCalls).toHaveLength(1);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        if (request.url.includes("/access_tokens")) {
+          return Response.json({
+            token: "ghs_install_token",
+            expires_at: "2099-01-01T00:00:00Z",
+          });
+        }
+        if (request.url.endsWith("/deployment_protection_rule")) {
+          return new Response("still failing", { status: 503 });
+        }
+        throw new Error(`unexpected fetch in queue final-attempt test: ${request.url}`);
+      }),
+    );
+
+    const retry = vi.fn();
+    const batch = {
+      messages: [{ body, attempts: 3, retry }],
+    } as unknown as MessageBatch<import("../../server/lib/scan-job").QueueMessage>;
+
+    await expect(worker.queue(batch, sandboxEnv, ctx)).rejects.toThrow(
+      "GitHub deployment protection decision failed (503)",
+    );
+    expect(retry).not.toHaveBeenCalled();
   });
 });
