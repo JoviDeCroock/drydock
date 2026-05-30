@@ -173,15 +173,15 @@ R2 is the target store for durable derived artifacts:
 
 Raw tarballs should not be retained by default in SaaS. If needed later, make raw retention an explicit organization setting with a short TTL, access logging, and clear warnings.
 
-### Workers AI (disabled)
+### Workers AI (Flagship-gated)
 
-Workers AI review is currently **disabled in the scan pipeline**. The reviewer module — `server/lib/ai-review.ts`, its single-model policy (`AI_MODEL` = `@cf/moonshotai/kimi-k2.5`), the prompt-injection-resistant system prompt, the AI SDK evidence-tool loop, and the test suite (skipped) — is kept on disk so it can be re-introduced behind a paid tier without re-engineering the contract.
+Workers AI review is wired into the scan pipeline through `maybeRunAiReview`, but it is **gated by the per-organization Cloudflare Flagship `ai-review` flag and off by default**. The reviewer module — `server/lib/ai-review.ts`, its single-model policy (`AI_MODEL` = `@cf/moonshotai/kimi-k2.5`), the prompt-injection-resistant system prompt, the AI SDK evidence-tool loop, and the test suite — stays in the active contract for the planned paid-tier feature.
 
-Scans persist `scan.aiJson = null` while AI review is disabled, and the UI omits the reviewer-notes section entirely. Risk is computed exclusively from deterministic findings.
+When Flagship does not return `true` for the scanning organization, the pipeline records an `unavailable` AI review. Risk is computed from deterministic findings unless a complete, schema-valid AI review is enabled and returns additional evidence or an explicit manual-review flag.
 
 All `AiReview` consumers must route the persisted record through `displayedAiResult()` (`server/lib/ai-review-types.ts`). The fallback shape used when the assistant did not complete carries `risk: "low"` and `releaseAssessment: "not_assessed"` — reading those fields raw would silently surface "we couldn't review this" as "low risk / nothing unusual." The helper narrows to a `{ kind: "complete" }` discriminated union or a `{ kind: "unavailable" }` view that intentionally omits `risk` and `releaseAssessment`, so neither the UI nor the risk computation can accidentally read fallback values as evidence.
 
-When AI review returns it will continue to:
+When AI review is enabled it must continue to:
 
 - start from deterministic findings, the normalized manifest diff, and changed-file metadata rather than a bulk dump of every changed file;
 - request targeted redacted evidence through app-owned AI SDK tools — a batched `read` tool that auto-returns a text diff for changed files (and the staged sample otherwise), a batched literal `search_files`, and a `list_files` filter — including unchanged files when a recognized manifest field exposes them as lifecycle-script targets or entrypoints;
@@ -226,7 +226,7 @@ Implemented `npm_connections` responsibilities:
 - support rotation/removal;
 - emit audit events for add, validate, use, and delete.
 
-Credential validation is empirical where possible: it checks registry auth through `/-/whoami`, staged list access through `GET /-/stage?perPage=1`, and when the user supplies a real stage ID it checks staged view plus ranged staged-tarball access without retaining the tarball. Before launch, confirm the least-privilege token shape with real npm tokens. Do not rely solely on broad token labels.
+Credential validation is empirical where possible: it checks registry auth through `/-/whoami`, staged list access through `GET /-/stage?perPage=1`, and when the user supplies a real stage ID it checks staged view plus ranged staged-tarball access without retaining the tarball. A read-only granular npm token reaches all currently required staged endpoints, so no broader token scope is required; continue to validate against the endpoints rather than relying only on broad token labels.
 
 ## Report model and future signing
 
@@ -238,7 +238,7 @@ Implemented foundation:
 - `digest` is SHA-256 over stable canonical report JSON built from redacted scan evidence, including the deterministic rules version and release/context finding annotations so digests change when the ruleset or visible risk interpretation changes;
 - newly completed scans store `summary_json.risk` with release, artifact, and context risk; `scans.risk` stores the primary artifact risk for new reports, while `summary_json.risk.releaseRisk` carries the package-to-package release verdict;
 - each deterministic finding carries `ruleId` and `ruleVersion` (see `DETERMINISTIC_RULES_VERSION` in `server/lib/review.ts`), persisted on `scan_findings.rule_id` / `rule_version`;
-- persisted scan detail renders report version, digest, rules version, package diff, and safety posture (AI review is disabled — see the Workers AI section).
+- persisted scan detail renders report version, digest, rules version, package diff, and safety posture (AI review is Flagship-gated and unavailable by default — see the Workers AI section).
 
 Prepare next for:
 

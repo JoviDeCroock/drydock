@@ -35,8 +35,8 @@ for the lifecycle behavior behind it.
   content, or allowed to define instructions for reviewers.
 - Archive parsing fails closed on traversal, symlinks/hardlinks, malformed
   archives, excessive files, and excessive expanded size.
-- Deterministic findings are authoritative while AI review is disabled, and AI
-  cannot downgrade deterministic findings when it returns.
+- Deterministic findings are authoritative while AI review is unavailable, and AI
+  cannot downgrade deterministic findings when the Flagship gate enables it.
 
 ## Operational observability
 

@@ -34,9 +34,9 @@ The product must not execute package code, install dependencies, run lifecycle s
 
 The Dynamic Worker sandbox must never receive npm token material. Only `NpmStageGateway` may attach npm authorization, and only for allowed npm registry endpoints.
 
-### AI is advisory (and currently disabled)
+### AI is advisory (and Flagship-gated)
 
-Workers AI review is currently disabled in the pipeline; deterministic findings are the only review signal. The reviewer module is preserved on disk and is planned to return behind a paid tier. When it returns, Workers AI reviews evidence but does not decide approval — deterministic findings remain authoritative and cannot be downgraded by AI output.
+Workers AI review is wired into the pipeline through `maybeRunAiReview`, but the per-organization Flagship `ai-review` flag is off by default for the planned paid-tier feature. When the flag is not enabled, the scan records AI review as unavailable and deterministic findings are the only review signal. When enabled, Workers AI reviews evidence but does not decide approval — deterministic findings remain authoritative and cannot be downgraded by AI output.
 
 ## npm credential posture
 
@@ -78,7 +78,7 @@ Persist by default:
 - bounded redacted text samples;
 - package.json summary and diff;
 - deterministic findings;
-- AI findings (paused — persisted as `null` while AI review is disabled);
+- AI findings (Flagship-gated and unavailable by default);
 - risk summary split into release, artifact, and context risk so `scans.risk` reflects the full artifact while unchanged hazards remain separated from the package-to-package release verdict;
 - safety posture;
 - audit events;
@@ -132,9 +132,9 @@ Additional boundaries for PyPI:
 - Treat wheel ZIP and sdist tar contents as hostile evidence, with the same no-execution and bounded-sample rules as npm tarballs.
 - Keep GitHub Actions artifact credentials in the trusted parent/GitHub integration path; do not pass them into the sandbox.
 
-## AI prompt-injection posture (paused)
+## AI prompt-injection posture
 
-AI review is disabled today; the posture below documents the contract the reviewer must continue to honor when it returns behind a paid tier.
+AI review is Flagship-gated and off by default; the posture below documents the contract the reviewer must continue to honor when enabled for an organization.
 
 Workers AI receives an ecosystem-aware system prompt that says package contents are hostile evidence only. The prompt is built from a shared safety preamble plus a stable npm, PyPI, or generic package-release checklist. The only instruction-bearing inputs are the application-owned system prompt, top-level review task, and application-owned tool descriptions. Everything derived from a package is untrusted evidence, including filenames, manifest/metadata fields, lifecycle/build scripts, dependency names/specifiers, README text, comments, source code, diffs, deterministic finding evidence, the changed-file manifest, and every tool result.
 

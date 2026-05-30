@@ -8,7 +8,7 @@ This roadmap converts the current staged-publish sandbox into a SaaS product whi
 - No full team RBAC in the first production slice.
 - Per-organization npm credentials, not a global production npm token.
 - npm approval remains manual and 2FA-protected outside the product.
-- Cloudflare Workers AI was the production AI provider. AI review is currently disabled in the pipeline and planned to return as a paid-tier feature; see [`docs/architecture.md`](./architecture.md#workers-ai-disabled) and [`docs/cost-model.md`](./cost-model.md#ai-model-strategy-paused-planned-paid-tier).
+- Cloudflare Workers AI is the production AI provider. AI review is wired through `maybeRunAiReview` but gated off by default behind the per-organization Flagship `ai-review` flag for the planned paid-tier feature; see [`docs/architecture.md`](./architecture.md#workers-ai-flagship-gated) and [`docs/cost-model.md`](./cost-model.md#ai-model-strategy-flagship-gated-planned-paid-tier).
 - Raw tarballs are not retained by default.
 - Signed reports are prepared for but not launched yet.
 
@@ -174,7 +174,7 @@ Goals:
 
 Tasks:
 
-- Confirm npm staged-publish list/view APIs can enumerate new stages with organization-owned credentials, and document the minimum token capabilities required.
+- Keep npm staged-publish list/view/tarball validation in the connection flow and document the read-only granular token setup in product guidance.
 - Add organization/package monitoring settings for opt-in scopes/packages, notification recipients, and notification preferences.
 - Add a scheduled discovery job, likely Cloudflare Cron-triggered, that polls for new staged publishes per npm connection.
 - Deduplicate discovered stage IDs in D1 and enqueue scan jobs idempotently so retries or repeated polls do not create duplicate automatic scans.
