@@ -217,6 +217,10 @@ export async function executeWorkflowGateJob(
   } catch (err) {
     const safe = classifyScanError(err);
     await markScanFailed(db, scanId, organizationId, safe);
+    // The scan is already visible to the organization. Keep the gate linked so
+    // the workbench can resolve gate context for the failed review instead of
+    // leaving a detached workflow-gate scan behind.
+    await attachScanToGate(db, gate.id, scanId);
     await recordScanEvent(db, {
       organizationId,
       actorUserId: ownerUserId,
@@ -255,8 +259,7 @@ export async function executeWorkflowGateJob(
 
   // Link the gate to its completed review and leave it PENDING. A maintainer
   // drives the decision from the workbench; the recommendation above is
-  // advisory. Attaching last means a transient pipeline failure leaves
-  // gate.scanId unset so a retry re-runs the review.
+  // advisory.
   await attachScanToGate(db, gate.id, scanId);
 
   emitOperationalEvent("info", "github_workflow_gate.review_ready", {

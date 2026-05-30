@@ -554,6 +554,46 @@ describe("executeWorkflowGateJob", () => {
     expect(types).not.toContain("github_workflow_gate.rejected");
   });
 
+  test("links a failed pipeline scan back to the pending gate", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9208",
+      repositoryId: 72009,
+      runId: 14141,
+    });
+    const scenario = await buildScenario(14141, { digestMatches: true });
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const sandboxEnv = {
+      ...buildEnv(bindings, loaderMock.binding),
+      FLAGS: {
+        getBooleanValue: vi.fn(async () => {
+          throw new Error("flag service unavailable");
+        }),
+      },
+    } as Cloudflare.Env;
+    const db = createDb(env.DB);
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.status).toBe("pending");
+    expect(gate?.scanId).toBeTruthy();
+    expect(scenario.decisionCalls).toHaveLength(0);
+
+    const persisted = await getScan(db, gate!.scanId!, seeded.organizationId);
+    expect(persisted?.scan.status).toBe("failed");
+    expect(persisted?.scan.source).toBe("workflow_gate");
+
+    const types = await scanEventTypes(seeded.organizationId, seeded.gateId);
+    expect(types).toContain("github_workflow_gate.review_failed");
+  });
+
   test("does not re-review a pending gate that already has a scan attached", async () => {
     const seeded = await seedGateForTest({
       installationExternalId: "9207",

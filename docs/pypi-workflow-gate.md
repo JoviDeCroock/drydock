@@ -510,13 +510,13 @@ and the consumer re-checks gate status, so a re-enqueue is safe.
 6. Create a scan job (`source: "workflow_gate"`, synthetic
    `stageId: "workflow-gate:<gateId>"`) and run `runScanPipeline` with the
    `pypiAdapter` over the verified manifest + artifacts. A pipeline throw marks
-   the scan failed, records `review_failed`, and leaves the gate pending.
+   the scan failed, links that failed scan to the gate so the workbench can
+   resolve gate context, records `review_failed`, and leaves the gate pending.
 7. Compute an **advisory** recommendation from the release risk
    (`recommendationForReleaseRisk`: `high`/`critical` → `rejected`, otherwise
    `approved`) and record `github_workflow_gate.reviewed` with it. Then link the
    scan to the gate via `attachScanToGate` and **leave the gate pending** — the
-   review never posts to GitHub. Attaching last means a transient pipeline
-   failure leaves `scanId` unset so a retry re-runs the review.
+   review never posts to GitHub.
 
 The job never auto-approves a release: approving releases the GitHub job and
 publishing happens immediately through Trusted Publishing/OIDC, which is too
