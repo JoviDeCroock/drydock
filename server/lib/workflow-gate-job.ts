@@ -289,7 +289,19 @@ export async function executeWorkflowGateJob(
   // Keep the completed review linked and leave the gate PENDING. A maintainer
   // drives the decision from the workbench; the recommendation above is
   // advisory.
-  await attachScanToGate(db, gate.id, scanId, scanId);
+  const reviewStillPending = await attachScanToGate(db, gate.id, scanId, scanId);
+  if (!reviewStillPending) {
+    const currentGate = await getGateForOrganization(db, organizationId, gate.id);
+    emitOperationalEvent("info", "github_workflow_gate.job_skipped", {
+      organizationId,
+      gateId,
+      scanId,
+      reason: currentGate
+        ? `review_ready_lost_to_status_${currentGate.status}`
+        : "review_ready_gate_missing",
+    });
+    return;
+  }
 
   // Tell the maintainer there is a gate to decide. This is the only review-ready
   // transition for the gate (a re-delivery short-circuits above at

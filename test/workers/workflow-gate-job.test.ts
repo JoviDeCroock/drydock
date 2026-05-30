@@ -917,6 +917,62 @@ describe("executeWorkflowGateJob", () => {
     expect(sentEvents).toHaveLength(1);
   });
 
+  test("does not email when the gate is decided before notification", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9223",
+      repositoryId: 72024,
+      runId: 20202,
+    });
+    const scenario = await buildScenario(20202, { digestMatches: true });
+    const db = createDb(env.DB);
+    const triggerName = `reject_gate_after_reviewed_${crypto.randomUUID().replaceAll("-", "_")}`;
+    await env.DB.prepare(`
+      CREATE TRIGGER ${triggerName}
+      AFTER INSERT ON scan_events
+      WHEN NEW.type = 'github_workflow_gate.reviewed'
+      BEGIN
+        UPDATE github_workflow_gates
+        SET status = 'rejected',
+            decision = 'rejected',
+            decision_comment = 'blocked during review',
+            decided_at = 1,
+            updated_at = 1
+        WHERE id = json_extract(NEW.metadata_json, '$.gateId')
+          AND status = 'pending';
+      END
+    `).run();
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const send = vi.fn(async () => undefined);
+    const sandboxEnv = buildEnvWithEmail(bindings, loaderMock.binding, { send });
+
+    try {
+      await executeWorkflowGateJob(
+        sandboxEnv,
+        ctx,
+        { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+        db,
+      );
+    } finally {
+      await env.DB.prepare(`DROP TRIGGER IF EXISTS ${triggerName}`).run();
+    }
+
+    expect(send).not.toHaveBeenCalled();
+    expect(scenario.decisionCalls).toHaveLength(0);
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.status).toBe("rejected");
+    expect(gate?.scanId).toBeTruthy();
+
+    const persisted = await getScan(db, gate!.scanId!, seeded.organizationId);
+    expect(persisted?.scan.status).toBe("complete");
+
+    const types = await scanEventTypes(seeded.organizationId, seeded.gateId);
+    expect(types).not.toContain("github_workflow_gate.notification_sent");
+    expect(types).not.toContain("github_workflow_gate.notification_failed");
+  });
+
   test("records a notification failure without blocking the gate when delivery fails", async () => {
     const seeded = await seedGateForTest({
       installationExternalId: "9222",

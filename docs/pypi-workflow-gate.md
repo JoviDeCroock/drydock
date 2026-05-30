@@ -545,11 +545,14 @@ recorded as a `github_workflow_gate.notification_sent` or
 `github_workflow_gate.notification_error` operational event.
 
 The email is **send-once per gate**. Step 8 sits on the single review-ready
-transition, and a GitHub re-delivery of the same `deployment_protection_rule`
-event short-circuits earlier at the `already_reviewed` guard (a pending gate
-with a completed attached scan is never re-reviewed), so one review-ready gate
-produces exactly one email. A failed first review records no email; a later
-retry that succeeds sends the one email when it reaches review-ready.
+transition, after the job re-confirms that the gate is still `pending` while
+linking the completed scan. If a maintainer has already decided the gate during
+the review, that compare-and-set fails and no stale "needs review" email is
+sent. A GitHub re-delivery of the same `deployment_protection_rule` event
+short-circuits earlier at the `already_reviewed` guard (a pending gate with a
+completed attached scan is never re-reviewed), so one review-ready gate produces
+exactly one email. A failed first review records no email; a later retry that
+succeeds sends the one email when it reaches review-ready.
 
 The job never auto-approves a release: approving releases the GitHub job and
 publishing happens immediately through Trusted Publishing/OIDC, which is too
