@@ -115,20 +115,26 @@ export const scanFiles = sqliteTable(
   }),
 );
 
-export const scanFindings = sqliteTable("scan_findings", {
-  id: text("id").primaryKey(),
-  scanId: text("scan_id")
-    .notNull()
-    .references(() => scans.id, { onDelete: "cascade" }),
-  severity: text("severity").notNull(),
-  file: text("file").notNull(),
-  evidence: text("evidence").notNull(),
-  reason: text("reason").notNull(),
-  line: integer("line"),
-  source: text("source").notNull().default("rule"),
-  ruleId: text("rule_id"),
-  ruleVersion: text("rule_version"),
-});
+export const scanFindings = sqliteTable(
+  "scan_findings",
+  {
+    id: text("id").primaryKey(),
+    scanId: text("scan_id")
+      .notNull()
+      .references(() => scans.id, { onDelete: "cascade" }),
+    severity: text("severity").notNull(),
+    file: text("file").notNull(),
+    evidence: text("evidence").notNull(),
+    reason: text("reason").notNull(),
+    line: integer("line"),
+    source: text("source").notNull().default("rule"),
+    ruleId: text("rule_id"),
+    ruleVersion: text("rule_version"),
+  },
+  (table) => ({
+    scanSeverityIdx: index("scan_findings_scan_severity_idx").on(table.scanId, table.severity),
+  }),
+);
 
 export const scanEvents = sqliteTable(
   "scan_events",

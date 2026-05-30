@@ -8,7 +8,7 @@ This roadmap converts the current staged-publish sandbox into a SaaS product whi
 - No full team RBAC in the first production slice.
 - Per-organization npm credentials, not a global production npm token.
 - npm approval remains manual and 2FA-protected outside the product.
-- Cloudflare Workers AI was the production AI provider. AI review is currently disabled in the pipeline and planned to return as a paid-tier feature; see [`docs/architecture.md`](./architecture.md#workers-ai-disabled) and [`docs/cost-model.md`](./cost-model.md#ai-model-strategy-paused-planned-paid-tier).
+- Cloudflare Workers AI is the production AI provider. AI review is wired through `maybeRunAiReview` but gated off by default behind the per-organization Flagship `ai-review` flag for the planned paid-tier feature; see [`docs/architecture.md`](./architecture.md#workers-ai-flagship-gated) and [`docs/cost-model.md`](./cost-model.md#ai-model-strategy-flagship-gated-planned-paid-tier).
 - Raw tarballs are not retained by default.
 - Signed reports are prepared for but not launched yet.
 
@@ -18,13 +18,11 @@ The prototype-to-product foundation is in place: authenticated organization-scop
 
 Closed: tenant-boundary, sandbox-gateway, and archive-parser regression tests now have route- and unit-level coverage (`test/workers/cross-org-routes.test.ts`, `test/workers/cross-org-npm-connection.test.ts`, `test/workers/sandbox-gateway-runtime.test.ts`, `test/tar-parser.test.mjs`).
 
-PyPI workflow-gate support has a backend foundation only: manifest validation, PyPI metadata helpers, safe wheel ZIP parsing, and deterministic PyPI artifact findings. It is not yet a routed or persisted product workflow. See [`pypi-workflow-gate.md`](./pypi-workflow-gate.md).
+PyPI workflow-gate support is now routed and persisted: the `POST /webhooks/github` deployment-protection webhook resolves a pending gate against `github_release_targets`, persists a `github_workflow_gates` row, and enqueues a queue-driven review (`executeWorkflowGateJob`) that runs the full PyPI pipeline and posts the approve/reject decision back to GitHub. What remains is the workflow-gate review UI, GitHub/PyPI setup guidance, and storing the reviewed artifact digests in the persisted report. See [`pypi-workflow-gate.md`](./pypi-workflow-gate.md).
 
-## Phase 3 — Per-organization npm connections (open follow-up)
+## Phase 3 — Per-organization npm connections (closed)
 
-Open validation question:
-
-- Confirm the minimum npm token capability required for staged package list/view/download endpoints. Current validation checks registry auth with `/-/whoami` and staged-tarball access for a supplied stage ID; before launch, add list/view endpoint checks if npm exposes/permits them for token validation.
+Resolved: `validateNpmCredential` checks registry auth (`/-/whoami`), staged-list, staged-view, and staged-tarball access. A read-only granular token reaches all of these staged endpoints, so the minimum-capability question is answered — no broader token scope is required.
 
 ## Phase 4 — Async scans with Cloudflare Queues (remaining)
 
@@ -176,7 +174,7 @@ Goals:
 
 Tasks:
 
-- Confirm npm staged-publish list/view APIs can enumerate new stages with organization-owned credentials, and document the minimum token capabilities required.
+- Keep npm staged-publish list/view/tarball validation in the connection flow and document the read-only granular token setup in product guidance.
 - Add organization/package monitoring settings for opt-in scopes/packages, notification recipients, and notification preferences.
 - Add a scheduled discovery job, likely Cloudflare Cron-triggered, that polls for new staged publishes per npm connection.
 - Deduplicate discovered stage IDs in D1 and enqueue scan jobs idempotently so retries or repeated polls do not create duplicate automatic scans.

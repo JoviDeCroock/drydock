@@ -13,7 +13,7 @@ The baseline selector is intentionally tag-aware:
 3. If there is no lower predecessor, it falls back to the highest published semver-like version.
 4. If no baseline can be selected or downloaded, the scan proceeds as an all-added diff and records the baseline reason in `summary_json.baseline`.
 
-This avoids forcing `2.0.0-beta.3 --tag beta` against `latest` and keeps maintenance or custom-channel releases from being compared with an unrelated highest-semver channel. A wrong baseline inflates changed-file count, which makes human review noisier and will increase AI input size when AI review returns.
+This avoids forcing `2.0.0-beta.3 --tag beta` against `latest` and keeps maintenance or custom-channel releases from being compared with an unrelated highest-semver channel. A wrong baseline inflates changed-file count, which makes human review noisier and increases AI input size when AI review is enabled.
 
 ## npm staged metadata
 
@@ -38,7 +38,7 @@ The pipeline cross-checks staged detail package name/version against the staged 
 
 ## AI token impact
 
-AI review is disabled in the current pipeline, but when it returns it should remain diff-first:
+AI review is Flagship-gated and off by default, but when enabled for an organization it should remain diff-first:
 
 - deterministic findings stay authoritative and are computed before AI;
 - AI sees the ecosystem id, normalized manifest diff, release-delta deterministic findings, changed-file diff, and bounded samples for changed files only;
