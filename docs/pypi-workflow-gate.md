@@ -441,13 +441,63 @@ The downloaded wheel/sdist files are flattened through the same wheel/sdist
 namespaces as the candidate, so `createPackageDiff` reports changed/unchanged
 files across versions.
 
+### Running the gate review (queue consumer)
+
+The webhook does not run the review inline. When a `deployment_protection_rule`
+delivery resolves to a pending gate, `POST /webhooks/github` enqueues a
+`{ kind: "workflow_gate", organizationId, gateId }` message onto `SCAN_QUEUE`
+(the same queue npm scans use). The Worker's `queue` handler routes that
+message to `executeWorkflowGateJob` in `server/lib/workflow-gate-job.ts`; the
+existing `ScanQueueMessage` path is unchanged. `SCAN_QUEUE` is optional in
+tests/local, so the enqueue is guarded — GitHub retries any non-2xx delivery
+and the consumer re-checks gate status, so a re-enqueue is safe.
+
+`executeWorkflowGateJob` runs the full pipeline for one gate:
+
+1. Read the GitHub App config. A `GithubAppConfigError` leaves the gate pending
+   and returns without retrying (a misconfigured app won't fix itself on retry).
+2. Load the gate. A gate that is already `approved`/`rejected` triggers a
+   **redelivery** of the stored decision to GitHub (idempotent re-POST) instead
+   of re-running the review; callback failures rethrow so the queue retries. A
+   non-pending, non-decided status is skipped with a warning.
+3. Record `github_workflow_gate.received`.
+4. Call `preparePyPiReleaseCandidateForGate` to resolve + verify the bundle.
+   - A `WorkflowArtifactError` (incl. a tampered `artifact_digest_mismatch`)
+     **rejects** the gate with a generic comment, records
+     `github_workflow_gate.rejected`, and POSTs the rejection. `prepare`
+     already recorded the typed `failureReason` and kept the gate pending, so
+     the `markGateDecided` CAS still fires.
+   - Any other error (sandbox/review failure) leaves the gate **pending**,
+     records `github_workflow_gate.review_failed`, and returns without POSTing —
+     we never auto-approve on error, and the operator can retry.
+5. Resolve the organization owner (so the persisted scan has an owner). A
+   missing owner records `review_failed` and leaves the gate pending.
+6. Create a scan job (`source: "workflow_gate"`, synthetic
+   `stageId: "workflow-gate:<gateId>"`), link it to the gate via
+   `attachScanToGate`, and run `runScanPipeline` with the `pypiAdapter` over the
+   verified manifest + artifacts. A pipeline throw marks the scan failed,
+   records `review_failed`, and leaves the gate pending.
+7. Map the release risk to a decision: `high`/`critical` → **rejected**,
+   otherwise **approved**. Record `github_workflow_gate.reviewed`.
+8. `markGateDecided` (CAS on `pending`) stores the decision, comment, and report
+   URL (`<BETTER_AUTH_URL>/dashboard/scans/<scanId>`); a `null` return means a
+   concurrent delivery already decided the gate, so we stop. Otherwise
+   `postDeploymentProtectionDecision` POSTs the approve/reject callback and we
+   record `github_workflow_gate.approved` / `.rejected` plus
+   `github_workflow_gate.decided`.
+
+Because `markGateDecided` is the single CAS out of `pending`, a fresh-decision
+POST failure rethrows so the queue retries; the retry then falls into the
+already-decided redelivery path (step 2) rather than re-running the review or
+double-deciding.
+
+The persisted review is an ordinary `scans` row scoped to the org with
+`source: "workflow_gate"`, reachable at `/dashboard/scans/<scanId>` — no
+separate review table. The gate row already links scan ↔ release target, so no
+schema change was needed.
+
 ## Remaining work
 
-- Wire `preparePyPiReleaseCandidateForGate` into the scan pipeline so a
-  resolved gate runs `pypiAdapter` to completion, persists the report, and
-  calls `markGateDecided` / `postDeploymentProtectionDecision`.
-- Persist workflow-gate reviews separately from npm `stageId` scans or
-  generalize the scan schema around `release_candidate` records.
 - Add UI for workflow-gate reviews and GitHub/PyPI setup guidance.
 - Record the reviewed artifact SHA-256 digests in the persisted report
   payload (the resolver returns them; the persister doesn't store them yet).

@@ -23,6 +23,9 @@ import type { ScanInput, ScanResult } from "../types";
 export interface ScanPipelineOptions extends ScanInput {
   scanId?: string;
   organizationId: string;
+  // Adapters parse their own input shape off this object (e.g. the PyPI adapter
+  // reads `manifest`/`artifacts`), so allow extra keys to flow through untyped.
+  [key: string]: unknown;
 }
 
 export interface ScanPipelineContext {
