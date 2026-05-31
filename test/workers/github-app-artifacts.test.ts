@@ -325,14 +325,15 @@ describe("fetchReleaseBundleWithToken", () => {
     });
   });
 
-  test("bundle_unavailable when list-artifacts returns 404", async () => {
+  test("repository_not_accessible when list-artifacts returns 404", async () => {
     stubGithubFetch({
       bundleZip: null,
       artifactsResponse: () => new Response("missing", { status: 404 }),
     });
 
     await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({
-      code: "bundle_unavailable",
+      name: "GithubAppValidationError",
+      code: "repository_not_accessible",
     });
   });
 

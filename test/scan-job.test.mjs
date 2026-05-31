@@ -9,6 +9,7 @@ const dbMock = vi.hoisted(() => ({
   createDb: vi.fn(() => ({})),
   discardScanAttempt: vi.fn(),
   getNpmConnection: vi.fn(),
+  markNpmConnectionInvalid: vi.fn(),
   markNpmConnectionUsed: vi.fn(),
   markScanFailed: vi.fn(),
   recordScanEvent: vi.fn(),
@@ -113,6 +114,23 @@ describe("scan job retry classification", () => {
     });
   });
 
+  test("flags a rejected token (401/403) as an auth failure but not a missing stage (404)", () => {
+    expect(
+      classifyScanError(new SandboxError(JSON.stringify({ error: "denied", status: 401 })))
+        .authFailure,
+    ).toBe(true);
+    expect(
+      classifyScanError(new SandboxError(JSON.stringify({ error: "denied", status: 403 })))
+        .authFailure,
+    ).toBe(true);
+    // A 404 means the staged tarball is gone (commonly because the publish was
+    // finalized), not that the token expired — it must not invalidate the token.
+    expect(
+      classifyScanError(new SandboxError(JSON.stringify({ error: "gone", status: 404 })))
+        .authFailure,
+    ).toBeUndefined();
+  });
+
   test("does not retry credential failures that crossed the Worker RPC boundary", () => {
     expect(
       classifyScanError({
@@ -164,6 +182,7 @@ describe("executeScanJob idempotency", () => {
       tokenFingerprint: "fp",
       validationStatus: "valid",
     });
+    dbMock.markNpmConnectionInvalid.mockResolvedValue(true);
     npmConnectionMock.decryptNpmToken.mockResolvedValue("npm_token");
     pipelineMock.runScanPipeline.mockResolvedValue({
       id: message.scanId,
@@ -272,10 +291,10 @@ describe("executeScanJob idempotency", () => {
     });
   });
 
-  test("discards auto-discovered scans when the org's token cannot access the tarball", async () => {
+  test("discards auto-discovered scans when the staged tarball is gone", async () => {
     dbMock.claimScanForRun.mockResolvedValue(true);
     pipelineMock.runScanPipeline.mockRejectedValue(
-      new SandboxError(JSON.stringify({ error: "denied", status: 403 })),
+      new SandboxError(JSON.stringify({ error: "gone", status: 404 })),
     );
 
     await expect(
@@ -307,7 +326,47 @@ describe("executeScanJob idempotency", () => {
       scanId: message.scanId,
       stageId: message.stageId,
     });
+    expect(dbMock.markNpmConnectionInvalid).not.toHaveBeenCalled();
+    const invalidated = dbMock.recordScanEvent.mock.calls.filter(
+      ([, payload]) => payload?.type === "npm_connection.invalidated",
+    );
+    expect(invalidated).toHaveLength(0);
     expect(notifyMock.notifyScanCompletion).not.toHaveBeenCalled();
+  });
+
+  test("invalidates and fails auto-discovered scans when the registry rejects the token", async () => {
+    dbMock.claimScanForRun.mockResolvedValue(true);
+    pipelineMock.runScanPipeline.mockRejectedValue(
+      new SandboxError(JSON.stringify({ error: "denied", status: 403 })),
+    );
+
+    await expect(
+      executeScanJob(
+        env,
+        ctx,
+        { ...message, source: "auto_discovery" },
+        {},
+        { attempt: 1, finalAttempt: true },
+      ),
+    ).rejects.toBeInstanceOf(SandboxError);
+
+    expect(dbMock.discardScanAttempt).not.toHaveBeenCalled();
+    expect(dbMock.markNpmConnectionInvalid).toHaveBeenCalledWith(
+      {},
+      {
+        organizationId: message.organizationId,
+        reason: "The organization's npm token was rejected when downloading the staged tarball.",
+        tokenFingerprint: "fp",
+      },
+    );
+    expect(dbMock.markScanFailed).toHaveBeenCalledTimes(1);
+    const invalidated = dbMock.recordScanEvent.mock.calls.filter(
+      ([, payload]) => payload?.type === "npm_connection.invalidated",
+    );
+    expect(invalidated).toHaveLength(1);
+    expect(notifyMock.notifyScanCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "failed" }),
+    );
   });
 
   test("still marks auto-discovered scans failed for non-tarball-access errors", async () => {
@@ -348,5 +407,47 @@ describe("executeScanJob idempotency", () => {
       ([, payload]) => payload?.type === "scan.retryable_failed",
     );
     expect(retryable).toHaveLength(1);
+  });
+
+  test("invalidates the npm connection when the registry rejects the token (403)", async () => {
+    dbMock.claimScanForRun.mockResolvedValue(true);
+    pipelineMock.runScanPipeline.mockRejectedValue(
+      new SandboxError(JSON.stringify({ error: "denied", status: 403 })),
+    );
+
+    await expect(
+      executeScanJob(env, ctx, message, {}, { attempt: 1, finalAttempt: true }),
+    ).rejects.toBeInstanceOf(SandboxError);
+
+    expect(dbMock.markNpmConnectionInvalid).toHaveBeenCalledWith(
+      {},
+      {
+        organizationId: message.organizationId,
+        reason: "The organization's npm token was rejected when downloading the staged tarball.",
+        tokenFingerprint: "fp",
+      },
+    );
+    const invalidated = dbMock.recordScanEvent.mock.calls.filter(
+      ([, payload]) => payload?.type === "npm_connection.invalidated",
+    );
+    expect(invalidated).toHaveLength(1);
+    expect(invalidated[0]?.[1]?.metadata).toMatchObject({ reason: "staged_tarball_unavailable" });
+  });
+
+  test("does not invalidate the npm connection when the staged tarball is simply gone (404)", async () => {
+    dbMock.claimScanForRun.mockResolvedValue(true);
+    pipelineMock.runScanPipeline.mockRejectedValue(
+      new SandboxError(JSON.stringify({ error: "gone", status: 404 })),
+    );
+
+    await expect(
+      executeScanJob(env, ctx, message, {}, { attempt: 1, finalAttempt: true }),
+    ).rejects.toBeInstanceOf(SandboxError);
+
+    expect(dbMock.markNpmConnectionInvalid).not.toHaveBeenCalled();
+    const invalidated = dbMock.recordScanEvent.mock.calls.filter(
+      ([, payload]) => payload?.type === "npm_connection.invalidated",
+    );
+    expect(invalidated).toHaveLength(0);
   });
 });

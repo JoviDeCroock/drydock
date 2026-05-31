@@ -8,6 +8,7 @@ const dbMock = vi.hoisted(() => ({
   createScanJob: vi.fn(),
   deletePendingScanJob: vi.fn(),
   listExistingScanStageIds: vi.fn(),
+  markNpmConnectionInvalid: vi.fn(),
   markNpmConnectionUsed: vi.fn(),
   recordScanEvent: vi.fn(),
   updateNpmConnectionValidation: vi.fn(),
@@ -67,6 +68,7 @@ describe("ensureUsableNpmConnection token state branching", () => {
         validationStatus: "valid",
         tokenCiphertext: "x",
         tokenNonce: "y",
+        tokenFingerprint: "fp",
       },
       actorUserId: "user_a",
     });
@@ -74,6 +76,7 @@ describe("ensureUsableNpmConnection token state branching", () => {
     expect(result).toEqual({
       token: "npm_secret_token",
       registryUrl: "https://registry.npmjs.org",
+      tokenFingerprint: "fp",
     });
     expect(npmConnectionMock.validateNpmCredential).not.toHaveBeenCalled();
     expect(dbMock.updateNpmConnectionValidation).not.toHaveBeenCalled();

@@ -12,12 +12,16 @@ import { githubAppInstallations, scans } from "../db/schema";
 import { pypiAdapter } from "./adapters/pypi/index";
 import {
   attachScanToGate,
+  clearInstallationHealth,
   GithubAppConfigError,
   type GithubAppConfig,
+  GithubAppValidationError,
+  type GithubAppValidationCode,
   getGateForOrganization,
   markGateDecided,
   postDeploymentProtectionDecision,
   readGithubAppConfig,
+  recordInstallationHealthFailure,
   WorkflowArtifactError,
   type WorkflowGateRecord,
 } from "./github-app";
@@ -182,6 +186,13 @@ export async function executeWorkflowGateJob(
     }
     // A review/processing error (e.g. the sandbox parser). Leave the deployment
     // pending so GitHub waits for a human; record the failure for the dashboard.
+    if (isGithubAuthFailure(err)) {
+      await recordInstallationHealthFailure(
+        db,
+        gate.installationRowId,
+        githubFailureReason(err, gate),
+      );
+    }
     const safe = classifyScanError(err);
     await recordScanEvent(db, {
       organizationId,
@@ -424,14 +435,95 @@ async function deliverGateDecision(
   if (!installationExternalId) {
     throw new Error(`installation row ${gate.installationRowId} missing for gate ${gate.id}`);
   }
-  await postDeploymentProtectionDecision({
-    config,
-    installationExternalId,
-    callbackUrl: gate.deploymentCallbackUrl,
-    environment: gate.environment,
-    state: gate.decision,
-    comment: gate.decisionComment ?? "",
-  });
+  try {
+    await postDeploymentProtectionDecision({
+      config,
+      installationExternalId,
+      callbackUrl: gate.deploymentCallbackUrl,
+      environment: gate.environment,
+      state: gate.decision,
+      comment: gate.decisionComment ?? "",
+    });
+  } catch (err) {
+    if (isGithubAuthFailure(err)) {
+      await recordInstallationHealthFailure(
+        db,
+        gate.installationRowId,
+        githubFailureReason(err, gate),
+      );
+    }
+    throw err;
+  }
+  if (await shouldClearInstallationHealthAfterSuccessfulDelivery(db, gate)) {
+    await clearInstallationHealth(db, gate.installationRowId);
+  }
+}
+
+const REPOSITORY_HEALTH_FAILURE_PREFIX = "Drydock's GitHub App can no longer access repository ";
+const REPOSITORY_HEALTH_FAILURE_SUFFIX = " — check its repository access.";
+
+const GITHUB_AUTH_FAILURE_CODES: ReadonlySet<GithubAppValidationCode> = new Set([
+  "installation_inactive",
+  "installation_missing",
+  "installation_not_authorized",
+  "repository_not_accessible",
+]);
+
+function isGithubAuthFailure(err: unknown): err is GithubAppValidationError {
+  if (!(err instanceof GithubAppValidationError) || !GITHUB_AUTH_FAILURE_CODES.has(err.code)) {
+    return false;
+  }
+  return err.status === undefined || err.status === 401 || err.status === 403 || err.status === 404;
+}
+
+function githubFailureReason(err: GithubAppValidationError, gate: WorkflowGateRecord): string {
+  switch (err.code) {
+    case "installation_inactive":
+      return "GitHub rejected Drydock's installation token — re-authorize the GitHub App installation.";
+    case "installation_missing":
+      return "GitHub could not find this App installation — it may have been removed.";
+    case "installation_not_authorized":
+      return "Drydock's GitHub App installation is no longer authorized.";
+    case "repository_not_accessible":
+      return `${REPOSITORY_HEALTH_FAILURE_PREFIX}${gate.repositoryFullName}${REPOSITORY_HEALTH_FAILURE_SUFFIX}`;
+    default:
+      return "The GitHub App installation stopped working.";
+  }
+}
+
+async function shouldClearInstallationHealthAfterSuccessfulDelivery(
+  db: AppDb,
+  gate: WorkflowGateRecord,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ lastFailureReason: githubAppInstallations.lastFailureReason })
+    .from(githubAppInstallations)
+    .where(
+      and(
+        eq(githubAppInstallations.id, gate.installationRowId),
+        eq(githubAppInstallations.organizationId, gate.organizationId),
+      ),
+    )
+    .limit(1);
+  const reason = row?.lastFailureReason;
+  if (!reason) return false;
+  if (reason.startsWith(REPOSITORY_HEALTH_FAILURE_PREFIX)) {
+    return repositoryNameFromHealthFailure(reason) === gate.repositoryFullName;
+  }
+  return true;
+}
+
+function repositoryNameFromHealthFailure(reason: string): string | null {
+  if (
+    !reason.startsWith(REPOSITORY_HEALTH_FAILURE_PREFIX) ||
+    !reason.endsWith(REPOSITORY_HEALTH_FAILURE_SUFFIX)
+  ) {
+    return null;
+  }
+  return reason.slice(
+    REPOSITORY_HEALTH_FAILURE_PREFIX.length,
+    reason.length - REPOSITORY_HEALTH_FAILURE_SUFFIX.length,
+  );
 }
 
 async function getInstallationExternalId(

@@ -18,6 +18,8 @@ export interface InstallationRecord {
   targetType: string;
   status: InstallationStatus;
   installedAt: Date;
+  lastFailureReason: string | null;
+  lastFailureAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -63,6 +65,8 @@ export async function upsertInstallation(
         `installation ${input.installationId} is already linked to a different organization`,
       );
     }
+    const clearHealth =
+      input.status === "active" && !isRepositoryScopedHealthFailure(existing.lastFailureReason);
     await db
       .update(githubAppInstallations)
       .set({
@@ -72,6 +76,8 @@ export async function upsertInstallation(
         status: input.status,
         suspendedAt: input.status === "suspended" ? now : null,
         uninstalledAt: input.status === "uninstalled" ? now : null,
+        lastFailureReason: clearHealth ? null : existing.lastFailureReason,
+        lastFailureAt: clearHealth ? null : existing.lastFailureAt,
         updatedAt: now,
       })
       .where(eq(githubAppInstallations.id, existing.id));
@@ -81,6 +87,8 @@ export async function upsertInstallation(
       accountType: input.accountType,
       targetType: input.targetType,
       status: input.status,
+      lastFailureReason: clearHealth ? null : existing.lastFailureReason,
+      lastFailureAt: clearHealth ? null : existing.lastFailureAt,
       updatedAt: now,
     });
   }
@@ -108,6 +116,8 @@ export async function upsertInstallation(
     targetType: input.targetType,
     status: input.status,
     installedAt: now,
+    lastFailureReason: null,
+    lastFailureAt: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -160,15 +170,68 @@ export async function markInstallationStatus(
   status: InstallationStatus,
 ): Promise<void> {
   const now = new Date();
+  const [existing] = await db
+    .select({
+      lastFailureReason: githubAppInstallations.lastFailureReason,
+      lastFailureAt: githubAppInstallations.lastFailureAt,
+    })
+    .from(githubAppInstallations)
+    .where(eq(githubAppInstallations.installationId, installationId))
+    .limit(1);
+  const set: Record<string, unknown> = {
+    status,
+    suspendedAt: status === "suspended" ? now : null,
+    uninstalledAt: status === "uninstalled" ? now : null,
+    updatedAt: now,
+  };
+  if (status === "active") {
+    const clearHealth = !isRepositoryScopedHealthFailure(existing?.lastFailureReason);
+    set.lastFailureReason = clearHealth ? null : existing?.lastFailureReason;
+    set.lastFailureAt = clearHealth ? null : existing?.lastFailureAt;
+  }
   await db
     .update(githubAppInstallations)
-    .set({
-      status,
-      suspendedAt: status === "suspended" ? now : null,
-      uninstalledAt: status === "uninstalled" ? now : null,
-      updatedAt: now,
-    })
+    .set(set)
     .where(eq(githubAppInstallations.installationId, installationId));
+}
+
+/**
+ * Record that a GitHub App installation failed during use (e.g. minting an
+ * installation access token was rejected). The installation status is left
+ * untouched — a transient auth failure should not flip an otherwise-active
+ * install to inactive — but the reason is surfaced in the UI so the operator
+ * can re-authorize. Keyed by the internal row id because the gate path already
+ * resolves the installation record.
+ */
+export async function recordInstallationHealthFailure(
+  db: AppDb,
+  installationRowId: string,
+  reason: string,
+): Promise<void> {
+  const now = new Date();
+  await db
+    .update(githubAppInstallations)
+    .set({ lastFailureReason: reason, lastFailureAt: now, updatedAt: now })
+    .where(eq(githubAppInstallations.id, installationRowId));
+}
+
+/** Clear a recorded health failure after the installation works again. */
+export async function clearInstallationHealth(db: AppDb, installationRowId: string): Promise<void> {
+  await db
+    .update(githubAppInstallations)
+    .set({ lastFailureReason: null, lastFailureAt: null, updatedAt: new Date() })
+    .where(eq(githubAppInstallations.id, installationRowId));
+}
+
+const REPOSITORY_HEALTH_FAILURE_PREFIX = "Drydock's GitHub App can no longer access repository ";
+const REPOSITORY_HEALTH_FAILURE_SUFFIX = " — check its repository access.";
+
+function isRepositoryScopedHealthFailure(reason: string | null | undefined): boolean {
+  return (
+    typeof reason === "string" &&
+    reason.startsWith(REPOSITORY_HEALTH_FAILURE_PREFIX) &&
+    reason.endsWith(REPOSITORY_HEALTH_FAILURE_SUFFIX)
+  );
 }
 
 export interface CreateReleaseTargetInput {
@@ -322,6 +385,8 @@ function readInstallationRow(row: {
   targetType: string;
   status: string;
   installedAt: Date | string | number;
+  lastFailureReason?: string | null;
+  lastFailureAt?: Date | string | number | null;
   createdAt: Date | string | number;
   updatedAt: Date | string | number;
 }): InstallationRecord {
@@ -334,6 +399,11 @@ function readInstallationRow(row: {
     targetType: row.targetType,
     status: normalizeInstallationStatus(row.status),
     installedAt: new Date(row.installedAt),
+    lastFailureReason: row.lastFailureReason ?? null,
+    lastFailureAt:
+      row.lastFailureAt === null || row.lastFailureAt === undefined
+        ? null
+        : new Date(row.lastFailureAt),
     createdAt: new Date(row.createdAt),
     updatedAt: new Date(row.updatedAt),
   };

@@ -99,6 +99,13 @@
       "when": 1780124308761,
       "tag": "0013_simple_blue_blade",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1780209719872,
+      "tag": "0014_rich_puck",
+      "breakpoints": true
     }
   ]
 }

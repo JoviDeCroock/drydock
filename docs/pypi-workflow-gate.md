@@ -241,6 +241,21 @@ fail-closed reject, only calls GitHub a single time. The companion
 unidentifiable artifacts, scan pipeline crash) without consuming the gate, so
 the operator can retry once the underlying issue is fixed.
 
+If GitHub rejects the installation token, a credentialed artifact listing
+returns 401, 403, or 404, or a credentialed artifact download returns 401 or
+403, the gate is left pending and the installation records a health failure.
+This covers the private-repository case where GitHub uses 404 for repository
+access loss.
+
+Only durable authorization failures create or keep a GitHub installation health
+issue. Transient token responses such as rate limits or 5xx errors are recorded
+as gate review failures but do not ask the operator to re-authorize the App.
+After an artifact has already been listed, a 404 from the artifact ZIP download
+is treated as an unavailable bundle rather than repository access loss. A
+successful decision delivery clears a stored installation-wide failure; for
+repository-scoped failures it only clears when the successful gate targets the
+exact same `owner/repo`.
+
 ### Trust boundary (webhook)
 
 - Signatures are required. There is no "trust the header" fallback.
@@ -491,7 +506,14 @@ and the consumer re-checks gate status, so a re-enqueue is safe.
      `markGateDecided` CAS still fires.
    - Any other error (sandbox/review failure) leaves the gate **pending**,
      records `github_workflow_gate.review_failed`, and returns without POSTing —
-     the operator can retry.
+     we never auto-approve on error, and the operator can retry. When the error
+     is a GitHub auth-class `GithubAppValidationError` (`installation_inactive`,
+     `installation_missing`, `installation_not_authorized`,
+     `repository_not_accessible`) it also calls `recordInstallationHealthFailure`
+     to stamp `github_app_installations.last_failure_reason` / `last_failure_at`
+     **without** changing `status`, so the dashboard surfaces the broken
+     installation while gating stays wired (see "Integration health surfacing"
+     in `architecture.md`).
 5. Resolve the organization owner (so the persisted scan has an owner). A
    missing owner records `review_failed` and leaves the gate pending.
 6. Create a scan job (`source: "workflow_gate"`, synthetic
@@ -511,6 +533,16 @@ and the consumer re-checks gate status, so a re-enqueue is safe.
    (`notifyWorkflowGateReview` in `server/lib/notify.ts`). Because Drydock never
    auto-decides, this email is the only proactive signal that a held GitHub
    deployment is waiting on a human.
+
+Delivery to GitHub only happens when a maintainer decides the gate from the
+workbench, or when an artifact error fail-closes it to `rejected`:
+`deliverGateDecision` POSTs the stored decision via
+`postDeploymentProtectionDecision`. On an auth-class callback failure it calls
+`recordInstallationHealthFailure` before rethrowing, so a queue retry preserves
+the surfaced reason; on a successful delivery it calls `clearInstallationHealth`
+when the prior failure was installation-wide, or when a repository-scoped failure
+names the same repository that just delivered successfully — so another
+repository on the same installation cannot hide an unresolved access failure.
 
 ### Notifying the maintainer
 

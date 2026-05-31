@@ -228,6 +228,16 @@ Implemented `npm_connections` responsibilities:
 
 Credential validation is empirical where possible: it checks registry auth through `/-/whoami`, staged list access through `GET /-/stage?perPage=1`, and when the user supplies a real stage ID it checks staged view plus ranged staged-tarball access without retaining the tarball. A read-only granular npm token reaches all currently required staged endpoints, so no broader token scope is required; continue to validate against the endpoints rather than relying only on broad token labels.
 
+Beyond the explicit validate endpoint, a token that stops working _during use_ is detected and recorded so the operator does not have to re-validate manually. `scan-job.ts` and the staged-publishes discovery path (`POST /api/v1/staged-publishes/scan` and the cron) inspect failures: a `401/403` from the registry while downloading a staged tarball or listing staged publishes flips `npm_connections.validation_status` to `invalid` via `markNpmConnectionInvalid` and stores `invalidated_at` + `last_failure_reason`. Invalidation is scoped to the token fingerprint observed before the failing registry call, so a late failure from an in-flight request cannot mark a freshly rotated token invalid. A `404` (the staged tarball is gone, commonly because the publish was finalized) is _not_ treated as a credential failure and never invalidates the token — this distinction is carried by the `authFailure` flag on the classified scan error.
+
+## Integration health surfacing
+
+Two integrations can silently stop working after they were set up: an org's npm token can expire/be revoked, and a GitHub App installation can be suspended, removed, or lose repository access. Both are surfaced to the operator without requiring a manual re-check.
+
+- npm token: see the npm connection model above — failures during use mark the connection `invalid` with a reason and timestamp.
+- GitHub App installation: lifecycle webhooks already update `github_app_installations.status` (suspended/uninstalled/active). For failures that do _not_ change status — GitHub rejecting Drydock's minted installation token or the gated repo becoming inaccessible during a gate run — `workflow-gate-job.ts` records a non-status-changing `last_failure_reason` + `last_failure_at` (`recordInstallationHealthFailure`). Installation-wide token/callback failures clear on the next successful delivery; repository-access failures include the affected repository and only clear after that same repository delivers successfully. Status is intentionally left untouched so a transient auth blip cannot permanently break gating (`resolveDeploymentProtectionTarget` requires `status === "active"`).
+- `GET /api/v1/integration-health` composes these into a single `issues[]` (`{ kind, severity, title, detail, occurredAt }`). It flags invalid npm tokens, installations with a recorded health failure, and gated installations (those mapped to a release target) that were disabled on GitHub. Ungated disabled installations stay quiet. The dashboard renders one banner per issue (best-effort) and Settings shows the per-integration failure reason.
+
 ## Report model and future signing
 
 Reports should become canonical data objects even before public signing launches.
@@ -268,6 +278,7 @@ Current API:
 - `GET /api/v1/organizations` — list the caller's organizations (personal first), each with `npmConnectionConfigured`;
 - `POST /api/v1/organizations` — create a new organization owned by the caller;
 - `PATCH /api/v1/organizations/:id` — rename (owner-only).
+- `GET /api/v1/integration-health` — composed `issues[]` describing npm-token and GitHub-App installation failures for the active org (see "Integration health surfacing"). Best-effort; the dashboard banner degrades to empty on error.
 
 All other `/api/v1/*` endpoints honor the `x-organization-id` request header to pick the active org; absent or non-member ids silently fall back to the caller's personal org.
 

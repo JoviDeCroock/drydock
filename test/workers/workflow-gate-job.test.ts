@@ -9,6 +9,7 @@ import {
   attachScanToGate,
   getGateForOrganization,
   markGateDecided,
+  recordInstallationHealthFailure,
   upsertInstallation,
 } from "../../server/lib/github-app";
 import {
@@ -1013,5 +1014,550 @@ describe("executeWorkflowGateJob", () => {
       "github_workflow_gate.notification_failed",
     );
     expect(meta?.reason).toBeTruthy();
+  });
+
+  test("records an installation health failure when GitHub rejects the installation token", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9300",
+      repositoryId: 73001,
+      runId: 13001,
+    });
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const sandboxEnv = buildEnv(bindings, loaderMock.binding);
+    const db = createDb(env.DB);
+
+    const decisionCalls: unknown[] = [];
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return new Response("bad credentials", { status: 401 });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        decisionCalls.push(await request.json());
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected fetch in auth-failure test: ${request.url}`);
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    // The gate stays pending (never auto-approved) and GitHub gets no decision.
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.status).toBe("pending");
+    expect(decisionCalls).toHaveLength(0);
+    expect(loaderMock.calls).toHaveLength(0);
+
+    const [row] = await db
+      .select()
+      .from(schema.githubAppInstallations)
+      .where(eq(schema.githubAppInstallations.id, seeded.installation.id))
+      .limit(1);
+    expect(row.lastFailureReason).toContain("re-authorize");
+    expect(row.lastFailureAt).toBeTruthy();
+    // The status must not flip — a transient auth failure should not break gating.
+    expect(row.status).toBe("active");
+
+    const types = await scanEventTypes(seeded.organizationId, seeded.gateId);
+    expect(types).toContain("github_workflow_gate.review_failed");
+  });
+
+  test("does not record an installation health failure for transient token errors", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9306",
+      repositoryId: 73007,
+      runId: 13007,
+    });
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const sandboxEnv = buildEnv(bindings, loaderMock.binding);
+    const db = createDb(env.DB);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        if (request.url.includes("/access_tokens")) {
+          return new Response("rate limited", { status: 429 });
+        }
+        throw new Error(`unexpected fetch in transient-token-failure test: ${request.url}`);
+      }),
+    );
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    const [row] = await db
+      .select()
+      .from(schema.githubAppInstallations)
+      .where(eq(schema.githubAppInstallations.id, seeded.installation.id))
+      .limit(1);
+    expect(row.lastFailureReason).toBeNull();
+    expect(row.lastFailureAt).toBeNull();
+  });
+
+  test("records an installation health failure when artifact listing loses repository access", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9302",
+      repositoryId: 73003,
+      runId: 13003,
+    });
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const sandboxEnv = buildEnv(bindings, loaderMock.binding);
+    const db = createDb(env.DB);
+
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({
+          token: "ghs_install_token",
+          expires_at: "2099-01-01T00:00:00Z",
+        });
+      }
+      if (request.url.includes("/actions/runs/13003/artifacts")) {
+        return new Response("forbidden", { status: 403 });
+      }
+      throw new Error(`unexpected fetch in repo-access-failure test: ${request.url}`);
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.status).toBe("pending");
+    expect(loaderMock.calls).toHaveLength(0);
+
+    const [row] = await db
+      .select()
+      .from(schema.githubAppInstallations)
+      .where(eq(schema.githubAppInstallations.id, seeded.installation.id))
+      .limit(1);
+    expect(row.lastFailureReason).toContain("octo/example");
+    expect(row.lastFailureAt).toBeTruthy();
+
+    const types = await scanEventTypes(seeded.organizationId, seeded.gateId);
+    expect(types).toContain("github_workflow_gate.review_failed");
+  });
+
+  test("records an installation health failure when private artifact listing returns 404", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9304",
+      repositoryId: 73005,
+      runId: 13005,
+    });
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const sandboxEnv = buildEnv(bindings, loaderMock.binding);
+    const db = createDb(env.DB);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        if (request.url.includes("/access_tokens")) {
+          return Response.json({
+            token: "ghs_install_token",
+            expires_at: "2099-01-01T00:00:00Z",
+          });
+        }
+        if (request.url.includes("/actions/runs/13005/artifacts")) {
+          return new Response("not found", { status: 404 });
+        }
+        throw new Error(`unexpected fetch in repo-404-health-failure test: ${request.url}`);
+      }),
+    );
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.status).toBe("pending");
+    expect(loaderMock.calls).toHaveLength(0);
+
+    const [row] = await db
+      .select()
+      .from(schema.githubAppInstallations)
+      .where(eq(schema.githubAppInstallations.id, seeded.installation.id))
+      .limit(1);
+    expect(row.lastFailureReason).toContain("octo/example");
+    expect(row.lastFailureAt).toBeTruthy();
+  });
+
+  test("treats artifact download 404 as an unavailable bundle, not lost repository access", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9307",
+      repositoryId: 73008,
+      runId: 13008,
+    });
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const sandboxEnv = buildEnv(bindings, loaderMock.binding);
+    const db = createDb(env.DB);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        if (request.url.includes("/access_tokens")) {
+          return Response.json({
+            token: "ghs_install_token",
+            expires_at: "2099-01-01T00:00:00Z",
+          });
+        }
+        if (request.url.includes("/actions/runs/13008/artifacts")) {
+          return Response.json({
+            total_count: 1,
+            artifacts: [
+              {
+                id: 88889,
+                name: "pypi-release-candidate",
+                size_in_bytes: 120,
+                expired: false,
+              },
+            ],
+          });
+        }
+        if (request.url.includes("/actions/artifacts/88889/zip")) {
+          return new Response("gone", { status: 404 });
+        }
+        if (request.url.endsWith("/deployment_protection_rule")) {
+          return new Response(null, { status: 204 });
+        }
+        throw new Error(`unexpected fetch in artifact-download-404 test: ${request.url}`);
+      }),
+    );
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.status).toBe("rejected");
+    expect(gate?.failureReason).toBe("bundle_unavailable");
+    expect(loaderMock.calls).toHaveLength(0);
+
+    const [row] = await db
+      .select()
+      .from(schema.githubAppInstallations)
+      .where(eq(schema.githubAppInstallations.id, seeded.installation.id))
+      .limit(1);
+    expect(row.lastFailureReason).toBeNull();
+    expect(row.lastFailureAt).toBeNull();
+  });
+
+  test("records an installation health failure when the decision callback is rejected", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9303",
+      repositoryId: 73004,
+      runId: 13004,
+    });
+    const db = createDb(env.DB);
+    // A maintainer has already decided this gate; re-delivery posts the stored
+    // decision to GitHub, which is where the auth failure surfaces.
+    await markGateDecided(db, {
+      gateId: seeded.gateId,
+      decision: "approved",
+      comment: "approved",
+      reportUrl: null,
+    });
+
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const sandboxEnv = buildEnv(bindings, loaderMock.binding);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        if (request.url.includes("/access_tokens")) {
+          return Response.json({
+            token: "ghs_install_token",
+            expires_at: "2099-01-01T00:00:00Z",
+          });
+        }
+        if (request.url.endsWith("/deployment_protection_rule")) {
+          return new Response("unauthorized", { status: 401 });
+        }
+        throw new Error(`unexpected fetch in callback-health-failure test: ${request.url}`);
+      }),
+    );
+
+    await expect(
+      executeWorkflowGateJob(
+        sandboxEnv,
+        ctx,
+        { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+        db,
+      ),
+    ).rejects.toThrow("GitHub deployment protection decision failed (401)");
+
+    const [row] = await db
+      .select()
+      .from(schema.githubAppInstallations)
+      .where(eq(schema.githubAppInstallations.id, seeded.installation.id))
+      .limit(1);
+    expect(row.lastFailureReason).toContain("re-authorize");
+    expect(row.lastFailureAt).toBeTruthy();
+  });
+
+  test("clears a stale installation health failure after a successful delivery", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9301",
+      repositoryId: 73002,
+      runId: 13002,
+    });
+    const db = createDb(env.DB);
+    await recordInstallationHealthFailure(
+      db,
+      seeded.installation.id,
+      "GitHub rejected Drydock's installation token — re-authorize the GitHub App installation.",
+    );
+    // A maintainer decided the gate; a successful re-delivery proves the
+    // installation works again and must clear the stale failure.
+    await markGateDecided(db, {
+      gateId: seeded.gateId,
+      decision: "approved",
+      comment: "approved",
+      reportUrl: null,
+    });
+
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const sandboxEnv = buildEnv(bindings, loaderMock.binding);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        if (request.url.includes("/access_tokens")) {
+          return Response.json({
+            token: "ghs_install_token",
+            expires_at: "2099-01-01T00:00:00Z",
+          });
+        }
+        if (request.url.endsWith("/deployment_protection_rule")) {
+          return new Response(null, { status: 204 });
+        }
+        throw new Error(`unexpected fetch in stale-health-clear test: ${request.url}`);
+      }),
+    );
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.status).toBe("approved");
+
+    const [row] = await db
+      .select()
+      .from(schema.githubAppInstallations)
+      .where(eq(schema.githubAppInstallations.id, seeded.installation.id))
+      .limit(1);
+    expect(row.lastFailureReason).toBeNull();
+    expect(row.lastFailureAt).toBeNull();
+  });
+
+  test("does not clear a repository-scoped health failure after another repository succeeds", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9305",
+      repositoryId: 73006,
+      runId: 13006,
+    });
+    const db = createDb(env.DB);
+    await recordInstallationHealthFailure(
+      db,
+      seeded.installation.id,
+      "Drydock's GitHub App can no longer access repository octo/broken — check its repository access.",
+    );
+
+    const otherTarget = await createReleaseTarget(db, {
+      organizationId: seeded.organizationId,
+      installationRowId: seeded.installation.id,
+      ecosystem: "pypi",
+      repositoryId: 730071,
+      repositoryFullName: "octo/healthy",
+      environment: "pypi",
+      createdByUserId: null,
+    });
+    const now = new Date();
+    const otherGateId = crypto.randomUUID();
+    await db.insert(schema.githubWorkflowGates).values({
+      id: otherGateId,
+      organizationId: seeded.organizationId,
+      installationRowId: seeded.installation.id,
+      releaseTargetId: otherTarget.id,
+      deliveryId: crypto.randomUUID(),
+      repositoryId: 730071,
+      repositoryFullName: "octo/healthy",
+      environment: "pypi",
+      runId: 130071,
+      deploymentId: 910,
+      deploymentCallbackUrl:
+        "https://api.github.com/repos/octo/healthy/actions/runs/130071/deployment_protection_rule",
+      eventAction: "requested",
+      status: "approved",
+      decision: "approved",
+      decisionComment: "approved",
+      requestedAt: now,
+      decidedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        if (request.url.includes("/access_tokens")) {
+          return Response.json({
+            token: "ghs_install_token",
+            expires_at: "2099-01-01T00:00:00Z",
+          });
+        }
+        if (request.url.endsWith("/deployment_protection_rule")) {
+          return new Response(null, { status: 204 });
+        }
+        throw new Error(`unexpected fetch in repo-scoped-clear test: ${request.url}`);
+      }),
+    );
+
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const sandboxEnv = buildEnv(bindings, loaderMock.binding);
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: otherGateId },
+      db,
+    );
+
+    const [row] = await db
+      .select()
+      .from(schema.githubAppInstallations)
+      .where(eq(schema.githubAppInstallations.id, seeded.installation.id))
+      .limit(1);
+    expect(row.lastFailureReason).toContain("octo/broken");
+    expect(row.lastFailureAt).toBeTruthy();
+  });
+
+  test("does not clear a repository-scoped health failure for a prefix-matched repository", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9308",
+      repositoryId: 73009,
+      runId: 13009,
+    });
+    const db = createDb(env.DB);
+    await recordInstallationHealthFailure(
+      db,
+      seeded.installation.id,
+      "Drydock's GitHub App can no longer access repository octo/pkg-tools — check its repository access.",
+    );
+
+    const prefixTarget = await createReleaseTarget(db, {
+      organizationId: seeded.organizationId,
+      installationRowId: seeded.installation.id,
+      ecosystem: "pypi",
+      repositoryId: 730101,
+      repositoryFullName: "octo/pkg",
+      environment: "pypi",
+      createdByUserId: null,
+    });
+    const now = new Date();
+    const prefixGateId = crypto.randomUUID();
+    await db.insert(schema.githubWorkflowGates).values({
+      id: prefixGateId,
+      organizationId: seeded.organizationId,
+      installationRowId: seeded.installation.id,
+      releaseTargetId: prefixTarget.id,
+      deliveryId: crypto.randomUUID(),
+      repositoryId: 730101,
+      repositoryFullName: "octo/pkg",
+      environment: "pypi",
+      runId: 130101,
+      deploymentId: 911,
+      deploymentCallbackUrl:
+        "https://api.github.com/repos/octo/pkg/actions/runs/130101/deployment_protection_rule",
+      eventAction: "requested",
+      status: "approved",
+      decision: "approved",
+      decisionComment: "approved",
+      requestedAt: now,
+      decidedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        if (request.url.includes("/access_tokens")) {
+          return Response.json({
+            token: "ghs_install_token",
+            expires_at: "2099-01-01T00:00:00Z",
+          });
+        }
+        if (request.url.endsWith("/deployment_protection_rule")) {
+          return new Response(null, { status: 204 });
+        }
+        throw new Error(`unexpected fetch in repo-prefix-clear test: ${request.url}`);
+      }),
+    );
+
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const sandboxEnv = buildEnv(bindings, loaderMock.binding);
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: prefixGateId },
+      db,
+    );
+
+    const [row] = await db
+      .select()
+      .from(schema.githubAppInstallations)
+      .where(eq(schema.githubAppInstallations.id, seeded.installation.id))
+      .limit(1);
+    expect(row.lastFailureReason).toContain("octo/pkg-tools");
+    expect(row.lastFailureAt).toBeTruthy();
   });
 });

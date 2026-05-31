@@ -204,36 +204,50 @@ function ReleaseTargetList({
 function InstallationList({ installations }: { installations: PublicGithubAppInstallation[] }) {
   return (
     <ul class="m-0 p-0 list-none border-t border-border">
-      {installations.map((installation) => (
-        <li
-          key={installation.id}
-          class="border-b border-border last:border-b-0 px-5 py-4 flex flex-wrap items-center justify-between gap-3"
-        >
-          <div class="flex flex-col gap-1.5 min-w-0">
-            <div class="flex items-center gap-2 flex-wrap">
-              <span class="font-mono text-[14px] font-medium">{installation.accountLogin}</span>
-              <Badge tone={installationStatusTone(installation.status)}>
-                {installation.status}
-              </Badge>
-              <Badge tone="neutral">{installation.accountType.toLowerCase()}</Badge>
+      {installations.map((installation) => {
+        const degraded = installation.status === "active" && Boolean(installation.lastFailureAt);
+        return (
+          <li
+            key={installation.id}
+            class="border-b border-border last:border-b-0 px-5 py-4 flex flex-col gap-2.5"
+          >
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div class="flex flex-col gap-1.5 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="font-mono text-[14px] font-medium">{installation.accountLogin}</span>
+                  <Badge tone={installationStatusTone(installation.status)}>
+                    {installation.status}
+                  </Badge>
+                  {degraded ? <Badge tone="critical">degraded</Badge> : null}
+                  <Badge tone="neutral">{installation.accountType.toLowerCase()}</Badge>
+                </div>
+                <MonoDetail
+                  parts={[
+                    <span key="installation">installation {installation.installationId}</span>,
+                    <span key="target">{installation.targetType.toLowerCase()}</span>,
+                    <span key="linked">linked {formatTimestamp(installation.installedAt)}</span>,
+                  ]}
+                />
+              </div>
+              {installation.status !== "active" ? (
+                <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+                  {installation.status === "suspended"
+                    ? "re-enable on github to use"
+                    : "removed on github · re-install to reconnect"}
+                </span>
+              ) : null}
             </div>
-            <MonoDetail
-              parts={[
-                <span key="installation">installation {installation.installationId}</span>,
-                <span key="target">{installation.targetType.toLowerCase()}</span>,
-                <span key="linked">linked {formatTimestamp(installation.installedAt)}</span>,
-              ]}
-            />
-          </div>
-          {installation.status !== "active" ? (
-            <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
-              {installation.status === "suspended"
-                ? "re-enable on github to use"
-                : "removed on github · re-install to reconnect"}
-            </span>
-          ) : null}
-        </li>
-      ))}
+            {degraded ? (
+              <Alert tone="warn">
+                {installation.lastFailureReason ?? "The GitHub App installation stopped working."}
+                {installation.lastFailureAt
+                  ? ` Detected ${formatTimestamp(installation.lastFailureAt)}.`
+                  : ""}
+              </Alert>
+            ) : null}
+          </li>
+        );
+      })}
     </ul>
   );
 }

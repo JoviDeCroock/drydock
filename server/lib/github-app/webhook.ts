@@ -1,7 +1,7 @@
 import { hexDecode, hmacSha256, timingSafeEqual } from "../crypto-utils";
 import type { AppDb } from "../../db";
 import { getInstallationAccessToken } from "./api";
-import type { GithubAppConfig } from "./config";
+import { GithubAppValidationError, type GithubAppConfig } from "./config";
 import { markInstallationStatus, resolveDeploymentProtectionTarget } from "./persistence";
 import { recordGateRequest, type WorkflowGateRecord } from "./webhook-gates";
 
@@ -303,6 +303,12 @@ export async function postDeploymentProtectionDecision(
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
+    if (response.status === 401 || response.status === 403 || response.status === 404) {
+      throw new GithubAppValidationError(
+        "installation_inactive",
+        `GitHub deployment protection decision failed (${response.status}): ${text.slice(0, 200)}`,
+      );
+    }
     throw new Error(
       `GitHub deployment protection decision failed (${response.status}): ${text.slice(0, 200)}`,
     );

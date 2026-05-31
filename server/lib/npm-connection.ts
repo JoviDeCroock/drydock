@@ -26,6 +26,8 @@ export interface PublicNpmConnection {
   validationStatus: string;
   capabilitiesJson: unknown;
   validatedAt: Date | string | number | null;
+  invalidatedAt: Date | string | number | null;
+  lastFailureReason: string | null;
   lastUsedAt: Date | string | number | null;
   createdByUserId: string | null;
   createdAt: Date | string | number;
@@ -109,6 +111,8 @@ export function publicNpmConnection(
     validationStatus: connection.validationStatus,
     capabilitiesJson: connection.capabilitiesJson,
     validatedAt: connection.validatedAt,
+    invalidatedAt: connection.invalidatedAt,
+    lastFailureReason: connection.lastFailureReason,
     lastUsedAt: connection.lastUsedAt,
     createdByUserId: connection.createdByUserId,
     createdAt: connection.createdAt,

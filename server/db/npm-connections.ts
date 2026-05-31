@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { AppDb } from "./client";
 import { npmConnections } from "./schema";
 
@@ -18,6 +18,7 @@ export interface NpmConnectionValidationInput {
   validationStatus: "valid" | "invalid" | "unvalidated";
   capabilities?: unknown;
   validatedAt?: Date | null;
+  failureReason?: string | null;
 }
 
 export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) {
@@ -34,6 +35,8 @@ export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) 
     validationStatus: "unvalidated",
     capabilitiesJson: null,
     validatedAt: null,
+    invalidatedAt: null,
+    lastFailureReason: null,
     lastUsedAt: null,
     createdByUserId: input.createdByUserId,
     createdAt: now,
@@ -55,6 +58,8 @@ export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) 
         validationStatus: values.validationStatus,
         capabilitiesJson: values.capabilitiesJson,
         validatedAt: values.validatedAt,
+        invalidatedAt: values.invalidatedAt,
+        lastFailureReason: values.lastFailureReason,
         updatedAt: now,
       },
     });
@@ -82,16 +87,50 @@ export async function updateNpmConnectionValidation(
   db: AppDb,
   input: NpmConnectionValidationInput,
 ) {
+  const now = new Date();
+  const invalid = input.validationStatus === "invalid";
   await db
     .update(npmConnections)
     .set({
       validationStatus: input.validationStatus,
       capabilitiesJson: input.capabilities ?? null,
       validatedAt: input.validatedAt ?? null,
-      updatedAt: new Date(),
+      invalidatedAt: invalid ? now : null,
+      lastFailureReason: invalid ? (input.failureReason ?? null) : null,
+      updatedAt: now,
     })
     .where(eq(npmConnections.organizationId, input.organizationId));
   return getNpmConnection(db, input.organizationId);
+}
+
+/**
+ * Mark an org's npm connection as invalid because it stopped working during use
+ * (e.g. the registry rejected the token with 401/403). Unlike
+ * {@link updateNpmConnectionValidation} this preserves the existing capabilities
+ * snapshot and only records the failure so the UI can surface it.
+ */
+export async function markNpmConnectionInvalid(
+  db: AppDb,
+  input: { organizationId: string; reason: string; tokenFingerprint?: string | null },
+) {
+  const now = new Date();
+  const where = input.tokenFingerprint
+    ? and(
+        eq(npmConnections.organizationId, input.organizationId),
+        eq(npmConnections.tokenFingerprint, input.tokenFingerprint),
+      )
+    : eq(npmConnections.organizationId, input.organizationId);
+  const updated = await db
+    .update(npmConnections)
+    .set({
+      validationStatus: "invalid",
+      invalidatedAt: now,
+      lastFailureReason: input.reason,
+      updatedAt: now,
+    })
+    .where(where)
+    .returning({ id: npmConnections.id });
+  return updated.length > 0;
 }
 
 export async function markNpmConnectionUsed(db: AppDb, organizationId: string) {

@@ -1,7 +1,7 @@
 import { readStreamBounded } from "../tar-parser.js";
 import { inferPyPiArtifactKind, type PyPiArtifactKind } from "../adapters/pypi/index";
 import { getInstallationAccessToken } from "./api";
-import type { GithubAppConfig } from "./config";
+import { GithubAppValidationError, type GithubAppConfig } from "./config";
 import { githubInstallationHeaders, nextLink } from "./http";
 import { extractOuterZipEntries } from "./artifacts-zip";
 
@@ -210,10 +210,11 @@ async function findRunArtifact(
     `/actions/runs/${runId}/artifacts?per_page=100`;
   for (let page = 0; page < MAX_LIST_PAGES && url; page += 1) {
     const response = await fetch(url, { headers: githubInstallationHeaders(token) });
-    if (response.status === 404) {
-      throw new WorkflowArtifactError(
-        "bundle_unavailable",
-        `workflow run ${runId} not found in ${repositoryFullName}`,
+    if (response.status === 401 || response.status === 403 || response.status === 404) {
+      throw new GithubAppValidationError(
+        "repository_not_accessible",
+        `GitHub App installation can no longer list artifacts for ${repositoryFullName} (${response.status})`,
+        response.status,
       );
     }
     if (!response.ok) {
@@ -290,6 +291,13 @@ async function downloadArtifactZip(
     const hopResponse = await fetch(target, { headers, redirect: "manual" });
     if (hopResponse.status < 300 || hopResponse.status >= 400) {
       response = hopResponse;
+      if (policy.credentialed && (response.status === 401 || response.status === 403)) {
+        throw new GithubAppValidationError(
+          "repository_not_accessible",
+          `GitHub App installation can no longer download artifacts for ${repositoryFullName} (${response.status})`,
+          response.status,
+        );
+      }
       break;
     }
     const location = hopResponse.headers.get("location");

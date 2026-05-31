@@ -8,6 +8,7 @@ import {
   StagedPublishesFetchError,
   discoverAndQueueStagedPublishes,
   ensureUsableNpmConnection,
+  maybeInvalidateNpmConnectionOnFetchError,
 } from "../lib/staged-publishes-discovery";
 import type { Bindings, Variables } from "../types";
 
@@ -76,6 +77,24 @@ stagedPublishesRoutes.post("/scan", async (c) => {
       );
     }
     if (err instanceof StagedPublishesFetchError) {
+      const invalidated = await maybeInvalidateNpmConnectionOnFetchError({
+        db,
+        organizationId,
+        actorUserId: session.userId,
+        eventSource: "staged_publishes.discovery",
+        tokenFingerprint: savedConnection.tokenFingerprint,
+        error: err,
+      });
+      if (invalidated) {
+        return c.json(
+          {
+            error:
+              "The organization's npm token was rejected by the registry — rotate it and try again.",
+            status: err.status,
+          },
+          400,
+        );
+      }
       return c.json(
         {
           error: "npm registry rejected the staged publishes request",

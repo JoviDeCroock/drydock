@@ -57,6 +57,15 @@ export function NpmConnectionSection({
           )}
         </div>
 
+        {connection && connection.validationStatus === "invalid" ? (
+          <Alert tone="critical">
+            {connection.lastFailureReason ?? "The npm token is no longer valid."}
+            {connection.invalidatedAt
+              ? ` Detected ${formatTimestamp(connection.invalidatedAt)}. Rotate the token below to reconnect.`
+              : " Rotate the token below to reconnect."}
+          </Alert>
+        ) : null}
+
         {connection ? (
           <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-x-6 gap-y-2 border-y border-border py-3">
             <CompactMetadataRow label="label" value={connection.label} />

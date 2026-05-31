@@ -28,10 +28,12 @@ import {
   discoverAndQueueStagedPublishes,
   ensureUsableNpmConnection,
   InvalidNpmConnectionError,
+  maybeInvalidateNpmConnectionOnFetchError,
   StagedPublishesFetchError,
 } from "./lib/staged-publishes-discovery";
 import { githubAppRoutes } from "./routes/github-app";
 import { githubWebhookRoutes } from "./routes/github-webhooks";
+import { integrationHealthRoutes } from "./routes/integration-health";
 import { npmConnectionRoutes } from "./routes/npm-connection";
 import { organizationsRoutes } from "./routes/organizations";
 import { scanRoutes } from "./routes/scan";
@@ -202,6 +204,7 @@ app.get("/api", (c) =>
       githubApp:
         "GET /api/v1/github-app/config; POST /api/v1/github-app/install; POST /api/v1/github-app/install/callback; GET /api/v1/github-app/installations; GET/POST /api/v1/github-app/release-targets; DELETE /api/v1/github-app/release-targets/:id; GET /api/v1/github-app/workflow-gates/by-scan/:scanId; POST /api/v1/github-app/workflow-gates/:gateId/decision",
       githubWebhooks: "POST /webhooks/github (signed by GitHub App webhook secret)",
+      integrationHealth: "GET /api/v1/integration-health",
       health: "GET /api/health",
     },
     auth: "Better Auth is required for every non-auth API endpoint.",
@@ -210,6 +213,7 @@ app.get("/api", (c) =>
 );
 
 app.route("/api/v1/github-app", githubAppRoutes);
+app.route("/api/v1/integration-health", integrationHealthRoutes);
 app.route("/api/v1/npm-connection", npmConnectionRoutes);
 app.route("/api/v1/organizations", organizationsRoutes);
 // Two scan-submit surfaces, both sharing executeScanJob/runScanPipeline; they
@@ -288,6 +292,14 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
         });
         continue;
       }
+      await maybeInvalidateNpmConnectionOnFetchError({
+        db,
+        organizationId: connection.organizationId,
+        actorUserId,
+        eventSource: "staged_publishes.cron",
+        tokenFingerprint: connection.tokenFingerprint,
+        error: err,
+      });
       const detail =
         err instanceof StagedPublishesFetchError
           ? { status: err.status, detail: err.detail }

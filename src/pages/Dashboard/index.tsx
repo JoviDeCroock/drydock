@@ -5,6 +5,10 @@ import { useLocation } from "preact-iso";
 import { rememberDashboardReturnUrl, useQuerySignal } from "../../lib/query-state";
 import { pluralize } from "../../lib/format";
 import { sessionModel } from "../../models/auth";
+import {
+  IntegrationHealthModel,
+  type IntegrationHealthIssue,
+} from "../../models/integration-health";
 import { NpmConnectionModel } from "../../models/npm-connection";
 import { OrganizationModel } from "../../models/organization";
 import { ScanListModel, type ScanDecisionFilter, type ScanListItem } from "../../models/scan";
@@ -32,6 +36,7 @@ export default function DashboardPage() {
   const npm = useModel(NpmConnectionModel);
   const organizations = useModel(OrganizationModel);
   const stagedPublishes = useModel(StagedPublishesModel);
+  const integrationHealth = useModel(IntegrationHealthModel);
   const sessionChecked = useSignal(false);
 
   // Two-way bind the decision filter to ?filter=. The model re-fetches
@@ -57,7 +62,12 @@ export default function DashboardPage() {
         return;
       }
       sessionChecked.value = true;
-      await Promise.all([organizations.load(), scans.refresh(), npm.load()]);
+      await Promise.all([
+        organizations.load(),
+        scans.refresh(),
+        npm.load(),
+        integrationHealth.load(),
+      ]);
     })();
     return () => {
       cancelled = true;
@@ -66,14 +76,14 @@ export default function DashboardPage() {
 
   const onSwitchOrganization = async (organizationId: string) => {
     if (organizations.activate(organizationId)) {
-      await Promise.all([scans.refresh(), npm.load()]);
+      await Promise.all([scans.refresh(), npm.load(), integrationHealth.load()]);
     }
   };
 
   const onCreateOrganization = async (name: string) => {
     const created = await organizations.create(name);
     if (created) {
-      await Promise.all([scans.refresh(), npm.load()]);
+      await Promise.all([scans.refresh(), npm.load(), integrationHealth.load()]);
     }
   };
 
@@ -129,8 +139,14 @@ export default function DashboardPage() {
 
       {workspaceLoaded ? (
         <>
+          <IntegrationHealthBanner issues={integrationHealth.issues.value} />
           {!npm.connection.value ? <NpmSetupCallout /> : null}
-          <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
+          <RecentReviewsSection
+            scans={scans}
+            stagedPublishes={stagedPublishes}
+            npm={npm}
+            integrationHealth={integrationHealth}
+          />
         </>
       ) : (
         <LoadingState
@@ -163,19 +179,23 @@ function DashboardHeader() {
 async function discoverStagedPublishes(
   stagedPublishes: ReturnType<typeof useModel<typeof StagedPublishesModel.prototype>>,
   scans: ReturnType<typeof useModel<typeof ScanListModel.prototype>>,
+  npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>,
+  integrationHealth: ReturnType<typeof useModel<typeof IntegrationHealthModel.prototype>>,
 ) {
   await stagedPublishes.discover();
-  await scans.refresh();
+  await Promise.all([scans.refresh(), npm.load(), integrationHealth.load()]);
 }
 
 function RecentReviewsSection({
   scans,
   stagedPublishes,
   npm,
+  integrationHealth,
 }: {
   scans: ReturnType<typeof useModel<typeof ScanListModel.prototype>>;
   stagedPublishes: ReturnType<typeof useModel<typeof StagedPublishesModel.prototype>>;
   npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
+  integrationHealth: ReturnType<typeof useModel<typeof IntegrationHealthModel.prototype>>;
 }) {
   const ready = npm.validated.value;
   const discovery = stagedPublishes.lastResult.value;
@@ -183,7 +203,7 @@ function RecentReviewsSection({
   const discoveryRefreshing = stagedPublishes.refreshing.value;
   const startedLabels = discovery?.scans.map(formatStartedScanLabel).filter(Boolean) ?? [];
   const onDiscover = async () => {
-    await discoverStagedPublishes(stagedPublishes, scans);
+    await discoverStagedPublishes(stagedPublishes, scans, npm, integrationHealth);
   };
 
   const discoveredAt = stagedPublishes.lastDiscoveryAt.value;
@@ -323,6 +343,30 @@ function emptyStateMessage(filter: ScanDecisionFilter): string {
 function formatStartedScanLabel(scan: { packageName: string | null; version: string | null }) {
   if (scan.packageName && scan.version) return `${scan.packageName}@${scan.version}`;
   return scan.packageName || scan.version || null;
+}
+
+function IntegrationHealthBanner({ issues }: { issues: IntegrationHealthIssue[] }) {
+  if (!issues.length) return null;
+  return (
+    <div class="flex flex-col gap-2">
+      {issues.map((issue, index) => (
+        <Alert
+          key={`${issue.kind}-${index}`}
+          tone={issue.severity === "critical" ? "critical" : "warn"}
+        >
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-col gap-0.5 min-w-0">
+              <strong class="text-[13px]">{issue.title}</strong>
+              <span class="text-[13px] text-ink-muted">{issue.detail}</span>
+            </div>
+            <LinkButton variant="secondary" size="sm" href="/dashboard/settings">
+              Open settings
+            </LinkButton>
+          </div>
+        </Alert>
+      ))}
+    </div>
+  );
 }
 
 function NpmSetupCallout() {

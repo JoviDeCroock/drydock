@@ -67,6 +67,7 @@ export async function getInstallationAccessToken(
     throw new GithubAppValidationError(
       "installation_inactive",
       `installation access token request failed (${response.status}): ${text.slice(0, 200)}`,
+      response.status,
     );
   }
   const data = (await response.json()) as { token?: string };

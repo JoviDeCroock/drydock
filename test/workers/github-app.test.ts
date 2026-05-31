@@ -18,6 +18,7 @@ import {
   listInstallationsForOrganization,
   listReleaseTargetsForOrganization,
   markInstallationStatus,
+  recordInstallationHealthFailure,
   resolveDeploymentProtectionTarget,
   upsertInstallation,
 } from "../../server/lib/github-app";
@@ -166,6 +167,49 @@ describe("github-app DB helpers", () => {
         createdByUserId: null,
       }),
     ).rejects.toBeInstanceOf(GithubAppValidationError);
+  });
+
+  test("upsertInstallation preserves repository-scoped health failures for active installs", async () => {
+    const { organizationId } = await seedUser();
+    const db = createDb(env.DB);
+    const installation = await seedInstallation(organizationId, {
+      installationId: `repo-scoped-active-${crypto.randomUUID()}`,
+    });
+    const reason =
+      "Drydock's GitHub App can no longer access repository octo/broken — check its repository access.";
+    await recordInstallationHealthFailure(db, installation.id, reason);
+
+    const updated = await upsertInstallation(db, {
+      organizationId,
+      installationId: installation.installationId,
+      accountLogin: "octo",
+      accountType: "Organization",
+      targetType: "Organization",
+      status: "active",
+      createdByUserId: null,
+    });
+
+    expect(updated.lastFailureReason).toBe(reason);
+    expect(updated.lastFailureAt).toBeTruthy();
+  });
+
+  test("markInstallationStatus preserves repository-scoped health failures when reactivated", async () => {
+    const { organizationId } = await seedUser();
+    const db = createDb(env.DB);
+    const installation = await seedInstallation(organizationId, {
+      installationId: `repo-scoped-reactivated-${crypto.randomUUID()}`,
+      status: "suspended",
+    });
+    const reason =
+      "Drydock's GitHub App can no longer access repository octo/broken — check its repository access.";
+    await recordInstallationHealthFailure(db, installation.id, reason);
+
+    await markInstallationStatus(db, installation.installationId, "active");
+
+    const found = await getInstallationByExternalId(db, installation.installationId);
+    expect(found?.status).toBe("active");
+    expect(found?.lastFailureReason).toBe(reason);
+    expect(found?.lastFailureAt).toBeTruthy();
   });
 
   test("listInstallationsForOrganization is scoped per organization", async () => {

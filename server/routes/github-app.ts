@@ -532,6 +532,8 @@ function publicInstallation(record: InstallationRecord) {
     targetType: record.targetType,
     status: record.status,
     installedAt: record.installedAt.toISOString(),
+    lastFailureReason: record.lastFailureReason,
+    lastFailureAt: record.lastFailureAt ? record.lastFailureAt.toISOString() : null,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   };

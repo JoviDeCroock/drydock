@@ -11,6 +11,8 @@ export interface PublicNpmConnection {
   validationStatus: string;
   capabilitiesJson: unknown;
   validatedAt: string | number | Date | null;
+  invalidatedAt: string | number | Date | null;
+  lastFailureReason: string | null;
   lastUsedAt: string | number | Date | null;
   createdByUserId: string | null;
   createdAt: string | number | Date;

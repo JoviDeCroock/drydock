@@ -3,6 +3,7 @@ import {
   createDb,
   discardScanAttempt,
   getNpmConnection,
+  markNpmConnectionInvalid,
   markNpmConnectionUsed,
   markScanFailed,
   recordScanEvent,
@@ -49,6 +50,9 @@ export interface SafeScanError {
   code: string;
   message: string;
   retryable: boolean;
+  /** True when the npm registry rejected the org token (401/403), as opposed to
+   * the staged tarball merely being gone (404). Drives token invalidation. */
+  authFailure?: boolean;
 }
 
 export interface ExecuteScanJobOptions {
@@ -66,6 +70,7 @@ export async function executeScanJob(
   const startedAtMs = Date.now();
   const attempt = options.attempt ?? 1;
   const session: WorkspaceSession = { userId: message.actorUserId };
+  let npmTokenFingerprint: string | null = null;
   const claimed = await claimScanForRun(db, message.scanId, message.organizationId);
   if (!claimed) {
     emitOperationalEvent("warn", "scan.job.skipped", {
@@ -95,6 +100,7 @@ export async function executeScanJob(
     if (npmConnection.validationStatus !== "valid") {
       throw new Error("Validate the organization npm token before scanning staged publishes.");
     }
+    npmTokenFingerprint = npmConnection.tokenFingerprint;
 
     await Promise.all([
       markNpmConnectionUsed(db, message.organizationId),
@@ -144,9 +150,34 @@ export async function executeScanJob(
     return result;
   } catch (err) {
     const safe = classifyScanError(err);
+    const skip =
+      message.source === "auto_discovery" &&
+      safe.code === "staged_tarball_unavailable" &&
+      !safe.authFailure;
+    if (safe.authFailure && !skip) {
+      const invalidated = await markNpmConnectionInvalid(db, {
+        organizationId: message.organizationId,
+        reason: safe.message,
+        tokenFingerprint: npmTokenFingerprint,
+      });
+      if (invalidated) {
+        await recordScanEvent(db, {
+          organizationId: message.organizationId,
+          actorUserId: message.actorUserId,
+          scanId: message.scanId,
+          type: "npm_connection.invalidated",
+          metadata: { stageId: message.stageId, attempt, reason: safe.code },
+        });
+        emitOperationalEvent("warn", "npm_connection.invalidated", {
+          organizationId: message.organizationId,
+          scanId: message.scanId,
+          stageId: message.stageId,
+          source: message.source ?? "manual",
+          reason: safe.code,
+        });
+      }
+    }
     if (!safe.retryable || options.finalAttempt) {
-      const skip =
-        message.source === "auto_discovery" && safe.code === "staged_tarball_unavailable";
       if (skip) {
         await recordScanEvent(db, {
           organizationId: message.organizationId,
@@ -235,6 +266,7 @@ export function classifyScanError(err: unknown): SafeScanError {
       code: sandbox.code,
       message: sandbox.message,
       retryable: sandbox.retryable,
+      authFailure: sandbox.authFailure,
     };
   }
   const message = errorMessage(err);
@@ -262,7 +294,12 @@ export function classifyScanError(err: unknown): SafeScanError {
   };
 }
 
-function parseSandboxDetail(detail: string) {
+function parseSandboxDetail(detail: string): {
+  code: string;
+  message: string;
+  retryable: boolean;
+  authFailure?: boolean;
+} {
   const parsed = parseJsonObject(detail);
   const error = typeof parsed?.error === "string" ? parsed.error : "sandbox download failed";
   const status = typeof parsed?.status === "number" ? parsed.status : undefined;
@@ -273,7 +310,15 @@ function parseSandboxDetail(detail: string) {
       retryable: true,
     };
   }
-  if (status && [401, 403, 404].includes(status)) {
+  if (status === 401 || status === 403) {
+    return {
+      code: "staged_tarball_unavailable",
+      message: "The organization's npm token was rejected when downloading the staged tarball.",
+      retryable: false,
+      authFailure: true,
+    };
+  }
+  if (status === 404) {
     return {
       code: "staged_tarball_unavailable",
       message: "The staged tarball could not be accessed with this organization's npm token.",

@@ -2,6 +2,7 @@ import {
   createScanJob,
   deletePendingScanJob,
   listExistingScanStageIds,
+  markNpmConnectionInvalid,
   markNpmConnectionUsed,
   recordScanEvent,
   updateNpmConnectionValidation,
@@ -9,6 +10,7 @@ import {
   type ScanSource,
 } from "../db";
 import { decryptNpmToken, validateNpmCredential } from "./npm-connection";
+import { emitOperationalEvent } from "./observability";
 import { executeScanJob, type ScanQueueMessage } from "./scan-job";
 import {
   listStagedPublishes,
@@ -53,6 +55,7 @@ export class InvalidNpmConnectionError extends Error {
 export interface TokenForDiscovery {
   token: string;
   registryUrl: string;
+  tokenFingerprint?: string | null;
 }
 
 export async function ensureUsableNpmConnection(input: {
@@ -64,6 +67,7 @@ export async function ensureUsableNpmConnection(input: {
     validationStatus: string;
     tokenCiphertext: string;
     tokenNonce: string;
+    tokenFingerprint?: string | null;
   };
   actorUserId: string;
   allowInsecureLocalhost?: boolean;
@@ -72,7 +76,11 @@ export async function ensureUsableNpmConnection(input: {
   const token = await decryptNpmToken(env, connection);
 
   if (connection.validationStatus === "valid") {
-    return { token, registryUrl: connection.registryUrl };
+    return {
+      token,
+      registryUrl: connection.registryUrl,
+      tokenFingerprint: connection.tokenFingerprint,
+    };
   }
   if (connection.validationStatus === "invalid") {
     throw new InvalidNpmConnectionError(connection.organizationId);
@@ -87,6 +95,9 @@ export async function ensureUsableNpmConnection(input: {
       validationStatus: validation.status,
       capabilities: validation.capabilities,
       validatedAt: validation.ok ? new Date() : null,
+      failureReason: validation.ok
+        ? null
+        : "The organization's npm token failed validation against the registry.",
     }),
     recordScanEvent(db, {
       organizationId: connection.organizationId,
@@ -101,7 +112,11 @@ export async function ensureUsableNpmConnection(input: {
     }),
   ]);
   if (!validation.ok) throw new InvalidNpmConnectionError(connection.organizationId);
-  return { token, registryUrl: connection.registryUrl };
+  return {
+    token,
+    registryUrl: connection.registryUrl,
+    tokenFingerprint: connection.tokenFingerprint,
+  };
 }
 
 export async function discoverAndQueueStagedPublishes(
@@ -232,6 +247,44 @@ async function listAllStagedPublishes(
   }
 
   return [...byId.values()];
+}
+
+/**
+ * When listing staged publishes fails because the registry rejected the token
+ * (401/403), mark the org's npm connection invalid so the UI can prompt a
+ * rotation. A 404 or 5xx is left alone — those are not credential problems.
+ * Returns true when the connection was invalidated.
+ */
+export async function maybeInvalidateNpmConnectionOnFetchError(input: {
+  db: AppDb;
+  organizationId: string;
+  actorUserId: string;
+  eventSource: string;
+  tokenFingerprint?: string | null;
+  error: unknown;
+}): Promise<boolean> {
+  const { db, organizationId, actorUserId, eventSource, tokenFingerprint, error } = input;
+  if (!(error instanceof StagedPublishesFetchError)) return false;
+  if (error.status !== 401 && error.status !== 403) return false;
+  const invalidated = await markNpmConnectionInvalid(db, {
+    organizationId,
+    tokenFingerprint,
+    reason:
+      "The organization's npm token was rejected by the registry while listing staged publishes.",
+  });
+  if (!invalidated) return false;
+  await recordScanEvent(db, {
+    organizationId,
+    actorUserId,
+    type: "npm_connection.invalidated",
+    metadata: { reason: `staged_publishes_${error.status}`, source: eventSource },
+  });
+  emitOperationalEvent("warn", "npm_connection.invalidated", {
+    organizationId,
+    source: eventSource,
+    reason: `staged_publishes_${error.status}`,
+  });
+  return true;
 }
 
 export { StagedPublishesFetchError };

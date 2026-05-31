@@ -34,6 +34,7 @@ export class GithubAppValidationError extends Error {
   constructor(
     public code: GithubAppValidationCode,
     message: string,
+    public status?: number,
   ) {
     super(message);
     this.name = "GithubAppValidationError";

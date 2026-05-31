@@ -12,6 +12,8 @@ export interface PublicGithubAppInstallation {
   targetType: string;
   status: InstallationStatus;
   installedAt: string;
+  lastFailureReason: string | null;
+  lastFailureAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
