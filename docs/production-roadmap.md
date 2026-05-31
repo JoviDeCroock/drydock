@@ -243,7 +243,7 @@ Implemented foundation:
 - `NpmStageGateway` can allow exact public artifact URLs without attaching npm credentials.
 - GitHub App installation, repository/environment picker, release-target mapping, and setup guidance live in settings.
 - `POST /webhooks/github` verifies the GitHub App secret, resolves the release-target mapping, persists a pending gate, and enqueues a workflow-gate job.
-- `fetchReleaseBundleForGate` downloads the run's artifact bundle and collects every wheel/sdist; `preparePyPiReleaseCandidateForGate` derives the release set (package name, version, and SHA-256 digests) from the artifact bytes themselves. There is no `drydock-manifest.json` contract.
+- `fetchReleaseBundleForGate` downloads the run's artifact bundle and collects every wheel/sdist; the PyPI `WorkflowGateAdapter` (via `prepareReleaseCandidateForGate`) derives the release set (package name, version, and SHA-256 digests) from the artifact bytes themselves. There is no `drydock-manifest.json` contract.
 - Workflow-gate reviews persist as ordinary scans with `source: "workflow_gate"` and synthetic `stageId: "workflow-gate:<gateId>"`.
 - Previous PyPI release artifacts are downloaded from `files.pythonhosted.org` for comparison when a matching namespace exists.
 - The scan workbench shows gate context, target-specific recommendation copy, and pending approve/reject controls; decided gates are mirrored onto the scan decision.

@@ -1,5 +1,4 @@
 import { readStreamBounded } from "../tar-parser.js";
-import { inferPyPiArtifactKind, type PyPiArtifactKind } from "../adapters/pypi/index";
 import { getInstallationAccessToken } from "./api";
 import type { GithubAppConfig } from "./config";
 import { githubInstallationHeaders, nextLink } from "./http";
@@ -14,11 +13,19 @@ export interface WorkflowArtifactSource {
   artifactName?: string;
 }
 
+/**
+ * Decide whether a bundle entry is a reviewable artifact. The shared fetcher is
+ * ecosystem-agnostic: the workflow-gate adapter supplies this so the kind is
+ * opaque here (PyPI returns `"wheel" | "sdist"`; other ecosystems pick their
+ * own). Returning `null` drops the entry — it is never collected or scanned.
+ */
+export type ClassifyArtifact = (path: string) => string | null;
+
 export interface ResolvedReleaseFile {
   path: string;
   bytes: Uint8Array;
   sha256: string;
-  kind: PyPiArtifactKind;
+  kind: string;
 }
 
 export interface ResolvedReleaseBundle {
@@ -108,16 +115,16 @@ export function evaluateGithubArtifactEgress(requestUrl: string): GithubArtifact
  * installation token; isolating that step lets us test artifact ingestion
  * without supplying a real RSA private key.
  *
- * There is no `drydock-manifest.json` contract: the release set is whatever
- * wheel/sdist files the bundle contains. Identity (`package`/`version`) is
- * derived from the artifacts themselves downstream
- * (`server/lib/release-candidate-pypi.ts`) once the bytes have been parsed in
- * the sandbox. This stage only collects the artifact bytes and recomputes their
- * SHA-256; non-artifact files in the bundle are ignored.
+ * Identity (`package`/`version`) is derived from the artifacts themselves
+ * downstream by the ecosystem's `WorkflowGateAdapter`
+ * (`server/lib/workflow-gates`) once the bytes have been parsed in the sandbox.
+ * This stage only collects the artifact bytes the supplied `classifyArtifact`
+ * keeps and recomputes their SHA-256; every other file in the bundle is ignored.
  */
 export async function fetchReleaseBundleWithToken(
   installationToken: string,
   source: WorkflowArtifactSource,
+  classifyArtifact: ClassifyArtifact,
 ): Promise<ResolvedReleaseBundle> {
   if (!REPOSITORY_FULL_NAME_RE.test(source.repositoryFullName)) {
     throw new WorkflowArtifactError(
@@ -145,12 +152,13 @@ export async function fetchReleaseBundleWithToken(
 
   const entries = await extractOuterZipEntries(zipBytes);
 
-  // The release set is every wheel/sdist in the bundle. Non-artifact files
-  // (checksums, READMEs, anything else upload-artifact happened to include) are
-  // ignored — they are never scanned, so they cannot influence the review.
+  // The release set is every entry the adapter classifies as an artifact.
+  // Non-artifact files (checksums, READMEs, anything else upload-artifact
+  // happened to include) are ignored — they are never scanned, so they cannot
+  // influence the review.
   const candidateArtifacts: ResolvedReleaseFile[] = [];
   for (const entry of entries) {
-    const kind = inferPyPiArtifactKind(entry.path);
+    const kind = classifyArtifact(entry.path);
     if (!kind) continue;
     const sha256 = await sha256Hex(entry.bytes);
     candidateArtifacts.push({ path: entry.path, bytes: entry.bytes, sha256, kind });
@@ -158,7 +166,7 @@ export async function fetchReleaseBundleWithToken(
   if (candidateArtifacts.length === 0) {
     throw new WorkflowArtifactError(
       "bundle_empty",
-      "artifact bundle contained no wheel or sdist files",
+      "artifact bundle contained no reviewable artifacts",
     );
   }
   if (candidateArtifacts.length > MAX_RELEASE_ARTIFACTS) {
@@ -184,9 +192,10 @@ export async function fetchReleaseBundleWithToken(
 export async function fetchReleaseBundleForGate(
   config: GithubAppConfig,
   source: WorkflowArtifactSource,
+  classifyArtifact: ClassifyArtifact,
 ): Promise<ResolvedReleaseBundle> {
   const token = await getInstallationAccessToken(config, source.installationExternalId);
-  return fetchReleaseBundleWithToken(token, source);
+  return fetchReleaseBundleWithToken(token, source, classifyArtifact);
 }
 
 // ── GitHub API: list + download ──────────────────────────────────────────────

@@ -9,7 +9,6 @@ import {
   type AppDb,
 } from "../db";
 import { githubAppInstallations, scans } from "../db/schema";
-import { pypiAdapter } from "./adapters/pypi/index";
 import {
   attachScanToGate,
   GithubAppConfigError,
@@ -23,7 +22,7 @@ import {
 } from "./github-app";
 import { notifyWorkflowGateReview } from "./notify";
 import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
-import { preparePyPiReleaseCandidateForGate } from "./release-candidate-pypi";
+import { prepareReleaseCandidateForGate } from "./workflow-gates";
 import type { RiskLevel } from "./review";
 import { runScanPipeline } from "./scan-pipeline";
 import { classifyScanError, type WorkflowGateQueueMessage } from "./scan-job";
@@ -39,13 +38,17 @@ export function recommendationForReleaseRisk(releaseRisk: RiskLevel): "approved"
 }
 
 /**
- * Review a resolved PyPI workflow gate end to end and leave it pending for a
- * human decision.
+ * Review a resolved workflow gate end to end and leave it pending for a human
+ * decision. The ecosystem is selected from the gate's release target: this
+ * runner owns all GitHub plumbing, while a `WorkflowGateAdapter`
+ * (`server/lib/workflow-gates`) supplies the ecosystem's artifact semantics and
+ * review adapter.
  *
  * Trust boundary: the installation token never enters the sandbox. Artifact
- * bytes are fetched + SHA-256-verified in the control plane (`prepare…`), then
- * the credentials-free sandbox parser turns them into evidence the existing
- * deterministic rules run against via `runScanPipeline`.
+ * bytes are fetched + SHA-256-verified in the control plane
+ * (`prepareReleaseCandidateForGate`), then the credentials-free sandbox parser
+ * turns them into evidence the deterministic rules run against via
+ * `runScanPipeline`.
  *
  * Decision model: a maintainer drives the gate from the workbench. A successful
  * review records a `reviewed` event carrying an advisory recommendation and
@@ -160,7 +163,7 @@ export async function executeWorkflowGateJob(
 
   let prepared;
   try {
-    prepared = await preparePyPiReleaseCandidateForGate(env, executionCtx, db, {
+    prepared = await prepareReleaseCandidateForGate(env, executionCtx, db, {
       config,
       organizationId,
       gateId,
@@ -170,7 +173,7 @@ export async function executeWorkflowGateJob(
       // The published artifacts could not be verified against the reviewed
       // manifest (missing bundle, tampered digest, package mismatch, …). Block
       // the deployment with a generic comment; the typed reason is already
-      // stored on the gate by `preparePyPiReleaseCandidateForGate`.
+      // stored on the gate by `prepareReleaseCandidateForGate`.
       await rejectGateForArtifactError(env, db, config, gate, err);
       emitOperationalEvent("warn", "github_workflow_gate.rejected_artifact_error", {
         organizationId,
@@ -238,13 +241,12 @@ export async function executeWorkflowGateJob(
   try {
     result = await runScanPipeline(
       { env, executionCtx, db, session: { userId: ownerUserId } },
-      pypiAdapter,
+      prepared.adapter.packageAdapter,
       {
         scanId,
         stageId,
         organizationId,
-        manifest: prepared.adapterInput.manifest,
-        artifacts: prepared.adapterInput.artifacts,
+        ...prepared.candidate.pipelineInput,
       },
     );
   } catch (err) {
