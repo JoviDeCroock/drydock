@@ -63,7 +63,7 @@ Implementation requirements:
 
 Current code has encrypted per-organization npm connections only. SaaS production must configure `NPM_CONNECTIONS_ENCRYPTION_KEY`; scans require an organization-owned npm token.
 
-Scans and staged-publish discovery require the organization npm connection to be validated first. The dashboard automatically runs the baseline npm auth/list validation after token save, and users can still run a stage-ID-specific validation check afterwards. Queued scan workers re-check validation immediately before decrypting and using the current token, so token rotation cannot bypass the validation gate. Custom npm registries are supported for organization npm connections and should be paired with explicit abuse controls in production operations.
+Scans and staged-publish discovery require the organization npm connection to be validated first. The settings page automatically runs the baseline npm auth/list validation after token save, and scheduled staged-publish discovery validates unvalidated connections during sweeps before using them. Stage-specific access is proved by discovery and scan workers when they fetch staged release evidence. Queued scan workers re-check validation immediately before decrypting and using the current token, so token rotation cannot bypass the validation gate. Custom npm registries are supported for organization npm connections and should be paired with explicit abuse controls in production operations.
 
 ## Package artifact handling
 
