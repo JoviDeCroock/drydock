@@ -1,6 +1,6 @@
 # Diff Baseline Strategy
 
-This note records the baseline-selection decision for staged publish review.
+This note records the baseline-selection decision for Drydock's npm staged-publish review path.
 
 ## Implemented behavior
 
