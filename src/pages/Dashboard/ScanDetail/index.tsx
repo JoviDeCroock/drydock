@@ -1,34 +1,22 @@
 import { useEffect } from "preact/hooks";
 import { useComputed, useModel, useSignal, useSignalEffect } from "@preact/signals";
 import { useLocation, useRoute } from "preact-iso";
-import { getDashboardReturnUrl, useQuerySignal } from "../../../lib/query-state";
-import { formatDateTime } from "../../../lib/format";
+import { useQuerySignal } from "../../../lib/query-state";
 import { sessionModel } from "../../../models/auth";
-import { ScanDetailModel, type PersistedScanDetail, type ScanDecision } from "../../../models/scan";
+import { ScanDetailModel, type ScanDecision } from "../../../models/scan";
 import type { WorkflowGateDecision } from "../../../models/github-app";
 import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review-types";
-import {
-  annotateFindingsWithDiffStatus as annotateReviewFindingsWithDiffStatus,
-  createPackageDiff,
-  normalizeFindingDiffStatus,
-  type DiffEntry,
-  type FindingDiffAnnotation,
-  type FileRecord,
-} from "../../../../server/lib/review";
+import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
 import {
   Alert,
-  Badge,
-  Button,
   Card,
   FileTree,
   Input,
   LoadingLine,
   LoadingState,
-  MonoDetail,
   PageShell,
   SectionLabel,
   VersionPicker,
-  severityTone,
 } from "../../../components";
 import { DecisionDialog } from "./DecisionDialog";
 import { GateContextPanel, GateDecisionDialog } from "./GateDecisionDialog";
@@ -36,7 +24,12 @@ import { DiffWorkbench } from "./DiffWorkbench";
 import { RiskSignalsSection } from "./FindingsSection";
 import { ReleaseRecommendation } from "./ReleaseRecommendation";
 import { PersistedReportSections } from "./ReportSections";
-import type { FindingWithDiffStatus, PersistedFinding, PersistedSummary } from "./types";
+import { ScanDetailHeader, ScanFailureAlert, VersionPickerSkeleton } from "./ScanDetailChrome";
+import { filterDiffEntries, scanFilesToFileRecords } from "./diff-helpers";
+import { useFindingsWithDiff } from "./hooks/useFindingsWithDiff";
+import { useScanFileContent } from "./hooks/useScanFileContent";
+import { useScanVersions } from "./hooks/useScanVersions";
+import type { PersistedSummary } from "./types";
 
 export default function ScanDetailPage() {
   const location = useLocation();
@@ -90,12 +83,7 @@ export default function ScanDetailPage() {
     };
   }, [id]);
 
-  // Fetch version metadata as soon as we have a package name (don't wait for complete).
-  useSignalEffect(() => {
-    if (!model.detail.value?.scan.packageName) return;
-    if (model.versions.value) return;
-    void model.loadVersions();
-  });
+  const versionsSignal = useScanVersions(model);
 
   // Load the workflow gate once the review reaches a terminal state. Completed
   // and failed scans may both be linked to the pending gate so the workbench can
@@ -146,15 +134,11 @@ export default function ScanDetailPage() {
     filterDiffEntries(diffEntries.value, fileFilter.value, changedFilesOnly.value),
   );
 
-  const findingsWithDiffStatus = useComputed(() =>
-    annotateFindingsWithDiffStatus(
-      model.detail.value?.findings ?? [],
-      diffEntries.value,
-      model.isDefaultComparison.value,
-      model.compare.value?.files ?? [],
-      model.detail.value ? scanFilesToFileRecords(model.detail.value.files) : [],
-      model.isDefaultComparison.value ? undefined : model.compare.value?.findingAnnotations,
-    ),
+  const findingsWithDiffStatus = useFindingsWithDiff(
+    model.detail,
+    model.compare,
+    diffEntries,
+    model.isDefaultComparison,
   );
 
   const stagedFile = useComputed(() => {
@@ -164,39 +148,11 @@ export default function ScanDetailPage() {
     return detail?.files.find((file) => file.path === path) ?? null;
   });
 
-  const previousFileMeta = useComputed(() => {
-    const path = model.selectedPath.value;
-    const compare = model.compare.value;
-    if (!path || !compare) return null;
-    return compare.files.find((file) => file.path === path) ?? null;
-  });
-
-  const previousFileKey = useComputed(() => {
-    const version = model.selectedVersion.value;
-    const path = model.selectedPath.value;
-    return version && path ? `${version}::${path}` : null;
-  });
-
-  const previousFile = useComputed(() => {
-    const key = previousFileKey.value;
-    const cache = model.fileContentCache.value;
-    return key ? (cache[key] ?? null) : null;
-  });
-
-  // Lazy-load the previous file content when the user picks a file + version.
-  useSignalEffect(() => {
-    const key = previousFileKey.value;
-    const cache = model.fileContentCache.value;
-    const meta = previousFileMeta.value;
-    const version = model.selectedVersion.value;
-    const path = model.selectedPath.value;
-    if (!key) return;
-    if (cache[key]) return;
-    if (!meta) return;
-    if (meta.flags?.includes("binary")) return;
-    if (!version || !path) return;
-    void model.loadPreviousFile(version, path);
-  });
+  const { previousFileMeta, previousFile } = useScanFileContent(
+    model,
+    model.selectedPath,
+    model.selectedVersion,
+  );
 
   if (!sessionChecked.value) {
     return (
@@ -208,7 +164,7 @@ export default function ScanDetailPage() {
   }
 
   const detail = model.detail.value;
-  const versions = model.versions.value;
+  const versions = versionsSignal.value;
   const error = model.error.value;
   const compareLoading = model.compareLoading.value;
   const compareError = model.compareError.value;
@@ -390,183 +346,6 @@ export default function ScanDetailPage() {
       ) : null}
     </PageShell>
   );
-}
-
-function ScanDetailHeader({
-  detail,
-  onDecideClick,
-}: {
-  detail?: PersistedScanDetail | null;
-  onDecideClick?: () => void;
-} = {}) {
-  const decision = detail?.scan.decision;
-  const decidedAt = detail?.scan.decidedAt;
-  const isComplete = detail?.scan.status === "complete";
-  const releaseRisk = isComplete ? (detail.riskSummary?.releaseRisk ?? detail.scan.risk) : null;
-  const dashboardHref = getDashboardReturnUrl();
-  return (
-    <header class="flex flex-wrap items-start justify-between gap-4">
-      <div class="flex flex-col gap-2 min-w-0">
-        <a href={dashboardHref} class="text-[13px] text-ink-muted hover:text-ink no-underline">
-          ← Reviews
-        </a>
-        <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">
-          {detail?.scan.packageName || "Release review"}
-        </h1>
-        {detail ? (
-          <MonoDetail
-            parts={[
-              <span key="version">
-                {detail.scan.previousVersion || "—"} → {detail.scan.stagedVersion || "—"}
-              </span>,
-              releaseRisk ? (
-                <Badge key="risk" tone={severityTone(releaseRisk)}>
-                  release {releaseRisk}
-                </Badge>
-              ) : null,
-              <span key="scan-id">scan {detail.scan.id.slice(0, 12)}</span>,
-            ]}
-          />
-        ) : (
-          <LoadingLine size="inline">Loading saved review</LoadingLine>
-        )}
-      </div>
-      {decision || onDecideClick ? (
-        <div class="flex flex-wrap items-start gap-3">
-          {decision ? (
-            <div class="flex flex-col items-end gap-1">
-              <Badge tone={decision === "publish" ? "ok" : "critical"}>
-                {decision === "publish" ? "approved" : "blocked"}
-              </Badge>
-              {decidedAt ? (
-                <span class="font-mono text-[11px] text-ink-subtle">
-                  {formatDateTime(decidedAt)}
-                </span>
-              ) : null}
-            </div>
-          ) : null}
-          {onDecideClick ? (
-            <Button variant={decision ? "secondary" : "primary"} onClick={onDecideClick}>
-              {decision ? "Update decision" : "Decide"}
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
-    </header>
-  );
-}
-
-function VersionPickerSkeleton({ stagedVersion }: { stagedVersion: string | null }) {
-  return (
-    <div class="flex flex-wrap items-center gap-3" aria-busy="true">
-      <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
-        Compare against
-      </span>
-      <div class="flex items-center bg-bg border border-border rounded-md text-[13px] text-ink-muted pl-3 pr-8 py-2 font-mono min-w-[200px] opacity-60">
-        loading versions<span class="ml-0.5 motion-safe:animate-pulse">…</span>
-      </div>
-      <span class="font-mono text-[11px] text-ink-muted">→ staged {stagedVersion || "—"}</span>
-    </div>
-  );
-}
-
-function ScanFailureAlert({ errorJson }: { errorJson: unknown }) {
-  const error =
-    errorJson && typeof errorJson === "object"
-      ? (errorJson as { message?: unknown; code?: unknown })
-      : null;
-  return (
-    <Alert tone="critical">
-      <div class="flex flex-col gap-1">
-        <strong>{typeof error?.message === "string" ? error.message : "Review failed."}</strong>
-        {typeof error?.code === "string" ? (
-          <span class="font-mono text-xs">code: {error.code}</span>
-        ) : null}
-      </div>
-    </Alert>
-  );
-}
-
-const DIFF_STATUS_RANK: Record<DiffEntry["status"], number> = {
-  added: 0,
-  modified: 1,
-  removed: 2,
-  unchanged: 3,
-};
-
-function filterDiffEntries(
-  entries: DiffEntry[],
-  rawFilter: string,
-  changedOnly: boolean,
-): DiffEntry[] {
-  const filter = rawFilter.trim().toLowerCase();
-  return entries
-    .filter((entry) => {
-      if (changedOnly && entry.status === "unchanged") return false;
-      if (!filter) return true;
-      return entry.path.toLowerCase().includes(filter);
-    })
-    .sort((a, b) => {
-      const status = DIFF_STATUS_RANK[a.status] - DIFF_STATUS_RANK[b.status];
-      return status || a.path.localeCompare(b.path);
-    });
-}
-
-function scanFilesToFileRecords(files: PersistedScanDetail["files"]): FileRecord[] {
-  return files.map((file) => ({
-    path: file.path,
-    size: file.size ?? 0,
-    sha256: file.sha256 ?? "",
-    textSample: file.textSample ?? undefined,
-    flags: Array.isArray(file.flagsJson) ? (file.flagsJson as string[]) : [],
-  }));
-}
-
-function annotateFindingsWithDiffStatus(
-  findings: PersistedFinding[],
-  diff: DiffEntry[],
-  preferPersistedStatus: boolean,
-  previousFiles: FileRecord[],
-  stagedFiles: FileRecord[],
-  compareAnnotations?: Array<{ id: string } & FindingDiffAnnotation>,
-): FindingWithDiffStatus[] {
-  const persistedAnnotations = compareAnnotations
-    ? new Map(
-        compareAnnotations.map((annotation) => [
-          annotation.id,
-          {
-            diffStatus: normalizeFindingDiffStatus(annotation.diffStatus),
-            releaseDelta: Boolean(annotation.releaseDelta),
-          },
-        ]),
-      )
-    : preferPersistedStatus
-      ? new Map(
-          findings.flatMap((finding): Array<[string, FindingDiffAnnotation]> => {
-            if (!finding.diffStatus) return [];
-            return [
-              [
-                finding.id,
-                {
-                  diffStatus: normalizeFindingDiffStatus(finding.diffStatus),
-                  releaseDelta: Boolean(finding.releaseDelta),
-                },
-              ],
-            ];
-          }),
-        )
-      : undefined;
-  return annotateReviewFindingsWithDiffStatus(findings, diff, {
-    persistedAnnotations,
-    previousFiles,
-    stagedFiles,
-  }).map((finding) => {
-    return {
-      finding,
-      diffStatus: finding.diffStatus,
-      releaseDelta: finding.releaseDelta,
-    };
-  });
 }
 
 function asPersistedSummary(value: unknown): PersistedSummary {

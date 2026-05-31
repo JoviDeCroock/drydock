@@ -1,9 +1,6 @@
 import type { TarSuspiciousEntry } from "./tar-parser.js";
-import {
-  DETERMINISTIC_RULE_IDS,
-  DETERMINISTIC_RULES_VERSION,
-  firstJsonPropertyLine,
-} from "./review-rules";
+import { DETERMINISTIC_RULE_IDS, DETERMINISTIC_RULES_VERSION } from "./review-rules";
+import type { DiffEntry } from "./review-diff";
 
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 
@@ -25,53 +22,6 @@ export interface Finding {
   ruleVersion?: string;
 }
 
-export interface PackageJsonSummary {
-  name?: string;
-  version?: string;
-  scripts?: Record<string, string>;
-  implicitScripts?: Record<string, string>;
-  gypfile?: boolean;
-  dependencies?: Record<string, string>;
-  devDependencies?: Record<string, string>;
-  peerDependencies?: Record<string, string>;
-  optionalDependencies?: Record<string, string>;
-  files?: string[];
-  bin?: string | Record<string, string>;
-  main?: string;
-  module?: string;
-  types?: string;
-  exports?: unknown;
-}
-
-export type DependencySection = "dependencies" | "optionalDependencies" | "peerDependencies";
-
-export interface PackageJsonDiffEntry {
-  key: string;
-  status: "added" | "removed" | "modified";
-  previous?: string;
-  staged?: string;
-  section?: DependencySection;
-}
-
-export interface PackageJsonDiff {
-  name: string | null;
-  previousVersion: string | null;
-  stagedVersion: string | null;
-  scripts: PackageJsonDiffEntry[];
-  dependencies: PackageJsonDiffEntry[];
-  entrypointsChanged: boolean;
-}
-
-export interface DiffEntry {
-  path: string;
-  status: "added" | "removed" | "modified" | "unchanged";
-  previousSize?: number;
-  stagedSize?: number;
-  previousSha256?: string;
-  stagedSha256?: string;
-  flags: string[];
-}
-
 export type FindingDiffStatus = DiffEntry["status"] | "unknown";
 
 export interface FindingDiffAnnotation {
@@ -88,10 +38,20 @@ export interface FindingAnnotationOptions {
   codePatternSet?: CodePatternSet;
 }
 
+export { createPackageDiff } from "./review-diff";
+export type { DiffEntry } from "./review-diff";
+export { summarizePackageJsonDiff } from "./review-serialize";
+export type {
+  DependencySection,
+  PackageJsonDiff,
+  PackageJsonDiffEntry,
+  PackageJsonSummary,
+} from "./review-serialize";
 export {
   DETERMINISTIC_RULE_IDS,
   DETERMINISTIC_RULES_VERSION,
   deterministicFindings,
+  packageJsonDiffFindings,
   PYTHON_EXECUTION_CAPABILITY_PATTERNS,
 } from "./review-rules";
 export type { DeterministicFindingOptions } from "./review-rules";
@@ -139,121 +99,6 @@ function tarSuspiciousReason(entry: TarSuspiciousEntry): string {
   }
 }
 
-export function createPackageDiff(
-  previousFiles: FileRecord[],
-  stagedFiles: FileRecord[],
-): DiffEntry[] {
-  const previous = new Map(previousFiles.map((file) => [file.path, file]));
-  const staged = new Map(stagedFiles.map((file) => [file.path, file]));
-  const paths = [...new Set([...previous.keys(), ...staged.keys()])].sort();
-
-  return paths.map((path) => {
-    const before = previous.get(path);
-    const after = staged.get(path);
-    if (!before && after)
-      return {
-        path,
-        status: "added",
-        stagedSize: after.size,
-        stagedSha256: after.sha256,
-        flags: after.flags,
-      };
-    if (before && !after)
-      return {
-        path,
-        status: "removed",
-        previousSize: before.size,
-        previousSha256: before.sha256,
-        flags: before.flags,
-      };
-    if (before && after && before.sha256 !== after.sha256) {
-      return {
-        path,
-        status: "modified",
-        previousSize: before.size,
-        stagedSize: after.size,
-        previousSha256: before.sha256,
-        stagedSha256: after.sha256,
-        flags: [...new Set([...before.flags, ...after.flags])],
-      };
-    }
-    return {
-      path,
-      status: "unchanged",
-      previousSize: before?.size,
-      stagedSize: after?.size,
-      previousSha256: before?.sha256,
-      stagedSha256: after?.sha256,
-      flags: [...new Set([...(before?.flags || []), ...(after?.flags || [])])],
-    };
-  });
-}
-
-export function summarizePackageJsonDiff(
-  previousPkg: PackageJsonSummary | null | undefined,
-  stagedPkg: PackageJsonSummary | null | undefined,
-): PackageJsonDiff {
-  const changedScripts = diffObject(previousPkg?.scripts || {}, stagedPkg?.scripts || {});
-  const changedDependencies = diffDependencySections(previousPkg, stagedPkg);
-  return {
-    name: stagedPkg?.name || previousPkg?.name || null,
-    previousVersion: previousPkg?.version || null,
-    stagedVersion: stagedPkg?.version || null,
-    scripts: changedScripts,
-    dependencies: changedDependencies,
-    entrypointsChanged:
-      JSON.stringify([
-        previousPkg?.bin,
-        previousPkg?.main,
-        previousPkg?.module,
-        previousPkg?.types,
-        previousPkg?.exports,
-      ]) !==
-      JSON.stringify([
-        stagedPkg?.bin,
-        stagedPkg?.main,
-        stagedPkg?.module,
-        stagedPkg?.types,
-        stagedPkg?.exports,
-      ]),
-  };
-}
-
-export function packageJsonDiffFindings(
-  packageJsonDiff: PackageJsonDiff,
-  stagedPackageJsonText?: string | null,
-): Finding[] {
-  const findings: Finding[] = [];
-  for (const entry of packageJsonDiff.dependencies) {
-    if (entry.status !== "added" && entry.status !== "modified") continue;
-    if (entry.section === "optionalDependencies" && entry.status === "added") {
-      findings.push({
-        severity: "high",
-        file: "package.json",
-        line: firstJsonPropertyLine(stagedPackageJsonText, entry.key, entry.staged),
-        evidence: `${entry.key}: ${entry.staged}`,
-        reason:
-          "optional dependencies can execute install lifecycle hooks while failing softly on unsupported platforms, so newly added optional dependencies require manual review",
-        ruleId: DETERMINISTIC_RULE_IDS.dependencyOptionalAdded,
-        ruleVersion: DETERMINISTIC_RULES_VERSION,
-      });
-    }
-    if (!entry.staged) continue;
-    const kind = unusualDependencySpecKind(entry.staged);
-    if (!kind) continue;
-    findings.push({
-      severity: "high",
-      file: "package.json",
-      line: firstJsonPropertyLine(stagedPackageJsonText, entry.key, entry.staged),
-      evidence: `${entry.key}: ${entry.staged}`,
-      reason: `${kind} dependency specs resolve code outside normal npm semver ranges and can introduce unreviewed install-time behavior`,
-      ruleId: DETERMINISTIC_RULE_IDS.dependencyUnusualSpec,
-      ruleVersion: DETERMINISTIC_RULES_VERSION,
-    });
-  }
-  return findings;
-}
-
 export function computeRisk(findings: Array<{ severity?: string | null }>): RiskLevel {
   if (findings.some((f) => f.severity === "critical")) return "critical";
   if (findings.some((f) => f.severity === "high")) return "high";
@@ -272,46 +117,4 @@ export function normalizeRisk(value: unknown): RiskLevel {
   return value === "critical" || value === "high" || value === "medium" || value === "low"
     ? value
     : "medium";
-}
-
-function diffDependencySections(
-  previousPkg: PackageJsonSummary | null | undefined,
-  stagedPkg: PackageJsonSummary | null | undefined,
-): PackageJsonDiffEntry[] {
-  const sectionEntries = (section: DependencySection) =>
-    diffObject(previousPkg?.[section] || {}, stagedPkg?.[section] || {}).map((entry) => ({
-      ...entry,
-      section,
-    }));
-
-  return [
-    ...sectionEntries("dependencies"),
-    ...sectionEntries("optionalDependencies"),
-    ...sectionEntries("peerDependencies"),
-  ].sort((a, b) => a.key.localeCompare(b.key) || a.section.localeCompare(b.section));
-}
-
-function unusualDependencySpecKind(spec: string): string | null {
-  const normalized = spec.trim().toLowerCase();
-  if (/^(?:github|gitlab|bitbucket):/.test(normalized)) return "git-hosted";
-  if (/^(?:git\+ssh|git\+https|git\+http|git|ssh):/.test(normalized)) return "git";
-  if (/^https?:/.test(normalized))
-    return normalized.endsWith(".tgz") ? "remote tarball" : "remote URL";
-  if (normalized.startsWith("file:")) return "local file";
-  if (normalized.startsWith("npm:")) return "npm alias";
-  return null;
-}
-
-function diffObject(
-  before: Record<string, string>,
-  after: Record<string, string>,
-): PackageJsonDiffEntry[] {
-  const out: PackageJsonDiffEntry[] = [];
-  for (const key of [...new Set([...Object.keys(before), ...Object.keys(after)])].sort()) {
-    if (!(key in before)) out.push({ key, status: "added", staged: after[key] });
-    else if (!(key in after)) out.push({ key, status: "removed", previous: before[key] });
-    else if (before[key] !== after[key])
-      out.push({ key, status: "modified", previous: before[key], staged: after[key] });
-  }
-  return out;
 }
