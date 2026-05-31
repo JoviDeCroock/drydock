@@ -9,6 +9,7 @@ export type { Severity, Status, BadgeTone } from "./Badge";
 export { Alert } from "./Alert";
 export type { AlertTone } from "./Alert";
 export { Dialog } from "./Dialog";
+export { CodeBlock } from "./CodeBlock";
 export { Card, SummaryCard } from "./Card";
 export type { SummaryCardTone, SummaryCardValue } from "./Card";
 export { PageShell } from "./PageShell";

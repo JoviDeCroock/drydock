@@ -110,6 +110,9 @@ export default function DashboardPage() {
     <PageShell
       headerActions={
         <>
+          <LinkButton variant="ghost" size="sm" href="/dashboard/setup">
+            Set up
+          </LinkButton>
           <LinkButton variant="ghost" size="sm" href="/dashboard/settings">
             Settings
           </LinkButton>
@@ -331,11 +334,12 @@ function NpmSetupCallout() {
       <div class="flex flex-col gap-1.5 min-w-0">
         <SectionLabel>npm not connected</SectionLabel>
         <Muted class="text-[13px] m-0">
-          Connect npm in settings so Drydock can fetch staged tarballs and run reviews.
+          Connect npm so Drydock can fetch staged tarballs and run reviews. The guided setup walks
+          you through staged publishing end to end.
         </Muted>
       </div>
-      <LinkButton variant="primary" size="sm" href="/dashboard/settings">
-        Open settings
+      <LinkButton variant="primary" size="sm" href="/dashboard/setup?flow=npm">
+        Set up staged publishing
       </LinkButton>
     </Card>
   );
