@@ -238,6 +238,16 @@ function source(): WorkflowArtifactSource {
   };
 }
 
+// The shared fetcher is ecosystem-agnostic; the workflow-gate adapter supplies
+// this. These tests use a wheel/sdist classifier to exercise the release-set
+// collection without coupling to a specific adapter.
+function classifyArtifact(path: string): string | null {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".whl")) return "wheel";
+  if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) return "sdist";
+  return null;
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("fetchReleaseBundleWithToken", () => {
@@ -245,7 +255,7 @@ describe("fetchReleaseBundleWithToken", () => {
     const fixture = await buildFixture();
     const calls = stubGithubFetch({ bundleZip: fixture.bundleZip });
 
-    const bundle = await fetchReleaseBundleWithToken(TOKEN, source());
+    const bundle = await fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact);
 
     expect(bundle.artifactName).toBe(ARTIFACT_NAME);
     expect(bundle.artifactId).toBe(ARTIFACT_ID);
@@ -265,7 +275,7 @@ describe("fetchReleaseBundleWithToken", () => {
     });
     stubGithubFetch({ bundleZip: fixture.bundleZip });
 
-    const bundle = await fetchReleaseBundleWithToken(TOKEN, source());
+    const bundle = await fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact);
 
     const paths = bundle.artifacts.map((artifact) => artifact.path).sort();
     expect(paths).toEqual([sdistPath, fixture.wheel.path].sort());
@@ -284,7 +294,7 @@ describe("fetchReleaseBundleWithToken", () => {
     });
     stubGithubFetch({ bundleZip: fixture.bundleZip });
 
-    const bundle = await fetchReleaseBundleWithToken(TOKEN, source());
+    const bundle = await fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact);
 
     expect(bundle.artifacts).toHaveLength(1);
     expect(bundle.artifacts[0]?.path).toBe(fixture.wheel.path);
@@ -297,7 +307,9 @@ describe("fetchReleaseBundleWithToken", () => {
     });
     stubGithubFetch({ bundleZip: fixture.bundleZip });
 
-    await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({
+    await expect(
+      fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact),
+    ).rejects.toMatchObject({
       code: "bundle_empty",
     });
   });
@@ -310,7 +322,9 @@ describe("fetchReleaseBundleWithToken", () => {
     const bundleZip = makeZip(entries);
     stubGithubFetch({ bundleZip });
 
-    await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({
+    await expect(
+      fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact),
+    ).rejects.toMatchObject({
       code: "bundle_too_large",
     });
   });
@@ -319,7 +333,9 @@ describe("fetchReleaseBundleWithToken", () => {
     const fixture = await buildFixture();
     stubGithubFetch({ bundleZip: fixture.bundleZip, artifactName: "something-else" });
 
-    await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({
+    await expect(
+      fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact),
+    ).rejects.toMatchObject({
       name: "WorkflowArtifactError",
       code: "bundle_unavailable",
     });
@@ -331,7 +347,9 @@ describe("fetchReleaseBundleWithToken", () => {
       artifactsResponse: () => new Response("missing", { status: 404 }),
     });
 
-    await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({
+    await expect(
+      fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact),
+    ).rejects.toMatchObject({
       code: "bundle_unavailable",
     });
   });
@@ -343,7 +361,9 @@ describe("fetchReleaseBundleWithToken", () => {
       contentLength: 26 * 1024 * 1024,
     });
 
-    await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({
+    await expect(
+      fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact),
+    ).rejects.toMatchObject({
       code: "bundle_too_large",
     });
   });
@@ -353,7 +373,9 @@ describe("fetchReleaseBundleWithToken", () => {
     const bundle = makeZip([{ path: "../../etc/passwd", body: sneaky.bytes }]);
     stubGithubFetch({ bundleZip: bundle });
 
-    await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({
+    await expect(
+      fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact),
+    ).rejects.toMatchObject({
       code: "artifact_path_unsafe",
     });
   });
@@ -400,7 +422,7 @@ describe("fetchReleaseBundleWithToken", () => {
       }),
     );
 
-    const bundle = await fetchReleaseBundleWithToken(TOKEN, source());
+    const bundle = await fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact);
     expect(bundle.artifacts).toHaveLength(1);
 
     const apiCalls = calls.filter((call) => call.url.startsWith("https://api.github.com/"));
@@ -443,7 +465,9 @@ describe("fetchReleaseBundleWithToken", () => {
       }),
     );
 
-    await expect(fetchReleaseBundleWithToken(TOKEN, source())).rejects.toMatchObject({
+    await expect(
+      fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact),
+    ).rejects.toMatchObject({
       code: "bundle_unavailable",
     });
     expect(calls.some((call) => call.url === evilUrl)).toBe(false);

@@ -9,7 +9,8 @@ import {
   readGithubAppConfig,
   upsertInstallation,
 } from "../../server/lib/github-app";
-import { preparePyPiReleaseCandidateForGate } from "../../server/lib/release-candidate-pypi";
+import type { PyPiAdapterInput } from "../../server/lib/adapters/pypi/index";
+import { prepareReleaseCandidateForGate } from "../../server/lib/workflow-gates";
 
 const WEBHOOK_SECRET = "webhook-secret-value-1234567890";
 
@@ -280,7 +281,7 @@ async function buildScenario(runId: number, opts?: { artifactPaths?: string[] })
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
-describe("preparePyPiReleaseCandidateForGate", () => {
+describe("prepareReleaseCandidateForGate", () => {
   test("derives the release identity from the artifacts for a matching gate", async () => {
     const seeded = await seedGateForTest({
       installationExternalId: "9100",
@@ -302,20 +303,24 @@ describe("preparePyPiReleaseCandidateForGate", () => {
     } as Cloudflare.Env;
 
     const db = createDb(env.DB);
-    const result = await preparePyPiReleaseCandidateForGate(sandboxEnv, ctx, db, {
+    const result = await prepareReleaseCandidateForGate(sandboxEnv, ctx, db, {
       config,
       organizationId: seeded.organizationId,
       gateId: seeded.gateId,
     });
 
     expect(result.gate.id).toBe(seeded.gateId);
-    expect(result.adapterInput.manifest.package).toBe("demo-package");
-    expect(result.adapterInput.manifest.version).toBe("1.2.0");
-    expect(result.adapterInput.manifest.artifacts).toHaveLength(1);
-    expect(result.adapterInput.manifest.artifacts[0].path).toBe(scenario.artifactPaths[0]);
-    expect(result.adapterInput.artifacts).toHaveLength(1);
-    expect(result.adapterInput.artifacts[0].path).toBe(scenario.artifactPaths[0]);
-    expect(result.adapterInput.artifacts[0].files).toHaveLength(1);
+    expect(result.adapter.ecosystem).toBe("pypi");
+    expect(result.candidate.package).toEqual({ name: "demo-package", version: "1.2.0" });
+
+    const pipelineInput = result.candidate.pipelineInput as unknown as PyPiAdapterInput;
+    expect(pipelineInput.manifest.package).toBe("demo-package");
+    expect(pipelineInput.manifest.version).toBe("1.2.0");
+    expect(pipelineInput.manifest.artifacts).toHaveLength(1);
+    expect(pipelineInput.manifest.artifacts[0].path).toBe(scenario.artifactPaths[0]);
+    expect(pipelineInput.artifacts).toHaveLength(1);
+    expect(pipelineInput.artifacts[0].path).toBe(scenario.artifactPaths[0]);
+    expect(pipelineInput.artifacts[0].files).toHaveLength(1);
     expect(loaderMock.calls).toHaveLength(1);
     expect(loaderMock.calls[0].format).toBe("zip");
 
@@ -348,7 +353,7 @@ describe("preparePyPiReleaseCandidateForGate", () => {
 
     const db = createDb(env.DB);
     await expect(
-      preparePyPiReleaseCandidateForGate(sandboxEnv, ctx, db, {
+      prepareReleaseCandidateForGate(sandboxEnv, ctx, db, {
         config,
         organizationId: seeded.organizationId,
         gateId: seeded.gateId,
@@ -389,7 +394,7 @@ describe("preparePyPiReleaseCandidateForGate", () => {
 
     const db = createDb(env.DB);
     await expect(
-      preparePyPiReleaseCandidateForGate(sandboxEnv, ctx, db, {
+      prepareReleaseCandidateForGate(sandboxEnv, ctx, db, {
         config,
         organizationId: seeded.organizationId,
         gateId: seeded.gateId,
@@ -421,7 +426,7 @@ describe("preparePyPiReleaseCandidateForGate", () => {
     } as Cloudflare.Env;
     const db = createDb(env.DB);
     await expect(
-      preparePyPiReleaseCandidateForGate(sandboxEnv, ctx, db, {
+      prepareReleaseCandidateForGate(sandboxEnv, ctx, db, {
         config,
         organizationId: "other-org",
         gateId: seeded.gateId,

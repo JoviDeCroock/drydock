@@ -366,10 +366,13 @@ detached failure.
 
 `server/lib/github-app/artifacts.ts` turns a pending gate into a release bundle
 of recomputed-SHA-256 wheel/sdist bytes on the trusted control-plane side, then
-`server/lib/release-candidate-pypi.ts` hands each wheel/sdist to the
-credentials-free `downloadInSandboxInline` sandbox path so the same untrusted-
-archive parser the npm pipeline uses produces bounded `FileRecord[]` evidence,
-and derives the release identity from that parsed metadata.
+the PyPI `WorkflowGateAdapter` (`server/lib/workflow-gates/pypi.ts`) hands each
+wheel/sdist to the credentials-free `downloadInSandboxInline` sandbox path so the
+same untrusted-archive parser the npm pipeline uses produces bounded
+`FileRecord[]` evidence, and derives the release identity from that parsed
+metadata. The ecosystem-neutral plumbing around it (gate/installation/release-
+target loading, adapter selection, bundle fetch) lives in
+`server/lib/workflow-gates/prepare.ts`.
 
 What the resolver enforces, in order:
 
@@ -417,18 +420,93 @@ Typed errors returned by `WorkflowArtifactError.code`:
 - `artifact_identity_inconsistent` — artifacts disagreed on the normalized
   package name or the version.
 
-`preparePyPiReleaseCandidateForGate(env, ctx, db, { config, organizationId,
-gateId })` is the gate-aware wrapper. It looks up the gate row, swaps the App
-JWT for a fresh installation access token, and on any failure calls
-`markGateErrored` with the typed error code so the gate cannot advance to
-scanning. The GitHub installation token never enters the sandbox: the parent
-worker downloads the artifact ZIP and recomputes digests, and only the
+`prepareReleaseCandidateForGate(env, ctx, db, { config, organizationId,
+gateId })` (`server/lib/workflow-gates/prepare.ts`) is the gate-aware wrapper. It
+looks up the gate row, selects the `WorkflowGateAdapter` for the release target's
+ecosystem, swaps the App JWT for a fresh installation access token, and on any
+failure calls `markGateErrored` with the typed error code so the gate cannot
+advance to scanning. The GitHub installation token never enters the sandbox: the
+parent worker downloads the artifact ZIP and recomputes digests, and only the
 wheel/sdist bytes cross the trust boundary through `downloadInSandboxInline`,
 which constructs the `NpmStageGateway` with empty props (no npm token, no
 public-artifact allowlist, `subRequests: 0`). Because identity is derived from
 the sandbox-parsed metadata, package identity is known only after the artifacts
 have crossed the untrusted-archive parser; the release target itself binds the
 review to the GitHub repository and environment.
+
+## Multi-ecosystem workflow gates
+
+PyPI is the first workflow-gate ecosystem, not the only intended one. The gate
+pipeline is split so that everything GitHub-shaped is shared and only the
+ecosystem's artifact semantics are pluggable. Two distinct adapter layers are
+involved — do not conflate them:
+
+- **`WorkflowGateAdapter`** (`server/lib/workflow-gates/types.ts`) — gate-time
+  artifact semantics: which GitHub Actions artifact to download, which bundle
+  entries are reviewable, and how to derive the package identity + scan-pipeline
+  input from the verified bytes.
+- **`PackageAdapter`** (`server/lib/adapters/types.ts`) — the deterministic
+  review/baseline/findings pipeline `runScanPipeline` already drives for npm and
+  PyPI. A `WorkflowGateAdapter` references one via `packageAdapter`.
+
+### Who owns what
+
+The **shared runner** owns every GitHub-shaped and persistence concern, in
+`server/lib/workflow-gate-job.ts` (`executeWorkflowGateJob`) plus
+`server/lib/workflow-gates/prepare.ts` (`prepareReleaseCandidateForGate`):
+
+- loading the `github_workflow_gates` row, installation, and release target;
+- selecting the adapter from `github_release_targets.ecosystem`;
+- fetching the GitHub Actions artifact bundle, bounded ZIP parsing, unsafe-path
+  rejection, and SHA-256 recomputation (the installation token is swapped + used
+  only in the control plane, never in the sandbox);
+- persisting gate status / decision / audit events with ecosystem-neutral names
+  (`github_workflow_gate.*`);
+- calling `markGateDecided` + `postDeploymentProtectionDecision` exactly once;
+- structured error handling: a `WorkflowArtifactError` rejects the deployment
+  fail-closed, while a review/processing error (or an
+  `UnsupportedEcosystemError`) leaves the gate pending for a human/retry and
+  records the typed `failureReason`.
+
+A **`WorkflowGateAdapter`** owns only the ecosystem-specific surface:
+
+- `artifactName` — the default GitHub Actions artifact the bundle is downloaded
+  from;
+- `classifyArtifact(path)` — which bundle entries are reviewable artifacts (the
+  returned kind is opaque to the shared fetcher; `null` drops the entry);
+- `prepareReleaseCandidate(...)` — parse the verified bytes through the
+  credentials-free sandbox, derive the package identity, reject a bundle that
+  does not match the configured release target, and return the
+  `pipelineInput` (`Record<string, unknown>` spread into `runScanPipeline`, so
+  its keys must match what `packageAdapter.parseInput` expects);
+- `packageAdapter` — the `PackageAdapter` the shared pipeline runs.
+
+The risk-to-decision mapping (`recommendationForReleaseRisk`) stays shared, so
+every ecosystem gets the same advisory recommendation and the same
+human-drives-the-decision model.
+
+### Adding a new ecosystem
+
+1. Implement (or reuse) a `PackageAdapter` for the ecosystem under
+   `server/lib/adapters/<ecosystem>/` — the deterministic findings, baseline
+   selection, and diff. This is the same contract npm and PyPI already satisfy.
+2. Add a `WorkflowGateAdapter` under `server/lib/workflow-gates/<ecosystem>.ts`
+   with the four members above. Throw `WorkflowArtifactError` (with one of the
+   typed codes) whenever the bundle cannot be trusted so the runner fail-closes.
+3. Register it in `server/lib/workflow-gates/registry.ts` by adding it to
+   `WORKFLOW_GATE_ADAPTERS` keyed by its `ecosystem`.
+4. Add the ecosystem string to `SUPPORTED_ECOSYSTEMS`
+   (`server/lib/github-app/config.ts`) so release targets for it can be created.
+5. Add adapter-dispatch + prepare tests under `test/workers/` (see
+   `workflow-gate-registry.test.ts` and `workflow-gate-prepare.test.ts`). No
+   change to `executeWorkflowGateJob` should be needed — if it is, the GitHub
+   plumbing has leaked into the adapter boundary.
+
+A release target whose ecosystem has no registered adapter resolves to an
+`UnsupportedEcosystemError`: the runner records `failureReason:
+"unsupported_ecosystem"`, emits `github_workflow_gate.unsupported_ecosystem`, and
+leaves the gate **pending** (a config/data problem is never auto-approved and
+never fail-closed-rejected).
 
 ### Baseline acquisition
 
@@ -481,7 +559,8 @@ and the consumer re-checks gate status, so a re-enqueue is safe.
    is retried and relinked to the new scan if the retry succeeds. A non-pending,
    non-decided status is skipped with a warning.
 3. Record `github_workflow_gate.received`.
-4. Call `preparePyPiReleaseCandidateForGate` to resolve + verify the bundle.
+4. Call `prepareReleaseCandidateForGate` to select the ecosystem adapter and
+   resolve + verify the bundle.
    - A `WorkflowArtifactError` (e.g. `bundle_unavailable` or
      `artifact_identity_inconsistent`)
      **rejects** the gate fail-closed with a generic comment, records
@@ -497,7 +576,8 @@ and the consumer re-checks gate status, so a re-enqueue is safe.
 6. Create a scan job (`source: "workflow_gate"`, synthetic
    `stageId: "workflow-gate:<gateId>"`), claim the gate's `scanId` with a CAS
    against the scan link the worker observed, and run `runScanPipeline` with the
-   `pypiAdapter` over the verified manifest + artifacts. If another delivery
+   selected adapter's `packageAdapter` over the verified pipeline input. If
+   another delivery
    already claimed the gate, the worker deletes its just-created pending scan
    and exits. A pipeline throw marks the linked scan failed, records
    `review_failed`, and leaves the gate pending; a later retry can replace that
