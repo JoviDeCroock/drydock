@@ -111,8 +111,8 @@ export default function SettingsPage() {
 
       {workspaceLoaded ? (
         <div class="flex flex-col gap-6">
-          <GithubAppSection githubApp={githubApp} />
           <NpmConnectionSection npm={npm} />
+          <GithubAppSection githubApp={githubApp} />
         </div>
       ) : (
         <LoadingState title="Loading settings" detail={loadingDetail(npmLoaded, githubAppLoaded)} />

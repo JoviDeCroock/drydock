@@ -25,7 +25,6 @@ export function NpmConnectionSection({
   const token = npm.token.value;
   const label = npm.label.value;
   const registry = npm.registry.value;
-  const validationStageId = npm.validationStageId.value;
   const error = npm.error.value;
 
   const onSave = async (event: Event) => {
@@ -120,36 +119,8 @@ export function NpmConnectionSection({
           </Button>
         </form>
 
-        <div class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end">
-          <Field label="Stage ID access check" for="validationStageId">
-            <Input
-              id="validationStageId"
-              type="text"
-              value={validationStageId}
-              placeholder="Paste a real stage ID to confirm package access"
-              onInput={(e) => (npm.validationStageId.value = (e.target as HTMLInputElement).value)}
-              disabled={busy || !connection}
-              autoComplete="off"
-              spellcheck={false}
-            />
-          </Field>
-          <Button
-            variant="secondary"
-            onClick={() => void npm.validate()}
-            disabled={busy || !connection}
-            class="shrink-0"
-          >
-            {status === "validating"
-              ? "Checking…"
-              : validationStageId.trim()
-                ? "Check stage access"
-                : "Check npm auth"}
-          </Button>
-        </div>
-
         <Muted class="text-xs">
-          Saving runs the npm auth check automatically. Add a stage ID to prove the token can read
-          that staged release; we do not keep the release archive.
+          After save, Drydock validates the token before any review uses it.
         </Muted>
 
         {error ? <Alert tone="critical">{error}</Alert> : null}

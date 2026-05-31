@@ -226,7 +226,7 @@ Implemented `npm_connections` responsibilities:
 - support rotation/removal;
 - emit audit events for add, validate, use, and delete.
 
-Credential validation is empirical where possible: it checks registry auth through `/-/whoami`, staged list access through `GET /-/stage?perPage=1`, and when the user supplies a real stage ID it checks staged view plus ranged staged-tarball access without retaining the tarball. A read-only granular npm token reaches all currently required staged endpoints, so no broader token scope is required; continue to validate against the endpoints rather than relying only on broad token labels.
+Credential validation is empirical where possible: it checks registry auth through `/-/whoami`, staged list access through `GET /-/stage?perPage=1`, and when a validation caller supplies a real stage ID it checks staged view plus ranged staged-tarball access without retaining the tarball. A read-only granular npm token reaches all currently required staged endpoints, so no broader token scope is required; continue to validate against the endpoints rather than relying only on broad token labels.
 
 ## Report model and future signing
 
