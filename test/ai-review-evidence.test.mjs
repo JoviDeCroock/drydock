@@ -144,6 +144,34 @@ describe("AI review evidence tools", () => {
     expect(tokenHit.matches.some((match) => match.path === "scripts/install.js")).toBe(true);
   });
 
+  test("divides the read budget fairly so later batched paths are not starved", async () => {
+    const paths = ["a.js", "b.js", "c.js", "d.js"];
+    const files = paths.map((path) => file(path, `${path}:`.padEnd(10_000, "x") + "\n"));
+    const options = {
+      ecosystem: "npm",
+      files,
+      previousFiles: [],
+      diff: paths.map((path, index) => ({
+        path,
+        status: "added",
+        stagedSize: files[index].size,
+        stagedSha256: files[index].sha256,
+        flags: [],
+      })),
+      packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
+      ruleFindings: [],
+      previousVersionAvailable: false,
+    };
+    const tools = createAiReviewTools(options, () => {});
+
+    const reads = await tools.read.execute({ paths, maxChars: 16_000 });
+    expect(reads.results).toHaveLength(4);
+    for (const entry of reads.results) {
+      expect(entry.ok).toBe(true);
+      expect(entry.content.length).toBeGreaterThan(1_000);
+    }
+  });
+
   test("describes package-json-referenced evidence in the initial payload policy", () => {
     const payload = buildAiReviewPayload(reviewOptions());
 

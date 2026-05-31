@@ -1,20 +1,36 @@
-import { generateText, hasToolCall, stepCountIs } from "ai";
+import {
+  generateText,
+  hasToolCall,
+  stepCountIs,
+  type LanguageModel,
+  type LanguageModelUsage,
+} from "ai";
 import { createWorkersAI } from "workers-ai-provider";
 import {
   aiReviewSubmissionSchema,
   buildReviewerSystemPrompt,
   MAX_AGENT_STEPS,
+  MAX_REVIEW_OUTPUT_TOKENS,
+  selectReportedFindings,
   type AiReviewSubmission,
 } from "./ai-review-contract";
 import { buildAiReviewPayload, createAiReviewTools } from "./ai-review-evidence";
-import type { AiReview, AiReviewStatus, SelectiveAiReviewOptions } from "./ai-review-types";
+import type {
+  AiReview,
+  AiReviewResult,
+  AiReviewStatus,
+  AiReviewUsage,
+  SelectiveAiReviewOptions,
+} from "./ai-review-types";
 import { errorMessage } from "./errors";
 
 export type {
   AiFinding,
   AiReleaseAssessment,
   AiReview,
+  AiReviewResult,
   AiReviewStatus,
+  AiReviewUsage,
   DisplayedAiResult,
   SelectiveAiReviewOptions,
 } from "./ai-review-types";
@@ -28,7 +44,7 @@ const DEFAULT_CACHE_AFFINITY = "staged-publish-review-agentic-release-reviewer-v
 export async function runSelectiveAiReview(
   env: Cloudflare.Env,
   options: SelectiveAiReviewOptions,
-): Promise<AiReview> {
+): Promise<AiReviewResult> {
   return analyzeWithAi(env, AI_MODEL, options);
 }
 
@@ -36,20 +52,24 @@ export async function analyzeWithAi(
   env: Cloudflare.Env,
   model: string,
   options: SelectiveAiReviewOptions,
-): Promise<AiReview> {
+  // Test seam: inject a language model to exercise the agent loop without a
+  // live Workers AI binding. Production always builds the Workers AI model.
+  languageModelOverride?: LanguageModel,
+): Promise<AiReviewResult> {
   const payload = buildAiReviewPayload(options);
   let submittedReview: AiReviewSubmission | null = null;
 
   try {
-    const workersAi = createWorkersAI({
-      binding: env.AI,
-      gateway: { id: "drydock-gateway" },
-    });
-    const languageModel = workersAi(model, {
-      extraHeaders: {
-        "x-session-affinity": scanScopedCacheAffinity(env, options.scanId),
-      },
-    });
+    const languageModel =
+      languageModelOverride ??
+      createWorkersAI({
+        binding: env.AI,
+        gateway: { id: "drydock-gateway" },
+      })(model, {
+        extraHeaders: {
+          "x-session-affinity": scanScopedCacheAffinity(env, options.scanId),
+        },
+      });
     const tools = createAiReviewTools(options, (review) => {
       submittedReview = review;
     });
@@ -61,30 +81,48 @@ export async function analyzeWithAi(
       tools,
       stopWhen: [hasToolCall("submit_review"), stepCountIs(MAX_AGENT_STEPS)],
       temperature: 0,
-      maxOutputTokens: 2_000,
+      maxOutputTokens: MAX_REVIEW_OUTPUT_TOKENS,
     });
 
+    const usage = toUsage(result.totalUsage, result.steps.length);
+
     if (submittedReview) {
-      return normalizeParsedReview(model, submittedReview);
+      return { review: normalizeParsedReview(model, submittedReview), usage };
     }
 
     const textReview = normalizeAiResponse(model, result.text);
     if (textReview.status === "complete") {
-      return textReview;
+      return { review: textReview, usage };
     }
 
-    return fallbackReview(
-      model,
-      "invalid",
-      "Assistant did not call submit_review before the evidence budget ended.",
-    );
+    return {
+      review: fallbackReview(
+        model,
+        "invalid",
+        "Assistant did not call submit_review before the evidence budget ended.",
+      ),
+      usage,
+    };
   } catch (err) {
-    return fallbackReview(
-      model,
-      "unavailable",
-      `Assistant review didn't run: ${errorMessage(err)}`,
-    );
+    return {
+      review: fallbackReview(
+        model,
+        "unavailable",
+        `Assistant review didn't run: ${errorMessage(err)}`,
+      ),
+      usage: null,
+    };
   }
+}
+
+function toUsage(usage: LanguageModelUsage, steps: number): AiReviewUsage {
+  return {
+    inputTokens: usage.inputTokens ?? null,
+    cachedInputTokens: usage.inputTokenDetails?.cacheReadTokens ?? null,
+    outputTokens: usage.outputTokens ?? null,
+    totalTokens: usage.totalTokens ?? null,
+    steps,
+  };
 }
 
 function scanScopedCacheAffinity(env: Cloudflare.Env, scanId: string | undefined): string {
@@ -146,7 +184,7 @@ function normalizeParsedReview(model: string, value: unknown): AiReview {
     risk: review.risk,
     releaseAssessment: review.releaseAssessment,
     summary: review.summary,
-    findings: review.findings,
+    findings: selectReportedFindings(review.findings),
     requiresManualReview: review.requiresManualReview,
     model,
   };

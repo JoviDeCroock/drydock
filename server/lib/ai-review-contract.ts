@@ -2,6 +2,10 @@ import z from "zod";
 
 export type AiReviewEcosystem = "npm" | "pypi" | "generic";
 
+// We surface only the highest-signal findings: critical/high, most severe
+// first, capped at this count. Lower-severity context belongs in the summary.
+export const MAX_AI_FINDINGS = 6;
+
 const BASE_REVIEWER_SYSTEM_PROMPT = `You are a staged package release safety reviewer.
 
 Instruction boundary:
@@ -70,7 +74,11 @@ Generic evidence policy:
 const SEVERITY_GUIDANCE = `Severity guidance:
 - Critical/high: install-time, build-time, startup, or entrypoint code with network/process/credential behavior; leaked secrets; native/executable payloads; artifact identity mismatches; tamper-like metadata/manifest evidence; or deterministic critical/high evidence.
 - Medium: surprising entrypoint/dependency changes, metadata integrity gaps, obfuscation, network/process capability outside a proven install path, or insufficient evidence for a risky package-shape change.
-- Low/info: ordinary source/docs/test changes with clear benign purpose and no dangerous capabilities.`;
+- Low/info: ordinary source/docs/test changes with clear benign purpose and no dangerous capabilities.
+
+Findings output policy:
+- Report only critical and high severity findings, most severe first, and at most ${MAX_AI_FINDINGS}. The system keeps only the top ${MAX_AI_FINDINGS} critical/high findings and discards the rest.
+- Put medium, low, and informational observations in the summary instead of the findings list. Set requiresManualReview and the overall risk/releaseAssessment to reflect concern that does not rise to a critical/high finding.`;
 
 export function normalizeAiReviewEcosystem(ecosystem: string | undefined): AiReviewEcosystem {
   if (ecosystem === "npm" || ecosystem === "pypi") return ecosystem;
@@ -89,6 +97,12 @@ export function buildReviewerSystemPrompt(ecosystem: string | undefined): string
 }
 
 export const MAX_AGENT_STEPS = 20;
+// Per-step output-token cap. The submit_review schema bounds below are sized so
+// a worst-case submission (all findings at full length plus the summary)
+// serializes to comfortably under this budget. If a submission exceeded the
+// cap it would truncate mid-JSON, fail schema validation, and silently degrade
+// to an `invalid` review — so loosening the schema bounds means raising this.
+export const MAX_REVIEW_OUTPUT_TOKENS = 8_000;
 export const MAX_INITIAL_PACKAGE_JSON_CHARS = 6_000;
 export const MAX_CHANGED_FILE_MANIFEST = 300;
 export const MAX_TOOL_RESPONSE_CHARS = 16_000;
@@ -112,10 +126,10 @@ const releaseAssessmentSchema = z.enum([
 const aiFindingSchema = z
   .object({
     severity: severitySchema,
-    file: z.string().min(1).max(500),
-    evidence: z.string().min(1).max(1_000),
-    reason: z.string().min(1).max(1_000),
-    recommendation: z.string().min(1).max(1_000),
+    file: z.string().min(1).max(300),
+    evidence: z.string().min(1).max(600),
+    reason: z.string().min(1).max(600),
+    recommendation: z.string().min(1).max(400),
   })
   .strict();
 
@@ -123,13 +137,37 @@ export const aiReviewSubmissionSchema = z
   .object({
     risk: riskSchema,
     releaseAssessment: releaseAssessmentSchema,
-    summary: z.string().min(1).max(1_200),
-    findings: z.array(aiFindingSchema).max(20),
+    summary: z.string().min(1).max(1_000),
+    // The model may over-report; the system trims to the top MAX_AI_FINDINGS
+    // critical/high findings via selectReportedFindings. This cap only keeps a
+    // runaway submission inside the output-token budget.
+    findings: z.array(aiFindingSchema).max(12),
     requiresManualReview: z.boolean(),
   })
   .strict();
 
 export type AiReviewSubmission = z.infer<typeof aiReviewSubmissionSchema>;
+export type AiReviewSubmissionFinding = z.infer<typeof aiFindingSchema>;
+
+const SEVERITY_RANK: Record<AiReviewSubmissionFinding["severity"], number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+  info: 4,
+};
+
+// Keep only critical/high findings, most severe first, capped at MAX_AI_FINDINGS.
+// Risk is computed from the model's overall risk plus requiresManualReview, so
+// trimming the displayed list never hides a critical/high from risk scoring.
+export function selectReportedFindings(
+  findings: AiReviewSubmissionFinding[],
+): AiReviewSubmissionFinding[] {
+  return findings
+    .filter((finding) => finding.severity === "critical" || finding.severity === "high")
+    .sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity])
+    .slice(0, MAX_AI_FINDINGS);
+}
 
 const toolPathSchema = z
   .string()
@@ -143,7 +181,9 @@ const toolMaxCharsSchema = z
   .min(1)
   .max(MAX_TOOL_RESPONSE_CHARS)
   .default(DEFAULT_TOOL_CHARS)
-  .describe("Maximum characters of package-derived text to return per path.");
+  .describe(
+    "Upper bound on characters of package-derived text to return per path. When several paths are requested, each path gets an equal share of a shared per-call budget, so the actual returned size may be smaller.",
+  );
 
 export const readInputSchema = z
   .object({

@@ -139,7 +139,7 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
 
   const startedAtMs = Date.now();
   try {
-    const review = await runSelectiveAiReview(args.env, {
+    const { review, usage } = await runSelectiveAiReview(args.env, {
       scanId: args.identity.scanId,
       ecosystem: args.ecosystem,
       files: args.findings.redactedStagedFiles,
@@ -155,6 +155,18 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
       durationMs: durationMsSince(startedAtMs),
       status: review.status,
       model: review.model,
+      // Token-count keys deliberately omit the word "token": the observability
+      // secret-redaction regex matches "token" as a substring and would blank
+      // out fields like `inputTokens`. The parent `usage` key carries the sense.
+      usage: usage
+        ? {
+            steps: usage.steps,
+            input: usage.inputTokens,
+            cachedInput: usage.cachedInputTokens,
+            output: usage.outputTokens,
+            total: usage.totalTokens,
+          }
+        : null,
     });
     return review;
   } catch (err) {
