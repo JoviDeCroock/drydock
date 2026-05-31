@@ -17,8 +17,8 @@ export function ReleaseTargetForm({
   const submitting = githubApp.formSubmitting.value;
   const formValid = githubApp.formValid.value;
 
-  // Default to the first active installation, but keep the picker available for
-  // organizations that have linked multiple GitHub App installations.
+  // Always default to the first active installation; the picker is intentionally
+  // not surfaced, so keep the selected installation pinned to the one we have.
   const installationIds = activeInstallations.map((row) => row.id).join(",");
   useEffect(() => {
     const stillValid = activeInstallations.some((row) => row.id === installationRowId);
@@ -34,22 +34,6 @@ export function ReleaseTargetForm({
 
   return (
     <form class="px-5 pb-5 flex flex-col gap-4" onSubmit={onSubmit}>
-      <Field label="Installation" for="releaseTargetInstallation">
-        <Select
-          id="releaseTargetInstallation"
-          value={installationRowId}
-          disabled={submitting}
-          onChange={(value) => githubApp.selectInstallation(value)}
-        >
-          <option value="">Pick an installation...</option>
-          {activeInstallations.map((row) => (
-            <option key={row.id} value={row.id}>
-              {row.accountLogin} · installation {row.installationId}
-            </option>
-          ))}
-        </Select>
-      </Field>
-
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <RepositorySelector githubApp={githubApp} />
         <EnvironmentSelector githubApp={githubApp} />
