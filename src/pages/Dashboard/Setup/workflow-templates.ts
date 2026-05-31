@@ -37,9 +37,25 @@ export interface PypiWorkflowInput {
   pythonVersion?: string;
 }
 
-function safePackagePlaceholder(packageName: string): string {
-  const trimmed = packageName.trim();
-  return trimmed || "<package>";
+function safePackagePlaceholders(packageName: string): string[] {
+  const names = packageNamesFromInput(packageName);
+  return names.length ? names : ["<package>"];
+}
+
+function packageNamesFromInput(packageName: string): string[] {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const raw of packageName.split(/[,\n]+/)) {
+    const name = raw.trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    names.push(name);
+  }
+  return names;
+}
+
+function yamlSingleQuoted(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
 }
 
 /**
@@ -49,7 +65,9 @@ function safePackagePlaceholder(packageName: string): string {
  * package-manager cache, and validates the tarball identity before staging.
  */
 export function npmStagedPublishWorkflow(input: NpmWorkflowInput): string {
-  const pkg = safePackagePlaceholder(input.packageName);
+  const packages = safePackagePlaceholders(input.packageName);
+  const primaryPackage = packages[0];
+  const expectedPackagesJson = JSON.stringify(packages);
   const environment =
     (input.environment ?? DEFAULT_NPM_ENVIRONMENT).trim() || DEFAULT_NPM_ENVIRONMENT;
   return `name: Release (npm staged publish via trusted publishing)
@@ -85,11 +103,84 @@ jobs:
           # the tarball that gets staged.
           package-manager-cache: false
       - run: npm ci --ignore-scripts
-      - run: npm pack
+      - name: Pack release candidate
+        env:
+          EXPECTED_PACKAGES_JSON: ${yamlSingleQuoted(expectedPackagesJson)}
+        run: |
+          set -euo pipefail
+          rm -rf .drydock-npm-pack
+          mkdir -p .drydock-npm-pack
+          node <<'NODE'
+          const fs = require("fs");
+          const expected = JSON.parse(process.env.EXPECTED_PACKAGES_JSON);
+          fs.writeFileSync(".drydock-npm-pack/expected-packages.txt", expected.join("\\n") + "\\n");
+          NODE
+
+          ROOT_NAME="$(node -e 'const fs = require("fs"); const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")); process.stdout.write(pkg.name || "");')"
+          EXPECTED_COUNT="$(wc -l < .drydock-npm-pack/expected-packages.txt | tr -d ' ')"
+          if [ "$EXPECTED_COUNT" = "1" ] && [ "$ROOT_NAME" = "$(cat .drydock-npm-pack/expected-packages.txt)" ]; then
+            npm pack --json --pack-destination .drydock-npm-pack > .drydock-npm-pack/pack.json
+          else
+            PACK_ARGS=()
+            while IFS= read -r package; do
+              if [ "$package" = "$ROOT_NAME" ]; then
+                PACK_ARGS+=(--include-workspace-root)
+              else
+                PACK_ARGS+=(--workspace "$package")
+              fi
+            done < .drydock-npm-pack/expected-packages.txt
+            npm pack "\${PACK_ARGS[@]}" --json --pack-destination .drydock-npm-pack > .drydock-npm-pack/pack.json
+          fi
+
+          # Monorepos may produce more than one tarball. Select the one whose
+          # package identity matches this setup flow, and carry that exact
+          # allowlist to the credentialed stage job.
+          node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+          const outputDir = ".drydock-npm-pack";
+          const expected = JSON.parse(process.env.EXPECTED_PACKAGES_JSON);
+          const expectedSet = new Set(expected);
+          const raw = JSON.parse(fs.readFileSync(path.join(outputDir, "pack.json"), "utf8"));
+          const packed = Array.isArray(raw) ? raw : [raw];
+          const byName = new Map();
+
+          for (const item of packed) {
+            if (!item || !expectedSet.has(item.name)) continue;
+            if (byName.has(item.name)) {
+              console.error("found more than one packed tarball for " + item.name);
+              process.exit(1);
+            }
+            byName.set(item.name, item);
+          }
+
+          const missing = expected.filter((name) => !byName.has(name));
+          if (missing.length) {
+            console.error("missing packed tarball(s): " + missing.join(", "));
+            console.error("packed packages:");
+            for (const item of packed) {
+              console.error("- " + (item?.name ?? "(unknown)") + " -> " + (item?.filename ?? "(no file)"));
+            }
+            process.exit(1);
+          }
+
+          const selected = [];
+          for (const name of expected) {
+            const item = byName.get(name);
+            const filename = path.basename(item.filename || "");
+            const tarball = path.join(outputDir, filename);
+            if (!filename || !fs.existsSync(tarball)) {
+              console.error("packed tarball not found: " + (item.filename || "(missing filename)"));
+              process.exit(1);
+            }
+            selected.push(filename);
+          }
+          fs.writeFileSync(path.join(outputDir, "selected-tarballs.txt"), selected.join("\\n") + "\\n");
+          NODE
       - uses: actions/upload-artifact@v4
         with:
           name: npm-tarball
-          path: "*.tgz"
+          path: .drydock-npm-pack
           if-no-files-found: error
 
   stage:
@@ -100,7 +191,7 @@ jobs:
     # policy applies before anything is staged.
     environment:
       name: ${environment}
-      url: https://www.npmjs.com/package/${pkg}
+      url: https://www.npmjs.com/package/${primaryPackage}
     permissions:
       contents: read
       id-token: write # OIDC token exchange for npm trusted publishing
@@ -108,6 +199,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: npm-tarball
+          path: .drydock-npm-pack
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -117,16 +209,24 @@ jobs:
       - name: Use npm with staged publishing
         run: npm install -g npm@^11.15.0
       - name: Stage the publish for review
+        env:
+          EXPECTED_PACKAGES_JSON: ${yamlSingleQuoted(expectedPackagesJson)}
         run: |
-          TARBALL="$(ls *.tgz)"
-          # Verify the tarball identity before staging; never stage an unexpected package.
-          tar -xOf "$TARBALL" package/package.json | node -e '
-            const p = JSON.parse(require("fs").readFileSync(0, "utf8"));
-            if (p.name !== "${pkg}") { console.error("package name mismatch: " + p.name); process.exit(1); }
-            console.log(p.name + "@" + p.version);
-          '
-          # Stage instead of publish — a maintainer approves the public release after Drydock review.
-          npm stage publish "$TARBALL" --access public --tag latest
+          set -euo pipefail
+          while IFS= read -r filename; do
+            [ -n "$filename" ] || continue
+            TARBALL=".drydock-npm-pack/$filename"
+            test -f "$TARBALL"
+            # Verify the tarball identity before staging; never stage an unexpected package.
+            tar -xOf "$TARBALL" package/package.json | node -e '
+              const expected = new Set(JSON.parse(process.env.EXPECTED_PACKAGES_JSON));
+              const p = JSON.parse(require("fs").readFileSync(0, "utf8"));
+              if (!expected.has(p.name)) { console.error("package name mismatch: " + p.name); process.exit(1); }
+              console.log(p.name + "@" + p.version);
+            '
+            # Stage instead of publish — a maintainer approves the public release after Drydock review.
+            npm stage publish "$TARBALL" --access public --tag latest
+          done < .drydock-npm-pack/selected-tarballs.txt
 `;
 }
 
@@ -135,7 +235,7 @@ jobs:
  * disallows `npm publish`, so OIDC cannot bypass the staged approval gate.
  */
 export function npmTrustCommand(input: NpmTrustInput): string {
-  const pkg = safePackagePlaceholder(input.packageName);
+  const packages = safePackagePlaceholders(input.packageName);
   const owner = input.owner.trim() || "<owner>";
   const repo = input.repo.trim() || "<repo>";
   const workflow =
@@ -143,9 +243,12 @@ export function npmTrustCommand(input: NpmTrustInput): string {
     DEFAULT_NPM_WORKFLOW_FILENAME;
   const environment =
     (input.environment ?? DEFAULT_NPM_ENVIRONMENT).trim() || DEFAULT_NPM_ENVIRONMENT;
-  return `npm install -g npm@^11.15.0
-npm trust github --repo ${owner}/${repo} --file ${workflow} --env ${environment} --allow-stage-publish --no-allow-publish ${pkg}
-npm trust list ${pkg}`;
+  const trustCommands = packages.map(
+    (pkg) =>
+      `npm trust github --repo ${owner}/${repo} --file ${workflow} --env ${environment} --allow-stage-publish --no-allow-publish ${pkg}`,
+  );
+  const listCommands = packages.map((pkg) => `npm trust list ${pkg}`);
+  return ["npm install -g npm@^11.15.0", ...trustCommands, ...listCommands].join("\n");
 }
 
 /**

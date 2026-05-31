@@ -41,7 +41,28 @@ describe("npmStagedPublishWorkflow", () => {
 
   it("requires a staged-publishing-capable npm and verifies the tarball identity", () => {
     expect(yaml).toContain("npm@^11.15.0");
-    expect(yaml).toContain('p.name !== "@scope/pkg"');
+    expect(yaml).toContain(`EXPECTED_PACKAGES_JSON: '["@scope/pkg"]'`);
+    expect(yaml).toContain("!expected.has(p.name)");
+  });
+
+  it("isolates pack output and selects tarballs by package identity", () => {
+    expect(yaml).toContain("npm pack --json --pack-destination .drydock-npm-pack");
+    expect(yaml).toContain('PACK_ARGS+=(--workspace "$package")');
+    expect(yaml).toContain('npm pack "${PACK_ARGS[@]}" --json');
+    expect(yaml).toContain("selected-tarballs.txt");
+    expect(yaml).toContain("missing packed tarball(s)");
+    expect(yaml).toContain("found more than one packed tarball");
+    expect(yaml).toContain("path: .drydock-npm-pack");
+    expect(yaml).not.toContain('path: "*.tgz"');
+    expect(yaml).not.toContain('TARBALL="$(ls *.tgz)"');
+  });
+
+  it("supports monorepo release flows that stage more than one selected package", () => {
+    const monorepo = npmStagedPublishWorkflow({ packageName: "@scope/a\n@scope/b" });
+    expect(monorepo).toContain(`EXPECTED_PACKAGES_JSON: '["@scope/a","@scope/b"]'`);
+    expect(monorepo).toContain("expected.join");
+    expect(monorepo).toContain("selected.join");
+    expect(monorepo).toContain("done < .drydock-npm-pack/selected-tarballs.txt");
   });
 
   it("honors a custom environment", () => {
@@ -85,6 +106,15 @@ describe("npmTrustCommand", () => {
   it("falls back to placeholders for empty owner/repo", () => {
     const command = npmTrustCommand({ owner: "", repo: "", packageName: "pkg" });
     expect(command).toContain("--repo <owner>/<repo>");
+  });
+
+  it("emits stage-only trust commands for each selected package", () => {
+    const command = npmTrustCommand({ owner: "acme", repo: "widgets", packageName: "a\nb" });
+    expect(count(command, "--allow-stage-publish")).toBe(2);
+    expect(command).toContain("--no-allow-publish a");
+    expect(command).toContain("--no-allow-publish b");
+    expect(command).toContain("npm trust list a");
+    expect(command).toContain("npm trust list b");
   });
 });
 

@@ -41,12 +41,17 @@ The generated config is surfaced through the `CodeBlock` component
    generates a tag-triggered workflow. The build job has no credentials; only the
    `stage` job gets `id-token: write`, runs behind the `npm` GitHub Environment,
    disables the package-manager cache (in **both** jobs), verifies the tarball
-   identity, and runs `npm stage publish`. No `NPM_TOKEN`.
+   identity, and runs `npm stage publish`. No `NPM_TOKEN`. Pack output is isolated
+   under `.drydock-npm-pack`; the generated workflow records the tarball(s)
+   selected from `npm pack --json` by package name, so root `.tgz` files and
+   monorepo pack outputs with multiple tarballs cannot accidentally stage the
+   wrong package. The UI accepts a comma-separated package allowlist for
+   monorepos that intentionally stage several workspaces in one release flow.
 3. **Configure the npm package as stage-only** (manual) — `npmTrustCommand()`
-   generates `npm trust github … --allow-stage-publish --no-allow-publish`, so
-   OIDC can stage but never publish directly. Checklist covers requiring 2FA and
-   disallowing token publishes. GitHub YAML alone does not enable trusted
-   publishing — the `npm trust` config is required.
+   generates one `npm trust github … --allow-stage-publish --no-allow-publish`
+   command per selected package, so OIDC can stage but never publish directly.
+   Checklist covers requiring 2FA and disallowing token publishes. GitHub YAML
+   alone does not enable trusted publishing — the `npm trust` config is required.
 4. **Verify** — runs staged-publish discovery (`stagedPublishes.discover()`) and
    reports whether a staged publish was found.
 
@@ -65,7 +70,9 @@ Mirrors `drydock-ci-example` and `docs/pypi-workflow-gate.md`.
    add Drydock as a custom deployment protection rule, and point a PyPI Trusted
    Publisher at the same environment name. The shared environment name is what
    ties the gate to the OIDC exchange.
-4. **Map the release target** — reuses `Settings/ReleaseTargetForm`.
+4. **Map the release target** — reuses `Settings/ReleaseTargetForm`. Existing
+   mappings must be selected explicitly for this setup flow; merely having an
+   unrelated release target in the organization does not mark the step complete.
 5. **Test the gate** (manual) — push a `v*` tag; the held deployment surfaces on
    the dashboard.
 

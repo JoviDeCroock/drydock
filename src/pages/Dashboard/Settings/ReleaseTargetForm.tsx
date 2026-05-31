@@ -1,6 +1,10 @@
 import { useEffect } from "preact/hooks";
 import { useModel } from "@preact/signals";
-import { GithubAppModel, type PublicGithubAppInstallation } from "../../../models/github-app";
+import {
+  GithubAppModel,
+  type PublicGithubAppInstallation,
+  type PublicReleaseTarget,
+} from "../../../models/github-app";
 import { Alert, Button, Field, Muted, Select } from "../../../components";
 
 type GithubApp = ReturnType<typeof useModel<typeof GithubAppModel.prototype>>;
@@ -8,9 +12,11 @@ type GithubApp = ReturnType<typeof useModel<typeof GithubAppModel.prototype>>;
 export function ReleaseTargetForm({
   githubApp,
   activeInstallations,
+  onCreated,
 }: {
   githubApp: GithubApp;
   activeInstallations: PublicGithubAppInstallation[];
+  onCreated?: (target: PublicReleaseTarget) => void;
 }) {
   const installationRowId = githubApp.formInstallationRowId.value;
   const formError = githubApp.formError.value;
@@ -29,7 +35,8 @@ export function ReleaseTargetForm({
 
   const onSubmit = async (event: Event) => {
     event.preventDefault();
-    await githubApp.createReleaseTarget();
+    const created = await githubApp.createReleaseTarget();
+    if (created) onCreated?.(created);
   };
 
   return (

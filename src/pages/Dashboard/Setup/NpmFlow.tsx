@@ -52,14 +52,14 @@ export function NpmFlow({ npm, stagedPublishes }: { npm: Npm; stagedPublishes: S
         index="02"
         title="Add the staged-publish workflow"
         status="manual"
-        summary="A tag-triggered GitHub Actions workflow that stages the tarball through npm trusted publishing (OIDC). No NPM_TOKEN — only the gated stage job can mint the OIDC token."
+        summary="A tag-triggered GitHub Actions workflow that stages the selected package tarball(s) through npm trusted publishing (OIDC). No NPM_TOKEN — only the gated stage job can mint the OIDC token."
       >
-        <Field label="Published package name" for="npmFlowPackage">
+        <Field label="Published package name(s)" for="npmFlowPackage">
           <Input
             id="npmFlowPackage"
             type="text"
             value={packageName.value}
-            placeholder="@scope/pkg"
+            placeholder="@scope/pkg or @scope/a, @scope/b"
             onInput={(e) => (packageName.value = (e.target as HTMLInputElement).value)}
             autoComplete="off"
             spellcheck={false}
@@ -75,15 +75,17 @@ export function NpmFlow({ npm, stagedPublishes }: { npm: Npm; stagedPublishes: S
           Pushing a <code class="font-mono text-ink-subtle">v*</code> tag builds the tarball with no
           credentials, then the <code class="font-mono text-ink-subtle">stage</code> job (gated by
           the <code class="font-mono text-ink-subtle">{setupDefaults.npmEnvironment}</code>{" "}
-          environment) stages it. For supply-chain hardening, pin each action to a commit SHA.
+          environment) stages it. In monorepos, enter multiple package names separated by commas;
+          the workflow stages only the tarballs whose package identities match that list. For
+          supply-chain hardening, pin each action to a commit SHA.
         </Muted>
       </StepCard>
 
       <StepCard
         index="03"
-        title="Configure the npm package as stage-only"
+        title="Configure npm package trust as stage-only"
         status="manual"
-        summary="On npm, trust this repo + workflow for staged publishing only, and lock the package down so OIDC can stage but can never bypass review to publish."
+        summary="On npm, trust this repo + workflow for staged publishing only, and lock each package down so OIDC can stage but can never bypass review to publish."
       >
         <Field label="Repository (owner/repo)" for="npmFlowRepo">
           <Input
@@ -100,7 +102,7 @@ export function NpmFlow({ npm, stagedPublishes }: { npm: Npm; stagedPublishes: S
         <Checklist
           items={[
             <>
-              Trusted publisher is <strong>stage-only</strong> —{" "}
+              Each trusted publisher is <strong>stage-only</strong> —{" "}
               <code class="font-mono text-ink-subtle">--allow-stage-publish</code> with{" "}
               <code class="font-mono text-ink-subtle">--no-allow-publish</code> — so OIDC can stage
               but never publish directly.

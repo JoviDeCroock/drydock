@@ -1,5 +1,9 @@
 import { useComputed, useModel, useSignal } from "@preact/signals";
-import type { GithubAppModel, PublicGithubAppInstallation } from "../../../models/github-app";
+import type {
+  GithubAppModel,
+  PublicGithubAppInstallation,
+  PublicReleaseTarget,
+} from "../../../models/github-app";
 import {
   Alert,
   Badge,
@@ -9,6 +13,7 @@ import {
   Input,
   LinkButton,
   Muted,
+  Select,
 } from "../../../components";
 import { ReleaseTargetForm } from "../Settings/ReleaseTargetForm";
 import { Checklist, StepCard } from "./StepCard";
@@ -19,6 +24,7 @@ type GithubApp = ReturnType<typeof useModel<typeof GithubAppModel.prototype>>;
 export function PypiFlow({ githubApp }: { githubApp: GithubApp }) {
   const environment = useSignal<string>(setupDefaults.pypiEnvironment);
   const pythonVersion = useSignal("3.12");
+  const selectedReleaseTargetId = useSignal("");
 
   const workflowYaml = useComputed(() =>
     pypiReleaseWorkflow({
@@ -32,6 +38,27 @@ export function PypiFlow({ githubApp }: { githubApp: GithubApp }) {
     (row: PublicGithubAppInstallation) => row.status === "active",
   );
   const releaseTargets = githubApp.releaseTargets.value;
+  const selectedReleaseTarget =
+    releaseTargets.find(
+      (target: PublicReleaseTarget) => target.id === selectedReleaseTargetId.value,
+    ) ?? null;
+  const normalizedFlowEnvironment = (environment.value || setupDefaults.pypiEnvironment)
+    .trim()
+    .toLowerCase();
+  const selectedTargetMatchesFlow =
+    selectedReleaseTarget !== null &&
+    selectedReleaseTarget.environment.toLowerCase() === normalizedFlowEnvironment;
+
+  const selectReleaseTarget = (targetId: string) => {
+    selectedReleaseTargetId.value = targetId;
+    const target = releaseTargets.find((row: PublicReleaseTarget) => row.id === targetId);
+    if (target) environment.value = target.environment;
+  };
+
+  const onReleaseTargetCreated = (target: PublicReleaseTarget) => {
+    selectedReleaseTargetId.value = target.id;
+    environment.value = target.environment;
+  };
 
   return (
     <div class="flex flex-col gap-4">
@@ -156,12 +183,41 @@ export function PypiFlow({ githubApp }: { githubApp: GithubApp }) {
       <StepCard
         index="04"
         title="Map the release target"
-        status={releaseTargets.length ? "done" : "todo"}
-        summary="Tell Drydock which package, repository, and environment to gate. It revalidates installation, repo access, and environment names before saving."
+        status={selectedTargetMatchesFlow ? "done" : "todo"}
+        summary="Tell Drydock which package, repository, and environment this flow gates. Pick an existing mapping explicitly or create a new one below."
       >
+        {releaseTargets.length ? (
+          <ExistingReleaseTargetPicker
+            releaseTargets={releaseTargets}
+            selectedId={selectedReleaseTargetId.value}
+            onSelect={selectReleaseTarget}
+          />
+        ) : null}
+        {selectedReleaseTarget && selectedTargetMatchesFlow ? (
+          <Muted class="text-[12px] m-0">
+            Using {selectedReleaseTarget.packageName} on{" "}
+            <code class="font-mono text-ink-subtle">
+              {selectedReleaseTarget.repositoryFullName}
+            </code>{" "}
+            / <code class="font-mono text-ink-subtle">{selectedReleaseTarget.environment}</code>.
+          </Muted>
+        ) : selectedReleaseTarget ? (
+          <Alert tone="warn">
+            The selected target uses environment {selectedReleaseTarget.environment}; update the
+            workflow environment or pick a matching target.
+          </Alert>
+        ) : releaseTargets.length ? (
+          <Muted class="text-[12px] m-0">
+            Existing mappings are available, but none is selected for this setup flow yet.
+          </Muted>
+        ) : null}
         {activeInstallations.length ? (
           <div class="border border-border rounded-lg overflow-hidden">
-            <ReleaseTargetForm githubApp={githubApp} activeInstallations={activeInstallations} />
+            <ReleaseTargetForm
+              githubApp={githubApp}
+              activeInstallations={activeInstallations}
+              onCreated={onReleaseTargetCreated}
+            />
           </div>
         ) : (
           <Muted class="text-[13px] m-0">
@@ -171,8 +227,8 @@ export function PypiFlow({ githubApp }: { githubApp: GithubApp }) {
         )}
         {releaseTargets.length ? (
           <Muted class="text-[12px] m-0">
-            {releaseTargets.length} release target{releaseTargets.length === 1 ? "" : "s"} mapped.
-            Manage them in{" "}
+            {releaseTargets.length} release target{releaseTargets.length === 1 ? "" : "s"} mapped in
+            this organization. Manage them in{" "}
             <a class="underline" href="/dashboard/settings">
               settings
             </a>
@@ -197,6 +253,29 @@ export function PypiFlow({ githubApp }: { githubApp: GithubApp }) {
         </LinkButton>
       </StepCard>
     </div>
+  );
+}
+
+function ExistingReleaseTargetPicker({
+  releaseTargets,
+  selectedId,
+  onSelect,
+}: {
+  releaseTargets: PublicReleaseTarget[];
+  selectedId: string;
+  onSelect: (targetId: string) => void;
+}) {
+  return (
+    <Field label="Release target for this flow" for="pypiFlowReleaseTarget">
+      <Select id="pypiFlowReleaseTarget" value={selectedId} onChange={onSelect}>
+        <option value="">Map a new target below…</option>
+        {releaseTargets.map((target) => (
+          <option key={target.id} value={target.id}>
+            {target.packageName} · {target.repositoryFullName} · env {target.environment}
+          </option>
+        ))}
+      </Select>
+    </Field>
   );
 }
 
