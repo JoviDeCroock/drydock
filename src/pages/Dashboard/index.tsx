@@ -154,8 +154,7 @@ function DashboardHeader() {
       <Eyebrow>Review workspace</Eyebrow>
       <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Ready for the next release</h1>
       <Muted class="text-[14px] leading-[1.55] m-0">
-        Bring a staged npm publish into drydock, compare it with the live version, and leave with a
-        focused safety brief before maintainers approve.
+        Diff a staged npm publish against the live version before maintainers approve.
       </Muted>
     </header>
   );
