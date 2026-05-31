@@ -240,66 +240,102 @@ app.onError((err, c) => {
   return c.json({ error: "internal error" }, 500);
 });
 
+// A scheduled invocation gets a bounded CPU budget. Sweeping organizations
+// sequentially is fine at ~10 orgs but approaches that budget around 50-100,
+// after which the tick can be cut off and cycles drop silently. Five sweeps in
+// flight keeps us comfortably under budget while still draining a large org
+// count within a single 15-minute cycle. Raise only after measuring CPU time.
+const DISCOVERY_CRON_CONCURRENCY = 5;
+
+async function runWithConcurrency<T>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const item = items[cursor++];
+      if (item !== undefined) await worker(item);
+    }
+  });
+  await Promise.all(runners);
+}
+
 async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: ExecutionContext) {
+  const startedAtMs = Date.now();
   const db = createDb(env.DB);
   const connections = await listAutoDiscoveryNpmConnections(db);
-  if (!connections.length) return;
   console.log("staged publishes cron sweep", { organizations: connections.length });
   const allowInsecureLocalhost = allowInsecureLocalRegistry(env);
-  for (const connection of connections) {
-    const actorUserId =
-      connection.createdByUserId ??
-      (await getOrganizationOwnerUserId(db, connection.organizationId));
-    if (!actorUserId) {
-      console.error("staged publishes cron sweep skipped: organization owner missing", {
-        organizationId: connection.organizationId,
-      });
-      continue;
-    }
+
+  let orgsProcessed = 0;
+  const sweepConnection = async (connection: (typeof connections)[number]) => {
     try {
-      const usable = await ensureUsableNpmConnection({
-        db,
-        env,
-        connection,
-        actorUserId,
-        allowInsecureLocalhost,
-      });
-      const result = await discoverAndQueueStagedPublishes(
-        {
-          db,
-          env,
-          executionCtx: ctx,
-          organizationId: connection.organizationId,
-          actorUserId,
-          source: "auto_discovery",
-          eventSource: "staged_publishes.cron",
-          allowInsecureLocalhost,
-        },
-        usable,
-      );
-      console.log("staged publishes cron sweep result", {
-        organizationId: connection.organizationId,
-        ...result,
-      });
-    } catch (err) {
-      if (err instanceof InvalidNpmConnectionError) {
-        console.log("staged publishes cron sweep skipped: token not valid", {
+      const actorUserId =
+        connection.createdByUserId ??
+        (await getOrganizationOwnerUserId(db, connection.organizationId));
+      if (!actorUserId) {
+        console.error("staged publishes cron sweep skipped: organization owner missing", {
           organizationId: connection.organizationId,
         });
-        continue;
+        return;
       }
-      const detail =
-        err instanceof StagedPublishesFetchError
-          ? { status: err.status, detail: err.detail }
-          : err instanceof Error
-            ? { name: err.name, message: err.message }
-            : { message: String(err) };
-      console.error("staged publishes cron sweep failed for organization", {
-        organizationId: connection.organizationId,
-        error: detail,
-      });
+      try {
+        const usable = await ensureUsableNpmConnection({
+          db,
+          env,
+          connection,
+          actorUserId,
+          allowInsecureLocalhost,
+        });
+        const result = await discoverAndQueueStagedPublishes(
+          {
+            db,
+            env,
+            executionCtx: ctx,
+            organizationId: connection.organizationId,
+            actorUserId,
+            source: "auto_discovery",
+            eventSource: "staged_publishes.cron",
+            allowInsecureLocalhost,
+          },
+          usable,
+        );
+        console.log("staged publishes cron sweep result", {
+          organizationId: connection.organizationId,
+          ...result,
+        });
+      } catch (err) {
+        if (err instanceof InvalidNpmConnectionError) {
+          console.log("staged publishes cron sweep skipped: token not valid", {
+            organizationId: connection.organizationId,
+          });
+          return;
+        }
+        const detail =
+          err instanceof StagedPublishesFetchError
+            ? { status: err.status, detail: err.detail }
+            : err instanceof Error
+              ? { name: err.name, message: err.message }
+              : { message: String(err) };
+        console.error("staged publishes cron sweep failed for organization", {
+          organizationId: connection.organizationId,
+          error: detail,
+        });
+      }
+    } finally {
+      orgsProcessed++;
     }
-  }
+  };
+
+  await runWithConcurrency(connections, DISCOVERY_CRON_CONCURRENCY, sweepConnection);
+
+  emitOperationalEvent("info", "staged_publishes.cron.swept", {
+    orgsProcessed,
+    durationMs: durationMsSince(startedAtMs),
+    concurrencyLimit: DISCOVERY_CRON_CONCURRENCY,
+  });
 }
 
 export default {
