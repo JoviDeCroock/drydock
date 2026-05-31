@@ -1,0 +1,38 @@
+{
+  "id": "legit-build-childprocess",
+  "title": "Build helper legitimately shells out to a compiler (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-childprocess",
+  "source": "benign-popular",
+  "intent": "A real-world-shaped local build script that legitimately uses child_process. The deterministic rules flag code.process-execution, but the truth is benign. This case measures false-positive precision; it is expected to be a reported false positive until the detector gains context (e.g. not an install hook, well-known build pattern).",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": { "name": "buildtool", "version": "2.0.0" },
+  "stagedPackageJson": { "name": "buildtool", "version": "2.1.0" },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 41,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"buildtool\",\"version\":\"2.0.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 41,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"buildtool\",\"version\":\"2.1.0\"}"
+    },
+    {
+      "path": "build.js",
+      "size": 180,
+      "sha256": "build-js",
+      "flags": [],
+      "textSample": "const { execSync } = require('child_process');\n// Compile native assets during the maintainer's local build (not an install hook).\nexecSync('cc -O2 -o out/app src/app.c', { stdio: 'inherit' });\n"
+    }
+  ]
+}

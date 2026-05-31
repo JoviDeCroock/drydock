@@ -45,7 +45,11 @@
     workflow changes require fake-registry e2e coverage in `test/e2e-fixtures/` and
     `test/e2e/local-registry.spec.ts`.
   - Deterministic detection changes require security-corpus fixtures with explicit expected
-    rule IDs, severity, and risk.
+    rule IDs, severity, and risk. The golden corpus (`test/security-corpus*.test.mjs`) protects
+    against regressions; the eval harness (`test/eval/`, `pnpm run eval`) measures detection
+    quality (recall, benign FP rate, evasion robustness) over truth-labeled hard cases. Add
+    frontier misses to `cases-frontier/` and benign hard-negatives to `cases-benign/`; only
+    regression metrics are gated. See `docs/detection-eval.md`.
   - Operational paths should emit structured, secret-redacted observability events through
     `server/lib/observability.ts`; do not log raw errors, tokens, headers, or package contents.
 - Never write SQL migrations by hand; use `pnpm db:generate` to create migrations from `server/db/schema.ts`.
@@ -63,5 +67,6 @@
 - `npm run e2e:fixtures` — Pack fake-registry fixture packages into `.context/e2e-registry/`.
 - `npm run e2e:dev` — Start the fake npm staging registry plus the local Worker dev server.
 - `npm run test:e2e` — Run Playwright against the fake-registry harness; required for registry, credential-forwarding, staged-publish, and scan-workflow changes.
+- `npm run eval` — Detection eval harness: measures recall, benign false-positive rate, and evasion robustness over the security corpus, and writes a report to `.context/eval/`. Reuses production detection so it can't drift. See `docs/detection-eval.md`.
 - `npm run verify` — runs lint, format check, typecheck, and tests in order. CI and the pre-commit hook both call this.
 - `npm run db:generate` — Drizzle migration from `server/db/schema.ts`.

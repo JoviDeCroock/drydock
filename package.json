@@ -21,6 +21,7 @@
     "test": "vitest run --config vitest.config.ts && vitest run --config vitest.workers.config.ts",
     "test:node": "vitest run --config vitest.config.ts",
     "test:workers": "vitest run --config vitest.workers.config.ts",
+    "eval": "vitest run --config vitest.config.ts test/eval/detection-eval.test.mjs",
     "e2e:fixtures": "node test/e2e/build-fixtures.mjs",
     "e2e:registry": "node test/e2e/fake-registry.mjs",
     "e2e:dev": "node test/e2e/dev-server.mjs",
