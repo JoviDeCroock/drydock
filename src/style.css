@@ -72,11 +72,33 @@
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
   }
+
+  :root {
+    --sh-token-string: #4db6a4;
+    --sh-token-string-expression: #4db6a4;
+    --sh-token-link: #4db6a4;
+  }
 }
 
 @layer base {
   :root {
     color-scheme: light dark;
+
+    /* Diff syntax highlighting (shiki css-variables theme). Restrained by
+       design: code structure rides the ink scale and a single muted teal marks
+       string literals. Severity row fills stay the only saturated color so
+       "color = signal" holds (DESIGN.md). */
+    --sh-foreground: var(--color-ink-muted);
+    --sh-token-keyword: var(--color-ink);
+    --sh-token-constant: var(--color-ink);
+    --sh-token-number: var(--color-ink);
+    --sh-token-function: var(--color-ink);
+    --sh-token-parameter: var(--color-ink-muted);
+    --sh-token-punctuation: var(--color-ink-subtle);
+    --sh-token-comment: var(--color-ink-subtle);
+    --sh-token-string: #0f766e;
+    --sh-token-string-expression: #0f766e;
+    --sh-token-link: #0f766e;
   }
 
   html,
