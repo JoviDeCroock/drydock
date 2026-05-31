@@ -46,13 +46,14 @@ describe("npmStagedPublishWorkflow", () => {
   });
 
   it("isolates pack output and selects tarballs by package identity", () => {
-    expect(yaml).toContain("npm pack --json --pack-destination .drydock-npm-pack");
+    expect(yaml).toContain("npm pack --json --pack-destination drydock-npm-pack");
     expect(yaml).toContain('PACK_ARGS+=(--workspace "$package")');
     expect(yaml).toContain('npm pack "${PACK_ARGS[@]}" --json');
     expect(yaml).toContain("selected-tarballs.txt");
     expect(yaml).toContain("missing packed tarball(s)");
     expect(yaml).toContain("found more than one packed tarball");
-    expect(yaml).toContain("path: .drydock-npm-pack");
+    expect(yaml).toContain("path: drydock-npm-pack");
+    expect(yaml).not.toContain(".drydock-npm-pack");
     expect(yaml).not.toContain('path: "*.tgz"');
     expect(yaml).not.toContain('TARBALL="$(ls *.tgz)"');
   });
@@ -62,7 +63,7 @@ describe("npmStagedPublishWorkflow", () => {
     expect(monorepo).toContain(`EXPECTED_PACKAGES_JSON: '["@scope/a","@scope/b"]'`);
     expect(monorepo).toContain("expected.join");
     expect(monorepo).toContain("selected.join");
-    expect(monorepo).toContain("done < .drydock-npm-pack/selected-tarballs.txt");
+    expect(monorepo).toContain("done < drydock-npm-pack/selected-tarballs.txt");
   });
 
   it("honors a custom environment", () => {

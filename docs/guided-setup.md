@@ -42,7 +42,7 @@ The generated config is surfaced through the `CodeBlock` component
    `stage` job gets `id-token: write`, runs behind the `npm` GitHub Environment,
    disables the package-manager cache (in **both** jobs), verifies the tarball
    identity, and runs `npm stage publish`. No `NPM_TOKEN`. Pack output is isolated
-   under `.drydock-npm-pack`; the generated workflow records the tarball(s)
+   under `drydock-npm-pack`; the generated workflow records the tarball(s)
    selected from `npm pack --json` by package name, so root `.tgz` files and
    monorepo pack outputs with multiple tarballs cannot accidentally stage the
    wrong package. The UI accepts a comma-separated package allowlist for

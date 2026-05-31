@@ -108,18 +108,18 @@ jobs:
           EXPECTED_PACKAGES_JSON: ${yamlSingleQuoted(expectedPackagesJson)}
         run: |
           set -euo pipefail
-          rm -rf .drydock-npm-pack
-          mkdir -p .drydock-npm-pack
+          rm -rf drydock-npm-pack
+          mkdir -p drydock-npm-pack
           node <<'NODE'
           const fs = require("fs");
           const expected = JSON.parse(process.env.EXPECTED_PACKAGES_JSON);
-          fs.writeFileSync(".drydock-npm-pack/expected-packages.txt", expected.join("\\n") + "\\n");
+          fs.writeFileSync("drydock-npm-pack/expected-packages.txt", expected.join("\\n") + "\\n");
           NODE
 
           ROOT_NAME="$(node -e 'const fs = require("fs"); const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")); process.stdout.write(pkg.name || "");')"
-          EXPECTED_COUNT="$(wc -l < .drydock-npm-pack/expected-packages.txt | tr -d ' ')"
-          if [ "$EXPECTED_COUNT" = "1" ] && [ "$ROOT_NAME" = "$(cat .drydock-npm-pack/expected-packages.txt)" ]; then
-            npm pack --json --pack-destination .drydock-npm-pack > .drydock-npm-pack/pack.json
+          EXPECTED_COUNT="$(wc -l < drydock-npm-pack/expected-packages.txt | tr -d ' ')"
+          if [ "$EXPECTED_COUNT" = "1" ] && [ "$ROOT_NAME" = "$(cat drydock-npm-pack/expected-packages.txt)" ]; then
+            npm pack --json --pack-destination drydock-npm-pack > drydock-npm-pack/pack.json
           else
             PACK_ARGS=()
             while IFS= read -r package; do
@@ -128,8 +128,8 @@ jobs:
               else
                 PACK_ARGS+=(--workspace "$package")
               fi
-            done < .drydock-npm-pack/expected-packages.txt
-            npm pack "\${PACK_ARGS[@]}" --json --pack-destination .drydock-npm-pack > .drydock-npm-pack/pack.json
+            done < drydock-npm-pack/expected-packages.txt
+            npm pack "\${PACK_ARGS[@]}" --json --pack-destination drydock-npm-pack > drydock-npm-pack/pack.json
           fi
 
           # Monorepos may produce more than one tarball. Select the one whose
@@ -138,7 +138,7 @@ jobs:
           node <<'NODE'
           const fs = require("fs");
           const path = require("path");
-          const outputDir = ".drydock-npm-pack";
+          const outputDir = "drydock-npm-pack";
           const expected = JSON.parse(process.env.EXPECTED_PACKAGES_JSON);
           const expectedSet = new Set(expected);
           const raw = JSON.parse(fs.readFileSync(path.join(outputDir, "pack.json"), "utf8"));
@@ -180,7 +180,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: npm-tarball
-          path: .drydock-npm-pack
+          path: drydock-npm-pack
           if-no-files-found: error
 
   stage:
@@ -199,7 +199,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: npm-tarball
-          path: .drydock-npm-pack
+          path: drydock-npm-pack
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -215,7 +215,7 @@ jobs:
           set -euo pipefail
           while IFS= read -r filename; do
             [ -n "$filename" ] || continue
-            TARBALL=".drydock-npm-pack/$filename"
+            TARBALL="drydock-npm-pack/$filename"
             test -f "$TARBALL"
             # Verify the tarball identity before staging; never stage an unexpected package.
             tar -xOf "$TARBALL" package/package.json | node -e '
@@ -226,7 +226,7 @@ jobs:
             '
             # Stage instead of publish — a maintainer approves the public release after Drydock review.
             npm stage publish "$TARBALL" --access public --tag latest
-          done < .drydock-npm-pack/selected-tarballs.txt
+          done < drydock-npm-pack/selected-tarballs.txt
 `;
 }
 
