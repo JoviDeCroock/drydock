@@ -1,6 +1,6 @@
 # Production roadmap
 
-This roadmap converts the current staged-publish sandbox into a SaaS product while preserving the core safety boundaries. Phases 1–2 (product framing, scan pipeline extraction) and most of phases 3–5 (per-org npm connections, async scans with queues, durable report workbench) have shipped and are no longer tracked here — only outstanding work is listed below.
+This roadmap converts the current staged-publish sandbox into a SaaS product while preserving the core safety boundaries. Phases 1–4, most of Phase 5, Phase 8 multi-organization workspaces, the scheduled npm discovery foundation, and the PyPI workflow-gate foundation have shipped. Remaining sections track production hardening, report/provenance work, UX polish, team/commercial features, and detection quality.
 
 ## Product assumptions
 
@@ -14,11 +14,11 @@ This roadmap converts the current staged-publish sandbox into a SaaS product whi
 
 ## Current cut line
 
-The prototype-to-product foundation is in place: authenticated organization-scoped scans, encrypted organization npm connections, async-capable scan jobs (idempotent across retries), persisted report metadata, and a text-only release diff workbench all exist. The next roadmap iteration is **multi-organization workspaces**: a single user can create and switch between multiple organizations, each holding its own granular npm token, so maintainers can segment work by npm scope, employer, or client without juggling accounts.
+The prototype-to-product foundation is in place: authenticated organization-scoped scans, encrypted organization npm connections, multi-organization switching, async-capable scan jobs (idempotent across retries), scheduled npm staged-publish discovery, persisted report metadata, and a text-only release diff workbench all exist.
 
 Closed: tenant-boundary, sandbox-gateway, and archive-parser regression tests now have route- and unit-level coverage (`test/workers/cross-org-routes.test.ts`, `test/workers/cross-org-npm-connection.test.ts`, `test/workers/sandbox-gateway-runtime.test.ts`, `test/tar-parser.test.mjs`).
 
-PyPI workflow-gate support is now routed and persisted: the `POST /webhooks/github` deployment-protection webhook resolves a pending gate against `github_release_targets`, persists a `github_workflow_gates` row, and enqueues a queue-driven review (`executeWorkflowGateJob`) that runs the full PyPI pipeline and posts the approve/reject decision back to GitHub. What remains is the workflow-gate review UI, GitHub/PyPI setup guidance, and storing the reviewed artifact digests in the persisted report. See [`pypi-workflow-gate.md`](./pypi-workflow-gate.md).
+PyPI workflow-gate support is routed, persisted, and visible in the app: the `POST /webhooks/github` deployment-protection webhook resolves a pending gate against `github_release_targets`, persists a `github_workflow_gates` row, and enqueues a queue-driven review (`executeWorkflowGateJob`) that runs the PyPI pipeline. Settings can install the GitHub App and map release targets; the scan workbench shows gate context and approve/reject controls. What remains is storing reviewed artifact digests in the persisted report and validating the full hosted GitHub/PyPI path operationally. See [`pypi-workflow-gate.md`](./pypi-workflow-gate.md).
 
 ## Phase 3 — Per-organization npm connections (closed)
 
@@ -31,10 +31,10 @@ Resolved: `validateNpmCredential` checks registry auth (`/-/whoami`), staged-lis
 
 ## Phase 5 — Durable report workbench (remaining)
 
-- Group deterministic and AI findings by severity/source.
+- Improve deterministic and AI finding grouping by severity/source beyond the current release/context split.
 - Group scan lifecycle events into a human-readable timeline.
 - Use `completed_at` more visibly in list/detail metadata.
-- Add file search/filter and a changed-files-first default while preserving safe text-only rendering.
+- Surface report digest, rules version, and provenance in the detail workbench.
 - Decide TTL/eviction expectations for the production `COMPARE_CACHE` KV namespace (the namespace itself is provisioned).
 
 ## Phase 6 — R2 derived artifacts
@@ -79,35 +79,17 @@ Exit criteria:
 - Add D1/R2 retention controls for persisted redacted text samples and derived artifacts.
 - Add deployment checklist and incident-response notes.
 
-## Phase 8 — Multi-organization workspace
+## Phase 8 — Multi-organization workspace (closed)
 
-Priority: highest.
+Implemented:
 
-Goals:
+- `server/lib/active-organization.ts` exports `requireActiveOrganization(c, db)`. It reads the `x-organization-id` request header, verifies membership in `organization_members`, and falls back to the personal org when the header is absent or points at a non-member org.
+- Scan, npm-connection, staged-publish discovery, and GitHub App routes use the active-organization resolver.
+- `routes/organizations.ts` exposes `GET /api/v1/organizations`, `POST /api/v1/organizations`, and `PATCH /api/v1/organizations/:id`.
+- `src/models/active-organization.ts`, `src/models/organization.ts`, and `OrgSwitcher` provide per-device organization switching backed by localStorage.
+- Cross-org isolation and organization route tests cover header-scoped scans/connections and non-member fallback.
 
-- One user can own and switch between multiple organizations.
-- Each organization holds its own granular npm token (still one connection per org).
-- All existing org-scoped surfaces (scans, npm connection, reports) follow the active organization without UI rework beyond a header switcher.
-- Personal org behavior is preserved: every user gets a deterministic "Personal" org on first signup and is the default fallback when no org is explicitly selected.
-
-Tasks:
-
-- Server resolver: `server/lib/active-organization.ts` exports `requireActiveOrganization(c, db)`. It reads the `x-organization-id` request header, verifies membership in `organization_members`, and silently falls back to the personal org (creating it via `ensurePersonalOrganization` if missing) when the header is absent or points at a non-member org. No server-side active-org column — switching is per-device.
-- Routes: replace every `ensurePersonalOrganization` call in `routes/scan.ts`, `routes/scans.ts`, `routes/npm-connection.ts`, `routes/staged-publishes.ts` with `requireActiveOrganization`. Keep `ensurePersonalOrganization` as the first-signup bootstrap.
-- New `routes/organizations.ts`:
-  - `GET /api/v1/organizations` — orgs the user belongs to (personal first), each with `isPersonal` and `npmConnectionConfigured`.
-  - `POST /api/v1/organizations` — create org + owner membership in one transaction.
-  - `PATCH /api/v1/organizations/:id` — owner-only rename.
-- UI: `src/models/active-organization.ts` owns the localStorage-backed `activeOrganizationId` signal. `apiFetch` reads it and attaches `x-organization-id` to every request. `src/models/organization.ts` exposes list/create/activate/rename and auto-selects the first listed org when no stored id is valid. `OrgSwitcher` in the dashboard header is a native `<select>` per DESIGN.md with an inline create form.
-- Tests: `test/workers/organizations-routes.test.ts` covers list (personal-first ordering), create, rename (owner-only → 403), header-scoped npm-connection write, and non-member header fall-back to personal. Existing `cross-org-routes.test.ts` and `cross-org-npm-connection.test.ts` continue to cover the personal-org default path.
-
-Out of scope (kept in Phase 12): invitations, RBAC beyond owner, org deletion, audit log UI, billing, quotas, cross-device active-org sync.
-
-Exit criteria:
-
-- A user can create an org, switch to it on a given device, attach a different npm token, and run scans scoped to that org without the personal org's data appearing.
-- Cross-org isolation tests pass against the header-based path.
-- Each device remembers its own active org via localStorage; clearing localStorage falls back to personal.
+Out of scope (kept in Phase 12): invitations, RBAC beyond owner, org deletion, audit log UI, billing, quotas, cross-device active-org sync, and multiple npm connections per organization.
 
 ## Phase 9 — Trustworthy report artifacts
 
@@ -146,15 +128,14 @@ Goals:
 
 Tasks:
 
-- Add a top-level recommendation: block, review carefully, or likely safe.
-- Explain the recommendation with the highest-impact evidence.
-- Group findings by severity and source, with deterministic findings before AI findings.
+- Refine the shipped top-level recommendation and highest-impact evidence copy with real maintainer feedback.
+- Improve finding grouping by severity/source, while preserving the current release-delta vs package-context split.
 - Add dedicated cards for install scripts, entrypoint changes, dependency changes, new binaries/native files, network-capable code, obfuscation, and secret access.
 - Add a scan lifecycle timeline: queued, download staged tarball, download previous version, parse, deterministic review, AI review, report generated.
 - Add retry failed scan and cancel pending/running scan flows where platform semantics allow it.
-- Improve file explorer ergonomics with search/filter, changed-files-only default, and clearer bounded text sample labeling.
-- Add first-run onboarding: connect npm token, wait for automatic validation, paste stage ID, review report.
-- Add in-app npm token setup guidance with least-privilege recommendations.
+- Improve file explorer ergonomics beyond the shipped file filter, changed-files-only default, and lazy previous-file diff.
+- Add first-run onboarding around connecting npm, waiting for validation, using "Check npm", and reading the first report.
+- Expand in-app npm token setup guidance with least-privilege recommendations.
 
 Exit criteria:
 
@@ -164,28 +145,30 @@ Exit criteria:
 
 ## Phase 11 — Proactive stage monitoring and email notifications
 
-Priority: high after the manual scan flow is reliable.
+Priority: foundation shipped; product controls remain.
 
 Goals:
 
-- Let maintainers opt in to automatic discovery of new npm staged publishes.
 - Reuse the existing queued scan pipeline so newly discovered stages are scanned without the user pasting a stage ID.
 - Notify the right user when an automatic scan finishes or fails, while keeping npm approval manual and outside the product.
+- Add product controls so organizations can decide what to monitor and who to notify.
 
-Tasks:
+Implemented foundation:
 
 - Keep npm staged-publish list/view/tarball validation in the connection flow and document the read-only granular token setup in product guidance.
+- A `*/15 * * * *` Cloudflare Cron trigger sweeps `valid` and `unvalidated` npm connections, validates unvalidated tokens, skips known-invalid tokens, deduplicates stage IDs, and enqueues `auto_discovery` scans.
+- `POST /api/v1/staged-publishes/scan` shares the same discovery path for the dashboard "Check npm" button.
+- Automatic scan completion/failure emails use the `SEND_EMAIL` binding and suppress likely cross-organization staged-tarball failures.
+
+Remaining tasks:
+
 - Add organization/package monitoring settings for opt-in scopes/packages, notification recipients, and notification preferences.
-- Add a scheduled discovery job, likely Cloudflare Cron-triggered, that polls for new staged publishes per npm connection.
-- Deduplicate discovered stage IDs in D1 and enqueue scan jobs idempotently so retries or repeated polls do not create duplicate automatic scans.
-- Reuse the existing scan lifecycle and persisted report surface for automatic scans.
-- Add an email notification provider and safe templates for scan complete, high-risk scan complete, and scan failed states, each linking back to the persisted report.
-- Add audit events and operator metrics for stage discovered, automatic scan queued, notification sent, and notification failed.
-- Add UI for enabling/disabling monitoring and showing last discovery/notification status.
+- Add UI for enabling/disabling monitoring and showing last discovery/notification status beyond the current "Check npm" freshness indicator.
+- Add operator metrics for stage discovered, automatic scan queued, notification sent, and notification failed.
 
 Exit criteria:
 
-- An opted-in organization automatically scans new staged publishes without manually pasting a stage ID.
+- An organization can explicitly configure automatic scan scope and recipients.
 - Each discovered stage is scanned at most once per organization unless a user explicitly retries it.
 - Users receive an email with a link to the persisted scan report when the automatic scan reaches a terminal state.
 - The product still makes clear that npm approval remains manual outside the product.
@@ -196,7 +179,7 @@ Priority: medium after private beta proves value.
 
 Goals:
 
-- Support real organizations instead of only personal organization ownership.
+- Support multi-member organizations instead of only single-owner organization workspaces.
 - Prepare the product for team usage, billing, and operator administration.
 
 Tasks:
@@ -243,7 +226,7 @@ Exit criteria:
 - Security claims are backed by tests, fixtures, and documented limitations.
 - The product earns trust as a release-security tool, not just a scanner UI.
 
-## Phase 14 — PyPI workflow gate
+## Phase 14 — PyPI workflow gate (foundation shipped)
 
 Priority: after the npm review loop is stable enough for a second operating mode.
 
@@ -255,30 +238,21 @@ Goals:
 
 Implemented foundation:
 
-- `server/lib/adapters/pypi/index.ts` validates `drydock.release-artifacts.v1` PyPI manifests, reads PyPI project JSON metadata, selects a published baseline, and creates PyPI deterministic findings through the shared `PackageAdapter` contract.
+- `server/lib/adapters/pypi/index.ts` consumes a derived `drydock.release-artifacts.v1` release set, reads PyPI project JSON metadata, selects a published baseline, and creates PyPI deterministic findings through the shared `PackageAdapter` contract.
 - `server/lib/tar-parser.js` now supports safe ZIP parsing for wheel archives.
 - `NpmStageGateway` can allow exact public artifact URLs without attaching npm credentials.
+- GitHub App installation, repository/environment picker, release-target mapping, and setup guidance live in settings.
+- `POST /webhooks/github` verifies the GitHub App secret, resolves the release-target mapping, persists a pending gate, and enqueues a workflow-gate job.
+- `fetchReleaseBundleForGate` downloads the run's artifact bundle and collects every wheel/sdist; `preparePyPiReleaseCandidateForGate` derives the release set (package name, version, and SHA-256 digests) from the artifact bytes themselves. There is no `drydock-manifest.json` contract.
+- Workflow-gate reviews persist as ordinary scans with `source: "workflow_gate"` and synthetic `stageId: "workflow-gate:<gateId>"`.
+- Previous PyPI release artifacts are downloaded from `files.pythonhosted.org` for comparison when a matching namespace exists.
+- The scan workbench shows gate context, target-specific recommendation copy, and pending approve/reject controls; decided gates are mirrored onto the scan decision.
 
 Remaining tasks:
 
-- Add GitHub App installation, repository, workflow, and environment mapping.
-- ~~Handle GitHub `deployment_protection_rule` webhooks for the PyPI
-  environment.~~ Implemented: `POST /webhooks/github` verifies the App secret,
-  resolves the release-target mapping, persists a pending gate, and exposes
-  `markGateDecided` + `postDeploymentProtectionDecision` for the future review
-  pipeline to release or block the publish job.
-- ~~Fetch GitHub Actions artifacts and the required `drydock-manifest.json`.~~
-  Implemented without a manifest file: `fetchReleaseBundleForGate` downloads the
-  run's artifact bundle and collects every wheel/sdist, and
-  `preparePyPiReleaseCandidateForGate` derives the release set (package name,
-  version, and SHA-256 digests) from the artifact bytes themselves. There is no
-  `drydock-manifest.json` contract.
-- Recompute artifact SHA-256 digests from the bundle bytes for review evidence.
-  (There is no maintainer-declared digest to verify against; the publish-side
-  digest-match check is intentionally gone — see `pypi-workflow-gate.md`.)
-- Persist workflow-gate reviews without overloading npm `stage_id`.
-- Download previous PyPI release artifacts from `files.pythonhosted.org` for comparison.
-- Add UI for PyPI setup, gate status, and review reports.
+- Persist reviewed artifact SHA-256 digests in the report payload for audit/provenance.
+- Validate hosted GitHub App installation, webhook delivery, artifact fetch, and decision callback behavior against production GitHub/PyPI projects.
+- Add operator dashboards/alerts for gate failures, fail-closed artifact rejection, notification failures, and callback redelivery.
 
 Exit criteria:
 
@@ -294,9 +268,9 @@ Exit criteria:
 - Multiple AI provider abstraction.
 - Deep native/binary malware analysis.
 - Automated publish approval, which is intentionally out of scope.
-- Private beta operations gating: production Queues/KV/D1/secrets configuration, scan-duration / failure / retry metrics + logging, email verification + Turnstile, endpoint rate limits, custom-registry abuse controls, and a deployment + incident-response checklist. Defer until product surface stabilizes after multi-org and the diff-first review UX land.
+- Private beta operations gating: production Queues/KV/D1/secrets validation, scan-duration / failure / retry metrics + logging, email verification + Turnstile, endpoint rate limits, custom-registry abuse controls, and a deployment + incident-response checklist.
 - Scan/report deletion and a documented retention policy for persisted redacted text samples. Defer alongside private beta operations.
 
 ## Suggested next implementation slice
 
-Multi-organization workspace (Phase 8) is the next slice — schema migration, active-org resolver, organizations route, dashboard switcher, and refreshed cross-org tests. Once it lands, Phase 10 (maintainer-grade review UX) is next and should be reframed around the diff-first product direction before implementation starts.
+Report/workbench polish is the next slice: render the persisted scan-event timeline, surface report digest/rules/provenance in the detail page, persist PyPI reviewed artifact digests in the report payload, and tighten finding grouping around the release decision.

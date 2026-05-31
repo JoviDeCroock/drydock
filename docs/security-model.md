@@ -1,6 +1,6 @@
 # Security model
 
-Staged Publish Review handles untrusted package artifacts and sensitive npm credentials. The core security posture is: **package bytes are hostile evidence; npm credentials stay outside the sandbox; approval remains a human 2FA action.**
+Drydock handles untrusted package artifacts and sensitive npm credentials. The core security posture is: **package bytes are hostile evidence; npm credentials stay outside the sandbox; approval remains a human 2FA action.**
 
 ## Assets to protect
 
@@ -8,7 +8,7 @@ Staged Publish Review handles untrusted package artifacts and sensitive npm cred
 - Better Auth sessions and user data.
 - Scan reports and package evidence.
 - Package contents that may be private/proprietary before approval.
-- Cloudflare account resources: D1, Workers AI, Dynamic Worker loader, future R2/Queues.
+- Cloudflare account resources: D1, Queues, Workers AI, Dynamic Worker loader, and future R2.
 - Maintainer trust in the final report.
 
 ## Adversaries and risky inputs
@@ -121,14 +121,14 @@ The gateway compares URL origins against the configured npm registry and attache
 
 ## PyPI workflow-gate posture
 
-PyPI support is a workflow-gate mode, not an approval bot and not a registry credential path. PyPI Trusted Publishers use OIDC from GitHub Actions, and PyPI strongly encourages binding the publisher to a GitHub Environment. Drydock's future GitHub App should review the built wheel/sdist artifacts while that environment is pending, then approve or reject the GitHub gate.
+PyPI support is a workflow-gate mode, not an approval bot and not a registry credential path. PyPI Trusted Publishers use OIDC from GitHub Actions, and PyPI strongly encourages binding the publisher to a GitHub Environment. Drydock's GitHub App reviews the built wheel/sdist artifacts while that environment is pending, records an advisory recommendation, and leaves the gate waiting for a human approve/reject decision. Artifact-resolution failures reject the gate fail-closed.
 
 Additional boundaries for PyPI:
 
 - Do not mint PyPI OIDC tokens or upload to PyPI.
-- Do not rebuild artifacts after review.
-- Require a manifest with package name, version, artifact path, and SHA-256 digest.
-- Verify the reviewed digests immediately before the publish action.
+- Do not rebuild artifacts after review; the publish job must download the reviewed GitHub Actions artifact bundle and publish those bytes.
+- Treat the `pypi-release-candidate` GitHub Actions artifact bundle as the release set. Recompute each wheel/sdist SHA-256 from bundle bytes, derive package name/version from wheel `METADATA` and sdist `PKG-INFO`, and reject missing identity, cross-artifact identity/version mismatch, or release-target mismatch.
+- There is no maintainer-declared manifest or publish-side digest-match contract today. Byte continuity rests on GitHub artifact immutability plus workflow discipline that forbids rebuilding after the gate.
 - Treat wheel ZIP and sdist tar contents as hostile evidence, with the same no-execution and bounded-sample rules as npm tarballs.
 - Keep GitHub Actions artifact credentials in the trusted parent/GitHub integration path; do not pass them into the sandbox.
 
@@ -200,12 +200,12 @@ Signed reports are not launching yet. Prepare by making report payloads canonica
 
 Current foundation:
 
-- newly completed scans store a report version and SHA-256 digest in `summary_json.report`;
+- newly completed scans store a report version and SHA-256 digest in `summary_json.report` and denormalize them onto `scans.report_version` / `scans.report_digest`;
 - the digest is computed over stable canonical JSON containing redacted scan evidence only.
 
 Future signed report requirements:
 
-- promote report metadata to dedicated columns or immutable artifact metadata if needed;
+- store immutable report payload snapshots in R2 or another artifact store before exposing public signed reports;
 - signature records include signer user, organization, scan, digest, and timestamp;
 - revocation/withdrawal is represented without mutating the original report;
 - public access requires explicit sharing controls.
@@ -216,7 +216,7 @@ Do not expose signed report URLs until access controls, report canonicalization,
 
 - Per-organization encrypted npm connections exist. `validateNpmCredential` checks registry auth (`/-/whoami`), staged-list access (`validateStagedListAccess`), and — when supplied a real stage ID — staged-view (`validateStagedViewAccess`) and staged-tarball (`validateStagedTarballAccess`) access. A read-only granular token reaches all of these endpoints, so the previous list/view capability gap is resolved.
 - Queue-backed scan retry/dead-letter behavior exists in code and Wrangler config, and scan/queue paths now emit structured secret-redacted operational events. Production queue resources, DLQ visibility, metrics dashboards, and alerts still need deployment validation.
-- Persisted detail UI now renders core report data, but finding grouping and lifecycle timelines still need polish.
+- Persisted detail UI now renders recommendations, package diffs, manifest changes, reviewer notes, and release/context risk signals; report provenance/digest display and lifecycle timelines still need polish.
 - Tar parsing now rejects traversal paths, skips symlinks/hardlinks, handles long-name/PAX paths, caps expanded size, and fails closed when the safe file-count limit is exceeded, but it still needs deeper archive-bomb fuzzing before broad public launch.
 - Basic D1-backed rate limits exist for scans and credential operations; production should add metrics, alerts, and edge/IP-based abuse controls.
 - Team RBAC is deferred.

@@ -284,8 +284,8 @@ release target:
 - **Deployments: Read & write** — receive `deployment_protection_rule`
   webhooks and POST the deployment-protection decision callback.
 - **Metadata: Read** — mandatory for any fine-grained App; backs
-  `GET /repos/{owner}/{repo}` and the future `GET /installation/repositories`
-  repo picker.
+  `GET /repos/{owner}/{repo}` and the `GET /installation/repositories` repo
+  picker.
 
 Webhook events to subscribe to:
 

@@ -40,7 +40,7 @@ npm run pack:implicit-node-gyp
 npm run stage:publish
 ```
 
-Copy the printed stage ID into Staged Publish Review. The app reviews the staged artifact only; final npm approval remains a human action:
+Copy the printed stage ID into Drydock. The app reviews the staged artifact only; final npm approval remains a human action:
 
 ```sh
 npm stage approve <stage-id>

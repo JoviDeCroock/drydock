@@ -1,6 +1,6 @@
 # Architecture
 
-Staged Publish Review is a Cloudflare-first SaaS for reviewing npm staged publishes before human approval. The product is intentionally centered on one question: **what changed in this staged publish, and should a maintainer pause before approving it?**
+Drydock is a Cloudflare-first SaaS for reviewing package releases before human approval. The npm path is intentionally centered on one question: **what changed in this staged publish, and should a maintainer pause before approving it?**
 
 ## Runtime components
 
@@ -175,7 +175,7 @@ Raw tarballs should not be retained by default in SaaS. If needed later, make ra
 
 ### Workers AI (Flagship-gated)
 
-Workers AI review is wired into the scan pipeline through `maybeRunAiReview`, but it is **gated by the per-organization Cloudflare Flagship `ai-review` flag and off by default**. The reviewer module — `server/lib/ai-review.ts`, its single-model policy (`AI_MODEL` = `@cf/moonshotai/kimi-k2.5`), the prompt-injection-resistant system prompt, the AI SDK evidence-tool loop, and the test suite — stays in the active contract for the planned paid-tier feature.
+Workers AI review is wired into the scan pipeline through `maybeRunAiReview`, but it is **gated by the per-organization Cloudflare Flagship `ai-review` flag and off by default**. The reviewer module - `server/lib/ai-review.ts`, its model policy, the prompt-injection-resistant system prompt, the AI SDK evidence-tool loop, and the test suite - stays in the active contract for the planned paid-tier feature. The code currently declares `AI_MODEL = "@cf/moonshotai/kimi-k2.5"`; Cloudflare scheduled that model to alias to Kimi K2.6 on May 30, 2026, so treat K2.6 as the effective model and pricing target unless the constant is migrated.
 
 When Flagship does not return `true` for the scanning organization, the pipeline records an `unavailable` AI review. Risk is computed from deterministic findings unless a complete, schema-valid AI review is enabled and returns additional evidence or an explicit manual-review flag.
 
@@ -234,17 +234,16 @@ Reports should become canonical data objects even before public signing launches
 
 Implemented foundation:
 
-- newly completed scans store report metadata inside `summary_json.report`;
+- newly completed scans store report metadata inside `summary_json.report` and denormalize `report_version`, `report_digest`, and `completed_at` onto the `scans` row for queryability;
 - `digest` is SHA-256 over stable canonical report JSON built from redacted scan evidence, including the deterministic rules version and release/context finding annotations so digests change when the ruleset or visible risk interpretation changes;
 - newly completed scans store `summary_json.risk` with release, artifact, and context risk; `scans.risk` stores the primary artifact risk for new reports, while `summary_json.risk.releaseRisk` carries the package-to-package release verdict;
 - each deterministic finding carries `ruleId` and `ruleVersion` (see `DETERMINISTIC_RULES_VERSION` in `server/lib/review.ts`), persisted on `scan_findings.rule_id` / `rule_version`;
-- persisted scan detail renders report version, digest, rules version, package diff, and safety posture (AI review is Flagship-gated and unavailable by default — see the Workers AI section).
+- persisted scan detail APIs return report version, digest, rules version, package diff, and safety posture. The current workbench renders recommendation, diff, findings, manifest changes, and AI availability/results; full report provenance and fingerprint display remain roadmap work.
 
 Prepare next for:
 
-- dedicated `report_version` / `report_digest` columns if queryability becomes important;
-- `completed_at`;
 - immutable report payload snapshots in R2;
+- report export/provenance UI;
 - future `scan_report_signatures` rows signed by a user.
 
 Do not expose public signed report generation until the report payload is stable and access controls are ready.
@@ -260,14 +259,18 @@ Current API:
 - `POST /api/v1/staged-publishes/scan` — discover open staged publishes and create scans for newly found stage IDs;
 - `GET /api/v1/scans` — list organization scans. Supports `filter=undecided|publish|no_publish|all` (default `undecided`), `limit` (default 20, max 100), and `cursor` (opaque `<createdAtMs>:<id>` token). Response includes `nextCursor` for the next page; retries are no longer deduplicated by stage id so every scan appears in the timeline;
 - `GET /api/v1/scans/:id` — scan status/report detail;
+- `GET /api/v1/scans/:id/versions` — list published comparison versions for the scanned package;
+- `GET /api/v1/scans/:id/compare?version=...` — parse/cache a selected previous tarball and return compare metadata without text samples;
+- `GET /api/v1/scans/:id/compare/file?version=...&path=...` — return one previous-version file sample for lazy diff rendering;
 - `POST /api/v1/scans/:id/decision` — record a `publish` or `no_publish` decision on a `complete` scan with an optional `reason` (≤500 chars). Returns the updated scan detail and emits a `scan.decided` audit event. Returns 409 if the scan is not yet complete;
 - `GET /api/v1/npm-connection` — read connection metadata;
 - `POST /api/v1/npm-connection` — create/rotate connection;
 - `POST /api/v1/npm-connection/validate` — validate access;
-- `DELETE /api/v1/npm-connection` — remove connection.
+- `DELETE /api/v1/npm-connection` — remove connection;
 - `GET /api/v1/organizations` — list the caller's organizations (personal first), each with `npmConnectionConfigured`;
 - `POST /api/v1/organizations` — create a new organization owned by the caller;
-- `PATCH /api/v1/organizations/:id` — rename (owner-only).
+- `PATCH /api/v1/organizations/:id` — rename (owner-only);
+- `GET /api/v1/github-app/config`, `POST /api/v1/github-app/install`, `POST /api/v1/github-app/install/callback`, installation/repository/environment proxy reads, release-target CRUD, and workflow-gate decision endpoints — see [`pypi-workflow-gate.md`](./pypi-workflow-gate.md) for the full GitHub App surface.
 
 All other `/api/v1/*` endpoints honor the `x-organization-id` request header to pick the active org; absent or non-member ids silently fall back to the caller's personal org.
 
@@ -275,14 +278,18 @@ Keep `POST /api/v1/scan` only as a compatibility shim during migration.
 
 ## PyPI workflow-gate foundation
 
-PyPI support is intentionally modeled as a separate workflow-gate mode because PyPI does not have npm's staged-publish review primitive. The current backend foundation lives in `server/lib/adapters/pypi/index.ts` as a `PackageAdapter` implementation, but it is not yet mounted as a route or persisted scan type.
+PyPI support is intentionally modeled as a separate workflow-gate mode because PyPI does not have npm's staged-publish review primitive. The implementation is mounted through the GitHub App routes and the public `POST /webhooks/github` deployment-protection webhook, and reviews are persisted as ordinary scans with `source: "workflow_gate"` and a synthetic `stageId: "workflow-gate:<gateId>"`.
 
 Implemented pieces:
 
-- `drydock.release-artifacts.v1` manifest validation for `ecosystem: "pypi"`;
+- GitHub App install/callback, installation listing, repository/environment proxy reads, and PyPI release-target CRUD in `server/routes/github-app.ts`;
+- `deployment_protection_rule` webhook handling in `server/routes/github-webhooks.ts`, backed by `github_workflow_gates`;
+- queue-driven gate review in `server/lib/workflow-gate-job.ts`, including fail-closed rejection for unverifiable artifact bundles and human approve/reject delivery back to GitHub;
+- release-candidate derivation from the `pypi-release-candidate` GitHub Actions artifact bundle: every wheel/sdist SHA-256 is recomputed from the bundle bytes, package identity is derived from wheel `METADATA` / sdist `PKG-INFO`, and no maintainer-declared manifest is required;
 - PyPI wheel/sdist artifact normalization and metadata extraction;
 - safe ZIP parsing for `.whl` archives in the sandbox parser;
-- PyPI-specific deterministic findings for manifest/metadata mismatches, missing wheel `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, and `.pyd` native extensions;
-- PyPI project JSON metadata helpers for baseline release selection and wheel/sdist download metadata.
+- PyPI-specific deterministic findings for manifest/metadata mismatches, missing wheel `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, unusual dependencies, and `.pyd` native extensions;
+- PyPI project JSON metadata helpers for baseline release selection and wheel/sdist download metadata;
+- settings UI for GitHub App installation/release-target mapping and workbench controls for pending gate decisions.
 
-The target gate is a GitHub custom deployment protection rule on the same GitHub Environment configured in PyPI Trusted Publishers. CI must build artifacts before the gate, Drydock must review those exact artifact digests, and the publish job must verify the digest manifest immediately before invoking PyPI trusted publishing. See [`pypi-workflow-gate.md`](./pypi-workflow-gate.md).
+The target gate is a GitHub custom deployment protection rule on the same GitHub Environment configured in PyPI Trusted Publishers. CI must build artifacts before the gate and the publish job must download the reviewed artifact bundle rather than rebuilding. There is no publish-side digest manifest check in the current contract, so byte continuity rests on GitHub artifact immutability plus workflow discipline. Remaining work is to persist the reviewed artifact digests in the report payload for audit/provenance. See [`pypi-workflow-gate.md`](./pypi-workflow-gate.md).
