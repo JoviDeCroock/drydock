@@ -195,7 +195,7 @@ export function PypiFlow({ githubApp }: { githubApp: GithubApp }) {
         ) : null}
         {selectedReleaseTarget && selectedTargetMatchesFlow ? (
           <Muted class="text-[12px] m-0">
-            Using {selectedReleaseTarget.packageName} on{" "}
+            Using{" "}
             <code class="font-mono text-ink-subtle">
               {selectedReleaseTarget.repositoryFullName}
             </code>{" "}
@@ -271,7 +271,7 @@ function ExistingReleaseTargetPicker({
         <option value="">Map a new target below…</option>
         {releaseTargets.map((target) => (
           <option key={target.id} value={target.id}>
-            {target.packageName} · {target.repositoryFullName} · env {target.environment}
+            {target.repositoryFullName} · env {target.environment}
           </option>
         ))}
       </Select>
