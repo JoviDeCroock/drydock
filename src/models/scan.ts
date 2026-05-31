@@ -450,6 +450,8 @@ export const ScanDetailModel = createModel((id: string) => {
   };
 });
 
+export type ScanDetailModelInstance = InstanceType<typeof ScanDetailModel>;
+
 function pickInitialPath(data: PersistedScanDetail): string | null {
   return (
     data.files.find((file) => file.status !== "unchanged")?.path ?? data.files[0]?.path ?? null

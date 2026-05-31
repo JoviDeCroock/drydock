@@ -18,10 +18,10 @@ import {
   computeRisk,
   createPackageDiff,
   DETERMINISTIC_RULES_VERSION,
+  deterministicFindings,
   packageJsonDiffFindings,
   summarizePackageJsonDiff,
 } from "../../server/lib/review.ts";
-import { deterministicFindings } from "../../server/lib/review-rules.ts";
 import {
   createPyPiReleaseCandidateReview,
   parsePyPiReleaseManifest,
