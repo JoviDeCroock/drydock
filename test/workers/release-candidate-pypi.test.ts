@@ -56,12 +56,9 @@ async function seedGateForTest(opts: {
     organizationId,
     installationRowId: installation.id,
     ecosystem: "pypi",
-    packageName: "demo-package",
     repositoryId: opts.repositoryId,
     repositoryFullName: "octo/example",
-    workflowFilename: null,
     environment: "pypi",
-    pypiTrustedPublisherEnvironment: "pypi",
     createdByUserId: null,
   });
 
@@ -402,40 +399,6 @@ describe("preparePyPiReleaseCandidateForGate", () => {
     const refreshed = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
     expect(refreshed?.status).toBe("pending");
     expect(refreshed?.failureReason).toBe("artifact_identity_inconsistent");
-  });
-
-  test("marks the gate errored when the derived package does not match the release target", async () => {
-    const seeded = await seedGateForTest({
-      installationExternalId: "9102",
-      repositoryId: 71003,
-      runId: 9999,
-    });
-    await buildScenario(9999);
-    const loaderMock = buildLoaderMock([[metadataFile("other-package", "1.2.0")]]);
-    const ctx = buildCtxWithGateway();
-    const bindings = buildConfigBindings();
-    const config = readGithubAppConfig({
-      ...bindings,
-      BETTER_AUTH_SECRET: bindings.BETTER_AUTH_SECRET,
-    });
-    const sandboxEnv = {
-      ...env,
-      ...bindings,
-      LOADER: loaderMock.binding as unknown as WorkerLoader,
-    } as Cloudflare.Env;
-
-    const db = createDb(env.DB);
-    await expect(
-      preparePyPiReleaseCandidateForGate(sandboxEnv, ctx, db, {
-        config,
-        organizationId: seeded.organizationId,
-        gateId: seeded.gateId,
-      }),
-    ).rejects.toMatchObject({ code: "release_target_mismatch" });
-
-    const refreshed = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
-    expect(refreshed?.status).toBe("pending");
-    expect(refreshed?.failureReason).toBe("release_target_mismatch");
   });
 
   test("rejects with bundle_unavailable when the gate id does not belong to the org", async () => {

@@ -282,35 +282,21 @@ githubAppRoutes.post("/release-targets", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
     installationRowId?: unknown;
     ecosystem?: unknown;
-    packageName?: unknown;
     repositoryFullName?: unknown;
-    workflowFilename?: unknown;
     environment?: unknown;
-    pypiTrustedPublisherEnvironment?: unknown;
   };
 
   const installationRowId =
     typeof body.installationRowId === "string" ? body.installationRowId.trim() : "";
   const ecosystem =
     typeof body.ecosystem === "string" ? (body.ecosystem.trim() as SupportedEcosystem) : "pypi";
-  const packageName = typeof body.packageName === "string" ? body.packageName.trim() : "";
   const repositoryFullName =
     typeof body.repositoryFullName === "string" ? body.repositoryFullName.trim() : "";
-  const workflowFilename =
-    typeof body.workflowFilename === "string" ? body.workflowFilename.trim() : null;
   const environment = typeof body.environment === "string" ? body.environment.trim() : "";
-  const pypiTrustedPublisherEnvironment =
-    typeof body.pypiTrustedPublisherEnvironment === "string"
-      ? body.pypiTrustedPublisherEnvironment.trim()
-      : "";
 
   if (!installationRowId) return c.json({ error: "installationRowId is required" }, 400);
-  if (!packageName) return c.json({ error: "packageName is required" }, 400);
   if (!repositoryFullName) return c.json({ error: "repositoryFullName is required" }, 400);
   if (!environment) return c.json({ error: "environment is required" }, 400);
-  if (!pypiTrustedPublisherEnvironment) {
-    return c.json({ error: "pypiTrustedPublisherEnvironment is required" }, 400);
-  }
   if (!SUPPORTED_ECOSYSTEMS.includes(ecosystem)) {
     return c.json({ error: `unsupported ecosystem: ${ecosystem}` }, 400);
   }
@@ -345,12 +331,9 @@ githubAppRoutes.post("/release-targets", async (c) => {
       organizationId,
       installationRowId: installation.id,
       ecosystem,
-      packageName,
       repositoryId: repo.id,
       repositoryFullName: repo.fullName,
-      workflowFilename,
       environment,
-      pypiTrustedPublisherEnvironment,
       createdByUserId: session.userId,
     });
     await recordScanEvent(db, {
@@ -359,7 +342,6 @@ githubAppRoutes.post("/release-targets", async (c) => {
       type: "github_app_release_target.created",
       metadata: {
         ecosystem: record.ecosystem,
-        packageName: record.packageName,
         repositoryFullName: record.repositoryFullName,
         repositoryId: record.repositoryId,
         environment: record.environment,
@@ -561,12 +543,9 @@ function publicReleaseTarget(record: ReleaseTargetRecord) {
     organizationId: record.organizationId,
     installationRowId: record.installationRowId,
     ecosystem: record.ecosystem,
-    packageName: record.packageName,
     repositoryId: record.repositoryId,
     repositoryFullName: record.repositoryFullName,
-    workflowFilename: record.workflowFilename,
     environment: record.environment,
-    pypiTrustedPublisherEnvironment: record.pypiTrustedPublisherEnvironment,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   };
@@ -620,10 +599,8 @@ function statusForCode(code: GithubAppValidationCode): 400 | 403 | 404 | 409 {
       return 409;
     case "repository_not_accessible":
       return 403;
-    case "package_already_mapped":
     case "environment_already_mapped":
       return 409;
-    case "environment_mismatch":
     case "environment_unmapped":
     case "unsupported_ecosystem":
     case "invalid_input":

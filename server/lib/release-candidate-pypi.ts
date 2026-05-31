@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import type { AppDb } from "../db";
-import { githubAppInstallations, githubReleaseTargets } from "../db/schema";
+import { githubAppInstallations } from "../db/schema";
 import {
   normalizePyPiProjectName,
   parsePyPiReleaseManifest,
@@ -204,24 +204,6 @@ export async function preparePyPiReleaseCandidateForGate(
     );
   }
 
-  const [releaseTarget] = await db
-    .select()
-    .from(githubReleaseTargets)
-    .where(
-      and(
-        eq(githubReleaseTargets.id, gate.releaseTargetId),
-        eq(githubReleaseTargets.organizationId, gate.organizationId),
-      ),
-    )
-    .limit(1);
-  if (!releaseTarget) {
-    await markGateErroredSafe(db, gate.id, "release_target_missing");
-    throw new WorkflowArtifactError(
-      "bundle_unavailable",
-      `release target ${gate.releaseTargetId} missing for gate ${gate.id}`,
-    );
-  }
-
   try {
     const bundle = await fetchReleaseBundleForGate(input.config, {
       installationExternalId: installation.installationId,
@@ -230,13 +212,6 @@ export async function preparePyPiReleaseCandidateForGate(
       artifactName: input.artifactName,
     });
     const prepared = await preparePyPiReleaseCandidateFromBundle(env, ctx, bundle);
-    const derivedPackage = normalizePyPiProjectName(prepared.adapterInput.manifest.package);
-    if (derivedPackage !== releaseTarget.packageName) {
-      throw new WorkflowArtifactError(
-        "release_target_mismatch",
-        `derived package ${derivedPackage} does not match release target ${releaseTarget.packageName}`,
-      );
-    }
     return { ...prepared, gate };
   } catch (err) {
     const reason = err instanceof WorkflowArtifactError ? err.code : "preparation_failed";

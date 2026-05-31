@@ -21,12 +21,9 @@ export interface PublicReleaseTarget {
   organizationId: string;
   installationRowId: string;
   ecosystem: "pypi";
-  packageName: string;
   repositoryId: number;
   repositoryFullName: string;
-  workflowFilename: string | null;
   environment: string;
-  pypiTrustedPublisherEnvironment: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -138,11 +135,8 @@ export const GithubAppModel = createModel(() => {
   const releaseTargetsError = signal<string | null>(null);
 
   const formInstallationRowId = signal<string>("");
-  const formPackageName = signal<string>("");
   const formRepositoryFullName = signal<string>("");
   const formEnvironment = signal<string>("");
-  const formPypiTrustedPublisherEnvironment = signal<string>("");
-  const formWorkflowFilename = signal<string>("");
   const formStatus = signal<ReleaseTargetFormStatus>("idle");
   const formError = signal<string | null>(null);
 
@@ -201,12 +195,8 @@ export const GithubAppModel = createModel(() => {
   const formValid = computed(
     () =>
       formInstallationRowId.value.trim() !== "" &&
-      formPackageName.value.trim() !== "" &&
       formRepositoryFullName.value.trim() !== "" &&
-      formEnvironment.value.trim() !== "" &&
-      formPypiTrustedPublisherEnvironment.value.trim() !== "" &&
-      formEnvironment.value.trim().toLowerCase() ===
-        formPypiTrustedPublisherEnvironment.value.trim().toLowerCase(),
+      formEnvironment.value.trim() !== "",
   );
 
   function setRepositoryStatus(installationRowId: string, value: RepositoryListStatus) {
@@ -233,11 +223,8 @@ export const GithubAppModel = createModel(() => {
 
   function clearForm() {
     formInstallationRowId.value = "";
-    formPackageName.value = "";
     formRepositoryFullName.value = "";
     formEnvironment.value = "";
-    formPypiTrustedPublisherEnvironment.value = "";
-    formWorkflowFilename.value = "";
     formError.value = null;
   }
 
@@ -259,11 +246,8 @@ export const GithubAppModel = createModel(() => {
     releaseTargetsError,
 
     formInstallationRowId,
-    formPackageName,
     formRepositoryFullName,
     formEnvironment,
-    formPypiTrustedPublisherEnvironment,
-    formWorkflowFilename,
     formStatus,
     formError,
     formSubmitting,
@@ -372,7 +356,6 @@ export const GithubAppModel = createModel(() => {
       formInstallationRowId.value = installationRowId;
       formRepositoryFullName.value = "";
       formEnvironment.value = "";
-      formPypiTrustedPublisherEnvironment.value = "";
       formError.value = null;
       if (installationRowId) {
         void this.loadInstallationRepositories(installationRowId);
@@ -382,7 +365,6 @@ export const GithubAppModel = createModel(() => {
     selectRepository(repositoryFullName: string) {
       formRepositoryFullName.value = repositoryFullName;
       formEnvironment.value = "";
-      formPypiTrustedPublisherEnvironment.value = "";
       formError.value = null;
       const installationRowId = formInstallationRowId.value;
       if (installationRowId && repositoryFullName) {
@@ -392,14 +374,6 @@ export const GithubAppModel = createModel(() => {
 
     selectEnvironment(environment: string) {
       formEnvironment.value = environment;
-      // PyPI trusted-publisher environment must match the GitHub environment by
-      // default — keep it in sync until the user edits the field directly.
-      formPypiTrustedPublisherEnvironment.value = environment;
-      formError.value = null;
-    },
-
-    setPypiTrustedPublisherEnvironment(environment: string) {
-      formPypiTrustedPublisherEnvironment.value = environment;
       formError.value = null;
     },
 
@@ -411,13 +385,9 @@ export const GithubAppModel = createModel(() => {
         const payload: Record<string, string> = {
           installationRowId: formInstallationRowId.value.trim(),
           ecosystem: "pypi",
-          packageName: formPackageName.value.trim(),
           repositoryFullName: formRepositoryFullName.value.trim(),
           environment: formEnvironment.value.trim(),
-          pypiTrustedPublisherEnvironment: formPypiTrustedPublisherEnvironment.value.trim(),
         };
-        const workflowFilename = formWorkflowFilename.value.trim();
-        if (workflowFilename) payload.workflowFilename = workflowFilename;
         const data = await apiJson<{ releaseTarget: PublicReleaseTarget }>(
           "/api/v1/github-app/release-targets",
           payload,

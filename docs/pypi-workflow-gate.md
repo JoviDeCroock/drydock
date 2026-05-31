@@ -57,7 +57,8 @@ What keeps this safe:
 
 - cross-artifact identity consistency (a foreign or version-skewed wheel cannot
   sneak into the release set);
-- the release-target name match still applies;
+- the release target binds the gate to the configured GitHub repository and
+  environment;
 - a bundle whose artifacts cannot be identified (no `METADATA`/`PKG-INFO`
   `Name`/`Version`) is rejected rather than guessed.
 
@@ -106,18 +107,12 @@ HTTP surface in `server/routes/github-app.ts`. Two tables back it:
   (`organization_id`, GitHub `installation_id`, `account_login`, status). The
   installation ID is unique across the app, so the same install cannot be linked
   to two organizations.
-- `github_release_targets` — one row per (org, ecosystem, package) mapping. Each
-  row points at an installation row and pins a `repository_id`, `environment`,
-  and `pypi_trusted_publisher_environment`. Drydock requires
-  `environment === pypi_trusted_publisher_environment` so the deployment
-  protection gate runs against the same job that performs the OIDC token
-  exchange. PyPI package names are stored in normalized PEP 503 form so
-  case/separator aliases map to the same release target. GitHub environment
-  names are stored in lowercase because GitHub treats environment names as
-  case-insensitive. A
-  repository/environment pair is unique within an organization because GitHub
-  deployment-protection webhooks identify the pending gate by installation,
-  repository, and environment, not by package name.
+- `github_release_targets` — one row per (org, repository, environment) mapping.
+  Each row points at an installation row and pins a `repository_id` and
+  `environment`. GitHub environment names are stored in lowercase because GitHub
+  treats environment names as case-insensitive. A repository/environment pair is
+  unique within an organization because GitHub deployment-protection webhooks
+  identify the pending gate by installation, repository, and environment.
 
 ### Endpoints
 
@@ -175,12 +170,8 @@ organization (`x-organization-id` header to scope writes).
   token returned 403/404, meaning the install was never granted that repo. The
   repo name is validated as exactly `owner/repo` before the GitHub API URL is
   built, so path traversal-like segments cannot escape the repository lookup.
-- `environment_unmapped` — caller did not provide both `environment` and
-  `pypiTrustedPublisherEnvironment`, or the provided environment name exceeds
-  GitHub's 255-character limit.
-- `environment_mismatch` — the two environment names differ.
-- `package_already_mapped` — `(organizationId, ecosystem, packageName)` already
-  has a row.
+- `environment_unmapped` — caller did not provide an `environment`, or the
+  provided environment name exceeds GitHub's 255-character limit.
 - `environment_already_mapped` — `(organizationId, repositoryId, environment)`
   already has a row, so a deployment-protection webhook would be ambiguous.
 
@@ -343,21 +334,19 @@ the install:
    `/dashboard...` return paths before resuming the callback.
 4. Linked installations render with `active` / `suspended` / `uninstalled`
    status badges.
-5. Below the linked installations, a "PyPI release targets" form lets the user
-   register a `(package, repo, environment)` mapping. Installation, repository,
-   and environment are dropdowns populated from the new proxy endpoints; the
-   PyPI Trusted Publisher environment defaults to the selected GitHub
-   environment but stays editable so the user can confirm before saving. The
-   server still revalidates installation ownership, repo access, and
-   environment-name equality on `POST /release-targets`, so the UI cannot
+5. Below the linked installations, a "Release targets" form lets the user
+   register a `(repo, environment)` mapping. The installation defaults to the one
+   linked for the org; repository and environment are dropdowns populated from
+   the proxy endpoints. The server still revalidates installation ownership, repo
+   access, and environment names on `POST /release-targets`, so the UI cannot
    bypass the rules. Empty states link to GitHub App settings (no repos) and
    GitHub Actions environments docs (no environments).
-6. Above the release-targets form, a "PyPI gate setup" guide walks through
-   installing the App, adding a GitHub Environment custom deployment protection
-   rule, and matching the PyPI Trusted Publisher environment. It states plainly
-   that approval releases or blocks the held GitHub job and that publishing
-   happens through the workflow's Trusted Publishing OIDC exchange — Drydock
-   never holds or sees PyPI credentials.
+6. Above the release-targets form, a "gate setup" guide walks through installing
+   the App, adding a GitHub Environment custom deployment protection rule, and
+   matching the PyPI Trusted Publisher environment. It states plainly that
+   approval releases or blocks the held GitHub job and that publishing happens
+   through the workflow's Trusted Publishing OIDC exchange — Drydock never holds
+   or sees PyPI credentials.
 
 ### Gate review workbench
 
@@ -415,9 +404,6 @@ What the resolver enforces, in order:
    the version. The synthesized `drydock.release-artifacts.v1` shape (PEP 503
    project name, safe version, ≤20 artifacts, safe artifact paths) is then
    re-validated before scanning.
-7. The gate wrapper compares the derived normalized package name against the
-   mapped `github_release_targets.package_name`. A repo/environment gate for one
-   PyPI project cannot approve a release for another project.
 
 Typed errors returned by `WorkflowArtifactError.code`:
 
@@ -430,8 +416,6 @@ Typed errors returned by `WorkflowArtifactError.code`:
   (or the derived identity failed validation).
 - `artifact_identity_inconsistent` — artifacts disagreed on the normalized
   package name or the version.
-- `release_target_mismatch` — derived normalized package name did not match
-  the release target mapped to the pending gate.
 
 `preparePyPiReleaseCandidateForGate(env, ctx, db, { config, organizationId,
 gateId })` is the gate-aware wrapper. It looks up the gate row, swaps the App
@@ -442,8 +426,9 @@ worker downloads the artifact ZIP and recomputes digests, and only the
 wheel/sdist bytes cross the trust boundary through `downloadInSandboxInline`,
 which constructs the `NpmStageGateway` with empty props (no npm token, no
 public-artifact allowlist, `subRequests: 0`). Because identity is derived from
-the sandbox-parsed metadata, the release-target match happens after parsing
-rather than before.
+the sandbox-parsed metadata, package identity is known only after the artifacts
+have crossed the untrusted-archive parser; the release target itself binds the
+review to the GitHub repository and environment.
 
 ### Baseline acquisition
 
@@ -497,8 +482,8 @@ and the consumer re-checks gate status, so a re-enqueue is safe.
    non-decided status is skipped with a warning.
 3. Record `github_workflow_gate.received`.
 4. Call `preparePyPiReleaseCandidateForGate` to resolve + verify the bundle.
-   - A `WorkflowArtifactError` (e.g. `bundle_unavailable`,
-     `artifact_identity_inconsistent`, or `release_target_mismatch`)
+   - A `WorkflowArtifactError` (e.g. `bundle_unavailable` or
+     `artifact_identity_inconsistent`)
      **rejects** the gate fail-closed with a generic comment, records
      `github_workflow_gate.rejected`, and POSTs the rejection — no human is
      needed to block an artifact that cannot be verified. `prepare` already

@@ -43,7 +43,6 @@ async function seedMappedRepository(opts: {
   installationExternalId: string;
   repositoryId: number;
   environment?: string;
-  packageName?: string;
 }) {
   const { organizationId } = await seedUser();
   const db = createDb(env.DB);
@@ -60,12 +59,9 @@ async function seedMappedRepository(opts: {
     organizationId,
     installationRowId: installation.id,
     ecosystem: "pypi",
-    packageName: opts.packageName ?? "example",
     repositoryId: opts.repositoryId,
     repositoryFullName: "octo/example",
-    workflowFilename: null,
     environment: opts.environment ?? "pypi",
-    pypiTrustedPublisherEnvironment: opts.environment ?? "pypi",
     createdByUserId: null,
   });
   return { organizationId, installation, releaseTarget };
@@ -360,7 +356,6 @@ describe("markGateDecided", () => {
     const { releaseTarget, installation, organizationId } = await seedMappedRepository({
       installationExternalId: "5050",
       repositoryId: 8080,
-      packageName: "decide-once",
     });
     const payload = buildRequestedPayload({
       installationId: "5050",
@@ -401,7 +396,6 @@ describe("markGateDecided", () => {
     await seedMappedRepository({
       installationExternalId: "5151",
       repositoryId: 8181,
-      packageName: "errored",
     });
     const payload = buildRequestedPayload({
       installationId: "5151",
@@ -433,7 +427,6 @@ describe("markGateDecided", () => {
     await seedMappedRepository({
       installationExternalId: "5252",
       repositoryId: 8282,
-      packageName: "late-error",
     });
     const payload = buildRequestedPayload({
       installationId: "5252",
