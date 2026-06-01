@@ -74,3 +74,18 @@ Before merging server-risk changes:
 5. Confirm operational events exist for new failure modes and do not include
    sensitive material.
 6. Update the relevant docs in the same change.
+
+## Deployment migrations
+
+Production deploys run remote D1 migrations before uploading the Worker:
+
+```sh
+pnpm run db:migrate:remote && wrangler deploy
+```
+
+Cloudflare Workers Builds should use `pnpm run deploy` for the production deploy
+command so the same sequence runs automatically on `main`. The build token used by
+Workers Builds must include both Worker deploy access and D1 edit access; runtime
+secrets remain Worker secrets and are not stored in the repository. Keep schema
+changes backward-compatible whenever possible, because a migration can succeed
+even if the subsequent Worker deploy fails.

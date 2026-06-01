@@ -230,6 +230,14 @@ Never write SQL migrations by hand; update `server/db/schema.ts` and generate mi
    pnpm deploy
    ```
 
+`pnpm deploy` runs `pnpm run db:migrate:remote` before `wrangler deploy`, so automatic
+Cloudflare Workers Builds should use `pnpm run deploy` as the production deploy
+command. Workers Builds provides the configured build API token to Wrangler at
+deploy time; make sure that token can both deploy Workers and edit D1 databases
+so `wrangler d1 migrations apply DB --remote` can run. Runtime secrets such as
+`BETTER_AUTH_SECRET` and `NPM_CONNECTIONS_ENCRYPTION_KEY` still need to be set as
+Worker secrets in Cloudflare.
+
 ## Security posture summary
 
 Defended today:
