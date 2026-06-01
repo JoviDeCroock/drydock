@@ -7,12 +7,11 @@ import {
   Alert,
   Badge,
   Button,
-  Card,
+  CollapsibleCard,
   Field,
   Input,
   LoadingLine,
   Muted,
-  SectionLabel,
 } from "../../../components";
 
 export function NotificationRecipientsSection({
@@ -37,19 +36,16 @@ export function NotificationRecipientsSection({
   };
 
   return (
-    <Card as="section" class="p-5">
-      <div class="flex flex-col gap-5">
-        <div class="flex flex-wrap items-start justify-between gap-3">
-          <div class="flex flex-col gap-1.5 max-w-[760px]">
-            <SectionLabel>notification recipients</SectionLabel>
-            <Muted class="text-[13px] m-0">
-              Choose who gets emailed when an auto-discovered scan finishes or a release gate needs
-              a review decision. Add a shared inbox or teammates. When this list is empty, Drydock
-              emails the organization owner.
-            </Muted>
-          </div>
-          <Badge tone="info">{list.length} configured</Badge>
-        </div>
+    <CollapsibleCard
+      title="notification recipients"
+      aside={<Badge tone="info">{list.length} configured</Badge>}
+    >
+      <div class="p-5 flex flex-col gap-5">
+        <Muted class="text-[13px] m-0 max-w-[760px]">
+          Choose who gets emailed when an auto-discovered scan finishes or a release gate needs a
+          review decision. Add a shared inbox or teammates. When this list is empty, Drydock emails
+          the organization owner.
+        </Muted>
 
         {!loaded ? (
           <LoadingLine class="border-y border-border py-3">loading recipients</LoadingLine>
@@ -106,6 +102,6 @@ export function NotificationRecipientsSection({
 
         {error ? <Alert tone="critical">{error}</Alert> : null}
       </div>
-    </Card>
+    </CollapsibleCard>
   );
 }

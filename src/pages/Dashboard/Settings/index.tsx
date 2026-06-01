@@ -130,13 +130,13 @@ export default function SettingsPage() {
             currentUserRole={activeRole(organizations)}
             currentUserId={user?.id ?? null}
           />
-          <NpmConnectionSection npm={npm} />
-          <GithubAppSection githubApp={githubApp} />
           <NotificationRecipientsSection
             recipients={recipients}
             organizationId={organizations.active.value?.id ?? null}
             fallbackEmail={user?.email}
           />
+          <NpmConnectionSection npm={npm} />
+          <GithubAppSection githubApp={githubApp} />
         </div>
       ) : (
         <LoadingState title="Loading settings" detail={loadingDetail(npmLoaded, githubAppLoaded)} />
