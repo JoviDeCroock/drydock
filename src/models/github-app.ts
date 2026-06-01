@@ -16,11 +16,17 @@ export interface PublicGithubAppInstallation {
   updatedAt: string;
 }
 
+export type SupportedEcosystem = "pypi";
+
 export interface PublicReleaseTarget {
   id: string;
   organizationId: string;
   installationRowId: string;
-  ecosystem: "pypi";
+  // null = auto-detect each package's ecosystem from the uploaded artifacts
+  // (the monorepo-friendly default).
+  ecosystem: SupportedEcosystem | null;
+  // null = no artifact-name filter; the runner consumes every uploaded artifact.
+  artifactName: string | null;
   repositoryId: number;
   repositoryFullName: string;
   environment: string;
@@ -30,6 +36,18 @@ export interface PublicReleaseTarget {
 
 export type WorkflowGateStatus = "pending" | "approved" | "rejected" | "errored";
 export type WorkflowGateDecision = "approved" | "rejected";
+export type GatePackageDecision = "publish" | "no_publish";
+
+// One entry per distinct package the gated release publishes. A monorepo fans
+// out into several; the gate releases only once every package is approved.
+export interface GatePackageScan {
+  scanId: string;
+  packageName: string | null;
+  version: string | null;
+  status: string;
+  releaseRisk: string | null;
+  decision: GatePackageDecision | null;
+}
 
 export interface PublicWorkflowGate {
   id: string;
@@ -44,6 +62,7 @@ export interface PublicWorkflowGate {
   reportUrl: string | null;
   scanId: string | null;
   failureReason: string | null;
+  packages: GatePackageScan[];
   requestedAt: string;
   decidedAt: string | null;
   createdAt: string;
@@ -64,15 +83,22 @@ export async function getWorkflowGateByScan(scanId: string): Promise<PublicWorkf
   }
 }
 
+// Records a decision for a single package of the gate (`scanId`). The gate only
+// finalizes — releasing or blocking the held GitHub job — once every package is
+// approved, or the moment any one is rejected.
 export function decideWorkflowGate(
   gateId: string,
+  scanId: string,
   decision: WorkflowGateDecision,
   comment: string | null,
   totpCode?: string | null,
 ): Promise<{ gate: PublicWorkflowGate }> {
-  const payload: { decision: WorkflowGateDecision; comment?: string; totpCode?: string } = {
-    decision,
-  };
+  const payload: {
+    scanId: string;
+    decision: WorkflowGateDecision;
+    comment?: string;
+    totpCode?: string;
+  } = { scanId, decision };
   if (comment) payload.comment = comment;
   if (totpCode) payload.totpCode = totpCode;
   return apiJson<{ gate: PublicWorkflowGate }>(
@@ -171,6 +197,10 @@ export const GithubAppModel = createModel(() => {
   const formInstallationRowId = signal<string>("");
   const formRepositoryFullName = signal<string>("");
   const formEnvironment = signal<string>("");
+  // "auto" lets the runner derive each package's ecosystem from the uploaded
+  // artifacts (the monorepo-friendly default); a named ecosystem pins it.
+  const formEcosystem = signal<"auto" | SupportedEcosystem>("auto");
+  const formArtifactName = signal<string>("");
   const formStatus = signal<ReleaseTargetFormStatus>("idle");
   const formError = signal<string | null>(null);
 
@@ -262,6 +292,8 @@ export const GithubAppModel = createModel(() => {
     formInstallationRowId.value = "";
     formRepositoryFullName.value = "";
     formEnvironment.value = "";
+    formEcosystem.value = "auto";
+    formArtifactName.value = "";
     formError.value = null;
   }
 
@@ -285,6 +317,8 @@ export const GithubAppModel = createModel(() => {
     formInstallationRowId,
     formRepositoryFullName,
     formEnvironment,
+    formEcosystem,
+    formArtifactName,
     formStatus,
     formError,
     formSubmitting,
@@ -420,12 +454,15 @@ export const GithubAppModel = createModel(() => {
       formStatus.value = "submitting";
       formError.value = null;
       try {
+        const artifactName = formArtifactName.value.trim();
         const payload: Record<string, string> = {
           installationRowId: formInstallationRowId.value.trim(),
-          ecosystem: "pypi",
+          // "auto" maps to a null ecosystem server-side (artifact-derived).
+          ecosystem: formEcosystem.value,
           repositoryFullName: formRepositoryFullName.value.trim(),
           environment: formEnvironment.value.trim(),
         };
+        if (artifactName) payload.artifactName = artifactName;
         const data = await apiJson<{ releaseTarget: PublicReleaseTarget }>(
           "/api/v1/github-app/release-targets",
           payload,

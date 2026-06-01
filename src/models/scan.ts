@@ -415,6 +415,10 @@ export const ScanDetailModel = createModel((id: string) => {
       }
     },
 
+    // Decides the package this detail page is reviewing (its own scanId). The
+    // gate only finalizes once every package is approved (or any is rejected);
+    // until then the returned gate stays pending and other packages still need
+    // a decision on their own detail pages.
     async decideGate(
       decision: WorkflowGateDecision,
       comment: string | null,
@@ -422,10 +426,17 @@ export const ScanDetailModel = createModel((id: string) => {
     ): Promise<void> {
       const current = this.gate.peek();
       if (!current) return;
+      const packageScanId = this.scanId.peek();
       this.gateDecisionStatus.value = "saving";
       this.gateDecisionError.value = null;
       try {
-        const { gate: updated } = await decideWorkflowGate(current.id, decision, comment, totpCode);
+        const { gate: updated } = await decideWorkflowGate(
+          current.id,
+          packageScanId,
+          decision,
+          comment,
+          totpCode,
+        );
         this.gate.value = updated;
         this.gateDecisionStatus.value = "idle";
         // The decision also writes the scan's publish/no_publish decision and an

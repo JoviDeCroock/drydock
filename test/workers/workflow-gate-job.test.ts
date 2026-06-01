@@ -8,6 +8,7 @@ import {
   createReleaseTarget,
   attachScanToGate,
   getGateForOrganization,
+  listGatePackageScans,
   markGateDecided,
   upsertInstallation,
 } from "../../server/lib/github-app";
@@ -661,12 +662,17 @@ describe("executeWorkflowGateJob", () => {
 
     const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
     expect(gate?.status).toBe("pending");
-    expect(gate?.scanId).toBeTruthy();
+    // The representative headline is attached only on a successful batch, so a
+    // failed batch leaves it unset; the failed package scan is still linked to
+    // the gate via `scans.gate_id` for the dashboard.
+    expect(gate?.scanId).toBeNull();
     expect(scenario.decisionCalls).toHaveLength(0);
 
-    const persisted = await getScan(db, gate!.scanId!, seeded.organizationId);
-    expect(persisted?.scan.status).toBe("failed");
-    expect(persisted?.scan.source).toBe("workflow_gate");
+    const failedPackages = await listGatePackageScans(db, seeded.organizationId, seeded.gateId);
+    expect(failedPackages).toHaveLength(1);
+    expect(failedPackages[0].status).toBe("failed");
+    const failedScan = await getScan(db, failedPackages[0].scanId, seeded.organizationId);
+    expect(failedScan?.scan.source).toBe("workflow_gate");
 
     const types = await scanEventTypes(seeded.organizationId, seeded.gateId);
     expect(types).toContain("github_workflow_gate.review_failed");
@@ -682,14 +688,19 @@ describe("executeWorkflowGateJob", () => {
 
     const retriedGate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
     expect(retriedGate?.status).toBe("pending");
+    // The retry discards the failed batch and re-runs it, so a fresh
+    // representative scan attaches on success.
     expect(retriedGate?.scanId).toBeTruthy();
-    expect(retriedGate?.scanId).not.toBe(gate?.scanId);
     expect(loaderMock.calls.length).toBeGreaterThan(loaderCallsAfterFailure);
     expect(scenario.decisionCalls).toHaveLength(0);
 
     const retriedScan = await getScan(db, retriedGate!.scanId!, seeded.organizationId);
     expect(retriedScan?.scan.status).toBe("complete");
     expect(retriedScan?.scan.source).toBe("workflow_gate");
+
+    const retriedPackages = await listGatePackageScans(db, seeded.organizationId, seeded.gateId);
+    expect(retriedPackages).toHaveLength(1);
+    expect(retriedPackages[0].status).toBe("complete");
   });
 
   test("does not re-review a pending gate that already has a scan attached", async () => {
@@ -990,10 +1001,15 @@ describe("executeWorkflowGateJob", () => {
 
     const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
     expect(gate?.status).toBe("rejected");
-    expect(gate?.scanId).toBeTruthy();
+    // The trigger decided the gate on the `reviewed` event, before the runner
+    // attaches the representative headline: the attach CAS (expecting a pending
+    // gate) loses the race, so `scanId` stays null. The reviewed package scan is
+    // still persisted and linked via `scans.gate_id`.
+    expect(gate?.scanId).toBeNull();
 
-    const persisted = await getScan(db, gate!.scanId!, seeded.organizationId);
-    expect(persisted?.scan.status).toBe("complete");
+    const packages = await listGatePackageScans(db, seeded.organizationId, seeded.gateId);
+    expect(packages).toHaveLength(1);
+    expect(packages[0].status).toBe("complete");
 
     const types = await scanEventTypes(seeded.organizationId, seeded.gateId);
     expect(types).not.toContain("github_workflow_gate.notification_sent");

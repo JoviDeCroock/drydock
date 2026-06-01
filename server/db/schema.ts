@@ -1,4 +1,11 @@
-import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import {
+  sqliteTable,
+  text,
+  integer,
+  index,
+  uniqueIndex,
+  type AnySQLiteColumn,
+} from "drizzle-orm/sqlite-core";
 
 export const user = sqliteTable("user", {
   id: text("id").primaryKey(),
@@ -114,6 +121,13 @@ export const scans = sqliteTable(
       onDelete: "cascade",
     }),
     ownerUserId: text("owner_user_id").references(() => user.id, { onDelete: "set null" }),
+    // Workflow-gate reviews link each per-package scan back to its gate. A
+    // monorepo release bundle produces several `workflow_gate` scans that share
+    // one `gate_id`; the gate decision aggregates across them. Null for ordinary
+    // (npm/manual) scans.
+    gateId: text("gate_id").references((): AnySQLiteColumn => githubWorkflowGates.id, {
+      onDelete: "set null",
+    }),
     packageName: text("package_name"),
     stagedVersion: text("staged_version"),
     previousVersion: text("previous_version"),
@@ -288,7 +302,14 @@ export const githubReleaseTargets = sqliteTable(
     installationRowId: text("installation_row_id")
       .notNull()
       .references(() => githubAppInstallations.id, { onDelete: "cascade" }),
-    ecosystem: text("ecosystem").notNull(),
+    // Null means "auto-detect the ecosystem from the uploaded artifacts" (one
+    // gate covers every package a monorepo publishes from the environment). A
+    // non-null value pins detection + the default artifact name to one ecosystem
+    // (the legacy single-ecosystem behavior).
+    ecosystem: text("ecosystem"),
+    // Optional override for the GitHub Actions artifact the release bundle is
+    // downloaded from. Null falls back to the ecosystem default.
+    artifactName: text("artifact_name"),
     repositoryId: integer("repository_id").notNull(),
     repositoryFullName: text("repository_full_name").notNull(),
     environment: text("environment").notNull(),
@@ -331,7 +352,13 @@ export const githubWorkflowGates = sqliteTable(
     decision: text("decision"),
     decisionComment: text("decision_comment"),
     reportUrl: text("report_url"),
+    // Representative (highest-risk) package scan for the gate. The full set of
+    // per-package scans is found via `scans.gate_id = github_workflow_gates.id`.
     scanId: text("scan_id").references(() => scans.id, { onDelete: "set null" }),
+    // CAS claim so concurrent webhook re-deliveries don't double-run the review
+    // batch. Set once when a delivery starts reviewing; a later delivery retries
+    // only when the batch is incomplete.
+    reviewStartedAt: integer("review_started_at", { mode: "timestamp_ms" }),
     failureReason: text("failure_reason"),
     requestedAt: integer("requested_at", { mode: "timestamp_ms" }).notNull(),
     decidedAt: integer("decided_at", { mode: "timestamp_ms" }),

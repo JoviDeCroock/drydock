@@ -240,11 +240,13 @@ function source(): WorkflowArtifactSource {
 
 // The shared fetcher is ecosystem-agnostic; the workflow-gate adapter supplies
 // this. These tests use a wheel/sdist classifier to exercise the release-set
-// collection without coupling to a specific adapter.
-function classifyArtifact(path: string): string | null {
+// collection without coupling to a specific adapter. The classifier tags each
+// kept entry with its ecosystem so a monorepo bundle can fan out per-ecosystem.
+function classifyArtifact(path: string): { ecosystem: string; kind: string } | null {
   const lower = path.toLowerCase();
-  if (lower.endsWith(".whl")) return "wheel";
-  if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) return "sdist";
+  if (lower.endsWith(".whl")) return { ecosystem: "pypi", kind: "wheel" };
+  if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz"))
+    return { ecosystem: "pypi", kind: "sdist" };
   return null;
 }
 
@@ -262,6 +264,7 @@ describe("fetchReleaseBundleWithToken", () => {
     expect(bundle.artifacts).toHaveLength(1);
     expect(bundle.artifacts[0]?.path).toBe(fixture.wheel.path);
     expect(bundle.artifacts[0]?.kind).toBe("wheel");
+    expect(bundle.artifacts[0]?.ecosystem).toBe("pypi");
     expect(bundle.artifacts[0]?.bytes).toEqual(fixture.wheel.bytes);
     expect(bundle.artifacts[0]?.sha256).toBe(fixture.wheelSha);
     expect(calls.every((call) => call.authorization === `Bearer ${TOKEN}`)).toBe(true);

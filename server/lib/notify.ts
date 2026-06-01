@@ -161,6 +161,8 @@ export interface NotifyWorkflowGateReviewInput {
   packageName: string | null;
   version: string | null;
   releaseRisk: RiskLevel;
+  /** Total packages in the release; >1 means a monorepo bundle fanned out. */
+  packageCount?: number;
 }
 
 /**
@@ -195,6 +197,7 @@ export async function notifyWorkflowGateReview(
     packageName,
     version,
     releaseRisk,
+    packageCount,
   } = input;
 
   const recipients = await resolveNotificationEmails(db, organizationId, ownerUserId);
@@ -211,13 +214,17 @@ export async function notifyWorkflowGateReview(
 
   const packageLabel = formatPackageLabel(packageName, version);
   const dashboardUrl = scanUrl(env, scanId);
+  const otherPackages = packageCount && packageCount > 1 ? packageCount - 1 : 0;
+  const packageLine = otherPackages
+    ? `Package: ${packageLabel} (+${otherPackages} more in this release; each must be approved)`
+    : `Package: ${packageLabel}`;
   const subject = `Release gate needs your review — ${packageLabel}`;
   const lines = [
     "Hi there,",
     "",
     `A staged release is held in ${repositoryFullName} and is waiting for a decision before it can publish.`,
     "",
-    `Package: ${packageLabel}`,
+    packageLine,
     `Release risk: ${releaseRisk}`,
     `Repository: ${repositoryFullName}`,
     `Environment: ${environment}`,

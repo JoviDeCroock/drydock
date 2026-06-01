@@ -177,11 +177,14 @@ function ReleaseTargetList({
             <div class="flex flex-col gap-1.5 min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="font-mono text-[14px] font-medium">{target.repositoryFullName}</span>
-                <Badge tone="info">{target.ecosystem}</Badge>
+                <Badge tone="info">{target.ecosystem ?? "auto"}</Badge>
               </div>
               <MonoDetail
                 parts={[
                   <span key="env">env {target.environment}</span>,
+                  target.artifactName ? (
+                    <span key="artifact">artifact {target.artifactName}</span>
+                  ) : null,
                   <span key="install">
                     via {installation?.accountLogin ?? "unknown"} ·{" "}
                     {installation?.installationId ?? target.installationRowId}

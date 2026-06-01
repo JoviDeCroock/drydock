@@ -26,7 +26,12 @@ export interface ReleaseTargetRecord {
   id: string;
   organizationId: string;
   installationRowId: string;
-  ecosystem: SupportedEcosystem;
+  // Null means "auto-detect the ecosystem from the uploaded artifacts" so one
+  // gate can cover every package a monorepo publishes from the environment.
+  ecosystem: SupportedEcosystem | null;
+  // Null falls back to the resolved ecosystem's default GitHub Actions artifact
+  // name (or the auto-detect default for unpinned targets).
+  artifactName: string | null;
   repositoryId: number;
   repositoryFullName: string;
   environment: string;
@@ -174,7 +179,10 @@ export async function markInstallationStatus(
 export interface CreateReleaseTargetInput {
   organizationId: string;
   installationRowId: string;
-  ecosystem: SupportedEcosystem;
+  /** Null = auto-detect the ecosystem from the uploaded artifacts. */
+  ecosystem: SupportedEcosystem | null;
+  /** Optional override for the GitHub Actions artifact name. */
+  artifactName?: string | null;
   repositoryId: number;
   repositoryFullName: string;
   environment: string;
@@ -207,12 +215,14 @@ export async function createReleaseTarget(
 
   const id = crypto.randomUUID();
   const now = new Date();
+  const artifactName = normalizeArtifactName(input.artifactName);
   try {
     await db.insert(githubReleaseTargets).values({
       id,
       organizationId: input.organizationId,
       installationRowId: input.installationRowId,
       ecosystem: input.ecosystem,
+      artifactName,
       repositoryId: input.repositoryId,
       repositoryFullName: input.repositoryFullName,
       environment,
@@ -234,12 +244,19 @@ export async function createReleaseTarget(
     organizationId: input.organizationId,
     installationRowId: input.installationRowId,
     ecosystem: input.ecosystem,
+    artifactName,
     repositoryId: input.repositoryId,
     repositoryFullName: input.repositoryFullName,
     environment,
     createdAt: now,
     updatedAt: now,
   };
+}
+
+function normalizeArtifactName(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 export async function listReleaseTargetsForOrganization(
@@ -343,7 +360,8 @@ function readReleaseTargetRow(row: {
   id: string;
   organizationId: string;
   installationRowId: string;
-  ecosystem: string;
+  ecosystem: string | null;
+  artifactName: string | null;
   repositoryId: number;
   repositoryFullName: string;
   environment: string;
@@ -354,7 +372,8 @@ function readReleaseTargetRow(row: {
     id: row.id,
     organizationId: row.organizationId,
     installationRowId: row.installationRowId,
-    ecosystem: row.ecosystem as SupportedEcosystem,
+    ecosystem: row.ecosystem === null ? null : (row.ecosystem as SupportedEcosystem),
+    artifactName: row.artifactName,
     repositoryId: row.repositoryId,
     repositoryFullName: row.repositoryFullName,
     environment: row.environment,

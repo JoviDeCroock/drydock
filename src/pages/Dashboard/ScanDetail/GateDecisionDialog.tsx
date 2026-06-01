@@ -1,7 +1,12 @@
 import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import type { DecisionStatus } from "../../../models/scan";
-import type { PublicWorkflowGate, WorkflowGateDecision } from "../../../models/github-app";
+import type {
+  GatePackageDecision,
+  GatePackageScan,
+  PublicWorkflowGate,
+  WorkflowGateDecision,
+} from "../../../models/github-app";
 import {
   Alert,
   Badge,
@@ -13,6 +18,7 @@ import {
   MonoDetail,
   Muted,
   SectionLabel,
+  severityTone,
 } from "../../../components";
 
 export function gateStatusTone(status: PublicWorkflowGate["status"]) {
@@ -38,6 +44,101 @@ export function gateStatusLabel(status: PublicWorkflowGate["status"]): string {
     default:
       return "awaiting decision";
   }
+}
+
+function packageDecisionTone(pkg: GatePackageScan) {
+  if (pkg.decision === "publish") return "ok" as const;
+  if (pkg.decision === "no_publish") return "critical" as const;
+  if (pkg.status === "failed") return "critical" as const;
+  if (pkg.status !== "complete") return "neutral" as const;
+  return "medium" as const;
+}
+
+function packageDecisionLabel(pkg: GatePackageScan): string {
+  if (pkg.decision === "publish") return "approved";
+  if (pkg.decision === "no_publish") return "rejected";
+  if (pkg.status === "failed") return "review failed";
+  if (pkg.status !== "complete") return "reviewing";
+  return "awaiting decision";
+}
+
+function packageLabel(pkg: GatePackageScan): string {
+  if (pkg.packageName && pkg.version) return `${pkg.packageName}@${pkg.version}`;
+  return pkg.packageName ?? "package";
+}
+
+/**
+ * Roster of every package the gated release publishes. A monorepo fans the gate
+ * out into one scan per package and the held deployment only releases once all
+ * of them are approved — so this panel makes the sibling packages and their
+ * per-package decision state visible from any one package's review page, with a
+ * link to open each sibling's own review.
+ *
+ * Renders nothing for a single-package gate, where the roster would just echo
+ * the page you're already on.
+ */
+export function GatePackagesPanel({
+  gate,
+  currentScanId,
+}: {
+  gate: PublicWorkflowGate;
+  currentScanId: string;
+}) {
+  const packages = gate.packages;
+  if (packages.length <= 1) return null;
+  const approved = packages.filter((pkg) => pkg.decision === "publish").length;
+  const rejected = packages.filter((pkg) => pkg.decision === "no_publish").length;
+  const pending = gate.status === "pending";
+
+  return (
+    <section class="flex flex-col gap-3 border border-border rounded-lg p-4">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <SectionLabel>Release packages</SectionLabel>
+        <span class="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-subtle">
+          {approved} of {packages.length} approved
+          {rejected ? ` · ${rejected} rejected` : ""}
+        </span>
+      </div>
+      <p class="m-0 max-w-[760px] text-[13px] leading-[1.55] text-ink-muted">
+        This release publishes {packages.length} packages. Every one must be approved before the
+        held deployment releases; rejecting any single package blocks the whole release.
+      </p>
+      <ul class="m-0 p-0 list-none flex flex-col">
+        {packages.map((pkg) => {
+          const isCurrent = pkg.scanId === currentScanId;
+          return (
+            <li
+              key={pkg.scanId}
+              class="border-t border-border first:border-t-0 py-2.5 flex flex-wrap items-center justify-between gap-2"
+            >
+              <div class="flex items-center gap-2 flex-wrap min-w-0">
+                <span class="font-mono text-[13px] font-medium truncate">{packageLabel(pkg)}</span>
+                {pkg.releaseRisk ? (
+                  <Badge tone={severityTone(pkg.releaseRisk)}>{pkg.releaseRisk}</Badge>
+                ) : null}
+                {isCurrent ? <Badge tone="neutral">this package</Badge> : null}
+              </div>
+              <div class="flex items-center gap-3 shrink-0">
+                <Badge tone={packageDecisionTone(pkg)}>{packageDecisionLabel(pkg)}</Badge>
+                {isCurrent ? (
+                  <span class="font-mono text-[11px] text-ink-subtle">
+                    {pending && !pkg.decision ? "decide below" : "shown here"}
+                  </span>
+                ) : (
+                  <a
+                    class="font-mono text-[11px] underline text-accent"
+                    href={`/dashboard/scans/${encodeURIComponent(pkg.scanId)}`}
+                  >
+                    {pending && !pkg.decision ? "review →" : "open →"}
+                  </a>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
 }
 
 export function GateContextPanel({
@@ -91,6 +192,7 @@ export function GateDecisionDialog({
   onClose,
   gate,
   packageName,
+  packageDecision,
   status,
   error,
   canApprove,
@@ -101,6 +203,8 @@ export function GateDecisionDialog({
   onClose: () => void;
   gate: PublicWorkflowGate;
   packageName: string | null;
+  /** This package's recorded decision, if it has already been decided. */
+  packageDecision: GatePackageDecision | null;
   status: DecisionStatus;
   error: string | null;
   canApprove: boolean;
@@ -114,8 +218,11 @@ export function GateDecisionDialog({
   const commentDraft = useSignal("");
   const codeDraft = useSignal("");
   const saving = status === "saving";
-  const decided = gate.status === "approved" || gate.status === "rejected";
-  const needsCode = requireTwoFactor && !decided;
+  const gateDecided = gate.status === "approved" || gate.status === "rejected";
+  const packages = gate.packages;
+  const multi = packages.length > 1;
+  const approvedCount = packages.filter((pkg) => pkg.decision === "publish").length;
+  const needsCode = requireTwoFactor && !gateDecided;
   const code = codeDraft.value.trim();
   const blockedOnCode = needsCode && code.length === 0;
 
@@ -127,7 +234,7 @@ export function GateDecisionDialog({
   }, [open]);
 
   const submit = (next: WorkflowGateDecision) => {
-    if (saving || decided || blockedOnCode) return;
+    if (saving || gateDecided || blockedOnCode) return;
     const trimmed = commentDraft.value.trim();
     void onSubmit(next, trimmed.length ? trimmed : null, needsCode ? code : null);
   };
@@ -141,8 +248,12 @@ export function GateDecisionDialog({
     <Dialog
       open={open}
       onClose={handleClose}
-      title="Release decision"
-      description="Approve to release the held GitHub Actions job — publishing then proceeds through PyPI Trusted Publishing (OIDC). Reject to block the job. Drydock never holds PyPI credentials or uploads the package."
+      title={multi ? "Package decision" : "Release decision"}
+      description={
+        multi
+          ? "Decide this package. The held GitHub Actions job releases only once every package in the release is approved; rejecting any one blocks the whole release. Publishing then proceeds through PyPI Trusted Publishing (OIDC) — Drydock never holds PyPI credentials."
+          : "Approve to release the held GitHub Actions job — publishing then proceeds through PyPI Trusted Publishing (OIDC). Reject to block the job. Drydock never holds PyPI credentials or uploads the package."
+      }
     >
       <div class="flex flex-col gap-2 border border-border rounded-md p-3">
         <MonoDetail
@@ -153,10 +264,21 @@ export function GateDecisionDialog({
             <span key="run">run #{gate.runId}</span>,
           ]}
         />
-        {decided ? (
+        {gateDecided ? (
           <Badge tone={gateStatusTone(gate.status)}>{gateStatusLabel(gate.status)}</Badge>
+        ) : packageDecision ? (
+          <Badge tone={packageDecision === "publish" ? "ok" : "critical"}>
+            this package {packageDecision === "publish" ? "approved" : "rejected"}
+          </Badge>
         ) : null}
       </div>
+
+      {multi && !gateDecided ? (
+        <Muted class="m-0 text-[13px]">
+          {approvedCount} of {packages.length} packages approved. All must be approved before the
+          held deployment releases.
+        </Muted>
+      ) : null}
 
       <Field label="Comment (optional · shown in the GitHub run log)" for="gateComment">
         <Input
@@ -165,7 +287,7 @@ export function GateDecisionDialog({
           value={commentDraft.value}
           placeholder="e.g. reviewed changed files, no risk signals"
           onInput={(e) => (commentDraft.value = (e.target as HTMLInputElement).value)}
-          disabled={saving || decided}
+          disabled={saving || gateDecided}
           maxLength={500}
           autoComplete="off"
           spellcheck={false}
@@ -192,7 +314,7 @@ export function GateDecisionDialog({
         </Field>
       ) : null}
 
-      {decided ? (
+      {gateDecided ? (
         <Muted class="m-0 text-[13px]">
           This gate has already been decided. The decision is final — GitHub has been notified.
         </Muted>
@@ -200,7 +322,13 @@ export function GateDecisionDialog({
         <div class="flex flex-wrap gap-2">
           {canApprove ? (
             <Button onClick={() => submit("approved")} disabled={saving || blockedOnCode}>
-              {saving ? "Submitting…" : "Approve & release"}
+              {saving
+                ? "Submitting…"
+                : packageDecision === "publish"
+                  ? "Re-approve package"
+                  : multi
+                    ? "Approve package"
+                    : "Approve & release"}
             </Button>
           ) : null}
           <Button
@@ -208,11 +336,11 @@ export function GateDecisionDialog({
             onClick={() => submit("rejected")}
             disabled={saving || blockedOnCode}
           >
-            {saving ? "Submitting…" : "Reject & block"}
+            {saving ? "Submitting…" : "Reject & block release"}
           </Button>
         </div>
       )}
-      {!decided && !canApprove ? (
+      {!gateDecided && !canApprove ? (
         <Muted class="m-0 text-[13px]">
           Approval requires a completed review. Rejecting blocks the held GitHub job.
         </Muted>

@@ -26,7 +26,7 @@ import {
   VersionPicker,
 } from "../../../components";
 import { DecisionDialog } from "./DecisionDialog";
-import { GateContextPanel, GateDecisionDialog } from "./GateDecisionDialog";
+import { GateContextPanel, GateDecisionDialog, GatePackagesPanel } from "./GateDecisionDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
 import { RiskSignalsSection } from "./FindingsSection";
 import { ReleaseRecommendation } from "./ReleaseRecommendation";
@@ -223,6 +223,9 @@ export default function ScanDetailPage() {
       {isWorkflowGate && detail ? (
         <GateContextPanel gate={gate} packageName={detail.scan.packageName} />
       ) : null}
+      {isWorkflowGate && detail && gate ? (
+        <GatePackagesPanel gate={gate} currentScanId={detail.scan.id} />
+      ) : null}
       {detail?.scan.status === "failed" ? (
         <ScanFailureAlert errorJson={detail.scan.errorJson} />
       ) : null}
@@ -352,6 +355,11 @@ export default function ScanDetailPage() {
           packageName={detail.scan.packageName}
           statusSignal={model.gateDecisionStatus}
           errorSignal={model.gateDecisionError}
+          packageDecision={
+            detail.scan.decision === "publish" || detail.scan.decision === "no_publish"
+              ? detail.scan.decision
+              : null
+          }
           canApprove={detail.scan.status === "complete"}
           onSubmit={handleGateDecision}
         />

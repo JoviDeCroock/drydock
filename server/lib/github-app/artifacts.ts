@@ -14,17 +14,22 @@ export interface WorkflowArtifactSource {
 }
 
 /**
- * Decide whether a bundle entry is a reviewable artifact. The shared fetcher is
- * ecosystem-agnostic: the workflow-gate adapter supplies this so the kind is
- * opaque here (PyPI returns `"wheel" | "sdist"`; other ecosystems pick their
- * own). Returning `null` drops the entry — it is never collected or scanned.
+ * Decide whether a bundle entry is a reviewable artifact and which ecosystem it
+ * belongs to. The shared fetcher is ecosystem-agnostic: a single-ecosystem
+ * workflow-gate adapter (pinned targets) or the registry's combined classifier
+ * (auto-detect targets) supplies this. Both `ecosystem` and `kind` are opaque
+ * here — PyPI returns `{ ecosystem: "pypi", kind: "wheel" | "sdist" }`; other
+ * ecosystems pick their own. Returning `null` drops the entry — it is never
+ * collected or scanned. Tagging each kept entry with its ecosystem is what lets
+ * one monorepo bundle fan out into per-ecosystem, per-package reviews.
  */
-export type ClassifyArtifact = (path: string) => string | null;
+export type ClassifyArtifact = (path: string) => { ecosystem: string; kind: string } | null;
 
 export interface ResolvedReleaseFile {
   path: string;
   bytes: Uint8Array;
   sha256: string;
+  ecosystem: string;
   kind: string;
 }
 
@@ -158,10 +163,16 @@ export async function fetchReleaseBundleWithToken(
   // influence the review.
   const candidateArtifacts: ResolvedReleaseFile[] = [];
   for (const entry of entries) {
-    const kind = classifyArtifact(entry.path);
-    if (!kind) continue;
+    const classified = classifyArtifact(entry.path);
+    if (!classified) continue;
     const sha256 = await sha256Hex(entry.bytes);
-    candidateArtifacts.push({ path: entry.path, bytes: entry.bytes, sha256, kind });
+    candidateArtifacts.push({
+      path: entry.path,
+      bytes: entry.bytes,
+      sha256,
+      ecosystem: classified.ecosystem,
+      kind: classified.kind,
+    });
   }
   if (candidateArtifacts.length === 0) {
     throw new WorkflowArtifactError(

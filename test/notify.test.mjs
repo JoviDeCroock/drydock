@@ -111,6 +111,15 @@ describe("notifyWorkflowGateReview", () => {
     }
   });
 
+  test("flags a monorepo bundle so the owner knows every package needs approval", async () => {
+    await notifyWorkflowGateReview(gateInput({ packageCount: 3 }));
+
+    const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
+    expect(message.text).toContain(
+      "demo-package@1.2.0 (+2 more in this release; each must be approved)",
+    );
+  });
+
   test("never leaks token, header, or callback material into the email", async () => {
     await notifyWorkflowGateReview(gateInput());
 

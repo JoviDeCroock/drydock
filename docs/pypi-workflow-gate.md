@@ -22,7 +22,7 @@ The repo now has a backend-only PyPI foundation in `server/lib/adapters/pypi/ind
 - parses wheel `METADATA`, `WHEEL`, and `RECORD` evidence from ZIP archives;
 - strips the common root directory from sdists before reading `PKG-INFO`;
 - compares flattened candidate artifact files against the previous PyPI release using stable wheel/sdist namespaces instead of versioned artifact filenames (callers may inject explicit `previousArtifacts`, otherwise the adapter resolves and downloads the baseline itself);
-- requires every artifact in the bundle to agree on the normalized package name and version before forming a reviewable release;
+- groups the bundle's artifacts by normalized (PEP 503) package name into one reviewable release per distinct package (a monorepo publishes several), requiring artifacts that share a name to agree on the version before forming that package's release;
 - adds PyPI-specific deterministic findings for metadata mismatches, missing wheel `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, and `.pyd` native extensions;
 - fetches PyPI project metadata from `GET /pypi/<project>/json`;
 - selects a default PyPI baseline release from `info.version`, falling back to newest non-yanked upload time;
@@ -35,15 +35,18 @@ The sandbox parser now supports safe ZIP archive parsing for wheels in addition 
 ## Release set derivation
 
 There is no manifest file. The boundary between the GitHub workflow and Drydock
-is simply the `pypi-release-candidate` artifact bundle: CI uploads `dist/*` and
-Drydock treats every `.whl` / `.tar.gz` / `.tgz` in the bundle as the release
-set. The reviewable identity is derived internally into the same
-`drydock.release-artifacts.v1` shape the rest of the pipeline consumes:
+is simply the release-candidate artifact bundle: CI uploads `dist/*` and Drydock
+treats every `.whl` / `.tar.gz` / `.tgz` in the bundle as the release set, then
+groups those files by package into one `drydock.release-artifacts.v1` release per
+distinct package (a monorepo publishes several) — the same shape the rest of the
+pipeline consumes:
 
 - `package` / `version` come from each wheel's `METADATA` and each sdist's
-  `PKG-INFO`. Every artifact must expose a `Name`/`Version` and agree on the
-  normalized (PEP 503) name and the version, so a foreign or version-skewed file
-  in `dist/` is rejected, not silently shipped.
+  `PKG-INFO`. Every artifact must expose a `Name`/`Version`; files are grouped by
+  normalized (PEP 503) name, and artifacts that share a name must agree on the
+  version, so a metadata-less or version-skewed file in a package's set is
+  rejected, not silently shipped. Distinct package names are kept apart as
+  separate releases — that is the expected monorepo shape, not a conflict.
 - each artifact's `sha256` is recomputed server-side from the bundle bytes.
 
 ### Trust tradeoff (deliberate)
@@ -148,18 +151,28 @@ organization (`x-organization-id` header to scope writes).
   belongs to so the scan workbench can render gate status and the decision
   controls. Returns the public gate shape (no `deployment_callback_url`); 404
   when the scan is not a gate review or belongs to another org.
-- `POST /workflow-gates/:gateId/decision` — records a maintainer's
-  `{ decision: "approved" | "rejected", comment?, totpCode? }` and releases/blocks
-  the held GitHub job. `markGateDecided` is the single CAS out of `pending`, so a
-  double-submit (or a race with the fail-closed artifact reject) returns 409.
-  Approval requires the gate to be linked to a completed `workflow_gate` scan;
-  rejection is allowed without one so maintainers can still fail closed.
-  Delivery to GitHub is scheduled immediately after the CAS, before best-effort
-  scan/audit mirroring, and is handed to the gate job (over `SCAN_QUEUE`, with
-  inline fallback) so the decided gate posts its stored decision. The decision is
-  also mirrored onto the underlying scan as `publish` for approved gates or
-  `no_publish` for rejected gates when that write succeeds. Rate-limited to
-  60/min per org.
+- `POST /workflow-gates/:gateId/decision` — records a maintainer's decision on
+  **one package** of the gate: `{ scanId, decision: "approved" | "rejected",
+  comment?, totpCode? }`, where `scanId` is the completed `workflow_gate` scan of
+  the package being decided. `scanId` is required (400 if missing); a scan that is
+  not a completed reviewable package of this gate returns 409
+  (`scanId is not a reviewable package of this gate`). The per-package decision is
+  persisted (`publish` for approved, `no_publish` for rejected), then the gate is
+  aggregated over **every** package scan linked via `scans.gate_id`:
+  - any package rejected → the gate is rejected and the held job is blocked
+    immediately (one bad package fails the whole release);
+  - every package approved → the gate is approved and the held job is released;
+  - otherwise the gate stays `pending` and the response returns the gate with its
+    per-package roster so the workbench can show "N of M approved" (HTTP 200, no
+    GitHub callback yet).
+
+  `markGateDecided` is the single CAS out of `pending`, so a double-submit (or a
+  race with the fail-closed artifact reject) returns 409. Delivery to GitHub is
+  scheduled immediately after the CAS, before best-effort audit mirroring, and is
+  handed to the gate job (over `SCAN_QUEUE`, with inline fallback) so the decided
+  gate posts its stored decision. Rate-limited to 60/min per org. The public gate
+  shape carries a `packages: [{ scanId, packageName, version, status,
+  releaseRisk, decision }]` array (one entry per distinct package).
   - **2FA step-up (issue #162):** releasing or blocking a held deployment is
     irreversible (approval immediately releases the job and publishing proceeds
     over Trusted Publishing/OIDC), so when the deciding maintainer has two-factor
@@ -189,6 +202,17 @@ organization (`x-organization-id` header to scope writes).
   provided environment name exceeds GitHub's 255-character limit.
 - `environment_already_mapped` — `(organizationId, repositoryId, environment)`
   already has a row, so a deployment-protection webhook would be ambiguous.
+- `unsupported_ecosystem` — a non-empty `ecosystem` that names no registered
+  ecosystem. `ecosystem` is **optional**: omitting it (or sending `""`/`"auto"`)
+  stores `null`, which means "auto-detect each package's ecosystem from the
+  uploaded artifacts" — the monorepo-friendly default, where one gate covers
+  every package the environment publishes. A non-empty value pins detection and
+  the default artifact name to that one ecosystem.
+
+`artifactName` is also optional: it overrides the GitHub Actions artifact the
+release bundle is downloaded from. When unset, an auto-detect target falls back
+to `release-candidate` and a pinned target falls back to its ecosystem adapter's
+default (PyPI: `pypi-release-candidate`).
 
 ### Webhook resolution
 
@@ -352,10 +376,13 @@ the install:
 5. Below the linked installations, a "Release targets" form lets the user
    register a `(repo, environment)` mapping. The installation defaults to the one
    linked for the org; repository and environment are dropdowns populated from
-   the proxy endpoints. The server still revalidates installation ownership, repo
-   access, and environment names on `POST /release-targets`, so the UI cannot
-   bypass the rules. Empty states link to GitHub App settings (no repos) and
-   GitHub Actions environments docs (no environments).
+   the proxy endpoints. A target left unpinned (no ecosystem) auto-detects each
+   package's ecosystem from the uploaded artifacts, so a single target gates every
+   package a monorepo publishes from that environment. The server still
+   revalidates installation ownership, repo access, and environment names on
+   `POST /release-targets`, so the UI cannot bypass the rules. Empty states link
+   to GitHub App settings (no repos) and GitHub Actions environments docs (no
+   environments).
 6. Above the release-targets form, a "gate setup" guide walks through installing
    the App, adding a GitHub Environment custom deployment protection rule, and
    matching the PyPI Trusted Publisher environment. It states plainly that
@@ -376,6 +403,15 @@ surface are identical to npm reviews. A decided gate shows its stored decision
 and comment instead of the controls. Failed review scans also resolve their
 linked gate so the workbench can show the held GitHub job context instead of a
 detached failure.
+
+Because one monorepo release fans out into one scan per package, the gate's
+`packages` roster is surfaced in the workbench: each package is a cross-link to
+its own scan with its release risk and per-package decision, and the gate header
+shows an "N of M approved" progress line. The decision controls always carry the
+current scan's `scanId`, so approving/rejecting acts on **that** package only;
+the gate stays pending until every package is individually approved (any one
+rejected blocks the whole release). A package opened from the roster is the same
+diff-first workbench scoped to that package's baseline.
 
 ### Resolving artifacts for a pending gate
 
@@ -417,11 +453,13 @@ What the resolver enforces, in order:
    with no wheels/sdists is `bundle_empty`; more than 20 is `bundle_too_large`.
 5. Each wheel/sdist's bytes cross into the credentials-free sandbox, which
    parses `METADATA`/`PKG-INFO` into bounded evidence.
-6. The release identity is derived from that parsed metadata: every artifact
-   must expose a `Name`/`Version` and agree on the normalized package name and
-   the version. The synthesized `drydock.release-artifacts.v1` shape (PEP 503
-   project name, safe version, ≤20 artifacts, safe artifact paths) is then
-   re-validated before scanning.
+6. The release identities are derived from that parsed metadata: every artifact
+   must expose a `Name`/`Version`, and the artifacts are grouped by normalized
+   package name into one release per distinct package (a monorepo yields
+   several). Artifacts sharing a name must agree on the version. Each group's
+   synthesized `drydock.release-artifacts.v1` shape (PEP 503 project name, safe
+   version, ≤20 artifacts, safe artifact paths) is then re-validated before
+   scanning.
 
 Typed errors returned by `WorkflowArtifactError.code`:
 
@@ -432,10 +470,11 @@ Typed errors returned by `WorkflowArtifactError.code`:
 - `artifact_path_unsafe` — bundle entry path contained traversal segments.
 - `artifact_identity_missing` — an artifact exposed no usable `Name`/`Version`
   (or the derived identity failed validation).
-- `artifact_identity_inconsistent` — artifacts disagreed on the normalized
-  package name or the version.
+- `artifact_identity_inconsistent` — two artifacts sharing a normalized package
+  name disagreed on the version. (Distinct names are not a conflict — they become
+  separate package releases.)
 
-`prepareReleaseCandidateForGate(env, ctx, db, { config, organizationId,
+`prepareReleaseCandidatesForGate(env, ctx, db, { config, organizationId,
 gateId })` (`server/lib/workflow-gates/prepare.ts`) is the gate-aware wrapper. It
 looks up the gate row, selects the `WorkflowGateAdapter` for the release target's
 ecosystem, swaps the App JWT for a fresh installation access token, and on any
@@ -448,6 +487,41 @@ public-artifact allowlist, `subRequests: 0`). Because identity is derived from
 the sandbox-parsed metadata, package identity is known only after the artifacts
 have crossed the untrusted-archive parser; the release target itself binds the
 review to the GitHub repository and environment.
+
+## Monorepo gates (per-package fan-out)
+
+One GitHub environment can publish several distinct packages from a single
+workflow run (a monorepo cutting many wheels/sdists at once). A workflow gate
+therefore covers a **set** of packages, not just one:
+
+- **Auto-detect ecosystem.** A release target with `ecosystem = null` (the
+  default — left unpinned in the UI, or sent as `""`/`"auto"`) does not assume an
+  ecosystem up front. `prepareReleaseCandidatesForGate` classifies every bundle
+  entry across all registered ecosystems, groups the verified artifacts by
+  ecosystem, and hands each ecosystem's slice to its adapter. An unpinned target
+  downloads from the artifact named `release-candidate` unless `artifactName`
+  overrides it; a pinned target uses its ecosystem adapter's own default
+  (`pypi-release-candidate`). Pinning a single ecosystem keeps the legacy
+  single-ecosystem behavior and surfaces an unknown ecosystem as a configuration
+  error (gate left pending) rather than a fail-closed reject.
+- **One scan per package.** Each adapter splits its slice into one prepared
+  candidate per distinct package, and `reviewGatePackages` runs a full scan for
+  each against its **own** baseline, linking every scan to the gate via
+  `scans.gate_id`. The diff, deterministic findings, and risk are computed
+  per package exactly as a standalone npm/PyPI review would be.
+- **Every package must be approved.** The held GitHub deployment is released
+  only when **every** discovered package is individually approved. The decision
+  route names one package's `scanId` per call and aggregates over all package
+  scans linked to the gate: any one rejected → the gate is rejected and the job
+  is blocked immediately; all approved → the gate is approved and the job is
+  released; otherwise the gate stays pending and the workbench shows the
+  remaining packages ("N of M approved"). A single bad package blocks the whole
+  release.
+- **All-or-nothing batch.** The per-package scans are run as one batch under a
+  `review_started_at` claim. If any package's pipeline throws, the claim is
+  released and the gate stays pending with no representative attached, so a
+  half-reviewed monorepo never becomes review-ready; a retry discards the
+  half-finished scans (`discardGateScans`) and re-runs the whole set.
 
 ## Multi-ecosystem workflow gates
 
@@ -468,7 +542,7 @@ involved — do not conflate them:
 
 The **shared runner** owns every GitHub-shaped and persistence concern, in
 `server/lib/workflow-gate-job.ts` (`executeWorkflowGateJob`) plus
-`server/lib/workflow-gates/prepare.ts` (`prepareReleaseCandidateForGate`):
+`server/lib/workflow-gates/prepare.ts` (`prepareReleaseCandidatesForGate`):
 
 - loading the `github_workflow_gates` row, installation, and release target;
 - selecting the adapter from `github_release_targets.ecosystem`;
@@ -569,12 +643,12 @@ and the consumer re-checks gate status, so a re-enqueue is safe.
 2. Load the gate. A gate that is already `approved`/`rejected` triggers a
    **redelivery** of the stored decision to GitHub (idempotent re-POST) instead
    of re-running the review; callback failures rethrow so the queue retries. A
-   pending gate with an attached completed review is skipped because it is
-   waiting for a human decision; a pending gate with an attached failed review
-   is retried and relinked to the new scan if the retry succeeds. A non-pending,
-   non-decided status is skipped with a warning.
+   pending gate that already has a representative scan attached (`gate.scanId`
+   set) is skipped as `already_reviewed` — the per-package batch finished and the
+   gate is waiting on a human. A non-pending, non-decided status is skipped with a
+   warning.
 3. Record `github_workflow_gate.received`.
-4. Call `prepareReleaseCandidateForGate` to select the ecosystem adapter and
+4. Call `prepareReleaseCandidatesForGate` to select the ecosystem adapter and
    resolve + verify the bundle.
    - A `WorkflowArtifactError` (e.g. `bundle_unavailable` or
      `artifact_identity_inconsistent`)
@@ -586,26 +660,41 @@ and the consumer re-checks gate status, so a re-enqueue is safe.
    - Any other error (sandbox/review failure) leaves the gate **pending**,
      records `github_workflow_gate.review_failed`, and returns without POSTing —
      the operator can retry.
-5. Resolve the organization owner (so the persisted scan has an owner). A
+5. Resolve the organization owner (so the persisted scans have an owner). A
    missing owner records `review_failed` and leaves the gate pending.
-6. Create a scan job (`source: "workflow_gate"`, synthetic
-   `stageId: "workflow-gate:<gateId>"`), claim the gate's `scanId` with a CAS
-   against the scan link the worker observed, and run `runScanPipeline` with the
-   selected adapter's `packageAdapter` over the verified pipeline input. If
-   another delivery
-   already claimed the gate, the worker deletes its just-created pending scan
-   and exits. A pipeline throw marks the linked scan failed, records
-   `review_failed`, and leaves the gate pending; a later retry can replace that
-   failed link with a completed scan.
-7. Compute an **advisory** recommendation from the release risk
+6. Claim the review batch with `claimGateReviewStart` (a CAS on
+   `review_started_at`). Only the first delivery to win the claim runs the scans;
+   a concurrent re-delivery loses the CAS and skips, so the batch never
+   double-runs. A retried batch (a prior attempt released its claim mid-flight)
+   first calls `discardGateScans` to drop the half-finished package scans, so the
+   gate's package set is exactly this batch.
+7. Run one scan **per discovered package** (`reviewGatePackages`). Each package
+   gets its own `scans` row (`source: "workflow_gate"`, synthetic
+   `stageId: "workflow-gate:<gateId>:<ecosystem>:<package>"`) linked to the gate
+   via `scans.gate_id`, and is scanned against its own baseline with that
+   ecosystem's `packageAdapter`. A monorepo release bundle fans out into several
+   such scans here. Any single package's pipeline throw marks that scan failed,
+   releases the review claim, records `review_failed`, and leaves the gate
+   pending — a half-reviewed gate must never become review-ready, and a retry
+   re-runs the whole batch.
+8. Aggregate the batch: the gate's headline release risk is the worst package's
+   (`combineRisk`) and the representative scan is the (first) package carrying it.
+   Compute an **advisory** recommendation from that aggregate risk
    (`recommendationForReleaseRisk`: `high`/`critical` → `rejected`, otherwise
-   `approved`) and record `github_workflow_gate.reviewed` with it. Then link the
-   scan to the gate via `attachScanToGate` and **leave the gate pending** — the
-   review never posts to GitHub.
-8. Classify the review against GitHub's deployment-protection **callback
+   `approved`) and record `github_workflow_gate.reviewed` with the
+   recommendation, the aggregate risk, and the per-package roster. Then attach
+   the representative scan as the gate headline via `attachScanToGate` (a CAS
+   expecting no scan yet, so a racing decision or fail-closed reject wins) and
+   **leave the gate pending** — the review never posts to GitHub. `gate.scanId`
+   is set only on this success; on any failure it stays null and the failed
+   package scans remain linked via `scans.gate_id` only, to be discarded on the
+   next retry.
+9. Classify the review against GitHub's deployment-protection **callback
    window** (`classifyGateTimeout`) and email the maintainer the matching
    notice. A gate still inside its window gets the "parked pending your
-   decision" email (`notifyWorkflowGateReview`); a gate whose review outran the
+   decision" email (`notifyWorkflowGateReview` in `server/lib/notify.ts`); for a
+   monorepo bundle that email names the representative package and flags that
+   every package in the release must be approved. A gate whose review outran the
    window gets the timeout notice (`notifyWorkflowGateTimeout`) instead, because
    GitHub has most likely already auto-rejected it. Because Drydock never
    auto-decides, this email is the only proactive signal that a held GitHub
@@ -613,7 +702,7 @@ and the consumer re-checks gate status, so a re-enqueue is safe.
 
 ### Notifying the maintainer
 
-Step 8 is the gate equivalent of the npm scan-completion email. It reuses the
+Step 9 is the gate equivalent of the npm scan-completion email. It reuses the
 `sendNotificationEmail` primitive and fans out to the organization's resolved
 recipient set (`resolveNotificationEmails`): the org's configured
 `organization_notification_recipients` when present, otherwise the owner's email
@@ -623,7 +712,11 @@ the setting keeps today's behavior. Each address gets its own send — no shared
 only the release identity (`package@version`), the computed release risk, the
 repository, the environment, and a deep link to the review at
 `/dashboard/scans/<scanId>` — never a token, header, callback URL, or artifact
-bytes, per the observability rules in `AGENTS.md`.
+bytes, per the observability rules in `AGENTS.md`. For a monorepo bundle
+(`packageCount > 1`) the identity line flags the extra packages
+(`package@version (+N more in this release; each must be approved)`) so the
+maintainer knows the single email covers a release that needs every package
+approved.
 
 Delivery is best-effort and **never blocks or fails the gate**: each send's
 outcome is recorded as a `github_workflow_gate.notification_sent` or
@@ -635,11 +728,11 @@ set is empty (no configured recipients and the owner has no email), a single
 `notification_failed` row with `reason: "no_recipients"` is recorded and no email
 is sent.
 
-The email is **send-once per gate**. Step 8 sits on the single review-ready
+The email is **send-once per gate**. Step 9 sits on the single review-ready
 transition, after the job re-confirms that the gate is still `pending` while
-linking the completed scan. If a maintainer has already decided the gate during
-the review, that compare-and-set fails and no stale "needs review" email is
-sent. A GitHub re-delivery of the same `deployment_protection_rule` event
+attaching the representative scan. If a maintainer has already decided the gate
+during the review, that compare-and-set fails and no stale "needs review" email
+is sent. A GitHub re-delivery of the same `deployment_protection_rule` event
 short-circuits earlier at the `already_reviewed` guard (a pending gate with a
 completed attached scan is never re-reviewed), so one review-ready gate produces
 exactly one email. A failed first review records no email; a later retry that
@@ -649,17 +742,20 @@ The job never auto-approves a release: approving releases the GitHub job and
 publishing happens immediately through Trusted Publishing/OIDC, which is too
 late to reverse. A maintainer drives the actual decision from the scan
 workbench via `POST /workflow-gates/:gateId/decision`; the recommendation
-recorded in step 7 is advisory only. Once decided, the gate job's redelivery
+recorded in step 8 is advisory only. Once decided, the gate job's redelivery
 path (step 2) is what POSTs the stored decision to GitHub. The decision route
 schedules that redelivery immediately after `markGateDecided`, before scan
 decision mirroring or audit events, so post-CAS bookkeeping cannot strand the
 held GitHub job behind a future 409; callback failure rethrows so the queue
 retries rather than re-running the review or double-deciding.
 
-The persisted review is an ordinary `scans` row scoped to the org with
+Each persisted review is an ordinary `scans` row scoped to the org with
 `source: "workflow_gate"`, reachable at `/dashboard/scans/<scanId>` — no
-separate review table. The gate row already links scan ↔ release target, so no
-schema change was needed.
+separate review table. A monorepo release produces one such row per package, all
+linked to the gate via the `scans.gate_id` column; the gate's own `scanId`
+points at the representative (worst-risk) package as the headline. The gate row
+already links scan ↔ release target, so no schema change beyond the
+`scans.gate_id` column was needed.
 
 ### Callback-window timeout
 

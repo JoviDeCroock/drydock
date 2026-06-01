@@ -51,6 +51,8 @@ export interface CreateScanJobInput {
   organizationId: string;
   ownerUserId: string;
   source?: ScanSource;
+  /** Links a workflow-gate review scan back to its gate. */
+  gateId?: string | null;
 }
 
 export const SCAN_SOURCES = ["manual", "auto_discovery", "workflow_gate"] as const;
@@ -63,6 +65,7 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
     stageId: input.stageId,
     organizationId: input.organizationId,
     ownerUserId: input.ownerUserId,
+    gateId: input.gateId ?? null,
     risk: "unknown",
     status: "pending",
     source: input.source ?? "manual",
@@ -146,6 +149,19 @@ export async function markScanFailed(
 
 export async function discardScanAttempt(db: AppDb, scanId: string, organizationId: string) {
   await db.delete(scans).where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)));
+}
+
+/**
+ * Remove every scan attached to a gate. Used to discard a partially-completed
+ * review batch before it is re-run, so a retry does not leave orphaned
+ * per-package scans behind (cascades to scan_files / scan_findings). Safe only
+ * once the caller holds the gate's review claim and no representative scan is
+ * attached.
+ */
+export async function discardGateScans(db: AppDb, gateId: string, organizationId: string) {
+  await db
+    .delete(scans)
+    .where(and(eq(scans.gateId, gateId), eq(scans.organizationId, organizationId)));
 }
 
 export async function persistScan(db: AppDb, input: PersistedScanInput) {

@@ -25,6 +25,24 @@ export function getWorkflowGateAdapter(ecosystem: string): WorkflowGateAdapter {
   return adapter;
 }
 
+/**
+ * Classify a bundle entry across every registered ecosystem for an auto-detect
+ * release target (one that does not pin an ecosystem). The first adapter whose
+ * `classifyArtifact` claims the path wins; entries no adapter claims are dropped.
+ *
+ * A path can in principle look like two ecosystems' artifacts, but in practice
+ * the suffixes are disjoint (`.whl`/`.tar.gz` vs other ecosystems'), so order
+ * only matters for genuinely ambiguous names — which we treat as the first
+ * registered match deterministically rather than erroring.
+ */
+export function classifyBundleArtifact(path: string): { ecosystem: string; kind: string } | null {
+  for (const adapter of Object.values(WORKFLOW_GATE_ADAPTERS)) {
+    const kind = adapter.classifyArtifact(path);
+    if (kind) return { ecosystem: adapter.ecosystem, kind };
+  }
+  return null;
+}
+
 /** Ecosystems that currently have a registered workflow-gate adapter. */
 export function supportedWorkflowGateEcosystems(): string[] {
   return Object.keys(WORKFLOW_GATE_ADAPTERS);

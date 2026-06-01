@@ -1,7 +1,11 @@
 import { useEffect } from "preact/hooks";
 import { useModel } from "@preact/signals";
-import { GithubAppModel, type PublicGithubAppInstallation } from "../../../models/github-app";
-import { Alert, Button, Field, Muted, Select } from "../../../components";
+import {
+  GithubAppModel,
+  type PublicGithubAppInstallation,
+  type SupportedEcosystem,
+} from "../../../models/github-app";
+import { Alert, Button, Field, Input, Muted, Select } from "../../../components";
 
 type GithubApp = ReturnType<typeof useModel<typeof GithubAppModel.prototype>>;
 
@@ -37,6 +41,11 @@ export function ReleaseTargetForm({
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <RepositorySelector githubApp={githubApp} />
         <EnvironmentSelector githubApp={githubApp} />
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <EcosystemSelector githubApp={githubApp} />
+        <ArtifactNameField githubApp={githubApp} />
       </div>
 
       {formError ? <Alert tone="critical">{formError}</Alert> : null}
@@ -117,6 +126,55 @@ function RepositorySelector({ githubApp }: { githubApp: GithubApp }) {
           and refresh.
         </Muted>
       ) : null}
+    </Field>
+  );
+}
+
+function EcosystemSelector({ githubApp }: { githubApp: GithubApp }) {
+  const ecosystem = githubApp.formEcosystem.value;
+  const submitting = githubApp.formSubmitting.value;
+
+  return (
+    <Field label="Ecosystem" for="releaseTargetEcosystem">
+      <Select
+        id="releaseTargetEcosystem"
+        value={ecosystem}
+        disabled={submitting}
+        onChange={(value) => (githubApp.formEcosystem.value = value as "auto" | SupportedEcosystem)}
+      >
+        <option value="auto">Auto-detect from artifacts</option>
+        <option value="pypi">PyPI</option>
+      </Select>
+      <Muted class="text-[12px] mt-1.5">
+        Auto-detect derives each package's ecosystem from the uploaded artifacts — the right choice
+        for a monorepo publishing several packages from one workflow. Pin an ecosystem only when the
+        release always publishes that one kind.
+      </Muted>
+    </Field>
+  );
+}
+
+function ArtifactNameField({ githubApp }: { githubApp: GithubApp }) {
+  const artifactName = githubApp.formArtifactName.value;
+  const submitting = githubApp.formSubmitting.value;
+
+  return (
+    <Field label="Artifact name (optional)" for="releaseTargetArtifact">
+      <Input
+        id="releaseTargetArtifact"
+        type="text"
+        value={artifactName}
+        placeholder="e.g. dist"
+        onInput={(e) => (githubApp.formArtifactName.value = (e.target as HTMLInputElement).value)}
+        disabled={submitting}
+        maxLength={200}
+        autoComplete="off"
+        spellcheck={false}
+      />
+      <Muted class="text-[12px] mt-1.5">
+        Leave blank to consume every artifact the run uploads. Set this to a single workflow
+        artifact name when only one upload holds the release candidates.
+      </Muted>
     </Field>
   );
 }
