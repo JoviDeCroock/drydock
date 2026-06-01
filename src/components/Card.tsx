@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { cn } from "./cn";
+import { SectionLabel } from "./Typography";
 
 export function Card({
   class: className,
@@ -12,6 +13,38 @@ export function Card({
 }) {
   return (
     <As class={cn("bg-surface border border-border rounded-lg p-6", className)}>{children}</As>
+  );
+}
+
+export function CollapsibleCard({
+  title,
+  aside,
+  defaultOpen = false,
+  class: className,
+  children,
+}: {
+  title: ComponentChildren;
+  aside?: ComponentChildren;
+  defaultOpen?: boolean;
+  class?: string;
+  children: ComponentChildren;
+}) {
+  return (
+    <Card as="section" class={cn("p-0 overflow-hidden", className)}>
+      <details open={defaultOpen} class="group">
+        <summary class="list-none cursor-pointer flex items-center gap-2.5 px-5 py-4 transition-colors hover:bg-surface-2">
+          <span
+            aria-hidden
+            class="text-ink-subtle text-[10px] inline-block transition-transform duration-150 ease-out group-open:rotate-90"
+          >
+            ▸
+          </span>
+          <SectionLabel class="flex-1">{title}</SectionLabel>
+          {aside ? <div class="flex items-center gap-2 shrink-0">{aside}</div> : null}
+        </summary>
+        <div class="border-t border-border">{children}</div>
+      </details>
+    </Card>
   );
 }
 

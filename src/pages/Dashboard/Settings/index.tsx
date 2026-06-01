@@ -120,13 +120,13 @@ export default function SettingsPage() {
 
       {workspaceLoaded ? (
         <div class="flex flex-col gap-6">
-          <NpmConnectionSection npm={npm} />
-          <GithubAppSection githubApp={githubApp} />
           <OrganizationMembersSection
             members={members}
             currentUserRole={activeRole(organizations)}
             currentUserId={user?.id ?? null}
           />
+          <NpmConnectionSection npm={npm} />
+          <GithubAppSection githubApp={githubApp} />
         </div>
       ) : (
         <LoadingState title="Loading settings" detail={loadingDetail(npmLoaded, githubAppLoaded)} />

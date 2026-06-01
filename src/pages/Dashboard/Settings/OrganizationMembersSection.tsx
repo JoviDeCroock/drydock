@@ -10,7 +10,7 @@ import {
   Alert,
   Badge,
   Button,
-  Card,
+  CollapsibleCard,
   Field,
   Input,
   MonoDetail,
@@ -50,21 +50,21 @@ export function OrganizationMembersSection({
   };
 
   return (
-    <Card as="section" class="p-0 overflow-hidden">
+    <CollapsibleCard
+      title="Members"
+      defaultOpen
+      aside={
+        <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+          {memberList.length} {memberList.length === 1 ? "member" : "members"}
+        </span>
+      }
+    >
       <div class="p-5 flex flex-col gap-5">
-        <div class="flex flex-wrap items-start justify-between gap-3">
-          <div class="flex flex-col gap-1.5 max-w-[760px]">
-            <SectionLabel>Members</SectionLabel>
-            <Muted class="text-[13px] m-0">
-              Invite teammates to collaborate on this organization's release targets, integrations,
-              and gate reviews. Owners and admins manage membership; members get read access to
-              org-scoped scans and can act on releases.
-            </Muted>
-          </div>
-          <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle shrink-0">
-            {memberList.length} {memberList.length === 1 ? "member" : "members"}
-          </span>
-        </div>
+        <Muted class="text-[13px] m-0 max-w-[760px]">
+          Invite teammates to collaborate on this organization's release targets, integrations, and
+          gate reviews. Owners and admins manage membership; members get read access to org-scoped
+          scans and can act on releases.
+        </Muted>
 
         {error ? <Alert tone="critical">{error}</Alert> : null}
 
@@ -133,7 +133,7 @@ export function OrganizationMembersSection({
           )}
         </div>
       ) : null}
-    </Card>
+    </CollapsibleCard>
   );
 }
 
