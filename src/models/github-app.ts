@@ -120,6 +120,19 @@ export type ReleaseTargetFormStatus = "idle" | "submitting";
 export type RepositoryListStatus = "idle" | "loading" | "error";
 export type EnvironmentListStatus = "idle" | "loading" | "error";
 
+// A release target is unique per (org, repositoryId, environment). The picker
+// already scopes to the org, so a repository that already has any release
+// target is dropped from the options to keep the user from re-submitting a
+// duplicate.
+export function selectUnmappedRepositories(
+  repositories: InstallationRepository[],
+  releaseTargets: Pick<PublicReleaseTarget, "repositoryId">[],
+): InstallationRepository[] {
+  if (!releaseTargets.length) return repositories;
+  const mapped = new Set(releaseTargets.map((target) => target.repositoryId));
+  return repositories.filter((repo) => !mapped.has(repo.id));
+}
+
 export const GithubAppModel = createModel(() => {
   const config = signal<GithubAppConfigState | null>(null);
   const installations = signal<PublicGithubAppInstallation[]>([]);
@@ -170,6 +183,9 @@ export const GithubAppModel = createModel(() => {
     const errors = repositoryErrors.value;
     return id ? (errors[id] ?? null) : null;
   });
+  const availableRepositories = computed<InstallationRepository[]>(() =>
+    selectUnmappedRepositories(activeRepositories.value, releaseTargets.value),
+  );
 
   const environmentCacheKey = computed<string>(() => {
     const installationId = formInstallationRowId.value;
@@ -256,6 +272,7 @@ export const GithubAppModel = createModel(() => {
     activeRepositories,
     activeRepositoryStatus,
     activeRepositoryError,
+    availableRepositories,
     activeEnvironments,
     activeEnvironmentStatus,
     activeEnvironmentError,
