@@ -57,9 +57,13 @@ function RepositorySelector({ githubApp }: { githubApp: GithubApp }) {
   const installationRowId = githubApp.formInstallationRowId.value;
   const repositoryFullName = githubApp.formRepositoryFullName.value;
   const submitting = githubApp.formSubmitting.value;
-  const repositories = githubApp.activeRepositories.value;
+  const repositories = githubApp.availableRepositories.value;
+  const accessibleCount = githubApp.activeRepositories.value.length;
   const repositoryStatus = githubApp.activeRepositoryStatus.value;
   const repositoryError = githubApp.activeRepositoryError.value;
+  // Repositories disappear from the picker once they have a release target, so
+  // an empty list with accessible repos behind it means every one is mapped.
+  const allMapped = accessibleCount > 0 && repositories.length === 0;
 
   return (
     <Field label="Repository" for="releaseTargetRepo">
@@ -76,7 +80,9 @@ function RepositorySelector({ githubApp }: { githubApp: GithubApp }) {
               ? "Loading repositories…"
               : repositories.length
                 ? "Pick a repository…"
-                : "No repositories visible"}
+                : allMapped
+                  ? "All repositories already mapped"
+                  : "No repositories visible"}
         </option>
         {repositories.map((repo: { id: number; fullName: string }) => (
           <option key={repo.id} value={repo.fullName}>
@@ -87,10 +93,16 @@ function RepositorySelector({ githubApp }: { githubApp: GithubApp }) {
       {repositoryError ? (
         <Muted class="text-[12px] mt-1.5 text-danger">{repositoryError}</Muted>
       ) : null}
+      {installationRowId && !repositoryError && repositoryStatus === "idle" && allMapped ? (
+        <Muted class="text-[12px] mt-1.5">
+          Every repository this installation can see already has a release target. Remove one below
+          to remap it, or grant the GitHub App access to another repository.
+        </Muted>
+      ) : null}
       {installationRowId &&
       !repositoryError &&
       repositoryStatus === "idle" &&
-      !repositories.length ? (
+      accessibleCount === 0 ? (
         <Muted class="text-[12px] mt-1.5">
           This installation has no accessible repositories. Grant the GitHub App access to a
           repository in{" "}
