@@ -1,5 +1,13 @@
 import { diffLines } from "diff";
+import { useMemo } from "preact/hooks";
 import { Badge, statusTone } from "./Badge";
+import {
+  ensureHighlighter,
+  highlighterReady,
+  langForPath,
+  tokenizeLines,
+  type TokenLine,
+} from "./highlight";
 import { Muted } from "./Typography";
 import { cn } from "./cn";
 
@@ -24,9 +32,15 @@ interface Row {
   beforeLine: number | null;
   afterLine: number | null;
   text: string;
+  tokens: TokenLine | null;
 }
 
-function buildRows(before: string, after: string): Row[] {
+function buildRows(
+  before: string,
+  after: string,
+  beforeTokens: TokenLine[] | null,
+  afterTokens: TokenLine[] | null,
+): Row[] {
   const parts = diffLines(before, after);
   const rows: Row[] = [];
   let beforeLine = 0;
@@ -37,18 +51,60 @@ function buildRows(before: string, after: string): Row[] {
     for (const line of lines) {
       if (part.added) {
         afterLine += 1;
-        rows.push({ tone: "added", beforeLine: null, afterLine, text: line });
+        rows.push({
+          tone: "added",
+          beforeLine: null,
+          afterLine,
+          text: line,
+          tokens: afterTokens?.[afterLine - 1] ?? null,
+        });
       } else if (part.removed) {
         beforeLine += 1;
-        rows.push({ tone: "removed", beforeLine, afterLine: null, text: line });
+        rows.push({
+          tone: "removed",
+          beforeLine,
+          afterLine: null,
+          text: line,
+          tokens: beforeTokens?.[beforeLine - 1] ?? null,
+        });
       } else {
         beforeLine += 1;
         afterLine += 1;
-        rows.push({ tone: "unchanged", beforeLine, afterLine, text: line });
+        rows.push({
+          tone: "unchanged",
+          beforeLine,
+          afterLine,
+          text: line,
+          tokens: afterTokens?.[afterLine - 1] ?? beforeTokens?.[beforeLine - 1] ?? null,
+        });
       }
     }
   }
   return rows;
+}
+
+// Tokenize an entire side once, memoized on the sample/language/ready signal.
+function useLineTokens(text: string, lang: string | undefined): TokenLine[] | null {
+  const ready = highlighterReady.value;
+  return useMemo(
+    () => (lang && ready && text ? tokenizeLines(text, lang) : null),
+    [text, lang, ready],
+  );
+}
+
+function LineContent({ text, tokens }: { text: string; tokens: TokenLine | null }) {
+  if (!tokens || tokens.length === 0) return <>{text}</>;
+  // Token content is rendered as escaped text children (never innerHTML) so
+  // untrusted package bytes can't inject markup.
+  return (
+    <>
+      {tokens.map((token, index) => (
+        <span key={index} style={{ color: token.color }}>
+          {token.content}
+        </span>
+      ))}
+    </>
+  );
 }
 
 function hasFlag(side: DiffSide | null, flag: string): boolean {
@@ -92,6 +148,7 @@ export function DiffView({ path, status, before, after, beforeLabel, afterLabel 
 }
 
 function DiffBody({
+  path,
   status,
   beforeSample,
   afterSample,
@@ -107,6 +164,11 @@ function DiffBody({
   beforeLabel: string;
   afterLabel: string;
 }) {
+  const lang = langForPath(path);
+  if (lang && !binary) ensureHighlighter();
+  const beforeTokens = useLineTokens(beforeSample, lang);
+  const afterTokens = useLineTokens(afterSample, lang);
+
   if (binary) {
     return <Muted class="text-[13px]">Binary file — no text diff available.</Muted>;
   }
@@ -115,13 +177,22 @@ function DiffBody({
     if (!afterSample) {
       return <Muted class="text-[13px]">No preview stored for this added file.</Muted>;
     }
-    return <SingleSidedView label={afterLabel} tone="added" text={afterSample} />;
+    return (
+      <SingleSidedView label={afterLabel} tone="added" text={afterSample} tokens={afterTokens} />
+    );
   }
   if (status === "removed") {
     if (!beforeSample) {
       return <Muted class="text-[13px]">No preview stored for this removed file.</Muted>;
     }
-    return <SingleSidedView label={beforeLabel} tone="removed" text={beforeSample} />;
+    return (
+      <SingleSidedView
+        label={beforeLabel}
+        tone="removed"
+        text={beforeSample}
+        tokens={beforeTokens}
+      />
+    );
   }
   if (status === "unchanged") {
     if (!afterSample && !beforeSample) {
@@ -132,6 +203,7 @@ function DiffBody({
         label={afterLabel || beforeLabel}
         tone="unchanged"
         text={afterSample || beforeSample}
+        tokens={afterSample ? afterTokens : beforeTokens}
       />
     );
   }
@@ -139,13 +211,22 @@ function DiffBody({
     return <Muted class="text-[13px]">No text samples available to diff.</Muted>;
   }
   if (!beforeSample) {
-    return <SingleSidedView label={afterLabel} tone="added" text={afterSample} />;
+    return (
+      <SingleSidedView label={afterLabel} tone="added" text={afterSample} tokens={afterTokens} />
+    );
   }
   if (!afterSample) {
-    return <SingleSidedView label={beforeLabel} tone="removed" text={beforeSample} />;
+    return (
+      <SingleSidedView
+        label={beforeLabel}
+        tone="removed"
+        text={beforeSample}
+        tokens={beforeTokens}
+      />
+    );
   }
 
-  const rows = buildRows(beforeSample, afterSample);
+  const rows = buildRows(beforeSample, afterSample, beforeTokens, afterTokens);
   return (
     <div class="border border-border rounded-md overflow-hidden">
       <div class="bg-surface-2 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle flex justify-between">
@@ -177,7 +258,9 @@ function DiffRow({ row }: { row: Row }) {
         {row.afterLine ?? ""}
       </td>
       <td class="px-2 py-[2px] select-none w-[20px] text-ink-subtle align-top">{sign}</td>
-      <td class="px-2 py-[2px] whitespace-pre-wrap break-words align-top">{row.text}</td>
+      <td class="px-2 py-[2px] whitespace-pre-wrap break-words align-top">
+        <LineContent text={row.text} tokens={row.tokens} />
+      </td>
     </tr>
   );
 }
@@ -186,10 +269,12 @@ function SingleSidedView({
   label,
   tone,
   text,
+  tokens,
 }: {
   label: string;
   tone: "added" | "removed" | "unchanged";
   text: string;
+  tokens: TokenLine[] | null;
 }) {
   const headerBg =
     tone === "added" ? "bg-ok-soft" : tone === "removed" ? "bg-danger-soft" : "bg-surface-2";
@@ -214,7 +299,9 @@ function SingleSidedView({
                 <td class="px-2 py-[2px] text-ink-subtle select-none w-[44px] text-right border-r border-border align-top">
                   {index + 1}
                 </td>
-                <td class="px-2 py-[2px] whitespace-pre-wrap break-words align-top">{line}</td>
+                <td class="px-2 py-[2px] whitespace-pre-wrap break-words align-top">
+                  <LineContent text={line} tokens={tokens?.[index] ?? null} />
+                </td>
               </tr>
             ))}
           </tbody>
