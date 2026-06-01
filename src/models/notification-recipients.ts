@@ -23,6 +23,7 @@ export const NotificationRecipientsModel = createModel(() => {
   const status = signal<NotificationRecipientsStatus>("idle");
   const error = signal<string | null>(null);
   const draftEmail = signal("");
+  let loadRequestId = 0;
 
   const busy = computed(() => status.value !== "idle");
 
@@ -35,17 +36,31 @@ export const NotificationRecipientsModel = createModel(() => {
     busy,
 
     async load(organizationId: string | null): Promise<void> {
-      if (!organizationId) return;
+      const requestId = ++loadRequestId;
+      this.recipients.value = [];
+      this.loaded.value = false;
+      this.error.value = null;
+      if (!organizationId) {
+        this.loaded.value = true;
+        this.status.value = "idle";
+        return;
+      }
       this.status.value = "loading";
       try {
         const data = await apiFetch<ListResponse>(recipientsPath(organizationId));
-        this.recipients.value = data.recipients;
-        this.error.value = null;
+        if (requestId === loadRequestId) {
+          this.recipients.value = data.recipients;
+          this.error.value = null;
+        }
       } catch (err) {
-        this.error.value = errorMessage(err);
+        if (requestId === loadRequestId) {
+          this.error.value = errorMessage(err);
+        }
       } finally {
-        this.loaded.value = true;
-        this.status.value = "idle";
+        if (requestId === loadRequestId) {
+          this.loaded.value = true;
+          this.status.value = "idle";
+        }
       }
     },
 

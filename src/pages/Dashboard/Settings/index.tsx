@@ -133,7 +133,7 @@ export default function SettingsPage() {
           <NotificationRecipientsSection
             recipients={recipients}
             organizationId={organizations.active.value?.id ?? null}
-            fallbackEmail={user?.email}
+            fallbackEmail={ownerFallbackEmail(organizations, user)}
           />
           <NpmConnectionSection npm={npm} />
           <GithubAppSection githubApp={githubApp} />
@@ -156,6 +156,15 @@ function canManageMembers(
   organizations: ReturnType<typeof useModel<typeof OrganizationModel.prototype>>,
 ): boolean {
   return roleCanManageMembers(activeRole(organizations));
+}
+
+function ownerFallbackEmail(
+  organizations: ReturnType<typeof useModel<typeof OrganizationModel.prototype>>,
+  user: { id?: string | null; email?: string | null } | null,
+): string | undefined {
+  const active = organizations.active.value;
+  if (!active?.ownerUserId || !user?.id || active.ownerUserId !== user.id) return undefined;
+  return user.email ?? undefined;
 }
 
 function loadingDetail(npmLoaded: boolean, githubAppLoaded: boolean): string {

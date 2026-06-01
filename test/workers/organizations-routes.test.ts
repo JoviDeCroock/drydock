@@ -361,6 +361,31 @@ describe("organization notification recipients", () => {
     expect(await listNotificationRecipients(db, orgId)).toHaveLength(0);
   });
 
+  test("limits notification recipients to five addresses", async () => {
+    const owner = await seedUser();
+    const orgId = owner.personalOrganizationId;
+
+    for (let i = 0; i < 5; i++) {
+      const add = await call(
+        buildTestApp(owner),
+        "POST",
+        `/api/v1/organizations/${orgId}/notification-recipients`,
+        { body: { email: `recipient-${i}@example.com` } },
+      );
+      expect(add.status).toBe(201);
+    }
+
+    const overflow = await call(
+      buildTestApp(owner),
+      "POST",
+      `/api/v1/organizations/${orgId}/notification-recipients`,
+      { body: { email: "recipient-5@example.com" } },
+    );
+    expect(overflow.status).toBe(400);
+    const body = (await overflow.json()) as { error: string };
+    expect(body.error).toBe("at most 5 notification recipients are allowed");
+  });
+
   test("resolveNotificationEmails falls back to the owner only when no recipients exist", async () => {
     const owner = await seedUser();
     const orgId = owner.personalOrganizationId;

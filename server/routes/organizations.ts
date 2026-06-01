@@ -24,7 +24,7 @@ import type { Bindings, Variables } from "../types";
 const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} _\-./]{0,79}$/u;
 const ORGANIZATION_NAME_ERROR =
   "organization name must be 1-80 characters of letters, digits, or _-./";
-const MAX_NOTIFICATION_RECIPIENTS = 25;
+const MAX_NOTIFICATION_RECIPIENTS = 5;
 
 export const organizationsRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 

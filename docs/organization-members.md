@@ -44,7 +44,7 @@ and return `403 { error: "forbidden" }` when the guard fails:
 - GitHub App install + release targets — `server/routes/github-app.ts`
 - notification recipients — `server/routes/organizations.ts` lets any member
   list recipients for an org path they belong to, while owner/admin are required
-  for add/remove.
+  for add/remove. Each organization can configure up to five recipient emails.
 
 Org rename stays owner-only (`isOrganizationOwner`). Gate approvals and scan
 decisions stay open to any member by design.
