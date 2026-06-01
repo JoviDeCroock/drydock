@@ -221,7 +221,13 @@ export function createAiReviewTools(
       inputSchema: readInputSchema,
       execute: async ({ paths, maxChars }) => {
         const callBudget = { remaining: MAX_TOOL_RESPONSE_CHARS };
-        const results = paths.map((path) => readOnePath(path, maxChars, callBudget));
+        // Fairly divide the per-call budget across the requested paths so an
+        // early greedy path can't starve later ones. Each path gets an equal
+        // share of whatever budget remains; under-used budget rolls forward.
+        const results = paths.map((path, index) => {
+          const fairShare = Math.max(1, Math.floor(callBudget.remaining / (paths.length - index)));
+          return readOnePath(path, Math.min(maxChars, fairShare), callBudget);
+        });
         return {
           ok: true,
           remainingEvidenceChars,

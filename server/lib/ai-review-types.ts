@@ -27,6 +27,22 @@ export interface AiReview {
   model: string | null;
 }
 
+// Operational telemetry for one AI review run. Kept off `AiReview` so it never
+// reaches persistence or the report digest — it is emitted to observability
+// only. Token counts are `null` when the provider does not report them.
+export interface AiReviewUsage {
+  inputTokens: number | null;
+  cachedInputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  steps: number;
+}
+
+export interface AiReviewResult {
+  review: AiReview;
+  usage: AiReviewUsage | null;
+}
+
 export interface SelectiveAiReviewOptions {
   scanId?: string;
   ecosystem: AiReviewEcosystem | string;
