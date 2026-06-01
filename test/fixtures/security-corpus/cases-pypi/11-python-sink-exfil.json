@@ -1,5 +1,6 @@
 {
   "id": "pypi-python-sink-exfil",
+  "parityGroup": "code-sink-exfil",
   "title": "wheel module chains Python process, network, and credential sinks",
   "category": "code-capability",
   "intent": "ratifies the Python-aware shared code.* rules on a non-setup module: subprocess + requests + os.environ",

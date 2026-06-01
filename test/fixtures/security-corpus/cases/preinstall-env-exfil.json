@@ -1,5 +1,7 @@
 {
   "id": "preinstall-env-exfil",
+  "parityGroup": "code-sink-exfil",
+  "parityIgnoreRuleIds": ["install-script.preinstall"],
   "title": "Preinstall hook reads environment data and sends it over the network",
   "category": "lifecycle-credential-exfiltration",
   "intent": "Model the common install-time collect-and-exfiltrate chain without embedding a working endpoint or real secret.",
