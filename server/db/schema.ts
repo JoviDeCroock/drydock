@@ -84,6 +84,26 @@ export const organizationInvitations = sqliteTable(
   }),
 );
 
+export const organizationNotificationRecipients = sqliteTable(
+  "organization_notification_recipients",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    orgEmailUniqueIdx: uniqueIndex("organization_notification_recipients_org_email_unique_idx").on(
+      table.organizationId,
+      table.email,
+    ),
+  }),
+);
+
 export const scans = sqliteTable(
   "scans",
   {

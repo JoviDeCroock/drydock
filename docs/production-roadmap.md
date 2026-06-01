@@ -25,6 +25,7 @@ The prototype-to-product foundation is in place:
 - Dynamic Worker sandbox for archive parsing, with `NpmStageGateway` as the credentialed egress boundary.
 - Async-capable scan jobs with Queue support, retry classification, and scan lifecycle persistence.
 - Scheduled npm staged-publish discovery plus manual “Check npm” discovery.
+- Per-organization notification recipients for scan-completion and workflow-gate emails, falling back to the organization owner when unset.
 - Persisted scan reports with redacted file summaries, deterministic findings, risk summary, report digest metadata, and decision records.
 - Tag-aware npm baseline selection and alternate-version compare cache.
 - Security corpus and eval harness for deterministic detection.

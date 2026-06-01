@@ -4,6 +4,7 @@ import { useLocation } from "preact-iso";
 import { rememberDashboardReturnUrl } from "../../../lib/query-state";
 import { sessionModel } from "../../../models/auth";
 import { NpmConnectionModel } from "../../../models/npm-connection";
+import { NotificationRecipientsModel } from "../../../models/notification-recipients";
 import { OrganizationModel } from "../../../models/organization";
 import { GithubAppModel } from "../../../models/github-app";
 import { MembersModel } from "../../../models/organization-members";
@@ -21,6 +22,7 @@ import {
   UserMenu,
 } from "../../../components";
 import { GithubAppSection } from "./GithubAppSection";
+import { NotificationRecipientsSection } from "./NotificationRecipientsSection";
 import { NpmConnectionSection } from "./NpmConnectionSection";
 import { OrganizationMembersSection } from "./OrganizationMembersSection";
 
@@ -30,6 +32,7 @@ export default function SettingsPage() {
   const organizations = useModel(OrganizationModel);
   const githubApp = useModel(GithubAppModel);
   const members = useModel(MembersModel);
+  const recipients = useModel(NotificationRecipientsModel);
   const sessionChecked = useSignal(false);
 
   useEffect(() => {
@@ -53,6 +56,7 @@ export default function SettingsPage() {
         githubApp.loadInstallations(),
         githubApp.loadReleaseTargets(),
         members.load(canManageMembers(organizations)),
+        recipients.load(organizations.active.peek()?.id ?? null),
       ]);
     })();
     return () => {
@@ -65,6 +69,7 @@ export default function SettingsPage() {
     githubApp.clearForm();
     if (!githubApp.configLoaded.peek()) loaders.push(githubApp.loadConfig());
     loaders.push(githubApp.loadInstallations(), githubApp.loadReleaseTargets());
+    loaders.push(recipients.load(organizations.active.peek()?.id ?? null));
     await Promise.all(loaders);
   };
 
@@ -127,6 +132,11 @@ export default function SettingsPage() {
           />
           <NpmConnectionSection npm={npm} />
           <GithubAppSection githubApp={githubApp} />
+          <NotificationRecipientsSection
+            recipients={recipients}
+            organizationId={organizations.active.value?.id ?? null}
+            fallbackEmail={user?.email}
+          />
         </div>
       ) : (
         <LoadingState title="Loading settings" detail={loadingDetail(npmLoaded, githubAppLoaded)} />

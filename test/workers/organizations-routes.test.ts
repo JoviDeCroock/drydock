@@ -1,7 +1,13 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
-import { createDb, ensurePersonalOrganization, getNpmConnection } from "../../server/db";
+import {
+  createDb,
+  ensurePersonalOrganization,
+  getNpmConnection,
+  listNotificationRecipients,
+  resolveNotificationEmails,
+} from "../../server/db";
 import * as schema from "../../server/db/schema";
 import { ACTIVE_ORG_HEADER } from "../../server/lib/active-organization";
 import { npmConnectionRoutes } from "../../server/routes/npm-connection";
@@ -196,5 +202,130 @@ describe("organizations routes", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { connection: unknown };
     expect(body.connection).toBeNull();
+  });
+});
+
+describe("organization notification recipients", () => {
+  test("lists, adds (lowercased), and the list is scoped to the owner", async () => {
+    const owner = await seedUser();
+    const stranger = await seedUser();
+    const orgId = owner.personalOrganizationId;
+
+    const empty = await call(
+      buildTestApp(owner),
+      "GET",
+      `/api/v1/organizations/${orgId}/notification-recipients`,
+    );
+    expect(empty.status).toBe(200);
+    expect(((await empty.json()) as { recipients: unknown[] }).recipients).toHaveLength(0);
+
+    const add = await call(
+      buildTestApp(owner),
+      "POST",
+      `/api/v1/organizations/${orgId}/notification-recipients`,
+      { body: { email: "Security@Example.com" } },
+    );
+    expect(add.status).toBe(201);
+    const added = (await add.json()) as { recipient: { id: string; email: string } };
+    expect(added.recipient.email).toBe("security@example.com");
+
+    const listed = await call(
+      buildTestApp(owner),
+      "GET",
+      `/api/v1/organizations/${orgId}/notification-recipients`,
+    );
+    const listedBody = (await listed.json()) as { recipients: Array<{ email: string }> };
+    expect(listedBody.recipients.map((r) => r.email)).toEqual(["security@example.com"]);
+
+    const intruder = await call(
+      buildTestApp(stranger),
+      "GET",
+      `/api/v1/organizations/${orgId}/notification-recipients`,
+    );
+    expect(intruder.status).toBe(404);
+  });
+
+  test("rejects invalid emails and is idempotent on duplicates", async () => {
+    const owner = await seedUser();
+    const orgId = owner.personalOrganizationId;
+
+    const bad = await call(
+      buildTestApp(owner),
+      "POST",
+      `/api/v1/organizations/${orgId}/notification-recipients`,
+      { body: { email: "not-an-email" } },
+    );
+    expect(bad.status).toBe(400);
+
+    const first = await call(
+      buildTestApp(owner),
+      "POST",
+      `/api/v1/organizations/${orgId}/notification-recipients`,
+      { body: { email: "dupe@example.com" } },
+    );
+    expect(first.status).toBe(201);
+
+    const second = await call(
+      buildTestApp(owner),
+      "POST",
+      `/api/v1/organizations/${orgId}/notification-recipients`,
+      { body: { email: "dupe@example.com" } },
+    );
+    expect(second.status).toBe(200);
+
+    const db = createDb(env.DB);
+    expect(await listNotificationRecipients(db, orgId)).toHaveLength(1);
+  });
+
+  test("DELETE removes an owned recipient and rejects non-owners", async () => {
+    const owner = await seedUser();
+    const stranger = await seedUser();
+    const orgId = owner.personalOrganizationId;
+
+    const add = await call(
+      buildTestApp(owner),
+      "POST",
+      `/api/v1/organizations/${orgId}/notification-recipients`,
+      { body: { email: "drop@example.com" } },
+    );
+    const recipientId = ((await add.json()) as { recipient: { id: string } }).recipient.id;
+
+    const intruder = await call(
+      buildTestApp(stranger),
+      "DELETE",
+      `/api/v1/organizations/${orgId}/notification-recipients/${recipientId}`,
+    );
+    expect(intruder.status).toBe(404);
+
+    const removed = await call(
+      buildTestApp(owner),
+      "DELETE",
+      `/api/v1/organizations/${orgId}/notification-recipients/${recipientId}`,
+    );
+    expect(removed.status).toBe(200);
+
+    const db = createDb(env.DB);
+    expect(await listNotificationRecipients(db, orgId)).toHaveLength(0);
+  });
+
+  test("resolveNotificationEmails falls back to the owner only when no recipients exist", async () => {
+    const owner = await seedUser();
+    const orgId = owner.personalOrganizationId;
+    const db = createDb(env.DB);
+
+    expect(await resolveNotificationEmails(db, orgId, owner.userId)).toEqual([
+      `${owner.userId}@example.com`,
+    ]);
+
+    await call(
+      buildTestApp(owner),
+      "POST",
+      `/api/v1/organizations/${orgId}/notification-recipients`,
+      {
+        body: { email: "team@example.com" },
+      },
+    );
+
+    expect(await resolveNotificationEmails(db, orgId, owner.userId)).toEqual(["team@example.com"]);
   });
 });

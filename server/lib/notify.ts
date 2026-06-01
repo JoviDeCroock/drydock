@@ -1,4 +1,4 @@
-import { getScan, getUserContact, recordScanEvent, type AppDb } from "../db";
+import { getScan, recordScanEvent, resolveNotificationEmails, type AppDb } from "../db";
 import { sendNotificationEmail } from "./email";
 import type { RiskLevel } from "./review";
 import type { OrganizationRole } from "./roles";
@@ -15,14 +15,21 @@ export interface NotifyScanCompletionInput {
 
 export async function notifyScanCompletion(input: NotifyScanCompletionInput): Promise<void> {
   const { env, db, scanId, organizationId, ownerUserId, outcome, error } = input;
-  const [contact, detail] = await Promise.all([
-    getUserContact(db, ownerUserId),
+  const [recipients, detail] = await Promise.all([
+    resolveNotificationEmails(db, organizationId, ownerUserId),
     getScan(db, scanId, organizationId),
   ]);
-  if (!contact?.email) {
-    console.warn("scan notification skipped: no email on record", { scanId, ownerUserId });
+  if (recipients.length === 0) {
+    await recordScanEvent(db, {
+      organizationId,
+      actorUserId: ownerUserId,
+      scanId,
+      type: "scan.notification_failed",
+      metadata: { outcome, channel: "email", reason: "no_recipients" },
+    });
     return;
   }
+
   const scan = detail?.scan;
   const packageLabel = formatPackageLabel(scan?.packageName, scan?.stagedVersion);
   const dashboardUrl = scanUrl(env, scanId);
@@ -34,7 +41,7 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
   const lines =
     outcome === "complete"
       ? [
-          `Hi ${contact.name ?? "there"},`,
+          "Hi there,",
           "",
           `We finished scanning the staged release ${packageLabel}.`,
           scan?.risk ? `Overall risk: ${scan.risk}.` : null,
@@ -43,7 +50,7 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
           "— Drydock",
         ]
       : [
-          `Hi ${contact.name ?? "there"},`,
+          "Hi there,",
           "",
           `We could not complete the auto-discovered scan for ${packageLabel}.`,
           error?.message ? `Reason: ${error.message}` : null,
@@ -53,13 +60,7 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
         ];
   const text = lines.filter((line): line is string => line !== null).join("\n");
 
-  const result = await sendNotificationEmail(env, {
-    to: contact.email,
-    subject,
-    text,
-  });
-
-  await recordScanEvent(db, {
+  await deliverToRecipients(env, db, recipients, { subject, text }, (recipient, result) => ({
     organizationId,
     actorUserId: ownerUserId,
     scanId,
@@ -67,9 +68,10 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
     metadata: {
       outcome,
       channel: "email",
+      recipient,
       ...(result.ok ? {} : { reason: result.reason }),
     },
-  });
+  }));
 }
 
 export interface NotifyWorkflowGateReviewInput {
@@ -87,18 +89,21 @@ export interface NotifyWorkflowGateReviewInput {
 }
 
 /**
- * Email the maintainer that a workflow gate has a completed review parked
- * pending their decision. Drydock never auto-decides a gate, so this is the only
- * proactive signal that a held GitHub deployment is waiting on a human.
+ * Email the organization's notification recipients that a workflow gate has a
+ * completed review parked pending a decision. Drydock never auto-decides a gate,
+ * so this is the only proactive signal that a held GitHub deployment is waiting
+ * on a human.
  *
- * Send-once is owned by the caller: `executeWorkflowGateJob` only reaches the
- * review-ready path once per gate (a re-delivered gate with a completed scan
- * short-circuits at its `already_reviewed` guard), so a single review-ready
- * transition produces a single email. Delivery is best-effort — the outcome is
- * recorded as a `github_workflow_gate.notification_sent` /
- * `notification_failed` event and never blocks or fails the gate. The body
- * carries only release identity, risk, repo/environment, and a dashboard link;
- * no token, header, or artifact bytes ever reach the email.
+ * Recipients resolve via `resolveNotificationEmails`: the org's configured set
+ * when present, otherwise the owner's email. Send-once is owned by the caller:
+ * `executeWorkflowGateJob` only reaches the review-ready path once per gate (a
+ * re-delivered gate with a completed scan short-circuits at its
+ * `already_reviewed` guard), so a single review-ready transition produces a
+ * single email per recipient. Delivery is best-effort — each send is recorded as
+ * a `github_workflow_gate.notification_sent` / `notification_failed` event and
+ * never blocks or fails the gate. The body carries only release identity, risk,
+ * repo/environment, and a dashboard link; no token, header, or artifact bytes
+ * ever reach the email.
  */
 export async function notifyWorkflowGateReview(
   input: NotifyWorkflowGateReviewInput,
@@ -117,14 +122,14 @@ export async function notifyWorkflowGateReview(
     releaseRisk,
   } = input;
 
-  const contact = await getUserContact(db, ownerUserId);
-  if (!contact?.email) {
+  const recipients = await resolveNotificationEmails(db, organizationId, ownerUserId);
+  if (recipients.length === 0) {
     await recordScanEvent(db, {
       organizationId,
       actorUserId: ownerUserId,
       scanId,
       type: "github_workflow_gate.notification_failed",
-      metadata: { gateId, channel: "email", reason: "no_contact_email" },
+      metadata: { gateId, channel: "email", reason: "no_recipients" },
     });
     return;
   }
@@ -133,9 +138,9 @@ export async function notifyWorkflowGateReview(
   const dashboardUrl = scanUrl(env, scanId);
   const subject = `Release gate needs your review — ${packageLabel}`;
   const lines = [
-    `Hi ${contact.name ?? "there"},`,
+    "Hi there,",
     "",
-    `A staged release is held in ${repositoryFullName} and is waiting for your decision before it can publish.`,
+    `A staged release is held in ${repositoryFullName} and is waiting for a decision before it can publish.`,
     "",
     `Package: ${packageLabel}`,
     `Release risk: ${releaseRisk}`,
@@ -144,19 +149,13 @@ export async function notifyWorkflowGateReview(
     "",
     dashboardUrl ? `Approve or block the release: ${dashboardUrl}` : null,
     "",
-    "The held GitHub deployment stays blocked until you approve or reject it.",
+    "The held GitHub deployment stays blocked until someone approves or rejects it.",
     "",
     "— Drydock",
   ];
   const text = lines.filter((line): line is string => line !== null).join("\n");
 
-  const result = await sendNotificationEmail(env, {
-    to: contact.email,
-    subject,
-    text,
-  });
-
-  await recordScanEvent(db, {
+  await deliverToRecipients(env, db, recipients, { subject, text }, (recipient, result) => ({
     organizationId,
     actorUserId: ownerUserId,
     scanId,
@@ -167,9 +166,32 @@ export async function notifyWorkflowGateReview(
       gateId,
       channel: "email",
       releaseRisk,
+      recipient,
       ...(result.ok ? {} : { reason: result.reason }),
     },
-  });
+  }));
+}
+
+async function deliverToRecipients(
+  env: Cloudflare.Env,
+  db: AppDb,
+  recipients: string[],
+  message: { subject: string; text: string },
+  event: (
+    recipient: string,
+    result: { ok: boolean; reason?: string },
+  ) => Parameters<typeof recordScanEvent>[1],
+): Promise<void> {
+  await Promise.all(
+    recipients.map(async (recipient) => {
+      const result = await sendNotificationEmail(env, {
+        to: recipient,
+        subject: message.subject,
+        text: message.text,
+      });
+      await recordScanEvent(db, event(recipient, result));
+    }),
+  );
 }
 
 export interface NotifyOrganizationInviteInput {

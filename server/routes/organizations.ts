@@ -1,21 +1,28 @@
 import { Hono } from "hono";
 import {
   RateLimitError,
+  addNotificationRecipient,
+  countNotificationRecipients,
   createDb,
   createOrganization,
+  deleteNotificationRecipient,
   enforceRateLimit,
   ensurePersonalOrganization,
   isOrganizationOwner,
+  listNotificationRecipients,
   listUserOrganizations,
   recordScanEvent,
   renameOrganization,
+  type NotificationRecipient,
 } from "../db";
+import { sanitizeAddress } from "../lib/email";
 import { rateLimitResponse } from "../lib/http";
 import type { Bindings, Variables } from "../types";
 
 const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} _\-./]{0,79}$/u;
 const ORGANIZATION_NAME_ERROR =
   "organization name must be 1-80 characters of letters, digits, or _-./";
+const MAX_NOTIFICATION_RECIPIENTS = 25;
 
 export const organizationsRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -78,6 +85,91 @@ organizationsRoutes.patch("/:id", async (c) => {
   });
   return c.json({ organization: { id: organizationId, name } });
 });
+
+organizationsRoutes.get("/:id/notification-recipients", async (c) => {
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = c.req.param("id");
+  const owner = await isOrganizationOwner(db, organizationId, session.userId);
+  if (!owner) return c.json({ error: "not found" }, 404);
+  const recipients = await listNotificationRecipients(db, organizationId);
+  return c.json({ recipients: recipients.map(publicRecipient) });
+});
+
+organizationsRoutes.post("/:id/notification-recipients", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { email?: unknown };
+  const email = sanitizeAddress(body.email);
+  if (!email) return c.json({ error: "a valid email address is required" }, 400);
+
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = c.req.param("id");
+  const owner = await isOrganizationOwner(db, organizationId, session.userId);
+  if (!owner) return c.json({ error: "not found" }, 404);
+
+  try {
+    await enforceRateLimit(db, {
+      key: `organizations:recipients:add:${session.userId}`,
+      limit: 30,
+      windowMs: 60 * 60 * 1000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return rateLimitResponse(c, "notification recipient rate limit exceeded", err);
+    }
+    throw err;
+  }
+
+  const existing = await countNotificationRecipients(db, organizationId);
+  if (existing >= MAX_NOTIFICATION_RECIPIENTS) {
+    return c.json(
+      { error: `at most ${MAX_NOTIFICATION_RECIPIENTS} notification recipients are allowed` },
+      400,
+    );
+  }
+
+  const { created, recipient } = await addNotificationRecipient(db, {
+    organizationId,
+    email,
+    createdByUserId: session.userId,
+  });
+  if (created) {
+    await recordScanEvent(db, {
+      organizationId,
+      actorUserId: session.userId,
+      type: "organization.notification_recipient_added",
+      metadata: { recipient: recipient.email },
+    });
+  }
+  return c.json({ recipient: publicRecipient(recipient) }, created ? 201 : 200);
+});
+
+organizationsRoutes.delete("/:id/notification-recipients/:recipientId", async (c) => {
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = c.req.param("id");
+  const recipientId = c.req.param("recipientId");
+  const owner = await isOrganizationOwner(db, organizationId, session.userId);
+  if (!owner) return c.json({ error: "not found" }, 404);
+
+  const removed = await deleteNotificationRecipient(db, organizationId, recipientId);
+  if (!removed) return c.json({ error: "not found" }, 404);
+  await recordScanEvent(db, {
+    organizationId,
+    actorUserId: session.userId,
+    type: "organization.notification_recipient_removed",
+    metadata: { recipient: removed.email },
+  });
+  return c.json({ ok: true });
+});
+
+function publicRecipient(recipient: NotificationRecipient) {
+  return {
+    id: recipient.id,
+    email: recipient.email,
+    createdAt: recipient.createdAt,
+  };
+}
 
 function parseOrganizationName(
   value: unknown,
