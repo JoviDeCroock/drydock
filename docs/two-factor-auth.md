@@ -16,7 +16,7 @@ account. Backup codes use the plugin default: 10 single-use codes.
 
 ### Enrollment (Settings → Security)
 
-`src/pages/Dashboard/TwoFactorSection.tsx` drives a dialog:
+`src/pages/Dashboard/Settings/TwoFactorSection.tsx` drives a dialog:
 
 1. Confirm the current password (`POST /api/auth/two-factor/enable`). The response carries the
    `totpURI` and the freshly generated `backupCodes`.
@@ -72,7 +72,7 @@ All under the Better Auth base path `/api/auth` and handled by `auth.handler`:
     the plugin requires this column
   - `user_id` (text, FK → `user.id`, `ON DELETE CASCADE`)
 
-Migrations are generated with `pnpm db:generate` (see `drizzle/0012_late_mattie_franklin.sql`),
+Migrations are generated with `pnpm db:generate` (see `drizzle/0015_nebulous_patch.sql`),
 never hand-written.
 
 ## Rate limiting
