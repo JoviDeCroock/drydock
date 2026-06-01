@@ -9,7 +9,11 @@ import {
   updateNpmConnectionValidation,
   upsertNpmConnection,
 } from "../db";
-import { requireActiveOrganization } from "../lib/active-organization";
+import {
+  requireActiveOrganization,
+  requireActiveOrganizationContext,
+} from "../lib/active-organization";
+import { roleCanManageIntegrations } from "../lib/roles";
 import {
   allowInsecureLocalRegistry,
   decryptNpmToken,
@@ -58,7 +62,8 @@ npmConnectionRoutes.post("/", async (c) => {
   try {
     const db = createDb(c.env.DB);
     const session = c.get("authSession");
-    const organizationId = await requireActiveOrganization(c, db);
+    const { organizationId, role } = await requireActiveOrganizationContext(c, db);
+    if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
     const [, encrypted] = await Promise.all([
       enforceRateLimit(db, {
         key: `npm-connection:save:${organizationId}`,
@@ -106,7 +111,8 @@ npmConnectionRoutes.post("/validate", async (c) => {
   try {
     const db = createDb(c.env.DB);
     const session = c.get("authSession");
-    const organizationId = await requireActiveOrganization(c, db);
+    const { organizationId, role } = await requireActiveOrganizationContext(c, db);
+    if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
     await enforceRateLimit(db, {
       key: `npm-connection:validate:${organizationId}`,
       limit: 12,
@@ -153,7 +159,8 @@ npmConnectionRoutes.post("/validate", async (c) => {
 npmConnectionRoutes.delete("/", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
-  const organizationId = await requireActiveOrganization(c, db);
+  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
+  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
   const existing = await getNpmConnection(db, organizationId);
   await Promise.all([
     deleteNpmConnection(db, organizationId),

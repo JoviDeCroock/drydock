@@ -6,6 +6,12 @@ import { sessionModel } from "../../../models/auth";
 import { NpmConnectionModel } from "../../../models/npm-connection";
 import { OrganizationModel } from "../../../models/organization";
 import { GithubAppModel } from "../../../models/github-app";
+import { MembersModel } from "../../../models/organization-members";
+import {
+  normalizeRole,
+  roleCanManageMembers,
+  type OrganizationRole,
+} from "../../../../server/lib/roles";
 import {
   Eyebrow,
   LoadingState,
@@ -16,12 +22,14 @@ import {
 } from "../../../components";
 import { GithubAppSection } from "./GithubAppSection";
 import { NpmConnectionSection } from "./NpmConnectionSection";
+import { OrganizationMembersSection } from "./OrganizationMembersSection";
 
 export default function SettingsPage() {
   const location = useLocation();
   const npm = useModel(NpmConnectionModel);
   const organizations = useModel(OrganizationModel);
   const githubApp = useModel(GithubAppModel);
+  const members = useModel(MembersModel);
   const sessionChecked = useSignal(false);
 
   useEffect(() => {
@@ -44,6 +52,7 @@ export default function SettingsPage() {
         githubApp.loadConfig(),
         githubApp.loadInstallations(),
         githubApp.loadReleaseTargets(),
+        members.load(canManageMembers(organizations)),
       ]);
     })();
     return () => {
@@ -52,7 +61,7 @@ export default function SettingsPage() {
   }, []);
 
   const reloadActiveOrgScopedData = async () => {
-    const loaders: Promise<unknown>[] = [npm.load()];
+    const loaders: Promise<unknown>[] = [npm.load(), members.load(canManageMembers(organizations))];
     githubApp.clearForm();
     if (!githubApp.configLoaded.peek()) loaders.push(githubApp.loadConfig());
     loaders.push(githubApp.loadInstallations(), githubApp.loadReleaseTargets());
@@ -113,12 +122,30 @@ export default function SettingsPage() {
         <div class="flex flex-col gap-6">
           <NpmConnectionSection npm={npm} />
           <GithubAppSection githubApp={githubApp} />
+          <OrganizationMembersSection
+            members={members}
+            currentUserRole={activeRole(organizations)}
+            currentUserId={user?.id ?? null}
+          />
         </div>
       ) : (
         <LoadingState title="Loading settings" detail={loadingDetail(npmLoaded, githubAppLoaded)} />
       )}
     </PageShell>
   );
+}
+
+function activeRole(
+  organizations: ReturnType<typeof useModel<typeof OrganizationModel.prototype>>,
+): OrganizationRole | null {
+  const role = organizations.active.value?.role;
+  return role ? normalizeRole(role) : null;
+}
+
+function canManageMembers(
+  organizations: ReturnType<typeof useModel<typeof OrganizationModel.prototype>>,
+): boolean {
+  return roleCanManageMembers(activeRole(organizations));
 }
 
 function loadingDetail(npmLoaded: boolean, githubAppLoaded: boolean): string {

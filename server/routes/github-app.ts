@@ -7,7 +7,11 @@ import {
   recordScanDecision,
   recordScanEvent,
 } from "../db";
-import { requireActiveOrganization } from "../lib/active-organization";
+import {
+  requireActiveOrganization,
+  requireActiveOrganizationContext,
+} from "../lib/active-organization";
+import { roleCanManageIntegrations } from "../lib/roles";
 import { rateLimitResponse } from "../lib/http";
 import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
 import {
@@ -71,7 +75,8 @@ githubAppRoutes.post("/install", async (c) => {
   }
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
-  const organizationId = await requireActiveOrganization(c, db);
+  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
+  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
   try {
     await enforceRateLimit(db, {
       key: `github-app:install:${organizationId}`,
@@ -138,10 +143,11 @@ githubAppRoutes.post("/install/callback", async (c) => {
 
   const db = createDb(c.env.DB);
   // Confirm the caller still has access to the org the state was issued for.
-  const organizationId = await requireActiveOrganization(c, db);
+  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
   if (organizationId !== claims.organizationId) {
     return c.json({ error: "state token does not match active organization" }, 403);
   }
+  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
 
   try {
     await verifyUserCanAccessInstallation(config, { code, installationId });
@@ -303,7 +309,8 @@ githubAppRoutes.post("/release-targets", async (c) => {
 
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
-  const organizationId = await requireActiveOrganization(c, db);
+  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
+  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
   try {
     await enforceRateLimit(db, {
       key: `github-app:release-target:${organizationId}`,
@@ -356,7 +363,8 @@ githubAppRoutes.post("/release-targets", async (c) => {
 githubAppRoutes.delete("/release-targets/:id", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
-  const organizationId = await requireActiveOrganization(c, db);
+  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
+  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
   const id = c.req.param("id");
   const removed = await deleteReleaseTarget(db, organizationId, id);
   if (!removed) return c.json({ error: "not found" }, 404);
