@@ -2,6 +2,7 @@ import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:
 import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import {
+  addOrganizationMember,
   createDb,
   ensurePersonalOrganization,
   getNpmConnection,
@@ -275,6 +276,58 @@ describe("organization notification recipients", () => {
 
     const db = createDb(env.DB);
     expect(await listNotificationRecipients(db, orgId)).toHaveLength(1);
+  });
+
+  test("admins can manage recipients while members can only read them", async () => {
+    const owner = await seedUser();
+    const admin = await seedUser();
+    const member = await seedUser();
+    const db = createDb(env.DB);
+    const orgId = owner.personalOrganizationId;
+
+    await addOrganizationMember(db, {
+      organizationId: orgId,
+      userId: admin.userId,
+      role: "admin",
+    });
+    await addOrganizationMember(db, {
+      organizationId: orgId,
+      userId: member.userId,
+      role: "member",
+    });
+
+    const add = await call(
+      buildTestApp(admin),
+      "POST",
+      `/api/v1/organizations/${orgId}/notification-recipients`,
+      { body: { email: "reviewers@example.com" } },
+    );
+    expect(add.status).toBe(201);
+    const recipientId = ((await add.json()) as { recipient: { id: string } }).recipient.id;
+
+    const listed = await call(
+      buildTestApp(member),
+      "GET",
+      `/api/v1/organizations/${orgId}/notification-recipients`,
+    );
+    expect(listed.status).toBe(200);
+    const listedBody = (await listed.json()) as { recipients: Array<{ email: string }> };
+    expect(listedBody.recipients.map((r) => r.email)).toEqual(["reviewers@example.com"]);
+
+    const memberAdd = await call(
+      buildTestApp(member),
+      "POST",
+      `/api/v1/organizations/${orgId}/notification-recipients`,
+      { body: { email: "member-write@example.com" } },
+    );
+    expect(memberAdd.status).toBe(403);
+
+    const memberRemove = await call(
+      buildTestApp(member),
+      "DELETE",
+      `/api/v1/organizations/${orgId}/notification-recipients/${recipientId}`,
+    );
+    expect(memberRemove.status).toBe(403);
   });
 
   test("DELETE removes an owned recipient and rejects non-owners", async () => {

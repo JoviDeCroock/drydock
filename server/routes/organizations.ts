@@ -8,6 +8,7 @@ import {
   deleteNotificationRecipient,
   enforceRateLimit,
   ensurePersonalOrganization,
+  getOrganizationRole,
   isOrganizationOwner,
   listNotificationRecipients,
   listUserOrganizations,
@@ -17,6 +18,7 @@ import {
 } from "../db";
 import { sanitizeAddress } from "../lib/email";
 import { rateLimitResponse } from "../lib/http";
+import { roleCanManageIntegrations, type OrganizationRole } from "../lib/roles";
 import type { Bindings, Variables } from "../types";
 
 const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} _\-./]{0,79}$/u;
@@ -90,8 +92,8 @@ organizationsRoutes.get("/:id/notification-recipients", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
   const organizationId = c.req.param("id");
-  const owner = await isOrganizationOwner(db, organizationId, session.userId);
-  if (!owner) return c.json({ error: "not found" }, 404);
+  const role = await requireOrganizationMember(db, organizationId, session.userId);
+  if (!role) return c.json({ error: "not found" }, 404);
   const recipients = await listNotificationRecipients(db, organizationId);
   return c.json({ recipients: recipients.map(publicRecipient) });
 });
@@ -104,8 +106,9 @@ organizationsRoutes.post("/:id/notification-recipients", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
   const organizationId = c.req.param("id");
-  const owner = await isOrganizationOwner(db, organizationId, session.userId);
-  if (!owner) return c.json({ error: "not found" }, 404);
+  const role = await requireOrganizationMember(db, organizationId, session.userId);
+  if (!role) return c.json({ error: "not found" }, 404);
+  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
 
   try {
     await enforceRateLimit(db, {
@@ -149,8 +152,9 @@ organizationsRoutes.delete("/:id/notification-recipients/:recipientId", async (c
   const session = c.get("authSession");
   const organizationId = c.req.param("id");
   const recipientId = c.req.param("recipientId");
-  const owner = await isOrganizationOwner(db, organizationId, session.userId);
-  if (!owner) return c.json({ error: "not found" }, 404);
+  const role = await requireOrganizationMember(db, organizationId, session.userId);
+  if (!role) return c.json({ error: "not found" }, 404);
+  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
 
   const removed = await deleteNotificationRecipient(db, organizationId, recipientId);
   if (!removed) return c.json({ error: "not found" }, 404);
@@ -169,6 +173,14 @@ function publicRecipient(recipient: NotificationRecipient) {
     email: recipient.email,
     createdAt: recipient.createdAt,
   };
+}
+
+function requireOrganizationMember(
+  db: ReturnType<typeof createDb>,
+  organizationId: string,
+  userId: string,
+): Promise<OrganizationRole | null> {
+  return getOrganizationRole(db, organizationId, userId);
 }
 
 function parseOrganizationName(
