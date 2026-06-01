@@ -22,6 +22,9 @@ const stagedMock = vi.hoisted(() => ({
 const npmConnectionMock = vi.hoisted(() => ({
   decryptNpmToken: vi.fn(),
 }));
+const aiReviewMock = vi.hoisted(() => ({
+  runSelectiveAiReview: vi.fn(),
+}));
 
 vi.mock("../server/db/index.ts", () => dbMock);
 vi.mock("../server/lib/registry.ts", async () => ({
@@ -36,6 +39,10 @@ vi.mock("../server/lib/staged-publishes.ts", async () => ({
 vi.mock("../server/lib/npm-connection.ts", async () => ({
   ...(await vi.importActual("../server/lib/npm-connection.ts")),
   decryptNpmToken: npmConnectionMock.decryptNpmToken,
+}));
+vi.mock("../server/lib/ai-review.ts", async () => ({
+  ...(await vi.importActual("../server/lib/ai-review.ts")),
+  runSelectiveAiReview: aiReviewMock.runSelectiveAiReview,
 }));
 
 const { runScanPipeline } = await import("../server/lib/scan-pipeline.ts");
@@ -118,6 +125,7 @@ describe("scan pipeline baseline selection", () => {
     registryMock.fetchPackageMetadata.mockReset();
     sandboxMock.downloadInSandbox.mockReset();
     stagedMock.fetchStagedPublishDetails.mockReset();
+    aiReviewMock.runSelectiveAiReview.mockReset();
   });
 
   const baseContext = {
@@ -241,6 +249,33 @@ describe("scan pipeline baseline selection", () => {
         },
       },
     });
+  });
+
+  test("persists deterministic results when enabled AI review fails", async () => {
+    aiReviewMock.runSelectiveAiReview.mockRejectedValue(new Error("workers ai unavailable"));
+    const context = {
+      ...baseContext,
+      env: {
+        ...baseContext.env,
+        FLAGS: {
+          getBooleanValue: vi.fn(async () => true),
+        },
+      },
+    };
+
+    const result = await runScanPipeline(context, npmAdapter, {
+      scanId: "scan_ai_failure",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
+
+    expect(result.aiFindings).toMatchObject({
+      status: "unavailable",
+      summary: "AI review failed; deterministic findings remain available.",
+      findings: [],
+    });
+    expect(result.risk).toBe("low");
+    expect(dbMock.persistScan).toHaveBeenCalled();
   });
 
   test("preserves diff-scoped deterministic findings from the npm adapter", async () => {
