@@ -1,6 +1,6 @@
 # Staged Publish Review
 
-Cloudflare-first SaaS for reviewing npm staged publishes before a maintainer approves them. The product downloads a staged npm tarball through a sandboxed boundary, compares it to the currently published package, runs deterministic supply-chain checks, asks Cloudflare Workers AI for constrained triage, and persists a human-readable review report.
+Cloudflare-first SaaS for reviewing package release artifacts before a maintainer approves publication. The npm path downloads a staged npm tarball through a sandboxed boundary, selects a tag-aware published baseline, runs deterministic supply-chain checks, optionally asks Cloudflare Workers AI for constrained triage behind a per-organization Flagship gate, and persists a human-readable review report.
 
 The approval step remains outside this product: maintainers approve with `npm stage approve <stage-id>` or npmjs.com, including npm's required 2FA challenge.
 
@@ -11,13 +11,18 @@ This repository is moving from prototype to real product. The current implementa
 - **SaaS, organization-scoped.** Scans belong to an organization boundary. RBAC is intentionally deferred for the first production slice, but the data model should keep organization ownership explicit.
 - **Per-organization npm credentials.** Production SaaS should not use a deployment-wide npm token. Each organization will connect its own npm credential, scoped as narrowly as npm permits, and the credential will only be used by the gateway that talks to npm.
 - **Manual publish approval.** The product reviews and explains a staged publish. It does not run `npm stage approve`, does not bypass npm 2FA, and does not become the final publisher.
-- **Workflow-gate expansion.** PyPI support is being introduced as a GitHub Environment gate rather than a registry-staged publish clone. See [`docs/pypi-workflow-gate.md`](docs/pypi-workflow-gate.md) for the implemented backend foundation and remaining GitHub App work.
-- **AI review paused.** Cloudflare Workers AI was the production reviewer, but AI review is currently disabled in the pipeline. We plan to re-introduce it as a paid-tier feature; until then, scans rely entirely on deterministic findings. AI findings will remain advisory and unable to downgrade deterministic findings when they return.
+- **Two operating modes.** npm uses registry-stage mode: Drydock reviews npm-staged bytes before the maintainer approves in npm. PyPI uses workflow-gate mode: a GitHub Environment deployment-protection rule blocks the trusted-publishing job while Drydock reviews the built wheel/sdist artifacts. See [`docs/pypi-workflow-gate.md`](docs/pypi-workflow-gate.md).
+- **AI review default-off.** Cloudflare Workers AI review is wired into the pipeline, but it is gated by the per-organization Flagship `ai-review` flag and defaults to unavailable. Deterministic findings are the review authority unless a complete, schema-valid AI review is enabled; AI remains advisory and cannot downgrade deterministic findings.
 - **Safe artifact defaults.** Do not retain raw tarballs by default in SaaS. Persist redacted summaries, manifests, diffs, findings, and report metadata. Raw artifact retention may become an explicit short-TTL organization setting later.
 - **Signed reports later.** Prepare report data to be canonical and signable, but do not launch public signed report generation yet.
 
-See [`docs/architecture.md`](docs/architecture.md), [`docs/security-model.md`](docs/security-model.md), [`docs/security-detection-corpus.md`](docs/security-detection-corpus.md), [`docs/production-roadmap.md`](docs/production-roadmap.md), [`docs/cost-model.md`](docs/cost-model.md), [`docs/test-package.md`](docs/test-package.md), and [`docs/e2e-test-environment.md`](docs/e2e-test-environment.md) for the production plan, detection corpus notes, budget napkin math, staged-publish test package, and local E2E harness.
-See [`docs/pypi-workflow-gate.md`](docs/pypi-workflow-gate.md) for the PyPI workflow-gate direction.
+Use the docs by layer:
+
+- [`docs/architecture.md`](docs/architecture.md) — runtime shape, trust boundaries, adapters, APIs.
+- [`docs/security-model.md`](docs/security-model.md) — non-negotiable security posture and known gaps.
+- [`docs/production-roadmap.md`](docs/production-roadmap.md) — remaining product slices, with closed work collapsed.
+- [`docs/pypi-workflow-gate.md`](docs/pypi-workflow-gate.md) — PyPI GitHub Environment gate contract and implementation notes.
+- [`docs/release-safety.md`](docs/release-safety.md), [`docs/security-detection-corpus.md`](docs/security-detection-corpus.md), [`docs/detection-eval.md`](docs/detection-eval.md), and [`docs/e2e-test-environment.md`](docs/e2e-test-environment.md) — change safety, detection quality, and local verification.
 
 ## Current capabilities
 
@@ -28,10 +33,10 @@ See [`docs/pypi-workflow-gate.md`](docs/pypi-workflow-gate.md) for the PyPI work
   - staged tarball: `https://registry.npmjs.org/-/stage/<stage-id>/tarball`
   - package metadata JSON
   - published `.tgz` tarballs for previous-version diffing
-- The sandbox parser can also parse ZIP wheel artifacts for the PyPI workflow-gate review foundation. End-to-end PyPI gating is not wired to routes or persistence yet.
+- The sandbox parser can also parse ZIP wheel artifacts for the PyPI workflow-gate path. GitHub App install/callback, deployment-protection webhooks, release-target mapping, queue-driven gate review, and workbench approve/reject controls are implemented; hosted GitHub/PyPI validation and report-level artifact digest persistence remain before broad use.
 - The sandbox gunzips/parses tarballs, returns bounded file metadata and text samples, and the parent Worker runs deterministic checks.
-- AI triage (Workers AI JSON-mode review of changed files only) is **disabled for now**. The reviewer module — a single-model (Kimi K2.5) policy and prompt-injection-resistant system prompt — lives in `server/lib/ai-review.ts` so it can return behind a paid tier without re-engineering.
-- The service diffs the staged tarball against the currently published previous version when package metadata is available.
+- AI triage (Workers AI JSON-mode review of targeted changed-file evidence) is wired but default-off behind the per-organization Flagship `ai-review` flag. When disabled, scans record AI review as unavailable and rely on deterministic findings.
+- The service diffs the staged tarball against a tag-aware baseline when package metadata is available. See [`docs/diff-baseline.md`](docs/diff-baseline.md) for the registry metadata constraints and comparison strategy.
 - Package files are treated as hostile evidence even with AI disabled — file previews are escaped/redacted before persistence, and the planned AI reviewer will not downgrade deterministic findings when it returns.
 - Review results are persisted in Cloudflare D1 through Drizzle ORM.
 - Persisted scans are scoped to the authenticated user's personal organization, and scan completion/view actions are recorded as audit events.
@@ -173,9 +178,7 @@ curl -X POST http://localhost:5173/api/v1/npm-connection/validate \
 curl -X DELETE http://localhost:5173/api/v1/npm-connection
 ```
 
-Target production API additions:
-
-- `POST /api/v1/npm-connection/validate` validates registry auth by default and staged-tarball access when a `stageId` is supplied. Further npm list/view capability checks should be added once the exact staged-review endpoint permissions are confirmed.
+Credential validation checks registry auth, staged-list access, and — when a caller supplies a real stage ID — staged-view plus ranged staged-tarball access. A read-only granular npm token reaches the currently required staged endpoints, so broader token scope is not required by the current implementation.
 
 Scan response/report data includes:
 

@@ -176,6 +176,14 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
       durationMs: durationMsSince(startedAtMs),
       error: describeOperationalError(err),
     });
-    throw err;
+    return {
+      status: "unavailable",
+      risk: "low",
+      releaseAssessment: "not_assessed",
+      summary: "AI review failed; deterministic findings remain available.",
+      findings: [],
+      requiresManualReview: false,
+      model: null,
+    };
   }
 }
