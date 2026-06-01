@@ -43,6 +43,15 @@ export async function getUserContact(db: AppDb, userId: string) {
   return row ?? null;
 }
 
+export async function getOrganizationName(db: AppDb, organizationId: string) {
+  const [row] = await db
+    .select({ name: organizations.name })
+    .from(organizations)
+    .where(eq(organizations.id, organizationId))
+    .limit(1);
+  return row?.name ?? null;
+}
+
 export async function getOrganizationOwnerUserId(db: AppDb, organizationId: string) {
   const [row] = await db
     .select({ ownerUserId: organizations.ownerUserId })

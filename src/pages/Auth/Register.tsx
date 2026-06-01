@@ -1,6 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
+import { normalizeAuthReturnTo } from "../../lib/auth-return";
 import { sessionModel } from "../../models/auth";
 import { errorMessage } from "../../models/api";
 import { Alert, Button, Card, Eyebrow, Field, Input, PageShell, Muted } from "../../components";
@@ -12,17 +13,20 @@ export default function RegisterPage() {
   const password = useSignal("");
   const error = useSignal<string | null>(null);
   const loading = useSignal(false);
+  const returnTo = normalizeAuthReturnTo(location.query.returnTo);
+  const signInHref =
+    returnTo === "/dashboard" ? "/login" : `/login?returnTo=${encodeURIComponent(returnTo)}`;
 
   useEffect(() => {
     let cancelled = false;
     void sessionModel.load().then((session) => {
       if (cancelled) return;
-      if (session?.user) location.route("/dashboard", true);
+      if (session?.user) location.route(returnTo, true);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [returnTo]);
 
   const onSubmit = async (event: Event) => {
     event.preventDefault();
@@ -34,7 +38,7 @@ export default function RegisterPage() {
     try {
       await sessionModel.signUp(submittedName, submittedEmail, submittedPassword);
       await sessionModel.signIn(submittedEmail, submittedPassword).catch(() => undefined);
-      location.route("/dashboard", true);
+      location.route(returnTo, true);
     } catch (err) {
       error.value = errorMessage(err);
     } finally {
@@ -92,7 +96,7 @@ export default function RegisterPage() {
         </form>
 
         <p class="text-[13px] text-ink-muted m-0">
-          Already have an account? <a href="/login">Sign in</a>
+          Already have an account? <a href={signInHref}>Sign in</a>
         </p>
       </Card>
     </PageShell>

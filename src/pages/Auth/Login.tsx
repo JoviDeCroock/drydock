@@ -13,6 +13,8 @@ export default function LoginPage() {
   const error = useSignal<string | null>(null);
   const loading = useSignal(false);
   const returnTo = normalizeAuthReturnTo(location.query.returnTo);
+  const registerHref =
+    returnTo === "/dashboard" ? "/register" : `/register?returnTo=${encodeURIComponent(returnTo)}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -80,7 +82,7 @@ export default function LoginPage() {
         </form>
 
         <p class="text-[13px] text-ink-muted m-0">
-          New here? <a href="/register">Create an account</a>
+          New here? <a href={registerHref}>Create an account</a>
         </p>
       </Card>
     </PageShell>

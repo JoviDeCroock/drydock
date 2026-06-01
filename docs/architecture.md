@@ -212,7 +212,9 @@ Organization-owned resources scope by the active org:
 - future report signatures;
 - future artifact retention settings.
 
-Invitations, team membership, RBAC, deletion, audit-log UI, billing, and quotas are deferred (see Phase 12 in `docs/production-roadmap.md`). Until they ship, every member of an organization is effectively an owner, and route guards must continue to verify membership through `organization_members` rather than trusting client-supplied org ids.
+Team membership, invitations, and RBAC ship today — see [`organization-members.md`](./organization-members.md). Each membership row carries one of three roles (`owner`, `admin`, `member`) defined in `server/lib/roles.ts`. Owners and admins manage members, invitations, npm connections, and GitHub release targets; members get read access to org-scoped resources and can act on releases. The owner is the `organizations.ownerUserId` and cannot be removed or demoted through the API. Route guards still verify membership through `organization_members` via `requireActiveOrganization`; sensitive mutations additionally resolve the caller's role with `requireActiveOrganizationContext` and gate on `roleCanManageMembers` / `roleCanManageIntegrations` rather than trusting client-supplied org ids.
+
+Deletion, audit-log UI, billing, and quotas remain deferred (see Phase 12 in `docs/production-roadmap.md`).
 
 ## npm connection model
 
@@ -272,6 +274,12 @@ Current API:
 - `GET /api/v1/organizations` — list the caller's organizations (personal first), each with `npmConnectionConfigured`;
 - `POST /api/v1/organizations` — create a new organization owned by the caller;
 - `PATCH /api/v1/organizations/:id` — rename (owner-only);
+- `GET /api/v1/organizations/members` — list members (any member);
+- `DELETE /api/v1/organizations/members/:userId` — remove a member (owner/admin; the owner cannot be removed);
+- `GET /api/v1/organizations/invitations` — list pending invitations (owner/admin);
+- `POST /api/v1/organizations/invitations` — invite an email at a chosen role (owner/admin; rate-limited; the raw token is emailed, never returned);
+- `DELETE /api/v1/organizations/invitations/:invitationId` — revoke a pending invitation (owner/admin);
+- `POST /api/v1/organizations/invitations/accept` — accept an invitation by token (authenticated invitee; **not** org-header scoped — the org is resolved from the token and the caller's account email must equal the invited address);
 - `GET /api/v1/github-app/config`, `POST /api/v1/github-app/install`, `POST /api/v1/github-app/install/callback`, installation/repository/environment proxy reads, release-target CRUD, and workflow-gate decision endpoints — see [`pypi-workflow-gate.md`](./pypi-workflow-gate.md) for the full GitHub App surface.
 
 All other `/api/v1/*` endpoints honor the `x-organization-id` request header to pick the active org; absent or non-member ids silently fall back to the caller's personal org.

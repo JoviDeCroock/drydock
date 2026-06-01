@@ -49,6 +49,41 @@ export const organizationMembers = sqliteTable(
   }),
 );
 
+export const organizationInvitations = sqliteTable(
+  "organization_invitations",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    role: text("role").notNull().default("member"),
+    tokenHash: text("token_hash").notNull(),
+    status: text("status").notNull().default("pending"),
+    invitedByUserId: text("invited_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    acceptedByUserId: text("accepted_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    acceptedAt: integer("accepted_at", { mode: "timestamp_ms" }),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    tokenHashUniqueIdx: uniqueIndex("organization_invitations_token_hash_unique_idx").on(
+      table.tokenHash,
+    ),
+    orgStatusIdx: index("organization_invitations_org_status_idx").on(
+      table.organizationId,
+      table.status,
+    ),
+    orgEmailIdx: index("organization_invitations_org_email_idx").on(
+      table.organizationId,
+      table.email,
+    ),
+  }),
+);
+
 export const scans = sqliteTable(
   "scans",
   {
