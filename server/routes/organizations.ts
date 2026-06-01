@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import {
   RateLimitError,
   addNotificationRecipient,
-  countNotificationRecipients,
   createDb,
   createOrganization,
   deleteNotificationRecipient,
@@ -123,8 +122,15 @@ organizationsRoutes.post("/:id/notification-recipients", async (c) => {
     throw err;
   }
 
-  const existing = await countNotificationRecipients(db, organizationId);
-  if (existing >= MAX_NOTIFICATION_RECIPIENTS) {
+  const existingRecipients = await listNotificationRecipients(db, organizationId);
+  const existingRecipient = existingRecipients.find(
+    (recipient) => recipient.email === email.trim().toLowerCase(),
+  );
+  if (existingRecipient) {
+    return c.json({ recipient: publicRecipient(existingRecipient) }, 200);
+  }
+
+  if (existingRecipients.length >= MAX_NOTIFICATION_RECIPIENTS) {
     return c.json(
       { error: `at most ${MAX_NOTIFICATION_RECIPIENTS} notification recipients are allowed` },
       400,

@@ -17,10 +17,12 @@ import {
 export function NotificationRecipientsSection({
   recipients,
   organizationId,
+  canManage,
   fallbackEmail,
 }: {
   recipients: ReturnType<typeof useModel<typeof NotificationRecipientsModel.prototype>>;
   organizationId: string | null;
+  canManage: boolean;
   fallbackEmail?: string;
 }) {
   const list = recipients.recipients.value;
@@ -54,17 +56,19 @@ export function NotificationRecipientsSection({
             {list.map((recipient: NotificationRecipient) => (
               <li key={recipient.id} class="flex items-center justify-between gap-3">
                 <code class="text-[13px] text-ink-muted break-all">{recipient.email}</code>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() =>
-                    organizationId && void recipients.remove(organizationId, recipient.id)
-                  }
-                  disabled={busy || !organizationId}
-                  class="shrink-0"
-                >
-                  {status === "removing" ? "Removing…" : "Remove"}
-                </Button>
+                {canManage ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      organizationId && void recipients.remove(organizationId, recipient.id)
+                    }
+                    disabled={busy || !organizationId}
+                    class="shrink-0"
+                  >
+                    {status === "removing" ? "Removing…" : "Remove"}
+                  </Button>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -75,30 +79,34 @@ export function NotificationRecipientsSection({
           </Muted>
         )}
 
-        <form
-          class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end"
-          onSubmit={onAdd}
-        >
-          <Field label="Add recipient email" for="recipientEmail">
-            <Input
-              id="recipientEmail"
-              type="email"
-              value={draft}
-              placeholder="security@example.com"
-              onInput={(e) => (recipients.draftEmail.value = (e.target as HTMLInputElement).value)}
-              disabled={busy || !organizationId}
-              autoComplete="off"
-              spellcheck={false}
-            />
-          </Field>
-          <Button
-            type="submit"
-            disabled={busy || !draft.trim() || !organizationId}
-            class="shrink-0"
+        {canManage ? (
+          <form
+            class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end"
+            onSubmit={onAdd}
           >
-            {status === "adding" ? "Adding…" : "Add recipient"}
-          </Button>
-        </form>
+            <Field label="Add recipient email" for="recipientEmail">
+              <Input
+                id="recipientEmail"
+                type="email"
+                value={draft}
+                placeholder="security@example.com"
+                onInput={(e) =>
+                  (recipients.draftEmail.value = (e.target as HTMLInputElement).value)
+                }
+                disabled={busy || !organizationId}
+                autoComplete="off"
+                spellcheck={false}
+              />
+            </Field>
+            <Button
+              type="submit"
+              disabled={busy || !draft.trim() || !organizationId}
+              class="shrink-0"
+            >
+              {status === "adding" ? "Adding…" : "Add recipient"}
+            </Button>
+          </form>
+        ) : null}
 
         {error ? <Alert tone="critical">{error}</Alert> : null}
       </div>

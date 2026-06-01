@@ -1,4 +1,10 @@
-import { getScan, recordScanEvent, resolveNotificationEmails, type AppDb } from "../db";
+import {
+  getOrganizationOwnerUserId,
+  getScan,
+  recordScanEvent,
+  resolveNotificationEmails,
+  type AppDb,
+} from "../db";
 import { sendNotificationEmail } from "./email";
 import type { RiskLevel } from "./review";
 import type { OrganizationRole } from "./roles";
@@ -15,14 +21,16 @@ export interface NotifyScanCompletionInput {
 
 export async function notifyScanCompletion(input: NotifyScanCompletionInput): Promise<void> {
   const { env, db, scanId, organizationId, ownerUserId, outcome, error } = input;
+  const notificationOwnerUserId =
+    (await getOrganizationOwnerUserId(db, organizationId)) ?? ownerUserId;
   const [recipients, detail] = await Promise.all([
-    resolveNotificationEmails(db, organizationId, ownerUserId),
+    resolveNotificationEmails(db, organizationId, notificationOwnerUserId),
     getScan(db, scanId, organizationId),
   ]);
   if (recipients.length === 0) {
     await recordScanEvent(db, {
       organizationId,
-      actorUserId: ownerUserId,
+      actorUserId: notificationOwnerUserId,
       scanId,
       type: "scan.notification_failed",
       metadata: { outcome, channel: "email", reason: "no_recipients" },
@@ -62,7 +70,7 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
 
   await deliverToRecipients(env, db, recipients, { subject, text }, (recipient, result) => ({
     organizationId,
-    actorUserId: ownerUserId,
+    actorUserId: notificationOwnerUserId,
     scanId,
     type: result.ok ? "scan.notification_sent" : "scan.notification_failed",
     metadata: {

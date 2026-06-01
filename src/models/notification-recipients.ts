@@ -24,6 +24,7 @@ export const NotificationRecipientsModel = createModel(() => {
   const error = signal<string | null>(null);
   const draftEmail = signal("");
   let loadRequestId = 0;
+  let currentOrganizationId: string | null = null;
 
   const busy = computed(() => status.value !== "idle");
 
@@ -37,6 +38,7 @@ export const NotificationRecipientsModel = createModel(() => {
 
     async load(organizationId: string | null): Promise<void> {
       const requestId = ++loadRequestId;
+      currentOrganizationId = organizationId;
       this.recipients.value = [];
       this.loaded.value = false;
       this.error.value = null;
@@ -65,6 +67,7 @@ export const NotificationRecipientsModel = createModel(() => {
     },
 
     async add(organizationId: string): Promise<boolean> {
+      if (currentOrganizationId === null) currentOrganizationId = organizationId;
       const email = this.draftEmail.value.trim();
       if (!email) {
         this.error.value = "Email is required.";
@@ -76,18 +79,24 @@ export const NotificationRecipientsModel = createModel(() => {
         await apiJson<{ recipient: NotificationRecipient }>(recipientsPath(organizationId), {
           email,
         });
+        if (currentOrganizationId !== organizationId) return true;
         this.draftEmail.value = "";
         await this.load(organizationId);
         return true;
       } catch (err) {
-        this.error.value = errorMessage(err);
+        if (currentOrganizationId === organizationId) {
+          this.error.value = errorMessage(err);
+        }
         return false;
       } finally {
-        this.status.value = "idle";
+        if (currentOrganizationId === organizationId) {
+          this.status.value = "idle";
+        }
       }
     },
 
     async remove(organizationId: string, recipientId: string): Promise<void> {
+      if (currentOrganizationId === null) currentOrganizationId = organizationId;
       this.status.value = "removing";
       this.error.value = null;
       try {
@@ -95,11 +104,16 @@ export const NotificationRecipientsModel = createModel(() => {
           `${recipientsPath(organizationId)}/${encodeURIComponent(recipientId)}`,
           { method: "DELETE" },
         );
+        if (currentOrganizationId !== organizationId) return;
         await this.load(organizationId);
       } catch (err) {
-        this.error.value = errorMessage(err);
+        if (currentOrganizationId === organizationId) {
+          this.error.value = errorMessage(err);
+        }
       } finally {
-        this.status.value = "idle";
+        if (currentOrganizationId === organizationId) {
+          this.status.value = "idle";
+        }
       }
     },
   };

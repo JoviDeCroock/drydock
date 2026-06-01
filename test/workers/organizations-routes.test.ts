@@ -375,6 +375,15 @@ describe("organization notification recipients", () => {
       expect(add.status).toBe(201);
     }
 
+    const duplicate = await call(
+      buildTestApp(owner),
+      "POST",
+      `/api/v1/organizations/${orgId}/notification-recipients`,
+      { body: { email: "recipient-4@example.com" } },
+    );
+    expect(duplicate.status).toBe(200);
+    expect(await listNotificationRecipients(createDb(env.DB), orgId)).toHaveLength(5);
+
     const overflow = await call(
       buildTestApp(owner),
       "POST",

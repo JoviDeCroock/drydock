@@ -10,6 +10,7 @@ import { GithubAppModel } from "../../../models/github-app";
 import { MembersModel } from "../../../models/organization-members";
 import {
   normalizeRole,
+  roleCanManageIntegrations,
   roleCanManageMembers,
   type OrganizationRole,
 } from "../../../../server/lib/roles";
@@ -133,6 +134,7 @@ export default function SettingsPage() {
           <NotificationRecipientsSection
             recipients={recipients}
             organizationId={organizations.active.value?.id ?? null}
+            canManage={canManageIntegrations(organizations)}
             fallbackEmail={ownerFallbackEmail(organizations, user)}
           />
           <NpmConnectionSection npm={npm} />
@@ -156,6 +158,12 @@ function canManageMembers(
   organizations: ReturnType<typeof useModel<typeof OrganizationModel.prototype>>,
 ): boolean {
   return roleCanManageMembers(activeRole(organizations));
+}
+
+function canManageIntegrations(
+  organizations: ReturnType<typeof useModel<typeof OrganizationModel.prototype>>,
+): boolean {
+  return roleCanManageIntegrations(activeRole(organizations));
 }
 
 function ownerFallbackEmail(

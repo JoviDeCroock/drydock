@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const dbMock = vi.hoisted(() => ({
+  getOrganizationOwnerUserId: vi.fn(),
   getScan: vi.fn(),
   resolveNotificationEmails: vi.fn(),
   recordScanEvent: vi.fn().mockResolvedValue(undefined),
@@ -44,6 +45,7 @@ function scanInput(overrides = {}) {
 }
 
 beforeEach(() => {
+  dbMock.getOrganizationOwnerUserId.mockResolvedValue("user_1");
   dbMock.resolveNotificationEmails.mockResolvedValue(["owner@example.com"]);
   dbMock.getScan.mockResolvedValue({
     scan: { packageName: "demo-package", stagedVersion: "1.2.0", risk: "high" },
@@ -52,6 +54,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  dbMock.getOrganizationOwnerUserId.mockReset();
   dbMock.resolveNotificationEmails.mockReset();
   dbMock.getScan.mockReset();
   dbMock.recordScanEvent.mockClear();
@@ -154,6 +157,13 @@ describe("notifyWorkflowGateReview", () => {
 });
 
 describe("notifyScanCompletion", () => {
+  test("resolves fallback recipients through the organization owner", async () => {
+    await notifyScanCompletion(scanInput({ ownerUserId: "admin_1" }));
+
+    expect(dbMock.getOrganizationOwnerUserId).toHaveBeenCalledWith({}, "org_1");
+    expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith({}, "org_1", "user_1");
+  });
+
   test("emails the resolved recipients on success with package and risk", async () => {
     dbMock.resolveNotificationEmails.mockResolvedValue([
       "security@example.com",
