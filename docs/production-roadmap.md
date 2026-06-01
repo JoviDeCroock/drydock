@@ -1,11 +1,11 @@
 # Production roadmap
 
-This roadmap converts the current staged-publish sandbox into a SaaS product while preserving the core safety boundaries. Phases 1–4, most of Phase 5, Phase 8 multi-organization workspaces, the scheduled npm discovery foundation, and the PyPI workflow-gate foundation have shipped. Remaining sections track production hardening, report/provenance work, UX polish, team/commercial features, and detection quality.
+This roadmap converts the current staged-publish sandbox into a SaaS product while preserving the core safety boundaries. Phases 1–4, most of Phase 5, Phase 8 multi-organization workspaces, the team membership/RBAC foundation, the scheduled npm discovery foundation, and the PyPI workflow-gate foundation have shipped. Remaining sections track production hardening, report/provenance work, UX polish, commercial features, and detection quality.
 
 ## Product assumptions
 
 - SaaS product with organization-scoped data.
-- No full team RBAC in the first production slice.
+- Basic organization RBAC ships with `owner`, `admin`, and `member` roles. Billing, quotas, audit-log UI, deletion/export, and operator tooling remain later commercial-readiness work.
 - Per-organization npm credentials, not a global production npm token.
 - npm approval remains manual and 2FA-protected outside the product.
 - Cloudflare Workers AI is the production AI provider. AI review is wired through `maybeRunAiReview` but gated off by default behind the per-organization Flagship `ai-review` flag for the planned paid-tier feature; see [`docs/architecture.md`](./architecture.md#workers-ai-flagship-gated) and [`docs/cost-model.md`](./cost-model.md#ai-model-strategy-flagship-gated-planned-paid-tier).
@@ -14,7 +14,7 @@ This roadmap converts the current staged-publish sandbox into a SaaS product whi
 
 ## Current cut line
 
-The prototype-to-product foundation is in place: authenticated organization-scoped scans, encrypted organization npm connections, multi-organization switching, async-capable scan jobs (idempotent across retries), scheduled npm staged-publish discovery, persisted report metadata, and a text-only release diff workbench all exist.
+The prototype-to-product foundation is in place: authenticated organization-scoped scans, encrypted organization npm connections, multi-organization switching, owner/admin/member RBAC, email-token organization invitations, async-capable scan jobs (idempotent across retries), scheduled npm staged-publish discovery, persisted report metadata, and a text-only release diff workbench all exist.
 
 Closed: tenant-boundary, sandbox-gateway, and archive-parser regression tests now have route- and unit-level coverage (`test/workers/cross-org-routes.test.ts`, `test/workers/cross-org-npm-connection.test.ts`, `test/workers/sandbox-gateway-runtime.test.ts`, `test/tar-parser.test.mjs`).
 
@@ -88,8 +88,9 @@ Implemented:
 - `routes/organizations.ts` exposes `GET /api/v1/organizations`, `POST /api/v1/organizations`, and `PATCH /api/v1/organizations/:id`.
 - `src/models/active-organization.ts`, `src/models/organization.ts`, and `OrgSwitcher` provide per-device organization switching backed by localStorage.
 - Cross-org isolation and organization route tests cover header-scoped scans/connections and non-member fallback.
+- `server/routes/organization-members.ts`, `server/lib/roles.ts`, and `docs/organization-members.md` cover member rosters, email-token invitations, owner/admin/member role gates, and invite acceptance.
 
-Out of scope (kept in Phase 12): invitations, RBAC beyond owner, org deletion, audit log UI, billing, quotas, cross-device active-org sync, and multiple npm connections per organization.
+Out of scope (kept in Phase 12): org deletion/export, audit log UI, billing, quotas, cross-device active-org sync, and multiple npm connections per organization.
 
 ## Phase 9 — Trustworthy report artifacts
 
@@ -173,21 +174,19 @@ Exit criteria:
 - Users receive an email with a link to the persisted scan report when the automatic scan reaches a terminal state.
 - The product still makes clear that npm approval remains manual outside the product.
 
-## Phase 12 — Team and commercial readiness
+## Phase 12 — Commercial readiness and administration
 
 Priority: medium after private beta proves value.
 
 Goals:
 
-- Support multi-member organizations instead of only single-owner organization workspaces.
-- Prepare the product for team usage, billing, and operator administration.
+- Build on the shipped multi-member organization foundation with billing, quotas, customer-facing audit surfaces, and operator administration.
+- Add the remaining account/organization lifecycle controls needed for paid team usage.
 
 Tasks:
 
 - Add multiple npm connections per organization so maintainers can segment tokens by npm scope, package, or release workflow.
 - Add per-scan npm connection selection and organization-level defaults once multiple connections exist.
-- Add invitations and membership management.
-- Add RBAC after the organization model is stable.
 - Add audit log UI for npm credential events, scan events, report exports, and future reviewer decisions.
 - Add organization usage and quota pages.
 - Add billing integration and plan limits.
@@ -196,8 +195,8 @@ Tasks:
 
 Exit criteria:
 
-- Multiple maintainers can collaborate safely in one organization.
 - Usage, billing, and audit data are visible to customers and operators.
+- Customers can manage organization lifecycle, account data, quotas, and plan limits without support intervention.
 - Support can diagnose common tenant issues without direct database access.
 
 ## Phase 13 — Security-product defensibility
