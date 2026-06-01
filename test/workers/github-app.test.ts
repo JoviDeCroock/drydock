@@ -190,7 +190,6 @@ describe("github-app createReleaseTarget", () => {
       createReleaseTarget(createDb(env.DB), {
         organizationId,
         installationRowId: "missing-install",
-        ecosystem: "pypi",
         repositoryId: 1,
         repositoryFullName: "octo/example",
         environment: "pypi",
@@ -208,7 +207,6 @@ describe("github-app createReleaseTarget", () => {
       createReleaseTarget(createDb(env.DB), {
         organizationId,
         installationRowId: installation.id,
-        ecosystem: "pypi",
         repositoryId: 1,
         repositoryFullName: "octo/example",
         environment: "pypi",
@@ -225,7 +223,6 @@ describe("github-app createReleaseTarget", () => {
     await createReleaseTarget(dbInstance, {
       organizationId,
       installationRowId: installation.id,
-      ecosystem: "pypi",
       repositoryId: 1,
       repositoryFullName: "octo/example",
       environment: "pypi",
@@ -236,7 +233,6 @@ describe("github-app createReleaseTarget", () => {
       createReleaseTarget(dbInstance, {
         organizationId,
         installationRowId: installation.id,
-        ecosystem: "pypi",
         repositoryId: 1,
         repositoryFullName: "octo/example",
         environment: "pypi",
@@ -253,7 +249,6 @@ describe("github-app createReleaseTarget", () => {
     const target = await createReleaseTarget(dbInstance, {
       organizationId,
       installationRowId: installation.id,
-      ecosystem: "pypi",
       repositoryId: 1,
       repositoryFullName: "octo/example",
       environment: "PyPI",
@@ -265,7 +260,6 @@ describe("github-app createReleaseTarget", () => {
       createReleaseTarget(dbInstance, {
         organizationId,
         installationRowId: installation.id,
-        ecosystem: "pypi",
         repositoryId: 1,
         repositoryFullName: "octo/example",
         environment: "PYPI",
@@ -284,7 +278,6 @@ describe("github-app routes", () => {
       "/api/v1/github-app/release-targets",
       {
         installationRowId: "install-row",
-        ecosystem: "pypi",
         environment: "pypi",
       },
     );
@@ -550,7 +543,6 @@ describe("resolveDeploymentProtectionTarget", () => {
     const target = await createReleaseTarget(dbInstance, {
       organizationId,
       installationRowId: installation.id,
-      ecosystem: "pypi",
       repositoryId: 9001,
       repositoryFullName: "octo/example",
       environment: "pypi",
@@ -576,7 +568,6 @@ describe("resolveDeploymentProtectionTarget", () => {
     const target = await createReleaseTarget(dbInstance, {
       organizationId,
       installationRowId: installation.id,
-      ecosystem: "pypi",
       repositoryId: 9002,
       repositoryFullName: "octo/example-case",
       environment: "PyPI",
@@ -599,7 +590,6 @@ describe("resolveDeploymentProtectionTarget", () => {
     await createReleaseTarget(dbInstance, {
       organizationId,
       installationRowId: installation.id,
-      ecosystem: "pypi",
       repositoryId: 42,
       repositoryFullName: "octo/example",
       environment: "pypi",
@@ -623,7 +613,6 @@ describe("resolveDeploymentProtectionTarget", () => {
     await createReleaseTarget(dbInstance, {
       organizationId,
       installationRowId: targetInstallation.id,
-      ecosystem: "pypi",
       repositoryId: 42,
       repositoryFullName: "octo/example",
       environment: "pypi",
@@ -645,7 +634,6 @@ describe("resolveDeploymentProtectionTarget", () => {
     await createReleaseTarget(dbInstance, {
       organizationId,
       installationRowId: installation.id,
-      ecosystem: "pypi",
       repositoryId: 77,
       repositoryFullName: "octo/example",
       environment: "pypi",
@@ -674,7 +662,6 @@ describe("github-app cleanup helpers", () => {
     const aTarget = await createReleaseTarget(dbInstance, {
       organizationId: a.organizationId,
       installationRowId: installA.id,
-      ecosystem: "pypi",
       repositoryId: 1,
       repositoryFullName: "octo/a",
       environment: "pypi",
@@ -683,7 +670,6 @@ describe("github-app cleanup helpers", () => {
     await createReleaseTarget(dbInstance, {
       organizationId: b.organizationId,
       installationRowId: installB.id,
-      ecosystem: "pypi",
       repositoryId: 2,
       repositoryFullName: "octo/b",
       environment: "pypi",
@@ -724,7 +710,6 @@ async function seedGate(
   const releaseTarget = await createReleaseTarget(db, {
     organizationId,
     installationRowId: installation.id,
-    ecosystem: "pypi",
     repositoryId: Math.floor(Math.random() * 1e6) + 1,
     repositoryFullName: "octo/example",
     environment: "pypi",

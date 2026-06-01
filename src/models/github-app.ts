@@ -20,7 +20,6 @@ export interface PublicReleaseTarget {
   id: string;
   organizationId: string;
   installationRowId: string;
-  ecosystem: "pypi";
   repositoryId: number;
   repositoryFullName: string;
   environment: string;
@@ -384,7 +383,6 @@ export const GithubAppModel = createModel(() => {
       try {
         const payload: Record<string, string> = {
           installationRowId: formInstallationRowId.value.trim(),
-          ecosystem: "pypi",
           repositoryFullName: formRepositoryFullName.value.trim(),
           environment: formEnvironment.value.trim(),
         };

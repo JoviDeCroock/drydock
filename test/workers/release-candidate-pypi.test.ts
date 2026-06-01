@@ -55,7 +55,6 @@ async function seedGateForTest(opts: {
   const releaseTarget = await createReleaseTarget(db, {
     organizationId,
     installationRowId: installation.id,
-    ecosystem: "pypi",
     repositoryId: opts.repositoryId,
     repositoryFullName: "octo/example",
     environment: "pypi",

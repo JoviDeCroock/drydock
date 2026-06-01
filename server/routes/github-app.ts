@@ -18,12 +18,10 @@ import {
 import {
   GithubAppConfigError,
   GithubAppValidationError,
-  SUPPORTED_ECOSYSTEMS,
   type GithubAppConfig,
   type GithubAppValidationCode,
   type InstallationRecord,
   type ReleaseTargetRecord,
-  type SupportedEcosystem,
   type WorkflowGateRecord,
   buildInstallUrl,
   createReleaseTarget,
@@ -281,15 +279,12 @@ githubAppRoutes.post("/release-targets", async (c) => {
 
   const body = (await c.req.json().catch(() => ({}))) as {
     installationRowId?: unknown;
-    ecosystem?: unknown;
     repositoryFullName?: unknown;
     environment?: unknown;
   };
 
   const installationRowId =
     typeof body.installationRowId === "string" ? body.installationRowId.trim() : "";
-  const ecosystem =
-    typeof body.ecosystem === "string" ? (body.ecosystem.trim() as SupportedEcosystem) : "pypi";
   const repositoryFullName =
     typeof body.repositoryFullName === "string" ? body.repositoryFullName.trim() : "";
   const environment = typeof body.environment === "string" ? body.environment.trim() : "";
@@ -297,9 +292,6 @@ githubAppRoutes.post("/release-targets", async (c) => {
   if (!installationRowId) return c.json({ error: "installationRowId is required" }, 400);
   if (!repositoryFullName) return c.json({ error: "repositoryFullName is required" }, 400);
   if (!environment) return c.json({ error: "environment is required" }, 400);
-  if (!SUPPORTED_ECOSYSTEMS.includes(ecosystem)) {
-    return c.json({ error: `unsupported ecosystem: ${ecosystem}` }, 400);
-  }
 
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
@@ -330,7 +322,6 @@ githubAppRoutes.post("/release-targets", async (c) => {
     const record = await createReleaseTarget(db, {
       organizationId,
       installationRowId: installation.id,
-      ecosystem,
       repositoryId: repo.id,
       repositoryFullName: repo.fullName,
       environment,
@@ -341,7 +332,6 @@ githubAppRoutes.post("/release-targets", async (c) => {
       actorUserId: session.userId,
       type: "github_app_release_target.created",
       metadata: {
-        ecosystem: record.ecosystem,
         repositoryFullName: record.repositoryFullName,
         repositoryId: record.repositoryId,
         environment: record.environment,
@@ -542,7 +532,6 @@ function publicReleaseTarget(record: ReleaseTargetRecord) {
     id: record.id,
     organizationId: record.organizationId,
     installationRowId: record.installationRowId,
-    ecosystem: record.ecosystem,
     repositoryId: record.repositoryId,
     repositoryFullName: record.repositoryFullName,
     environment: record.environment,
@@ -602,7 +591,6 @@ function statusForCode(code: GithubAppValidationCode): 400 | 403 | 404 | 409 {
     case "environment_already_mapped":
       return 409;
     case "environment_unmapped":
-    case "unsupported_ecosystem":
     case "invalid_input":
       return 400;
   }

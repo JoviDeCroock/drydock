@@ -1,12 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import type { AppDb } from "../../db";
 import { githubAppInstallations, githubReleaseTargets } from "../../db/schema";
-import {
-  ACCOUNT_LOGIN_MAX,
-  GithubAppValidationError,
-  type InstallationStatus,
-  type SupportedEcosystem,
-} from "./config";
+import { ACCOUNT_LOGIN_MAX, GithubAppValidationError, type InstallationStatus } from "./config";
 import { normalizeGithubEnvironmentName, validateReleaseTargetShape } from "./validation";
 
 export interface InstallationRecord {
@@ -26,7 +21,6 @@ export interface ReleaseTargetRecord {
   id: string;
   organizationId: string;
   installationRowId: string;
-  ecosystem: SupportedEcosystem;
   repositoryId: number;
   repositoryFullName: string;
   environment: string;
@@ -174,7 +168,6 @@ export async function markInstallationStatus(
 export interface CreateReleaseTargetInput {
   organizationId: string;
   installationRowId: string;
-  ecosystem: SupportedEcosystem;
   repositoryId: number;
   repositoryFullName: string;
   environment: string;
@@ -212,7 +205,6 @@ export async function createReleaseTarget(
       id,
       organizationId: input.organizationId,
       installationRowId: input.installationRowId,
-      ecosystem: input.ecosystem,
       repositoryId: input.repositoryId,
       repositoryFullName: input.repositoryFullName,
       environment,
@@ -233,7 +225,6 @@ export async function createReleaseTarget(
     id,
     organizationId: input.organizationId,
     installationRowId: input.installationRowId,
-    ecosystem: input.ecosystem,
     repositoryId: input.repositoryId,
     repositoryFullName: input.repositoryFullName,
     environment,
@@ -343,7 +334,6 @@ function readReleaseTargetRow(row: {
   id: string;
   organizationId: string;
   installationRowId: string;
-  ecosystem: string;
   repositoryId: number;
   repositoryFullName: string;
   environment: string;
@@ -354,7 +344,6 @@ function readReleaseTargetRow(row: {
     id: row.id,
     organizationId: row.organizationId,
     installationRowId: row.installationRowId,
-    ecosystem: row.ecosystem as SupportedEcosystem,
     repositoryId: row.repositoryId,
     repositoryFullName: row.repositoryFullName,
     environment: row.environment,

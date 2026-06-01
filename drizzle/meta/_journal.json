@@ -99,6 +99,13 @@
       "when": 1780124308761,
       "tag": "0013_simple_blue_blade",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1780209092609,
+      "tag": "0014_equal_yellow_claw",
+      "breakpoints": true
     }
   ]
 }

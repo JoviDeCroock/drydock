@@ -1,0 +1,1 @@
+ALTER TABLE `github_release_targets` DROP COLUMN `ecosystem`;

@@ -232,7 +232,6 @@ export const githubReleaseTargets = sqliteTable(
     installationRowId: text("installation_row_id")
       .notNull()
       .references(() => githubAppInstallations.id, { onDelete: "cascade" }),
-    ecosystem: text("ecosystem").notNull(),
     repositoryId: integer("repository_id").notNull(),
     repositoryFullName: text("repository_full_name").notNull(),
     environment: text("environment").notNull(),

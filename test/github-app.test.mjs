@@ -32,7 +32,6 @@ const VALID_ENV = {
 const VALID_RELEASE_TARGET = {
   organizationId: "org_1",
   installationRowId: "inst_1",
-  ecosystem: "pypi",
   repositoryId: 42,
   repositoryFullName: "octo/example",
   environment: "pypi-release",
@@ -197,16 +196,6 @@ describe("release target validation", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(GithubAppValidationError);
       expect(err.code).toBe("environment_unmapped");
-    }
-  });
-
-  test("rejects unsupported ecosystems", () => {
-    try {
-      validateReleaseTargetShape({ ...VALID_RELEASE_TARGET, ecosystem: "rubygems" });
-      throw new Error("expected validation to throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(GithubAppValidationError);
-      expect(err.code).toBe("unsupported_ecosystem");
     }
   });
 

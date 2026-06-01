@@ -112,7 +112,9 @@ HTTP surface in `server/routes/github-app.ts`. Two tables back it:
   `environment`. GitHub environment names are stored in lowercase because GitHub
   treats environment names as case-insensitive. A repository/environment pair is
   unique within an organization because GitHub deployment-protection webhooks
-  identify the pending gate by installation, repository, and environment.
+  identify the pending gate by installation, repository, and environment. The
+  mapping intentionally does not store an ecosystem; ecosystem/package identity
+  is derived from the artifact bundle that the workflow submits for review.
 
 ### Endpoints
 
@@ -428,7 +430,10 @@ which constructs the `NpmStageGateway` with empty props (no npm token, no
 public-artifact allowlist, `subRequests: 0`). Because identity is derived from
 the sandbox-parsed metadata, package identity is known only after the artifacts
 have crossed the untrusted-archive parser; the release target itself binds the
-review to the GitHub repository and environment.
+review to the GitHub repository and environment. The current gate worker routes
+these bundles through the PyPI adapter, but the release-target mapping does not
+pre-classify the ecosystem so future adapters can derive that from the received
+artifact set.
 
 ### Baseline acquisition
 

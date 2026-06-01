@@ -9,9 +9,6 @@ export interface GithubAppEnv {
   BETTER_AUTH_SECRET: string;
 }
 
-export const SUPPORTED_ECOSYSTEMS = ["pypi"] as const;
-export type SupportedEcosystem = (typeof SUPPORTED_ECOSYSTEMS)[number];
-
 export const INSTALLATION_STATUSES = ["active", "suspended", "uninstalled"] as const;
 export type InstallationStatus = (typeof INSTALLATION_STATUSES)[number];
 
@@ -47,7 +44,6 @@ export type GithubAppValidationCode =
   | "repository_not_accessible"
   | "environment_unmapped"
   | "environment_already_mapped"
-  | "unsupported_ecosystem"
   | "invalid_input";
 
 // ── Config readers ───────────────────────────────────────────────────────────

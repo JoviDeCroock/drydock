@@ -1,21 +1,10 @@
-import {
-  ENVIRONMENT_MAX,
-  GithubAppValidationError,
-  REPO_FULL_NAME_MAX,
-  SUPPORTED_ECOSYSTEMS,
-} from "./config";
+import { ENVIRONMENT_MAX, GithubAppValidationError, REPO_FULL_NAME_MAX } from "./config";
 import type { CreateReleaseTargetInput } from "./persistence";
 
 const REPO_OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const REPO_NAME_RE = /^[A-Za-z0-9._-]+$/;
 
 export function validateReleaseTargetShape(input: CreateReleaseTargetInput) {
-  if (!SUPPORTED_ECOSYSTEMS.includes(input.ecosystem)) {
-    throw new GithubAppValidationError(
-      "unsupported_ecosystem",
-      `unsupported ecosystem: ${input.ecosystem}`,
-    );
-  }
   if (!Number.isInteger(input.repositoryId) || input.repositoryId <= 0) {
     throw new GithubAppValidationError("invalid_input", "repositoryId must be a positive integer");
   }
