@@ -1,5 +1,6 @@
 {
   "id": "benign-minimal",
+  "parityGroup": "benign-version-bump",
   "title": "Small version bump with unchanged runtime code",
   "category": "benign-control",
   "intent": "Keep a low-risk control case in the corpus so broad rules cannot silently start flagging ordinary package changes.",

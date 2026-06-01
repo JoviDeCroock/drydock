@@ -1,5 +1,6 @@
 {
   "id": "pypi-benign-control",
+  "parityGroup": "benign-version-bump",
   "title": "clean wheel + sdist version bump raises nothing",
   "category": "control",
   "intent": "a well-formed release with matching metadata, complete RECORD, and no active code must stay low risk",
