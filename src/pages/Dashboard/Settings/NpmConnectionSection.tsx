@@ -104,7 +104,8 @@ export function NpmConnectionSection({
               spellcheck={false}
             />
           </Field>
-          <Button type="submit" disabled={busy || !token.trim()} class="shrink-0">
+          {/* h-[38px] matches the Input control height (13px × 1.55 line-height + padding + border); Button's leading-none makes it shorter otherwise. */}
+          <Button type="submit" disabled={busy || !token.trim()} class="shrink-0 h-[38px]">
             {status === "saving"
               ? "Saving…"
               : status === "validating"
