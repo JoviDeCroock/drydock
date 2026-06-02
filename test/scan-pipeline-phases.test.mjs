@@ -104,7 +104,7 @@ function makeAdapter(overrides = {}) {
         reason: "credential-like content on a changed line",
         line: 2,
         ruleId: "code.credential-access",
-        ruleVersion: "1.6.0",
+        ruleVersion: "1.6.1",
       },
     ]),
     describe: vi.fn(() => ({

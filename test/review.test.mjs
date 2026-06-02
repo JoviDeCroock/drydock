@@ -119,10 +119,10 @@ describe("review", () => {
         size: 80,
         sha256: "pkg",
         flags: [],
-        textSample: JSON.stringify({ scripts: { postinstall: "node install.js" } }),
+        textSample: JSON.stringify({ scripts: { postinstall: "node scripts/install" } }),
       },
       {
-        path: "install.js",
+        path: "scripts/install.js",
         size: 90,
         sha256: "install",
         flags: [],
@@ -135,7 +135,7 @@ describe("review", () => {
       expect.arrayContaining([
         expect.objectContaining({
           ruleId: "code.network-access",
-          file: "install.js",
+          file: "scripts/install.js",
         }),
       ]),
     );
@@ -156,7 +156,7 @@ describe("review", () => {
         size: 80,
         sha256: "secret",
         flags: [],
-        textSample: "export const config = { client_secret: 'real-looking-secret-value' };\n",
+        textSample: "export const config = { password: 'abc!def@ghi#jkl' };\n",
       },
     ];
     const findings = deterministicFindings(staged, createPackageDiff([], staged));

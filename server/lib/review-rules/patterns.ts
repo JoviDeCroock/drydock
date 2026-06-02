@@ -118,7 +118,7 @@ export const SECRET_PATTERNS: Array<[RegExp, string]> = [
   ],
   [/(authorization\s*[:=]\s*)['"]?Bearer\s+[A-Za-z0-9._\-+/=]{16,}/gi, "$1[REDACTED_BEARER]"],
   [
-    /(?<![A-Za-z0-9])((?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key|client[_-]?secret)\s*[:=]\s*)['"]?[A-Za-z0-9._\-+/=]{12,}(?=$|[\s'",;}\]])/gi,
+    /(?<![A-Za-z0-9])((?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key|client[_-]?secret)\s*[:=]\s*)['"]?[^'"\s]{12,}(?=$|[\s'",;}\]])/gi,
     "$1[REDACTED_SECRET]",
   ],
 ];

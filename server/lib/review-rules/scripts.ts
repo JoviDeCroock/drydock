@@ -111,10 +111,30 @@ function hasAdjacentExecutionRisk(ctx: RuleContext, sample: string): boolean {
 }
 
 function isLifecycleScriptFile(ctx: RuleContext, path: string): boolean {
-  const basename = path.split("/").at(-1) ?? path;
+  const candidates = scriptPathCandidates(path);
   return LIFECYCLE_SCRIPTS.some((script) => {
     const command = ctx.scripts[script];
     if (!command || ctx.implicitScripts[script] === command) return false;
-    return command.includes(path) || command.includes(basename);
+    return scriptCommandTokens(command).some((token) => candidates.has(token));
   });
+}
+
+function scriptPathCandidates(path: string): Set<string> {
+  const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "");
+  const withoutPackage = normalized.startsWith("package/")
+    ? normalized.slice("package/".length)
+    : normalized;
+  const basename = withoutPackage.split("/").at(-1) ?? withoutPackage;
+  const baseValues = [normalized, withoutPackage, basename];
+  const values = [...baseValues];
+  for (const value of baseValues) {
+    values.push(value.replace(/\.[^/.]+$/, ""));
+  }
+  return new Set(values.filter(Boolean));
+}
+
+function scriptCommandTokens(command: string): string[] {
+  return [...command.matchAll(/(?:\.\/)?[\w@./-]+(?:\.[\w-]+)?\b/g)].map((match) =>
+    match[0].replace(/^\.\//, ""),
+  );
 }
