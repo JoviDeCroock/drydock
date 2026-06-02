@@ -14,7 +14,7 @@ account. Backup codes use the plugin default: 10 single-use codes.
 
 ## User flows
 
-### Enrollment (Settings → Security)
+### Enrollment (Settings → General)
 
 `src/pages/Dashboard/Settings/TwoFactorSection.tsx` drives a dialog:
 
@@ -44,7 +44,7 @@ and `src/models/two-factor.ts`.
 
 Enrolled users can regenerate backup codes
 (`POST /api/auth/two-factor/generate-backup-codes`, password-gated) or disable 2FA
-(`POST /api/auth/two-factor/disable`, password-gated) from Settings → Security.
+(`POST /api/auth/two-factor/disable`, password-gated) from Settings → General.
 
 ## Endpoints
 
@@ -72,7 +72,7 @@ All under the Better Auth base path `/api/auth` and handled by `auth.handler`:
     the plugin requires this column
   - `user_id` (text, FK → `user.id`, `ON DELETE CASCADE`)
 
-Migrations are generated with `pnpm db:generate` (see `drizzle/0015_nebulous_patch.sql`),
+Migrations are generated with `pnpm db:generate` (see `drizzle/0016_lovely_madrox.sql`),
 never hand-written.
 
 ## Rate limiting
