@@ -82,8 +82,8 @@ function buildZip(entries) {
 }
 
 const LIMITS = {
-  maxFiles: 250,
-  maxBytesPerFile: 64 * 1024,
+  maxFiles: 2_500,
+  maxBytesPerFile: 128 * 1024,
   maxArchiveBytes: 25 * 1024 * 1024,
 };
 

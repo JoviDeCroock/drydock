@@ -80,7 +80,11 @@ function buildTar(entries) {
   return out;
 }
 
-const PARSE_LIMITS = { maxFiles: 250, maxBytesPerFile: 64 * 1024, maxTarBytes: 25 * 1024 * 1024 };
+const PARSE_LIMITS = {
+  maxFiles: 2_500,
+  maxBytesPerFile: 128 * 1024,
+  maxTarBytes: 25 * 1024 * 1024,
+};
 
 async function parse(tar, limits = PARSE_LIMITS) {
   const result = await readTar(
