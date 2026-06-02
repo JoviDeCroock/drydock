@@ -164,17 +164,41 @@ export async function sha256Hex(bytes) {
 
 export async function summarizeFile(path, body, maxBytesPerFile) {
   const flags = [];
+  const skipTextSample = shouldSkipTextSample(path);
+  if (skipTextSample) flags.push("text-sample-skipped");
   if (body.length > maxBytesPerFile) flags.push("truncated");
+  const hash = await sha256Hex(body);
+  if (skipTextSample) {
+    return {
+      path,
+      size: body.length,
+      sha256: hash,
+      flags,
+    };
+  }
   const sample = body.subarray(0, Math.min(body.length, maxBytesPerFile));
   const text = decodeText(sample);
   if (!text) flags.push("binary");
   return {
     path,
     size: body.length,
-    sha256: await sha256Hex(body),
+    sha256: hash,
     flags,
     ...(text ? { textSample: text } : {}),
   };
+}
+
+export function shouldSkipTextSample(path) {
+  const normalized = String(path || "")
+    .replaceAll("\\", "/")
+    .toLowerCase();
+  const basename = normalized.slice(normalized.lastIndexOf("/") + 1);
+
+  if (basename.endsWith(".map")) return true;
+  if (/\.d\.(?:c|m)?ts$/.test(basename)) return true;
+  if (/\.min\.(?:js|mjs|cjs|css)$/.test(basename)) return true;
+
+  return false;
 }
 
 export async function readTar(buffer, maxFiles, maxBytesPerFile, maxTarBytes) {
