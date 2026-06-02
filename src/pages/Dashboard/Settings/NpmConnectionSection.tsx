@@ -58,19 +58,19 @@ export function NpmConnectionSection({
         </Muted>
 
         {connection ? (
-          <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-x-6 gap-y-2 border-y border-border py-3">
-            <CompactMetadataRow label="label" value={connection.label} />
-            <CompactMetadataRow label="registry" value={connection.registryUrl} />
-            <CompactMetadataRow label="token" value={`•••• ${connection.tokenLast4 || "stored"}`} />
-            <CompactMetadataRow
+          <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-8 gap-y-4 border-y border-border py-4 m-0">
+            <MetadataField label="label" value={connection.label} />
+            <MetadataField label="registry" value={connection.registryUrl} />
+            <MetadataField label="token" value={`•••• ${connection.tokenLast4 || "stored"}`} />
+            <MetadataField
               label="validated"
               value={connection.validatedAt ? formatTimestamp(connection.validatedAt) : "not yet"}
             />
-            <CompactMetadataRow
+            <MetadataField
               label="last used"
               value={connection.lastUsedAt ? formatTimestamp(connection.lastUsedAt) : "never"}
             />
-          </div>
+          </dl>
         ) : null}
 
         <form
@@ -140,11 +140,11 @@ export function NpmConnectionSection({
   );
 }
 
-function CompactMetadataRow({ label, value }: { label: string; value: string }) {
+function MetadataField({ label, value }: { label: string; value: string }) {
   return (
-    <div class="grid grid-cols-[92px_minmax(0,1fr)] gap-3 text-[13px] min-w-0">
-      <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">{label}</span>
-      <code class="text-xs text-ink-muted break-all">{value}</code>
+    <div class="flex flex-col gap-1 min-w-0">
+      <dt class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">{label}</dt>
+      <dd class="font-mono text-xs text-ink-muted break-words m-0">{value}</dd>
     </div>
   );
 }
