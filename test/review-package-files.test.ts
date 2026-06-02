@@ -15,6 +15,13 @@ describe("isOutsidePackageFilesAllowlist", () => {
     ).toBe(false);
   });
 
+  test("treats root-level files covered by package.json glob entries as declared", () => {
+    const packageJson = { files: ["**/*.js", "**/*.md"] };
+
+    expect(isOutsidePackageFilesAllowlist("version.js", packageJson)).toBe(false);
+    expect(isOutsidePackageFilesAllowlist("CHANGELOG.md", packageJson)).toBe(false);
+  });
+
   test("still flags files that are not covered by package.json entries", () => {
     const packageJson = { files: ["dist", "**/*.d.ts"] };
 
