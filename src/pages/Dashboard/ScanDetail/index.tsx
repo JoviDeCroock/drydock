@@ -372,7 +372,10 @@ export default function ScanDetailPage() {
               ? detail.scan.decision
               : null
           }
-          canApprove={detail.scan.status === "complete" || detail.scan.status === "failed"}
+          canApprove={
+            Boolean(gate.scanId) &&
+            (detail.scan.status === "complete" || detail.scan.status === "failed")
+          }
           reviewFailed={detail.scan.status === "failed"}
           onSubmit={handleGateDecision}
         />

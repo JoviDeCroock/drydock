@@ -534,8 +534,9 @@ therefore covers a **set** of packages, not just one:
   is blocked immediately; all approved → the gate is approved and the job is
   released; otherwise the gate stays pending and the workbench shows the
   remaining packages ("N of M approved"). AI/release-risk recommendations are
-  advisory: a human can still approve after reading the review, and a failed
-  automated package review can be approved, rejected, or retried.
+  advisory: a human can still approve after reading a completed batch. A failed
+  partial batch has no representative scan attached, so it can be retried or
+  rejected, but it cannot be approved as complete.
 - **All-or-nothing batch.** The per-package scans are run as one batch under a
   `review_started_at` claim. If any package's pipeline throws, the claim is
   released and the gate stays pending with no representative attached, so a

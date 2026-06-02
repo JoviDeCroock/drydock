@@ -404,6 +404,7 @@ export async function markGateDecidedForPackageAggregate(
         eq(githubWorkflowGates.id, input.gateId),
         eq(githubWorkflowGates.organizationId, input.organizationId),
         eq(githubWorkflowGates.status, "pending"),
+        input.decision === "approved" ? sql`${githubWorkflowGates.scanId} is not null` : sql`1 = 1`,
         packageDecisionCondition,
       ),
     )

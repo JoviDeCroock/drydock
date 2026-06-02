@@ -987,6 +987,55 @@ describe("github-app workflow-gate decision route", () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
+  test("rejects approval for a partial failed review batch", async () => {
+    const { userId, organizationId } = await seedUser();
+    const { gateId } = await seedGate(organizationId);
+    const completeScanId = await seedGatePackageScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      packageName: "alpha-pkg",
+      version: "1.0.0",
+    });
+    const failedScanId = `scan_${crypto.randomUUID()}`;
+    await createScanJob(createDb(env.DB), {
+      id: failedScanId,
+      stageId: `workflow-gate:${gateId}:pypi:beta-pkg`,
+      organizationId,
+      ownerUserId: userId,
+      source: "workflow_gate",
+      gateId,
+    });
+    await markScanFailed(createDb(env.DB), failedScanId, organizationId, {
+      code: "review_failed",
+      message: "review failed",
+    });
+    globalThis.fetch = vi.fn();
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: completeScanId },
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      error: "approval requires a completed workflow-gate review batch",
+      gate: { status: "pending" },
+    });
+    const stored = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
+    expect(stored?.scanId).toBeNull();
+    expect(stored?.status).toBe("pending");
+    const scan = await createDb(env.DB)
+      .select({ decision: schema.scans.decision })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, completeScanId))
+      .limit(1);
+    expect(scan[0]?.decision).toBeNull();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
   test("decides a pending gate once, posts to GitHub, and 409s a double-submit", async () => {
     const { userId, organizationId } = await seedUser();
     const { gateId, scanId } = await seedGate(organizationId, {

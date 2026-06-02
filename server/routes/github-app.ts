@@ -500,8 +500,10 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
 
   // The decision targets one package scan that has reached a human decision
   // point. A completed review gives the maintainer the full diff; a failed
-  // review can still be explicitly accepted/rejected by the human, or retried
-  // through the retry endpoint before deciding.
+  // package can still be rejected by the human, or retried through the retry
+  // endpoint before deciding. Approval additionally requires the batch to have
+  // reached review-ready (`gate.scanId` attached), so a partial failed batch
+  // cannot be approved as if every package had been reviewed.
   const scan = await getScan(db, packageScanId, organizationId);
   const scanReachedDecisionPoint =
     scan?.scan.status === "complete" || scan?.scan.status === "failed";
@@ -512,6 +514,16 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     !scanReachedDecisionPoint
   ) {
     return c.json({ error: "scanId is not a reviewable package of this gate" }, 409);
+  }
+  if (decision === "approved" && !existing.scanId) {
+    const packages = await listGatePackageScans(db, organizationId, gateId);
+    return c.json(
+      {
+        gate: publicWorkflowGate(existing, packages),
+        error: "approval requires a completed workflow-gate review batch",
+      },
+      409,
+    );
   }
 
   // Persist the per-package decision while the gate is still pending.
@@ -549,6 +561,15 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   if (!anyRejected && !allApproved) {
     // Other packages still need a decision; keep the deployment held.
     return c.json({ gate: publicWorkflowGate(existing, packages) });
+  }
+  if (allApproved && !existing.scanId) {
+    return c.json(
+      {
+        gate: publicWorkflowGate(existing, packages),
+        error: "approval requires a completed workflow-gate review batch",
+      },
+      409,
+    );
   }
 
   const gateDecision: GateDecision = anyRejected ? "rejected" : "approved";

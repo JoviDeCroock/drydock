@@ -379,8 +379,8 @@ export function GateDecisionDialog({
       )}
       {!gateDecided && !canApprove ? (
         <Muted class="m-0 text-[13px]">
-          Approval requires the review to reach a decision point. Rejecting blocks the held GitHub
-          job.
+          Approval requires a completed review batch. Retry the review or reject to block the held
+          GitHub job.
         </Muted>
       ) : null}
       {error ? <Alert tone="critical">{error}</Alert> : null}
