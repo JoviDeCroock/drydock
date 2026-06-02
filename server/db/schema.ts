@@ -158,6 +158,7 @@ export const scans = sqliteTable(
     ownerIdx: index("scans_owner_idx").on(table.ownerUserId),
     stageIdx: index("scans_stage_id_idx").on(table.stageId),
     packageIdx: index("scans_package_idx").on(table.packageName),
+    gateIdx: index("scans_gate_org_idx").on(table.gateId, table.organizationId),
     orgDecisionCreatedIdx: index("scans_org_decision_created_idx").on(
       table.organizationId,
       table.decision,

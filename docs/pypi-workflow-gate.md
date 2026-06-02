@@ -35,12 +35,13 @@ The sandbox parser now supports safe ZIP archive parsing for wheels in addition 
 ## Release set derivation
 
 There is no manifest file. The boundary between the GitHub workflow and Drydock
-is the workflow run's uploaded artifacts: CI uploads `dist/*` and, unless a
-release target narrows discovery with `artifactName`, Drydock inspects every
-non-expired upload from the held run. Every `.whl` / `.tar.gz` / `.tgz` found in
-those uploads becomes part of the release set, then those files are grouped by
-package into one `drydock.release-artifacts.v1` release per distinct package (a
-monorepo publishes several) — the same shape the rest of the pipeline consumes:
+is the workflow run's uploaded artifacts: CI uploads `dist/*`, and Drydock
+inspects either every non-expired upload from the held run (auto-detect targets),
+a configured `artifactName`, or the pinned ecosystem adapter's default artifact
+name. Every `.whl` / `.tar.gz` / `.tgz` found in the selected uploads becomes
+part of the release set, then those files are grouped by package into one
+`drydock.release-artifacts.v1` release per distinct package (a monorepo publishes
+several) — the same shape the rest of the pipeline consumes:
 
 - `package` / `version` come from each wheel's `METADATA` and each sdist's
   `PKG-INFO`. Every artifact must expose a `Name`/`Version`; files are grouped by
@@ -219,13 +220,13 @@ organization (`x-organization-id` header to scope writes).
   stores `null`, which means "auto-detect each package's ecosystem from the
   uploaded artifacts" — the monorepo-friendly default, where one gate covers
   every package the environment publishes. A non-empty value pins ecosystem
-  detection to that adapter; artifact discovery still scans every upload unless
-  `artifactName` narrows it.
+  detection to that adapter; when no `artifactName` is set, pinned targets use
+  that adapter's default artifact name (for PyPI, `pypi-release-candidate`).
 
 `artifactName` is also optional: when set, it narrows discovery to that GitHub
-Actions artifact name. When unset, Drydock scans every non-expired artifact
-uploaded by the held workflow run and lets the ecosystem classifier decide which
-inner files are reviewable.
+Actions artifact name. When unset on an auto-detect target, Drydock scans every
+non-expired artifact uploaded by the held workflow run and lets the ecosystem
+classifier decide which inner files are reviewable.
 
 ### Webhook resolution
 
@@ -520,8 +521,9 @@ therefore covers a **set** of packages, not just one:
   ecosystem's slice to its adapter. `artifactName` is only a narrowing override;
   when it is blank, Drydock scans every non-expired upload in the held run.
   Pinning a single ecosystem keeps ecosystem classification constrained to that
-  adapter and surfaces an unknown ecosystem as a configuration error (gate left
-  pending) rather than a fail-closed reject.
+  adapter, falls back to that adapter's default artifact name when `artifactName`
+  is blank, and surfaces an unknown ecosystem as a configuration error (gate
+  left pending) rather than a fail-closed reject.
 - **One scan per package.** Each adapter splits its slice into one prepared
   candidate per distinct package, and `reviewGatePackages` runs a full scan for
   each against its **own** baseline, linking every scan to the gate via

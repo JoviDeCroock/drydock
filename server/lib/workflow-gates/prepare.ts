@@ -162,9 +162,9 @@ export async function prepareReleaseCandidatesForGate(
  * target. A pinned ecosystem resolves its adapter up front so an unknown
  * ecosystem is surfaced as a configuration error (gate left pending, never
  * auto-approved) rather than a fail-closed artifact rejection; an unpinned target
- * classifies across every registered ecosystem. When no artifact name override
- * is present, the fetcher enumerates every non-expired upload from the workflow
- * run and the classifier decides which inner files are reviewable.
+ * classifies across every registered ecosystem. Unpinned targets inspect every
+ * non-expired upload by default, while pinned targets use the adapter's default
+ * artifact name unless the release target supplies an override.
  */
 function resolveBundleClassifier(
   db: AppDb,
@@ -202,7 +202,7 @@ function resolveBundleClassifier(
       const kind = adapter.classifyArtifact(path);
       return kind ? { ecosystem: adapter.ecosystem, kind } : null;
     },
-    ...(override ? { artifactName: override } : {}),
+    artifactName: override ?? adapter.artifactName,
   };
 }
 
