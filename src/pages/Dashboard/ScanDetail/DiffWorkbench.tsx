@@ -1,6 +1,7 @@
 import type { DiffEntry, FileRecord } from "../../../../server/lib/review";
 import type { PersistedScanDetail } from "../../../models/scan";
-import { DiffView, EmptyLine, LoadingLine } from "../../../components";
+import { DiffView, EmptyLine, IndeterminateBar, LoadingLine } from "../../../components";
+import { selectDiffWorkbenchState } from "./diff-helpers";
 
 export function DiffWorkbench({
   entry,
@@ -8,6 +9,7 @@ export function DiffWorkbench({
   previousMeta,
   previousContent,
   compareReady,
+  compareLoading,
   selectedVersion,
   stagedVersion,
 }: {
@@ -16,26 +18,31 @@ export function DiffWorkbench({
   previousMeta: FileRecord | null;
   previousContent: FileRecord | null;
   compareReady: boolean;
+  compareLoading: boolean;
   selectedVersion: string | null;
   stagedVersion: string | null | undefined;
 }) {
   if (!entry) {
-    return <EmptyLine>Select a file from the tree to diff.</EmptyLine>;
+    return <DiffPanelMessage>Select a file from the tree to diff.</DiffPanelMessage>;
   }
 
-  const needsPrevious = entry.status !== "added";
-  const isBinaryPrev = Boolean(previousMeta?.flags?.includes("binary"));
+  const state = selectDiffWorkbenchState({
+    hasEntry: true,
+    entryStatus: entry.status,
+    hasStaged: Boolean(staged),
+    hasPreviousMeta: Boolean(previousMeta),
+    hasPreviousContent: Boolean(previousContent),
+    previousIsBinary: Boolean(previousMeta?.flags?.includes("binary")),
+    compareReady,
+    compareLoading,
+  });
 
-  if (needsPrevious && !compareReady && entry.status !== "unchanged") {
-    return <LoadingLine size="inline">Loading comparison</LoadingLine>;
+  if (state.kind === "empty") {
+    return <DiffPanelMessage>{state.message}</DiffPanelMessage>;
   }
 
-  if (needsPrevious && previousMeta && !isBinaryPrev && !previousContent) {
-    return <LoadingLine size="inline">Loading file content</LoadingLine>;
-  }
-
-  if (!staged && !previousContent && !previousMeta) {
-    return <EmptyLine>No file content available.</EmptyLine>;
+  if (state.kind === "processing") {
+    return <DiffProcessing title={state.title} detail={state.detail} />;
   }
 
   return (
@@ -53,6 +60,28 @@ export function DiffWorkbench({
       }
       after={staged ? scanFileToDiffSide(staged) : null}
     />
+  );
+}
+
+// A centered processing block that fills the diff panel so the "still working"
+// signal is unmistakable while the previous version streams in — the file tree
+// renders first, and the sandbox fetch of the previous tarball can take a
+// minute. No spinner (DESIGN.md): mono line plus an indeterminate bar.
+function DiffProcessing({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div class="flex flex-1 flex-col items-center justify-center gap-3 text-center min-h-0">
+      <LoadingLine>{title}</LoadingLine>
+      <IndeterminateBar class="w-48 max-w-full" />
+      <p class="font-mono text-[11px] tracking-[0.02em] text-ink-subtle m-0">{detail}</p>
+    </div>
+  );
+}
+
+function DiffPanelMessage({ children }: { children: string }) {
+  return (
+    <div class="flex flex-1 flex-col items-center justify-center min-h-0">
+      <EmptyLine>{children}</EmptyLine>
+    </div>
   );
 }
 

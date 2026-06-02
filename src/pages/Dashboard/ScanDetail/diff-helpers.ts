@@ -15,6 +15,69 @@ const DIFF_STATUS_RANK: Record<DiffEntry["status"], number> = {
   unchanged: 3,
 };
 
+export type DiffWorkbenchState =
+  | { kind: "empty"; message: string }
+  | { kind: "processing"; title: string; detail: string }
+  | { kind: "diff" };
+
+// Decides what the diff panel should show for the selected file. Extracted so
+// the loading/empty/diff guards are testable: the previous version is fetched
+// through the sandbox after the file tree already renders, and during that
+// window we must show an explicit processing state instead of letting DiffView
+// render a one-sided (all added/removed) view of a file that is actually
+// modified.
+export function selectDiffWorkbenchState(input: {
+  hasEntry: boolean;
+  entryStatus: DiffEntry["status"] | null;
+  hasStaged: boolean;
+  hasPreviousMeta: boolean;
+  hasPreviousContent: boolean;
+  previousIsBinary: boolean;
+  compareReady: boolean;
+  compareLoading: boolean;
+}): DiffWorkbenchState {
+  if (!input.hasEntry) {
+    return { kind: "empty", message: "Select a file from the tree to diff." };
+  }
+
+  const needsPrevious = input.entryStatus !== "added";
+
+  // Previous version still being fetched via the sandbox. Keyed off
+  // compareLoading too (not just compareReady) so a stale cache entry from a
+  // prior version can't flash a wrong diff while the new fetch is in flight.
+  if (
+    needsPrevious &&
+    input.entryStatus !== "unchanged" &&
+    (input.compareLoading || !input.compareReady)
+  ) {
+    return {
+      kind: "processing",
+      title: "Loading comparison",
+      detail: "fetching previous version via sandbox · this can take a minute",
+    };
+  }
+
+  // Comparison resolved; the previous file body is still loading.
+  if (
+    needsPrevious &&
+    input.hasPreviousMeta &&
+    !input.previousIsBinary &&
+    !input.hasPreviousContent
+  ) {
+    return {
+      kind: "processing",
+      title: "Loading file diff",
+      detail: "fetching file contents",
+    };
+  }
+
+  if (!input.hasStaged && !input.hasPreviousContent && !input.hasPreviousMeta) {
+    return { kind: "empty", message: "No file content available." };
+  }
+
+  return { kind: "diff" };
+}
+
 export function filterDiffEntries(
   entries: DiffEntry[],
   rawFilter: string,

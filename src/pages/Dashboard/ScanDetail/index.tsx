@@ -299,6 +299,7 @@ export default function ScanDetailPage() {
                   previousMeta={previousFileMeta.value}
                   previousContent={previousFile.value}
                   compareReady={Boolean(compare)}
+                  compareLoading={compareLoading}
                   selectedVersion={selectedVersion}
                   stagedVersion={detail.scan.stagedVersion}
                 />
