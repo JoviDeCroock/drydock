@@ -40,4 +40,10 @@ describe("secret redaction", () => {
     const out = redactText('Authorization: "Bearer abcdef0123456789abcdef0123456789"');
     expect(out).toContain("[REDACTED_BEARER]");
   });
+
+  test("redacts generic secret values with punctuation", () => {
+    const out = redactText("password: 'abc!def@ghi#jkl'");
+    expect(out).toContain("password: [REDACTED_SECRET]");
+    expect(out).not.toContain("abc!def@ghi#jkl");
+  });
 });

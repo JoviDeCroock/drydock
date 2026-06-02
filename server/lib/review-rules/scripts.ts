@@ -46,6 +46,8 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     const sample = file.textSample || "";
     const prefix = changedPrefix(ctx, file.path);
     const changed = ctx.diffByPath.get(file.path)?.status;
+    const lifecycleScriptFile = isLifecycleScriptFile(ctx, file.path);
+    const adjacentExecutionRisk = hasAdjacentExecutionRisk(ctx, sample);
 
     if (ctx.patterns.processExecution.some((pattern) => pattern.test(sample))) {
       findings.push(
@@ -58,10 +60,13 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
         }),
       );
     }
-    if (ctx.patterns.networkAccess.some((pattern) => pattern.test(sample))) {
+    if (
+      (changed !== "unchanged" || lifecycleScriptFile || adjacentExecutionRisk) &&
+      ctx.patterns.networkAccess.some((pattern) => pattern.test(sample))
+    ) {
       findings.push(
         tag("codeNetworkAccess", {
-          severity: changed === "added" ? "high" : "medium",
+          severity: networkAccessSeverity(changed, lifecycleScriptFile, adjacentExecutionRisk),
           file: file.path,
           line: firstMatchingLine(sample, ctx.patterns.networkAccess),
           evidence: `${prefix}network-capable code path`,
@@ -95,4 +100,49 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
   }
 
   return findings;
+}
+
+function hasAdjacentExecutionRisk(ctx: RuleContext, sample: string): boolean {
+  return (
+    ctx.patterns.processExecution.some((pattern) => pattern.test(sample)) ||
+    ctx.patterns.dynamicEvaluation.some((pattern) => pattern.test(sample)) ||
+    ctx.patterns.credentialAccess.some((pattern) => pattern.test(sample))
+  );
+}
+
+function networkAccessSeverity(
+  changed: RuleContext["diff"][number]["status"] | undefined,
+  lifecycleScriptFile: boolean,
+  adjacentExecutionRisk: boolean,
+): Finding["severity"] {
+  return changed === "added" && (lifecycleScriptFile || adjacentExecutionRisk) ? "high" : "medium";
+}
+
+function isLifecycleScriptFile(ctx: RuleContext, path: string): boolean {
+  const candidates = scriptPathCandidates(path);
+  return LIFECYCLE_SCRIPTS.some((script) => {
+    const command = ctx.scripts[script];
+    if (!command || ctx.implicitScripts[script] === command) return false;
+    return scriptCommandTokens(command).some((token) => candidates.has(token));
+  });
+}
+
+function scriptPathCandidates(path: string): Set<string> {
+  const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "");
+  const withoutPackage = normalized.startsWith("package/")
+    ? normalized.slice("package/".length)
+    : normalized;
+  const basename = withoutPackage.split("/").at(-1) ?? withoutPackage;
+  const baseValues = [normalized, withoutPackage, basename];
+  const values = [...baseValues];
+  for (const value of baseValues) {
+    values.push(value.replace(/\.[^/.]+$/, ""));
+  }
+  return new Set(values.filter(Boolean));
+}
+
+function scriptCommandTokens(command: string): string[] {
+  return [...command.matchAll(/(?:\.\/)?[\w@./-]+(?:\.[\w-]+)?\b/g)].map((match) =>
+    match[0].replace(/^\.\//, ""),
+  );
 }
