@@ -10,6 +10,8 @@
     "AI_CACHE_AFFINITY": "staged-publish-review-test",
     "NPM_REGISTRY": "https://registry.npmjs.org",
     "NPM_CONNECTIONS_ENCRYPTION_KEY": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "SLACK_CLIENT_ID": "test-slack-client-id",
+    "SLACK_CLIENT_SECRET": "test-slack-client-secret",
   },
   "d1_databases": [
     {

@@ -4,14 +4,47 @@ const dbMock = vi.hoisted(() => ({
   getOrganizationOwnerUserId: vi.fn(),
   getScan: vi.fn(),
   resolveNotificationEmails: vi.fn(),
+  getSlackConnectionSecret: vi.fn(),
   recordScanEvent: vi.fn().mockResolvedValue(undefined),
 }));
 const emailMock = vi.hoisted(() => ({
   sendNotificationEmail: vi.fn(),
 }));
+const secretBoxMock = vi.hoisted(() => ({
+  decryptSlackBotToken: vi.fn(),
+}));
+const slackMock = vi.hoisted(() => ({
+  postSlackMessage: vi.fn(),
+  renderSlackMessage: vi.fn(() => ({ text: "rendered", blocks: [] })),
+}));
 
 vi.mock("../server/db/index.ts", () => dbMock);
 vi.mock("../server/lib/email.ts", () => emailMock);
+vi.mock("../server/lib/secret-box.ts", () => secretBoxMock);
+vi.mock("../server/lib/slack.ts", () => slackMock);
+
+const BOT_TOKEN = "xoxb-0000000000-SUPERSECRETTOKEN";
+
+function slackConnection(overrides = {}) {
+  return {
+    id: "conn_1",
+    organizationId: "org_1",
+    teamId: "T1",
+    teamName: "Acme",
+    channelId: "C123",
+    channelName: "releases",
+    enabled: true,
+    botTokenCiphertext: "v1:ciphertext",
+    botTokenNonce: "nonce",
+    ...overrides,
+  };
+}
+
+function slackEvents() {
+  return dbMock.recordScanEvent.mock.calls
+    .map(([, event]) => event)
+    .filter((event) => event.metadata.channel === "slack");
+}
 
 const { notifyScanCompletion, notifyWorkflowGateReview } = await import("../server/lib/notify.ts");
 
@@ -47,18 +80,25 @@ function scanInput(overrides = {}) {
 beforeEach(() => {
   dbMock.getOrganizationOwnerUserId.mockResolvedValue("user_1");
   dbMock.resolveNotificationEmails.mockResolvedValue(["owner@example.com"]);
+  dbMock.getSlackConnectionSecret.mockResolvedValue(null);
   dbMock.getScan.mockResolvedValue({
     scan: { packageName: "demo-package", stagedVersion: "1.2.0", risk: "high" },
   });
   emailMock.sendNotificationEmail.mockResolvedValue({ ok: true });
+  secretBoxMock.decryptSlackBotToken.mockResolvedValue(BOT_TOKEN);
+  slackMock.postSlackMessage.mockResolvedValue({ ok: true, status: 200, statusClass: "2xx" });
 });
 
 afterEach(() => {
   dbMock.getOrganizationOwnerUserId.mockReset();
   dbMock.resolveNotificationEmails.mockReset();
+  dbMock.getSlackConnectionSecret.mockReset();
   dbMock.getScan.mockReset();
   dbMock.recordScanEvent.mockClear();
   emailMock.sendNotificationEmail.mockReset();
+  secretBoxMock.decryptSlackBotToken.mockReset();
+  slackMock.postSlackMessage.mockReset();
+  slackMock.renderSlackMessage.mockClear();
 });
 
 describe("notifyWorkflowGateReview", () => {
@@ -216,5 +256,128 @@ describe("notifyScanCompletion", () => {
     const [, event] = dbMock.recordScanEvent.mock.calls[0];
     expect(event.type).toBe("scan.notification_failed");
     expect(event.metadata).toMatchObject({ outcome: "complete", reason: "no_recipients" });
+  });
+});
+
+describe("Slack connection delivery", () => {
+  test("posts a workflow-gate review to the connected channel without leaking the token", async () => {
+    dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+
+    await notifyWorkflowGateReview(gateInput());
+
+    expect(secretBoxMock.decryptSlackBotToken).toHaveBeenCalledTimes(1);
+    expect(slackMock.postSlackMessage).toHaveBeenCalledTimes(1);
+    const [token, channelId] = slackMock.postSlackMessage.mock.calls[0];
+    expect(token).toBe(BOT_TOKEN);
+    expect(channelId).toBe("C123");
+
+    const events = slackEvents();
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event.type).toBe("github_workflow_gate.notification_sent");
+    expect(event.metadata).toMatchObject({
+      channel: "slack",
+      channelName: "releases",
+      gateId: "gate_1",
+      releaseRisk: "high",
+      statusClass: "2xx",
+    });
+    const serialized = JSON.stringify(event);
+    expect(serialized).not.toContain(BOT_TOKEN);
+    expect(serialized).not.toContain("ciphertext");
+  });
+
+  test("records a delivery failure with its reason but no token", async () => {
+    dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+    slackMock.postSlackMessage.mockResolvedValue({
+      ok: false,
+      status: 200,
+      statusClass: "2xx",
+      reason: "channel_not_found",
+    });
+
+    await expect(notifyWorkflowGateReview(gateInput())).resolves.toBeUndefined();
+
+    const [event] = slackEvents();
+    expect(event.type).toBe("github_workflow_gate.notification_failed");
+    expect(event.metadata).toMatchObject({
+      channel: "slack",
+      channelName: "releases",
+      reason: "channel_not_found",
+    });
+    expect(JSON.stringify(event)).not.toContain(BOT_TOKEN);
+  });
+
+  test("surfaces rate-limit metadata when Slack returns 429", async () => {
+    dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+    slackMock.postSlackMessage.mockResolvedValue({
+      ok: false,
+      status: 429,
+      statusClass: "4xx",
+      rateLimited: true,
+      retryAfterSeconds: 30,
+      reason: "rate_limited",
+    });
+
+    await notifyWorkflowGateReview(gateInput());
+
+    const [event] = slackEvents();
+    expect(event.type).toBe("github_workflow_gate.notification_failed");
+    expect(event.metadata).toMatchObject({ rateLimited: true, retryAfterSeconds: 30 });
+  });
+
+  test("records delivery_error and never posts when decryption fails", async () => {
+    dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+    secretBoxMock.decryptSlackBotToken.mockRejectedValue(new Error("bad key material"));
+
+    await expect(notifyWorkflowGateReview(gateInput())).resolves.toBeUndefined();
+
+    expect(slackMock.postSlackMessage).not.toHaveBeenCalled();
+    const [event] = slackEvents();
+    expect(event.type).toBe("github_workflow_gate.notification_failed");
+    expect(event.metadata).toMatchObject({ channel: "slack", reason: "delivery_error" });
+    expect(JSON.stringify(event)).not.toContain("bad key material");
+  });
+
+  test("silently skips when the connection is disabled or has no channel", async () => {
+    dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection({ enabled: false }));
+    await notifyWorkflowGateReview(gateInput());
+    expect(slackMock.postSlackMessage).not.toHaveBeenCalled();
+    expect(slackEvents()).toHaveLength(0);
+
+    dbMock.recordScanEvent.mockClear();
+    dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection({ channelId: null }));
+    await notifyWorkflowGateReview(gateInput());
+    expect(slackMock.postSlackMessage).not.toHaveBeenCalled();
+    expect(slackEvents()).toHaveLength(0);
+  });
+
+  test("fans a completed scan out to Slack with the scan outcome", async () => {
+    dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+
+    await notifyScanCompletion(scanInput());
+
+    const [event] = slackEvents();
+    expect(event.type).toBe("scan.notification_sent");
+    expect(event.metadata).toMatchObject({ channel: "slack", outcome: "complete" });
+  });
+
+  test("delivers to Slack even when no email recipients resolve", async () => {
+    dbMock.resolveNotificationEmails.mockResolvedValue([]);
+    dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+
+    await notifyScanCompletion(scanInput());
+
+    expect(emailMock.sendNotificationEmail).not.toHaveBeenCalled();
+    expect(slackMock.postSlackMessage).toHaveBeenCalledTimes(1);
+
+    const emailEvents = dbMock.recordScanEvent.mock.calls
+      .map(([, event]) => event)
+      .filter((event) => event.metadata.channel === "email");
+    expect(emailEvents).toHaveLength(1);
+    expect(emailEvents[0].metadata.reason).toBe("no_recipients");
+
+    const [slackEvent] = slackEvents();
+    expect(slackEvent.type).toBe("scan.notification_sent");
   });
 });

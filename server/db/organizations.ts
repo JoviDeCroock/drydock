@@ -9,6 +9,7 @@ import {
   organizationInvitations,
   organizationMembers,
   organizationNotificationRecipients,
+  organizationSlackConnections,
   organizations,
   scanEvents,
   scanFiles,
@@ -199,6 +200,9 @@ export async function deleteOrganization(db: AppDb, organizationId: string): Pro
     db
       .delete(organizationNotificationRecipients)
       .where(eq(organizationNotificationRecipients.organizationId, organizationId)),
+    db
+      .delete(organizationSlackConnections)
+      .where(eq(organizationSlackConnections.organizationId, organizationId)),
     db
       .delete(organizationInvitations)
       .where(eq(organizationInvitations.organizationId, organizationId)),

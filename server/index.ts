@@ -37,6 +37,7 @@ import { npmConnectionRoutes } from "./routes/npm-connection";
 import { organizationMembersRoutes } from "./routes/organization-members";
 import { organizationsRoutes } from "./routes/organizations";
 import { scanRoutes } from "./routes/scan";
+import { slackRoutes } from "./routes/slack";
 import { scansRoutes } from "./routes/scans";
 import { stagedPublishesRoutes } from "./routes/staged-publishes";
 import type { Bindings, Variables } from "./types";
@@ -209,6 +210,8 @@ app.get("/api", (c) =>
       githubApp:
         "GET /api/v1/github-app/config; POST /api/v1/github-app/install; POST /api/v1/github-app/install/callback; GET /api/v1/github-app/installations; GET/POST /api/v1/github-app/release-targets; DELETE /api/v1/github-app/release-targets/:id; GET /api/v1/github-app/workflow-gates/by-scan/:scanId; POST /api/v1/github-app/workflow-gates/:gateId/decision",
       githubWebhooks: "POST /webhooks/github (signed by GitHub App webhook secret)",
+      slack:
+        "GET /api/v1/slack; POST /api/v1/slack/connect; GET /api/v1/slack/callback; GET /api/v1/slack/channels; PUT /api/v1/slack/channel; PATCH /api/v1/slack; DELETE /api/v1/slack; POST /api/v1/slack/test",
       health: "GET /api/health",
     },
     auth: "Better Auth is required for every non-auth API endpoint.",
@@ -233,6 +236,7 @@ app.route("/api/v1/organizations", organizationMembersRoutes);
 // SCAN_QUEUE directly.
 app.route("/api/v1/scan", scanRoutes);
 app.route("/api/v1/scans", scansRoutes);
+app.route("/api/v1/slack", slackRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
 
 app.notFound((c) => c.json({ error: "not found" }, 404));
