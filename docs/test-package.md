@@ -52,7 +52,7 @@ For disposable tests, discard the staged publish instead of approving it.
 
 For low-risk smoke tests, change only `index.js`, `index.d.ts`, `README.md`, or `CHANGELOG.md`.
 
-For deterministic-rule tests, introduce a temporary change that should be flagged, such as adding an install lifecycle script, adding network-capable code, adding dynamic-code primitives, or adding a credential-looking file. Do not approve those staged publishes.
+For deterministic-rule tests, introduce a temporary change that should be flagged, such as adding an install lifecycle script, adding network-capable code, adding dynamic-code primitives, or adding a credential-looking file. Network-only additions are contextual medium findings; combine network access with a lifecycle script, credential read, process execution, or dynamic evaluation when testing high-risk chains. Do not approve those staged publishes.
 
 ### Implicit node-gyp probe
 

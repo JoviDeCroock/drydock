@@ -94,8 +94,8 @@ describe("review", () => {
     expect(findings.some((finding) => finding.ruleId === "code.dynamic-evaluation")).toBe(false);
   });
 
-  test("does not flag expected library network code paths", () => {
-    const staged = [
+  test("does not flag unchanged network-only code paths", () => {
+    const previous = [
       {
         path: "link/http/createSignalIfSupported.js",
         size: 90,
@@ -104,12 +104,37 @@ describe("review", () => {
         textSample: "export function createSignalIfSupported() {\n  return fetch('/graphql');\n}\n",
       },
     ];
-    const findings = deterministicFindings(staged, createPackageDiff([], staged), {
+    const staged = [...previous];
+    const findings = deterministicFindings(staged, createPackageDiff(previous, staged), {
       name: "@apollo/client",
       version: "4.2.0",
     });
 
     expect(findings.some((finding) => finding.ruleId === "code.network-access")).toBe(false);
+  });
+
+  test("flags added network-only code paths as contextual", () => {
+    const staged = [
+      {
+        path: "lib/update.js",
+        size: 90,
+        sha256: "network-only",
+        flags: [],
+        textSample:
+          "import https from 'https';\nhttps.request('https://example.invalid/payload').end();\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "code.network-access",
+          severity: "medium",
+          file: "lib/update.js",
+        }),
+      ]),
+    );
   });
 
   test("still flags network-capable lifecycle script files", () => {
@@ -135,6 +160,7 @@ describe("review", () => {
       expect.arrayContaining([
         expect.objectContaining({
           ruleId: "code.network-access",
+          severity: "high",
           file: "scripts/install.js",
         }),
       ]),

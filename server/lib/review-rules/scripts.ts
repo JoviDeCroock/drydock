@@ -46,6 +46,8 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     const sample = file.textSample || "";
     const prefix = changedPrefix(ctx, file.path);
     const changed = ctx.diffByPath.get(file.path)?.status;
+    const lifecycleScriptFile = isLifecycleScriptFile(ctx, file.path);
+    const adjacentExecutionRisk = hasAdjacentExecutionRisk(ctx, sample);
 
     if (ctx.patterns.processExecution.some((pattern) => pattern.test(sample))) {
       findings.push(
@@ -59,14 +61,12 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       );
     }
     if (
-      (changed === "modified" ||
-        isLifecycleScriptFile(ctx, file.path) ||
-        hasAdjacentExecutionRisk(ctx, sample)) &&
+      (changed !== "unchanged" || lifecycleScriptFile || adjacentExecutionRisk) &&
       ctx.patterns.networkAccess.some((pattern) => pattern.test(sample))
     ) {
       findings.push(
         tag("codeNetworkAccess", {
-          severity: changed === "added" ? "high" : "medium",
+          severity: networkAccessSeverity(changed, lifecycleScriptFile, adjacentExecutionRisk),
           file: file.path,
           line: firstMatchingLine(sample, ctx.patterns.networkAccess),
           evidence: `${prefix}network-capable code path`,
@@ -108,6 +108,14 @@ function hasAdjacentExecutionRisk(ctx: RuleContext, sample: string): boolean {
     ctx.patterns.dynamicEvaluation.some((pattern) => pattern.test(sample)) ||
     ctx.patterns.credentialAccess.some((pattern) => pattern.test(sample))
   );
+}
+
+function networkAccessSeverity(
+  changed: RuleContext["diff"][number]["status"] | undefined,
+  lifecycleScriptFile: boolean,
+  adjacentExecutionRisk: boolean,
+): Finding["severity"] {
+  return changed === "added" && (lifecycleScriptFile || adjacentExecutionRisk) ? "high" : "medium";
 }
 
 function isLifecycleScriptFile(ctx: RuleContext, path: string): boolean {
