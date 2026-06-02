@@ -244,6 +244,50 @@ export async function releaseGateReviewClaim(db: AppDb, gateId: string): Promise
     );
 }
 
+/**
+ * Reopen a failed, still-pending review batch so the next gate job can discard
+ * the failed package scans and re-run the whole set. This refuses to run once a
+ * package decision has been recorded, because retrying would otherwise replace
+ * already-reviewed package state.
+ */
+export async function resetGateReviewForRetry(
+  db: AppDb,
+  input: { gateId: string; organizationId: string },
+): Promise<boolean> {
+  const now = new Date();
+  const updated = await db
+    .update(githubWorkflowGates)
+    .set({
+      scanId: null,
+      reviewStartedAt: null,
+      failureReason: null,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(githubWorkflowGates.id, input.gateId),
+        eq(githubWorkflowGates.organizationId, input.organizationId),
+        eq(githubWorkflowGates.status, "pending"),
+        sql`exists (
+          select 1
+          from ${scans}
+          where ${scans.gateId} = ${input.gateId}
+            and ${scans.organizationId} = ${input.organizationId}
+            and ${scans.status} = 'failed'
+        )`,
+        sql`not exists (
+          select 1
+          from ${scans}
+          where ${scans.gateId} = ${input.gateId}
+            and ${scans.organizationId} = ${input.organizationId}
+            and ${scans.decision} is not null
+        )`,
+      ),
+    )
+    .returning({ id: githubWorkflowGates.id });
+  return updated.length > 0;
+}
+
 export async function attachScanToGate(
   db: AppDb,
   gateId: string,

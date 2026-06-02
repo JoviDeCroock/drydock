@@ -144,10 +144,19 @@ export function GatePackagesPanel({
 export function GateContextPanel({
   gate,
   packageName,
+  canRetry,
+  retryStatus,
+  retryError,
+  onRetry,
 }: {
   gate: PublicWorkflowGate | null;
   packageName: string | null;
+  canRetry?: boolean;
+  retryStatus?: DecisionStatus;
+  retryError?: string | null;
+  onRetry?: () => void;
 }) {
+  const retrying = retryStatus === "saving";
   return (
     <section class="flex flex-col gap-3 border border-border rounded-lg p-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
@@ -183,6 +192,17 @@ export function GateContextPanel({
           against the reviewed manifest ({gate.failureReason}).
         </Alert>
       ) : null}
+      {canRetry && onRetry ? (
+        <div class="flex flex-wrap items-center gap-3">
+          <Button variant="secondary" onClick={onRetry} disabled={retrying}>
+            {retrying ? "Retrying…" : "Retry review"}
+          </Button>
+          <Muted class="m-0 text-[12px]">
+            Re-runs the gate review from the workflow artifacts and replaces the failed batch.
+          </Muted>
+        </div>
+      ) : null}
+      {retryError ? <Alert tone="critical">{retryError}</Alert> : null}
     </section>
   );
 }
@@ -197,6 +217,7 @@ export function GateDecisionDialog({
   error,
   canApprove,
   requireTwoFactor,
+  reviewFailed,
   onSubmit,
 }: {
   open: boolean;
@@ -209,6 +230,7 @@ export function GateDecisionDialog({
   error: string | null;
   canApprove: boolean;
   requireTwoFactor: boolean;
+  reviewFailed?: boolean;
   onSubmit: (
     decision: WorkflowGateDecision,
     comment: string | null,
@@ -281,6 +303,13 @@ export function GateDecisionDialog({
         </Muted>
       ) : null}
 
+      {reviewFailed && !gateDecided && !packageAlreadyDecided ? (
+        <Alert tone="warn">
+          This package review failed. Retry the review, or record a human decision based on the
+          release evidence you have inspected.
+        </Alert>
+      ) : null}
+
       <Field label="Comment (optional · shown in the GitHub run log)" for="gateComment">
         <Input
           id="gateComment"
@@ -328,7 +357,15 @@ export function GateDecisionDialog({
         <div class="flex flex-wrap gap-2">
           {canApprove ? (
             <Button onClick={() => submit("approved")} disabled={saving || blockedOnCode}>
-              {saving ? "Submitting…" : multi ? "Approve package" : "Approve & release"}
+              {saving
+                ? "Submitting…"
+                : reviewFailed
+                  ? multi
+                    ? "Approve package anyway"
+                    : "Approve anyway & release"
+                  : multi
+                    ? "Approve package"
+                    : "Approve & release"}
             </Button>
           ) : null}
           <Button
@@ -342,7 +379,8 @@ export function GateDecisionDialog({
       )}
       {!gateDecided && !canApprove ? (
         <Muted class="m-0 text-[13px]">
-          Approval requires a completed review. Rejecting blocks the held GitHub job.
+          Approval requires the review to reach a decision point. Rejecting blocks the held GitHub
+          job.
         </Muted>
       ) : null}
       {error ? <Alert tone="critical">{error}</Alert> : null}

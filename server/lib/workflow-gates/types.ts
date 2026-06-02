@@ -38,8 +38,6 @@ export interface PreparedReleaseCandidate {
  * events. An adapter only describes the ecosystem's artifact semantics and
  * review wiring:
  *
- *  - `artifactName` — the default GitHub Actions artifact the bundle is
- *    downloaded from when a release target pins this ecosystem.
  *  - `classifyArtifact` — which bundle entries are this ecosystem's reviewable
  *    artifacts.
  *  - `prepareReleaseCandidates` — split the ecosystem's slice of the verified
@@ -54,7 +52,7 @@ export interface WorkflowGateAdapter {
   /** Stable ecosystem id; matches `github_release_targets.ecosystem`. */
   readonly ecosystem: string;
 
-  /** Default GitHub Actions artifact name the release bundle is downloaded from. */
+  /** Suggested artifact name for workflows that choose to narrow discovery. */
   readonly artifactName: string;
 
   /** Review adapter driven by `runScanPipeline` for this ecosystem. */

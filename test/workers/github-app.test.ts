@@ -111,6 +111,7 @@ async function callGithubAppRoute(
   method: string,
   path: string,
   body?: unknown,
+  envOverrides: Partial<Bindings> = {},
 ) {
   const ctx = createExecutionContext();
   const init: RequestInit = { method };
@@ -128,6 +129,7 @@ async function callGithubAppRoute(
     GITHUB_APP_WEBHOOK_SECRET: "webhook-secret-value-1234567890",
     GITHUB_APP_STATE_SECRET: "0123456789abcdef0123456789abcdef",
     BETTER_AUTH_SECRET: "fallback-secret-with-enough-entropy-aaaaaaaa",
+    ...envOverrides,
   };
   const res = await app.fetch(new Request(`http://test.local${path}`, init), routeEnv, ctx);
   await waitOnExecutionContext(ctx);
@@ -921,7 +923,7 @@ describe("github-app workflow-gate decision route", () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  test("rejects approval when the package scan has not completed", async () => {
+  test("allows a human to approve a failed package review", async () => {
     const { userId, organizationId } = await seedUser();
     const { gateId, scanId } = await seedGate(organizationId, {
       attachScan: { ownerUserId: userId },
@@ -929,6 +931,45 @@ describe("github-app workflow-gate decision route", () => {
     await markScanFailed(createDb(env.DB), scanId!, organizationId, {
       code: "review_failed",
       message: "review failed",
+    });
+    const decisionCalls: { state: string }[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        decisionCalls.push((await request.json()) as { state: string });
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected fetch in decision test: ${request.url}`);
+    });
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      gate: { status: "approved", decision: "approved" },
+    });
+    const scan = await createDb(env.DB)
+      .select({ decision: schema.scans.decision })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId!))
+      .limit(1);
+    expect(scan[0]?.decision).toBe("publish");
+    expect(decisionCalls).toHaveLength(1);
+    expect(decisionCalls[0].state).toBe("approved");
+  });
+
+  test("rejects a decision while the package scan is still pending", async () => {
+    const { userId, organizationId } = await seedUser();
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
     });
     globalThis.fetch = vi.fn();
 
@@ -1123,6 +1164,36 @@ describe("github-app workflow-gate decision route", () => {
     expect(stored?.status).toBe("rejected");
     expect(decisionCalls).toHaveLength(1);
     expect(decisionCalls[0].state).toBe("rejected");
+  });
+
+  test("retries a failed package review by requeueing the pending gate", async () => {
+    const { userId, organizationId } = await seedUser();
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await markScanFailed(createDb(env.DB), scanId!, organizationId, {
+      code: "review_failed",
+      message: "review failed",
+    });
+    const queueSend = vi.fn(async () => undefined);
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/retry`,
+      {},
+      { SCAN_QUEUE: { send: queueSend } as unknown as Queue },
+    );
+
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ queued: true, gate: { status: "pending" } });
+    expect(queueSend).toHaveBeenCalledWith({
+      kind: "workflow_gate",
+      organizationId,
+      gateId,
+    });
+    const gate = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
+    expect(gate?.scanId).toBeNull();
   });
 });
 

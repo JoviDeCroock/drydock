@@ -164,7 +164,7 @@ function ArtifactNameField({ githubApp }: { githubApp: GithubApp }) {
         id="releaseTargetArtifact"
         type="text"
         value={artifactName}
-        placeholder="e.g. dist"
+        placeholder="e.g. pypi-release-candidate"
         onInput={(e) => (githubApp.formArtifactName.value = (e.target as HTMLInputElement).value)}
         disabled={submitting}
         maxLength={200}
@@ -172,9 +172,8 @@ function ArtifactNameField({ githubApp }: { githubApp: GithubApp }) {
         spellcheck={false}
       />
       <Muted class="text-[12px] mt-1.5">
-        Leave blank to use the default artifact name for the selected mode: release-candidate for
-        auto-detect, or the pinned ecosystem's default. Set a name when your workflow uploads the
-        release candidates under a different artifact.
+        Leave blank to scan every non-expired artifact uploaded by the held workflow run. Set a name
+        only when you want Drydock to inspect one specific upload.
       </Muted>
     </Field>
   );

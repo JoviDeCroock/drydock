@@ -201,12 +201,17 @@ export default function ScanDetailPage() {
     }
   };
 
+  const handleGateRetry = async () => {
+    await model.retryGate();
+  };
+
   const gateReviewComplete = detail?.scan.status === "complete";
   const gateReviewFailed = detail?.scan.status === "failed";
 
   // npm scans become decidable once complete; gate scans are decidable while
-  // pending after the review either completes or fails. Failed reviews can only
-  // be rejected because approval releases the held GitHub job.
+  // pending after the review either completes or fails. Human decisions remain
+  // allowed even when automated review fails; the retry action gives a safer
+  // first move when the maintainer wants a fresh automated pass.
   const onDecideClick = isWorkflowGate
     ? gate?.status === "pending" && (gateReviewComplete || gateReviewFailed)
       ? () => (gateDialogOpen.value = true)
@@ -221,7 +226,14 @@ export default function ScanDetailPage() {
 
       {error ? <Alert tone="critical">{error}</Alert> : null}
       {isWorkflowGate && detail ? (
-        <GateContextPanel gate={gate} packageName={detail.scan.packageName} />
+        <GateContextPanel
+          gate={gate}
+          packageName={detail.scan.packageName}
+          canRetry={gate?.status === "pending" && gateReviewFailed && !detail.scan.decision}
+          retryStatus={model.gateRetryStatus.value}
+          retryError={model.gateRetryError.value}
+          onRetry={handleGateRetry}
+        />
       ) : null}
       {isWorkflowGate && detail && gate ? (
         <GatePackagesPanel gate={gate} currentScanId={detail.scan.id} />
@@ -360,7 +372,8 @@ export default function ScanDetailPage() {
               ? detail.scan.decision
               : null
           }
-          canApprove={detail.scan.status === "complete"}
+          canApprove={detail.scan.status === "complete" || detail.scan.status === "failed"}
+          reviewFailed={detail.scan.status === "failed"}
           onSubmit={handleGateDecision}
         />
       ) : null}

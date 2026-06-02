@@ -2,7 +2,7 @@
 
 PyPI support uses a different product shape from npm staged publishing.
 
-npm owns a pending staged tarball, so Drydock can fetch `/-/stage/<stage-id>/tarball` and leave final approval in npm. PyPI does not expose an equivalent registry-staged artifact. The PyPI path is therefore **workflow gate mode**: CI builds wheels/sdists first, uploads them as a `pypi-release-candidate` bundle for review, and a GitHub Environment blocks the publish job until the reviewed release is approved. There is no `drydock-manifest.json` to write — the release set is whatever wheels/sdists the bundle contains, and the package identity is derived from the artifacts themselves.
+npm owns a pending staged tarball, so Drydock can fetch `/-/stage/<stage-id>/tarball` and leave final approval in npm. PyPI does not expose an equivalent registry-staged artifact. The PyPI path is therefore **workflow gate mode**: CI builds wheels/sdists first, uploads them as GitHub Actions artifacts for review, and a GitHub Environment blocks the publish job until the reviewed release is approved. There is no `drydock-manifest.json` to write — the release set is whatever wheels/sdists the workflow uploads, and the package identity is derived from the artifacts themselves.
 
 Official references:
 
@@ -35,11 +35,12 @@ The sandbox parser now supports safe ZIP archive parsing for wheels in addition 
 ## Release set derivation
 
 There is no manifest file. The boundary between the GitHub workflow and Drydock
-is simply the release-candidate artifact bundle: CI uploads `dist/*` and Drydock
-treats every `.whl` / `.tar.gz` / `.tgz` in the bundle as the release set, then
-groups those files by package into one `drydock.release-artifacts.v1` release per
-distinct package (a monorepo publishes several) — the same shape the rest of the
-pipeline consumes:
+is the workflow run's uploaded artifacts: CI uploads `dist/*` and, unless a
+release target narrows discovery with `artifactName`, Drydock inspects every
+non-expired upload from the held run. Every `.whl` / `.tar.gz` / `.tgz` found in
+those uploads becomes part of the release set, then those files are grouped by
+package into one `drydock.release-artifacts.v1` release per distinct package (a
+monorepo publishes several) — the same shape the rest of the pipeline consumes:
 
 - `package` / `version` come from each wheel's `METADATA` and each sdist's
   `PKG-INFO`. Every artifact must expose a `Name`/`Version`; files are grouped by
@@ -153,9 +154,10 @@ organization (`x-organization-id` header to scope writes).
   when the scan is not a gate review or belongs to another org.
 - `POST /workflow-gates/:gateId/decision` — records a maintainer's decision on
   **one package** of the gate: `{ scanId, decision: "approved" | "rejected",
-  comment?, totpCode? }`, where `scanId` is the completed `workflow_gate` scan of
-  the package being decided. `scanId` is required (400 if missing); a scan that is
-  not a completed reviewable package of this gate returns 409
+  comment?, totpCode? }`, where `scanId` is the completed or failed
+  `workflow_gate` scan of the package being decided. `scanId` is required (400 if
+  missing); a scan that has not reached a human decision point for this gate
+  returns 409
   (`scanId is not a reviewable package of this gate`). The per-package decision is
   persisted (`publish` for approved, `no_publish` for rejected), then the gate is
   aggregated over **every** package scan linked via `scans.gate_id`:
@@ -193,6 +195,12 @@ organization (`x-organization-id` header to scope writes).
     record only — it never publishes or cancels anything — and deliberately does
     not require a step-up.
 
+- `POST /workflow-gates/:gateId/retry` — requeues a failed package-review batch
+  while the gate is still pending. It is only accepted when at least one package
+  scan is failed and no package decision has been recorded; retrying clears the
+  representative pointer and the next gate job discards the failed batch before
+  rerunning every package from the workflow artifacts.
+
 `POST /release-targets` enforces every validation listed in issue #114:
 
 - `installation_missing` — caller supplied an `installationRowId` that does not
@@ -210,13 +218,14 @@ organization (`x-organization-id` header to scope writes).
   ecosystem. `ecosystem` is **optional**: omitting it (or sending `""`/`"auto"`)
   stores `null`, which means "auto-detect each package's ecosystem from the
   uploaded artifacts" — the monorepo-friendly default, where one gate covers
-  every package the environment publishes. A non-empty value pins detection and
-  the default artifact name to that one ecosystem.
+  every package the environment publishes. A non-empty value pins ecosystem
+  detection to that adapter; artifact discovery still scans every upload unless
+  `artifactName` narrows it.
 
-`artifactName` is also optional: it overrides the GitHub Actions artifact the
-release bundle is downloaded from. When unset, an auto-detect target falls back
-to `release-candidate` and a pinned target falls back to its ecosystem adapter's
-default (PyPI: `pypi-release-candidate`).
+`artifactName` is also optional: when set, it narrows discovery to that GitHub
+Actions artifact name. When unset, Drydock scans every non-expired artifact
+uploaded by the held workflow run and lets the ecosystem classifier decide which
+inner files are reviewable.
 
 ### Webhook resolution
 
@@ -432,10 +441,11 @@ target loading, adapter selection, bundle fetch) lives in
 What the resolver enforces, in order:
 
 1. `GET /repos/{owner}/{repo}/actions/runs/{run_id}/artifacts` with an
-   installation token — find the first non-expired artifact named
-   `pypi-release-candidate` (configurable). Requires the **Actions: Read**
-   repository permission on the GitHub App.
-2. `GET /repos/{owner}/{repo}/actions/artifacts/{artifact_id}/zip` answers with
+   installation token — enumerate non-expired workflow artifacts, or narrow to a
+   configured `artifactName` when the release target supplies one. Requires the
+   **Actions: Read** repository permission on the GitHub App.
+2. For each selected upload,
+   `GET /repos/{owner}/{repo}/actions/artifacts/{artifact_id}/zip` answers with
    a 302 to a signed artifact-storage URL. The redirect is followed manually
    (`redirect: "manual"`) through an egress allowlist
    (`evaluateGithubArtifactEgress`, mirroring the `NpmStageGateway` credential
@@ -445,8 +455,10 @@ What the resolver enforces, in order:
    `*.blob.core.windows.net/actions-results/...`), which carry their own auth
    in the URL. A redirect to any other host fails closed with
    `bundle_unavailable` before the request is issued, so a spoofed `Location`
-   cannot leak the token. The outer ZIP is capped at 25 MiB; Content-Length is
-   rejected before reading, and the streamed body is also bounded.
+   cannot leak the token. Each outer ZIP is capped at 25 MiB, total downloaded
+   artifact ZIP bytes are capped at 50 MiB, and at most 50 workflow artifacts are
+   inspected; Content-Length is rejected before reading, and streamed bodies are
+   also bounded.
 3. The outer ZIP is parsed with a focused central-directory walker that
    reuses the hardened primitives from `server/lib/tar-parser.js`
    (`findZipEndOfCentralDirectory`, `inflateRawBounded`, `normalizeZipPath`).
@@ -467,10 +479,12 @@ What the resolver enforces, in order:
 
 Typed errors returned by `WorkflowArtifactError.code`:
 
-- `bundle_unavailable` — workflow run / artifact name is unreachable.
-- `bundle_too_large` — outer ZIP exceeded the size/entry cap, or the bundle held
-  more than 20 wheel/sdist files.
-- `bundle_empty` — the bundle contained no `.whl` / `.tar.gz` / `.tgz` files.
+- `bundle_unavailable` — workflow run or configured artifact name is unreachable.
+- `bundle_too_large` — selected uploads exceeded the size/entry cap, there were
+  too many matching workflow artifacts, or the release set held more than 20
+  wheel/sdist files.
+- `bundle_empty` — the selected uploads contained no `.whl` / `.tar.gz` /
+  `.tgz` files.
 - `artifact_path_unsafe` — bundle entry path contained traversal segments.
 - `artifact_identity_missing` — an artifact exposed no usable `Name`/`Version`
   (or the derived identity failed validation).
@@ -500,14 +514,14 @@ therefore covers a **set** of packages, not just one:
 
 - **Auto-detect ecosystem.** A release target with `ecosystem = null` (the
   default — left unpinned in the UI, or sent as `""`/`"auto"`) does not assume an
-  ecosystem up front. `prepareReleaseCandidatesForGate` classifies every bundle
-  entry across all registered ecosystems, groups the verified artifacts by
-  ecosystem, and hands each ecosystem's slice to its adapter. An unpinned target
-  downloads from the artifact named `release-candidate` unless `artifactName`
-  overrides it; a pinned target uses its ecosystem adapter's own default
-  (`pypi-release-candidate`). Pinning a single ecosystem keeps the legacy
-  single-ecosystem behavior and surfaces an unknown ecosystem as a configuration
-  error (gate left pending) rather than a fail-closed reject.
+  ecosystem up front. `prepareReleaseCandidatesForGate` classifies every
+  reviewable file from the run's selected uploads across all registered
+  ecosystems, groups the verified artifacts by ecosystem, and hands each
+  ecosystem's slice to its adapter. `artifactName` is only a narrowing override;
+  when it is blank, Drydock scans every non-expired upload in the held run.
+  Pinning a single ecosystem keeps ecosystem classification constrained to that
+  adapter and surfaces an unknown ecosystem as a configuration error (gate left
+  pending) rather than a fail-closed reject.
 - **One scan per package.** Each adapter splits its slice into one prepared
   candidate per distinct package, and `reviewGatePackages` runs a full scan for
   each against its **own** baseline, linking every scan to the gate via
@@ -519,8 +533,9 @@ therefore covers a **set** of packages, not just one:
   scans linked to the gate: any one rejected → the gate is rejected and the job
   is blocked immediately; all approved → the gate is approved and the job is
   released; otherwise the gate stays pending and the workbench shows the
-  remaining packages ("N of M approved"). A single bad package blocks the whole
-  release.
+  remaining packages ("N of M approved"). AI/release-risk recommendations are
+  advisory: a human can still approve after reading the review, and a failed
+  automated package review can be approved, rejected, or retried.
 - **All-or-nothing batch.** The per-package scans are run as one batch under a
   `review_started_at` claim. If any package's pipeline throws, the claim is
   released and the gate stays pending with no representative attached, so a
@@ -535,9 +550,8 @@ ecosystem's artifact semantics are pluggable. Two distinct adapter layers are
 involved — do not conflate them:
 
 - **`WorkflowGateAdapter`** (`server/lib/workflow-gates/types.ts`) — gate-time
-  artifact semantics: which GitHub Actions artifact to download, which bundle
-  entries are reviewable, and how to derive the package identity + scan-pipeline
-  input from the verified bytes.
+  artifact semantics: which uploaded files are reviewable, and how to derive the
+  package identity + scan-pipeline input from the verified bytes.
 - **`PackageAdapter`** (`server/lib/adapters/types.ts`) — the deterministic
   review/baseline/findings pipeline `runScanPipeline` already drives for npm and
   PyPI. A `WorkflowGateAdapter` references one via `packageAdapter`.
@@ -550,7 +564,7 @@ The **shared runner** owns every GitHub-shaped and persistence concern, in
 
 - loading the `github_workflow_gates` row, installation, and release target;
 - selecting the adapter from `github_release_targets.ecosystem`;
-- fetching the GitHub Actions artifact bundle, bounded ZIP parsing, unsafe-path
+- fetching selected GitHub Actions uploads, bounded ZIP parsing, unsafe-path
   rejection, and SHA-256 recomputation (the installation token is swapped + used
   only in the control plane, never in the sandbox);
 - persisting gate status / decision / audit events with ecosystem-neutral names
@@ -563,11 +577,9 @@ The **shared runner** owns every GitHub-shaped and persistence concern, in
 
 A **`WorkflowGateAdapter`** owns only the ecosystem-specific surface:
 
-- `artifactName` — the default GitHub Actions artifact the bundle is downloaded
-  from;
 - `classifyArtifact(path)` — which bundle entries are reviewable artifacts (the
   returned kind is opaque to the shared fetcher; `null` drops the entry);
-- `prepareReleaseCandidate(...)` — parse the verified bytes through the
+- `prepareReleaseCandidates(...)` — parse the verified bytes through the
   credentials-free sandbox, derive the package identity, reject a bundle that
   does not match the configured release target, and return the
   `pipelineInput` (`Record<string, unknown>` spread into `runScanPipeline`, so

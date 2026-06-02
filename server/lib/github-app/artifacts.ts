@@ -35,8 +35,11 @@ export interface ResolvedReleaseFile {
 
 export interface ResolvedReleaseBundle {
   artifacts: ResolvedReleaseFile[];
+  /** First downloaded GitHub Actions artifact id; retained for old callers/tests. */
   artifactId: number;
+  /** First downloaded GitHub Actions artifact name, or "all" when several were inspected. */
   artifactName: string;
+  /** Total downloaded GitHub Actions artifact ZIP bytes. */
   artifactSizeBytes: number;
 }
 
@@ -60,12 +63,12 @@ export class WorkflowArtifactError extends Error {
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
-const DEFAULT_ARTIFACT_NAME = "pypi-release-candidate";
-
 export const MAX_OUTER_ZIP_BYTES = 25 * 1024 * 1024;
+export const MAX_TOTAL_ARTIFACT_ZIP_BYTES = 50 * 1024 * 1024;
 export const MAX_OUTER_ZIP_ENTRIES = 256;
 export const MAX_PER_ENTRY_BYTES = 25 * 1024 * 1024;
 const MAX_RELEASE_ARTIFACTS = 20;
+const MAX_RUN_ARTIFACTS = 50;
 const MAX_LIST_PAGES = 4;
 const MAX_DOWNLOAD_REDIRECTS = 4;
 
@@ -123,8 +126,10 @@ export function evaluateGithubArtifactEgress(requestUrl: string): GithubArtifact
  * Identity (`package`/`version`) is derived from the artifacts themselves
  * downstream by the ecosystem's `WorkflowGateAdapter`
  * (`server/lib/workflow-gates`) once the bytes have been parsed in the sandbox.
- * This stage only collects the artifact bytes the supplied `classifyArtifact`
- * keeps and recomputes their SHA-256; every other file in the bundle is ignored.
+ * This stage enumerates the workflow run's non-expired GitHub Actions artifacts
+ * unless `source.artifactName` narrows it to one named upload. It then collects
+ * only the inner files the supplied `classifyArtifact` keeps and recomputes
+ * their SHA-256; every other file in every upload is ignored.
  */
 export async function fetchReleaseBundleWithToken(
   installationToken: string,
@@ -140,39 +145,53 @@ export async function fetchReleaseBundleWithToken(
   if (!Number.isInteger(source.runId) || source.runId <= 0) {
     throw new WorkflowArtifactError("bundle_unavailable", "runId must be a positive integer");
   }
-  const artifactName =
-    (source.artifactName ?? DEFAULT_ARTIFACT_NAME).trim() || DEFAULT_ARTIFACT_NAME;
-
-  const artifact = await findRunArtifact(
+  const artifactName = typeof source.artifactName === "string" ? source.artifactName.trim() : "";
+  const runArtifacts = await listRunArtifacts(
     installationToken,
     source.repositoryFullName,
     source.runId,
-    artifactName,
+    artifactName || undefined,
   );
-  const zipBytes = await downloadArtifactZip(
-    installationToken,
-    source.repositoryFullName,
-    artifact.id,
-  );
-
-  const entries = await extractOuterZipEntries(zipBytes);
 
   // The release set is every entry the adapter classifies as an artifact.
   // Non-artifact files (checksums, READMEs, anything else upload-artifact
   // happened to include) are ignored — they are never scanned, so they cannot
   // influence the review.
   const candidateArtifacts: ResolvedReleaseFile[] = [];
-  for (const entry of entries) {
-    const classified = classifyArtifact(entry.path);
-    if (!classified) continue;
-    const sha256 = await sha256Hex(entry.bytes);
-    candidateArtifacts.push({
-      path: entry.path,
-      bytes: entry.bytes,
-      sha256,
-      ecosystem: classified.ecosystem,
-      kind: classified.kind,
-    });
+  let totalZipBytes = 0;
+  for (const artifact of runArtifacts) {
+    const zipBytes = await downloadArtifactZip(
+      installationToken,
+      source.repositoryFullName,
+      artifact.id,
+    );
+    totalZipBytes += zipBytes.byteLength;
+    if (totalZipBytes > MAX_TOTAL_ARTIFACT_ZIP_BYTES) {
+      throw new WorkflowArtifactError(
+        "bundle_too_large",
+        `artifact downloads exceed ${MAX_TOTAL_ARTIFACT_ZIP_BYTES} bytes`,
+      );
+    }
+
+    const entries = await extractOuterZipEntries(zipBytes);
+    for (const entry of entries) {
+      const classified = classifyArtifact(entry.path);
+      if (!classified) continue;
+      const sha256 = await sha256Hex(entry.bytes);
+      candidateArtifacts.push({
+        path: entry.path,
+        bytes: entry.bytes,
+        sha256,
+        ecosystem: classified.ecosystem,
+        kind: classified.kind,
+      });
+    }
+    if (candidateArtifacts.length > MAX_RELEASE_ARTIFACTS) {
+      throw new WorkflowArtifactError(
+        "bundle_too_large",
+        `artifact bundle contains more than ${MAX_RELEASE_ARTIFACTS} wheel/sdist files`,
+      );
+    }
   }
   if (candidateArtifacts.length === 0) {
     throw new WorkflowArtifactError(
@@ -180,18 +199,12 @@ export async function fetchReleaseBundleWithToken(
       "artifact bundle contained no reviewable artifacts",
     );
   }
-  if (candidateArtifacts.length > MAX_RELEASE_ARTIFACTS) {
-    throw new WorkflowArtifactError(
-      "bundle_too_large",
-      `artifact bundle contains more than ${MAX_RELEASE_ARTIFACTS} wheel/sdist files`,
-    );
-  }
 
   return {
     artifacts: candidateArtifacts,
-    artifactId: artifact.id,
-    artifactName: artifact.name,
-    artifactSizeBytes: zipBytes.byteLength,
+    artifactId: runArtifacts[0]?.id ?? 0,
+    artifactName: runArtifacts.length === 1 ? (runArtifacts[0]?.name ?? "") : "all",
+    artifactSizeBytes: totalZipBytes,
   };
 }
 
@@ -218,16 +231,17 @@ interface RunArtifactRef {
   expired: boolean;
 }
 
-async function findRunArtifact(
+async function listRunArtifacts(
   token: string,
   repositoryFullName: string,
   runId: number,
-  artifactName: string,
-): Promise<RunArtifactRef> {
+  artifactName?: string,
+): Promise<RunArtifactRef[]> {
   const [owner, repo] = repositoryFullName.split("/");
   let url: string | null =
     `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}` +
     `/actions/runs/${runId}/artifacts?per_page=100`;
+  const found: RunArtifactRef[] = [];
   for (let page = 0; page < MAX_LIST_PAGES && url; page += 1) {
     const response = await fetch(url, { headers: githubInstallationHeaders(token) });
     if (response.status === 404) {
@@ -254,15 +268,22 @@ async function findRunArtifact(
       if (
         typeof candidate.id === "number" &&
         candidate.id > 0 &&
-        candidate.name === artifactName &&
+        typeof candidate.name === "string" &&
+        (!artifactName || candidate.name === artifactName) &&
         candidate.expired !== true
       ) {
-        return {
+        found.push({
           id: candidate.id,
           name: candidate.name,
           sizeInBytes: typeof candidate.size_in_bytes === "number" ? candidate.size_in_bytes : null,
           expired: false,
-        };
+        });
+        if (found.length > MAX_RUN_ARTIFACTS) {
+          throw new WorkflowArtifactError(
+            "bundle_too_large",
+            `workflow run has more than ${MAX_RUN_ARTIFACTS} matching artifacts`,
+          );
+        }
       }
     }
     const next = nextLink(response.headers.get("link"));
@@ -270,10 +291,11 @@ async function findRunArtifact(
     // a forged `Link` header cannot redirect the token-bearing listing call.
     url = next && evaluateGithubArtifactEgress(next).host === "api.github.com" ? next : null;
   }
-  throw new WorkflowArtifactError(
-    "bundle_unavailable",
-    `no non-expired artifact named ${artifactName} on run ${runId}`,
-  );
+  if (found.length > 0) return found;
+  const detail = artifactName
+    ? `no non-expired artifact named ${artifactName} on run ${runId}`
+    : `no non-expired artifacts on run ${runId}`;
+  throw new WorkflowArtifactError("bundle_unavailable", detail);
 }
 
 async function downloadArtifactZip(

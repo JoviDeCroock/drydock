@@ -21,16 +21,11 @@ import {
 } from "./registry";
 import type { PreparedReleaseCandidate, WorkflowGateAdapter } from "./types";
 
-// The GitHub Actions artifact name an auto-detect (unpinned) release target
-// downloads from when nothing overrides it. A pinned target falls back to its
-// ecosystem adapter's own default instead.
-const DEFAULT_AUTO_DETECT_ARTIFACT_NAME = "release-candidate";
-
 export interface PrepareForGateInput {
   config: GithubAppConfig;
   organizationId: string;
   gateId: string;
-  /** Overrides the release target's configured / default artifact name. */
+  /** Narrows artifact discovery to one GitHub Actions artifact name. */
   artifactName?: string;
 }
 
@@ -135,7 +130,7 @@ export async function prepareReleaseCandidatesForGate(
         installationExternalId: installation.installationId,
         repositoryFullName: gate.repositoryFullName,
         runId: gate.runId,
-        artifactName,
+        ...(artifactName ? { artifactName } : {}),
       },
       classify,
     );
@@ -163,23 +158,25 @@ export async function prepareReleaseCandidatesForGate(
 }
 
 /**
- * Pick the artifact classifier + download name for a release target. A pinned
- * ecosystem resolves its adapter up front so an unknown ecosystem is surfaced as
- * a configuration error (gate left pending, never auto-approved) rather than a
- * fail-closed artifact rejection; an unpinned target classifies across every
- * registered ecosystem.
+ * Pick the artifact classifier + optional upload-name narrowing for a release
+ * target. A pinned ecosystem resolves its adapter up front so an unknown
+ * ecosystem is surfaced as a configuration error (gate left pending, never
+ * auto-approved) rather than a fail-closed artifact rejection; an unpinned target
+ * classifies across every registered ecosystem. When no artifact name override
+ * is present, the fetcher enumerates every non-expired upload from the workflow
+ * run and the classifier decides which inner files are reviewable.
  */
 function resolveBundleClassifier(
   db: AppDb,
   gate: WorkflowGateRecord,
   releaseTarget: { ecosystem: string | null; artifactName: string | null },
   input: PrepareForGateInput,
-): { classify: ClassifyArtifact; artifactName: string } {
+): { classify: ClassifyArtifact; artifactName?: string } {
   const override = input.artifactName ?? releaseTarget.artifactName ?? undefined;
   if (releaseTarget.ecosystem === null) {
     return {
       classify: classifyBundleArtifact,
-      artifactName: override ?? DEFAULT_AUTO_DETECT_ARTIFACT_NAME,
+      ...(override ? { artifactName: override } : {}),
     };
   }
 
@@ -205,7 +202,7 @@ function resolveBundleClassifier(
       const kind = adapter.classifyArtifact(path);
       return kind ? { ecosystem: adapter.ecosystem, kind } : null;
     },
-    artifactName: override ?? adapter.artifactName,
+    ...(override ? { artifactName: override } : {}),
   };
 }
 

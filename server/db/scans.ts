@@ -605,7 +605,7 @@ export async function recordGatePackageDecision(db: AppDb, input: RecordGatePack
         eq(scans.organizationId, input.organizationId),
         eq(scans.gateId, input.gateId),
         eq(scans.source, "workflow_gate"),
-        eq(scans.status, "complete"),
+        sql`${scans.status} in ('complete', 'failed')`,
         isNull(scans.decision),
         sql`exists (
           select 1

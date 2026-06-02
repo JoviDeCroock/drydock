@@ -128,7 +128,7 @@ Additional boundaries for PyPI:
 
 - Do not mint PyPI OIDC tokens or upload to PyPI.
 - Do not rebuild artifacts after review; the publish job must download the reviewed GitHub Actions artifact bundle and publish those bytes.
-- Treat the `pypi-release-candidate` GitHub Actions artifact bundle as the release set. Recompute each wheel/sdist SHA-256 from bundle bytes, derive package name/version from wheel `METADATA` and sdist `PKG-INFO`, and reject missing identity, cross-artifact identity/version mismatch, or release-target mismatch.
+- Treat the held workflow run's uploaded GitHub Actions artifacts as the release set, optionally narrowed by a configured artifact name. Recompute each wheel/sdist SHA-256 from upload bytes, derive package name/version from wheel `METADATA` and sdist `PKG-INFO`, and reject missing identity, cross-artifact identity/version mismatch, or release-target mismatch.
 - There is no maintainer-declared manifest or publish-side digest-match contract today. Byte continuity rests on GitHub artifact immutability plus workflow discipline that forbids rebuilding after the gate.
 - Treat wheel ZIP and sdist tar contents as hostile evidence, with the same no-execution and bounded-sample rules as npm tarballs.
 - Keep GitHub Actions artifact credentials in the trusted parent/GitHub integration path; do not pass them into the sandbox.

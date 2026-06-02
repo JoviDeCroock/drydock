@@ -178,6 +178,12 @@ async function buildFixture(opts?: {
 
 interface StubOptions {
   bundleZip: Uint8Array | null;
+  artifacts?: Array<{
+    id: number;
+    name: string;
+    bundleZip: Uint8Array | null;
+    expired?: boolean;
+  }>;
   artifactsResponse?: () => Response;
   artifactId?: number;
   artifactName?: string;
@@ -186,16 +192,22 @@ interface StubOptions {
 
 function stubGithubFetch(options: StubOptions) {
   const calls: { url: string; authorization: string | null }[] = [];
+  const artifacts = options.artifacts ?? [
+    {
+      id: options.artifactId ?? ARTIFACT_ID,
+      name: options.artifactName ?? ARTIFACT_NAME,
+      bundleZip: options.bundleZip,
+      expired: false,
+    },
+  ];
   const artifactsBody = JSON.stringify({
-    total_count: 1,
-    artifacts: [
-      {
-        id: options.artifactId ?? ARTIFACT_ID,
-        name: options.artifactName ?? ARTIFACT_NAME,
-        size_in_bytes: options.bundleZip?.length ?? 0,
-        expired: false,
-      },
-    ],
+    total_count: artifacts.length,
+    artifacts: artifacts.map((artifact) => ({
+      id: artifact.id,
+      name: artifact.name,
+      size_in_bytes: artifact.bundleZip?.length ?? 0,
+      expired: artifact.expired === true,
+    })),
   });
   vi.stubGlobal(
     "fetch",
@@ -213,16 +225,19 @@ function stubGithubFetch(options: StubOptions) {
         });
       }
       if (request.url.includes("/actions/artifacts/")) {
-        if (!options.bundleZip) {
+        const match = request.url.match(/\/actions\/artifacts\/(\d+)\/zip$/);
+        const artifactId = match ? Number.parseInt(match[1], 10) : Number.NaN;
+        const artifact = artifacts.find((candidate) => candidate.id === artifactId);
+        if (!artifact?.bundleZip) {
           return new Response("not found", { status: 404 });
         }
         const headers: Record<string, string> = {
           "content-type": "application/zip",
         };
         if (options.contentLength !== null) {
-          headers["content-length"] = String(options.contentLength ?? options.bundleZip.length);
+          headers["content-length"] = String(options.contentLength ?? artifact.bundleZip.length);
         }
-        return new Response(options.bundleZip, { status: 200, headers });
+        return new Response(artifact.bundleZip, { status: 200, headers });
       }
       throw new Error(`unexpected fetch in test: ${request.url}`);
     }),
@@ -230,11 +245,12 @@ function stubGithubFetch(options: StubOptions) {
   return calls;
 }
 
-function source(): WorkflowArtifactSource {
+function source(overrides: Partial<WorkflowArtifactSource> = {}): WorkflowArtifactSource {
   return {
     installationExternalId: "1010",
     repositoryFullName: REPO,
     runId: RUN_ID,
+    ...overrides,
   };
 }
 
@@ -287,6 +303,40 @@ describe("fetchReleaseBundleWithToken", () => {
     expect(sdist?.sha256).toBe(await sha256Hex(sdistBytes));
   });
 
+  test("collects reviewable files across every non-expired workflow artifact", async () => {
+    const first = await buildFixture();
+    const secondWheel = makeWheelBytes("other-package", "2.0.0");
+    const secondZip = makeZip([{ path: secondWheel.path, body: secondWheel.bytes }]);
+    stubGithubFetch({
+      bundleZip: null,
+      artifacts: [
+        {
+          id: ARTIFACT_ID,
+          name: "alpha-upload",
+          bundleZip: first.bundleZip,
+        },
+        {
+          id: ARTIFACT_ID + 1,
+          name: "beta-upload",
+          bundleZip: secondZip,
+        },
+        {
+          id: ARTIFACT_ID + 2,
+          name: "expired-upload",
+          bundleZip: makeZip([{ path: "dist/expired-1.0.0.tar.gz", body: "expired" }]),
+          expired: true,
+        },
+      ],
+    });
+
+    const bundle = await fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact);
+
+    expect(bundle.artifactName).toBe("all");
+    expect(bundle.artifactSizeBytes).toBe(first.bundleZip.length + secondZip.length);
+    const paths = bundle.artifacts.map((artifact) => artifact.path).sort();
+    expect(paths).toEqual([first.wheel.path, secondWheel.path].sort());
+  });
+
   test("ignores non-artifact files in the bundle", async () => {
     const fixture = await buildFixture({
       extraEntries: [
@@ -332,12 +382,12 @@ describe("fetchReleaseBundleWithToken", () => {
     });
   });
 
-  test("bundle_unavailable when no artifact with that name exists", async () => {
+  test("bundle_unavailable when an explicit artifact name does not exist", async () => {
     const fixture = await buildFixture();
     stubGithubFetch({ bundleZip: fixture.bundleZip, artifactName: "something-else" });
 
     await expect(
-      fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact),
+      fetchReleaseBundleWithToken(TOKEN, source({ artifactName: ARTIFACT_NAME }), classifyArtifact),
     ).rejects.toMatchObject({
       name: "WorkflowArtifactError",
       code: "bundle_unavailable",

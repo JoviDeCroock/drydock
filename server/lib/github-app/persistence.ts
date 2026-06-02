@@ -29,8 +29,8 @@ export interface ReleaseTargetRecord {
   // Null means "auto-detect the ecosystem from the uploaded artifacts" so one
   // gate can cover every package a monorepo publishes from the environment.
   ecosystem: SupportedEcosystem | null;
-  // Null falls back to the resolved ecosystem's default GitHub Actions artifact
-  // name (or the auto-detect default for unpinned targets).
+  // Null inspects every non-expired workflow artifact; non-null narrows to one
+  // GitHub Actions artifact name.
   artifactName: string | null;
   repositoryId: number;
   repositoryFullName: string;
@@ -181,7 +181,7 @@ export interface CreateReleaseTargetInput {
   installationRowId: string;
   /** Null = auto-detect the ecosystem from the uploaded artifacts. */
   ecosystem: SupportedEcosystem | null;
-  /** Optional override for the GitHub Actions artifact name. */
+  /** Optional narrowing override for the GitHub Actions artifact name. */
   artifactName?: string | null;
   repositoryId: number;
   repositoryFullName: string;

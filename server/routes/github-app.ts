@@ -46,6 +46,7 @@ import {
   listRepositoryEnvironments,
   markGateDecidedForPackageAggregate,
   readGithubAppConfig,
+  resetGateReviewForRetry,
   signOAuthState,
   upsertInstallation,
   verifyUserCanAccessInstallation,
@@ -497,14 +498,18 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     twoFactorVerified = true;
   }
 
-  // The decision targets one package's completed scan, which must belong to
-  // this gate. A scan that is not this gate's reviewable package is rejected.
+  // The decision targets one package scan that has reached a human decision
+  // point. A completed review gives the maintainer the full diff; a failed
+  // review can still be explicitly accepted/rejected by the human, or retried
+  // through the retry endpoint before deciding.
   const scan = await getScan(db, packageScanId, organizationId);
+  const scanReachedDecisionPoint =
+    scan?.scan.status === "complete" || scan?.scan.status === "failed";
   if (
     !scan ||
     scan.scan.source !== "workflow_gate" ||
     scan.scan.gateId !== gateId ||
-    scan.scan.status !== "complete"
+    !scanReachedDecisionPoint
   ) {
     return c.json({ error: "scanId is not a reviewable package of this gate" }, 409);
   }
@@ -603,7 +608,72 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   return c.json({ gate: publicWorkflowGate(decided, packages) });
 });
 
+// Re-run a failed workflow-gate review batch. The retry is intentionally scoped
+// to pending gates whose package scans have no recorded decisions: once a human
+// has accepted or rejected a package, retrying must not replace that decision.
+githubAppRoutes.post("/workflow-gates/:gateId/retry", async (c) => {
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = await requireActiveOrganization(c, db);
+  try {
+    await enforceRateLimit(db, {
+      key: `github-app:gate-retry:${organizationId}`,
+      limit: 20,
+      windowMs: 60 * 1000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return rateLimitResponse(c, "gate retry rate limit exceeded", err);
+    }
+    throw err;
+  }
+
+  const gateId = c.req.param("gateId");
+  const existing = await getGateForOrganization(db, organizationId, gateId);
+  if (!existing) return c.json({ error: "not found" }, 404);
+  if (existing.status !== "pending") {
+    return c.json({ error: "gate has already been decided" }, 409);
+  }
+
+  const reset = await resetGateReviewForRetry(db, { gateId, organizationId });
+  const packages = await listGatePackageScans(db, organizationId, gateId);
+  if (!reset) {
+    return c.json(
+      {
+        gate: publicWorkflowGate(existing, packages),
+        error: "gate review is not retryable",
+      },
+      409,
+    );
+  }
+
+  await recordScanEvent(db, {
+    organizationId,
+    actorUserId: session.userId,
+    scanId: existing.scanId,
+    type: "github_workflow_gate.retry_requested",
+    metadata: { gateId, packageCount: packages.length },
+  });
+
+  const message = { kind: "workflow_gate" as const, organizationId, gateId };
+  c.executionCtx.waitUntil(runWorkflowGateJob(c, db, message));
+
+  const gate = await getGateForOrganization(db, organizationId, gateId);
+  return c.json(
+    { gate: publicWorkflowGate(gate ?? existing, packages), queued: Boolean(c.env.SCAN_QUEUE) },
+    202,
+  );
+});
+
 async function deliverGateDecisionJob(
+  c: RouteContext,
+  db: ReturnType<typeof createDb>,
+  message: { kind: "workflow_gate"; organizationId: string; gateId: string },
+) {
+  await runWorkflowGateJob(c, db, message);
+}
+
+async function runWorkflowGateJob(
   c: RouteContext,
   db: ReturnType<typeof createDb>,
   message: { kind: "workflow_gate"; organizationId: string; gateId: string },

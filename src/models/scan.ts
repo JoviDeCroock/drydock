@@ -9,6 +9,7 @@ import { apiFetch, apiJson, errorMessage } from "./api";
 import {
   decideWorkflowGate,
   getWorkflowGateByScan,
+  retryWorkflowGate,
   type PublicWorkflowGate,
   type WorkflowGateDecision,
 } from "./github-app";
@@ -256,6 +257,8 @@ export const ScanDetailModel = createModel((id: string) => {
   const gateLoaded = signal(false);
   const gateDecisionStatus = signal<DecisionStatus>("idle");
   const gateDecisionError = signal<string | null>(null);
+  const gateRetryStatus = signal<DecisionStatus>("idle");
+  const gateRetryError = signal<string | null>(null);
 
   const isWorkflowGate = computed(() => detail.value?.scan.source === "workflow_gate");
   const status = computed(() => detail.value?.scan.status ?? null);
@@ -339,6 +342,8 @@ export const ScanDetailModel = createModel((id: string) => {
     gateLoaded,
     gateDecisionStatus,
     gateDecisionError,
+    gateRetryStatus,
+    gateRetryError,
     isWorkflowGate,
     status,
     isPolling,
@@ -445,6 +450,22 @@ export const ScanDetailModel = createModel((id: string) => {
       } catch (err) {
         this.gateDecisionError.value = errorMessage(err);
         this.gateDecisionStatus.value = "error";
+      }
+    },
+
+    async retryGate(): Promise<void> {
+      const current = this.gate.peek();
+      if (!current) return;
+      this.gateRetryStatus.value = "saving";
+      this.gateRetryError.value = null;
+      try {
+        const { gate: updated } = await retryWorkflowGate(current.id);
+        this.gate.value = updated;
+        this.gateLoaded.value = true;
+        this.gateRetryStatus.value = "idle";
+      } catch (err) {
+        this.gateRetryError.value = errorMessage(err);
+        this.gateRetryStatus.value = "error";
       }
     },
 

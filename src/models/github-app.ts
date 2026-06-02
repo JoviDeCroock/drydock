@@ -25,7 +25,8 @@ export interface PublicReleaseTarget {
   // null = auto-detect each package's ecosystem from the uploaded artifacts
   // (the monorepo-friendly default).
   ecosystem: SupportedEcosystem | null;
-  // null = use the runner's default artifact name for the selected ecosystem mode.
+  // null = inspect every non-expired workflow artifact; non-null narrows to one
+  // GitHub Actions artifact name.
   artifactName: string | null;
   repositoryId: number;
   repositoryFullName: string;
@@ -120,6 +121,13 @@ export function decideWorkflowGate(
     }
     throw err;
   });
+}
+
+export function retryWorkflowGate(gateId: string): Promise<{ gate: PublicWorkflowGate }> {
+  return apiJson<{ gate: PublicWorkflowGate }>(
+    `/api/v1/github-app/workflow-gates/${encodeURIComponent(gateId)}/retry`,
+    {},
+  );
 }
 
 export interface InstallationRepository {

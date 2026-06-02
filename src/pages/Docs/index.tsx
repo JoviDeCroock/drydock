@@ -173,9 +173,9 @@ export default function DocsPage() {
                 </>,
                 <>
                   Add the build and publish workflow below. The build job uploads the wheels and
-                  sdists as a <Code>pypi-release-candidate</Code> bundle; the publish job runs in{" "}
-                  <Code>environment: pypi</Code> and stays blocked until a maintainer approves the
-                  review in Drydock.
+                  sdists as a GitHub Actions artifact; the publish job runs in{" "}
+                  <Code>environment: pypi</Code>, downloads the same artifact, and stays blocked
+                  until a maintainer approves the review in Drydock.
                 </>,
               ]}
             />
@@ -189,9 +189,10 @@ export default function DocsPage() {
           <Subsection title="Release-candidate bundle">
             <Prose>
               There is no manifest to write. The boundary between your workflow and Drydock is the
-              uploaded <Code>pypi-release-candidate</Code> bundle: CI builds and uploads{" "}
-              <Code>dist/*</Code>, and Drydock treats every <Code>.whl</Code>, <Code>.tar.gz</Code>,
-              and <Code>.tgz</Code> in it as the release set.
+              workflow run's uploaded artifacts: CI builds and uploads <Code>dist/*</Code>, and
+              Drydock treats every <Code>.whl</Code>, <Code>.tar.gz</Code>, and <Code>.tgz</Code> it
+              finds as the release set. The settings form can narrow discovery to one artifact name,
+              but leaving it blank lets Drydock inspect every non-expired upload from the held run.
             </Prose>
             <Prose>
               The release identity is derived from the artifacts themselves — package name and
