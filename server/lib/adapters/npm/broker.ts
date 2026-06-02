@@ -1,13 +1,9 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { createDb, getNpmConnection, type AppDb } from "../../../db";
 import { allowInsecureLocalRegistry, decryptNpmToken } from "../../npm-connection";
+import { downloadPublishedTarball } from "../../published-tarball";
 import { fetchPackageMetadata, type RegistryMetadata } from "../../registry";
-import {
-  downloadInSandbox,
-  sandboxErrorDetail,
-  type DownloadOptions,
-  type DownloadResult,
-} from "../../sandbox";
+import { downloadInSandbox, sandboxErrorDetail, type DownloadResult } from "../../sandbox";
 import { fetchStagedPublishDetails, type StagedPublishDetails } from "../../staged-publishes";
 import type { AdapterBroker, AdapterContext, AdapterConnectionRef } from "../types";
 
@@ -57,13 +53,15 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
 
   async downloadStaged(stageId: string, opts: NpmBrokerDownloadOptions): Promise<DownloadResult> {
     const creds = await this.resolveCredentials();
-    return downloadInSandboxForRpc(this.env, this.ctx, {
-      stageId,
-      maxFiles: opts.maxFiles,
-      maxBytesPerFile: opts.maxBytesPerFile,
-      npmToken: creds.token,
-      npmRegistry: creds.registry,
-    });
+    return runRpcSafe(() =>
+      downloadInSandbox(this.env, this.ctx, {
+        stageId,
+        maxFiles: opts.maxFiles,
+        maxBytesPerFile: opts.maxBytesPerFile,
+        npmToken: creds.token,
+        npmRegistry: creds.registry,
+      }),
+    );
   }
 
   async downloadPublished(
@@ -71,13 +69,15 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
     opts: NpmBrokerDownloadOptions,
   ): Promise<DownloadResult> {
     const creds = await this.resolveCredentials();
-    return downloadInSandboxForRpc(this.env, this.ctx, {
-      tarballUrl,
-      maxFiles: opts.maxFiles,
-      maxBytesPerFile: opts.maxBytesPerFile,
-      npmToken: creds.token,
-      npmRegistry: creds.registry,
-    });
+    return runRpcSafe(() =>
+      downloadPublishedTarball(this.env, this.ctx, tarballUrl, {
+        registryUrl: creds.registry,
+        npmToken: creds.token,
+        allowInsecureLocalhost: allowInsecureLocalRegistry(this.env),
+        maxFiles: opts.maxFiles,
+        maxBytesPerFile: opts.maxBytesPerFile,
+      }),
+    );
   }
 
   private async resolveCredentials(): Promise<ResolvedCredentials> {
@@ -101,13 +101,12 @@ async function resolveNpmCredentials(
   return { token, registry: connection.registryUrl };
 }
 
-async function downloadInSandboxForRpc(
-  env: Cloudflare.Env,
-  ctx: ExecutionContext,
-  options: DownloadOptions,
-): Promise<DownloadResult> {
+// WorkerEntrypoint RPC re-throws errors as opaque objects, so translate the
+// structured SandboxError detail into an RPC-safe Error the orchestrator can
+// still recognize via `sandboxErrorDetail`.
+async function runRpcSafe<T>(fn: () => Promise<T>): Promise<T> {
   try {
-    return await downloadInSandbox(env, ctx, options);
+    return await fn();
   } catch (err) {
     const detail = sandboxErrorDetail(err);
     if (detail === null) throw err;
@@ -145,22 +144,27 @@ class LocalNpmBroker implements NpmBroker {
   }
 
   async downloadStaged(stageId: string, opts: NpmBrokerDownloadOptions): Promise<DownloadResult> {
-    return this.download({ stageId, ...opts });
+    const creds = await this.resolve();
+    return downloadInSandbox(this.ctx.env, this.ctx.executionCtx, {
+      stageId,
+      maxFiles: opts.maxFiles,
+      maxBytesPerFile: opts.maxBytesPerFile,
+      npmToken: creds.token,
+      npmRegistry: creds.registry,
+    });
   }
 
   async downloadPublished(
     tarballUrl: string,
     opts: NpmBrokerDownloadOptions,
   ): Promise<DownloadResult> {
-    return this.download({ tarballUrl, ...opts });
-  }
-
-  private async download(options: Omit<DownloadOptions, "npmToken" | "npmRegistry">) {
     const creds = await this.resolve();
-    return downloadInSandbox(this.ctx.env, this.ctx.executionCtx, {
-      ...options,
+    return downloadPublishedTarball(this.ctx.env, this.ctx.executionCtx, tarballUrl, {
+      registryUrl: creds.registry,
       npmToken: creds.token,
-      npmRegistry: creds.registry,
+      allowInsecureLocalhost: allowInsecureLocalRegistry(this.ctx.env),
+      maxFiles: opts.maxFiles,
+      maxBytesPerFile: opts.maxBytesPerFile,
     });
   }
 

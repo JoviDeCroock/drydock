@@ -1,5 +1,4 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { allowInsecureLocalRegistry, registryProtocolAllowed } from "./npm-connection";
 import type { FileRecord, PackageJsonSummary } from "./review";
 import { STAGE_ID_PATTERN } from "./stage-id";
 import * as tarParser from "./tar-parser.js";
@@ -7,9 +6,10 @@ import type { TarSuspiciousEntry } from "./tar-parser.js";
 
 export const SANDBOX_MAX_FILES = 2_500;
 export const SANDBOX_MAX_BYTES_PER_FILE = 128 * 1024;
+export const SANDBOX_MAX_TAR_BYTES = 25 * 1024 * 1024;
 const MAX_FILES = SANDBOX_MAX_FILES;
 const MAX_BYTES_PER_FILE = SANDBOX_MAX_BYTES_PER_FILE;
-const MAX_TAR_BYTES = 25 * 1024 * 1024;
+const MAX_TAR_BYTES = SANDBOX_MAX_TAR_BYTES;
 
 // Functions whose source text is concatenated into the sandbox worker module.
 // They must remain referenced only by lexical name (no closures) so the order
@@ -56,7 +56,7 @@ interface NpmStageGatewayProps {
 export interface NpmStageGatewayPolicy {
   allowed: boolean;
   credentialed: boolean;
-  kind: "staged-tarball" | "published-tarball" | "package-metadata" | "public-artifact" | "blocked";
+  kind: "staged-tarball" | "package-metadata" | "public-artifact" | "blocked";
 }
 
 export function evaluateNpmStageGatewayRequest(
@@ -79,16 +79,10 @@ export function evaluateNpmStageGatewayRequest(
     normalizedMethod === "GET" &&
     url.pathname.startsWith("/-/stage/") &&
     url.pathname.endsWith("/tarball");
-  const isPublishedTarball =
-    sameOrigin &&
-    normalizedMethod === "GET" &&
-    url.pathname.endsWith(".tgz") &&
-    url.pathname.includes("/-/");
   const isRegistryMetadata = sameOrigin && normalizedMethod === "GET" && packageMetadataPath;
 
   if (isPublicArtifact) return { allowed: true, credentialed: false, kind: "public-artifact" };
   if (isStagedTarball) return { allowed: true, credentialed: true, kind: "staged-tarball" };
-  if (isPublishedTarball) return { allowed: true, credentialed: true, kind: "published-tarball" };
   if (isRegistryMetadata) return { allowed: true, credentialed: true, kind: "package-metadata" };
   return { allowed: false, credentialed: false, kind: "blocked" };
 }
@@ -245,20 +239,17 @@ export async function downloadInSandbox(
   ctx: ExecutionContext,
   options: DownloadOptions,
 ): Promise<DownloadResult> {
-  const registry = options.npmRegistry || env.NPM_REGISTRY || "https://registry.npmjs.org";
   if (options.tarballUrl) {
+    // The only credentialed sandbox egress is the staged-tarball endpoint
+    // (fetched via stageId). A direct tarballUrl is reserved for pinned,
+    // uncredentialed public artifacts (e.g. PyPI files.pythonhosted.org);
+    // npm previous-version tarballs are fetched by the trusted parent worker.
     try {
       const tarball = new URL(options.tarballUrl);
-      const registryOrigin = new URL(registry).origin;
-      const isRegistryArtifact =
-        tarball.origin === registryOrigin &&
-        registryProtocolAllowed(tarball, {
-          allowInsecureLocalhost: allowInsecureLocalRegistry(env),
-        });
       const isPublicArtifact =
         tarball.protocol === "https:" &&
         (options.publicArtifactUrls ?? []).some((allowedUrl) => allowedUrl === options.tarballUrl);
-      if (!isRegistryArtifact && !isPublicArtifact) {
+      if (!isPublicArtifact) {
         throw new SandboxError(
           JSON.stringify({ error: "tarball URL is not allowed by the gateway", status: 400 }),
         );

@@ -103,8 +103,9 @@ Redaction is a defense-in-depth feature, not a proof that data is safe. Redact k
 Allowed credentialed egress through `NpmStageGateway`:
 
 - `GET` staged npm tarball endpoint;
-- `GET` npm package metadata JSON endpoint;
-- `GET` published npm `.tgz` tarballs for previous-version diffing.
+- `GET` npm package metadata JSON endpoint.
+
+Published `.tgz` tarballs are **not** fetched through the gateway. The previous-version baseline tarball is downloaded by the trusted parent Worker (`fetchPublishedTarballBytes`), which attaches the npm token only after the URL is proven to share the configured registry origin, then hands the raw bytes to a credentials-free inline sandbox for decompression and parsing. This keeps the hostile-archive parse isolated without exposing the token to a sandbox egress path. See [diff-baseline.md](diff-baseline.md).
 
 The trusted parent Worker may also call npm's staged list/view endpoints (`/-/stage`, `/-/stage/:id`) with organization credentials for discovery, validation, tag-aware baseline selection, and shasum/mismatch checks. Current staged-view responses are metadata-only, not prepared manifests. Those responses are treated as registry metadata and are not fetched from inside the sandbox; token material still never enters the sandbox.
 

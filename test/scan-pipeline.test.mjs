@@ -16,6 +16,9 @@ const registryMock = vi.hoisted(() => ({
 const sandboxMock = vi.hoisted(() => ({
   downloadInSandbox: vi.fn(),
 }));
+const publishedTarballMock = vi.hoisted(() => ({
+  downloadPublishedTarball: vi.fn(),
+}));
 const stagedMock = vi.hoisted(() => ({
   fetchStagedPublishDetails: vi.fn(),
 }));
@@ -32,6 +35,7 @@ vi.mock("../server/lib/registry.ts", async () => ({
   fetchPackageMetadata: registryMock.fetchPackageMetadata,
 }));
 vi.mock("../server/lib/sandbox.ts", () => sandboxMock);
+vi.mock("../server/lib/published-tarball.ts", () => publishedTarballMock);
 vi.mock("../server/lib/staged-publishes.ts", async () => ({
   ...(await vi.importActual("../server/lib/staged-publishes.ts")),
   fetchStagedPublishDetails: stagedMock.fetchStagedPublishDetails,
@@ -81,39 +85,35 @@ describe("scan pipeline baseline selection", () => {
         beta: "2.0.0-beta.2",
       },
     });
-    sandboxMock.downloadInSandbox.mockImplementation(async (_env, _ctx, options) => {
-      if (options.stageId) {
-        return {
-          files: [
-            {
-              path: "package.json",
-              size: 64,
-              sha256: "staged-pkg",
-              flags: [],
-              textSample: JSON.stringify({
-                name: "@scope/pkg",
-                version: "2.0.0-beta.3",
-              }),
-            },
-          ],
-          packageJson: { name: "@scope/pkg", version: "2.0.0-beta.3" },
-        };
-      }
-      return {
-        files: [
-          {
-            path: "package.json",
-            size: 64,
-            sha256: "previous-pkg",
-            flags: [],
-            textSample: JSON.stringify({
-              name: "@scope/pkg",
-              version: "2.0.0-beta.2",
-            }),
-          },
-        ],
-        packageJson: { name: "@scope/pkg", version: "2.0.0-beta.2" },
-      };
+    sandboxMock.downloadInSandbox.mockResolvedValue({
+      files: [
+        {
+          path: "package.json",
+          size: 64,
+          sha256: "staged-pkg",
+          flags: [],
+          textSample: JSON.stringify({
+            name: "@scope/pkg",
+            version: "2.0.0-beta.3",
+          }),
+        },
+      ],
+      packageJson: { name: "@scope/pkg", version: "2.0.0-beta.3" },
+    });
+    publishedTarballMock.downloadPublishedTarball.mockResolvedValue({
+      files: [
+        {
+          path: "package.json",
+          size: 64,
+          sha256: "previous-pkg",
+          flags: [],
+          textSample: JSON.stringify({
+            name: "@scope/pkg",
+            version: "2.0.0-beta.2",
+          }),
+        },
+      ],
+      packageJson: { name: "@scope/pkg", version: "2.0.0-beta.2" },
     });
   });
 
@@ -124,6 +124,7 @@ describe("scan pipeline baseline selection", () => {
     npmConnectionMock.decryptNpmToken.mockReset();
     registryMock.fetchPackageMetadata.mockReset();
     sandboxMock.downloadInSandbox.mockReset();
+    publishedTarballMock.downloadPublishedTarball.mockReset();
     stagedMock.fetchStagedPublishDetails.mockReset();
     aiReviewMock.runSelectiveAiReview.mockReset();
   });
@@ -230,9 +231,9 @@ describe("scan pipeline baseline selection", () => {
       "stage-beta-123",
       { allowInsecureLocalhost: false },
     );
-    expect(sandboxMock.downloadInSandbox.mock.calls[1]?.[2]).toMatchObject({
-      tarballUrl: "https://registry.npmjs.org/@scope/pkg/-/pkg-2.0.0-beta.2.tgz",
-    });
+    expect(publishedTarballMock.downloadPublishedTarball.mock.calls[0]?.[2]).toBe(
+      "https://registry.npmjs.org/@scope/pkg/-/pkg-2.0.0-beta.2.tgz",
+    );
     expect(result.baseline).toMatchObject({
       version: "2.0.0-beta.2",
       tag: "beta",
@@ -297,40 +298,36 @@ describe("scan pipeline baseline selection", () => {
       },
       "dist-tags": { latest: "1.0.0" },
     });
-    sandboxMock.downloadInSandbox.mockImplementation(async (_env, _ctx, options) => {
-      if (options.stageId) {
-        return {
-          files: [
-            {
-              path: "package.json",
-              size: 40,
-              sha256: "staged-pkg",
-              flags: [],
-              textSample: JSON.stringify({ name: "pkg", version: "1.0.1" }),
-            },
-            {
-              path: ".env",
-              size: 31,
-              sha256: "staged-env",
-              flags: [],
-              textSample: "NPM_TOKEN=npm_fakeTokenForTests123",
-            },
-          ],
-          packageJson: { name: "pkg", version: "1.0.1" },
-        };
-      }
-      return {
-        files: [
-          {
-            path: "package.json",
-            size: 40,
-            sha256: "previous-pkg",
-            flags: [],
-            textSample: JSON.stringify({ name: "pkg", version: "1.0.0" }),
-          },
-        ],
-        packageJson: { name: "pkg", version: "1.0.0" },
-      };
+    sandboxMock.downloadInSandbox.mockResolvedValue({
+      files: [
+        {
+          path: "package.json",
+          size: 40,
+          sha256: "staged-pkg",
+          flags: [],
+          textSample: JSON.stringify({ name: "pkg", version: "1.0.1" }),
+        },
+        {
+          path: ".env",
+          size: 31,
+          sha256: "staged-env",
+          flags: [],
+          textSample: "NPM_TOKEN=npm_fakeTokenForTests123",
+        },
+      ],
+      packageJson: { name: "pkg", version: "1.0.1" },
+    });
+    publishedTarballMock.downloadPublishedTarball.mockResolvedValue({
+      files: [
+        {
+          path: "package.json",
+          size: 40,
+          sha256: "previous-pkg",
+          flags: [],
+          textSample: JSON.stringify({ name: "pkg", version: "1.0.0" }),
+        },
+      ],
+      packageJson: { name: "pkg", version: "1.0.0" },
     });
 
     const result = await runScanPipeline(baseContext, npmAdapter, {
@@ -537,47 +534,43 @@ describe("scan pipeline baseline selection", () => {
 
     const runWithPreviousText = async (previousText) => {
       dbMock.persistScan.mockClear();
-      sandboxMock.downloadInSandbox.mockImplementation(async (_env, _ctx, options) => {
-        if (options.stageId) {
-          return {
-            files: [
-              {
-                path: "package.json",
-                size: 40,
-                sha256: "staged-pkg",
-                flags: [],
-                textSample: JSON.stringify({ name: "pkg", version: "1.0.1" }),
-              },
-              {
-                path: "index.js",
-                size: 80,
-                sha256: "staged-index",
-                flags: [],
-                textSample: "fetch('/existing-risk');\nexport const value = 2;\n",
-              },
-            ],
-            packageJson: { name: "pkg", version: "1.0.1" },
-          };
-        }
-        return {
-          files: [
-            {
-              path: "package.json",
-              size: 40,
-              sha256: "previous-pkg",
-              flags: [],
-              textSample: JSON.stringify({ name: "pkg", version: "1.0.0" }),
-            },
-            {
-              path: "index.js",
-              size: 80,
-              sha256: "previous-index",
-              flags: [],
-              textSample: previousText,
-            },
-          ],
-          packageJson: { name: "pkg", version: "1.0.0" },
-        };
+      sandboxMock.downloadInSandbox.mockResolvedValue({
+        files: [
+          {
+            path: "package.json",
+            size: 40,
+            sha256: "staged-pkg",
+            flags: [],
+            textSample: JSON.stringify({ name: "pkg", version: "1.0.1" }),
+          },
+          {
+            path: "index.js",
+            size: 80,
+            sha256: "staged-index",
+            flags: [],
+            textSample: "fetch('/existing-risk');\nexport const value = 2;\n",
+          },
+        ],
+        packageJson: { name: "pkg", version: "1.0.1" },
+      });
+      publishedTarballMock.downloadPublishedTarball.mockResolvedValue({
+        files: [
+          {
+            path: "package.json",
+            size: 40,
+            sha256: "previous-pkg",
+            flags: [],
+            textSample: JSON.stringify({ name: "pkg", version: "1.0.0" }),
+          },
+          {
+            path: "index.js",
+            size: 80,
+            sha256: "previous-index",
+            flags: [],
+            textSample: previousText,
+          },
+        ],
+        packageJson: { name: "pkg", version: "1.0.0" },
       });
 
       await runScanPipeline(baseContext, npmAdapter, {
@@ -617,47 +610,43 @@ describe("scan pipeline baseline selection", () => {
       },
       "dist-tags": { latest: "1.0.0" },
     });
-    sandboxMock.downloadInSandbox.mockImplementation(async (_env, _ctx, options) => {
-      if (options.stageId) {
-        return {
-          files: [
-            {
-              path: "package.json",
-              size: 40,
-              sha256: "staged-pkg",
-              flags: [],
-              textSample: JSON.stringify({ name: "pkg", version: "1.0.1" }),
-            },
-            {
-              path: "index.js",
-              size: 80,
-              sha256: "same-risk",
-              flags: [],
-              textSample: "require('child_process').execSync('true');\n",
-            },
-          ],
-          packageJson: { name: "pkg", version: "1.0.1" },
-        };
-      }
-      return {
-        files: [
-          {
-            path: "package.json",
-            size: 40,
-            sha256: "previous-pkg",
-            flags: [],
-            textSample: JSON.stringify({ name: "pkg", version: "1.0.0" }),
-          },
-          {
-            path: "index.js",
-            size: 80,
-            sha256: "same-risk",
-            flags: [],
-            textSample: "require('child_process').execSync('true');\n",
-          },
-        ],
-        packageJson: { name: "pkg", version: "1.0.0" },
-      };
+    sandboxMock.downloadInSandbox.mockResolvedValue({
+      files: [
+        {
+          path: "package.json",
+          size: 40,
+          sha256: "staged-pkg",
+          flags: [],
+          textSample: JSON.stringify({ name: "pkg", version: "1.0.1" }),
+        },
+        {
+          path: "index.js",
+          size: 80,
+          sha256: "same-risk",
+          flags: [],
+          textSample: "require('child_process').execSync('true');\n",
+        },
+      ],
+      packageJson: { name: "pkg", version: "1.0.1" },
+    });
+    publishedTarballMock.downloadPublishedTarball.mockResolvedValue({
+      files: [
+        {
+          path: "package.json",
+          size: 40,
+          sha256: "previous-pkg",
+          flags: [],
+          textSample: JSON.stringify({ name: "pkg", version: "1.0.0" }),
+        },
+        {
+          path: "index.js",
+          size: 80,
+          sha256: "same-risk",
+          flags: [],
+          textSample: "require('child_process').execSync('true');\n",
+        },
+      ],
+      packageJson: { name: "pkg", version: "1.0.0" },
     });
 
     const result = await runScanPipeline(baseContext, npmAdapter, {

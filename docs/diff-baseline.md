@@ -15,6 +15,10 @@ The baseline selector is intentionally tag-aware:
 
 This avoids forcing `2.0.0-beta.3 --tag beta` against `latest` and keeps maintenance or custom-channel releases from being compared with an unrelated highest-semver channel. A wrong baseline inflates changed-file count, which makes human review noisier and increases AI input size when AI review is enabled.
 
+### Fetching the baseline tarball
+
+The selected baseline is a _published_ `.tgz`, and it is **not** downloaded through `NpmStageGateway`. The trusted parent Worker fetches the bytes directly via `downloadPublishedTarball` (in `server/lib/published-tarball.ts`): it validates that the tarball URL shares the configured registry origin before attaching the npm token (so the credential can never reach a package-controlled host), reads the body under a hard size cap _without_ decompressing, then hands the raw bytes to a credentials-free inline sandbox (`downloadInSandboxInline`) for gunzip/untar and parsing. The previous version is attacker-influenced evidence, so the decompression-bomb-prone parse stays sandboxed even though the fetch does not. The same helper backs the on-demand compare endpoint (`server/lib/compare-cache.ts`). Only the staged-tarball endpoint still flows through the credentialed gateway.
+
 ## npm staged metadata
 
 As of the npm stage API/CLI docs published with npm CLI 11.15, staged publish metadata exposes the staged package's package name, version, dist-tag, actor, access, and shasum through both the staged list endpoint and the staged detail endpoint:
