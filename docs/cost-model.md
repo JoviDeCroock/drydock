@@ -1,6 +1,6 @@
 # Cost model (napkin math)
 
-Order-of-magnitude estimates for running Drydock on Cloudflare. Numbers are based on Cloudflare's published rates for the Workers Paid plan and assume a typical scan profile (≤2,500 files, ≤128 KB per file textSample). Treat this as a sanity check, not a quote.
+Order-of-magnitude estimates for running Drydock on Cloudflare. Numbers are based on Cloudflare's published rates for the Workers Paid plan and assume a typical scan profile (≤2,500 files, ≤128 KB per eligible file textSample). Low-value generated artifacts such as source maps, TypeScript declaration files, and minified bundles keep metadata/hashes but skip persisted text samples. Treat this as a sanity check, not a quote.
 
 > **AI review is Flagship-gated and off by default**. The Workers-AI lines below describe what scans cost for organizations where the per-organization `ai-review` flag is enabled; until then, the dominant per-scan cost is the sandbox + D1 path. The cost-model scenarios already reflect AI as the dominant variable cost for the paid-tier rollout.
 

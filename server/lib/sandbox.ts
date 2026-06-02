@@ -30,6 +30,7 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.parsePax,
   tarParser.describeNonRegularType,
   tarParser.sha256Hex,
+  tarParser.shouldSkipTextSample,
   tarParser.summarizeFile,
   tarParser.readTar,
   tarParser.readUint16Le,

@@ -6,3 +6,4 @@ packages/experiments/build/
 .DS_Store
 .dev.vars
 .gstack/
+.context/

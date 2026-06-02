@@ -55,6 +55,7 @@ export function normalizeZipPath(rawPath: string | null | undefined): string | n
 export function parsePax(body: Uint8Array): Record<string, string>;
 export function describeNonRegularType(type: string): string;
 export function sha256Hex(bytes: Uint8Array): Promise<string>;
+export function shouldSkipTextSample(path: string): boolean;
 export function summarizeFile(
   path: string,
   body: Uint8Array,

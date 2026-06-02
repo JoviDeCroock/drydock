@@ -203,6 +203,25 @@ describe("readTar regular files", () => {
     expect(files[0].size).toBe(2048);
     expect(files[0].textSample?.length).toBe(1024);
   });
+
+  test("omits low-value generated text samples while preserving metadata", async () => {
+    const tar = buildTar([
+      { name: "package/dist/index.js", body: "export const value = 1;\n" },
+      { name: "package/dist/index.js.map", body: JSON.stringify({ version: 3, mappings: "AAAA" }) },
+      { name: "package/dist/index.d.ts", body: "export declare const value: number;\n" },
+      { name: "package/dist/index.min.js", body: "(()=>{var a=1})();\n" },
+    ]);
+    const files = await parse(tar);
+    const byPath = Object.fromEntries(files.map((file) => [file.path, file]));
+
+    expect(byPath["dist/index.js"].textSample).toBe("export const value = 1;\n");
+    for (const path of ["dist/index.js.map", "dist/index.d.ts", "dist/index.min.js"]) {
+      expect(byPath[path].textSample).toBeUndefined();
+      expect(byPath[path].sha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(byPath[path].size).toBeGreaterThan(0);
+      expect(byPath[path].flags).toContain("text-sample-skipped");
+    }
+  });
 });
 
 describe("readTar path safety", () => {
@@ -652,6 +671,7 @@ describe("rendered sandbox parser source", () => {
     "parsePax",
     "describeNonRegularType",
     "sha256Hex",
+    "shouldSkipTextSample",
     "summarizeFile",
     "readTar",
     "parsePackageJson",
