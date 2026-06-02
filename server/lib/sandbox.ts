@@ -5,8 +5,10 @@ import { STAGE_ID_PATTERN } from "./stage-id";
 import * as tarParser from "./tar-parser.js";
 import type { TarSuspiciousEntry } from "./tar-parser.js";
 
-const MAX_FILES = 250;
-const MAX_BYTES_PER_FILE = 64 * 1024;
+export const SANDBOX_MAX_FILES = 2_500;
+export const SANDBOX_MAX_BYTES_PER_FILE = 128 * 1024;
+const MAX_FILES = SANDBOX_MAX_FILES;
+const MAX_BYTES_PER_FILE = SANDBOX_MAX_BYTES_PER_FILE;
 const MAX_TAR_BYTES = 25 * 1024 * 1024;
 
 // Functions whose source text is concatenated into the sandbox worker module.
@@ -344,7 +346,7 @@ export default {
       }
       let files;
       try {
-        files = await readZipArchive(zip, env.MAX_FILES || 250, env.MAX_BYTES_PER_FILE || 65536, maxTarBytes);
+        files = await readZipArchive(zip, env.MAX_FILES || 2_500, env.MAX_BYTES_PER_FILE || 131072, maxTarBytes);
       } catch (err) {
         const reason = err && err.message === "archive contains too many files"
           ? "archive contains too many files"
@@ -373,7 +375,7 @@ export default {
     let files;
     let suspiciousEntries;
     try {
-      const parsed = await readTar(tar, env.MAX_FILES || 250, env.MAX_BYTES_PER_FILE || 65536, maxTarBytes);
+      const parsed = await readTar(tar, env.MAX_FILES || 2_500, env.MAX_BYTES_PER_FILE || 131072, maxTarBytes);
       files = parsed.files;
       suspiciousEntries = parsed.suspicious;
     } catch (err) {
