@@ -20,8 +20,10 @@ import { ReleaseTargetForm } from "./ReleaseTargetForm";
 
 export function GithubAppSection({
   githubApp,
+  defaultOpen = false,
 }: {
   githubApp: ReturnType<typeof useModel<typeof GithubAppModel.prototype>>;
+  defaultOpen?: boolean;
 }) {
   const configured = githubApp.config.value?.configured === true;
   const appSlug = githubApp.config.value?.appSlug;
@@ -43,6 +45,7 @@ export function GithubAppSection({
   return (
     <CollapsibleCard
       title="GitHub App"
+      defaultOpen={defaultOpen}
       aside={
         <div class="flex flex-col items-end gap-2">
           {configured ? (

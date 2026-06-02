@@ -14,8 +14,10 @@ import {
 
 export function NpmConnectionSection({
   npm,
+  defaultOpen = false,
 }: {
   npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
+  defaultOpen?: boolean;
 }) {
   const connection = npm.connection.value;
   const status = npm.status.value;
@@ -34,6 +36,7 @@ export function NpmConnectionSection({
   return (
     <CollapsibleCard
       title="npm access"
+      defaultOpen={defaultOpen}
       aside={
         connection ? (
           <Badge

@@ -19,11 +19,13 @@ export function NotificationRecipientsSection({
   organizationId,
   canManage,
   fallbackEmail,
+  defaultOpen = false,
 }: {
   recipients: ReturnType<typeof useModel<typeof NotificationRecipientsModel.prototype>>;
   organizationId: string | null;
   canManage: boolean;
   fallbackEmail?: string;
+  defaultOpen?: boolean;
 }) {
   const list = recipients.recipients.value;
   const status = recipients.status.value;
@@ -40,6 +42,7 @@ export function NotificationRecipientsSection({
   return (
     <CollapsibleCard
       title="notification recipients"
+      defaultOpen={defaultOpen}
       aside={<Badge tone="info">{list.length} configured</Badge>}
     >
       <div class="p-5 flex flex-col gap-5">

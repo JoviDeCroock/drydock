@@ -17,7 +17,7 @@ interface ListResponse {
   organizations: Organization[];
 }
 
-export type OrganizationStatus = "idle" | "loading" | "creating" | "renaming";
+export type OrganizationStatus = "idle" | "loading" | "creating" | "renaming" | "deleting";
 
 export const OrganizationModel = createModel(() => {
   const organizations = signal<Organization[]>([]);
@@ -96,6 +96,25 @@ export const OrganizationModel = createModel(() => {
       setActiveOrganizationId(organizationId);
       this.error.value = null;
       return true;
+    },
+
+    async delete(organizationId: string): Promise<boolean> {
+      this.status.value = "deleting";
+      this.error.value = null;
+      try {
+        await apiFetch(`/api/v1/organizations/${encodeURIComponent(organizationId)}`, {
+          method: "DELETE",
+        });
+        // load() re-points the active org when the stored id is no longer valid,
+        // so a deleted active org falls back to the personal workspace.
+        await this.load();
+        return true;
+      } catch (err) {
+        this.error.value = errorMessage(err);
+        return false;
+      } finally {
+        this.status.value = "idle";
+      }
     },
 
     async rename(organizationId: string, name: string): Promise<boolean> {

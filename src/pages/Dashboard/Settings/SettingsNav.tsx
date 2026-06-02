@@ -1,0 +1,49 @@
+import { cn } from "../../../components";
+
+export type SettingsTab = "general" | "members" | "notifications" | "integrations";
+
+export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string }> = [
+  { id: "general", label: "General" },
+  { id: "members", label: "Members" },
+  { id: "notifications", label: "Notifications" },
+  { id: "integrations", label: "Integrations" },
+];
+
+export function isSettingsTab(value: unknown): value is SettingsTab {
+  return SETTINGS_TABS.some((tab) => tab.id === value);
+}
+
+export function SettingsNav({
+  active,
+  onSelect,
+}: {
+  active: SettingsTab;
+  onSelect: (tab: SettingsTab) => void;
+}) {
+  return (
+    <nav
+      aria-label="Settings sections"
+      class="flex md:flex-col gap-1 overflow-x-auto md:overflow-visible -mx-1 px-1 md:mx-0 md:px-0"
+    >
+      {SETTINGS_TABS.map((tab) => {
+        const isActive = tab.id === active;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            aria-current={isActive ? "page" : undefined}
+            onClick={() => onSelect(tab.id)}
+            class={cn(
+              "shrink-0 text-left rounded-md px-3 py-2 text-[13px] font-medium transition-colors duration-150 ease-out",
+              isActive
+                ? "bg-accent-soft text-accent"
+                : "text-ink-muted hover:bg-surface-2 hover:text-ink",
+            )}
+          >
+            {tab.label}
+          </button>
+        );
+      })}
+    </nav>
+  );
+}

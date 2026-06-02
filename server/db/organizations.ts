@@ -1,11 +1,19 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { personalOrganizationId } from "../lib/ownership";
 import type { AppDb, WorkspaceSession } from "./client";
 import {
+  githubAppInstallations,
+  githubReleaseTargets,
+  githubWorkflowGates,
   npmConnections,
+  organizationInvitations,
   organizationMembers,
   organizationNotificationRecipients,
   organizations,
+  scanEvents,
+  scanFiles,
+  scanFindings,
+  scans,
   user,
 } from "./schema";
 
@@ -161,6 +169,42 @@ export async function renameOrganization(db: AppDb, organizationId: string, name
     .update(organizations)
     .set({ name, updatedAt: new Date() })
     .where(eq(organizations.id, organizationId));
+}
+
+/**
+ * Permanently delete an organization and every row scoped to it. We delete the
+ * children explicitly (in dependency order) rather than relying on
+ * `ON DELETE CASCADE`, because D1 does not enforce foreign keys by default and a
+ * silent orphan here would leak one org's scans/credentials past its deletion.
+ * scan_files / scan_findings hang off scan_id, so they're cleared via a subquery
+ * over the org's scans before the scans themselves go.
+ */
+export async function deleteOrganization(db: AppDb, organizationId: string): Promise<void> {
+  const orgScans = db
+    .select({ id: scans.id })
+    .from(scans)
+    .where(eq(scans.organizationId, organizationId));
+
+  await db.batch([
+    db.delete(scanFindings).where(inArray(scanFindings.scanId, orgScans)),
+    db.delete(scanFiles).where(inArray(scanFiles.scanId, orgScans)),
+    db.delete(scanEvents).where(eq(scanEvents.organizationId, organizationId)),
+    db.delete(scans).where(eq(scans.organizationId, organizationId)),
+    db.delete(githubWorkflowGates).where(eq(githubWorkflowGates.organizationId, organizationId)),
+    db.delete(githubReleaseTargets).where(eq(githubReleaseTargets.organizationId, organizationId)),
+    db
+      .delete(githubAppInstallations)
+      .where(eq(githubAppInstallations.organizationId, organizationId)),
+    db.delete(npmConnections).where(eq(npmConnections.organizationId, organizationId)),
+    db
+      .delete(organizationNotificationRecipients)
+      .where(eq(organizationNotificationRecipients.organizationId, organizationId)),
+    db
+      .delete(organizationInvitations)
+      .where(eq(organizationInvitations.organizationId, organizationId)),
+    db.delete(organizationMembers).where(eq(organizationMembers.organizationId, organizationId)),
+    db.delete(organizations).where(eq(organizations.id, organizationId)),
+  ]);
 }
 
 export interface NotificationRecipient {

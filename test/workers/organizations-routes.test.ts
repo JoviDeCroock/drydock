@@ -1,4 +1,5 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import {
@@ -6,6 +7,7 @@ import {
   createDb,
   ensurePersonalOrganization,
   getNpmConnection,
+  getOrganizationRole,
   listNotificationRecipients,
   resolveNotificationEmails,
 } from "../../server/db";
@@ -414,5 +416,141 @@ describe("organization notification recipients", () => {
     );
 
     expect(await resolveNotificationEmails(db, orgId, owner.userId)).toEqual(["team@example.com"]);
+  });
+});
+
+describe("organization deletion", () => {
+  test("owner deletes an org and every row scoped to it is removed", async () => {
+    const owner = await seedUser();
+    const member = await seedUser();
+    const db = createDb(env.DB);
+
+    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
+      body: { name: "doomed-org" },
+    });
+    const orgId = ((await create.json()) as { organization: { id: string } }).organization.id;
+
+    await addOrganizationMember(db, {
+      organizationId: orgId,
+      userId: member.userId,
+      role: "admin",
+    });
+    await call(
+      buildTestApp(owner),
+      "POST",
+      `/api/v1/organizations/${orgId}/notification-recipients`,
+      {
+        body: { email: "alerts@example.com" },
+      },
+    );
+    await call(buildTestApp(owner), "POST", "/api/v1/npm-connection", {
+      body: { token: "npm_doomed_token_AAAAAAAA", label: "doomed" },
+      activeOrganizationId: orgId,
+    });
+
+    const now = new Date();
+    const scanId = `scan_${crypto.randomUUID()}`;
+    await db.insert(schema.scans).values({
+      id: scanId,
+      stageId: "stage_doomed",
+      organizationId: orgId,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.scanFiles).values({
+      id: `file_${crypto.randomUUID()}`,
+      scanId,
+      path: "index.js",
+      status: "added",
+      flagsJson: [],
+    });
+    await db.insert(schema.scanFindings).values({
+      id: `finding_${crypto.randomUUID()}`,
+      scanId,
+      severity: "high",
+      file: "index.js",
+      evidence: "evil()",
+      reason: "suspicious",
+    });
+    await db.insert(schema.scanEvents).values({
+      id: `event_${crypto.randomUUID()}`,
+      organizationId: orgId,
+      scanId,
+      type: "scan.completed",
+      createdAt: now,
+    });
+
+    const res = await call(buildTestApp(owner), "DELETE", `/api/v1/organizations/${orgId}`);
+    expect(res.status).toBe(200);
+
+    const list = await call(buildTestApp(owner), "GET", "/api/v1/organizations");
+    const listed = (await list.json()) as { organizations: Array<{ id: string }> };
+    expect(listed.organizations.map((o) => o.id)).not.toContain(orgId);
+
+    expect(await getOrganizationRole(db, orgId, owner.userId)).toBeNull();
+    expect(await getOrganizationRole(db, orgId, member.userId)).toBeNull();
+    expect(await getNpmConnection(db, orgId)).toBeNull();
+    expect(await listNotificationRecipients(db, orgId)).toHaveLength(0);
+    expect(
+      await db.select().from(schema.scans).where(eq(schema.scans.organizationId, orgId)),
+    ).toHaveLength(0);
+    expect(
+      await db.select().from(schema.scanFiles).where(eq(schema.scanFiles.scanId, scanId)),
+    ).toHaveLength(0);
+    expect(
+      await db.select().from(schema.scanFindings).where(eq(schema.scanFindings.scanId, scanId)),
+    ).toHaveLength(0);
+    expect(
+      await db.select().from(schema.scanEvents).where(eq(schema.scanEvents.organizationId, orgId)),
+    ).toHaveLength(0);
+  });
+
+  test("non-owners cannot delete the org", async () => {
+    const owner = await seedUser();
+    const stranger = await seedUser();
+
+    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
+      body: { name: "owner-only" },
+    });
+    const orgId = ((await create.json()) as { organization: { id: string } }).organization.id;
+
+    const res = await call(buildTestApp(stranger), "DELETE", `/api/v1/organizations/${orgId}`);
+    expect(res.status).toBe(404);
+
+    const list = await call(buildTestApp(owner), "GET", "/api/v1/organizations");
+    const listed = (await list.json()) as { organizations: Array<{ id: string }> };
+    expect(listed.organizations.map((o) => o.id)).toContain(orgId);
+  });
+
+  test("admins cannot delete the org", async () => {
+    const owner = await seedUser();
+    const admin = await seedUser();
+    const db = createDb(env.DB);
+
+    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
+      body: { name: "admin-managed" },
+    });
+    const orgId = ((await create.json()) as { organization: { id: string } }).organization.id;
+    await addOrganizationMember(db, { organizationId: orgId, userId: admin.userId, role: "admin" });
+
+    const res = await call(buildTestApp(admin), "DELETE", `/api/v1/organizations/${orgId}`);
+    expect(res.status).toBe(404);
+  });
+
+  test("the personal workspace cannot be deleted", async () => {
+    const owner = await seedUser();
+
+    const res = await call(
+      buildTestApp(owner),
+      "DELETE",
+      `/api/v1/organizations/${owner.personalOrganizationId}`,
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()) as { error: string }).toEqual({
+      error: "personal workspaces cannot be deleted",
+    });
+
+    const db = createDb(env.DB);
+    expect(await getOrganizationRole(db, owner.personalOrganizationId, owner.userId)).toBe("owner");
   });
 });
