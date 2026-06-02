@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import type { AppDb } from "../../db";
 import { githubWorkflowGates, scans } from "../../db/schema";
 import type { InstallationRecord, ReleaseTargetRecord } from "./persistence";
@@ -298,6 +298,71 @@ export async function markGateDecided(
       updatedAt: now,
     })
     .where(and(eq(githubWorkflowGates.id, input.gateId), eq(githubWorkflowGates.status, "pending")))
+    .returning({ id: githubWorkflowGates.id });
+  if (updated.length === 0) return null;
+  const [row] = await db
+    .select()
+    .from(githubWorkflowGates)
+    .where(eq(githubWorkflowGates.id, input.gateId))
+    .limit(1);
+  return row ? readGateRow(row) : null;
+}
+
+interface DecideGateWithPackageAggregateInput extends DecideGateInput {
+  organizationId: string;
+}
+
+/**
+ * Atomically finalize a pending gate only if the current per-package scan
+ * decisions still justify that aggregate decision. This closes the race where a
+ * sibling package decision changes between a route's in-memory aggregation and
+ * the gate CAS.
+ */
+export async function markGateDecidedForPackageAggregate(
+  db: AppDb,
+  input: DecideGateWithPackageAggregateInput,
+): Promise<WorkflowGateRecord | null> {
+  const now = new Date();
+  const packageDecisionCondition =
+    input.decision === "approved"
+      ? sql`exists (
+          select 1
+          from ${scans}
+          where ${scans.gateId} = ${input.gateId}
+            and ${scans.organizationId} = ${input.organizationId}
+        )
+        and not exists (
+          select 1
+          from ${scans}
+          where ${scans.gateId} = ${input.gateId}
+            and ${scans.organizationId} = ${input.organizationId}
+            and (${scans.decision} is null or ${scans.decision} <> 'publish')
+        )`
+      : sql`exists (
+          select 1
+          from ${scans}
+          where ${scans.gateId} = ${input.gateId}
+            and ${scans.organizationId} = ${input.organizationId}
+            and ${scans.decision} = 'no_publish'
+        )`;
+  const updated = await db
+    .update(githubWorkflowGates)
+    .set({
+      status: input.decision,
+      decision: input.decision,
+      decisionComment: input.comment,
+      reportUrl: input.reportUrl ?? null,
+      decidedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(githubWorkflowGates.id, input.gateId),
+        eq(githubWorkflowGates.organizationId, input.organizationId),
+        eq(githubWorkflowGates.status, "pending"),
+        packageDecisionCondition,
+      ),
+    )
     .returning({ id: githubWorkflowGates.id });
   if (updated.length === 0) return null;
   const [row] = await db

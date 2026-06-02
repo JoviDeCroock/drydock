@@ -25,7 +25,7 @@ export interface PublicReleaseTarget {
   // null = auto-detect each package's ecosystem from the uploaded artifacts
   // (the monorepo-friendly default).
   ecosystem: SupportedEcosystem | null;
-  // null = no artifact-name filter; the runner consumes every uploaded artifact.
+  // null = use the runner's default artifact name for the selected ecosystem mode.
   artifactName: string | null;
   repositoryId: number;
   repositoryFullName: string;

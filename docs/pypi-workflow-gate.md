@@ -166,8 +166,12 @@ organization (`x-organization-id` header to scope writes).
     per-package roster so the workbench can show "N of M approved" (HTTP 200, no
     GitHub callback yet).
 
-  `markGateDecided` is the single CAS out of `pending`, so a double-submit (or a
-  race with the fail-closed artifact reject) returns 409. Delivery to GitHub is
+  Each package scan can be decided once while the gate is pending; stale
+  re-submits for an already-decided package return 409
+  (`package has already been decided`) and cannot overwrite the package roster.
+  The aggregate decision is also rechecked in the database during the CAS out of
+  `pending`, so concurrent package decisions cannot release a gate whose live
+  package state no longer matches the requested aggregate. Delivery to GitHub is
   scheduled immediately after the CAS, before best-effort audit mirroring, and is
   handed to the gate job (over `SCAN_QUEUE`, with inline fallback) so the decided
   gate posts its stored decision. Rate-limited to 60/min per org. The public gate

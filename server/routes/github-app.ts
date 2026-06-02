@@ -4,7 +4,7 @@ import {
   createDb,
   enforceRateLimit,
   getScan,
-  recordScanDecision,
+  recordGatePackageDecision,
   recordScanEvent,
 } from "../db";
 import {
@@ -44,7 +44,7 @@ import {
   listInstallationsForOrganization,
   listReleaseTargetsForOrganization,
   listRepositoryEnvironments,
-  markGateDecided,
+  markGateDecidedForPackageAggregate,
   readGithubAppConfig,
   signOAuthState,
   upsertInstallation,
@@ -415,7 +415,7 @@ githubAppRoutes.get("/workflow-gates/by-scan/:scanId", async (c) => {
 // package is approved, `rejected` the moment any one is rejected. Until then the
 // gate stays pending and the held deployment waits.
 //
-// The CAS in `markGateDecided` is the single transition out of `pending`, so a
+// The aggregate CAS is the single transition out of `pending`, so a
 // double-submit (or a race with the fail-closed artifact reject) returns 409.
 // Posting the decision to GitHub is delegated to the gate job, which sees the
 // now-decided gate and delivers its stored decision — either over the queue or
@@ -509,16 +509,32 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     return c.json({ error: "scanId is not a reviewable package of this gate" }, 409);
   }
 
-  // Persist the per-package decision. `recordScanDecision` also writes the
-  // `scan.decided` audit event and keeps the workbench decision filters
-  // consistent (approved → publish, rejected → no_publish).
-  await recordScanDecision(db, {
+  // Persist the per-package decision while the gate is still pending.
+  // `recordGatePackageDecision` also writes the `scan.decided` audit event and
+  // keeps the workbench decision filters consistent (approved → publish,
+  // rejected → no_publish).
+  const decidedPackage = await recordGatePackageDecision(db, {
     scanId: packageScanId,
     organizationId,
+    gateId,
     actorUserId: session.userId,
     decision: decision === "approved" ? "publish" : "no_publish",
     reason: comment || null,
   });
+  if (!decidedPackage) {
+    const current = await getGateForOrganization(db, organizationId, gateId);
+    const currentPackages = await listGatePackageScans(db, organizationId, gateId);
+    return c.json(
+      {
+        gate: current ? publicWorkflowGate(current, currentPackages) : null,
+        error:
+          current?.status === "pending"
+            ? "package has already been decided"
+            : "gate has already been decided",
+      },
+      409,
+    );
+  }
 
   // Aggregate over every package: release only when all are approved; block the
   // moment any one is rejected.
@@ -532,8 +548,9 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
 
   const gateDecision: GateDecision = anyRejected ? "rejected" : "approved";
   const reportUrl = buildReportUrl(c.env, existing.scanId);
-  const decided = await markGateDecided(db, {
+  const decided = await markGateDecidedForPackageAggregate(db, {
     gateId,
+    organizationId,
     decision: gateDecision,
     comment: comment || buildHumanDecisionComment(gateDecision, reportUrl),
     reportUrl,

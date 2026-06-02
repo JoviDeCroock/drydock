@@ -219,6 +219,7 @@ export function GateDecisionDialog({
   const codeDraft = useSignal("");
   const saving = status === "saving";
   const gateDecided = gate.status === "approved" || gate.status === "rejected";
+  const packageAlreadyDecided = packageDecision !== null;
   const packages = gate.packages;
   const multi = packages.length > 1;
   const approvedCount = packages.filter((pkg) => pkg.decision === "publish").length;
@@ -234,7 +235,7 @@ export function GateDecisionDialog({
   }, [open]);
 
   const submit = (next: WorkflowGateDecision) => {
-    if (saving || gateDecided || blockedOnCode) return;
+    if (saving || gateDecided || packageAlreadyDecided || blockedOnCode) return;
     const trimmed = commentDraft.value.trim();
     void onSubmit(next, trimmed.length ? trimmed : null, needsCode ? code : null);
   };
@@ -287,7 +288,7 @@ export function GateDecisionDialog({
           value={commentDraft.value}
           placeholder="e.g. reviewed changed files, no risk signals"
           onInput={(e) => (commentDraft.value = (e.target as HTMLInputElement).value)}
-          disabled={saving || gateDecided}
+          disabled={saving || gateDecided || packageAlreadyDecided}
           maxLength={500}
           autoComplete="off"
           spellcheck={false}
@@ -318,17 +319,16 @@ export function GateDecisionDialog({
         <Muted class="m-0 text-[13px]">
           This gate has already been decided. The decision is final — GitHub has been notified.
         </Muted>
+      ) : packageAlreadyDecided ? (
+        <Muted class="m-0 text-[13px]">
+          This package decision has been recorded. The held deployment stays pending until the
+          remaining packages are decided.
+        </Muted>
       ) : (
         <div class="flex flex-wrap gap-2">
           {canApprove ? (
             <Button onClick={() => submit("approved")} disabled={saving || blockedOnCode}>
-              {saving
-                ? "Submitting…"
-                : packageDecision === "publish"
-                  ? "Re-approve package"
-                  : multi
-                    ? "Approve package"
-                    : "Approve & release"}
+              {saving ? "Submitting…" : multi ? "Approve package" : "Approve & release"}
             </Button>
           ) : null}
           <Button

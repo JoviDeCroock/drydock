@@ -172,8 +172,9 @@ function ArtifactNameField({ githubApp }: { githubApp: GithubApp }) {
         spellcheck={false}
       />
       <Muted class="text-[12px] mt-1.5">
-        Leave blank to consume every artifact the run uploads. Set this to a single workflow
-        artifact name when only one upload holds the release candidates.
+        Leave blank to use the default artifact name for the selected mode: release-candidate for
+        auto-detect, or the pinned ecosystem's default. Set a name when your workflow uploads the
+        release candidates under a different artifact.
       </Muted>
     </Field>
   );

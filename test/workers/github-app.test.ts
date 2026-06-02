@@ -1045,6 +1045,20 @@ describe("github-app workflow-gate decision route", () => {
     expect(partialBody.gate.packages).toHaveLength(2);
     expect(decisionCalls).toHaveLength(0);
 
+    // The package decision is final while the gate is pending; a stale second
+    // submit must not overwrite it before the aggregate gate decision happens.
+    const staleOverwrite = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "rejected", scanId: scanId! },
+    );
+    expect(staleOverwrite.status).toBe(409);
+    expect(await staleOverwrite.json()).toMatchObject({
+      error: "package has already been decided",
+    });
+    expect(decisionCalls).toHaveLength(0);
+
     // Approving the last package finalizes the gate and posts the release.
     const finalRes = await callGithubAppRoute(
       buildTestApp(userId),

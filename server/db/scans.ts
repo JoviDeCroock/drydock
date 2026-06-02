@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import {
   annotateFindingsWithDiffStatus,
   type CodePatternSet,
@@ -14,7 +14,7 @@ import {
 import { normalizeScanRiskBreakdown, type ScanRiskBreakdown } from "../lib/risk";
 import type { AppDb } from "./client";
 import { recordScanEvent, redactScanEventForClient } from "./events";
-import { scanEvents, scanFiles, scanFindings, scans } from "./schema";
+import { githubWorkflowGates, scanEvents, scanFiles, scanFindings, scans } from "./schema";
 
 export interface PersistedScanInput {
   id: string;
@@ -561,6 +561,58 @@ export async function recordScanDecision(db: AppDb, input: RecordScanDecisionInp
         eq(scans.id, input.scanId),
         eq(scans.organizationId, input.organizationId),
         eq(scans.status, "complete"),
+      ),
+    )
+    .returning({ id: scans.id });
+
+  if (updated.length === 0) return null;
+
+  await recordScanEvent(db, {
+    organizationId: input.organizationId,
+    actorUserId: input.actorUserId,
+    scanId: input.scanId,
+    type: "scan.decided",
+    metadata: { decision: input.decision, reason },
+  });
+
+  return getScan(db, input.scanId, input.organizationId);
+}
+
+export interface RecordGatePackageDecisionInput extends RecordScanDecisionInput {
+  gateId: string;
+}
+
+/**
+ * Record the one allowed decision for a workflow-gate package while the gate is
+ * still pending. This keeps stale concurrent submits from mutating package state
+ * after the aggregate gate decision has already released or blocked GitHub.
+ */
+export async function recordGatePackageDecision(db: AppDb, input: RecordGatePackageDecisionInput) {
+  const now = new Date();
+  const reason = input.reason?.trim() ? input.reason.trim() : null;
+  const updated = await db
+    .update(scans)
+    .set({
+      decision: input.decision,
+      decisionReason: reason,
+      decidedByUserId: input.actorUserId,
+      decidedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(scans.id, input.scanId),
+        eq(scans.organizationId, input.organizationId),
+        eq(scans.gateId, input.gateId),
+        eq(scans.source, "workflow_gate"),
+        eq(scans.status, "complete"),
+        isNull(scans.decision),
+        sql`exists (
+          select 1
+          from ${githubWorkflowGates}
+          where ${githubWorkflowGates.id} = ${input.gateId}
+            and ${githubWorkflowGates.status} = 'pending'
+        )`,
       ),
     )
     .returning({ id: scans.id });
