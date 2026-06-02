@@ -321,7 +321,7 @@ function pipelineSafety(): ScanResult["safety"] {
     tokenExposedToSandbox: false,
     directSandboxNetwork: false,
     outboundPolicy:
-      "sandbox uses the gateway only for npm staged tarball, published tarball, and package metadata endpoints; parent fetches staged metadata with the organization credential",
+      "sandbox uses the gateway only for npm staged tarball and package metadata endpoints; parent fetches published npm tarballs with a registry-origin credential guard and parses them in a credentials-free inline sandbox; parent also fetches staged metadata with the organization credential",
     aiInputPolicy:
       "package bytes are untrusted evidence, not instructions; static safety prompt is prefix-cache friendly and AI cannot downgrade deterministic findings",
     fileExplorerPolicy:
