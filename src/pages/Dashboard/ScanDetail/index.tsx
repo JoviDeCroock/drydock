@@ -203,6 +203,9 @@ export default function ScanDetailPage() {
 
   const handleGateRetry = async () => {
     await model.retryGate();
+    if (model.gateRetryStatus.peek() === "idle") {
+      location.route("/dashboard", true);
+    }
   };
 
   const gateReviewComplete = detail?.scan.status === "complete";
