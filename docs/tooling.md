@@ -8,19 +8,19 @@
 
 ## Scripts
 
-| Command                 | What it does                                                                                            |
-| ----------------------- | ------------------------------------------------------------------------------------------------------- |
-| `pnpm run lint`         | Run oxlint over the repo. Exit non-zero on errors.                                                      |
-| `pnpm run lint:fix`     | Apply oxlint autofixes.                                                                                 |
-| `pnpm run format`       | Rewrite files with oxfmt.                                                                               |
-| `pnpm run format:check` | Report files that would change without writing.                                                         |
-| `pnpm run test`         | Node logic tests (`test/**`) plus D1-backed worker tests (`test/workers/**`) via `vitest-pool-workers`. |
-| `pnpm run test:node`    | Just the node logic suite.                                                                              |
-| `pnpm run test:workers` | Just the worker suite (Miniflare D1 from `wrangler.test.jsonc` + `drizzle/`).                           |
-| `pnpm run e2e:fixtures` | Pack local E2E fixture packages and generate `.context/e2e-registry/registry.json`.                     |
-| `pnpm run e2e:dev`      | Start the fake npm staging registry plus the Vite/Worker dev server for browser testing.                |
-| `pnpm run test:e2e`     | Run Playwright against the local fake-registry harness.                                                 |
-| `pnpm run verify`       | Run lint + format check + typecheck + tests, in order.                                                  |
+| Command                 | What it does                                                                                                                                                                                                      |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm run lint`         | Run oxlint over the repo. Exit non-zero on errors.                                                                                                                                                                |
+| `pnpm run lint:fix`     | Apply oxlint autofixes.                                                                                                                                                                                           |
+| `pnpm run format`       | Rewrite files with oxfmt.                                                                                                                                                                                         |
+| `pnpm run format:check` | Report files that would change without writing.                                                                                                                                                                   |
+| `pnpm run test`         | Node logic tests (`test/**`) plus D1-backed worker tests (`test/workers/**`) in one Vitest run via the `node`/`workers` projects (root `vitest.config.ts`), so the fast node suite overlaps the slow worker pool. |
+| `pnpm run test:node`    | Just the node logic suite (`vitest run --project node`).                                                                                                                                                          |
+| `pnpm run test:workers` | Just the worker suite (`vitest run --project workers`; Miniflare D1 from `wrangler.test.jsonc` + `drizzle/`).                                                                                                     |
+| `pnpm run e2e:fixtures` | Pack local E2E fixture packages and generate `.context/e2e-registry/registry.json`.                                                                                                                               |
+| `pnpm run e2e:dev`      | Start the fake npm staging registry plus the Vite/Worker dev server for browser testing.                                                                                                                          |
+| `pnpm run test:e2e`     | Run Playwright against the local fake-registry harness.                                                                                                                                                           |
+| `pnpm run verify`       | Run lint + format check + typecheck + tests **in parallel** (`scripts/verify.mjs`); the cheap checks finish while the worker pool runs. All four always run to completion and every failure is reported together. |
 
 `pnpm lint` (the shorthand without `run`) can collide with workspace forwarding or shell wrappers — always use `pnpm run lint`.
 

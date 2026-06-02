@@ -20,6 +20,7 @@ export default defineConfig(async () => {
       }),
     ],
     test: {
+      name: "workers",
       include: ["test/workers/**/*.test.ts"],
       globals: false,
       setupFiles: ["./test/workers/setup.ts"],
