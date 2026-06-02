@@ -28,6 +28,10 @@ export function firstSecretLine(text: string | undefined | null): number | undef
   );
 }
 
+export function isSourceMap(path: string): boolean {
+  return /\.map$/i.test(path);
+}
+
 export function firstJsonPropertyLine(
   text: string | undefined | null,
   key: string,

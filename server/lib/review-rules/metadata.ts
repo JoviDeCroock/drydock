@@ -1,6 +1,6 @@
 import { isOutsidePackageFilesAllowlist } from "../review-package-files";
 import type { Finding } from "../review";
-import { containsSecretLikeText, firstSecretLine, tag } from "./helpers";
+import { containsSecretLikeText, firstSecretLine, isSourceMap, tag } from "./helpers";
 import { changedPrefix, type RuleContext } from "./context";
 
 // Manifest integrity and secret-exposure rules: parse failures, secret-looking
@@ -29,7 +29,10 @@ export function metadataFindings(ctx: RuleContext): Finding[] {
     const prefix = changedPrefix(ctx, file.path);
     const changed = ctx.diffByPath.get(file.path)?.status;
 
-    if (/\.npmrc|\.env|id_rsa|id_ed25519/i.test(file.path) || containsSecretLikeText(sample)) {
+    if (
+      /\.npmrc|\.env|id_rsa|id_ed25519/i.test(file.path) ||
+      (!isSourceMap(file.path) && containsSecretLikeText(sample))
+    ) {
       findings.push(
         tag("fileSecretContent", {
           severity: changed === "added" ? "critical" : "high",

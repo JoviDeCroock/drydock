@@ -2,7 +2,7 @@ import { hasImplicitNodeGypInstall } from "../tar-parser.js";
 import { firstMatchingLine } from "../text-utils";
 import type { Finding } from "../review";
 import { LIFECYCLE_SCRIPTS } from "./patterns";
-import { firstJsonPropertyLine, tag } from "./helpers";
+import { firstJsonPropertyLine, isSourceMap, tag } from "./helpers";
 import { changedPrefix, type RuleContext } from "./context";
 
 // Install lifecycle hooks and in-file code-execution capability: the scripts and
@@ -58,7 +58,13 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
         }),
       );
     }
-    if (ctx.patterns.networkAccess.some((pattern) => pattern.test(sample))) {
+    if (
+      !isSourceMap(file.path) &&
+      (changed === "modified" ||
+        isLifecycleScriptFile(ctx, file.path) ||
+        hasAdjacentExecutionRisk(ctx, sample)) &&
+      ctx.patterns.networkAccess.some((pattern) => pattern.test(sample))
+    ) {
       findings.push(
         tag("codeNetworkAccess", {
           severity: changed === "added" ? "high" : "medium",
@@ -95,4 +101,21 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
   }
 
   return findings;
+}
+
+function hasAdjacentExecutionRisk(ctx: RuleContext, sample: string): boolean {
+  return (
+    ctx.patterns.processExecution.some((pattern) => pattern.test(sample)) ||
+    ctx.patterns.dynamicEvaluation.some((pattern) => pattern.test(sample)) ||
+    ctx.patterns.credentialAccess.some((pattern) => pattern.test(sample))
+  );
+}
+
+function isLifecycleScriptFile(ctx: RuleContext, path: string): boolean {
+  const basename = path.split("/").at(-1) ?? path;
+  return LIFECYCLE_SCRIPTS.some((script) => {
+    const command = ctx.scripts[script];
+    if (!command || ctx.implicitScripts[script] === command) return false;
+    return command.includes(path) || command.includes(basename);
+  });
 }

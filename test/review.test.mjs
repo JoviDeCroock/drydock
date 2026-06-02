@@ -94,6 +94,93 @@ describe("review", () => {
     expect(findings.some((finding) => finding.ruleId === "code.dynamic-evaluation")).toBe(false);
   });
 
+  test("does not flag expected library network code paths", () => {
+    const staged = [
+      {
+        path: "link/http/createSignalIfSupported.js",
+        size: 90,
+        sha256: "apollo-http",
+        flags: [],
+        textSample: "export function createSignalIfSupported() {\n  return fetch('/graphql');\n}\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged), {
+      name: "@apollo/client",
+      version: "4.2.0",
+    });
+
+    expect(findings.some((finding) => finding.ruleId === "code.network-access")).toBe(false);
+  });
+
+  test("still flags network-capable lifecycle script files", () => {
+    const staged = [
+      {
+        path: "package.json",
+        size: 80,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({ scripts: { postinstall: "node install.js" } }),
+      },
+      {
+        path: "install.js",
+        size: 90,
+        sha256: "install",
+        flags: [],
+        textSample: "fetch('https://example.com/payload.js');\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "code.network-access",
+          file: "install.js",
+        }),
+      ]),
+    );
+  });
+
+  test("does not flag secret-looking source map content", () => {
+    const staged = [
+      {
+        path: "core/index.js.map",
+        size: 120,
+        sha256: "map",
+        flags: [],
+        textSample: JSON.stringify({
+          version: 3,
+          sources: ["../src/client_secret.ts"],
+          sourcesContent: ["const config = { client_secret: 'not-a-real-example-value' };"],
+          mappings: "AAAA",
+        }),
+      },
+      {
+        path: "config.js",
+        size: 80,
+        sha256: "secret",
+        flags: [],
+        textSample: "export const config = { client_secret: 'real-looking-secret-value' };\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(
+      findings.some(
+        (finding) =>
+          finding.ruleId === "file.secret-content" && finding.file === "core/index.js.map",
+      ),
+    ).toBe(false);
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "file.secret-content",
+          file: "config.js",
+        }),
+      ]),
+    );
+  });
+
   test("does not treat importlib.metadata as Python dynamic evaluation", () => {
     const staged = [
       {
