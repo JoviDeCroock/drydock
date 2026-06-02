@@ -43,11 +43,7 @@ function globLikePackageFilesEntryMatches(entry: string, path: string): boolean 
     return pattern.test(path);
   }
 
-  const escaped = entry
-    .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*\*/g, ".*")
-    .replace(/\*/g, "[^/]*");
-  pattern = new RegExp(`^${escaped}$`);
+  pattern = new RegExp(`^${packageFilesGlobToRegexSource(entry)}$`);
 
   if (globPatternCache.size >= GLOB_PATTERN_CACHE_LIMIT) {
     const oldestEntry = globPatternCache.keys().next().value;
@@ -56,4 +52,37 @@ function globLikePackageFilesEntryMatches(entry: string, path: string): boolean 
   globPatternCache.set(entry, pattern);
 
   return pattern.test(path);
+}
+
+function packageFilesGlobToRegexSource(entry: string): string {
+  let source = "";
+  for (let index = 0; index < entry.length; ) {
+    const char = entry[index];
+    const next = entry[index + 1];
+    const afterNext = entry[index + 2];
+
+    if (char === "*" && next === "*" && afterNext === "/") {
+      source += "(?:.*/)?";
+      index += 3;
+      continue;
+    }
+    if (char === "*" && next === "*") {
+      source += ".*";
+      index += 2;
+      continue;
+    }
+    if (char === "*") {
+      source += "[^/]*";
+      index += 1;
+      continue;
+    }
+
+    source += escapeRegexChar(char);
+    index += 1;
+  }
+  return source;
+}
+
+function escapeRegexChar(char: string): string {
+  return /[\\^$.*+?()[\]{}|]/.test(char) ? `\\${char}` : char;
 }
