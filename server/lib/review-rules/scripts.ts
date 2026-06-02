@@ -2,7 +2,7 @@ import { hasImplicitNodeGypInstall } from "../tar-parser.js";
 import { firstMatchingLine } from "../text-utils";
 import type { Finding } from "../review";
 import { LIFECYCLE_SCRIPTS } from "./patterns";
-import { firstJsonPropertyLine, isSourceMap, tag } from "./helpers";
+import { firstJsonPropertyLine, tag } from "./helpers";
 import { changedPrefix, type RuleContext } from "./context";
 
 // Install lifecycle hooks and in-file code-execution capability: the scripts and
@@ -59,7 +59,6 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       );
     }
     if (
-      !isSourceMap(file.path) &&
       (changed === "modified" ||
         isLifecycleScriptFile(ctx, file.path) ||
         hasAdjacentExecutionRisk(ctx, sample)) &&

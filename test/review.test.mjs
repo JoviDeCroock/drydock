@@ -142,18 +142,14 @@ describe("review", () => {
   });
 
   test("does not flag secret-looking source map content", () => {
+    // The tar parser strips text samples from .map files (shouldSkipTextSample),
+    // so deterministic rules never see source-map contents.
     const staged = [
       {
         path: "core/index.js.map",
         size: 120,
         sha256: "map",
-        flags: [],
-        textSample: JSON.stringify({
-          version: 3,
-          sources: ["../src/client_secret.ts"],
-          sourcesContent: ["const config = { client_secret: 'not-a-real-example-value' };"],
-          mappings: "AAAA",
-        }),
+        flags: ["text-sample-skipped"],
       },
       {
         path: "config.js",
