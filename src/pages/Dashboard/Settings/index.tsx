@@ -1,7 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { useModel, useSignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
-import { rememberDashboardReturnUrl } from "../../../lib/query-state";
+import { rememberDashboardReturnUrl, useQuerySignal } from "../../../lib/query-state";
 import { sessionModel } from "../../../models/auth";
 import { NpmConnectionModel } from "../../../models/npm-connection";
 import { NotificationRecipientsModel } from "../../../models/notification-recipients";
@@ -22,10 +22,12 @@ import {
   PageShell,
   UserMenu,
 } from "../../../components";
+import { GeneralSection } from "./GeneralSection";
 import { GithubAppSection } from "./GithubAppSection";
 import { NotificationRecipientsSection } from "./NotificationRecipientsSection";
 import { NpmConnectionSection } from "./NpmConnectionSection";
 import { OrganizationMembersSection } from "./OrganizationMembersSection";
+import { SettingsNav, isSettingsTab, type SettingsTab } from "./SettingsNav";
 
 export default function SettingsPage() {
   const location = useLocation();
@@ -35,6 +37,13 @@ export default function SettingsPage() {
   const members = useModel(MembersModel);
   const recipients = useModel(NotificationRecipientsModel);
   const sessionChecked = useSignal(false);
+  const activeTab = useSignal<SettingsTab>("general");
+
+  useQuerySignal(activeTab, {
+    name: "tab",
+    parse: (raw) => (isSettingsTab(raw) ? raw : "general"),
+    serialize: (value) => (value === "general" ? null : value),
+  });
 
   useEffect(() => {
     rememberDashboardReturnUrl(location.url);
@@ -105,6 +114,7 @@ export default function SettingsPage() {
   const githubAppLoaded = githubApp.loaded.value;
   const npmLoaded = npm.loaded.value;
   const workspaceLoaded = githubAppLoaded && npmLoaded;
+  const tab = activeTab.value;
 
   return (
     <PageShell
@@ -125,20 +135,40 @@ export default function SettingsPage() {
       <SettingsHeader />
 
       {workspaceLoaded ? (
-        <div class="flex flex-col gap-6">
-          <OrganizationMembersSection
-            members={members}
-            currentUserRole={activeRole(organizations)}
-            currentUserId={user?.id ?? null}
-          />
-          <NotificationRecipientsSection
-            recipients={recipients}
-            organizationId={organizations.active.value?.id ?? null}
-            canManage={canManageIntegrations(organizations)}
-            fallbackEmail={ownerFallbackEmail(organizations, user)}
-          />
-          <NpmConnectionSection npm={npm} />
-          <GithubAppSection githubApp={githubApp} />
+        <div class="grid grid-cols-1 md:grid-cols-[200px_minmax(0,1fr)] gap-6 md:gap-8">
+          <SettingsNav active={tab} onSelect={(next) => (activeTab.value = next)} />
+
+          <div class="min-w-0 flex flex-col gap-6">
+            {tab === "general" ? (
+              <GeneralSection
+                organizations={organizations}
+                currentUserRole={activeRole(organizations)}
+                onDeleted={reloadActiveOrgScopedData}
+              />
+            ) : null}
+            {tab === "members" ? (
+              <OrganizationMembersSection
+                members={members}
+                currentUserRole={activeRole(organizations)}
+                currentUserId={user?.id ?? null}
+              />
+            ) : null}
+            {tab === "notifications" ? (
+              <NotificationRecipientsSection
+                recipients={recipients}
+                organizationId={organizations.active.value?.id ?? null}
+                canManage={canManageIntegrations(organizations)}
+                fallbackEmail={ownerFallbackEmail(organizations, user)}
+                defaultOpen
+              />
+            ) : null}
+            {tab === "integrations" ? (
+              <>
+                <NpmConnectionSection npm={npm} defaultOpen />
+                <GithubAppSection githubApp={githubApp} defaultOpen />
+              </>
+            ) : null}
+          </div>
         </div>
       ) : (
         <LoadingState title="Loading settings" detail={loadingDetail(npmLoaded, githubAppLoaded)} />
@@ -186,10 +216,10 @@ function SettingsHeader() {
   return (
     <header class="flex flex-col gap-2 max-w-[640px]">
       <Eyebrow>Organization settings</Eyebrow>
-      <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Integrations &amp; access</h1>
+      <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Settings</h1>
       <Muted class="text-[14px] leading-[1.55] m-0">
-        Connect npm so Drydock can fetch staged tarballs, and install the GitHub App so it can gate
-        workflow releases for this organization.
+        Manage this organization's members, notification recipients, and the npm and GitHub
+        connections Drydock uses to gate releases.
       </Muted>
     </header>
   );

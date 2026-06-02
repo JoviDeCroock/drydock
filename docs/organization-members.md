@@ -46,8 +46,18 @@ and return `403 { error: "forbidden" }` when the guard fails:
   list recipients for an org path they belong to, while owner/admin are required
   for add/remove. Each organization can configure up to five recipient emails.
 
-Org rename stays owner-only (`isOrganizationOwner`). Gate approvals and scan
-decisions stay open to any member by design.
+Org rename and delete stay owner-only (`isOrganizationOwner`). Gate approvals and
+scan decisions stay open to any member by design.
+
+Deleting an org (`DELETE /api/v1/organizations/:id`, owner-only, rate-limited at
+10/hour) rejects the personal workspace (`400`) and otherwise removes every
+org-scoped row explicitly in dependency order — members, invitations,
+notification recipients, npm and GitHub connections/release targets/workflow
+gates, and the org's scans plus their files, findings, and events — via a single
+`deleteOrganization` batch. The deletes are explicit (not `ON DELETE CASCADE`)
+because D1 does not enforce foreign keys by default, so a silent orphan would
+otherwise leak one org's scans/credentials past its deletion. No audit event is
+recorded: the org's `scan_events` are removed in the same batch.
 
 ## Invitation flow
 

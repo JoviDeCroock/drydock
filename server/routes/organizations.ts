@@ -5,6 +5,7 @@ import {
   createDb,
   createOrganization,
   deleteNotificationRecipient,
+  deleteOrganization,
   enforceRateLimit,
   ensurePersonalOrganization,
   getOrganizationRole,
@@ -17,6 +18,7 @@ import {
 } from "../db";
 import { sanitizeAddress } from "../lib/email";
 import { rateLimitResponse } from "../lib/http";
+import { personalOrganizationId } from "../lib/ownership";
 import { roleCanManageIntegrations, type OrganizationRole } from "../lib/roles";
 import type { Bindings, Variables } from "../types";
 
@@ -85,6 +87,36 @@ organizationsRoutes.patch("/:id", async (c) => {
     metadata: { name },
   });
   return c.json({ organization: { id: organizationId, name } });
+});
+
+organizationsRoutes.delete("/:id", async (c) => {
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = c.req.param("id");
+
+  const owner = await isOrganizationOwner(db, organizationId, session.userId);
+  if (!owner) return c.json({ error: "not found" }, 404);
+  if (organizationId === personalOrganizationId(session.userId)) {
+    return c.json({ error: "personal workspaces cannot be deleted" }, 400);
+  }
+
+  try {
+    await enforceRateLimit(db, {
+      key: `organizations:delete:${session.userId}`,
+      limit: 10,
+      windowMs: 60 * 60 * 1000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return rateLimitResponse(c, "organization delete rate limit exceeded", err);
+    }
+    throw err;
+  }
+
+  // No scan_event is recorded: the org and its scan_events are removed together,
+  // so the audit row would be deleted in the same breath.
+  await deleteOrganization(db, organizationId);
+  return c.json({ ok: true });
 });
 
 organizationsRoutes.get("/:id/notification-recipients", async (c) => {
