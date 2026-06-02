@@ -1,7 +1,13 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { personalOrganizationId } from "../lib/ownership";
 import type { AppDb, WorkspaceSession } from "./client";
-import { npmConnections, organizationMembers, organizations, user } from "./schema";
+import {
+  npmConnections,
+  organizationMembers,
+  organizationNotificationRecipients,
+  organizations,
+  user,
+} from "./schema";
 
 export async function ensurePersonalOrganization(db: AppDb, session: WorkspaceSession) {
   const organizationId = personalOrganizationId(session.userId);
@@ -155,4 +161,144 @@ export async function renameOrganization(db: AppDb, organizationId: string, name
     .update(organizations)
     .set({ name, updatedAt: new Date() })
     .where(eq(organizations.id, organizationId));
+}
+
+export interface NotificationRecipient {
+  id: string;
+  organizationId: string;
+  email: string;
+  createdByUserId: string | null;
+  createdAt: Date | string | number;
+  updatedAt: Date | string | number;
+}
+
+export async function listNotificationRecipients(
+  db: AppDb,
+  organizationId: string,
+): Promise<NotificationRecipient[]> {
+  return db
+    .select({
+      id: organizationNotificationRecipients.id,
+      organizationId: organizationNotificationRecipients.organizationId,
+      email: organizationNotificationRecipients.email,
+      createdByUserId: organizationNotificationRecipients.createdByUserId,
+      createdAt: organizationNotificationRecipients.createdAt,
+      updatedAt: organizationNotificationRecipients.updatedAt,
+    })
+    .from(organizationNotificationRecipients)
+    .where(eq(organizationNotificationRecipients.organizationId, organizationId))
+    .orderBy(asc(organizationNotificationRecipients.createdAt));
+}
+
+export interface AddNotificationRecipientInput {
+  organizationId: string;
+  email: string;
+  createdByUserId: string | null;
+}
+
+export async function addNotificationRecipient(
+  db: AppDb,
+  input: AddNotificationRecipientInput,
+): Promise<{ created: boolean; recipient: NotificationRecipient }> {
+  const email = input.email.trim().toLowerCase();
+  const now = new Date();
+  await db
+    .insert(organizationNotificationRecipients)
+    .values({
+      id: crypto.randomUUID(),
+      organizationId: input.organizationId,
+      email,
+      createdByUserId: input.createdByUserId,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoNothing();
+
+  const [recipient] = await db
+    .select({
+      id: organizationNotificationRecipients.id,
+      organizationId: organizationNotificationRecipients.organizationId,
+      email: organizationNotificationRecipients.email,
+      createdByUserId: organizationNotificationRecipients.createdByUserId,
+      createdAt: organizationNotificationRecipients.createdAt,
+      updatedAt: organizationNotificationRecipients.updatedAt,
+    })
+    .from(organizationNotificationRecipients)
+    .where(
+      and(
+        eq(organizationNotificationRecipients.organizationId, input.organizationId),
+        eq(organizationNotificationRecipients.email, email),
+      ),
+    )
+    .limit(1);
+
+  const created = new Date(recipient.createdAt).getTime() === now.getTime();
+  return { created, recipient };
+}
+
+export async function deleteNotificationRecipient(
+  db: AppDb,
+  organizationId: string,
+  recipientId: string,
+): Promise<NotificationRecipient | null> {
+  const [removed] = await db
+    .delete(organizationNotificationRecipients)
+    .where(
+      and(
+        eq(organizationNotificationRecipients.id, recipientId),
+        eq(organizationNotificationRecipients.organizationId, organizationId),
+      ),
+    )
+    .returning({
+      id: organizationNotificationRecipients.id,
+      organizationId: organizationNotificationRecipients.organizationId,
+      email: organizationNotificationRecipients.email,
+      createdByUserId: organizationNotificationRecipients.createdByUserId,
+      createdAt: organizationNotificationRecipients.createdAt,
+      updatedAt: organizationNotificationRecipients.updatedAt,
+    });
+  return removed ?? null;
+}
+
+export async function countNotificationRecipients(
+  db: AppDb,
+  organizationId: string,
+): Promise<number> {
+  const rows = await db
+    .select({ id: organizationNotificationRecipients.id })
+    .from(organizationNotificationRecipients)
+    .where(eq(organizationNotificationRecipients.organizationId, organizationId));
+  return rows.length;
+}
+
+/**
+ * Resolve who receives a notification for an organization. When the org has
+ * configured recipients they fully define the set; otherwise we fall back to the
+ * owner's email so an org that never touched the setting keeps today's behavior
+ * (and a misconfiguration never silently drops a security alert). Addresses are
+ * lowercased and de-duplicated.
+ */
+export async function resolveNotificationEmails(
+  db: AppDb,
+  organizationId: string,
+  ownerUserId: string,
+): Promise<string[]> {
+  const configured = await listNotificationRecipients(db, organizationId);
+  if (configured.length > 0) {
+    return dedupeEmails(configured.map((row) => row.email));
+  }
+  const owner = await getUserContact(db, ownerUserId);
+  return owner?.email ? dedupeEmails([owner.email]) : [];
+}
+
+function dedupeEmails(emails: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const email of emails) {
+    const normalized = email.trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
 }

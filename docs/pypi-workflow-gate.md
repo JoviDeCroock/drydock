@@ -595,19 +595,26 @@ and the consumer re-checks gate status, so a re-enqueue is safe.
 ### Notifying the maintainer
 
 Step 8 is the gate equivalent of the npm scan-completion email. It reuses the
-`sendNotificationEmail` primitive and goes to the organization owner
-(`getOrganizationOwnerUserId` → `getUserContact`; recipient/role resolution will
-follow the org membership model as that lands). The body carries only the
-release identity (`package@version`), the computed release risk, the repository,
-the environment, and a deep link to the review at
+`sendNotificationEmail` primitive and fans out to the organization's resolved
+recipient set (`resolveNotificationEmails`): the org's configured
+`organization_notification_recipients` when present, otherwise the owner's email
+(`getOrganizationOwnerUserId` → `getUserContact`) so an org that never touched
+the setting keeps today's behavior. Each address gets its own send — no shared
+`To`/`Cc` — so recipients are never disclosed to one another. The body carries
+only the release identity (`package@version`), the computed release risk, the
+repository, the environment, and a deep link to the review at
 `/dashboard/scans/<scanId>` — never a token, header, callback URL, or artifact
 bytes, per the observability rules in `AGENTS.md`.
 
-Delivery is best-effort and **never blocks or fails the gate**: the outcome is
-recorded as a `github_workflow_gate.notification_sent` or
-`github_workflow_gate.notification_failed` `scan_events` row (mirroring the
-`scan.notification_*` pattern), and a thrown send error is swallowed into a
-`github_workflow_gate.notification_error` operational event.
+Delivery is best-effort and **never blocks or fails the gate**: each send's
+outcome is recorded as a `github_workflow_gate.notification_sent` or
+`github_workflow_gate.notification_failed` `scan_events` row (one per recipient,
+with the destination in `metadata.recipient`, mirroring the `scan.notification_*`
+pattern), and a thrown send error is swallowed into a
+`github_workflow_gate.notification_error` operational event. When the recipient
+set is empty (no configured recipients and the owner has no email), a single
+`notification_failed` row with `reason: "no_recipients"` is recorded and no email
+is sent.
 
 The email is **send-once per gate**. Step 8 sits on the single review-ready
 transition, after the job re-confirms that the gate is still `pending` while

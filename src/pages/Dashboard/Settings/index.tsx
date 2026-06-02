@@ -4,11 +4,13 @@ import { useLocation } from "preact-iso";
 import { rememberDashboardReturnUrl } from "../../../lib/query-state";
 import { sessionModel } from "../../../models/auth";
 import { NpmConnectionModel } from "../../../models/npm-connection";
+import { NotificationRecipientsModel } from "../../../models/notification-recipients";
 import { OrganizationModel } from "../../../models/organization";
 import { GithubAppModel } from "../../../models/github-app";
 import { MembersModel } from "../../../models/organization-members";
 import {
   normalizeRole,
+  roleCanManageIntegrations,
   roleCanManageMembers,
   type OrganizationRole,
 } from "../../../../server/lib/roles";
@@ -21,6 +23,7 @@ import {
   UserMenu,
 } from "../../../components";
 import { GithubAppSection } from "./GithubAppSection";
+import { NotificationRecipientsSection } from "./NotificationRecipientsSection";
 import { NpmConnectionSection } from "./NpmConnectionSection";
 import { OrganizationMembersSection } from "./OrganizationMembersSection";
 
@@ -30,6 +33,7 @@ export default function SettingsPage() {
   const organizations = useModel(OrganizationModel);
   const githubApp = useModel(GithubAppModel);
   const members = useModel(MembersModel);
+  const recipients = useModel(NotificationRecipientsModel);
   const sessionChecked = useSignal(false);
 
   useEffect(() => {
@@ -53,6 +57,7 @@ export default function SettingsPage() {
         githubApp.loadInstallations(),
         githubApp.loadReleaseTargets(),
         members.load(canManageMembers(organizations)),
+        recipients.load(organizations.active.peek()?.id ?? null),
       ]);
     })();
     return () => {
@@ -65,6 +70,7 @@ export default function SettingsPage() {
     githubApp.clearForm();
     if (!githubApp.configLoaded.peek()) loaders.push(githubApp.loadConfig());
     loaders.push(githubApp.loadInstallations(), githubApp.loadReleaseTargets());
+    loaders.push(recipients.load(organizations.active.peek()?.id ?? null));
     await Promise.all(loaders);
   };
 
@@ -125,6 +131,12 @@ export default function SettingsPage() {
             currentUserRole={activeRole(organizations)}
             currentUserId={user?.id ?? null}
           />
+          <NotificationRecipientsSection
+            recipients={recipients}
+            organizationId={organizations.active.value?.id ?? null}
+            canManage={canManageIntegrations(organizations)}
+            fallbackEmail={ownerFallbackEmail(organizations, user)}
+          />
           <NpmConnectionSection npm={npm} />
           <GithubAppSection githubApp={githubApp} />
         </div>
@@ -146,6 +158,21 @@ function canManageMembers(
   organizations: ReturnType<typeof useModel<typeof OrganizationModel.prototype>>,
 ): boolean {
   return roleCanManageMembers(activeRole(organizations));
+}
+
+function canManageIntegrations(
+  organizations: ReturnType<typeof useModel<typeof OrganizationModel.prototype>>,
+): boolean {
+  return roleCanManageIntegrations(activeRole(organizations));
+}
+
+function ownerFallbackEmail(
+  organizations: ReturnType<typeof useModel<typeof OrganizationModel.prototype>>,
+  user: { id?: string | null; email?: string | null } | null,
+): string | undefined {
+  const active = organizations.active.value;
+  if (!active?.ownerUserId || !user?.id || active.ownerUserId !== user.id) return undefined;
+  return user.email ?? undefined;
 }
 
 function loadingDetail(npmLoaded: boolean, githubAppLoaded: boolean): string {
