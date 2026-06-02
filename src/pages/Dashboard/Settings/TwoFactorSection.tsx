@@ -67,6 +67,13 @@ export function TwoFactorSection() {
     dialog.value = mode;
   };
 
+  const onDialogClose = () => {
+    if (dialog.value === "enroll" && enrollStep.value === "backup" && !savedConfirmed.value) {
+      return;
+    }
+    close();
+  };
+
   const onBeginEnroll = async (event: Event) => {
     event.preventDefault();
     const pw = password.value;
@@ -268,7 +275,7 @@ export function TwoFactorSection() {
 
       <Dialog
         open={dialog.value !== "none"}
-        onClose={close}
+        onClose={onDialogClose}
         title={dialogTitle}
         description={dialogDescription}
       >

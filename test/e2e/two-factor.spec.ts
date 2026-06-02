@@ -43,6 +43,8 @@ test("enrolls in TOTP 2FA and signs in through the challenge", async ({ browser,
 
     // Backup codes are revealed; confirm and close.
     await expect(dialog.getByText("Save your backup codes")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog.getByText("Save your backup codes")).toBeVisible();
     await dialog.getByLabel("I've saved these codes").check();
     await dialog.getByRole("button", { name: "Done" }).click();
 

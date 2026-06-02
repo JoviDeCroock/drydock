@@ -25,7 +25,9 @@ account. Backup codes use the plugin default: 10 single-use codes.
    (`POST /api/auth/two-factor/verify-totp`), which finalizes enrollment and flips
    `user.twoFactorEnabled` to `true`.
 3. The backup codes are shown once behind an "I've saved these codes" confirmation, with a
-   download-to-`.txt` option.
+   download-to-`.txt` option. The setup dialog cannot be dismissed from this step until that
+   confirmation is checked, because 2FA is already enabled and these recovery codes are not shown
+   again.
 
 ### Sign-in challenge
 
