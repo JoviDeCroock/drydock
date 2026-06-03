@@ -28,26 +28,34 @@ export function FindingCard({
         className,
       )}
     >
-      <div class="flex items-center gap-2.5 min-w-0">
-        <Badge tone={severityTone(severity)} dot>
-          {severity}
-        </Badge>
-        <code class="text-[13px] text-ink-muted truncate">{file}</code>
-        {line ? (
-          <code class="text-[11px] text-ink-subtle font-mono flex-shrink-0">L{line}</code>
-        ) : null}
-        {diffStatus ? (
-          <Badge tone={statusTone(diffStatus)} class="flex-shrink-0">
-            {diffLabel ?? diffStatus}
+      <div class="flex flex-col gap-1 min-w-0">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <Badge tone={severityTone(severity)} dot>
+            {severity}
           </Badge>
-        ) : null}
-        {ruleId ? (
-          <code
-            class="ml-auto text-[11px] text-ink-subtle font-mono uppercase tracking-[0.05em] flex-shrink-0"
-            title={`Rule ${ruleId}`}
-          >
-            {ruleId}
+          <code class="text-[13px] text-ink-muted truncate text-left [direction:rtl]" title={file}>
+            <bdi>{file}</bdi>
           </code>
+          {diffStatus ? (
+            <Badge tone={statusTone(diffStatus)} class="flex-shrink-0">
+              {diffLabel ?? diffStatus}
+            </Badge>
+          ) : null}
+        </div>
+        {line || ruleId ? (
+          <div class="flex items-center gap-2 min-w-0 font-mono text-[11px] text-ink-subtle">
+            {line ? <span class="flex-shrink-0">L{line}</span> : null}
+            {line && ruleId ? (
+              <span class="flex-shrink-0" aria-hidden>
+                ·
+              </span>
+            ) : null}
+            {ruleId ? (
+              <span class="truncate uppercase tracking-[0.05em]" title={`Rule ${ruleId}`}>
+                {ruleId}
+              </span>
+            ) : null}
+          </div>
         ) : null}
       </div>
       <div class="text-[13px] leading-[1.55] flex flex-col gap-1.5">{children}</div>
