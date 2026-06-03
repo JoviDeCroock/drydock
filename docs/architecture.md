@@ -216,6 +216,19 @@ Team membership, invitations, and RBAC ship today — see [`organization-members
 
 Deletion, audit-log UI, billing, and quotas remain deferred (see Phase 12 in `docs/production-roadmap.md`).
 
+## Account email verification
+
+Email/password signup is gated on email verification, but only when the Worker can actually send mail. `createAuth` flips `emailAndPassword.requireEmailVerification` on `Boolean(env.SEND_EMAIL)`: production has the Email binding bound, so a fresh signup gets no session and must click a verification link first; local dev and the e2e harness have no binding, so signup auto-signs-in and the verification flow is inert. This keeps the gate from locking users out during an email outage and keeps the existing e2e auth flow unchanged.
+
+Better Auth's `emailVerification` block wires the link delivery and post-verify behavior:
+
+- `sendVerificationEmail` composes the message through `server/lib/account-email.ts` (`buildAccountVerificationEmail`) and dispatches it via the shared `sendNotificationEmail` primitive (`server/lib/email.ts`). The verification URL carries a signed JWT (HS256 over `BETTER_AUTH_SECRET`) — it is a credential and must never be logged.
+- `expiresIn` is 24 hours (`VERIFICATION_TOKEN_TTL_SECONDS`); the email copy states the same.
+- `autoSignInAfterVerification: true` issues a session the moment the link is opened, so the `/verify-email` landing page just loads the session and routes verified users to `/dashboard`.
+- `sendOnSignIn: true` re-dispatches a fresh link when an unverified user tries to sign in. That sign-in returns `403 EMAIL_NOT_VERIFIED`, which the login page catches to steer the user to their inbox with a resend option rather than showing a generic failure.
+
+The email composer HTML-escapes the verification URL (attribute-escaping the `href`) so a crafted callback can't break out of the anchor; the plain-text part carries the raw link. Client surfaces live in `src/pages/Auth/` (`Register` shows "check your email", `Login` handles the unverified path, `VerifyEmail` is the callback landing). The `/verify-email` route is intentionally **not** in `isPrerenderedRoute` — it is dynamic and client-rendered through the SPA fallback. Resends route through `POST /api/auth/send-verification-email` (`sessionModel.resendVerification`). No schema change was needed: `user.emailVerified` already exists and verification tokens are JWTs, not `verification`-table rows.
+
 ## npm connection model
 
 Production SaaS uses per-organization npm credentials instead of a global Worker secret.

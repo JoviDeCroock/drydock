@@ -12,6 +12,22 @@ export interface AuthSession {
   session?: unknown;
 }
 
+// Where the verification link returns the user after they click it. Better Auth
+// embeds this as the callbackURL in the emailed link; on success it redirects
+// here (signed in), on failure it appends `?error=<code>`.
+export const VERIFY_EMAIL_CALLBACK_PATH = "/verify-email";
+
+export class AuthError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = "AuthError";
+  }
+}
+
 export const SessionModel = createModel(() => {
   const session = signal<AuthSession | null>(null);
   const loaded = signal(false);
@@ -47,7 +63,19 @@ export const SessionModel = createModel(() => {
     },
 
     async signUp(name: string, email: string, password: string): Promise<void> {
-      await authPost("/api/auth/sign-up/email", { name, email, password });
+      await authPost("/api/auth/sign-up/email", {
+        name,
+        email,
+        password,
+        callbackURL: VERIFY_EMAIL_CALLBACK_PATH,
+      });
+    },
+
+    async resendVerification(email: string): Promise<void> {
+      await authPost("/api/auth/send-verification-email", {
+        email,
+        callbackURL: VERIFY_EMAIL_CALLBACK_PATH,
+      });
     },
 
     async signOut(): Promise<void> {
@@ -75,8 +103,16 @@ async function authPost(path: string, body: unknown) {
     headers: { "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify(body),
   });
-  const data = (await res.json().catch(() => null)) as { error?: string; message?: string } | null;
+  const data = (await res.json().catch(() => null)) as {
+    error?: string;
+    message?: string;
+    code?: string;
+  } | null;
   if (!res.ok) {
-    throw new Error(data?.message || data?.error || "authentication failed");
+    throw new AuthError(
+      data?.message || data?.error || "authentication failed",
+      data?.code,
+      res.status,
+    );
   }
 }

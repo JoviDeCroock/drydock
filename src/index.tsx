@@ -6,6 +6,7 @@ const LandingPage = lazy(() => import("./pages/Landing"));
 const DocsPage = lazy(() => import("./pages/Docs"));
 const LoginPage = lazy(() => import("./pages/Auth/Login"));
 const RegisterPage = lazy(() => import("./pages/Auth/Register"));
+const VerifyEmailPage = lazy(() => import("./pages/Auth/VerifyEmail"));
 const DashboardPage = lazy(() => import("./pages/Dashboard"));
 const ScanDetailPage = lazy(() => import("./pages/Dashboard/ScanDetail"));
 const SettingsPage = lazy(() => import("./pages/Dashboard/Settings"));
@@ -22,6 +23,7 @@ export function App() {
           <Route path="/docs" component={DocsPage} />
           <Route path="/login" component={LoginPage} />
           <Route path="/register" component={RegisterPage} />
+          <Route path="/verify-email" component={VerifyEmailPage} />
           <Route path="/dashboard" component={DashboardPage} />
           <Route path="/dashboard/scans/:id" component={ScanDetailPage} />
           <Route path="/dashboard/settings" component={SettingsPage} />
