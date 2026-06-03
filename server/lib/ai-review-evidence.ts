@@ -30,9 +30,11 @@ interface EvidenceIndex {
   ruleFindings: SelectiveAiReviewOptions["ruleFindings"];
 }
 
-export function buildAiReviewPayload(options: SelectiveAiReviewOptions) {
+export function buildAiReviewPayload(
+  options: SelectiveAiReviewOptions,
+  index: EvidenceIndex = buildEvidenceIndex(options),
+) {
   const ecosystem = normalizeAiReviewEcosystem(options.ecosystem);
-  const index = buildEvidenceIndex(options);
   const packageJsonFile = index.packageJsonPath
     ? (index.stagedByPath.get(index.packageJsonPath) ??
       index.previousByPath.get(index.packageJsonPath) ??
@@ -78,8 +80,8 @@ function reviewTaskFor(ecosystem: string): string {
 export function createAiReviewTools(
   options: SelectiveAiReviewOptions,
   submitReview: (review: AiReviewSubmission) => void,
+  index: EvidenceIndex = buildEvidenceIndex(options),
 ) {
-  const index = buildEvidenceIndex(options);
   let remainingEvidenceChars = MAX_TOTAL_TOOL_RESPONSE_CHARS;
 
   const takeText = (text: string, maxChars: number, callBudget: { remaining: number }) => {
@@ -271,7 +273,7 @@ export function createAiReviewTools(
   };
 }
 
-function buildEvidenceIndex(options: SelectiveAiReviewOptions): EvidenceIndex {
+export function buildEvidenceIndex(options: SelectiveAiReviewOptions): EvidenceIndex {
   const stagedByPath = new Map(options.files.map((file) => [file.path, file]));
   const previousByPath = new Map((options.previousFiles ?? []).map((file) => [file.path, file]));
   const diffByPath = new Map(options.diff.map((entry) => [entry.path, entry]));
