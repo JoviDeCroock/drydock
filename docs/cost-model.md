@@ -10,7 +10,7 @@ A single scan exercises the deterministic pipeline (staged tarball download, pre
 
 | Component         | Approx per scan | Notes                                                                                                                                            |
 | ----------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Worker requests   | ~5              | `POST /scans` + queue producer + queue consumer + 2 sandbox spins (staged + previous)                                                            |
+| Worker requests   | ~5              | `POST /scans` + queue producer + queue consumer + 2 sandbox spins (staged via gateway; previous fetched by the parent, then parsed inline)       |
 | Worker CPU-ms     | ~3,000          | Dominated by tar parse + sha256 hashing in the sandbox                                                                                           |
 | D1 row writes     | ~150            | one scans row + N scan_files + M scan_findings                                                                                                   |
 | Workers AI tokens | flag-gated      | When AI review is enabled: compact manifest input plus bounded evidence-tool turns; static safety preamble prompt-cached via `AI_CACHE_AFFINITY` |

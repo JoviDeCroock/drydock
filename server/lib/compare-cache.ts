@@ -1,4 +1,4 @@
-import { downloadInSandbox } from "./sandbox";
+import { downloadPublishedTarball } from "./published-tarball";
 import { redactFileRecords, redactJson, type FileRecord, type PackageJsonSummary } from "./review";
 
 export interface CachedCompare {
@@ -51,7 +51,13 @@ export async function loadCompare(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
   version: string,
-  options: { tarballUrl: string; registryUrl: string; npmToken?: string; cacheScope: string },
+  options: {
+    tarballUrl: string;
+    registryUrl: string;
+    npmToken?: string;
+    cacheScope: string;
+    allowInsecureLocalhost?: boolean;
+  },
 ): Promise<CachedCompare> {
   const key = await computeCompareCacheKey(
     options.registryUrl,
@@ -61,10 +67,10 @@ export async function loadCompare(
   const cached = await readCompareCache(env, key);
   if (cached) return cached;
 
-  const downloaded = await downloadInSandbox(env, ctx, {
-    tarballUrl: options.tarballUrl,
+  const downloaded = await downloadPublishedTarball(env, ctx, options.tarballUrl, {
+    registryUrl: options.registryUrl,
     npmToken: options.npmToken,
-    npmRegistry: options.registryUrl,
+    allowInsecureLocalhost: options.allowInsecureLocalhost,
   });
 
   const payload: CachedCompare = {

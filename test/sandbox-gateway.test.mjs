@@ -29,16 +29,19 @@ describe("npm stage gateway policy", () => {
       credentialed: true,
       kind: "package-metadata",
     });
+  });
+
+  test("blocks published .tgz tarballs (fetched by the trusted parent, not the sandbox)", () => {
     expect(
       evaluateNpmStageGatewayRequest(
         "https://registry.npmjs.org/pkg/-/pkg-1.2.3.tgz",
         "GET",
         registry,
       ),
-    ).toMatchObject({
-      allowed: true,
-      credentialed: true,
-      kind: "published-tarball",
+    ).toEqual({
+      allowed: false,
+      credentialed: false,
+      kind: "blocked",
     });
   });
 
@@ -50,6 +53,7 @@ describe("npm stage gateway policy", () => {
       ["https://registry.npmjs.org/-/whoami", "GET"],
       ["https://registry.npmjs.org/pkg", "PUT"],
       ["https://registry.npmjs.org/pkg/readme", "GET"],
+      ["https://registry.npmjs.org/pkg/-/pkg-1.2.3.tgz", "GET"],
     ];
 
     for (const [url, method] of blocked) {

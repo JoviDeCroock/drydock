@@ -19,11 +19,8 @@ import {
 import { requireActiveOrganization } from "../lib/active-organization";
 import { loadCompare, stripTextSamples } from "../lib/compare-cache";
 import { rateLimitResponse } from "../lib/http";
-import {
-  allowInsecureLocalRegistry,
-  getOrganizationNpmToken,
-  registryProtocolAllowed,
-} from "../lib/npm-connection";
+import { allowInsecureLocalRegistry, getOrganizationNpmToken } from "../lib/npm-connection";
+import { isPublishedTarballUrlAllowed } from "../lib/published-tarball";
 import { compareSemver, fetchPackageMetadata, pickPreviousVersion } from "../lib/registry";
 import { annotateFindingsWithDiffStatus, createPackageDiff, type FileRecord } from "../lib/review";
 import { parseScanInput } from "../lib/scan-input";
@@ -274,25 +271,6 @@ scansRoutes.get("/:id/versions", async (c) => {
 
 const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
 
-function isTarballUrlAllowed(
-  tarballUrl: string,
-  registryUrl: string,
-  allowInsecureLocalhost: boolean,
-): boolean {
-  try {
-    const tarball = new URL(tarballUrl);
-    const registry = new URL(registryUrl);
-    return (
-      tarball.origin === registry.origin &&
-      registryProtocolAllowed(tarball, { allowInsecureLocalhost }) &&
-      tarball.pathname.endsWith(".tgz") &&
-      tarball.pathname.includes("/-/")
-    );
-  } catch {
-    return false;
-  }
-}
-
 async function resolveCompareContext(
   c: import("hono").Context<{ Bindings: Bindings; Variables: Variables }>,
 ) {
@@ -382,7 +360,8 @@ async function loadCompareArchive(
   if (!tarballUrl) return { error: c.json({ error: "unknown version" }, 404) } as const;
 
   const registryUrl = connection?.registryUrl || c.env.NPM_REGISTRY || "https://registry.npmjs.org";
-  if (!isTarballUrlAllowed(tarballUrl, registryUrl, allowInsecureLocalRegistry(c.env))) {
+  const allowInsecureLocalhost = allowInsecureLocalRegistry(c.env);
+  if (!isPublishedTarballUrlAllowed(tarballUrl, registryUrl, allowInsecureLocalhost)) {
     return {
       error: c.json({ error: "registry returned an unexpected tarball URL" }, 502),
     } as const;
@@ -393,6 +372,7 @@ async function loadCompareArchive(
     registryUrl,
     npmToken: connection?.token,
     cacheScope: `org:${ctx.organizationId}`,
+    allowInsecureLocalhost,
   });
 
   return { cached } as const;

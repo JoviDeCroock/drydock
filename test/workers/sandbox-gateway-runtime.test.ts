@@ -54,12 +54,11 @@ describe("NpmStageGateway runtime credential injection", () => {
     expect(captured[0].userAgent).toBe("staged-publish-review/0.3");
   });
 
-  test("attaches Authorization on published-tarball requests", async () => {
+  test("blocks published .tgz tarballs without forwarding the npm token", async () => {
     const { gateway, captured } = setupGateway({ npmToken: "npm_secret_token_xyz" });
     const res = await gateway.fetch(new Request("https://registry.npmjs.org/pkg/-/pkg-1.2.3.tgz"));
-    expect(res.status).toBe(200);
-    expect(captured).toHaveLength(1);
-    expect(captured[0].authorization).toBe("Bearer npm_secret_token_xyz");
+    expect(res.status).toBe(403);
+    expect(captured).toHaveLength(0);
   });
 
   test("attaches Authorization on package-metadata requests", async () => {
