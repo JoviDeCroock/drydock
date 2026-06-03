@@ -14,7 +14,11 @@ import {
   selectReportedFindings,
   type AiReviewSubmission,
 } from "./ai-review-contract";
-import { buildAiReviewPayload, createAiReviewTools } from "./ai-review-evidence";
+import {
+  buildAiReviewPayload,
+  buildEvidenceIndex,
+  createAiReviewTools,
+} from "./ai-review-evidence";
 import type {
   AiReview,
   AiReviewResult,
@@ -56,7 +60,8 @@ export async function analyzeWithAi(
   // live Workers AI binding. Production always builds the Workers AI model.
   languageModelOverride?: LanguageModel,
 ): Promise<AiReviewResult> {
-  const payload = buildAiReviewPayload(options);
+  const index = buildEvidenceIndex(options);
+  const payload = buildAiReviewPayload(options, index);
   let submittedReview: AiReviewSubmission | null = null;
 
   try {
@@ -70,9 +75,13 @@ export async function analyzeWithAi(
           "x-session-affinity": scanScopedCacheAffinity(env, options.scanId),
         },
       });
-    const tools = createAiReviewTools(options, (review) => {
-      submittedReview = review;
-    });
+    const tools = createAiReviewTools(
+      options,
+      (review) => {
+        submittedReview = review;
+      },
+      index,
+    );
 
     const result = await generateText({
       model: languageModel,
@@ -131,39 +140,16 @@ function scanScopedCacheAffinity(env: Cloudflare.Env, scanId: string | undefined
   return `${base}:${suffix}`;
 }
 
-function normalizeAiResponse(model: string, result: unknown): AiReview {
-  const content = extractContent(result);
-  if (typeof content === "string") {
-    try {
-      return normalizeParsedReview(model, JSON.parse(content));
-    } catch {
-      return fallbackReview(
-        model,
-        "invalid",
-        "Assistant returned non-JSON output; review didn't complete.",
-      );
-    }
+function normalizeAiResponse(model: string, text: string): AiReview {
+  try {
+    return normalizeParsedReview(model, JSON.parse(text));
+  } catch {
+    return fallbackReview(
+      model,
+      "invalid",
+      "Assistant returned non-JSON output; review didn't complete.",
+    );
   }
-  return normalizeParsedReview(model, content);
-}
-
-function extractContent(result: unknown): unknown {
-  if (typeof result === "string") return result;
-  if (!result || typeof result !== "object") return result;
-  const obj = result as Record<string, unknown>;
-  const choices = obj.choices;
-  if (Array.isArray(choices) && choices.length > 0) {
-    const first = choices[0];
-    if (first && typeof first === "object") {
-      const message = (first as Record<string, unknown>).message;
-      if (message && typeof message === "object") {
-        const content = (message as Record<string, unknown>).content;
-        if (content !== undefined && content !== null) return content;
-      }
-    }
-  }
-  if ("response" in obj) return obj.response;
-  return obj;
 }
 
 function normalizeParsedReview(model: string, value: unknown): AiReview {
