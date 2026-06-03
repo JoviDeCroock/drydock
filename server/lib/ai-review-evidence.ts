@@ -5,7 +5,6 @@ import {
   LARGE_FILE_BYTES,
   ListFilesFilter,
   MAX_CHANGED_FILE_MANIFEST,
-  MAX_INITIAL_PACKAGE_JSON_CHARS,
   MAX_TOOL_RESPONSE_CHARS,
   MAX_TOTAL_TOOL_RESPONSE_CHARS,
   normalizeAiReviewEcosystem,
@@ -39,19 +38,15 @@ export function buildAiReviewPayload(options: SelectiveAiReviewOptions) {
       index.previousByPath.get(index.packageJsonPath) ??
       null)
     : null;
-  const changedFileDiff = options.diff
+  const changedPaths = options.diff
     .filter((entry) => entry.status !== "unchanged")
-    .slice(0, MAX_CHANGED_FILE_MANIFEST);
+    .slice(0, MAX_CHANGED_FILE_MANIFEST)
+    .map((entry) => entry.path);
 
   return {
     ecosystem,
     task: reviewTaskFor(ecosystem),
     toolPolicy: {
-      toolsMayRead:
-        "redacted package text samples and text diffs for changed files, package manifest-referenced script/entrypoint files where applicable, deterministic-finding files, and package manifests where present",
-      toolsMaySearch: "literal search over the same redacted tool-readable package text",
-      toolsMayNot:
-        "fetch external URLs, install dependencies, execute package code, import package modules, or read unbounded/raw tarball contents",
       maxToolResponseChars: MAX_TOOL_RESPONSE_CHARS,
       maxTotalToolResponseChars: MAX_TOTAL_TOOL_RESPONSE_CHARS,
     },
@@ -61,14 +56,11 @@ export function buildAiReviewPayload(options: SelectiveAiReviewOptions) {
       ? {
           path: packageJsonFile.path,
           size: packageJsonFile.size,
-          sha256: packageJsonFile.sha256,
           flags: packageJsonFile.flags,
-          textSample: packageJsonFile.textSample?.slice(0, MAX_INITIAL_PACKAGE_JSON_CHARS),
         }
       : null,
     previousVersionAvailable: options.previousVersionAvailable,
-    changedFileDiff,
-    changedFileManifest: changedFileDiff.map((entry) => manifestEntry(entry.path, index)),
+    changedFileManifest: changedPaths.map((path) => manifestEntry(path, index)),
   };
 }
 
@@ -411,9 +403,8 @@ function manifestEntry(path: string, index: EvidenceIndex) {
   return {
     path,
     status: diff?.status ?? "unchanged",
-    size: staged?.size ?? previous?.size ?? diff?.stagedSize ?? diff?.previousSize ?? null,
-    sha256:
-      staged?.sha256 ?? previous?.sha256 ?? diff?.stagedSha256 ?? diff?.previousSha256 ?? null,
+    previousSize: previous?.size ?? diff?.previousSize,
+    stagedSize: staged?.size ?? diff?.stagedSize,
     flags: file?.flags ?? diff?.flags ?? [],
     signals: fileSignals(path, index),
   };
