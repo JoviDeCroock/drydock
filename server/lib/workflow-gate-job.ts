@@ -41,8 +41,10 @@ export function recommendationForReleaseRisk(releaseRisk: RiskLevel): "approved"
 // back inside its decision window. We don't get told when that happens, so we
 // compare the review's wall-clock duration against this window to flag a gate
 // that almost certainly already lapsed (`missed`) or is close to it
-// (`imminent`). Default 10 minutes; override with WORKFLOW_GATE_CALLBACK_WINDOW_MS.
-const DEFAULT_GATE_CALLBACK_WINDOW_MS = 10 * 60 * 1000;
+// (`imminent`). GitHub's custom deployment protection rule callback window is
+// 30 days; override with WORKFLOW_GATE_CALLBACK_WINDOW_MS if GitHub changes it
+// or a test needs a shorter deterministic window.
+const DEFAULT_GATE_CALLBACK_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const GATE_TIMEOUT_IMMINENT_FRACTION = 0.8;
 
 export function workflowGateCallbackWindowMs(env: Cloudflare.Env): number {

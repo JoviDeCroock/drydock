@@ -402,18 +402,18 @@ describe("recommendationForReleaseRisk", () => {
 });
 
 describe("gate callback timeout classification", () => {
-  test("defaults to a 10 minute window and honours the override", () => {
-    expect(workflowGateCallbackWindowMs({} as Cloudflare.Env)).toBe(10 * 60 * 1000);
+  test("defaults to GitHub's 30 day window and honours the override", () => {
+    expect(workflowGateCallbackWindowMs({} as Cloudflare.Env)).toBe(30 * 24 * 60 * 60 * 1000);
     expect(
       workflowGateCallbackWindowMs({ WORKFLOW_GATE_CALLBACK_WINDOW_MS: "1000" } as Cloudflare.Env),
     ).toBe(1000);
     // A non-positive or unparseable override falls back to the default.
     expect(
       workflowGateCallbackWindowMs({ WORKFLOW_GATE_CALLBACK_WINDOW_MS: "0" } as Cloudflare.Env),
-    ).toBe(10 * 60 * 1000);
+    ).toBe(30 * 24 * 60 * 60 * 1000);
     expect(
       workflowGateCallbackWindowMs({ WORKFLOW_GATE_CALLBACK_WINDOW_MS: "nope" } as Cloudflare.Env),
-    ).toBe(10 * 60 * 1000);
+    ).toBe(30 * 24 * 60 * 60 * 1000);
   });
 
   test("flags imminent at 80% of the window and missed at the window", () => {
