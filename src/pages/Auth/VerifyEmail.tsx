@@ -1,6 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
+import { normalizeAuthReturnTo } from "../../lib/auth-return";
 import { sessionModel } from "../../models/auth";
 import { errorMessage } from "../../models/api";
 import {
@@ -26,6 +27,7 @@ const ERROR_COPY: Record<string, string> = {
 export default function VerifyEmailPage() {
   const location = useLocation();
   const errorCode = typeof location.query.error === "string" ? location.query.error : "";
+  const returnTo = normalizeAuthReturnTo(location.query.returnTo);
   const state = useSignal<VerifyState>(errorCode ? "error" : "verifying");
   const email = useSignal("");
   const error = useSignal<string | null>(null);
@@ -39,7 +41,7 @@ export default function VerifyEmailPage() {
       if (cancelled) return;
       // Verification auto-signs the user in, so a live session means success.
       if (session?.user) {
-        location.route("/dashboard", true);
+        location.route(returnTo, true);
         return;
       }
       state.value = "verified";
@@ -47,7 +49,7 @@ export default function VerifyEmailPage() {
     return () => {
       cancelled = true;
     };
-  }, [errorCode]);
+  }, [errorCode, returnTo]);
 
   const onResend = async (event: Event) => {
     event.preventDefault();
@@ -57,7 +59,7 @@ export default function VerifyEmailPage() {
     resent.value = false;
     error.value = null;
     try {
-      await sessionModel.resendVerification(target);
+      await sessionModel.resendVerification(target, returnTo);
       resent.value = true;
     } catch (err) {
       error.value = errorMessage(err);

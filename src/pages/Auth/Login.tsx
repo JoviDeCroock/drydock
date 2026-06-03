@@ -37,7 +37,7 @@ export default function LoginPage() {
     loading.value = true;
     error.value = null;
     try {
-      await sessionModel.signIn(submittedEmail, submittedPassword);
+      await sessionModel.signIn(submittedEmail, submittedPassword, returnTo);
       location.route(returnTo, true);
     } catch (err) {
       // The server re-sends a verification link on an unverified sign-in, so
@@ -60,7 +60,7 @@ export default function LoginPage() {
     resent.value = false;
     error.value = null;
     try {
-      await sessionModel.resendVerification(target);
+      await sessionModel.resendVerification(target, returnTo);
       resent.value = true;
     } catch (err) {
       error.value = errorMessage(err);

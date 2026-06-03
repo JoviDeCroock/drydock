@@ -38,7 +38,10 @@ export function createAuth(env: Cloudflare.Env) {
       sendOnSignIn: true,
       expiresIn: VERIFICATION_TOKEN_TTL_SECONDS,
       sendVerificationEmail: async ({ user, url }) => {
-        await sendAccountVerificationEmail(env, { email: user.email, url });
+        const result = await sendAccountVerificationEmail(env, { email: user.email, url });
+        if (!result.ok) {
+          throw new Error(`verification email failed: ${result.reason ?? "unknown error"}`);
+        }
       },
     },
     emailAndPassword: {

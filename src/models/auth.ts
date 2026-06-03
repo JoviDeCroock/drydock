@@ -17,6 +17,11 @@ export interface AuthSession {
 // here (signed in), on failure it appends `?error=<code>`.
 export const VERIFY_EMAIL_CALLBACK_PATH = "/verify-email";
 
+export function verificationCallbackPath(returnTo?: string): string {
+  if (!returnTo || returnTo === "/dashboard") return VERIFY_EMAIL_CALLBACK_PATH;
+  return `${VERIFY_EMAIL_CALLBACK_PATH}?returnTo=${encodeURIComponent(returnTo)}`;
+}
+
 export class AuthError extends Error {
   constructor(
     message: string,
@@ -57,24 +62,29 @@ export const SessionModel = createModel(() => {
       }
     },
 
-    async signIn(email: string, password: string): Promise<void> {
-      await authPost("/api/auth/sign-in/email", { email, password, rememberMe: true });
+    async signIn(email: string, password: string, returnTo?: string): Promise<void> {
+      await authPost("/api/auth/sign-in/email", {
+        email,
+        password,
+        rememberMe: true,
+        callbackURL: verificationCallbackPath(returnTo),
+      });
       await this.load();
     },
 
-    async signUp(name: string, email: string, password: string): Promise<void> {
+    async signUp(name: string, email: string, password: string, returnTo?: string): Promise<void> {
       await authPost("/api/auth/sign-up/email", {
         name,
         email,
         password,
-        callbackURL: VERIFY_EMAIL_CALLBACK_PATH,
+        callbackURL: verificationCallbackPath(returnTo),
       });
     },
 
-    async resendVerification(email: string): Promise<void> {
+    async resendVerification(email: string, returnTo?: string): Promise<void> {
       await authPost("/api/auth/send-verification-email", {
         email,
-        callbackURL: VERIFY_EMAIL_CALLBACK_PATH,
+        callbackURL: verificationCallbackPath(returnTo),
       });
     },
 

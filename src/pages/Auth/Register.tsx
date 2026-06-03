@@ -39,7 +39,7 @@ export default function RegisterPage() {
     loading.value = true;
     error.value = null;
     try {
-      await sessionModel.signUp(submittedName, submittedEmail, submittedPassword);
+      await sessionModel.signUp(submittedName, submittedEmail, submittedPassword, returnTo);
       // When verification is enforced sign-up does not start a session; when it
       // is not (no email transport configured) the user is already signed in.
       const session = await sessionModel.load();
@@ -62,7 +62,7 @@ export default function RegisterPage() {
     resent.value = false;
     error.value = null;
     try {
-      await sessionModel.resendVerification(target);
+      await sessionModel.resendVerification(target, returnTo);
       resent.value = true;
     } catch (err) {
       error.value = errorMessage(err);
