@@ -85,7 +85,7 @@ export function SummaryCard({
         className,
       )}
     >
-      <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">{label}</span>
+      <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">{label}</span>
       <span class={cn(valueClass[value], toneClass[tone])}>{children}</span>
     </div>
   );

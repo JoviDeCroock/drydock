@@ -295,7 +295,7 @@ function ScanFilterChips({
             onClick={() => onChange(option.value)}
             class={`font-mono text-[11px] uppercase tracking-[0.08em] px-2.5 py-1.5 rounded-md border transition-colors duration-150 ease-out cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 ${
               isActive
-                ? "bg-accent text-accent-on border-accent"
+                ? "bg-accent-soft text-accent border-accent"
                 : "bg-surface-2 text-ink-muted border-border hover:border-border-strong"
             }`}
           >
@@ -415,7 +415,7 @@ function DecisionBadge({ decision }: { decision?: string | null }) {
 
 function Th({ children }: { children: ComponentChildren }) {
   return (
-    <th class="text-left font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle px-4 py-2.5">
+    <th class="text-left font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle px-4 py-2.5">
       {children}
     </th>
   );

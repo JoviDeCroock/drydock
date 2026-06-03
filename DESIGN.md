@@ -40,17 +40,17 @@ Source of truth for visual decisions in this repo. Read this before changing fon
 
 The system has three small-text sizes (10/11/12px). They are not interchangeable — they map to specific roles, and the role determines whether `--fg-subtle` is allowed.
 
-| Size | Allowed roles                                                                                                                                                                                                   | Allowed colors                            |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| 10px | **Scanning-only:** DiffView header strip, SeverityBar legend, FileTree folder marker (`▸`), mockup-internal eyebrows (DiffMockup, etc.), gutter line numbers. Never load-bearing labels the user reads as text. | `--fg-subtle`                             |
-| 11px | **Floor for read labels:** Field labels, FindingCard rule-id, FindingRow label, mono detail line, StatusStrip eyebrow, Menu group header, OrgSwitcher annotation.                                               | `--fg-subtle` (passes AA) or `--fg-muted` |
-| 12px | **Marketing eyebrows** (`Eyebrow` component) — the only place mono is the section header above body copy. Give it presence.                                                                                     | `--fg-subtle` or `--accent`               |
+| Size | Allowed roles                                                                                                                                                                                                                                                                                                                                                                                                                                               | Allowed colors                            |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| 10px | **Scanning-only:** DiffView header strip, SeverityBar legend, FileTree folder marker (`▸`), mockup-internal eyebrows (DiffMockup, etc.), gutter line numbers. Never load-bearing labels the user reads as text.                                                                                                                                                                                                                                             | `--fg-subtle`                             |
+| 11px | **Floor for read labels:** Field labels, table column headers, metadata/definition rows (`InlineMeta`, `MetadataField`, `ChangeList` title), SummaryCard labels, FindingCard rule-id, FindingRow label, mono detail line, StatusStrip eyebrow, VersionPicker prefix, Menu group header, OrgSwitcher annotation. If the user reads it as a label, it is an 11px-floor label — including page-local copies of these patterns, not just the shared primitives. | `--fg-subtle` (passes AA) or `--fg-muted` |
+| 12px | **Marketing eyebrows** (`Eyebrow` component) — the only place mono is the section header above body copy. Give it presence.                                                                                                                                                                                                                                                                                                                                 | `--fg-subtle` or `--accent`               |
 
 **Hard rules:**
 
 - Text below 11px must not be a label the user reads — only scanning glyphs and structural metadata.
 - `--fg-subtle` is now AA-passing at all sizes (5.9:1 on `--bg`). Don't pair sub-11px text with anything lower contrast.
-- White text on `--accent` (Button primary, active nav pills) requires 14px / 500 minimum. Smaller white-on-accent text needs the secondary button variant.
+- White text on `--accent` (Button primary) requires 13px / 500 minimum — `--accent` is 4.97:1, so 13px/500 clears AA. Smaller white-on-accent controls (the view-switcher pills) use the soft-accent active treatment instead — `bg-accent-soft` + `text-accent` + accent border — never white-on-accent below 13px.
 - Severity-as-text uses the `-text` variants (`text-warn-text`, `text-ok-text`). The saturated tokens (`text-warn`, `text-ok`) are reserved for shapes — chart segments, borders, alert discs.
 
 ## Color
@@ -146,7 +146,7 @@ The marketing landing page sits on the same primitives as the app. The system _r
 - **Hero headline:** Display 1 scale (`44–56px / 600 / -0.03em / 1.05`). Max-width `760px`.
 - **Hero subhead:** body `17px / leading 1.6`, color `--fg-muted`. Max-width `620px`. This is the only place body type goes above 14px.
 - **Section gap:** marketing pages use `40–64px` between sections (vs. app surfaces' `24–32px`).
-- **Eyebrow:** marketing pages may render the section label as `mono 10px / 0.1em uppercase / --accent` (the only place mono labels use the accent color directly).
+- **Eyebrow:** marketing pages may render the section label as `mono 12px / 0.1em uppercase / --accent` (the only place mono labels use the accent color directly).
 
 ### Where it stays disciplined
 
@@ -159,7 +159,7 @@ The marketing landing page sits on the same primitives as the app. The system _r
 
 Three short Card panels in a row, each containing:
 
-- A mono `10px / 0.1em uppercase` label (`credentials`, `retention`, `approval`).
+- A mono `11px / 0.1em uppercase` label (`credentials`, `retention`, `approval`).
 - A trailing `Badge` (`ok`, `info`, `neutral`) communicating the claim's state.
 - One sentence of body copy, `13px / --fg-muted / 1.55`.
 - `min-height: 112px` so the three cards align even when copy lengths differ.
@@ -227,7 +227,7 @@ The only chart in the v1 product.
 ### Count tiles (already in code as `SummaryCard`)
 
 - Wrapper: `--surface` background, `1px --border`, `8px` radius, `12px 14px` padding, vertical `4px` gap.
-- Label: mono `10px / 0.1em uppercase / --fg-subtle`.
+- Label: mono `11px / 0.1em uppercase / --fg-subtle`.
 - Value: either `body 14px / --fg` (sentence-like values) or mono `13px / --fg` (identifiers) or `18px / 500 / -0.01em` (when the value is a number presented as a metric).
 - Tone variants: `danger`, `warn`, `ok` tint **only the value**, never the label or border.
 
@@ -315,7 +315,7 @@ Document-shaped tree, rendered with `<details>` + `<ul>`, not a custom widget.
 The canonical "labeled control with metadata" row pattern. Re-use this composition any time a control needs a mono label prefix and a mono result caption.
 
 - **Layout:** `flex flex-wrap items-center gap-3`.
-- **Prefix label:** mono `10px / 0.1em uppercase / ink-subtle` reading "Compare against" (or analogous noun phrase).
+- **Prefix label:** mono `11px / 0.1em uppercase / ink-subtle` reading "Compare against" (or analogous noun phrase).
 - **Control:** native `<select>` — never a custom combobox. `border + 6px radius`, font-mono `13px`, `min-w 200px`, padding `8px 12px`. Focus state is the standard 3px `--accent-soft` halo + accent border (matches `Input`).
 - **Result caption:** mono `11px / ink-muted` reading `→ staged X.Y.Z`. The `→` is the canonical relation glyph.
 - **Tag chips:** `Badge tone="info"` for dist-tags. Multiple tags wrap on the same line.

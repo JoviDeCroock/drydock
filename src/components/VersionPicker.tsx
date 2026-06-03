@@ -32,7 +32,7 @@ export function VersionPicker({
 
   return (
     <div class="flex flex-wrap items-center gap-3">
-      <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+      <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
         Compare against
       </span>
       <div class="relative inline-block">
