@@ -13,6 +13,9 @@ export default function RegisterPage() {
   const password = useSignal("");
   const error = useSignal<string | null>(null);
   const loading = useSignal(false);
+  const verificationSentTo = useSignal<string | null>(null);
+  const resending = useSignal(false);
+  const resent = useSignal(false);
   const returnTo = normalizeAuthReturnTo(location.query.returnTo);
   const signInHref =
     returnTo === "/dashboard" ? "/login" : `/login?returnTo=${encodeURIComponent(returnTo)}`;
@@ -36,15 +39,66 @@ export default function RegisterPage() {
     loading.value = true;
     error.value = null;
     try {
-      await sessionModel.signUp(submittedName, submittedEmail, submittedPassword);
-      await sessionModel.signIn(submittedEmail, submittedPassword).catch(() => undefined);
-      location.route(returnTo, true);
+      await sessionModel.signUp(submittedName, submittedEmail, submittedPassword, returnTo);
+      // When verification is enforced sign-up does not start a session; when it
+      // is not (no email transport configured) the user is already signed in.
+      const session = await sessionModel.load();
+      if (session?.user) {
+        location.route(returnTo, true);
+        return;
+      }
+      verificationSentTo.value = submittedEmail;
     } catch (err) {
       error.value = errorMessage(err);
     } finally {
       loading.value = false;
     }
   };
+
+  const onResend = async () => {
+    const target = verificationSentTo.value;
+    if (!target) return;
+    resending.value = true;
+    resent.value = false;
+    error.value = null;
+    try {
+      await sessionModel.resendVerification(target, returnTo);
+      resent.value = true;
+    } catch (err) {
+      error.value = errorMessage(err);
+    } finally {
+      resending.value = false;
+    }
+  };
+
+  if (verificationSentTo.value) {
+    return (
+      <PageShell width="narrow">
+        <Card class="flex flex-col gap-4">
+          <Eyebrow>Almost there</Eyebrow>
+          <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Check your email</h1>
+          <Alert tone="info">
+            We sent a verification link to {verificationSentTo.value}. Open it to activate your
+            account.
+          </Alert>
+          <Muted class="text-[13px] m-0">
+            The link expires in 24 hours. Check your spam folder if it doesn't arrive.
+          </Muted>
+
+          {error.value ? <Alert tone="critical">{error.value}</Alert> : null}
+          {resent.value ? <Alert tone="ok">We sent another verification link.</Alert> : null}
+
+          <Button variant="secondary" disabled={resending.value} onClick={onResend}>
+            {resending.value ? "Resending…" : "Resend verification email"}
+          </Button>
+
+          <p class="text-[13px] text-ink-muted m-0">
+            Already verified? <a href={signInHref}>Sign in</a>
+          </p>
+        </Card>
+      </PageShell>
+    );
+  }
 
   return (
     <PageShell width="narrow">
@@ -82,7 +136,7 @@ export default function RegisterPage() {
               type="password"
               value={password}
               autocomplete="new-password"
-              minlength={8}
+              minlength={12}
               required
               onInput={(e) => (password.value = (e.target as HTMLInputElement).value)}
             />
