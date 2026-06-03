@@ -203,6 +203,23 @@ export default function DocsPage() {
             </Prose>
           </Subsection>
 
+          <Subsection title="Monorepo releases">
+            <Prose>
+              One workflow run can publish several distinct packages — a monorepo cutting many
+              wheels and sdists at once. Drydock groups the uploaded artifacts by package identity
+              and fans the gate out into one review per package, each diffed against its own
+              previously-published baseline. A release target left without a pinned ecosystem
+              auto-detects each package's ecosystem from its artifacts, so a single gate can cover
+              every package the environment publishes.
+            </Prose>
+            <Prose>
+              The held deployment is released only once every discovered package is individually
+              approved; rejecting any single package blocks the whole release. The review workbench
+              lists the package roster, tracks how many are approved, and links each package to its
+              own diff-first review.
+            </Prose>
+          </Subsection>
+
           <Subsection title="Workflow shape">
             <CodeBlock name=".github/workflows/release.yml">
               {`jobs:
@@ -256,16 +273,18 @@ export default function DocsPage() {
                 </>,
                 <>
                   Drydock derives the release set from the uploaded bundle, recomputes each
-                  artifact's sha256, runs the scan pipeline, and records an advisory recommendation.
-                  The review never posts to GitHub — it leaves the gate <Code>pending</Code> and
-                  hands off to a human.
+                  artifact's sha256, and runs the scan pipeline — one review per discovered package,
+                  each against its own baseline — recording an advisory recommendation. The review
+                  never posts to GitHub — it leaves the gate <Code>pending</Code> and hands off to a
+                  human.
                 </>,
                 <>
                   A maintainer opens the review in the diff-first workbench at{" "}
-                  <Code>/dashboard/scans/:id</Code> and approves or rejects. Only that decision is
-                  posted back to GitHub, releasing or blocking the held publish job. A bundle whose
-                  artifacts can't be verified is auto-rejected fail-closed — no human is needed to
-                  block something Drydock can't identify.
+                  <Code>/dashboard/scans/:id</Code> and approves or rejects each package. The held
+                  publish job is released only once every package is approved, and blocked the
+                  moment any one is rejected — only that final decision is posted back to GitHub. A
+                  bundle whose artifacts can't be verified is auto-rejected fail-closed — no human
+                  is needed to block something Drydock can't identify.
                 </>,
                 <>
                   The decision callback hits{" "}
