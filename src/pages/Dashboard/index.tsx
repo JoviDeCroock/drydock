@@ -436,7 +436,7 @@ function ScanFreshnessIndicator({ at }: { at: number }) {
   const label = `scanned ${formatRelativeTime(at, now.value)}`;
   return (
     <span
-      class="font-mono text-[14px] leading-none text-ok cursor-help select-none"
+      class="font-mono text-[14px] leading-none text-ok-text cursor-help select-none"
       title={label}
       aria-label={label}
     >

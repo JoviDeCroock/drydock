@@ -13,20 +13,24 @@
   --color-border-strong: #d6d3d1;
   --color-ink: #18181b;
   --color-ink-muted: #57534e;
-  --color-ink-subtle: #a8a29e;
+  --color-ink-subtle: #6b6660;
 
-  --color-accent: #ea580c;
-  --color-accent-hover: #c2410c;
+  --color-accent: #c2410c;
+  --color-accent-hover: #9a3412;
   --color-accent-soft: #fff7ed;
   --color-accent-on: #ffffff;
 
   --color-danger: #dc2626;
+  --color-danger-text: #dc2626;
   --color-danger-soft: #fee2e2;
   --color-warn: #d97706;
+  --color-warn-text: #b45309;
   --color-warn-soft: #fef3c7;
   --color-info: #2563eb;
+  --color-info-text: #2563eb;
   --color-info-soft: #dbeafe;
   --color-ok: #16a34a;
+  --color-ok-text: #15803d;
   --color-ok-soft: #dcfce7;
 
   --shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.04);
@@ -61,12 +65,16 @@
     --color-accent-on: #18181b;
 
     --color-danger: #f87171;
+    --color-danger-text: #f87171;
     --color-danger-soft: rgba(239, 68, 68, 0.14);
     --color-warn: #fbbf24;
+    --color-warn-text: #fbbf24;
     --color-warn-soft: rgba(251, 191, 36, 0.14);
     --color-info: #60a5fa;
+    --color-info-text: #60a5fa;
     --color-info-soft: rgba(96, 165, 250, 0.14);
     --color-ok: #4ade80;
+    --color-ok-text: #4ade80;
     --color-ok-soft: rgba(74, 222, 128, 0.14);
 
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);

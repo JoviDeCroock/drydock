@@ -213,11 +213,11 @@ function TreeRow({
 }) {
   const toneClass =
     tone === "added"
-      ? "text-ok"
+      ? "text-ok-text"
       : tone === "removed"
-        ? "text-danger"
+        ? "text-danger-text"
         : tone === "modified"
-          ? "text-warn"
+          ? "text-warn-text"
           : tone === "mixed"
             ? "text-accent"
             : "text-ink-muted";

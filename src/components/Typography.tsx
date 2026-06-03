@@ -14,7 +14,7 @@ export function Eyebrow({
   return (
     <p
       class={cn(
-        "font-mono text-[11px] uppercase tracking-[0.1em] m-0",
+        "font-mono text-[12px] uppercase tracking-[0.1em] m-0",
         tone === "accent" ? "text-accent" : "text-ink-subtle",
         className,
       )}

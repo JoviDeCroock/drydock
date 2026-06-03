@@ -59,10 +59,10 @@ const valueClass: Record<SummaryCardValue, string> = {
 
 const toneClass: Record<SummaryCardTone, string> = {
   default: "text-ink",
-  danger: "text-danger",
-  warn: "text-warn",
-  ok: "text-ok",
-  info: "text-info",
+  danger: "text-danger-text",
+  warn: "text-warn-text",
+  ok: "text-ok-text",
+  info: "text-info-text",
 };
 
 export function SummaryCard({

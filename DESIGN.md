@@ -36,22 +36,39 @@ Source of truth for visual decisions in this repo. Read this before changing fon
 | Mono code        | 13px             | 400/500 | 0              | 1.5         |
 | Mono label       | 11px (uppercase) | 500     | 0.1em          | 1.4         |
 
+### Minimum size + contrast rules
+
+The system has three small-text sizes (10/11/12px). They are not interchangeable — they map to specific roles, and the role determines whether `--fg-subtle` is allowed.
+
+| Size | Allowed roles                                                                                                                                                                                                   | Allowed colors                            |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| 10px | **Scanning-only:** DiffView header strip, SeverityBar legend, FileTree folder marker (`▸`), mockup-internal eyebrows (DiffMockup, etc.), gutter line numbers. Never load-bearing labels the user reads as text. | `--fg-subtle`                             |
+| 11px | **Floor for read labels:** Field labels, FindingCard rule-id, FindingRow label, mono detail line, StatusStrip eyebrow, Menu group header, OrgSwitcher annotation.                                               | `--fg-subtle` (passes AA) or `--fg-muted` |
+| 12px | **Marketing eyebrows** (`Eyebrow` component) — the only place mono is the section header above body copy. Give it presence.                                                                                     | `--fg-subtle` or `--accent`               |
+
+**Hard rules:**
+
+- Text below 11px must not be a label the user reads — only scanning glyphs and structural metadata.
+- `--fg-subtle` is now AA-passing at all sizes (5.9:1 on `--bg`). Don't pair sub-11px text with anything lower contrast.
+- White text on `--accent` (Button primary, active nav pills) requires 14px / 500 minimum. Smaller white-on-accent text needs the secondary button variant.
+- Severity-as-text uses the `-text` variants (`text-warn-text`, `text-ok-text`). The saturated tokens (`text-warn`, `text-ok`) are reserved for shapes — chart segments, borders, alert discs.
+
 ## Color
 
 - **Approach:** Restrained. One brand accent for action, severity colors do the rest. Light and dark are both first-class — auto-follow `prefers-color-scheme` by default.
 
 ### Light mode (default surface)
 
-| Token             | Hex       | Usage                                |
-| ----------------- | --------- | ------------------------------------ |
-| `--bg`            | `#fafaf9` | Page background (warm paper-ish)     |
-| `--bg-elev`       | `#ffffff` | Cards, inputs                        |
-| `--bg-elev-2`     | `#f4f4f5` | Secondary surfaces, button-secondary |
-| `--border`        | `#e7e5e4` | Default borders                      |
-| `--border-strong` | `#d6d3d1` | Hover borders, dividers              |
-| `--fg`            | `#18181b` | Primary text                         |
-| `--fg-muted`      | `#57534e` | Secondary text                       |
-| `--fg-subtle`     | `#a8a29e` | Tertiary text, labels                |
+| Token             | Hex       | Contrast on `--bg` | Usage                                |
+| ----------------- | --------- | ------------------ | ------------------------------------ |
+| `--bg`            | `#fafaf9` | —                  | Page background (warm paper-ish)     |
+| `--bg-elev`       | `#ffffff` | —                  | Cards, inputs                        |
+| `--bg-elev-2`     | `#f4f4f5` | —                  | Secondary surfaces, button-secondary |
+| `--border`        | `#e7e5e4` | —                  | Default borders                      |
+| `--border-strong` | `#d6d3d1` | —                  | Hover borders, dividers              |
+| `--fg`            | `#18181b` | 16.5:1 (AAA)       | Primary text                         |
+| `--fg-muted`      | `#57534e` | 7.5:1 (AAA)        | Secondary text                       |
+| `--fg-subtle`     | `#6b6660` | 5.9:1 (AA)         | Tertiary text, mono labels           |
 
 ### Dark mode
 
@@ -68,25 +85,35 @@ Source of truth for visual decisions in this repo. Read this before changing fon
 
 ### Accent (brand action)
 
-| Token            | Light                  | Dark                       | Usage                                                |
-| ---------------- | ---------------------- | -------------------------- | ---------------------------------------------------- |
-| `--accent`       | `#ea580c` (orange-600) | `#fb923c` (orange-400)     | Primary buttons, focus rings, active nav, brand mark |
-| `--accent-hover` | `#c2410c`              | `#fdba74`                  | Hover state                                          |
-| `--accent-soft`  | `#fff7ed`              | `rgba(251, 146, 60, 0.12)` | Focus ring background, soft fills                    |
-| `--accent-on`    | `#ffffff`              | `#18181b`                  | Text on accent background                            |
+| Token            | Light                  | Dark                       | Usage                                                             |
+| ---------------- | ---------------------- | -------------------------- | ----------------------------------------------------------------- |
+| `--accent`       | `#c2410c` (orange-700) | `#fb923c` (orange-400)     | Primary buttons, focus rings, active nav, brand mark, accent text |
+| `--accent-hover` | `#9a3412` (orange-800) | `#fdba74`                  | Hover state                                                       |
+| `--accent-soft`  | `#fff7ed`              | `rgba(251, 146, 60, 0.12)` | Focus ring background, soft fills                                 |
+| `--accent-on`    | `#ffffff`              | `#18181b`                  | Text on accent background                                         |
 
 **Why orange, not purple:** Every peer security tool (Socket, Snyk, Aikido) leans on violet. Orange differentiates without sacrificing the "caution / pre-flight" connotation. It is _not_ a severity color — severity stays red/amber/blue/green.
 
+**Why orange-700, not orange-600:** Orange-600 (`#ea580c`) only gave 3.58:1 contrast for white text on the accent button and 3.5:1 for `text-accent` on `--bg` — both failing WCAG AA. Orange-700 reaches 4.97:1 in both roles. A single accent token now covers both surface and text use without splitting roles. The brand still reads as confident orange.
+
 ### Severity (semantic)
 
-| Token      | Light     | Dark      | Soft (light / dark)                    | Usage               |
-| ---------- | --------- | --------- | -------------------------------------- | ------------------- |
-| `--danger` | `#dc2626` | `#f87171` | `#fee2e2` / `rgba(239, 68, 68, 0.14)`  | Critical, High      |
-| `--warn`   | `#d97706` | `#fbbf24` | `#fef3c7` / `rgba(251, 191, 36, 0.14)` | Medium              |
-| `--info`   | `#2563eb` | `#60a5fa` | `#dbeafe` / `rgba(96, 165, 250, 0.14)` | Low, Info           |
-| `--ok`     | `#16a34a` | `#4ade80` | `#dcfce7` / `rgba(74, 222, 128, 0.14)` | Passed, no findings |
+Severity has a **two-role split**: a saturated token for shapes (chart bars, badge fills, alert discs, borders) and a darker `*-text` variant for text-on-bg readability. In dark mode the variants are identical because the saturated colors already pass AAA on dark surfaces.
+
+| Token           | Light                | Dark      | Soft (light / dark)                    | Usage                                                                         |
+| --------------- | -------------------- | --------- | -------------------------------------- | ----------------------------------------------------------------------------- |
+| `--danger`      | `#dc2626`            | `#f87171` | `#fee2e2` / `rgba(239, 68, 68, 0.14)`  | Critical/High shapes — chart segments, alert disc, border                     |
+| `--danger-text` | `#dc2626` (5.4:1 AA) | `#f87171` | —                                      | Critical/High as text (Badge/Alert/SummaryCard tone, status text)             |
+| `--warn`        | `#d97706`            | `#fbbf24` | `#fef3c7` / `rgba(251, 191, 36, 0.14)` | Medium shapes                                                                 |
+| `--warn-text`   | `#b45309` (4.9:1 AA) | `#fbbf24` | —                                      | Medium as text (darker amber so labels pass AA on white and on `--warn-soft`) |
+| `--info`        | `#2563eb`            | `#60a5fa` | `#dbeafe` / `rgba(96, 165, 250, 0.14)` | Low/Info shapes                                                               |
+| `--info-text`   | `#2563eb` (5.8:1 AA) | `#60a5fa` | —                                      | Low/Info as text                                                              |
+| `--ok`          | `#16a34a`            | `#4ade80` | `#dcfce7` / `rgba(74, 222, 128, 0.14)` | Passed/no-findings shapes                                                     |
+| `--ok-text`     | `#15803d` (4.5:1 AA) | `#4ade80` | —                                      | Passed as text (darker green so labels pass AA on white and on `--ok-soft`)   |
 
 **Rule:** Severity colors are reserved for severity meaning. Never use red for a decorative accent, never use the orange accent to flag a finding. Color = signal.
+
+**Role rule:** Use the saturated token (`--warn`, `--ok`, …) for **shapes** — chart segments, badge fills, alert discs, alert borders. Use the `-text` variant (`--warn-text`, `--ok-text`, …) for **text** — Badge/Alert/SummaryCard text, status glyphs, FileTree status names. Tailwind: `text-warn-text` not `text-warn`, `bg-warn-soft` not `bg-warn-soft-text`. The split exists because saturated amber and green fail WCAG AA as text on white (3.8:1 and 3.0:1); the `-text` variants pass.
 
 ### Dark mode strategy
 
@@ -297,6 +324,9 @@ The canonical "labeled control with metadata" row pattern. Re-use this compositi
 ## Anti-patterns — do not introduce
 
 - Violet/purple as the primary accent. The previous `--accent: #7c5cff` is retired.
+- **Orange-600 (`#ea580c`) as the accent token.** The accent moved to orange-700 (`#c2410c`) so white text on the Button primary and `text-accent` body copy both clear WCAG AA. Going back to orange-600 re-breaks both.
+- **Saturated severity tokens (`text-warn`, `text-ok`) as text colors.** They fail AA on white (3.8:1 and 3.0:1). Use the `-text` variants. The saturated tokens belong on chart segments, alert discs, and borders.
+- **Sub-11px text used as a label.** 10px is reserved for scanning glyphs and structural metadata (DiffView header, SeverityBar legend, FileTree marker, gutter line numbers, mockup-internal eyebrows). If a user reads it as a labeled value, the floor is 11px.
 - Gradient buttons or gradient hero backgrounds.
 - Bubbly border-radius (`9999px`) on badges or buttons.
 - Icon-in-colored-circle three-column feature grids.
@@ -312,15 +342,16 @@ The canonical "labeled control with metadata" row pattern. Re-use this compositi
 
 ## Decisions Log
 
-| Date       | Decision                                                                                          | Rationale                                                                                                                                                                                                                                                                                                               |
-| ---------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-05-21 | Initial design system created via `/design-consultation`.                                         | Replaces ad-hoc `src/style.css` palette. Moves brand off the SaaS-default violet, makes Geist + Geist Mono official, and locks severity semantics so they cannot drift.                                                                                                                                                 |
-| 2026-05-21 | Accent: orange `#ea580c` over violet.                                                             | Differentiates from Socket/Snyk/Aikido violet convergence; preserves "caution / pre-flight" semantics; non-overlapping with severity colors.                                                                                                                                                                            |
-| 2026-05-21 | Light is the default surface; dark is first-class via `prefers-color-scheme`.                     | Auto-mode chosen by user. Both modes must be designed, not derived.                                                                                                                                                                                                                                                     |
-| 2026-05-21 | Squarish badges (3px), not pills.                                                                 | Echoes terminal/document feel. Pill badges read as SaaS-generic.                                                                                                                                                                                                                                                        |
-| 2026-05-21 | Specced DiffView, FileTree, VersionPicker.                                                        | New components shipped without DESIGN.md coverage; locked in mono-label conventions, severity-soft row fills, native `<select>` for version picking, and document-shaped tree styling so future contributors don't drift.                                                                                               |
-| 2026-05-21 | Marketing surfaces extend the system; status strip is the canonical headline unit.                | Same primitives as the app, with hero-only relaxations (17px subhead, wider section gaps, accent-tinted eyebrow). Status strip carries from dashboard to marketing so visitors stay oriented.                                                                                                                           |
-| 2026-05-21 | Zero SVG icons; text glyphs only.                                                                 | Risk taken deliberately: type and severity color carry identity. Allowed-glyph list closes the gap so contributors have a clear alternative to reaching for an icon library. The Alert disc is the only exception.                                                                                                      |
-| 2026-05-21 | One chart pattern (severity stacked bar) for v1; sparkline reserved for future.                   | Avoids dashboard fatigue and keeps the product document-shaped. Solid severity tokens belong to charts; soft tokens stay for rows/Badges/Alerts — color = signal, never mixed roles.                                                                                                                                    |
-| 2026-05-21 | State patterns codified (empty / loading inline / loading full / async / recoverable / blocking). | Per-page improvisation removed: mono sizes, copy rules, and trigger conditions now explicit. No spinners, no skeleton bones — `Muted` lines and pulsing counters only.                                                                                                                                                  |
-| 2026-05-30 | DiffView syntax highlighting via a restrained `--sh-*` palette.                                   | Wanted readable code diffs without breaking "color = signal." Structure rides the ink scale; one muted teal marks strings; severity hues and the orange accent are off-limits as token colors so the green/red row fills stay the only saturated signal. shiki tokenizes client-side, lazy-loaded, plain-text fallback. |
+| Date       | Decision                                                                                                                                                    | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-05-21 | Initial design system created via `/design-consultation`.                                                                                                   | Replaces ad-hoc `src/style.css` palette. Moves brand off the SaaS-default violet, makes Geist + Geist Mono official, and locks severity semantics so they cannot drift.                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 2026-05-21 | Accent: orange `#ea580c` over violet.                                                                                                                       | Differentiates from Socket/Snyk/Aikido violet convergence; preserves "caution / pre-flight" semantics; non-overlapping with severity colors.                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 2026-05-21 | Light is the default surface; dark is first-class via `prefers-color-scheme`.                                                                               | Auto-mode chosen by user. Both modes must be designed, not derived.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 2026-05-21 | Squarish badges (3px), not pills.                                                                                                                           | Echoes terminal/document feel. Pill badges read as SaaS-generic.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 2026-05-21 | Specced DiffView, FileTree, VersionPicker.                                                                                                                  | New components shipped without DESIGN.md coverage; locked in mono-label conventions, severity-soft row fills, native `<select>` for version picking, and document-shaped tree styling so future contributors don't drift.                                                                                                                                                                                                                                                                                                                                                                              |
+| 2026-05-21 | Marketing surfaces extend the system; status strip is the canonical headline unit.                                                                          | Same primitives as the app, with hero-only relaxations (17px subhead, wider section gaps, accent-tinted eyebrow). Status strip carries from dashboard to marketing so visitors stay oriented.                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 2026-05-21 | Zero SVG icons; text glyphs only.                                                                                                                           | Risk taken deliberately: type and severity color carry identity. Allowed-glyph list closes the gap so contributors have a clear alternative to reaching for an icon library. The Alert disc is the only exception.                                                                                                                                                                                                                                                                                                                                                                                     |
+| 2026-05-21 | One chart pattern (severity stacked bar) for v1; sparkline reserved for future.                                                                             | Avoids dashboard fatigue and keeps the product document-shaped. Solid severity tokens belong to charts; soft tokens stay for rows/Badges/Alerts — color = signal, never mixed roles.                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 2026-05-21 | State patterns codified (empty / loading inline / loading full / async / recoverable / blocking).                                                           | Per-page improvisation removed: mono sizes, copy rules, and trigger conditions now explicit. No spinners, no skeleton bones — `Muted` lines and pulsing counters only.                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 2026-05-30 | DiffView syntax highlighting via a restrained `--sh-*` palette.                                                                                             | Wanted readable code diffs without breaking "color = signal." Structure rides the ink scale; one muted teal marks strings; severity hues and the orange accent are off-limits as token colors so the green/red row fills stay the only saturated signal. shiki tokenizes client-side, lazy-loaded, plain-text fallback.                                                                                                                                                                                                                                                                                |
+| 2026-06-03 | Light-mode contrast pass: `--fg-subtle` darkened, accent shifted to orange-700, severity text split into `*-text` variants, small-text size floor codified. | The system's signature treatment (mono detail line, mono labels) was rendered in `--fg-subtle` `#a8a29e` — 2.4:1 contrast, well below WCAG AA. White text on `--accent` `#ea580c` and `text-accent` body both failed AA (3.5–3.6:1). Light-mode `text-warn` and `text-ok` failed AA on white. The pass darkens `--fg-subtle` to `#6b6660` (5.9:1), unifies the accent at orange-700 `#c2410c` (4.97:1 in both surface and text roles), adds `--*-text` severity variants for text-on-bg use, and codifies the 10/11/12px role split so future contributors keep load-bearing labels at the 11px floor. |

@@ -37,7 +37,7 @@ export function StatusStripItem({
       )}
     >
       <div class="flex items-center justify-between gap-3">
-        <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+        <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
           {label}
         </span>
         <Badge tone={tone}>{status}</Badge>
