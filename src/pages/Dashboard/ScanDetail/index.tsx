@@ -1,9 +1,16 @@
+import type { ComponentProps } from "preact";
 import { useEffect } from "preact/hooks";
-import { useComputed, useModel, useSignal, useSignalEffect } from "@preact/signals";
+import {
+  type ReadonlySignal,
+  useComputed,
+  useModel,
+  useSignal,
+  useSignalEffect,
+} from "@preact/signals";
 import { useLocation, useRoute } from "preact-iso";
 import { useQuerySignal } from "../../../lib/query-state";
 import { sessionModel } from "../../../models/auth";
-import { ScanDetailModel, type ScanDecision } from "../../../models/scan";
+import { ScanDetailModel, type DecisionStatus, type ScanDecision } from "../../../models/scan";
 import type { WorkflowGateDecision } from "../../../models/github-app";
 import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review-types";
 import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
@@ -321,31 +328,78 @@ export default function ScanDetailPage() {
       ) : null}
 
       {detail && detail.scan.status === "complete" && !isWorkflowGate ? (
-        <DecisionDialog
-          open={decisionDialogOpen.value}
+        <DecisionDialogHost
+          openSignal={decisionDialogOpen}
           onClose={() => (decisionDialogOpen.value = false)}
           decision={detail.scan.decision}
           decisionReason={detail.scan.decisionReason}
           decidedAt={detail.scan.decidedAt}
-          status={model.decisionStatus.value}
-          error={model.decisionError.value}
+          statusSignal={model.decisionStatus}
+          errorSignal={model.decisionError}
           onSubmit={handleDecisionSubmit}
         />
       ) : null}
 
       {detail && isWorkflowGate && gate ? (
-        <GateDecisionDialog
-          open={gateDialogOpen.value}
+        <GateDialogHost
+          openSignal={gateDialogOpen}
           onClose={() => (gateDialogOpen.value = false)}
           gate={gate}
           packageName={detail.scan.packageName}
-          status={model.gateDecisionStatus.value}
-          error={model.gateDecisionError.value}
+          statusSignal={model.gateDecisionStatus}
+          errorSignal={model.gateDecisionError}
           canApprove={detail.scan.status === "complete"}
           onSubmit={handleGateDecision}
         />
       ) : null}
     </PageShell>
+  );
+}
+
+// The dialog's reactive inputs (open/status/error) are read as signals inside
+// these thin hosts rather than in ScanDetailPage's body. Reading `.value` here
+// subscribes only the host, so opening the dialog and the save round-trip
+// (idle → saving → idle/error) re-render the dialog alone — not the whole page,
+// which includes the risk-signals list (one card per finding, thousands for a
+// large package). Reading any of these in the page body re-renders that list
+// synchronously and freezes the main thread for seconds.
+function DecisionDialogHost({
+  openSignal,
+  statusSignal,
+  errorSignal,
+  ...props
+}: Omit<ComponentProps<typeof DecisionDialog>, "open" | "status" | "error"> & {
+  openSignal: ReadonlySignal<boolean>;
+  statusSignal: ReadonlySignal<DecisionStatus>;
+  errorSignal: ReadonlySignal<string | null>;
+}) {
+  return (
+    <DecisionDialog
+      open={openSignal.value}
+      status={statusSignal.value}
+      error={errorSignal.value}
+      {...props}
+    />
+  );
+}
+
+function GateDialogHost({
+  openSignal,
+  statusSignal,
+  errorSignal,
+  ...props
+}: Omit<ComponentProps<typeof GateDecisionDialog>, "open" | "status" | "error"> & {
+  openSignal: ReadonlySignal<boolean>;
+  statusSignal: ReadonlySignal<DecisionStatus>;
+  errorSignal: ReadonlySignal<string | null>;
+}) {
+  return (
+    <GateDecisionDialog
+      open={openSignal.value}
+      status={statusSignal.value}
+      error={errorSignal.value}
+      {...props}
+    />
   );
 }
 
