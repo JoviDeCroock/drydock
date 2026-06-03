@@ -103,7 +103,6 @@ export const MAX_AGENT_STEPS = 20;
 // cap it would truncate mid-JSON, fail schema validation, and silently degrade
 // to an `invalid` review — so loosening the schema bounds means raising this.
 export const MAX_REVIEW_OUTPUT_TOKENS = 8_000;
-export const MAX_INITIAL_PACKAGE_JSON_CHARS = 6_000;
 export const MAX_CHANGED_FILE_MANIFEST = 300;
 export const MAX_TOOL_RESPONSE_CHARS = 16_000;
 export const MAX_TOTAL_TOOL_RESPONSE_CHARS = 48_000;

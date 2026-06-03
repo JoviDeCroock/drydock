@@ -172,13 +172,32 @@ describe("AI review evidence tools", () => {
     }
   });
 
-  test("describes package-json-referenced evidence in the initial payload policy", () => {
+  test("trims the initial payload to drop dead input tokens", () => {
     const payload = buildAiReviewPayload(reviewOptions());
 
-    expect(payload.toolPolicy.toolsMayRead).toContain(
-      "manifest-referenced script/entrypoint files",
-    );
+    // Tool policy carries only the numeric budgets; the prose duplicated the
+    // system prompt and tool descriptions.
+    expect(payload.toolPolicy).toEqual({
+      maxToolResponseChars: expect.any(Number),
+      maxTotalToolResponseChars: expect.any(Number),
+    });
+
+    // One file list, not two: the diff list is gone and the manifest subsumes it.
+    expect(payload).not.toHaveProperty("changedFileDiff");
     expect(payload.changedFileManifest.map((entry) => entry.path)).toEqual(["package.json"]);
+
+    const entry = payload.changedFileManifest[0];
+    // SHA256 is input-token noise an LLM can't reason over.
+    expect(entry).not.toHaveProperty("sha256");
+    // The byte-size delta the diff list carried lives on the manifest entry.
+    expect(typeof entry.previousSize).toBe("number");
+    expect(typeof entry.stagedSize).toBe("number");
+    expect(entry.signals).toContain("diff:modified");
+
+    // The package.json pointer no longer inlines a multi-KB text sample or hash;
+    // the model reads it on demand.
+    expect(payload.packageJson).not.toHaveProperty("textSample");
+    expect(payload.packageJson).not.toHaveProperty("sha256");
   });
 
   test("labels PyPI review payloads with the ecosystem-specific task", () => {
@@ -215,5 +234,12 @@ describe("AI review evidence tools", () => {
     expect(payload.task).toContain("PyPI release candidate");
     expect(payload.task).toContain("workflow gate");
     expect(payload.packageJson).toBeNull();
+
+    // An added file has no previous side, so previousSize is omitted from the
+    // serialized payload the model actually receives.
+    const added = JSON.parse(JSON.stringify(payload)).changedFileManifest[0];
+    expect(added.status).toBe("added");
+    expect(added).not.toHaveProperty("previousSize");
+    expect(added.stagedSize).toBe(53);
   });
 });
