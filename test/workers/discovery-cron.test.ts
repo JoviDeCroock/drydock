@@ -1,8 +1,10 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { eq } from "drizzle-orm";
 import {
   createDb,
   ensurePersonalOrganization,
+  getNpmConnection,
   updateNpmConnectionValidation,
   upsertNpmConnection,
 } from "../../server/db";
@@ -70,6 +72,14 @@ function authHeader(input: Request | string | URL, init?: RequestInit): string |
   return headers.get("authorization");
 }
 
+async function eventTypesForOrg(organizationId: string): Promise<string[]> {
+  const rows = await createDb(env.DB)
+    .select({ type: schema.scanEvents.type })
+    .from(schema.scanEvents)
+    .where(eq(schema.scanEvents.organizationId, organizationId));
+  return rows.map((row) => row.type);
+}
+
 describe("staged publishes discovery cron", () => {
   // The cron sweeps every eligible connection in the database, so a prior
   // test's seeded connections would otherwise be picked up here. Clear them so
@@ -83,7 +93,7 @@ describe("staged publishes discovery cron", () => {
     vi.restoreAllMocks();
   });
 
-  test("queues the valid org, records a per-org failure for the expired org, and skips the disabled org", async () => {
+  test("queues the valid org, alerts the expired org, and skips the disabled org", async () => {
     // (a) live token + discovery on, (b) token that now 401s + discovery on,
     // (c) discovery off. There is no separate auto-discovery flag: the sweep
     // queries connections whose validationStatus is valid/unvalidated, so a
@@ -127,10 +137,11 @@ describe("staged publishes discovery cron", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const queue = { send: vi.fn(async () => undefined) };
+    const send = vi.fn(async () => undefined);
     const ctx = createExecutionContext();
     await worker.scheduled(
       scheduledController(),
-      { ...env, SCAN_QUEUE: queue } as unknown as Cloudflare.Env,
+      { ...env, SCAN_QUEUE: queue, SEND_EMAIL: { send } } as unknown as Cloudflare.Env,
       ctx,
     );
     await waitOnExecutionContext(ctx);
@@ -146,28 +157,72 @@ describe("staged publishes discovery cron", () => {
       source: "auto_discovery",
     });
 
-    // (b) expired token: structured per-org failure event, no crash.
-    const failureCall = errorSpy.mock.calls.find(
-      (call) => call[0] === "staged publishes cron sweep failed for organization",
+    // (b) expired token: marked invalid, audited, and the maintainer emailed —
+    // not a silent skip. No unhandled crash logged.
+    const orgBConnection = await getNpmConnection(createDb(env.DB), orgB.organizationId);
+    expect(orgBConnection?.validationStatus).toBe("invalid");
+    const orgBEvents = await eventTypesForOrg(orgB.organizationId);
+    expect(orgBEvents).toContain("npm_connection.token_expired");
+    expect(orgBEvents).toContain("npm_connection.notification_sent");
+    expect(send).toHaveBeenCalledTimes(1);
+    const genericFailureForOrgB = errorSpy.mock.calls.find(
+      (call) =>
+        call[0] === "staged publishes cron sweep failed for organization" &&
+        (call[1] as { organizationId?: string })?.organizationId === orgB.organizationId,
     );
-    expect(failureCall).toBeDefined();
-    expect(failureCall![1]).toMatchObject({
-      organizationId: orgB.organizationId,
-      error: { status: 401 },
-    });
+    expect(genericFailureForOrgB).toBeUndefined();
 
-    // (c) never queued nor errored.
+    // (c) never queued, errored, nor emailed.
     for (const call of queue.send.mock.calls) {
       expect(call[0]).not.toMatchObject({ organizationId: orgC.organizationId });
     }
-    for (const call of errorSpy.mock.calls) {
-      expect(call[1]).not.toMatchObject({ organizationId: orgC.organizationId });
-    }
+    expect(await eventTypesForOrg(orgC.organizationId)).toHaveLength(0);
 
     // Sweep finished cleanly over the two eligible orgs.
     const sweptCall = logSpy.mock.calls.find((call) => call[0] === "staged_publishes.cron.swept");
     expect(sweptCall).toBeDefined();
     expect(sweptCall![1]).toMatchObject({ orgsProcessed: 2 });
+  });
+
+  test("logs a generic per-org failure for a non-auth registry error without alerting", async () => {
+    // A 500 from the registry is transient infrastructure, not an expired token:
+    // the connection must stay valid (so the next sweep retries it) and no
+    // maintenance email goes out.
+    const org = await seedOrg({
+      index: 0,
+      token: "npm_valid_aaaaaaaaaaaa",
+      validationStatus: "valid",
+    });
+
+    const fetchMock = vi.fn(async () => new Response("upstream boom", { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const send = vi.fn(async () => undefined);
+    const ctx = createExecutionContext();
+    await worker.scheduled(
+      scheduledController(),
+      { ...env, SEND_EMAIL: { send } } as unknown as Cloudflare.Env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    const failureCall = errorSpy.mock.calls.find(
+      (call) => call[0] === "staged publishes cron sweep failed for organization",
+    );
+    expect(failureCall).toBeDefined();
+    expect(failureCall![1]).toMatchObject({
+      organizationId: org.organizationId,
+      error: { status: 500 },
+    });
+
+    const connection = await getNpmConnection(createDb(env.DB), org.organizationId);
+    expect(connection?.validationStatus).toBe("valid");
+    expect(send).not.toHaveBeenCalled();
+    expect(await eventTypesForOrg(org.organizationId)).not.toContain(
+      "npm_connection.token_expired",
+    );
   });
 
   test("dispatches an auto-discovery email for the valid org", async () => {

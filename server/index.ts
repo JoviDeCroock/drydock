@@ -27,7 +27,8 @@ import { executeWorkflowGateJob } from "./lib/workflow-gate-job";
 import {
   discoverAndQueueStagedPublishes,
   ensureUsableNpmConnection,
-  InvalidNpmConnectionError,
+  isNpmConnectionAuthFailure,
+  recordExpiredNpmConnection,
   StagedPublishesFetchError,
 } from "./lib/staged-publishes-discovery";
 import { githubAppRoutes } from "./routes/github-app";
@@ -311,10 +312,18 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
           ...result,
         });
       } catch (err) {
-        if (err instanceof InvalidNpmConnectionError) {
-          console.log("staged publishes cron sweep skipped: token not valid", {
-            organizationId: connection.organizationId,
-          });
+        if (isNpmConnectionAuthFailure(err)) {
+          // The token can no longer reach the staging registry. Mark the
+          // connection invalid, record it, and email the maintainer so reviews
+          // don't silently stop. Never let the alerting itself break the sweep.
+          try {
+            await recordExpiredNpmConnection({ db, env, connection, actorUserId, error: err });
+          } catch (alertErr) {
+            emitOperationalEvent("error", "npm_connection.token_expired_alert_failed", {
+              organizationId: connection.organizationId,
+              error: describeOperationalError(alertErr),
+            });
+          }
           return;
         }
         const detail =

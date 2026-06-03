@@ -12,8 +12,10 @@ import {
   upsertInstallation,
 } from "../../server/lib/github-app";
 import {
+  classifyGateTimeout,
   executeWorkflowGateJob,
   recommendationForReleaseRisk,
+  workflowGateCallbackWindowMs,
 } from "../../server/lib/workflow-gate-job";
 import worker from "../../server/index";
 
@@ -396,6 +398,32 @@ describe("recommendationForReleaseRisk", () => {
     expect(recommendationForReleaseRisk("critical")).toBe("rejected");
     expect(recommendationForReleaseRisk("low")).toBe("approved");
     expect(recommendationForReleaseRisk("medium")).toBe("approved");
+  });
+});
+
+describe("gate callback timeout classification", () => {
+  test("defaults to a 10 minute window and honours the override", () => {
+    expect(workflowGateCallbackWindowMs({} as Cloudflare.Env)).toBe(10 * 60 * 1000);
+    expect(
+      workflowGateCallbackWindowMs({ WORKFLOW_GATE_CALLBACK_WINDOW_MS: "1000" } as Cloudflare.Env),
+    ).toBe(1000);
+    // A non-positive or unparseable override falls back to the default.
+    expect(
+      workflowGateCallbackWindowMs({ WORKFLOW_GATE_CALLBACK_WINDOW_MS: "0" } as Cloudflare.Env),
+    ).toBe(10 * 60 * 1000);
+    expect(
+      workflowGateCallbackWindowMs({ WORKFLOW_GATE_CALLBACK_WINDOW_MS: "nope" } as Cloudflare.Env),
+    ).toBe(10 * 60 * 1000);
+  });
+
+  test("flags imminent at 80% of the window and missed at the window", () => {
+    const windowMs = 10 * 60 * 1000;
+    expect(classifyGateTimeout(0, windowMs)).toBe("ok");
+    expect(classifyGateTimeout(windowMs * 0.79, windowMs)).toBe("ok");
+    expect(classifyGateTimeout(windowMs * 0.8, windowMs)).toBe("imminent");
+    expect(classifyGateTimeout(windowMs - 1, windowMs)).toBe("imminent");
+    expect(classifyGateTimeout(windowMs, windowMs)).toBe("missed");
+    expect(classifyGateTimeout(windowMs * 2, windowMs)).toBe("missed");
   });
 });
 
@@ -1013,5 +1041,60 @@ describe("executeWorkflowGateJob", () => {
       "github_workflow_gate.notification_failed",
     );
     expect(meta?.reason).toBeTruthy();
+  });
+
+  test("emails a timeout notice instead of a review request when the scan outruns the callback window", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9224",
+      repositoryId: 72025,
+      runId: 21212,
+    });
+    const scenario = await buildScenario(21212, { digestMatches: true });
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const send = vi.fn(async () => undefined);
+    // A 1ms callback window guarantees the (always slower) review is classified
+    // as `missed`, so the maintainer gets the timeout notice rather than a
+    // decision request. "0" can't be used here — it falls back to the default
+    // window because the override must be strictly positive.
+    const sandboxEnv = {
+      ...buildEnvWithEmail(bindings, loaderMock.binding, { send }),
+      WORKFLOW_GATE_CALLBACK_WINDOW_MS: "1",
+    } as Cloudflare.Env;
+    const db = createDb(env.DB);
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    // Exactly one email — the timeout notice — and the gate is left pending: a
+    // missed callback is GitHub's to auto-reject, so Drydock posts no decision.
+    expect(send).toHaveBeenCalledTimes(1);
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.status).toBe("pending");
+    expect(scenario.decisionCalls).toHaveLength(0);
+
+    const types = await scanEventTypes(seeded.organizationId, seeded.gateId);
+    expect(types).toContain("github_workflow_gate.timeout_missed");
+    expect(types).not.toContain("github_workflow_gate.timeout_imminent");
+    expect(types).toContain("github_workflow_gate.notification_sent");
+
+    const timeoutMeta = await gateEventMetadata(
+      seeded.organizationId,
+      seeded.gateId,
+      "github_workflow_gate.timeout_missed",
+    );
+    expect(timeoutMeta).toMatchObject({ windowMs: 1 });
+
+    const sentMeta = await gateEventMetadata(
+      seeded.organizationId,
+      seeded.gateId,
+      "github_workflow_gate.notification_sent",
+    );
+    expect(sentMeta).toMatchObject({ channel: "email", trigger: "timeout_missed" });
   });
 });

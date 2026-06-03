@@ -9,6 +9,7 @@ import {
   type ScanSource,
 } from "../db";
 import { decryptNpmToken, validateNpmCredential } from "./npm-connection";
+import { notifyNpmConnectionExpired } from "./notify";
 import { executeScanJob, type ScanQueueMessage } from "./scan-job";
 import {
   listStagedPublishes,
@@ -53,6 +54,61 @@ export class InvalidNpmConnectionError extends Error {
 export interface TokenForDiscovery {
   token: string;
   registryUrl: string;
+}
+
+/**
+ * Whether a cron sweep error means the org's npm token can no longer authenticate
+ * against the staging registry (expired, revoked, or scope-stripped) rather than
+ * a transient registry/network problem. A revalidation failure surfaces as
+ * `InvalidNpmConnectionError`; a token that was last seen valid surfaces as a
+ * 401/403 on the staged-list fetch. Both mean the maintainer must re-add a token.
+ */
+export function isNpmConnectionAuthFailure(err: unknown): boolean {
+  if (err instanceof InvalidNpmConnectionError) return true;
+  if (err instanceof StagedPublishesFetchError) return err.status === 401 || err.status === 403;
+  return false;
+}
+
+function describeNpmAuthFailure(err: unknown): string {
+  if (err instanceof StagedPublishesFetchError) return `staged_list_${err.status}`;
+  if (err instanceof InvalidNpmConnectionError) return "validation_failed";
+  return "unknown";
+}
+
+/**
+ * Record that an org's npm token stopped working during a cron sweep: mark the
+ * connection `invalid` (which removes it from future sweeps and raises the
+ * Settings banner), write the `npm_connection.token_expired` audit event, and
+ * email the maintainer. Marking invalid first is what keeps this to one email
+ * per expiry — the next sweep no longer sees the connection.
+ */
+export async function recordExpiredNpmConnection(input: {
+  db: AppDb;
+  env: Cloudflare.Env;
+  connection: { organizationId: string; registryUrl: string };
+  actorUserId: string;
+  error: unknown;
+}): Promise<void> {
+  const { db, env, connection, actorUserId, error } = input;
+  const reason = describeNpmAuthFailure(error);
+  await updateNpmConnectionValidation(db, {
+    organizationId: connection.organizationId,
+    validationStatus: "invalid",
+    validatedAt: null,
+  });
+  await recordScanEvent(db, {
+    organizationId: connection.organizationId,
+    actorUserId,
+    type: "npm_connection.token_expired",
+    metadata: { source: "cron", reason },
+  });
+  await notifyNpmConnectionExpired({
+    env,
+    db,
+    organizationId: connection.organizationId,
+    ownerUserId: actorUserId,
+    registryUrl: connection.registryUrl,
+  });
 }
 
 export async function ensureUsableNpmConnection(input: {

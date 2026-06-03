@@ -24,6 +24,7 @@ declare global {
       GITHUB_APP_PRIVATE_KEY?: string;
       GITHUB_APP_WEBHOOK_SECRET?: string;
       GITHUB_APP_STATE_SECRET?: string;
+      WORKFLOW_GATE_CALLBACK_WINDOW_MS?: string;
     }
   }
 
