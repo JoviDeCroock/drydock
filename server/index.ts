@@ -277,10 +277,12 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
   let orgsProcessed = 0;
   const sweepConnection = async (connection: (typeof connections)[number]) => {
     try {
-      const actorUserId =
-        connection.createdByUserId ??
-        (await getOrganizationOwnerUserId(db, connection.organizationId));
-      if (!actorUserId) {
+      const notificationOwnerUserId = await getOrganizationOwnerUserId(
+        db,
+        connection.organizationId,
+      );
+      const actorUserId = connection.createdByUserId ?? notificationOwnerUserId;
+      if (!notificationOwnerUserId || !actorUserId) {
         console.error("staged publishes cron sweep skipped: organization owner missing", {
           organizationId: connection.organizationId,
         });
@@ -317,7 +319,14 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
           // connection invalid, record it, and email the maintainer so reviews
           // don't silently stop. Never let the alerting itself break the sweep.
           try {
-            await recordExpiredNpmConnection({ db, env, connection, actorUserId, error: err });
+            await recordExpiredNpmConnection({
+              db,
+              env,
+              connection,
+              actorUserId,
+              notificationOwnerUserId,
+              error: err,
+            });
           } catch (alertErr) {
             emitOperationalEvent("error", "npm_connection.token_expired_alert_failed", {
               organizationId: connection.organizationId,

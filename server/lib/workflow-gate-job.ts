@@ -333,9 +333,10 @@ export async function executeWorkflowGateJob(
   // window. GitHub never tells us when it auto-rejects, so a `missed` gate is
   // most likely already lost — we tell the maintainer it timed out instead of
   // asking them to decide a gate GitHub has already closed.
-  const elapsedMs = durationMsSince(startedAtMs);
+  const gateElapsedMs = Date.now() - gate.requestedAt.getTime();
+  const jobDurationMs = durationMsSince(startedAtMs);
   const windowMs = workflowGateCallbackWindowMs(env);
-  const timeoutState = classifyGateTimeout(elapsedMs, windowMs);
+  const timeoutState = classifyGateTimeout(gateElapsedMs, windowMs);
   if (timeoutState !== "ok") {
     await recordScanEvent(db, {
       organizationId,
@@ -345,14 +346,14 @@ export async function executeWorkflowGateJob(
         timeoutState === "missed"
           ? "github_workflow_gate.timeout_missed"
           : "github_workflow_gate.timeout_imminent",
-      metadata: { gateId: gate.id, elapsedMs, windowMs },
+      metadata: { gateId: gate.id, elapsedMs: gateElapsedMs, windowMs },
     });
     emitOperationalEvent(
       timeoutState === "missed" ? "error" : "warn",
       timeoutState === "missed"
         ? "github_workflow_gate.timeout_missed"
         : "github_workflow_gate.timeout_imminent",
-      { organizationId, gateId, scanId, elapsedMs, windowMs },
+      { organizationId, gateId, scanId, elapsedMs: gateElapsedMs, windowMs },
     );
   }
 
@@ -406,7 +407,7 @@ export async function executeWorkflowGateJob(
     releaseRisk,
     recommendation,
     timeoutState,
-    durationMs: elapsedMs,
+    durationMs: jobDurationMs,
   });
 }
 

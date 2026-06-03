@@ -655,11 +655,12 @@ would otherwise leave a maintainer staring at a "needs review" email for a gate
 GitHub has already closed.
 
 Step 8 guards against that silent failure. After the review attaches, the job
-measures its own wall-clock duration (`durationMsSince(startedAtMs)`) against the
-configured window (`workflowGateCallbackWindowMs`, default **30 days** to match
-GitHub's custom deployment protection rule timeout, overridable per-environment
-with `WORKFLOW_GATE_CALLBACK_WINDOW_MS`; a non-positive or unparseable value
-falls back to the default) and classifies it with `classifyGateTimeout`:
+measures elapsed time from the persisted gate request timestamp
+(`gate.requestedAt`) against the configured window (`workflowGateCallbackWindowMs`,
+default **30 days** to match GitHub's custom deployment protection rule timeout,
+overridable per-environment with `WORKFLOW_GATE_CALLBACK_WINDOW_MS`; a
+non-positive or unparseable value falls back to the default) and classifies it
+with `classifyGateTimeout`:
 
 - `ok` — under 80% of the window. Normal review-ready path: send
   `notifyWorkflowGateReview`.

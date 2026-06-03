@@ -115,9 +115,10 @@ export async function recordExpiredNpmConnection(input: {
   env: Cloudflare.Env;
   connection: { organizationId: string; registryUrl: string };
   actorUserId: string;
+  notificationOwnerUserId: string;
   error: unknown;
 }): Promise<void> {
-  const { db, env, connection, actorUserId, error } = input;
+  const { db, env, connection, actorUserId, notificationOwnerUserId, error } = input;
   const reason = describeNpmAuthFailure(error);
   await updateNpmConnectionValidation(db, {
     organizationId: connection.organizationId,
@@ -134,7 +135,7 @@ export async function recordExpiredNpmConnection(input: {
     env,
     db,
     organizationId: connection.organizationId,
-    ownerUserId: actorUserId,
+    ownerUserId: notificationOwnerUserId,
     registryUrl: connection.registryUrl,
   });
 }

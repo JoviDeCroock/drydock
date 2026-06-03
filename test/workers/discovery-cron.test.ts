@@ -22,12 +22,15 @@ interface SeededOrg {
   userId: string;
   email: string;
   token: string;
+  connectionCreatorUserId: string;
+  connectionCreatorEmail: string;
 }
 
 async function seedOrg(input: {
   index: number;
   token: string;
   validationStatus: ValidationStatus;
+  connectionCreator?: "owner" | "other";
 }): Promise<SeededOrg> {
   const db = createDb(env.DB);
   const now = new Date();
@@ -42,12 +45,26 @@ async function seedOrg(input: {
     updatedAt: now,
   });
   const organizationId = await ensurePersonalOrganization(db, { userId });
+  let connectionCreatorUserId = userId;
+  let connectionCreatorEmail = email;
+  if (input.connectionCreator === "other") {
+    connectionCreatorUserId = `user_${crypto.randomUUID()}`;
+    connectionCreatorEmail = `${connectionCreatorUserId}@example.com`;
+    await db.insert(schema.user).values({
+      id: connectionCreatorUserId,
+      name: `Connection Creator ${input.index}`,
+      email: connectionCreatorEmail,
+      emailVerified: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
   const encrypted = await encryptNpmToken(env, input.token);
   await upsertNpmConnection(db, {
     organizationId,
     registryUrl: REGISTRY_URL,
     label: "npm registry",
-    createdByUserId: userId,
+    createdByUserId: connectionCreatorUserId,
     ...encrypted,
   });
   await updateNpmConnectionValidation(db, {
@@ -55,7 +72,14 @@ async function seedOrg(input: {
     validationStatus: input.validationStatus,
     validatedAt: input.validationStatus === "valid" ? now : null,
   });
-  return { organizationId, userId, email, token: input.token };
+  return {
+    organizationId,
+    userId,
+    email,
+    token: input.token,
+    connectionCreatorUserId,
+    connectionCreatorEmail,
+  };
 }
 
 function scheduledController(): ScheduledController {
@@ -78,6 +102,18 @@ async function eventTypesForOrg(organizationId: string): Promise<string[]> {
     .from(schema.scanEvents)
     .where(eq(schema.scanEvents.organizationId, organizationId));
   return rows.map((row) => row.type);
+}
+
+async function eventMetadataForOrg(
+  organizationId: string,
+  type: string,
+): Promise<Record<string, unknown> | null> {
+  const rows = await createDb(env.DB)
+    .select({ type: schema.scanEvents.type, metadata: schema.scanEvents.metadataJson })
+    .from(schema.scanEvents)
+    .where(eq(schema.scanEvents.organizationId, organizationId));
+  const match = rows.find((candidate) => candidate.type === type);
+  return (match?.metadata as Record<string, unknown> | null) ?? null;
 }
 
 describe("staged publishes discovery cron", () => {
@@ -107,6 +143,7 @@ describe("staged publishes discovery cron", () => {
       index: 1,
       token: "npm_expired_bbbbbbbbbb",
       validationStatus: "valid",
+      connectionCreator: "other",
     });
     const orgC = await seedOrg({
       index: 2,
@@ -165,6 +202,12 @@ describe("staged publishes discovery cron", () => {
     expect(orgBEvents).toContain("npm_connection.token_expired");
     expect(orgBEvents).toContain("npm_connection.notification_sent");
     expect(send).toHaveBeenCalledTimes(1);
+    const sentMeta = await eventMetadataForOrg(
+      orgB.organizationId,
+      "npm_connection.notification_sent",
+    );
+    expect(sentMeta).toMatchObject({ recipient: orgB.email });
+    expect(sentMeta).not.toMatchObject({ recipient: orgB.connectionCreatorEmail });
     const genericFailureForOrgB = errorSpy.mock.calls.find(
       (call) =>
         call[0] === "staged publishes cron sweep failed for organization" &&

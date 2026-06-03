@@ -39,9 +39,11 @@ async function seedGateForTest(opts: {
   installationExternalId: string;
   repositoryId: number;
   runId: number;
+  requestedAt?: Date;
 }) {
   const db = createDb(env.DB);
   const now = new Date();
+  const requestedAt = opts.requestedAt ?? now;
   const userId = `user_${crypto.randomUUID()}`;
   await db.insert(schema.user).values({
     id: userId,
@@ -86,7 +88,7 @@ async function seedGateForTest(opts: {
     deploymentCallbackUrl: `https://api.github.com/repos/octo/example/actions/runs/${opts.runId}/deployment_protection_rule`,
     eventAction: "requested",
     status: "pending",
-    requestedAt: now,
+    requestedAt,
     createdAt: now,
     updatedAt: now,
   });
@@ -1048,19 +1050,20 @@ describe("executeWorkflowGateJob", () => {
       installationExternalId: "9224",
       repositoryId: 72025,
       runId: 21212,
+      requestedAt: new Date(Date.now() - 61_000),
     });
     const scenario = await buildScenario(21212, { digestMatches: true });
     const loaderMock = buildLoaderMock();
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const send = vi.fn(async () => undefined);
-    // A 1ms callback window guarantees the (always slower) review is classified
-    // as `missed`, so the maintainer gets the timeout notice rather than a
-    // decision request. "0" can't be used here — it falls back to the default
-    // window because the override must be strictly positive.
+    // The callback window starts when GitHub sends the gate request, not when
+    // this queue job starts. This request is already older than the one-minute
+    // window, so the maintainer gets the timeout notice rather than a decision
+    // request even though the job itself runs quickly.
     const sandboxEnv = {
       ...buildEnvWithEmail(bindings, loaderMock.binding, { send }),
-      WORKFLOW_GATE_CALLBACK_WINDOW_MS: "1",
+      WORKFLOW_GATE_CALLBACK_WINDOW_MS: "60000",
     } as Cloudflare.Env;
     const db = createDb(env.DB);
 
@@ -1088,7 +1091,7 @@ describe("executeWorkflowGateJob", () => {
       seeded.gateId,
       "github_workflow_gate.timeout_missed",
     );
-    expect(timeoutMeta).toMatchObject({ windowMs: 1 });
+    expect(timeoutMeta).toMatchObject({ windowMs: 60_000 });
 
     const sentMeta = await gateEventMetadata(
       seeded.organizationId,
