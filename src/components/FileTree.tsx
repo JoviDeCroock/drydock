@@ -94,9 +94,9 @@ function statusToTone(status: FolderStatus): BadgeTone {
 
 function statusToText(status: FolderStatus): string {
   if (status === "mixed") return "text-accent";
-  if (status === "added") return "text-ok";
-  if (status === "removed") return "text-danger";
-  if (status === "modified") return "text-warn";
+  if (status === "added") return "text-ok-text";
+  if (status === "removed") return "text-danger-text";
+  if (status === "modified") return "text-warn-text";
   return "text-ink-muted";
 }
 

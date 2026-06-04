@@ -343,7 +343,7 @@ function CodeBlock({ name, children }: { name?: string; children: string }) {
   return (
     <div class="rounded-md border border-border overflow-hidden bg-surface-2">
       {name ? (
-        <div class="px-4 py-2 border-b border-border font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+        <div class="px-4 py-2 border-b border-border font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
           {name}
         </div>
       ) : null}

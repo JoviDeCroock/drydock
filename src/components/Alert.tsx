@@ -4,10 +4,10 @@ import { cn } from "./cn";
 export type AlertTone = "critical" | "warn" | "info" | "ok";
 
 const toneStyles: Record<AlertTone, string> = {
-  critical: "bg-danger-soft border-danger text-danger",
-  warn: "bg-warn-soft border-warn text-warn",
-  info: "bg-info-soft border-info text-info",
-  ok: "bg-ok-soft border-ok text-ok",
+  critical: "bg-danger-soft border-danger text-danger-text",
+  warn: "bg-warn-soft border-warn text-warn-text",
+  info: "bg-info-soft border-info text-info-text",
+  ok: "bg-ok-soft border-ok text-ok-text",
 };
 
 export function Alert({

@@ -70,7 +70,7 @@ export function ScanDetailHeader({
 export function VersionPickerSkeleton({ stagedVersion }: { stagedVersion: string | null }) {
   return (
     <div class="flex flex-wrap items-center gap-3" aria-busy="true">
-      <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+      <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
         Compare against
       </span>
       <div class="flex items-center bg-bg border border-border rounded-md text-[13px] text-ink-muted pl-3 pr-8 py-2 font-mono min-w-[200px] opacity-60">

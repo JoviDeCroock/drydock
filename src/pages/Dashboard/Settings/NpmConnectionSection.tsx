@@ -143,7 +143,7 @@ export function NpmConnectionSection({
 function MetadataField({ label, value }: { label: string; value: string }) {
   return (
     <div class="flex flex-col gap-1 min-w-0">
-      <dt class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">{label}</dt>
+      <dt class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">{label}</dt>
       <dd class="font-mono text-xs text-ink-muted break-words m-0">{value}</dd>
     </div>
   );

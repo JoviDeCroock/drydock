@@ -86,7 +86,7 @@ export function ReleaseRecommendation({
             key={`${item.label}-${index}`}
             class="grid grid-cols-[112px_minmax(0,1fr)] gap-3 text-[13px]"
           >
-            <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+            <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
               {item.label}
             </span>
             <span class="min-w-0 text-ink-muted">{item.value}</span>

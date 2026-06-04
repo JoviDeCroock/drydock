@@ -123,7 +123,7 @@ function PackageJsonDiffView({ diff }: { diff: PackageJsonDiff }) {
 function InlineMeta({ label, value }: { label: string; value: string }) {
   return (
     <div class="flex items-baseline gap-2 min-w-0">
-      <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle flex-shrink-0">
+      <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle flex-shrink-0">
         {label}
       </span>
       <code class="text-xs text-ink-muted break-words min-w-0">{value}</code>
@@ -145,7 +145,7 @@ function ChangeList({
 }) {
   return (
     <div class="border border-border rounded-lg overflow-hidden">
-      <div class="px-3 py-2 bg-surface-2 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+      <div class="px-3 py-2 bg-surface-2 font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
         {title} ({rows.length})
       </div>
       {rows.length ? (

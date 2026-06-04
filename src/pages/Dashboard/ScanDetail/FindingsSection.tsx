@@ -49,7 +49,7 @@ export function RiskSignalsSection({ findings }: { findings: FindingWithDiffStat
       {contextualFindings.length ? (
         <details class="group border-y border-border py-3">
           <summary class="cursor-pointer list-none flex flex-wrap items-center justify-between gap-3">
-            <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+            <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
               Package context
             </span>
             <span class="font-mono text-[11px] text-ink-subtle">

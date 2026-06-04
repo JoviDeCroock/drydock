@@ -59,10 +59,10 @@ const valueClass: Record<SummaryCardValue, string> = {
 
 const toneClass: Record<SummaryCardTone, string> = {
   default: "text-ink",
-  danger: "text-danger",
-  warn: "text-warn",
-  ok: "text-ok",
-  info: "text-info",
+  danger: "text-danger-text",
+  warn: "text-warn-text",
+  ok: "text-ok-text",
+  info: "text-info-text",
 };
 
 export function SummaryCard({
@@ -85,7 +85,7 @@ export function SummaryCard({
         className,
       )}
     >
-      <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">{label}</span>
+      <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">{label}</span>
       <span class={cn(valueClass[value], toneClass[tone])}>{children}</span>
     </div>
   );
