@@ -181,7 +181,7 @@ Raw tarballs should not be retained by default in SaaS. If needed later, make ra
 
 ### Workers AI (Flagship-gated)
 
-Workers AI review is wired into the scan pipeline through `maybeRunAiReview`, but it is **gated by the per-organization Cloudflare Flagship `ai-review` flag and off by default**. The reviewer module - `server/lib/ai-review.ts`, its model policy, the prompt-injection-resistant system prompt, the AI SDK evidence-tool loop, and the test suite - stays in the active contract for the planned paid-tier feature. The code currently declares `AI_MODEL = "@cf/moonshotai/kimi-k2.5"`; Cloudflare scheduled that model to alias to Kimi K2.6 on May 30, 2026, so treat K2.6 as the effective model and pricing target unless the constant is migrated.
+Workers AI review is wired into the scan pipeline through `maybeRunAiReview`, but it is **gated by the per-organization Cloudflare Flagship `ai-review` flag and off by default**. The reviewer module - `server/lib/ai-review.ts`, its model policy, the prompt-injection-resistant system prompt, the AI SDK evidence-tool loop, and the test suite - stays in the active contract for the planned paid-tier feature. The code currently declares `AI_MODEL = "@cf/moonshotai/kimi-k2.5"`; Cloudflare aliases that model to Kimi K2.6 (effective May 30, 2026), so treat K2.6 as the effective model and pricing target unless the constant is migrated.
 
 When Flagship does not return `true` for the scanning organization, the pipeline records an `unavailable` AI review. If enabled AI review fails, the pipeline emits `scan.ai_review.failed`, records AI review as unavailable, and still persists the deterministic report. Risk is computed from deterministic findings unless a complete, schema-valid AI review returns additional evidence or an explicit manual-review flag.
 
@@ -218,7 +218,7 @@ Organization-owned resources scope by the active org:
 
 Team membership, invitations, and RBAC ship today — see [`organization-members.md`](./organization-members.md). Each membership row carries one of three roles (`owner`, `admin`, `member`) defined in `server/lib/roles.ts`. Owners and admins manage members, invitations, npm connections, and GitHub release targets; members get read access to org-scoped resources and can act on releases. The owner is the `organizations.ownerUserId` and cannot be removed or demoted through the API. Route guards still verify membership through `organization_members` via `requireActiveOrganization`; sensitive mutations additionally resolve the caller's role with `requireActiveOrganizationContext` and gate on `roleCanManageMembers` / `roleCanManageIntegrations` rather than trusting client-supplied org ids.
 
-Deletion, audit-log UI, billing, and quotas remain deferred (see Phase 12 in `docs/production-roadmap.md`).
+Deletion, audit-log UI, billing, and quotas remain deferred (see Phase 7 in `docs/production-roadmap.md`).
 
 ## Account email verification
 
