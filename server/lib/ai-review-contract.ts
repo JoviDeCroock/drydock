@@ -97,11 +97,16 @@ export function buildReviewerSystemPrompt(ecosystem: string | undefined): string
 }
 
 export const MAX_AGENT_STEPS = 20;
-// Per-step output-token cap. The submit_review schema bounds below are sized so
-// a worst-case submission (all findings at full length plus the summary)
-// serializes to comfortably under this budget. If a submission exceeded the
-// cap it would truncate mid-JSON, fail schema validation, and silently degrade
-// to an `invalid` review — so loosening the schema bounds means raising this.
+// Per-step output-token cap. The submit_review schema bounds (AI_REVIEW_BOUNDS)
+// are sized so a worst-case submission (all findings at full length plus the
+// summary) serializes to comfortably under this budget. A submission that
+// slightly overshoots a length bound is now clamped by clampAiReviewSubmission
+// (via experimental_repairToolCall) rather than discarded. The remaining
+// unrecoverable case is a submission truncated mid-JSON by this cap: the
+// arguments stop being parseable JSON, so there is nothing to clamp. That case
+// is left to fail safe — the loop retries and, if it still cannot submit, the
+// review degrades to `invalid`, which the risk layer escalates to manual
+// review. Keep this cap comfortably above the worst-case serialized size.
 export const MAX_REVIEW_OUTPUT_TOKENS = 8_000;
 export const MAX_CHANGED_FILE_MANIFEST = 300;
 export const MAX_TOOL_RESPONSE_CHARS = 16_000;
@@ -122,13 +127,26 @@ const releaseAssessmentSchema = z.enum([
   "blocked",
 ]);
 
+// Length/count bounds for a submitted review. Declared as named constants (not
+// inline `.max()` literals) so `clampAiReviewSubmission` can clamp to the exact
+// same limits the schema enforces. These bounds keep a worst-case submission
+// inside MAX_REVIEW_OUTPUT_TOKENS; see the comment on that constant.
+export const AI_REVIEW_BOUNDS = {
+  summary: 1_000,
+  file: 300,
+  evidence: 600,
+  reason: 600,
+  recommendation: 400,
+  findingsCount: 12,
+} as const;
+
 const aiFindingSchema = z
   .object({
     severity: severitySchema,
-    file: z.string().min(1).max(300),
-    evidence: z.string().min(1).max(600),
-    reason: z.string().min(1).max(600),
-    recommendation: z.string().min(1).max(400),
+    file: z.string().min(1).max(AI_REVIEW_BOUNDS.file),
+    evidence: z.string().min(1).max(AI_REVIEW_BOUNDS.evidence),
+    reason: z.string().min(1).max(AI_REVIEW_BOUNDS.reason),
+    recommendation: z.string().min(1).max(AI_REVIEW_BOUNDS.recommendation),
   })
   .strict();
 
@@ -136,14 +154,55 @@ export const aiReviewSubmissionSchema = z
   .object({
     risk: riskSchema,
     releaseAssessment: releaseAssessmentSchema,
-    summary: z.string().min(1).max(1_000),
+    summary: z.string().min(1).max(AI_REVIEW_BOUNDS.summary),
     // The model may over-report; the system trims to the top MAX_AI_FINDINGS
     // critical/high findings via selectReportedFindings. This cap only keeps a
     // runaway submission inside the output-token budget.
-    findings: z.array(aiFindingSchema).max(12),
+    findings: z.array(aiFindingSchema).max(AI_REVIEW_BOUNDS.findingsCount),
     requiresManualReview: z.boolean(),
   })
   .strict();
+
+// Reviewers occasionally overshoot a prose/length bound by a handful of
+// characters while otherwise producing a complete, well-typed review. Strict
+// schema validation would reject the whole tool call, `execute` would never
+// run, and a genuinely high-risk review would silently degrade to an `invalid`
+// fallback that reads as low risk — a release could slip through that way. This
+// helper deterministically clamps the known string/array fields to their bounds
+// (no LLM round-trip) so a near-miss submission is normalized instead of
+// discarded. It only projects the known keys and clamps lengths; it never
+// invents enums or required fields, so a structurally broken submission still
+// fails validation and the model is asked to retry. Used by the
+// `experimental_repairToolCall` hook in ai-review.ts.
+export function clampAiReviewSubmission(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const value = raw as Record<string, unknown>;
+  return {
+    risk: value.risk,
+    releaseAssessment: value.releaseAssessment,
+    summary: clampString(value.summary, AI_REVIEW_BOUNDS.summary),
+    requiresManualReview: value.requiresManualReview,
+    findings: Array.isArray(value.findings)
+      ? value.findings.slice(0, AI_REVIEW_BOUNDS.findingsCount).map(clampFinding)
+      : value.findings,
+  };
+}
+
+function clampFinding(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const value = raw as Record<string, unknown>;
+  return {
+    severity: value.severity,
+    file: clampString(value.file, AI_REVIEW_BOUNDS.file),
+    evidence: clampString(value.evidence, AI_REVIEW_BOUNDS.evidence),
+    reason: clampString(value.reason, AI_REVIEW_BOUNDS.reason),
+    recommendation: clampString(value.recommendation, AI_REVIEW_BOUNDS.recommendation),
+  };
+}
+
+function clampString(value: unknown, max: number): unknown {
+  return typeof value === "string" && value.length > max ? value.slice(0, max) : value;
+}
 
 export type AiReviewSubmission = z.infer<typeof aiReviewSubmissionSchema>;
 export type AiReviewSubmissionFinding = z.infer<typeof aiFindingSchema>;

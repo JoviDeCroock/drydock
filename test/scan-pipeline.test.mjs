@@ -274,8 +274,9 @@ describe("scan pipeline baseline selection", () => {
       status: "unavailable",
       summary: "AI review failed; deterministic findings remain available.",
       findings: [],
+      model: "@cf/moonshotai/kimi-k2.5",
     });
-    expect(result.risk).toBe("low");
+    expect(result.risk).toBe("medium");
     expect(dbMock.persistScan).toHaveBeenCalled();
   });
 

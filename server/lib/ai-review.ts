@@ -1,14 +1,9 @@
-import {
-  generateText,
-  hasToolCall,
-  stepCountIs,
-  type LanguageModel,
-  type LanguageModelUsage,
-} from "ai";
+import { generateText, stepCountIs, type LanguageModel, type LanguageModelUsage } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
 import {
   aiReviewSubmissionSchema,
   buildReviewerSystemPrompt,
+  clampAiReviewSubmission,
   MAX_AGENT_STEPS,
   MAX_REVIEW_OUTPUT_TOKENS,
   selectReportedFindings,
@@ -88,7 +83,31 @@ export async function analyzeWithAi(
       system: buildReviewerSystemPrompt(options.ecosystem),
       messages: [{ role: "user", content: JSON.stringify(payload) }],
       tools,
-      stopWhen: [hasToolCall("submit_review"), stepCountIs(MAX_AGENT_STEPS)],
+      // Stop only once a review is actually recorded — not merely when a
+      // submit_review tool call appears. An invalid submit_review (rejected by
+      // schema validation, so `execute` never fires) must NOT end the loop:
+      // that would terminate the review with nothing recorded. Leaving it
+      // running lets the model see the tool error and retry, bounded by the
+      // step budget.
+      stopWhen: [() => submittedReview !== null, stepCountIs(MAX_AGENT_STEPS)],
+      // Deterministically repair a near-miss submission (e.g. a summary a few
+      // characters over the bound) by clamping it to the schema limits instead
+      // of discarding the whole review. No extra model round-trip: we clamp,
+      // re-validate, and only substitute the repaired call when it now passes.
+      // A submission we cannot make valid (unparseable/truncated JSON, bad
+      // enum, missing field) returns null, so the model is asked to retry.
+      experimental_repairToolCall: async ({ toolCall }) => {
+        if (toolCall.toolName !== "submit_review") return null;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(toolCall.input);
+        } catch {
+          return null;
+        }
+        const repaired = clampAiReviewSubmission(parsed);
+        if (!aiReviewSubmissionSchema.safeParse(repaired).success) return null;
+        return { ...toolCall, input: JSON.stringify(repaired) };
+      },
       temperature: 0,
       maxOutputTokens: MAX_REVIEW_OUTPUT_TOKENS,
     });
