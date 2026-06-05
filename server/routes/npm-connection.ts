@@ -1,9 +1,7 @@
 import { Hono } from "hono";
 import {
-  RateLimitError,
   createDb,
   deleteNpmConnection,
-  enforceRateLimit,
   getNpmConnection,
   recordScanEvent,
   updateNpmConnectionValidation,
@@ -24,7 +22,7 @@ import {
 } from "../lib/npm-connection";
 import { isValidStageId } from "../lib/stage-id";
 import { errorMessage } from "../lib/errors";
-import { rateLimitResponse } from "../lib/http";
+import { withRateLimit } from "../lib/http";
 import type { Bindings, Variables } from "../types";
 
 export const npmConnectionRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -59,19 +57,22 @@ npmConnectionRoutes.post("/", async (c) => {
       400,
     );
   }
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
+  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
+  const [limited, encrypted] = await Promise.all([
+    withRateLimit(
+      c,
+      db,
+      { key: `npm-connection:save:${organizationId}`, limit: 20, windowMs: 60 * 60 * 1000 },
+      "npm connection save rate limit exceeded",
+    ),
+    encryptNpmToken(c.env, token),
+  ]);
+  if (limited) return limited;
+
   try {
-    const db = createDb(c.env.DB);
-    const session = c.get("authSession");
-    const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-    if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
-    const [, encrypted] = await Promise.all([
-      enforceRateLimit(db, {
-        key: `npm-connection:save:${organizationId}`,
-        limit: 20,
-        windowMs: 60 * 60 * 1000,
-      }),
-      encryptNpmToken(c.env, token),
-    ]);
     const [connection] = await Promise.all([
       upsertNpmConnection(db, {
         organizationId,
@@ -94,9 +95,6 @@ npmConnectionRoutes.post("/", async (c) => {
 
     return c.json({ connection: publicNpmConnection(connection) });
   } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "npm connection save rate limit exceeded", err);
-    }
     console.error("npm connection upsert failed", err);
     return c.json({ error: "failed to store npm connection" }, 400);
   }
@@ -108,20 +106,22 @@ npmConnectionRoutes.post("/validate", async (c) => {
     typeof body.stageId === "string" && body.stageId.trim() ? body.stageId.trim() : undefined;
   if (stageId && !isValidStageId(stageId)) return c.json({ error: "invalid stageId" }, 400);
 
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
+  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
+  const limited = await withRateLimit(
+    c,
+    db,
+    { key: `npm-connection:validate:${organizationId}`, limit: 12, windowMs: 10 * 60 * 1000 },
+    "npm validation rate limit exceeded",
+  );
+  if (limited) return limited;
+
+  const connection = await getNpmConnection(db, organizationId);
+  if (!connection) return c.json({ error: "npm connection is not configured" }, 404);
+
   try {
-    const db = createDb(c.env.DB);
-    const session = c.get("authSession");
-    const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-    if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
-    await enforceRateLimit(db, {
-      key: `npm-connection:validate:${organizationId}`,
-      limit: 12,
-      windowMs: 10 * 60 * 1000,
-    });
-
-    const connection = await getNpmConnection(db, organizationId);
-    if (!connection) return c.json({ error: "npm connection is not configured" }, 404);
-
     const token = await decryptNpmToken(c.env, connection);
     const validation = await validateNpmCredential(connection.registryUrl, token, {
       stageId,
@@ -148,9 +148,6 @@ npmConnectionRoutes.post("/validate", async (c) => {
 
     return c.json({ validation, connection: publicNpmConnection(updated) });
   } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "npm validation rate limit exceeded", err);
-    }
     console.error("npm connection validation failed", err);
     return c.json({ error: "failed to validate npm connection" }, 400);
   }

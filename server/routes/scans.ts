@@ -2,15 +2,12 @@ import { Hono } from "hono";
 import {
   LIST_SCANS_DEFAULT_LIMIT,
   LIST_SCANS_MAX_LIMIT,
-  RateLimitError,
   SCAN_DECISIONS,
   SCAN_DECISION_FILTERS,
   type ScanDecision,
   type ScanDecisionFilter,
   createDb,
   createScanJob,
-  enforceRateLimit,
-  getNpmConnection,
   getScan,
   listScans,
   recordScanDecision,
@@ -18,8 +15,13 @@ import {
 } from "../db";
 import { requireActiveOrganization } from "../lib/active-organization";
 import { loadCompare, stripTextSamples } from "../lib/compare-cache";
-import { rateLimitResponse } from "../lib/http";
-import { allowInsecureLocalRegistry, getOrganizationNpmToken } from "../lib/npm-connection";
+import { withRateLimit } from "../lib/http";
+import {
+  NpmConnectionError,
+  allowInsecureLocalRegistry,
+  getOrganizationNpmToken,
+  requireValidNpmConnection,
+} from "../lib/npm-connection";
 import { isPublishedTarballUrlAllowed } from "../lib/published-tarball";
 import { compareSemver, fetchPackageMetadata, pickPreviousVersion } from "../lib/registry";
 import { annotateFindingsWithDiffStatus, createPackageDiff, type FileRecord } from "../lib/review";
@@ -35,68 +37,58 @@ scansRoutes.post("/", async (c) => {
   if (!parsed.ok) return c.json({ error: parsed.error }, parsed.status);
   const { input } = parsed;
 
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = await requireActiveOrganization(c, db);
+  const limited = await withRateLimit(
+    c,
+    db,
+    { key: `scan:${organizationId}`, limit: 10, windowMs: 60 * 60 * 1000 },
+    "scan rate limit exceeded",
+  );
+  if (limited) return limited;
+
   try {
-    const db = createDb(c.env.DB);
-    const session = c.get("authSession");
-    const organizationId = await requireActiveOrganization(c, db);
-    await enforceRateLimit(db, {
-      key: `scan:${organizationId}`,
-      limit: 10,
-      windowMs: 60 * 60 * 1000,
-    });
-
-    const npmConnection = await getNpmConnection(db, organizationId);
-    if (!npmConnection) {
-      return c.json(
-        { error: "Connect an organization npm token before scanning staged publishes." },
-        400,
-      );
-    }
-    if (npmConnection.validationStatus !== "valid") {
-      return c.json(
-        { error: "Validate the organization npm token before scanning staged publishes." },
-        400,
-      );
-    }
-
-    const scanId = crypto.randomUUID();
-    const detail = await createScanJob(db, {
-      id: scanId,
-      stageId: input.stageId,
-      organizationId,
-      ownerUserId: session.userId,
-    });
-    if (!detail) return c.json({ error: "failed to create scan" }, 500);
-    const message: ScanQueueMessage = {
-      ...input,
-      scanId,
-      organizationId,
-      actorUserId: session.userId,
-    };
-
-    await recordScanEvent(db, {
-      organizationId,
-      actorUserId: session.userId,
-      scanId,
-      type: c.env.SCAN_QUEUE ? "scan.queued" : "scan.backgrounded",
-      metadata: { stageId: input.stageId },
-    });
-
-    if (c.env.SCAN_QUEUE) {
-      await c.env.SCAN_QUEUE.send(message);
-    } else {
-      c.executionCtx.waitUntil(
-        executeScanJob(c.env, c.executionCtx, message, db, { finalAttempt: true }),
-      );
-    }
-
-    return c.json({ scan: detail?.scan, queued: Boolean(c.env.SCAN_QUEUE) }, 202);
+    await requireValidNpmConnection(db, organizationId);
   } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "scan rate limit exceeded", err);
+    if (err instanceof NpmConnectionError) {
+      return c.json({ error: err.message }, 400);
     }
     throw err;
   }
+
+  const scanId = crypto.randomUUID();
+  const detail = await createScanJob(db, {
+    id: scanId,
+    stageId: input.stageId,
+    organizationId,
+    ownerUserId: session.userId,
+  });
+  if (!detail) return c.json({ error: "failed to create scan" }, 500);
+  const message: ScanQueueMessage = {
+    ...input,
+    scanId,
+    organizationId,
+    actorUserId: session.userId,
+  };
+
+  await recordScanEvent(db, {
+    organizationId,
+    actorUserId: session.userId,
+    scanId,
+    type: c.env.SCAN_QUEUE ? "scan.queued" : "scan.backgrounded",
+    metadata: { stageId: input.stageId },
+  });
+
+  if (c.env.SCAN_QUEUE) {
+    await c.env.SCAN_QUEUE.send(message);
+  } else {
+    c.executionCtx.waitUntil(
+      executeScanJob(c.env, c.executionCtx, message, db, { finalAttempt: true }),
+    );
+  }
+
+  return c.json({ scan: detail?.scan, queued: Boolean(c.env.SCAN_QUEUE) }, 202);
 });
 
 const DECISION_REASON_MAX = 500;
@@ -211,22 +203,16 @@ scansRoutes.get("/:id/versions", async (c) => {
     });
   }
 
-  let connection: Awaited<ReturnType<typeof getOrganizationNpmToken>> = null;
-  try {
-    [, connection] = await Promise.all([
-      enforceRateLimit(db, {
-        key: `compare-versions:${session.userId}`,
-        limit: 60,
-        windowMs: 60 * 1000,
-      }),
-      getOrganizationNpmToken(db, c.env, organizationId).catch(() => null),
-    ]);
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "rate limit exceeded", err);
-    }
-    throw err;
-  }
+  const [limited, connection] = await Promise.all([
+    withRateLimit(
+      c,
+      db,
+      { key: `compare-versions:${session.userId}`, limit: 60, windowMs: 60 * 1000 },
+      "rate limit exceeded",
+    ),
+    getOrganizationNpmToken(db, c.env, organizationId).catch(() => null),
+  ]);
+  if (limited) return limited;
 
   const metadata = await fetchPackageMetadata(c.env, scan.scan.packageName, {
     npmToken: connection?.token,
@@ -333,24 +319,16 @@ async function loadCompareArchive(
   ctx: CompareContext,
   options: { rateLimitKey: string; rateLimit: number },
 ) {
-  let connection: Awaited<ReturnType<typeof getOrganizationNpmToken>> = null;
-  try {
-    [, connection] = await Promise.all([
-      enforceRateLimit(ctx.db, {
-        key: options.rateLimitKey,
-        limit: options.rateLimit,
-        windowMs: 60 * 1000,
-      }),
-      getOrganizationNpmToken(ctx.db, c.env, ctx.organizationId).catch(() => null),
-    ]);
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return {
-        error: rateLimitResponse(c, "rate limit exceeded", err),
-      } as const;
-    }
-    throw err;
-  }
+  const [limited, connection] = await Promise.all([
+    withRateLimit(
+      c,
+      ctx.db,
+      { key: options.rateLimitKey, limit: options.rateLimit, windowMs: 60 * 1000 },
+      "rate limit exceeded",
+    ),
+    getOrganizationNpmToken(ctx.db, c.env, ctx.organizationId).catch(() => null),
+  ]);
+  if (limited) return { error: limited } as const;
 
   const metadata = await fetchPackageMetadata(c.env, ctx.packageName, {
     npmToken: connection?.token,

@@ -2,7 +2,6 @@ import {
   claimScanForRun,
   createDb,
   discardScanAttempt,
-  getNpmConnection,
   markNpmConnectionUsed,
   markScanFailed,
   recordScanEvent,
@@ -12,6 +11,7 @@ import {
 } from "../db";
 import { npmAdapter } from "./adapters/npm";
 import { errorMessage } from "./errors";
+import { requireValidNpmConnection } from "./npm-connection";
 import { notifyScanCompletion } from "./notify";
 import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
 import { runScanPipeline } from "./scan-pipeline";
@@ -88,13 +88,7 @@ export async function executeScanJob(
   });
 
   try {
-    const npmConnection = await getNpmConnection(db, message.organizationId);
-    if (!npmConnection) {
-      throw new Error("Connect an organization npm token before scanning staged publishes.");
-    }
-    if (npmConnection.validationStatus !== "valid") {
-      throw new Error("Validate the organization npm token before scanning staged publishes.");
-    }
+    const npmConnection = await requireValidNpmConnection(db, message.organizationId);
 
     await Promise.all([
       markNpmConnectionUsed(db, message.organizationId),

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { createDb, enforceRateLimit, RateLimitError, recordScanEvent } from "../db";
+import { createDb, recordScanEvent } from "../db";
 import {
   applyGithubWebhookEvent,
   GithubAppConfigError,
@@ -10,6 +10,7 @@ import {
   type WebhookOutcome,
 } from "../lib/github-app";
 import { emitOperationalEvent } from "../lib/observability";
+import { withRateLimit } from "../lib/http";
 import type { Bindings, Variables } from "../types";
 
 export const githubWebhookRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -96,22 +97,13 @@ githubWebhookRoutes.post("/github", async (c) => {
   }
 
   const db = createDb(c.env.DB);
-  try {
-    await enforceRateLimit(db, {
-      key: `github-webhook:${deliveryId.slice(0, 8)}`,
-      limit: 60,
-      windowMs: 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return c.json(
-        { error: "webhook rate limit exceeded", retryAfterSeconds: err.retryAfterSeconds },
-        429,
-        { "retry-after": String(err.retryAfterSeconds) },
-      );
-    }
-    throw err;
-  }
+  const limited = await withRateLimit(
+    c,
+    db,
+    { key: `github-webhook:${deliveryId.slice(0, 8)}`, limit: 60, windowMs: 60 * 1000 },
+    "webhook rate limit exceeded",
+  );
+  if (limited) return limited;
 
   const parsed = parseGithubWebhookEvent(eventName, rawBody);
   if ("error" in parsed) {

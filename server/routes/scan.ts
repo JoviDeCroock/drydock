@@ -1,7 +1,8 @@
 import { Hono } from "hono";
-import { RateLimitError, createDb, createScanJob, enforceRateLimit, getNpmConnection } from "../db";
+import { createDb, createScanJob } from "../db";
 import { requireActiveOrganization } from "../lib/active-organization";
-import { rateLimitResponse } from "../lib/http";
+import { withRateLimit } from "../lib/http";
+import { NpmConnectionError, requireValidNpmConnection } from "../lib/npm-connection";
 import { parseScanInput } from "../lib/scan-input";
 import { executeScanJob } from "../lib/scan-job";
 import { sandboxErrorDetail } from "../lib/sandbox";
@@ -15,30 +16,27 @@ scanRoutes.post("/", async (c) => {
   if (!parsed.ok) return c.json({ error: parsed.error }, parsed.status);
   const { input } = parsed;
 
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = await requireActiveOrganization(c, db);
+  const limited = await withRateLimit(
+    c,
+    db,
+    { key: `scan:${organizationId}`, limit: 10, windowMs: 60 * 60 * 1000 },
+    "scan rate limit exceeded",
+  );
+  if (limited) return limited;
+
   try {
-    const db = createDb(c.env.DB);
-    const session = c.get("authSession");
-    const organizationId = await requireActiveOrganization(c, db);
-    await enforceRateLimit(db, {
-      key: `scan:${organizationId}`,
-      limit: 10,
-      windowMs: 60 * 60 * 1000,
-    });
-
-    const npmConnection = await getNpmConnection(db, organizationId);
-    if (!npmConnection) {
-      return c.json(
-        { error: "Connect an organization npm token before scanning staged publishes." },
-        400,
-      );
+    await requireValidNpmConnection(db, organizationId);
+  } catch (err) {
+    if (err instanceof NpmConnectionError) {
+      return c.json({ error: err.message }, 400);
     }
-    if (npmConnection.validationStatus !== "valid") {
-      return c.json(
-        { error: "Validate the organization npm token before scanning staged publishes." },
-        400,
-      );
-    }
+    throw err;
+  }
 
+  try {
     const scanId = crypto.randomUUID();
     await createScanJob(db, {
       id: scanId,
@@ -56,9 +54,6 @@ scanRoutes.post("/", async (c) => {
 
     return c.json(result);
   } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "scan rate limit exceeded", err);
-    }
     const detail = sandboxErrorDetail(err);
     if (detail !== null) {
       return c.json({ error: "Could not download or inspect the staged tarball.", detail }, 502);

@@ -1,9 +1,7 @@
 import { Hono } from "hono";
 import {
-  RateLimitError,
   addOrganizationMember,
   createDb,
-  enforceRateLimit,
   findUserByEmail,
   getInvitationByTokenHash,
   getOrganizationName,
@@ -26,7 +24,7 @@ import {
   requireActiveOrganizationContext,
 } from "../lib/active-organization";
 import { sanitizeAddress } from "../lib/email";
-import { rateLimitResponse } from "../lib/http";
+import { withRateLimit } from "../lib/http";
 import { generateInvitationToken, hashInvitationToken } from "../lib/invitation-token";
 import { notifyOrganizationInvite } from "../lib/notify";
 import { isInvitableRole, roleCanManageMembers, type OrganizationRole } from "../lib/roles";
@@ -87,18 +85,13 @@ organizationMembersRoutes.post("/invitations", async (c) => {
   const { organizationId, role: actorRole } = await requireActiveOrganizationContext(c, db);
   if (!roleCanManageMembers(actorRole)) return c.json({ error: "forbidden" }, 403);
 
-  try {
-    await enforceRateLimit(db, {
-      key: `organizations:invite:${organizationId}`,
-      limit: 30,
-      windowMs: 60 * 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "organization invite rate limit exceeded", err);
-    }
-    throw err;
-  }
+  const limited = await withRateLimit(
+    c,
+    db,
+    { key: `organizations:invite:${organizationId}`, limit: 30, windowMs: 60 * 60 * 1000 },
+    "organization invite rate limit exceeded",
+  );
+  if (limited) return limited;
 
   const existingUser = await findUserByEmail(db, normalizedEmail);
   if (existingUser) {

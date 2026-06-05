@@ -1,4 +1,7 @@
+import { errorMessage } from "../../server/lib/errors";
 import { ACTIVE_ORG_HEADER, activeOrganizationId } from "./active-organization";
+
+export { errorMessage };
 
 export class ApiError extends Error {
   constructor(
@@ -51,13 +54,4 @@ export function apiJson<T>(
     },
     body: JSON.stringify(body),
   });
-}
-
-export function errorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (err && typeof err === "object") {
-    const message = (err as Record<string, unknown>).message;
-    if (typeof message === "string") return message;
-  }
-  return String(err);
 }

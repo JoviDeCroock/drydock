@@ -1,19 +1,12 @@
 import { Hono, type Context } from "hono";
-import {
-  RateLimitError,
-  createDb,
-  enforceRateLimit,
-  getScan,
-  recordGatePackageDecision,
-  recordScanEvent,
-} from "../db";
+import { createDb, getScan, recordGatePackageDecision, recordScanEvent } from "../db";
 import {
   requireActiveOrganization,
   requireActiveOrganizationContext,
 } from "../lib/active-organization";
 import { userHasTwoFactor, verifyTotpStepUp } from "../lib/auth";
 import { roleCanManageIntegrations } from "../lib/roles";
-import { rateLimitResponse } from "../lib/http";
+import { withRateLimit } from "../lib/http";
 import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
 import {
   buildHumanDecisionComment,
@@ -81,25 +74,13 @@ githubAppRoutes.post("/install", async (c) => {
   const session = c.get("authSession");
   const { organizationId, role } = await requireActiveOrganizationContext(c, db);
   if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
-  try {
-    await enforceRateLimit(db, {
-      key: `github-app:install:${organizationId}`,
-      limit: 20,
-      windowMs: 60 * 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return c.json(
-        {
-          error: "install rate limit exceeded",
-          retryAfterSeconds: err.retryAfterSeconds,
-        },
-        429,
-        { "retry-after": String(err.retryAfterSeconds) },
-      );
-    }
-    throw err;
-  }
+  const limited = await withRateLimit(
+    c,
+    db,
+    { key: `github-app:install:${organizationId}`, limit: 20, windowMs: 60 * 60 * 1000 },
+    "install rate limit exceeded",
+  );
+  if (limited) return limited;
 
   const state = await signOAuthState(config.stateSecret, {
     organizationId,
@@ -204,18 +185,17 @@ githubAppRoutes.get("/installations/:installationRowId/repositories", async (c) 
   const installationRowId = c.req.param("installationRowId");
   try {
     const installation = await ensureInstallationOwnedBy(db, organizationId, installationRowId);
-    try {
-      await enforceRateLimit(db, {
+    const limited = await withRateLimit(
+      c,
+      db,
+      {
         key: `github-app:repositories:${organizationId}:${installation.id}`,
         limit: GITHUB_APP_PROXY_LIMIT,
         windowMs: GITHUB_APP_PROXY_WINDOW_MS,
-      });
-    } catch (err) {
-      if (err instanceof RateLimitError) {
-        return rateLimitResponse(c, "GitHub repository lookup rate limit exceeded", err);
-      }
-      throw err;
-    }
+      },
+      "GitHub repository lookup rate limit exceeded",
+    );
+    if (limited) return limited;
     const repositories = await listInstallationRepositories(config, installation.installationId);
     return c.json({
       repositories: repositories.map((repo) => ({
@@ -248,18 +228,17 @@ githubAppRoutes.get(
     }
     try {
       const installation = await ensureInstallationOwnedBy(db, organizationId, installationRowId);
-      try {
-        await enforceRateLimit(db, {
+      const limited = await withRateLimit(
+        c,
+        db,
+        {
           key: `github-app:environments:${organizationId}:${installation.id}:${owner}/${repo}`,
           limit: GITHUB_APP_PROXY_LIMIT,
           windowMs: GITHUB_APP_PROXY_WINDOW_MS,
-        });
-      } catch (err) {
-        if (err instanceof RateLimitError) {
-          return rateLimitResponse(c, "GitHub environment lookup rate limit exceeded", err);
-        }
-        throw err;
-      }
+        },
+        "GitHub environment lookup rate limit exceeded",
+      );
+      if (limited) return limited;
       const environments = await listRepositoryEnvironments(
         config,
         installation.installationId,
@@ -324,25 +303,13 @@ githubAppRoutes.post("/release-targets", async (c) => {
   const session = c.get("authSession");
   const { organizationId, role } = await requireActiveOrganizationContext(c, db);
   if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
-  try {
-    await enforceRateLimit(db, {
-      key: `github-app:release-target:${organizationId}`,
-      limit: 30,
-      windowMs: 60 * 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return c.json(
-        {
-          error: "release target rate limit exceeded",
-          retryAfterSeconds: err.retryAfterSeconds,
-        },
-        429,
-        { "retry-after": String(err.retryAfterSeconds) },
-      );
-    }
-    throw err;
-  }
+  const limited = await withRateLimit(
+    c,
+    db,
+    { key: `github-app:release-target:${organizationId}`, limit: 30, windowMs: 60 * 60 * 1000 },
+    "release target rate limit exceeded",
+  );
+  if (limited) return limited;
 
   try {
     const installation = await ensureInstallationOwnedBy(db, organizationId, installationRowId);
@@ -444,18 +411,13 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
-  try {
-    await enforceRateLimit(db, {
-      key: `github-app:gate-decision:${organizationId}`,
-      limit: 60,
-      windowMs: 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "gate decision rate limit exceeded", err);
-    }
-    throw err;
-  }
+  const limited = await withRateLimit(
+    c,
+    db,
+    { key: `github-app:gate-decision:${organizationId}`, limit: 60, windowMs: 60 * 1000 },
+    "gate decision rate limit exceeded",
+  );
+  if (limited) return limited;
 
   const gateId = c.req.param("gateId");
   const existing = await getGateForOrganization(db, organizationId, gateId);
@@ -503,18 +465,17 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   // publishes or cancels anything — and deliberately never requires this.)
   let twoFactorVerified = false;
   if (await userHasTwoFactor(db, session.userId)) {
-    try {
-      await enforceRateLimit(db, {
+    const tfaLimited = await withRateLimit(
+      c,
+      db,
+      {
         key: `github-app:gate-decision-2fa:${session.userId}`,
         limit: 10,
         windowMs: 15 * 60 * 1000,
-      });
-    } catch (err) {
-      if (err instanceof RateLimitError) {
-        return rateLimitResponse(c, "too many two-factor attempts", err);
-      }
-      throw err;
-    }
+      },
+      "too many two-factor attempts",
+    );
+    if (tfaLimited) return tfaLimited;
     const totpCode = typeof body.totpCode === "string" ? body.totpCode.trim() : "";
     if (!totpCode) {
       return c.json(
@@ -638,18 +599,13 @@ githubAppRoutes.post("/workflow-gates/:gateId/retry", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
-  try {
-    await enforceRateLimit(db, {
-      key: `github-app:gate-retry:${organizationId}`,
-      limit: 20,
-      windowMs: 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "gate retry rate limit exceeded", err);
-    }
-    throw err;
-  }
+  const limited = await withRateLimit(
+    c,
+    db,
+    { key: `github-app:gate-retry:${organizationId}`, limit: 20, windowMs: 60 * 1000 },
+    "gate retry rate limit exceeded",
+  );
+  if (limited) return limited;
 
   const gateId = c.req.param("gateId");
   const existing = await getGateForOrganization(db, organizationId, gateId);

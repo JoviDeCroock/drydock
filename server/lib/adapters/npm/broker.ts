@@ -1,6 +1,10 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { createDb, getNpmConnection, type AppDb } from "../../../db";
-import { allowInsecureLocalRegistry, decryptNpmToken } from "../../npm-connection";
+import { createDb, type AppDb } from "../../../db";
+import {
+  allowInsecureLocalRegistry,
+  decryptNpmToken,
+  requireValidNpmConnection,
+} from "../../npm-connection";
 import { downloadPublishedTarball } from "../../published-tarball";
 import { fetchPackageMetadata, type RegistryMetadata } from "../../registry";
 import { downloadInSandbox, sandboxErrorDetail, type DownloadResult } from "../../sandbox";
@@ -90,13 +94,7 @@ async function resolveNpmCredentials(
   db: AppDb,
   organizationId: string,
 ): Promise<ResolvedCredentials> {
-  const connection = await getNpmConnection(db, organizationId);
-  if (!connection) {
-    throw new Error("Connect an organization npm token before scanning staged publishes.");
-  }
-  if (connection.validationStatus !== "valid") {
-    throw new Error("Validate the organization npm token before scanning staged publishes.");
-  }
+  const connection = await requireValidNpmConnection(db, organizationId);
   const token = await decryptNpmToken(env, connection);
   return { token, registry: connection.registryUrl };
 }

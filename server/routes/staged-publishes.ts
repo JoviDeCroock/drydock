@@ -1,8 +1,12 @@
 import { Hono } from "hono";
-import { RateLimitError, createDb, enforceRateLimit, getNpmConnection } from "../db";
+import { createDb } from "../db";
 import { requireActiveOrganization } from "../lib/active-organization";
-import { rateLimitResponse } from "../lib/http";
-import { allowInsecureLocalRegistry } from "../lib/npm-connection";
+import { withRateLimit } from "../lib/http";
+import {
+  NpmConnectionError,
+  allowInsecureLocalRegistry,
+  requireValidNpmConnection,
+} from "../lib/npm-connection";
 import {
   InvalidNpmConnectionError,
   StagedPublishesFetchError,
@@ -18,31 +22,22 @@ stagedPublishesRoutes.post("/scan", async (c) => {
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
 
+  const limited = await withRateLimit(
+    c,
+    db,
+    { key: `staged-publishes:scan:${organizationId}`, limit: 12, windowMs: 10 * 60 * 1000 },
+    "staged publish discovery rate limit exceeded",
+  );
+  if (limited) return limited;
+
+  let savedConnection;
   try {
-    await enforceRateLimit(db, {
-      key: `staged-publishes:scan:${organizationId}`,
-      limit: 12,
-      windowMs: 10 * 60 * 1000,
-    });
+    savedConnection = await requireValidNpmConnection(db, organizationId);
   } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "staged publish discovery rate limit exceeded", err);
+    if (err instanceof NpmConnectionError) {
+      return c.json({ error: err.message }, 400);
     }
     throw err;
-  }
-
-  const savedConnection = await getNpmConnection(db, organizationId);
-  if (!savedConnection) {
-    return c.json(
-      { error: "Connect an organization npm token before discovering staged publishes." },
-      400,
-    );
-  }
-  if (savedConnection.validationStatus !== "valid") {
-    return c.json(
-      { error: "Validate the organization npm token before discovering staged publishes." },
-      400,
-    );
   }
 
   const allowInsecureLocalhost = allowInsecureLocalRegistry(c.env);

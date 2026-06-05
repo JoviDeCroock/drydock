@@ -157,6 +157,36 @@ function splitCiphertext(value: string): { version: "v0" | "v1"; payload: string
   return { version: "v0", payload: value };
 }
 
+/**
+ * Fetch the organization's npm connection and verify it exists and has been
+ * validated. Returns the connection row on success.
+ *
+ * Replaces the repeated null-check + `validationStatus !== "valid"` guard that
+ * appeared in `scan.ts`, `scans.ts`, `staged-publishes.ts`, `scan-job.ts`, and
+ * `adapters/npm/broker.ts`.
+ */
+export async function requireValidNpmConnection(db: AppDb, organizationId: string) {
+  const connection = await getNpmConnection(db, organizationId);
+  if (!connection) {
+    throw new NpmConnectionError(
+      "Connect an organization npm token before scanning staged publishes.",
+    );
+  }
+  if (connection.validationStatus !== "valid") {
+    throw new NpmConnectionError(
+      "Validate the organization npm token before scanning staged publishes.",
+    );
+  }
+  return connection;
+}
+
+export class NpmConnectionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NpmConnectionError";
+  }
+}
+
 export async function getOrganizationNpmToken(
   db: AppDb,
   env: Cloudflare.Env,

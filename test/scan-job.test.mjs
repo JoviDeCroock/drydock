@@ -14,7 +14,16 @@ const dbMock = vi.hoisted(() => ({
   recordScanEvent: vi.fn(),
 }));
 const pipelineMock = vi.hoisted(() => ({ runScanPipeline: vi.fn() }));
-const npmConnectionMock = vi.hoisted(() => ({ decryptNpmToken: vi.fn() }));
+const npmConnectionMock = vi.hoisted(() => ({
+  decryptNpmToken: vi.fn(),
+  requireValidNpmConnection: vi.fn(),
+  NpmConnectionError: class NpmConnectionError extends Error {
+    constructor(message) {
+      super(message);
+      this.name = "NpmConnectionError";
+    }
+  },
+}));
 const notifyMock = vi.hoisted(() => ({
   notifyScanCompletion: vi.fn().mockResolvedValue(undefined),
 }));
@@ -159,7 +168,7 @@ describe("executeScanJob idempotency", () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    dbMock.getNpmConnection.mockResolvedValue({
+    npmConnectionMock.requireValidNpmConnection.mockResolvedValue({
       registryUrl: "https://registry.npmjs.org",
       tokenFingerprint: "fp",
       validationStatus: "valid",
@@ -176,6 +185,7 @@ describe("executeScanJob idempotency", () => {
   afterEach(() => {
     for (const fn of Object.values(dbMock)) if (typeof fn?.mockReset === "function") fn.mockReset();
     pipelineMock.runScanPipeline.mockReset();
+    npmConnectionMock.requireValidNpmConnection.mockReset();
     npmConnectionMock.decryptNpmToken.mockReset();
     notifyMock.notifyScanCompletion.mockClear();
     vi.restoreAllMocks();
@@ -252,11 +262,11 @@ describe("executeScanJob idempotency", () => {
 
   test("fails before decrypting when the queued job sees an unvalidated rotated connection", async () => {
     dbMock.claimScanForRun.mockResolvedValue(true);
-    dbMock.getNpmConnection.mockResolvedValue({
-      registryUrl: "https://registry.npmjs.org",
-      tokenFingerprint: "fp",
-      validationStatus: "unvalidated",
-    });
+    npmConnectionMock.requireValidNpmConnection.mockRejectedValue(
+      new npmConnectionMock.NpmConnectionError(
+        "Validate the organization npm token before scanning staged publishes.",
+      ),
+    );
 
     await expect(
       executeScanJob(env, ctx, message, {}, { attempt: 1, finalAttempt: true }),

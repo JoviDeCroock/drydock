@@ -1,14 +1,8 @@
 import { Hono } from "hono";
-import {
-  createDb,
-  enforceRateLimit,
-  getOrganizationOwnerUserId,
-  listAutoDiscoveryNpmConnections,
-  RateLimitError,
-} from "./db";
+import { createDb, getOrganizationOwnerUserId, listAutoDiscoveryNpmConnections } from "./db";
 import { createAuth, getAuthSession } from "./lib/auth";
 import { errorMessage } from "./lib/errors";
-import { rateLimitResponse } from "./lib/http";
+import { withRateLimit } from "./lib/http";
 import { allowInsecureLocalRegistry } from "./lib/npm-connection";
 import {
   describeOperationalError,
@@ -140,18 +134,13 @@ app.use("/api/auth/*", async (c, next) => {
   const ip =
     c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
   if (!ip) return next();
-  try {
-    await enforceRateLimit(createDb(c.env.DB), {
-      key: `auth:${limit.bucket}:${ip}`,
-      limit: limit.max,
-      windowMs: limit.windowMs,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "too many authentication attempts", err);
-    }
-    throw err;
-  }
+  const limited = await withRateLimit(
+    c,
+    createDb(c.env.DB),
+    { key: `auth:${limit.bucket}:${ip}`, limit: limit.max, windowMs: limit.windowMs },
+    "too many authentication attempts",
+  );
+  if (limited) return limited;
   return next();
 });
 

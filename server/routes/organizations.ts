@@ -1,12 +1,10 @@
 import { Hono } from "hono";
 import {
-  RateLimitError,
   addNotificationRecipient,
   createDb,
   createOrganization,
   deleteNotificationRecipient,
   deleteOrganization,
-  enforceRateLimit,
   ensurePersonalOrganization,
   getOrganizationRole,
   isOrganizationOwner,
@@ -17,7 +15,7 @@ import {
   type NotificationRecipient,
 } from "../db";
 import { sanitizeAddress } from "../lib/email";
-import { rateLimitResponse } from "../lib/http";
+import { withRateLimit } from "../lib/http";
 import { personalOrganizationId } from "../lib/ownership";
 import { roleCanManageIntegrations, type OrganizationRole } from "../lib/roles";
 import type { Bindings, Variables } from "../types";
@@ -43,14 +41,17 @@ organizationsRoutes.post("/", async (c) => {
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   const { name } = parsed;
 
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const limited = await withRateLimit(
+    c,
+    db,
+    { key: `organizations:create:${session.userId}`, limit: 10, windowMs: 60 * 60 * 1000 },
+    "organization create rate limit exceeded",
+  );
+  if (limited) return limited;
+
   try {
-    const db = createDb(c.env.DB);
-    const session = c.get("authSession");
-    await enforceRateLimit(db, {
-      key: `organizations:create:${session.userId}`,
-      limit: 10,
-      windowMs: 60 * 60 * 1000,
-    });
     const id = await createOrganization(db, { ownerUserId: session.userId, name });
     await recordScanEvent(db, {
       organizationId: id,
@@ -60,9 +61,6 @@ organizationsRoutes.post("/", async (c) => {
     });
     return c.json({ organization: { id, name } }, 201);
   } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "organization create rate limit exceeded", err);
-    }
     console.error("organization create failed", err);
     return c.json({ error: "failed to create organization" }, 500);
   }
@@ -100,18 +98,13 @@ organizationsRoutes.delete("/:id", async (c) => {
     return c.json({ error: "personal workspaces cannot be deleted" }, 400);
   }
 
-  try {
-    await enforceRateLimit(db, {
-      key: `organizations:delete:${session.userId}`,
-      limit: 10,
-      windowMs: 60 * 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "organization delete rate limit exceeded", err);
-    }
-    throw err;
-  }
+  const limited = await withRateLimit(
+    c,
+    db,
+    { key: `organizations:delete:${session.userId}`, limit: 10, windowMs: 60 * 60 * 1000 },
+    "organization delete rate limit exceeded",
+  );
+  if (limited) return limited;
 
   // No scan_event is recorded: the org and its scan_events are removed together,
   // so the audit row would be deleted in the same breath.
@@ -141,18 +134,13 @@ organizationsRoutes.post("/:id/notification-recipients", async (c) => {
   if (!role) return c.json({ error: "not found" }, 404);
   if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
 
-  try {
-    await enforceRateLimit(db, {
-      key: `organizations:recipients:add:${session.userId}`,
-      limit: 30,
-      windowMs: 60 * 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "notification recipient rate limit exceeded", err);
-    }
-    throw err;
-  }
+  const limited = await withRateLimit(
+    c,
+    db,
+    { key: `organizations:recipients:add:${session.userId}`, limit: 30, windowMs: 60 * 60 * 1000 },
+    "notification recipient rate limit exceeded",
+  );
+  if (limited) return limited;
 
   const existingRecipients = await listNotificationRecipients(db, organizationId);
   const existingRecipient = existingRecipients.find(
