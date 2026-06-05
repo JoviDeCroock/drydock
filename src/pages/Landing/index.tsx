@@ -33,9 +33,16 @@ export default function LandingPage() {
     <PageShell
       class="gap-12"
       headerActions={
-        <LinkButton href="/docs" variant="ghost" size="sm">
-          Docs
-        </LinkButton>
+        <>
+          <Show when={authed}>
+            <LinkButton href="/dashboard" variant="ghost" size="sm">
+              Dashboard
+            </LinkButton>
+          </Show>
+          <LinkButton href="/docs" variant="ghost" size="sm">
+            Docs
+          </LinkButton>
+        </>
       }
     >
       <section class="py-8 md:py-12 border-y border-border flex flex-col gap-5">
