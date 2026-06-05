@@ -14,6 +14,7 @@ The fixture taxonomy is based on the current Drydock rule surface plus public np
 - Recent npm detection benchmark research reports a curated dataset of 6,420 malicious and 7,288 benign npm packages, with 11 behavior categories and 8 evasion categories. The most common behaviors were command execution, data collection, and data exfiltration; install scripts were used by about 72% of malicious packages in that study, and preinstall hooks were the dominant install-time entry point.
 - The same benchmark highlights the central detection trade-off: benign and malicious packages often call the same APIs. A single `process.env` or `https` use is capability evidence, while chains such as collect → serialize → exfiltrate are stronger intent evidence.
 - Network-only code follows that trade-off: unchanged network-only files are suppressed as package context, added network-only files remain medium-severity contextual evidence, and added network access escalates to high when it is tied to lifecycle scripts, process execution, dynamic evaluation, or credential access.
+- Documentation and prose files remain available as package evidence, but deterministic `code.*` rules do not treat them as executable capability evidence. Secret checks in documentation use only high-confidence token formats; generic key/value examples such as `token = localStorage.getItem("token")` are not `file.secret-content` findings.
 
 ## Safety policy
 
@@ -95,7 +96,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.2.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.6.1`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.6.2`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -104,7 +105,10 @@ fixtures in the same PR whenever a rule family's coverage changes (`PYPI_RULES_V
 Python-aware matching in `1.6.0` (subprocess/os.system, urllib.request/requests/socket,
 exec/`__import__`/base64-decode, os.environ/getpass/keyring) while npm keeps the JavaScript matcher;
 the same Python matcher must be used when annotating modified-file findings so release-risk
-classification stays consistent for extensionless Python files. `pypi.*` grew `startup-hook`,
+classification stays consistent for extensionless Python files. `1.6.2` excludes documentation from
+shared `code.*` capability findings, narrows JavaScript `fetch` matching to calls rather than class
+method declarations, and limits documentation secret-content matches to high-confidence token formats.
+`pypi.*` grew `startup-hook`,
 `record-mismatch`, and `unusual-dependency` in `0.2.0`, and
 `setup-install-command` was upgraded to fire on the top-level sdist `setup.py` install-time code, not
 just `cmdclass`.

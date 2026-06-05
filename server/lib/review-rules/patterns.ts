@@ -25,7 +25,8 @@ const PYTHON_PROCESS_EXECUTION_PATTERNS = [
 const JS_NETWORK_ACCESS_PATTERNS = [
   /\brequire\(["'](?:node:)?(?:http|https|net|dns)["']\)/,
   /\bfrom\s+["'](?:node:)?(?:http|https|net|dns)["']/,
-  /\bfetch\s*\(/,
+  /\b(?:global|globalThis|self|window)\.fetch\s*\(/,
+  /(?<![\w$.])fetch\s*\((?![^\n;]*\)\s*\{)/,
   /\bXMLHttpRequest\b/,
   /\baxios\s*\./,
 ];
@@ -117,11 +118,22 @@ export const SECRET_PATTERNS: Array<[RegExp, string]> = [
     "[REDACTED_PRIVATE_KEY]",
   ],
   [/(authorization\s*[:=]\s*)['"]?Bearer\s+[A-Za-z0-9._\-+/=]{16,}/gi, "$1[REDACTED_BEARER]"],
-  [
-    /(?<![A-Za-z0-9])((?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key|client[_-]?secret)\s*[:=]\s*)['"]?[^'"\s]{12,}(?=$|[\s'",;}\]])/gi,
-    "$1[REDACTED_SECRET]",
-  ],
+  ...genericSecretPatterns(),
 ];
+
+export const HIGH_CONFIDENCE_SECRET_PATTERNS: Array<[RegExp, string]> = SECRET_PATTERNS.slice(
+  0,
+  -1,
+);
+
+function genericSecretPatterns(): Array<[RegExp, string]> {
+  return [
+    [
+      /(?<![A-Za-z0-9])((?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key|client[_-]?secret)\s*[:=]\s*)['"]?[^'"\s()]{12,}(?=$|[\s'",;}\]])/gi,
+      "$1[REDACTED_SECRET]",
+    ],
+  ];
+}
 
 export function codePatternsFor(codePatternSet: CodePatternSet | undefined): typeof JS_PATTERN_SET {
   return codePatternSet === "python" ? PYTHON_PATTERN_SET : JS_PATTERN_SET;

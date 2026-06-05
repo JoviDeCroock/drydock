@@ -4,6 +4,7 @@ import type { Finding } from "../review";
 import { LIFECYCLE_SCRIPTS } from "./patterns";
 import { firstJsonPropertyLine, tag } from "./helpers";
 import { changedPrefix, type RuleContext } from "./context";
+import { isDocumentationPath } from "./file-types";
 
 // Install lifecycle hooks and in-file code-execution capability: the scripts and
 // code paths that run on, or are pulled in by, a consumer install.
@@ -43,6 +44,8 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
   }
 
   for (const file of ctx.files) {
+    if (isDocumentationPath(file.path)) continue;
+
     const sample = file.textSample || "";
     const prefix = changedPrefix(ctx, file.path);
     const changed = ctx.diffByPath.get(file.path)?.status;
