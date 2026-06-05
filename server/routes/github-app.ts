@@ -4,7 +4,7 @@ import {
   createDb,
   enforceRateLimit,
   getScan,
-  recordScanDecision,
+  recordGatePackageDecision,
   recordScanEvent,
 } from "../db";
 import {
@@ -24,6 +24,7 @@ import {
   GithubAppConfigError,
   GithubAppValidationError,
   SUPPORTED_ECOSYSTEMS,
+  type GatePackageScan,
   type GithubAppConfig,
   type GithubAppValidationCode,
   type InstallationRecord,
@@ -38,12 +39,14 @@ import {
   getGateByScanId,
   getGateForOrganization,
   isGithubAppConfigured,
+  listGatePackageScans,
   listInstallationRepositories,
   listInstallationsForOrganization,
   listReleaseTargetsForOrganization,
   listRepositoryEnvironments,
-  markGateDecided,
+  markGateDecidedForPackageAggregate,
   readGithubAppConfig,
+  resetGateReviewForRetry,
   signOAuthState,
   upsertInstallation,
   verifyUserCanAccessInstallation,
@@ -289,14 +292,23 @@ githubAppRoutes.post("/release-targets", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
     installationRowId?: unknown;
     ecosystem?: unknown;
+    artifactName?: unknown;
     repositoryFullName?: unknown;
     environment?: unknown;
   };
 
   const installationRowId =
     typeof body.installationRowId === "string" ? body.installationRowId.trim() : "";
-  const ecosystem =
-    typeof body.ecosystem === "string" ? (body.ecosystem.trim() as SupportedEcosystem) : "pypi";
+  // Null/"auto"/absent pins nothing: the runner auto-detects each package's
+  // ecosystem from the uploaded artifacts (the monorepo-friendly default). A
+  // non-empty string must name a supported ecosystem.
+  const ecosystemRaw = typeof body.ecosystem === "string" ? body.ecosystem.trim() : "";
+  const ecosystem: SupportedEcosystem | null =
+    ecosystemRaw === "" || ecosystemRaw === "auto" ? null : (ecosystemRaw as SupportedEcosystem);
+  const artifactName =
+    typeof body.artifactName === "string" && body.artifactName.trim()
+      ? body.artifactName.trim()
+      : null;
   const repositoryFullName =
     typeof body.repositoryFullName === "string" ? body.repositoryFullName.trim() : "";
   const environment = typeof body.environment === "string" ? body.environment.trim() : "";
@@ -304,7 +316,7 @@ githubAppRoutes.post("/release-targets", async (c) => {
   if (!installationRowId) return c.json({ error: "installationRowId is required" }, 400);
   if (!repositoryFullName) return c.json({ error: "repositoryFullName is required" }, 400);
   if (!environment) return c.json({ error: "environment is required" }, 400);
-  if (!SUPPORTED_ECOSYSTEMS.includes(ecosystem)) {
+  if (ecosystem !== null && !SUPPORTED_ECOSYSTEMS.includes(ecosystem)) {
     return c.json({ error: `unsupported ecosystem: ${ecosystem}` }, 400);
   }
 
@@ -339,6 +351,7 @@ githubAppRoutes.post("/release-targets", async (c) => {
       organizationId,
       installationRowId: installation.id,
       ecosystem,
+      artifactName,
       repositoryId: repo.id,
       repositoryFullName: repo.fullName,
       environment,
@@ -349,7 +362,8 @@ githubAppRoutes.post("/release-targets", async (c) => {
       actorUserId: session.userId,
       type: "github_app_release_target.created",
       metadata: {
-        ecosystem: record.ecosystem,
+        ecosystem: record.ecosystem ?? "auto",
+        artifactName: record.artifactName,
         repositoryFullName: record.repositoryFullName,
         repositoryId: record.repositoryId,
         environment: record.environment,
@@ -389,11 +403,20 @@ githubAppRoutes.get("/workflow-gates/by-scan/:scanId", async (c) => {
   const scanId = c.req.param("scanId");
   const gate = await getGateByScanId(db, organizationId, scanId);
   if (!gate) return c.json({ error: "not found" }, 404);
-  return c.json({ gate: publicWorkflowGate(gate) });
+  const packages = await listGatePackageScans(db, organizationId, gate.id);
+  return c.json({ gate: publicWorkflowGate(gate, packages) });
 });
 
-// Record a maintainer's decision and release/block the GitHub Actions job.
-// The CAS in `markGateDecided` is the single transition out of `pending`, so a
+// Record a maintainer's decision on one package of a gate and, once the whole
+// release resolves, release or block the held GitHub Actions job.
+//
+// A monorepo gate fans out into one scan per package. Each call decides a single
+// package (`scanId`): the per-package decision is persisted, then the gate is
+// finalized only when the release as a whole resolves — `approved` once every
+// package is approved, `rejected` the moment any one is rejected. Until then the
+// gate stays pending and the held deployment waits.
+//
+// The aggregate CAS is the single transition out of `pending`, so a
 // double-submit (or a race with the fail-closed artifact reject) returns 409.
 // Posting the decision to GitHub is delegated to the gate job, which sees the
 // now-decided gate and delivers its stored decision — either over the queue or
@@ -403,11 +426,16 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     decision: string;
     comment: string;
     totpCode: string;
+    scanId: string;
   }>;
   if (!GATE_DECISION_SET.has(body.decision as GateDecision)) {
     return c.json({ error: "decision must be 'approved' or 'rejected'" }, 400);
   }
   const decision = body.decision as GateDecision;
+  const packageScanId = typeof body.scanId === "string" ? body.scanId.trim() : "";
+  if (!packageScanId) {
+    return c.json({ error: "scanId of the package being decided is required" }, 400);
+  }
   const comment = typeof body.comment === "string" ? body.comment.trim() : "";
   if (comment.length > GATE_DECISION_COMMENT_MAX) {
     return c.json({ error: `comment must be <= ${GATE_DECISION_COMMENT_MAX} characters` }, 400);
@@ -432,22 +460,46 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   const gateId = c.req.param("gateId");
   const existing = await getGateForOrganization(db, organizationId, gateId);
   if (!existing) return c.json({ error: "not found" }, 404);
-  if (decision === "approved") {
-    if (!existing.scanId) {
-      return c.json({ error: "approval requires a completed workflow-gate review" }, 409);
-    }
-    const scan = await getScan(db, existing.scanId, organizationId);
-    if (!scan || scan.scan.source !== "workflow_gate" || scan.scan.status !== "complete") {
-      return c.json({ error: "approval requires a completed workflow-gate review" }, 409);
-    }
+  if (existing.status !== "pending") {
+    return c.json({ error: "gate has already been decided" }, 409);
+  }
+
+  // The decision targets one package scan that has reached a human decision
+  // point. A completed review gives the maintainer the full diff; a failed
+  // package can still be rejected by the human, or retried through the retry
+  // endpoint before deciding. Approval additionally requires the batch to have
+  // reached review-ready (`gate.scanId` attached), so a partial failed batch
+  // cannot be approved as if every package had been reviewed.
+  const scan = await getScan(db, packageScanId, organizationId);
+  const scanReachedDecisionPoint =
+    scan?.scan.status === "complete" || scan?.scan.status === "failed";
+  if (
+    !scan ||
+    scan.scan.source !== "workflow_gate" ||
+    scan.scan.gateId !== gateId ||
+    !scanReachedDecisionPoint
+  ) {
+    return c.json({ error: "scanId is not a reviewable package of this gate" }, 409);
+  }
+  if (decision === "approved" && !existing.scanId) {
+    const packages = await listGatePackageScans(db, organizationId, gateId);
+    return c.json(
+      {
+        gate: publicWorkflowGate(existing, packages),
+        error: "approval requires a completed workflow-gate review batch",
+      },
+      409,
+    );
   }
 
   // 2FA step-up. Releasing or blocking a held deployment is a high-trust action
   // — approval immediately releases the GitHub job and publishing proceeds via
   // Trusted Publishing/OIDC, which can't be reversed. So a maintainer who has
   // enrolled in two-factor auth must prove a *fresh* second factor here; an
-  // existing session is not enough. Members without 2FA decide as before. (The
-  // staged-publish decision in scans.ts is an audit record only — it never
+  // existing session is not enough. Members without 2FA decide as before. This
+  // runs only after the decision is confirmed actionable above, so an enrolled
+  // maintainer is never prompted for a code on a decision that would 409 anyway.
+  // (The staged-publish decision in scans.ts is an audit record only — it never
   // publishes or cancels anything — and deliberately never requires this.)
   let twoFactorVerified = false;
   if (await userHasTwoFactor(db, session.userId)) {
@@ -476,15 +528,71 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     twoFactorVerified = true;
   }
 
-  const reportUrl = buildReportUrl(c.env, existing.scanId);
-  const decided = await markGateDecided(db, {
+  // Persist the per-package decision while the gate is still pending.
+  // `recordGatePackageDecision` also writes the `scan.decided` audit event and
+  // keeps the workbench decision filters consistent (approved → publish,
+  // rejected → no_publish).
+  const decidedPackage = await recordGatePackageDecision(db, {
+    scanId: packageScanId,
+    organizationId,
     gateId,
-    decision,
-    comment: comment || buildHumanDecisionComment(decision, reportUrl),
+    actorUserId: session.userId,
+    decision: decision === "approved" ? "publish" : "no_publish",
+    reason: comment || null,
+  });
+  if (!decidedPackage) {
+    const current = await getGateForOrganization(db, organizationId, gateId);
+    const currentPackages = await listGatePackageScans(db, organizationId, gateId);
+    return c.json(
+      {
+        gate: current ? publicWorkflowGate(current, currentPackages) : null,
+        error:
+          current?.status === "pending"
+            ? "package has already been decided"
+            : "gate has already been decided",
+      },
+      409,
+    );
+  }
+
+  // Aggregate over every package: release only when all are approved; block the
+  // moment any one is rejected.
+  const packages = await listGatePackageScans(db, organizationId, gateId);
+  const anyRejected = packages.some((pkg) => pkg.decision === "no_publish");
+  const allApproved = packages.length > 0 && packages.every((pkg) => pkg.decision === "publish");
+  if (!anyRejected && !allApproved) {
+    // Other packages still need a decision; keep the deployment held.
+    return c.json({ gate: publicWorkflowGate(existing, packages) });
+  }
+  if (allApproved && !existing.scanId) {
+    return c.json(
+      {
+        gate: publicWorkflowGate(existing, packages),
+        error: "approval requires a completed workflow-gate review batch",
+      },
+      409,
+    );
+  }
+
+  const gateDecision: GateDecision = anyRejected ? "rejected" : "approved";
+  const reportUrl = buildReportUrl(c.env, existing.scanId);
+  const decided = await markGateDecidedForPackageAggregate(db, {
+    gateId,
+    organizationId,
+    decision: gateDecision,
+    comment: comment || buildHumanDecisionComment(gateDecision, reportUrl),
     reportUrl,
   });
   if (!decided) {
-    return c.json({ error: "gate has already been decided" }, 409);
+    // Lost a race to a concurrent finalize or a fail-closed artifact reject.
+    const current = await getGateForOrganization(db, organizationId, gateId);
+    return c.json(
+      {
+        gate: current ? publicWorkflowGate(current, packages) : null,
+        error: "gate has already been decided",
+      },
+      409,
+    );
   }
 
   // Schedule delivery immediately after the CAS. Everything below is
@@ -493,30 +601,20 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   const message = { kind: "workflow_gate" as const, organizationId, gateId };
   c.executionCtx.waitUntil(deliverGateDecisionJob(c, db, message));
 
-  // Mirror the decision onto the underlying scan so the workbench audit trail
-  // and decision filters stay consistent (approved → publish, rejected →
-  // no_publish). Best effort: only applies once the review scan is complete.
   try {
-    if (decided.scanId) {
-      await recordScanDecision(db, {
-        scanId: decided.scanId,
-        organizationId,
-        actorUserId: session.userId,
-        decision: decision === "approved" ? "publish" : "no_publish",
-        reason: comment || null,
-      });
-    }
-
     await recordScanEvent(db, {
       organizationId,
       actorUserId: session.userId,
       scanId: decided.scanId,
       type:
-        decision === "approved" ? "github_workflow_gate.approved" : "github_workflow_gate.rejected",
+        gateDecision === "approved"
+          ? "github_workflow_gate.approved"
+          : "github_workflow_gate.rejected",
       metadata: {
         gateId,
         decidedBy: "human",
         reportUrl,
+        packageCount: packages.length,
         twoFactor: twoFactorVerified,
         twoFactorMethod: twoFactorVerified ? "totp" : null,
       },
@@ -525,15 +623,80 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     emitOperationalEvent("warn", "github_workflow_gate.decision_bookkeeping_failed", {
       organizationId,
       gateId,
-      decision,
+      decision: gateDecision,
       error: describeOperationalError(err),
     });
   }
 
-  return c.json({ gate: publicWorkflowGate(decided) });
+  return c.json({ gate: publicWorkflowGate(decided, packages) });
+});
+
+// Re-run a failed workflow-gate review batch. The retry is intentionally scoped
+// to pending gates whose package scans have no recorded decisions: once a human
+// has accepted or rejected a package, retrying must not replace that decision.
+githubAppRoutes.post("/workflow-gates/:gateId/retry", async (c) => {
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = await requireActiveOrganization(c, db);
+  try {
+    await enforceRateLimit(db, {
+      key: `github-app:gate-retry:${organizationId}`,
+      limit: 20,
+      windowMs: 60 * 1000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return rateLimitResponse(c, "gate retry rate limit exceeded", err);
+    }
+    throw err;
+  }
+
+  const gateId = c.req.param("gateId");
+  const existing = await getGateForOrganization(db, organizationId, gateId);
+  if (!existing) return c.json({ error: "not found" }, 404);
+  if (existing.status !== "pending") {
+    return c.json({ error: "gate has already been decided" }, 409);
+  }
+
+  const reset = await resetGateReviewForRetry(db, { gateId, organizationId });
+  const packages = await listGatePackageScans(db, organizationId, gateId);
+  if (!reset) {
+    return c.json(
+      {
+        gate: publicWorkflowGate(existing, packages),
+        error: "gate review is not retryable",
+      },
+      409,
+    );
+  }
+
+  await recordScanEvent(db, {
+    organizationId,
+    actorUserId: session.userId,
+    scanId: existing.scanId,
+    type: "github_workflow_gate.retry_requested",
+    metadata: { gateId, packageCount: packages.length },
+  });
+
+  const message = { kind: "workflow_gate" as const, organizationId, gateId };
+  c.executionCtx.waitUntil(runWorkflowGateJob(c, db, message));
+
+  const gate = await getGateForOrganization(db, organizationId, gateId);
+  return c.json(
+    { gate: publicWorkflowGate(gate ?? existing, packages), queued: Boolean(c.env.SCAN_QUEUE) },
+    202,
+  );
 });
 
 async function deliverGateDecisionJob(
+  c: RouteContext,
+  db: ReturnType<typeof createDb>,
+  message: { kind: "workflow_gate"; organizationId: string; gateId: string },
+) {
+  await runWorkflowGateJob(c, db, message);
+}
+
+async function runWorkflowGateJob(
   c: RouteContext,
   db: ReturnType<typeof createDb>,
   message: { kind: "workflow_gate"; organizationId: string; gateId: string },
@@ -592,7 +755,9 @@ function publicReleaseTarget(record: ReleaseTargetRecord) {
     id: record.id,
     organizationId: record.organizationId,
     installationRowId: record.installationRowId,
+    // Null = auto-detect the ecosystem from the uploaded artifacts.
     ecosystem: record.ecosystem,
+    artifactName: record.artifactName,
     repositoryId: record.repositoryId,
     repositoryFullName: record.repositoryFullName,
     environment: record.environment,
@@ -602,8 +767,10 @@ function publicReleaseTarget(record: ReleaseTargetRecord) {
 }
 
 // Excludes the deployment callback URL (and other GitHub-internal identifiers)
-// so the credentialed egress target is never exposed to the browser.
-function publicWorkflowGate(record: WorkflowGateRecord) {
+// so the credentialed egress target is never exposed to the browser. `packages`
+// is one entry per distinct package the release publishes (a monorepo fans out
+// into several); the gate releases only once every package is approved.
+function publicWorkflowGate(record: WorkflowGateRecord, packages: GatePackageScan[] = []) {
   return {
     id: record.id,
     organizationId: record.organizationId,
@@ -617,6 +784,14 @@ function publicWorkflowGate(record: WorkflowGateRecord) {
     reportUrl: record.reportUrl,
     scanId: record.scanId,
     failureReason: record.failureReason,
+    packages: packages.map((pkg) => ({
+      scanId: pkg.scanId,
+      packageName: pkg.packageName,
+      version: pkg.stagedVersion,
+      status: pkg.status,
+      releaseRisk: pkg.releaseRisk,
+      decision: pkg.decision,
+    })),
     requestedAt: record.requestedAt.toISOString(),
     decidedAt: record.decidedAt ? record.decidedAt.toISOString() : null,
     createdAt: record.createdAt.toISOString(),

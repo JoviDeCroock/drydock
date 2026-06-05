@@ -10,7 +10,9 @@ const REPO_OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const REPO_NAME_RE = /^[A-Za-z0-9._-]+$/;
 
 export function validateReleaseTargetShape(input: CreateReleaseTargetInput) {
-  if (!SUPPORTED_ECOSYSTEMS.includes(input.ecosystem)) {
+  // Null pins nothing: the runner auto-detects the ecosystem from the uploaded
+  // artifacts. A non-null value must be a supported ecosystem.
+  if (input.ecosystem !== null && !SUPPORTED_ECOSYSTEMS.includes(input.ecosystem)) {
     throw new GithubAppValidationError(
       "unsupported_ecosystem",
       `unsupported ecosystem: ${input.ecosystem}`,

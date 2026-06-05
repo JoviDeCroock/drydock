@@ -10,7 +10,7 @@ import {
 } from "../../server/lib/github-app";
 import {
   getWorkflowGateAdapter,
-  prepareReleaseCandidateForGate,
+  prepareReleaseCandidatesForGate,
   pypiWorkflowGateAdapter,
   supportedWorkflowGateEcosystems,
   UnsupportedEcosystemError,
@@ -120,7 +120,7 @@ async function seedUnsupportedEcosystemGate(ecosystem: string) {
   return { organizationId, gateId };
 }
 
-describe("prepareReleaseCandidateForGate adapter dispatch", () => {
+describe("prepareReleaseCandidatesForGate adapter dispatch", () => {
   test("marks the gate errored and rethrows when the ecosystem has no adapter", async () => {
     const { organizationId, gateId } = await seedUnsupportedEcosystemGate("cargo");
     const ctx = createExecutionContext();
@@ -128,7 +128,7 @@ describe("prepareReleaseCandidateForGate adapter dispatch", () => {
     const db = createDb(env.DB);
 
     await expect(
-      prepareReleaseCandidateForGate(env, ctx, db, { config, organizationId, gateId }),
+      prepareReleaseCandidatesForGate(env, ctx, db, { config, organizationId, gateId }),
     ).rejects.toBeInstanceOf(UnsupportedEcosystemError);
 
     // A configuration/data problem leaves the gate pending (never auto-approved)

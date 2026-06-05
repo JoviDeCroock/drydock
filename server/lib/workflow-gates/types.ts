@@ -10,14 +10,20 @@ import type { AdapterBroker, PackageAdapter } from "../adapters/types";
 export type WorkflowArtifactKind = string;
 
 /**
- * Result of turning a verified artifact bundle into the input the scan pipeline
- * runs against, plus the derived package identity.
+ * Result of turning one package's slice of a verified artifact bundle into the
+ * input the scan pipeline runs against, plus the derived package identity.
+ *
+ * One bundle can yield several candidates: a monorepo publishes multiple
+ * packages (and potentially several ecosystems) from one release, and each
+ * package becomes its own candidate → its own scan against its own baseline.
  *
  * `pipelineInput` is spread into `runScanPipeline` options, so its keys must
  * match what `packageAdapter.parseInput` expects (for PyPI: `manifest` +
  * `artifacts`). The shared runner never interprets it.
  */
 export interface PreparedReleaseCandidate {
+  /** Ecosystem this package belongs to; matches a registered adapter id. */
+  ecosystem: string;
   pipelineInput: Record<string, unknown>;
   package: { name: string; version: string };
 }
@@ -32,11 +38,12 @@ export interface PreparedReleaseCandidate {
  * events. An adapter only describes the ecosystem's artifact semantics and
  * review wiring:
  *
- *  - `artifactName` — the GitHub Actions artifact the bundle is downloaded from.
- *  - `classifyArtifact` — which bundle entries are reviewable artifacts.
- *  - `prepareReleaseCandidate` — derive package identity + pipeline input from
- *    the verified bundle, rejecting a bundle whose artifacts disagree on the
- *    package identity they carry.
+ *  - `classifyArtifact` — which bundle entries are this ecosystem's reviewable
+ *    artifacts.
+ *  - `prepareReleaseCandidates` — split the ecosystem's slice of the verified
+ *    bundle into one candidate per distinct package (grouping the bundle's
+ *    artifacts by package identity), rejecting a group whose artifacts disagree
+ *    on the identity they carry.
  *  - `packageAdapter` — the deterministic review/baseline/findings adapter the
  *    shared pipeline runs (see `server/lib/adapters/types.ts`); risk-to-decision
  *    mapping stays shared in `recommendationForReleaseRisk`.
@@ -45,7 +52,7 @@ export interface WorkflowGateAdapter {
   /** Stable ecosystem id; matches `github_release_targets.ecosystem`. */
   readonly ecosystem: string;
 
-  /** Default GitHub Actions artifact name the release bundle is downloaded from. */
+  /** Suggested artifact name for workflows that choose to narrow discovery. */
   readonly artifactName: string;
 
   /** Review adapter driven by `runScanPipeline` for this ecosystem. */
@@ -59,18 +66,21 @@ export interface WorkflowGateAdapter {
   classifyArtifact(path: string): WorkflowArtifactKind | null;
 
   /**
-   * Turn the verified bundle into the scan-pipeline input and derived identity.
+   * Split this ecosystem's slice of the verified bundle into one prepared
+   * candidate per distinct package. `bundle.artifacts` has already been narrowed
+   * to entries this adapter's `classifyArtifact` kept, so the adapter only needs
+   * to group them by package identity and synthesize each group's pipeline input.
    *
    * Trust boundary: the installation token is already gone — `bundle` holds only
    * artifact bytes whose SHA-256 was recomputed in the control plane. The
    * adapter parses those bytes through the credentials-free sandbox. It must
-   * throw `WorkflowArtifactError` when the bundle cannot be trusted (missing or
+   * throw `WorkflowArtifactError` when a group cannot be trusted (missing or
    * inconsistent artifact identity) so the shared runner fail-closes the
    * deployment.
    */
-  prepareReleaseCandidate(
+  prepareReleaseCandidates(
     env: Cloudflare.Env,
     ctx: ExecutionContext,
     args: { bundle: ResolvedReleaseBundle },
-  ): Promise<PreparedReleaseCandidate>;
+  ): Promise<PreparedReleaseCandidate[]>;
 }

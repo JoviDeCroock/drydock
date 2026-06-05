@@ -313,7 +313,7 @@ Implemented pieces:
 - GitHub App install/callback, installation listing, repository/environment proxy reads, and PyPI release-target CRUD in `server/routes/github-app.ts`;
 - `deployment_protection_rule` webhook handling in `server/routes/github-webhooks.ts`, backed by `github_workflow_gates`;
 - queue-driven gate review in `server/lib/workflow-gate-job.ts`, including fail-closed rejection for unverifiable artifact bundles and human approve/reject delivery back to GitHub;
-- release-candidate derivation from the `pypi-release-candidate` GitHub Actions artifact bundle: every wheel/sdist SHA-256 is recomputed from the bundle bytes, package identity is derived from wheel `METADATA` / sdist `PKG-INFO`, and no maintainer-declared manifest is required;
+- release-candidate derivation from the held workflow run's uploaded GitHub Actions artifacts: every wheel/sdist SHA-256 is recomputed from upload bytes, package identity is derived from wheel `METADATA` / sdist `PKG-INFO`, and no maintainer-declared manifest is required;
 - PyPI wheel/sdist artifact normalization and metadata extraction;
 - safe ZIP parsing for `.whl` archives in the sandbox parser;
 - PyPI-specific deterministic findings for manifest/metadata mismatches, missing wheel `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, unusual dependencies, and `.pyd` native extensions;

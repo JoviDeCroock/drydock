@@ -9,6 +9,7 @@ import { apiFetch, apiJson, errorMessage } from "./api";
 import {
   decideWorkflowGate,
   getWorkflowGateByScan,
+  retryWorkflowGate,
   type PublicWorkflowGate,
   type WorkflowGateDecision,
 } from "./github-app";
@@ -256,6 +257,8 @@ export const ScanDetailModel = createModel((id: string) => {
   const gateLoaded = signal(false);
   const gateDecisionStatus = signal<DecisionStatus>("idle");
   const gateDecisionError = signal<string | null>(null);
+  const gateRetryStatus = signal<DecisionStatus>("idle");
+  const gateRetryError = signal<string | null>(null);
 
   const isWorkflowGate = computed(() => detail.value?.scan.source === "workflow_gate");
   const status = computed(() => detail.value?.scan.status ?? null);
@@ -339,6 +342,8 @@ export const ScanDetailModel = createModel((id: string) => {
     gateLoaded,
     gateDecisionStatus,
     gateDecisionError,
+    gateRetryStatus,
+    gateRetryError,
     isWorkflowGate,
     status,
     isPolling,
@@ -415,6 +420,10 @@ export const ScanDetailModel = createModel((id: string) => {
       }
     },
 
+    // Decides the package this detail page is reviewing (its own scanId). The
+    // gate only finalizes once every package is approved (or any is rejected);
+    // until then the returned gate stays pending and other packages still need
+    // a decision on their own detail pages.
     async decideGate(
       decision: WorkflowGateDecision,
       comment: string | null,
@@ -422,10 +431,17 @@ export const ScanDetailModel = createModel((id: string) => {
     ): Promise<void> {
       const current = this.gate.peek();
       if (!current) return;
+      const packageScanId = this.scanId.peek();
       this.gateDecisionStatus.value = "saving";
       this.gateDecisionError.value = null;
       try {
-        const { gate: updated } = await decideWorkflowGate(current.id, decision, comment, totpCode);
+        const { gate: updated } = await decideWorkflowGate(
+          current.id,
+          packageScanId,
+          decision,
+          comment,
+          totpCode,
+        );
         this.gate.value = updated;
         this.gateDecisionStatus.value = "idle";
         // The decision also writes the scan's publish/no_publish decision and an
@@ -434,6 +450,22 @@ export const ScanDetailModel = createModel((id: string) => {
       } catch (err) {
         this.gateDecisionError.value = errorMessage(err);
         this.gateDecisionStatus.value = "error";
+      }
+    },
+
+    async retryGate(): Promise<void> {
+      const current = this.gate.peek();
+      if (!current) return;
+      this.gateRetryStatus.value = "saving";
+      this.gateRetryError.value = null;
+      try {
+        const { gate: updated } = await retryWorkflowGate(current.id);
+        this.gate.value = updated;
+        this.gateLoaded.value = true;
+        this.gateRetryStatus.value = "idle";
+      } catch (err) {
+        this.gateRetryError.value = errorMessage(err);
+        this.gateRetryStatus.value = "error";
       }
     },
 

@@ -10,7 +10,7 @@ import {
   upsertInstallation,
 } from "../../server/lib/github-app";
 import type { PyPiAdapterInput } from "../../server/lib/adapters/pypi/index";
-import { prepareReleaseCandidateForGate } from "../../server/lib/workflow-gates";
+import { prepareReleaseCandidatesForGate } from "../../server/lib/workflow-gates";
 
 const WEBHOOK_SECRET = "webhook-secret-value-1234567890";
 
@@ -237,11 +237,20 @@ function buildConfigBindings(): Record<string, string> {
 // The bundle contains only the wheel/sdist files — no `drydock-manifest.json`.
 // The wheel bytes here are opaque: the sandbox is mocked, so identity comes from
 // the loader's returned METADATA rather than these bytes.
-async function buildScenario(runId: number, opts?: { artifactPaths?: string[] }) {
+async function buildScenario(
+  runId: number,
+  opts?: {
+    artifactPaths?: string[];
+    extraArtifacts?: Array<{ id: number; name: string; artifactPaths: string[] }>;
+  },
+) {
   const artifactPaths = opts?.artifactPaths ?? ["dist/demo_package-1.2.0-py3-none-any.whl"];
-  const bundleZip = makeZip(
-    artifactPaths.map((path) => ({ path, body: `opaque bytes for ${path}` })),
-  );
+  const bundles = new Map<number, Uint8Array>();
+  const bundleZip = zipForArtifactPaths(artifactPaths);
+  bundles.set(88888, bundleZip);
+  for (const artifact of opts?.extraArtifacts ?? []) {
+    bundles.set(artifact.id, zipForArtifactPaths(artifact.artifactPaths));
+  }
 
   const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init);
@@ -262,13 +271,23 @@ async function buildScenario(runId: number, opts?: { artifactPaths?: string[] })
               size_in_bytes: bundleZip.length,
               expired: false,
             },
+            ...(opts?.extraArtifacts ?? []).map((artifact) => ({
+              id: artifact.id,
+              name: artifact.name,
+              size_in_bytes: bundles.get(artifact.id)?.length ?? 0,
+              expired: false,
+            })),
           ],
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
     }
     if (request.url.includes("/actions/artifacts/")) {
-      return new Response(bundleZip, {
+      const match = request.url.match(/\/actions\/artifacts\/(\d+)\/zip$/);
+      const artifactId = match ? Number.parseInt(match[1], 10) : 88888;
+      const zip = bundles.get(artifactId);
+      if (!zip) return new Response("not found", { status: 404 });
+      return new Response(zip, {
         status: 200,
         headers: { "content-type": "application/zip" },
       });
@@ -279,9 +298,13 @@ async function buildScenario(runId: number, opts?: { artifactPaths?: string[] })
   return { fetchSpy, artifactPaths };
 }
 
+function zipForArtifactPaths(artifactPaths: string[]): Uint8Array {
+  return makeZip(artifactPaths.map((path) => ({ path, body: `opaque bytes for ${path}` })));
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
-describe("prepareReleaseCandidateForGate", () => {
+describe("prepareReleaseCandidatesForGate", () => {
   test("derives the release identity from the artifacts for a matching gate", async () => {
     const seeded = await seedGateForTest({
       installationExternalId: "9100",
@@ -303,17 +326,20 @@ describe("prepareReleaseCandidateForGate", () => {
     } as Cloudflare.Env;
 
     const db = createDb(env.DB);
-    const result = await prepareReleaseCandidateForGate(sandboxEnv, ctx, db, {
+    const result = await prepareReleaseCandidatesForGate(sandboxEnv, ctx, db, {
       config,
       organizationId: seeded.organizationId,
       gateId: seeded.gateId,
     });
 
     expect(result.gate.id).toBe(seeded.gateId);
-    expect(result.adapter.ecosystem).toBe("pypi");
-    expect(result.candidate.package).toEqual({ name: "demo-package", version: "1.2.0" });
+    expect(result.packages).toHaveLength(1);
+    const [prepared] = result.packages;
+    expect(prepared.candidate.ecosystem).toBe("pypi");
+    expect(prepared.packageAdapter.id).toBe("pypi");
+    expect(prepared.candidate.package).toEqual({ name: "demo-package", version: "1.2.0" });
 
-    const pipelineInput = result.candidate.pipelineInput as unknown as PyPiAdapterInput;
+    const pipelineInput = prepared.candidate.pipelineInput as unknown as PyPiAdapterInput;
     expect(pipelineInput.manifest.package).toBe("demo-package");
     expect(pipelineInput.manifest.version).toBe("1.2.0");
     expect(pipelineInput.manifest.artifacts).toHaveLength(1);
@@ -323,6 +349,101 @@ describe("prepareReleaseCandidateForGate", () => {
     expect(pipelineInput.artifacts[0].files).toHaveLength(1);
     expect(loaderMock.calls).toHaveLength(1);
     expect(loaderMock.calls[0].format).toBe("zip");
+
+    const refreshed = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(refreshed?.status).toBe("pending");
+  });
+
+  test("uses the PyPI default artifact for pinned targets without an override", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9106",
+      repositoryId: 71005,
+      runId: 10101,
+    });
+    const scenario = await buildScenario(10101, {
+      extraArtifacts: [
+        {
+          id: 99999,
+          name: "unrelated-build-output",
+          artifactPaths: ["dist/unrelated_package-9.9.9-py3-none-any.whl"],
+        },
+      ],
+    });
+    const loaderMock = buildLoaderMock([[metadataFile("demo-package", "1.2.0")]]);
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const config = readGithubAppConfig({
+      ...bindings,
+      BETTER_AUTH_SECRET: bindings.BETTER_AUTH_SECRET,
+    });
+    const sandboxEnv = {
+      ...env,
+      ...bindings,
+      LOADER: loaderMock.binding as unknown as WorkerLoader,
+    } as Cloudflare.Env;
+
+    const db = createDb(env.DB);
+    const result = await prepareReleaseCandidatesForGate(sandboxEnv, ctx, db, {
+      config,
+      organizationId: seeded.organizationId,
+      gateId: seeded.gateId,
+    });
+
+    expect(result.packages).toHaveLength(1);
+    expect(result.packages[0].candidate.package.name).toBe("demo-package");
+    expect(loaderMock.calls).toHaveLength(1);
+    const downloadedArtifactIds = scenario.fetchSpy.mock.calls
+      .map(([input]) => (input instanceof Request ? input.url : String(input)))
+      .filter((url) => url.includes("/actions/artifacts/"))
+      .map((url) => url.match(/\/actions\/artifacts\/(\d+)\/zip$/)?.[1]);
+    expect(downloadedArtifactIds).toEqual(["88888"]);
+  });
+
+  test("fans a monorepo bundle out into one candidate per distinct package", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9105",
+      repositoryId: 71006,
+      runId: 12121,
+    });
+    // Two distinct packages publish from one release: each wheel carries its own
+    // identity and must become its own candidate (its own scan + baseline).
+    const scenario = await buildScenario(12121, {
+      artifactPaths: [
+        "dist/alpha_pkg-1.0.0-py3-none-any.whl",
+        "dist/beta_pkg-2.0.0-py3-none-any.whl",
+      ],
+    });
+    const loaderMock = buildLoaderMock([
+      [metadataFile("alpha-pkg", "1.0.0")],
+      [metadataFile("beta-pkg", "2.0.0")],
+    ]);
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const config = readGithubAppConfig({
+      ...bindings,
+      BETTER_AUTH_SECRET: bindings.BETTER_AUTH_SECRET,
+    });
+    const sandboxEnv = {
+      ...env,
+      ...bindings,
+      LOADER: loaderMock.binding as unknown as WorkerLoader,
+    } as Cloudflare.Env;
+
+    const db = createDb(env.DB);
+    const result = await prepareReleaseCandidatesForGate(sandboxEnv, ctx, db, {
+      config,
+      organizationId: seeded.organizationId,
+      gateId: seeded.gateId,
+    });
+
+    expect(result.packages).toHaveLength(2);
+    const names = result.packages.map((pkg) => pkg.candidate.package.name).sort();
+    expect(names).toEqual(["alpha-pkg", "beta-pkg"]);
+    for (const pkg of result.packages) {
+      expect(pkg.candidate.ecosystem).toBe("pypi");
+      expect(pkg.packageAdapter.id).toBe("pypi");
+    }
+    expect(scenario.artifactPaths).toHaveLength(2);
 
     const refreshed = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
     expect(refreshed?.status).toBe("pending");
@@ -353,7 +474,7 @@ describe("prepareReleaseCandidateForGate", () => {
 
     const db = createDb(env.DB);
     await expect(
-      prepareReleaseCandidateForGate(sandboxEnv, ctx, db, {
+      prepareReleaseCandidatesForGate(sandboxEnv, ctx, db, {
         config,
         organizationId: seeded.organizationId,
         gateId: seeded.gateId,
@@ -394,7 +515,7 @@ describe("prepareReleaseCandidateForGate", () => {
 
     const db = createDb(env.DB);
     await expect(
-      prepareReleaseCandidateForGate(sandboxEnv, ctx, db, {
+      prepareReleaseCandidatesForGate(sandboxEnv, ctx, db, {
         config,
         organizationId: seeded.organizationId,
         gateId: seeded.gateId,
@@ -426,7 +547,7 @@ describe("prepareReleaseCandidateForGate", () => {
     } as Cloudflare.Env;
     const db = createDb(env.DB);
     await expect(
-      prepareReleaseCandidateForGate(sandboxEnv, ctx, db, {
+      prepareReleaseCandidatesForGate(sandboxEnv, ctx, db, {
         config,
         organizationId: "other-org",
         gateId: seeded.gateId,

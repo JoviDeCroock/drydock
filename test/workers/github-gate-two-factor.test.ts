@@ -1,5 +1,6 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { eq } from "drizzle-orm";
 import * as OTPAuth from "otpauth";
 import worker from "../../server/index";
 import { createDb, createScanJob, ensurePersonalOrganization, persistScan } from "../../server/db";
@@ -146,7 +147,7 @@ async function seedDecidableGate(
   organizationId: string,
   ownerUserId: string,
   options: { completeScan?: boolean } = {},
-): Promise<string> {
+): Promise<{ gateId: string; scanId: string }> {
   const completeScan = options.completeScan ?? true;
   const db = createDb(env.DB);
   const now = new Date();
@@ -171,13 +172,10 @@ async function seedDecidableGate(
   });
   const gateId = crypto.randomUUID();
   const scanId = `scan_${crypto.randomUUID()}`;
-  await createScanJob(db, {
-    id: scanId,
-    stageId: `workflow-gate:${gateId}`,
-    organizationId,
-    ownerUserId,
-    source: "workflow_gate",
-  });
+  // scans.gate_id references the gate and the gate's scanId references the scan,
+  // so insert the gate first (scanId null), create the per-package scan linked
+  // via gateId, then point the gate at it (mirroring attachScanToGate) once the
+  // scan is complete — avoiding the circular foreign key.
   await db.insert(schema.githubWorkflowGates).values({
     id: gateId,
     organizationId,
@@ -193,10 +191,18 @@ async function seedDecidableGate(
     eventAction: "requested",
     status: "pending",
     decision: null,
-    scanId,
+    scanId: null,
     requestedAt: now,
     createdAt: now,
     updatedAt: now,
+  });
+  await createScanJob(db, {
+    id: scanId,
+    stageId: `workflow-gate:${gateId}`,
+    organizationId,
+    ownerUserId,
+    source: "workflow_gate",
+    gateId,
   });
   if (completeScan) {
     await persistScan(db, {
@@ -215,8 +221,12 @@ async function seedDecidableGate(
       diff: [],
       findings: [],
     });
+    await db
+      .update(schema.githubWorkflowGates)
+      .set({ scanId })
+      .where(eq(schema.githubWorkflowGates.id, gateId));
   }
-  return gateId;
+  return { gateId, scanId };
 }
 
 // Mocks the two GitHub calls the delivery path makes (install token + callback)
@@ -249,20 +259,22 @@ describe("workflow-gate decision 2FA step-up", () => {
       await enrollTwoFactor(jar);
       const organizationId = personalOrganizationId(userId);
       await ensurePersonalOrganization(createDb(env.DB), { userId });
-      const gateId = await seedDecidableGate(organizationId, userId, { completeScan: false });
+      const { gateId, scanId } = await seedDecidableGate(organizationId, userId, {
+        completeScan: false,
+      });
 
       const decisionCalls: { state: string }[] = [];
       mockGithubDecisionFetch(decisionCalls);
 
       const res = await call("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
-        body: { decision: "approved" },
+        body: { decision: "approved", scanId },
         jar,
         env: await githubEnv(),
       });
 
       expect(res.res.status).toBe(409);
       expect(res.json).toMatchObject({
-        error: "approval requires a completed workflow-gate review",
+        error: "scanId is not a reviewable package of this gate",
       });
       const stored = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
       expect(stored?.status).toBe("pending");
@@ -279,13 +291,13 @@ describe("workflow-gate decision 2FA step-up", () => {
       await enrollTwoFactor(jar);
       const organizationId = personalOrganizationId(userId);
       await ensurePersonalOrganization(createDb(env.DB), { userId });
-      const gateId = await seedDecidableGate(organizationId, userId);
+      const { gateId, scanId } = await seedDecidableGate(organizationId, userId);
 
       const decisionCalls: { state: string }[] = [];
       mockGithubDecisionFetch(decisionCalls);
 
       const res = await call("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
-        body: { decision: "approved" },
+        body: { decision: "approved", scanId },
         jar,
         env: await githubEnv(),
       });
@@ -308,13 +320,13 @@ describe("workflow-gate decision 2FA step-up", () => {
       await enrollTwoFactor(jar);
       const organizationId = personalOrganizationId(userId);
       await ensurePersonalOrganization(createDb(env.DB), { userId });
-      const gateId = await seedDecidableGate(organizationId, userId);
+      const { gateId, scanId } = await seedDecidableGate(organizationId, userId);
 
       const decisionCalls: { state: string }[] = [];
       mockGithubDecisionFetch(decisionCalls);
 
       const res = await call("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
-        body: { decision: "approved", totpCode: "000000" },
+        body: { decision: "approved", totpCode: "000000", scanId },
         jar,
         env: await githubEnv(),
       });
@@ -336,13 +348,13 @@ describe("workflow-gate decision 2FA step-up", () => {
       const totpURI = await enrollTwoFactor(jar);
       const organizationId = personalOrganizationId(userId);
       await ensurePersonalOrganization(createDb(env.DB), { userId });
-      const gateId = await seedDecidableGate(organizationId, userId);
+      const { gateId, scanId } = await seedDecidableGate(organizationId, userId);
 
       const decisionCalls: { state: string }[] = [];
       mockGithubDecisionFetch(decisionCalls);
 
       const res = await call("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
-        body: { decision: "approved", totpCode: totpFor(totpURI) },
+        body: { decision: "approved", totpCode: totpFor(totpURI), scanId },
         jar,
         env: await githubEnv(),
       });
@@ -361,13 +373,13 @@ describe("workflow-gate decision 2FA step-up", () => {
     const userId = await signUp(jar);
     const organizationId = personalOrganizationId(userId);
     await ensurePersonalOrganization(createDb(env.DB), { userId });
-    const gateId = await seedDecidableGate(organizationId, userId);
+    const { gateId, scanId } = await seedDecidableGate(organizationId, userId);
 
     const decisionCalls: { state: string }[] = [];
     mockGithubDecisionFetch(decisionCalls);
 
     const res = await call("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
-      body: { decision: "approved" },
+      body: { decision: "approved", scanId },
       jar,
       env: await githubEnv(),
     });

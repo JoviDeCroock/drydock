@@ -1,4 +1,5 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
@@ -110,6 +111,7 @@ async function callGithubAppRoute(
   method: string,
   path: string,
   body?: unknown,
+  envOverrides: Partial<Bindings> = {},
 ) {
   const ctx = createExecutionContext();
   const init: RequestInit = { method };
@@ -127,6 +129,7 @@ async function callGithubAppRoute(
     GITHUB_APP_WEBHOOK_SECRET: "webhook-secret-value-1234567890",
     GITHUB_APP_STATE_SECRET: "0123456789abcdef0123456789abcdef",
     BETTER_AUTH_SECRET: "fallback-secret-with-enough-entropy-aaaaaaaa",
+    ...envOverrides,
   };
   const res = await app.fetch(new Request(`http://test.local${path}`, init), routeEnv, ctx);
   await waitOnExecutionContext(ctx);
@@ -731,17 +734,9 @@ async function seedGate(
     createdByUserId: null,
   });
   const gateId = crypto.randomUUID();
-  let scanId: string | null = null;
-  if (overrides.attachScan) {
-    scanId = `scan_${crypto.randomUUID()}`;
-    await createScanJob(db, {
-      id: scanId,
-      stageId: `workflow-gate:${gateId}`,
-      organizationId,
-      ownerUserId: overrides.attachScan.ownerUserId,
-      source: "workflow_gate",
-    });
-  }
+  // Insert the gate before any per-package scan: `scans.gate_id` references the
+  // gate, so the gate must exist first (production creates the gate from the
+  // webhook before the runner fans out per-package scans).
   await db.insert(schema.githubWorkflowGates).values({
     id: gateId,
     organizationId,
@@ -757,11 +752,28 @@ async function seedGate(
     eventAction: "requested",
     status: overrides.status ?? "pending",
     decision: overrides.decision ?? null,
-    scanId,
+    scanId: null,
     requestedAt: now,
     createdAt: now,
     updatedAt: now,
   });
+  let scanId: string | null = null;
+  if (overrides.attachScan) {
+    scanId = `scan_${crypto.randomUUID()}`;
+    await createScanJob(db, {
+      id: scanId,
+      stageId: `workflow-gate:${gateId}`,
+      organizationId,
+      ownerUserId: overrides.attachScan.ownerUserId,
+      source: "workflow_gate",
+      gateId,
+    });
+    // Point the gate at its representative scan, mirroring `attachScanToGate`.
+    await db
+      .update(schema.githubWorkflowGates)
+      .set({ scanId })
+      .where(eq(schema.githubWorkflowGates.id, gateId));
+  }
   return { gateId, scanId, installation, releaseTarget, runId };
 }
 
@@ -770,13 +782,15 @@ async function completeWorkflowGateScan(input: {
   ownerUserId: string;
   gateId: string;
   scanId: string;
+  packageName?: string;
+  version?: string;
 }) {
   await persistScan(createDb(env.DB), {
     id: input.scanId,
     stageId: `workflow-gate:${input.gateId}`,
     organizationId: input.organizationId,
     ownerUserId: input.ownerUserId,
-    packageJson: { name: "pkg", version: "1.0.0" },
+    packageJson: { name: input.packageName ?? "pkg", version: input.version ?? "1.0.0" },
     previousPackageJson: null,
     risk: "low",
     status: "complete",
@@ -787,6 +801,37 @@ async function completeWorkflowGateScan(input: {
     diff: [],
     findings: [],
   });
+}
+
+// Seed a second (or further) complete per-package scan linked to an existing
+// gate via `scans.gate_id`. The gate decision aggregates over every such scan,
+// so multi-package tests stack these on top of the gate's first package.
+async function seedGatePackageScan(input: {
+  organizationId: string;
+  ownerUserId: string;
+  gateId: string;
+  packageName: string;
+  version: string;
+}) {
+  const db = createDb(env.DB);
+  const scanId = `scan_${crypto.randomUUID()}`;
+  await createScanJob(db, {
+    id: scanId,
+    stageId: `workflow-gate:${input.gateId}:pypi:${input.packageName}`,
+    organizationId: input.organizationId,
+    ownerUserId: input.ownerUserId,
+    source: "workflow_gate",
+    gateId: input.gateId,
+  });
+  await completeWorkflowGateScan({
+    organizationId: input.organizationId,
+    ownerUserId: input.ownerUserId,
+    gateId: input.gateId,
+    scanId,
+    packageName: input.packageName,
+    version: input.version,
+  });
+  return scanId;
 }
 
 describe("github-app workflow-gate decision route", () => {
@@ -815,12 +860,29 @@ describe("github-app workflow-gate decision route", () => {
       buildTestApp(userId),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
-      { decision: "approved", comment: "x".repeat(501) },
+      { decision: "approved", scanId: "scan_x", comment: "x".repeat(501) },
     );
 
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({
       error: "comment must be <= 500 characters",
+    });
+  });
+
+  test("rejects a decision that does not name the package scan", async () => {
+    const { userId, organizationId } = await seedUser();
+    const { gateId } = await seedGate(organizationId);
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: "scanId of the package being decided is required",
     });
   });
 
@@ -834,7 +896,7 @@ describe("github-app workflow-gate decision route", () => {
       buildTestApp(caller.userId),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
-      { decision: "approved" },
+      { decision: "approved", scanId: "scan_x" },
     );
 
     expect(res.status).toBe(404);
@@ -842,7 +904,7 @@ describe("github-app workflow-gate decision route", () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  test("rejects approval when the gate has no completed review scan", async () => {
+  test("rejects a scanId that is not a package of this gate", async () => {
     const { userId, organizationId } = await seedUser();
     const { gateId } = await seedGate(organizationId);
     globalThis.fetch = vi.fn();
@@ -851,22 +913,100 @@ describe("github-app workflow-gate decision route", () => {
       buildTestApp(userId),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
-      { decision: "approved" },
+      { decision: "approved", scanId: `scan_${crypto.randomUUID()}` },
     );
 
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({
-      error: "approval requires a completed workflow-gate review",
+      error: "scanId is not a reviewable package of this gate",
     });
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  test("rejects approval when the linked review scan failed", async () => {
+  test("allows a human to approve a failed package review", async () => {
     const { userId, organizationId } = await seedUser();
     const { gateId, scanId } = await seedGate(organizationId, {
       attachScan: { ownerUserId: userId },
     });
     await markScanFailed(createDb(env.DB), scanId!, organizationId, {
+      code: "review_failed",
+      message: "review failed",
+    });
+    const decisionCalls: { state: string }[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        decisionCalls.push((await request.json()) as { state: string });
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected fetch in decision test: ${request.url}`);
+    });
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      gate: { status: "approved", decision: "approved" },
+    });
+    const scan = await createDb(env.DB)
+      .select({ decision: schema.scans.decision })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId!))
+      .limit(1);
+    expect(scan[0]?.decision).toBe("publish");
+    expect(decisionCalls).toHaveLength(1);
+    expect(decisionCalls[0].state).toBe("approved");
+  });
+
+  test("rejects a decision while the package scan is still pending", async () => {
+    const { userId, organizationId } = await seedUser();
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    globalThis.fetch = vi.fn();
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      error: "scanId is not a reviewable package of this gate",
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  test("rejects approval for a partial failed review batch", async () => {
+    const { userId, organizationId } = await seedUser();
+    const { gateId } = await seedGate(organizationId);
+    const completeScanId = await seedGatePackageScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      packageName: "alpha-pkg",
+      version: "1.0.0",
+    });
+    const failedScanId = `scan_${crypto.randomUUID()}`;
+    await createScanJob(createDb(env.DB), {
+      id: failedScanId,
+      stageId: `workflow-gate:${gateId}:pypi:beta-pkg`,
+      organizationId,
+      ownerUserId: userId,
+      source: "workflow_gate",
+      gateId,
+    });
+    await markScanFailed(createDb(env.DB), failedScanId, organizationId, {
       code: "review_failed",
       message: "review failed",
     });
@@ -876,13 +1016,23 @@ describe("github-app workflow-gate decision route", () => {
       buildTestApp(userId),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
-      { decision: "approved" },
+      { decision: "approved", scanId: completeScanId },
     );
 
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({
-      error: "approval requires a completed workflow-gate review",
+      error: "approval requires a completed workflow-gate review batch",
+      gate: { status: "pending" },
     });
+    const stored = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
+    expect(stored?.scanId).toBeNull();
+    expect(stored?.status).toBe("pending");
+    const scan = await createDb(env.DB)
+      .select({ decision: schema.scans.decision })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, completeScanId))
+      .limit(1);
+    expect(scan[0]?.decision).toBeNull();
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
@@ -914,7 +1064,7 @@ describe("github-app workflow-gate decision route", () => {
       buildTestApp(userId),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
-      { decision: "approved", comment: "ship it" },
+      { decision: "approved", scanId: scanId!, comment: "ship it" },
     );
     expect(first.status).toBe(200);
     expect(await first.json()).toMatchObject({
@@ -930,12 +1080,169 @@ describe("github-app workflow-gate decision route", () => {
       buildTestApp(userId),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
-      { decision: "rejected" },
+      { decision: "rejected", scanId: scanId! },
     );
     expect(second.status).toBe(409);
     expect(await second.json()).toMatchObject({ error: "gate has already been decided" });
     // The CAS lost the second transition, so no extra callback is posted.
     expect(decisionCalls).toHaveLength(1);
+  });
+
+  test("holds the deployment until every package is approved, then releases", async () => {
+    const { userId, organizationId } = await seedUser();
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await completeWorkflowGateScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      scanId: scanId!,
+      packageName: "alpha-pkg",
+    });
+    const secondScanId = await seedGatePackageScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      packageName: "beta-pkg",
+      version: "2.0.0",
+    });
+    const decisionCalls: { state: string }[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        decisionCalls.push((await request.json()) as { state: string });
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected fetch in decision test: ${request.url}`);
+    });
+
+    // Approving only the first package keeps the gate pending: no callback yet.
+    const partial = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+    expect(partial.status).toBe(200);
+    const partialBody = (await partial.json()) as {
+      gate: { status: string; packages: { scanId: string; decision: string | null }[] };
+    };
+    expect(partialBody.gate.status).toBe("pending");
+    expect(partialBody.gate.packages).toHaveLength(2);
+    expect(decisionCalls).toHaveLength(0);
+
+    // The package decision is final while the gate is pending; a stale second
+    // submit must not overwrite it before the aggregate gate decision happens.
+    const staleOverwrite = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "rejected", scanId: scanId! },
+    );
+    expect(staleOverwrite.status).toBe(409);
+    expect(await staleOverwrite.json()).toMatchObject({
+      error: "package has already been decided",
+    });
+    expect(decisionCalls).toHaveLength(0);
+
+    // Approving the last package finalizes the gate and posts the release.
+    const finalRes = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: secondScanId },
+    );
+    expect(finalRes.status).toBe(200);
+    expect(await finalRes.json()).toMatchObject({
+      gate: { status: "approved", decision: "approved" },
+    });
+    const stored = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
+    expect(stored?.status).toBe("approved");
+    expect(decisionCalls).toHaveLength(1);
+    expect(decisionCalls[0].state).toBe("approved");
+  });
+
+  test("rejecting any single package blocks the whole release immediately", async () => {
+    const { userId, organizationId } = await seedUser();
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await completeWorkflowGateScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      scanId: scanId!,
+      packageName: "alpha-pkg",
+    });
+    // A second, still-undecided package exists, yet one rejection is enough.
+    await seedGatePackageScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      packageName: "beta-pkg",
+      version: "2.0.0",
+    });
+    const decisionCalls: { state: string }[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        decisionCalls.push((await request.json()) as { state: string });
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected fetch in decision test: ${request.url}`);
+    });
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "rejected", scanId: scanId! },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      gate: { status: "rejected", decision: "rejected" },
+    });
+    const stored = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
+    expect(stored?.status).toBe("rejected");
+    expect(decisionCalls).toHaveLength(1);
+    expect(decisionCalls[0].state).toBe("rejected");
+  });
+
+  test("retries a failed package review by requeueing the pending gate", async () => {
+    const { userId, organizationId } = await seedUser();
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await markScanFailed(createDb(env.DB), scanId!, organizationId, {
+      code: "review_failed",
+      message: "review failed",
+    });
+    const queueSend = vi.fn(async () => undefined);
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/retry`,
+      {},
+      { SCAN_QUEUE: { send: queueSend } as unknown as Queue },
+    );
+
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ queued: true, gate: { status: "pending" } });
+    expect(queueSend).toHaveBeenCalledWith({
+      kind: "workflow_gate",
+      organizationId,
+      gateId,
+    });
+    const gate = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
+    expect(gate?.scanId).toBeNull();
   });
 });
 

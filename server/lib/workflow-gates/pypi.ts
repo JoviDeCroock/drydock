@@ -38,80 +38,97 @@ export const pypiWorkflowGateAdapter: WorkflowGateAdapter = {
     return inferPyPiArtifactKind(path);
   },
 
-  async prepareReleaseCandidate(
+  async prepareReleaseCandidates(
     env: Cloudflare.Env,
     ctx: ExecutionContext,
     { bundle }: { bundle: ResolvedReleaseBundle },
-  ): Promise<PreparedReleaseCandidate> {
-    const artifacts: PyPiArtifactInput[] = [];
-    for (const artifact of bundle.artifacts) {
-      const files = await parseArtifactBytes(env, ctx, artifact);
-      artifacts.push({ path: artifact.path, files });
+  ): Promise<PreparedReleaseCandidate[]> {
+    const entries: PreparedArtifactEntry[] = [];
+    for (const file of bundle.artifacts) {
+      const files = await parseArtifactBytes(env, ctx, file);
+      const input: PyPiArtifactInput = { path: file.path, files };
+      entries.push({ file, input, prepared: preparePyPiArtifact(input) });
     }
-    const prepared = artifacts.map(preparePyPiArtifact);
-    const manifest = deriveReleaseManifest(bundle, prepared);
-
-    return {
-      pipelineInput: { manifest, artifacts },
-      package: { name: manifest.package, version: manifest.version },
-    };
+    return deriveReleaseCandidates(entries);
   },
 };
 
+interface PreparedArtifactEntry {
+  file: ResolvedReleaseFile;
+  input: PyPiArtifactInput;
+  prepared: PyPiPreparedArtifact;
+}
+
 /**
- * Synthesize the `PyPiReleaseManifest` the rest of the pipeline consumes from
- * the artifacts themselves. Identity comes from each wheel's `METADATA` /
- * sdist's `PKG-INFO`, and the SHA-256 is the digest already recomputed from the
- * bundle bytes.
+ * Split the bundle's PyPI artifacts into one candidate per distinct package.
  *
- * Every artifact must expose a `Name`/`Version` and agree on the normalized
- * (PEP 503) name and the version, so a foreign or version-skewed file slipped
- * into the bundle is rejected rather than silently shipped.
+ * A monorepo publishes several packages from one release, so artifacts are
+ * grouped by their normalized (PEP 503) name and each group becomes its own
+ * candidate → its own scan against its own baseline. Identity comes from each
+ * wheel's `METADATA` / sdist's `PKG-INFO`; the SHA-256 is the digest already
+ * recomputed from the bundle bytes.
+ *
+ * Every artifact must expose a `Name`/`Version`, and all artifacts that share a
+ * normalized name must agree on the version, so a metadata-less or
+ * version-skewed file slipped into a package's set is rejected rather than
+ * silently shipped. Distinct packages with distinct names are kept apart — that
+ * is the expected monorepo shape, not a conflict.
  */
-function deriveReleaseManifest(
-  bundle: ResolvedReleaseBundle,
-  prepared: PyPiPreparedArtifact[],
-): PyPiReleaseManifest {
-  let name: string | null = null;
-  let normalizedName: string | null = null;
-  let version: string | null = null;
-  for (const artifact of prepared) {
-    const { summary } = artifact;
+function deriveReleaseCandidates(entries: PreparedArtifactEntry[]): PreparedReleaseCandidate[] {
+  const groups = new Map<
+    string,
+    { name: string; version: string; entries: PreparedArtifactEntry[] }
+  >();
+  for (const entry of entries) {
+    const { summary } = entry.prepared;
     if (!summary.name || !summary.version) {
       throw new WorkflowArtifactError(
         "artifact_identity_missing",
-        `${artifact.path} does not expose a PyPI Name/Version in its metadata`,
+        `${entry.file.path} does not expose a PyPI Name/Version in its metadata`,
       );
     }
     const normalized = normalizePyPiProjectName(summary.name);
-    if (name === null) {
-      name = summary.name;
-      normalizedName = normalized;
-      version = summary.version;
+    const group = groups.get(normalized);
+    if (!group) {
+      groups.set(normalized, { name: summary.name, version: summary.version, entries: [entry] });
       continue;
     }
-    if (normalized !== normalizedName) {
+    if (summary.version !== group.version) {
       throw new WorkflowArtifactError(
         "artifact_identity_inconsistent",
-        `${artifact.path} package ${summary.name} disagrees with ${name}`,
+        `${entry.file.path} version ${summary.version} disagrees with ${group.version} for ${group.name}`,
       );
     }
-    if (summary.version !== version) {
-      throw new WorkflowArtifactError(
-        "artifact_identity_inconsistent",
-        `${artifact.path} version ${summary.version} disagrees with ${version}`,
-      );
-    }
+    group.entries.push(entry);
   }
 
-  // `prepared` is non-empty: the resolver throws `bundle_empty` when a bundle
-  // has no wheels/sdists, so `name`/`version` are always set here.
+  // `entries` is non-empty: the resolver throws `bundle_empty` when a bundle has
+  // no wheels/sdists, so `groups` always has at least one package here.
+  return [...groups.values()].map((group) => {
+    const manifest = buildReleaseManifest(
+      group.name,
+      group.version,
+      group.entries.map((entry) => entry.file),
+    );
+    return {
+      ecosystem: "pypi",
+      pipelineInput: { manifest, artifacts: group.entries.map((entry) => entry.input) },
+      package: { name: manifest.package, version: manifest.version },
+    };
+  });
+}
+
+function buildReleaseManifest(
+  name: string,
+  version: string,
+  files: ResolvedReleaseFile[],
+): PyPiReleaseManifest {
   const candidate = {
     schema: PYPI_RELEASE_MANIFEST_SCHEMA,
     ecosystem: "pypi",
     package: name,
     version,
-    artifacts: bundle.artifacts.map((file) => ({ path: file.path, sha256: file.sha256 })),
+    artifacts: files.map((file) => ({ path: file.path, sha256: file.sha256 })),
   };
   try {
     return parsePyPiReleaseManifest(candidate);

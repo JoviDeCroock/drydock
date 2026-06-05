@@ -2,28 +2,34 @@ import { and, eq } from "drizzle-orm";
 import {
   createDb,
   createScanJob,
-  deletePendingScanJob,
+  discardGateScans,
   getOrganizationOwnerUserId,
   markScanFailed,
   recordScanEvent,
   type AppDb,
 } from "../db";
-import { githubAppInstallations, scans } from "../db/schema";
+import { githubAppInstallations } from "../db/schema";
 import {
   attachScanToGate,
+  claimGateReviewStart,
   GithubAppConfigError,
   type GithubAppConfig,
   getGateForOrganization,
   markGateDecided,
   postDeploymentProtectionDecision,
   readGithubAppConfig,
+  releaseGateReviewClaim,
   WorkflowArtifactError,
   type WorkflowGateRecord,
 } from "./github-app";
 import { notifyWorkflowGateReview, notifyWorkflowGateTimeout } from "./notify";
 import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
-import { prepareReleaseCandidateForGate } from "./workflow-gates";
-import type { RiskLevel } from "./review";
+import {
+  prepareReleaseCandidatesForGate,
+  type PreparedGatePackage,
+  type PreparedGateRelease,
+} from "./workflow-gates";
+import { combineRisk, type RiskLevel } from "./review";
 import { runScanPipeline } from "./scan-pipeline";
 import { classifyScanError, type WorkflowGateQueueMessage } from "./scan-job";
 
@@ -70,7 +76,7 @@ export function classifyGateTimeout(
  *
  * Trust boundary: the installation token never enters the sandbox. Artifact
  * bytes are fetched + SHA-256-verified in the control plane
- * (`prepareReleaseCandidateForGate`), then the credentials-free sandbox parser
+ * (`prepareReleaseCandidatesForGate`), then the credentials-free sandbox parser
  * turns them into evidence the deterministic rules run against via
  * `runScanPipeline`.
  *
@@ -142,40 +148,20 @@ export async function executeWorkflowGateJob(
     return;
   }
 
+  // A finished batch attaches a representative scan to the gate. A re-delivery
+  // must not re-run the per-package scans; the gate is waiting on a human.
   if (gate.scanId) {
-    const attachedScan = await getAttachedGateScan(db, organizationId, gate.scanId);
-    if (attachedScan?.status === "complete") {
-      // A prior delivery already reviewed this gate and attached its completed
-      // scan; it is waiting on a human decision. Re-enqueues must not re-run the
-      // pipeline.
-      emitOperationalEvent("info", "github_workflow_gate.job_skipped", {
-        organizationId,
-        gateId,
-        scanId: gate.scanId,
-        reason: "already_reviewed",
-      });
-      return;
-    }
-    if (attachedScan?.status === "pending" || attachedScan?.status === "running") {
-      emitOperationalEvent("info", "github_workflow_gate.job_skipped", {
-        organizationId,
-        gateId,
-        scanId: gate.scanId,
-        reason: `scan_${attachedScan.status}`,
-      });
-      return;
-    }
-    emitOperationalEvent("info", "github_workflow_gate.review_retrying", {
+    emitOperationalEvent("info", "github_workflow_gate.job_skipped", {
       organizationId,
       gateId,
       scanId: gate.scanId,
-      priorStatus: attachedScan?.status ?? "missing",
+      reason: "already_reviewed",
     });
+    return;
   }
 
   await recordScanEvent(db, {
     organizationId,
-    scanId: gate.scanId,
     type: "github_workflow_gate.received",
     metadata: {
       gateId: gate.id,
@@ -185,9 +171,9 @@ export async function executeWorkflowGateJob(
     },
   });
 
-  let prepared;
+  let prepared: PreparedGateRelease;
   try {
-    prepared = await prepareReleaseCandidateForGate(env, executionCtx, db, {
+    prepared = await prepareReleaseCandidatesForGate(env, executionCtx, db, {
       config,
       organizationId,
       gateId,
@@ -197,7 +183,7 @@ export async function executeWorkflowGateJob(
       // The published artifacts could not be verified against the reviewed
       // manifest (missing bundle, tampered digest, package mismatch, …). Block
       // the deployment with a generic comment; the typed reason is already
-      // stored on the gate by `prepareReleaseCandidateForGate`.
+      // stored on the gate by `prepareReleaseCandidatesForGate`.
       await rejectGateForArtifactError(env, db, config, gate, err);
       emitOperationalEvent("warn", "github_workflow_gate.rejected_artifact_error", {
         organizationId,
@@ -212,7 +198,6 @@ export async function executeWorkflowGateJob(
     const safe = classifyScanError(err);
     await recordScanEvent(db, {
       organizationId,
-      scanId: gate.scanId,
       type: "github_workflow_gate.review_failed",
       metadata: { gateId: gate.id, error: safe },
     });
@@ -240,88 +225,87 @@ export async function executeWorkflowGateJob(
     return;
   }
 
-  const scanId = crypto.randomUUID();
-  const stageId = `workflow-gate:${gate.id}`;
-  await createScanJob(db, {
-    id: scanId,
-    stageId,
-    organizationId,
-    ownerUserId,
-    source: "workflow_gate",
-  });
-  const claimedGate = await attachScanToGate(db, gate.id, scanId, gate.scanId);
-  if (!claimedGate) {
-    await deletePendingScanJob(db, scanId, organizationId);
+  // Claim the review batch. Only the first delivery to flip `review_started_at`
+  // runs the per-package scans; a concurrent re-delivery loses the CAS and skips
+  // here rather than double-running. Early returns above leave the claim unset,
+  // so a transient prepare/owner failure stays retryable.
+  const claimed = await claimGateReviewStart(db, gate.id);
+  if (!claimed) {
     emitOperationalEvent("info", "github_workflow_gate.job_skipped", {
       organizationId,
       gateId,
-      scanId,
-      reason: "scan_claim_lost",
+      reason: "review_claim_lost",
     });
     return;
   }
 
-  let result;
+  let reviewed: ReviewedPackage[];
   try {
-    result = await runScanPipeline(
-      { env, executionCtx, db, session: { userId: ownerUserId } },
-      prepared.adapter.packageAdapter,
-      {
-        scanId,
-        stageId,
-        organizationId,
-        ...prepared.candidate.pipelineInput,
-      },
+    // A retried batch (a prior attempt released its claim mid-flight) discards
+    // the half-finished scans first so the gate's package set is exactly this
+    // batch.
+    await discardGateScans(db, gate.id, organizationId);
+    reviewed = await reviewGatePackages(
+      { env, executionCtx, db },
+      { gate, ownerUserId, packages: prepared.packages },
     );
   } catch (err) {
+    // A per-package scan failed. Release the claim so a retry re-runs the whole
+    // batch, and leave the deployment pending (never auto-approved on error).
+    await releaseGateReviewClaim(db, gate.id);
     const safe = classifyScanError(err);
-    await markScanFailed(db, scanId, organizationId, safe);
     await recordScanEvent(db, {
       organizationId,
       actorUserId: ownerUserId,
-      scanId,
       type: "github_workflow_gate.review_failed",
       metadata: { gateId: gate.id, error: safe },
     });
     emitOperationalEvent("error", "github_workflow_gate.review_failed", {
       organizationId,
       gateId,
-      scanId,
       durationMs: durationMsSince(startedAtMs),
       error: safe,
     });
     return;
   }
 
-  const releaseRisk = result.riskSummary.releaseRisk;
-  const recommendation = recommendationForReleaseRisk(releaseRisk);
+  // The gate's headline risk is the worst package's release risk; the
+  // representative scan is the (first) package carrying it.
+  const aggregateReleaseRisk = combineRisk(...reviewed.map((pkg) => pkg.releaseRisk));
+  const representative =
+    reviewed.find((pkg) => pkg.releaseRisk === aggregateReleaseRisk) ?? reviewed[0];
+  const recommendation = recommendationForReleaseRisk(aggregateReleaseRisk);
 
   await recordScanEvent(db, {
     organizationId,
     actorUserId: ownerUserId,
-    scanId,
+    scanId: representative.scanId,
     type: "github_workflow_gate.reviewed",
     metadata: {
       gateId: gate.id,
       recommendation,
-      releaseRisk,
-      artifactRisk: result.risk,
-      contextRisk: result.riskSummary.contextRisk,
-      packageName: result.package.name,
-      stagedVersion: result.package.stagedVersion,
+      releaseRisk: aggregateReleaseRisk,
+      packageCount: reviewed.length,
+      packages: reviewed.map((pkg) => ({
+        scanId: pkg.scanId,
+        packageName: pkg.packageName,
+        stagedVersion: pkg.version,
+        releaseRisk: pkg.releaseRisk,
+      })),
     },
   });
 
-  // Keep the completed review linked and leave the gate PENDING. A maintainer
-  // drives the decision from the workbench; the recommendation above is
-  // advisory.
-  const reviewStillPending = await attachScanToGate(db, gate.id, scanId, scanId);
-  if (!reviewStillPending) {
+  // Attach the representative scan as the gate headline and leave the gate
+  // PENDING. The CAS (expecting no scan yet) guards against a racing decision or
+  // fail-closed artifact reject. A maintainer drives the decision; every package
+  // must be approved before the gate releases.
+  const reviewReady = await attachScanToGate(db, gate.id, representative.scanId, null);
+  if (!reviewReady) {
     const currentGate = await getGateForOrganization(db, organizationId, gate.id);
     emitOperationalEvent("info", "github_workflow_gate.job_skipped", {
       organizationId,
       gateId,
-      scanId,
+      scanId: representative.scanId,
       reason: currentGate
         ? `review_ready_lost_to_status_${currentGate.status}`
         : "review_ready_gate_missing",
@@ -341,7 +325,7 @@ export async function executeWorkflowGateJob(
     await recordScanEvent(db, {
       organizationId,
       actorUserId: ownerUserId,
-      scanId,
+      scanId: representative.scanId,
       type:
         timeoutState === "missed"
           ? "github_workflow_gate.timeout_missed"
@@ -353,7 +337,7 @@ export async function executeWorkflowGateJob(
       timeoutState === "missed"
         ? "github_workflow_gate.timeout_missed"
         : "github_workflow_gate.timeout_imminent",
-      { organizationId, gateId, scanId, elapsedMs: gateElapsedMs, windowMs },
+      { organizationId, gateId, scanId: representative.scanId, elapsedMs: gateElapsedMs, windowMs },
     );
   }
 
@@ -372,9 +356,9 @@ export async function executeWorkflowGateJob(
         gateId: gate.id,
         repositoryFullName: gate.repositoryFullName,
         environment: gate.environment,
-        scanId,
-        packageName: result.package.name,
-        version: result.package.stagedVersion,
+        scanId: representative.scanId,
+        packageName: representative.packageName,
+        version: representative.version,
       });
     } else {
       await notifyWorkflowGateReview({
@@ -385,17 +369,18 @@ export async function executeWorkflowGateJob(
         gateId: gate.id,
         repositoryFullName: gate.repositoryFullName,
         environment: gate.environment,
-        scanId,
-        packageName: result.package.name,
-        version: result.package.stagedVersion,
-        releaseRisk,
+        scanId: representative.scanId,
+        packageName: representative.packageName,
+        version: representative.version,
+        releaseRisk: aggregateReleaseRisk,
+        packageCount: reviewed.length,
       });
     }
   } catch (err) {
     emitOperationalEvent("warn", "github_workflow_gate.notification_error", {
       organizationId,
       gateId,
-      scanId,
+      scanId: representative.scanId,
       error: describeOperationalError(err),
     });
   }
@@ -403,12 +388,71 @@ export async function executeWorkflowGateJob(
   emitOperationalEvent("info", "github_workflow_gate.review_ready", {
     organizationId,
     gateId,
-    scanId,
-    releaseRisk,
+    scanId: representative.scanId,
+    packageCount: reviewed.length,
+    releaseRisk: aggregateReleaseRisk,
     recommendation,
     timeoutState,
     durationMs: jobDurationMs,
   });
+}
+
+interface ReviewedPackage {
+  scanId: string;
+  packageName: string | null;
+  version: string | null;
+  releaseRisk: RiskLevel;
+}
+
+/**
+ * Run one scan per discovered package, each against its own baseline, and link
+ * every scan back to the gate via `scans.gate_id`. A monorepo release bundle
+ * fans out into several packages here; the gate decision later aggregates them
+ * (release only when all are approved). A pipeline failure on any package
+ * rethrows so the caller fail-closes the batch — a half-reviewed gate must never
+ * become review-ready.
+ */
+async function reviewGatePackages(
+  ctx: { env: Cloudflare.Env; executionCtx: ExecutionContext; db: AppDb },
+  args: { gate: WorkflowGateRecord; ownerUserId: string; packages: PreparedGatePackage[] },
+): Promise<ReviewedPackage[]> {
+  const { env, executionCtx, db } = ctx;
+  const { gate, ownerUserId, packages } = args;
+  const organizationId = gate.organizationId;
+  const reviewed: ReviewedPackage[] = [];
+
+  for (const pkg of packages) {
+    const { candidate, packageAdapter } = pkg;
+    const scanId = crypto.randomUUID();
+    const stageId = `workflow-gate:${gate.id}:${candidate.ecosystem}:${candidate.package.name}`;
+    await createScanJob(db, {
+      id: scanId,
+      stageId,
+      organizationId,
+      ownerUserId,
+      source: "workflow_gate",
+      gateId: gate.id,
+    });
+
+    try {
+      const result = await runScanPipeline(
+        { env, executionCtx, db, session: { userId: ownerUserId } },
+        packageAdapter,
+        { scanId, stageId, organizationId, ...candidate.pipelineInput },
+      );
+      reviewed.push({
+        scanId,
+        packageName: result.package.name,
+        version: result.package.stagedVersion,
+        releaseRisk: result.riskSummary.releaseRisk,
+      });
+    } catch (err) {
+      await markScanFailed(db, scanId, organizationId, classifyScanError(err));
+      throw err;
+    }
+  }
+
+  return reviewed;
 }
 
 // ── Internals ────────────────────────────────────────────────────────────────
@@ -435,20 +479,6 @@ async function rejectGateForArtifactError(
     type: "github_workflow_gate.rejected",
     metadata: { gateId: gate.id, reason: error.code },
   });
-}
-
-async function getAttachedGateScan(
-  db: AppDb,
-  organizationId: string,
-  scanId: string,
-): Promise<{ status: string; source: string } | null> {
-  const [row] = await db
-    .select({ status: scans.status, source: scans.source })
-    .from(scans)
-    .where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)))
-    .limit(1);
-  if (!row || row.source !== "workflow_gate") return null;
-  return row;
 }
 
 /**

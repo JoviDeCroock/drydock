@@ -120,6 +120,13 @@
       "when": 1780377399680,
       "tag": "0016_lovely_madrox",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1780630576632,
+      "tag": "0017_normal_zodiak",
+      "breakpoints": true
     }
   ]
 }

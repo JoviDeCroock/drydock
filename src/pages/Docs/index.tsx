@@ -173,9 +173,9 @@ export default function DocsPage() {
                 </>,
                 <>
                   Add the build and publish workflow below. The build job uploads the wheels and
-                  sdists as a <Code>pypi-release-candidate</Code> bundle; the publish job runs in{" "}
-                  <Code>environment: pypi</Code> and stays blocked until a maintainer approves the
-                  review in Drydock.
+                  sdists as a GitHub Actions artifact; the publish job runs in{" "}
+                  <Code>environment: pypi</Code>, downloads the same artifact, and stays blocked
+                  until a maintainer approves the review in Drydock.
                 </>,
               ]}
             />
@@ -189,9 +189,10 @@ export default function DocsPage() {
           <Subsection title="Release-candidate bundle">
             <Prose>
               There is no manifest to write. The boundary between your workflow and Drydock is the
-              uploaded <Code>pypi-release-candidate</Code> bundle: CI builds and uploads{" "}
-              <Code>dist/*</Code>, and Drydock treats every <Code>.whl</Code>, <Code>.tar.gz</Code>,
-              and <Code>.tgz</Code> in it as the release set.
+              workflow run's uploaded artifacts: CI builds and uploads <Code>dist/*</Code>, and
+              Drydock treats every <Code>.whl</Code>, <Code>.tar.gz</Code>, and <Code>.tgz</Code> it
+              finds as the release set. The settings form can narrow discovery to one artifact name,
+              but leaving it blank lets Drydock inspect every non-expired upload from the held run.
             </Prose>
             <Prose>
               The release identity is derived from the artifacts themselves — package name and
@@ -199,6 +200,23 @@ export default function DocsPage() {
               , with every sha256 recomputed server-side from the uploaded bytes. The reviewed wheel
               or sdist must be the exact file published: the publish job only downloads the reviewed
               bundle and never rebuilds, so the reviewed bytes are the published bytes.
+            </Prose>
+          </Subsection>
+
+          <Subsection title="Monorepo releases">
+            <Prose>
+              One workflow run can publish several distinct packages — a monorepo cutting many
+              wheels and sdists at once. Drydock groups the uploaded artifacts by package identity
+              and fans the gate out into one review per package, each diffed against its own
+              previously-published baseline. A release target left without a pinned ecosystem
+              auto-detects each package's ecosystem from its artifacts, so a single gate can cover
+              every package the environment publishes.
+            </Prose>
+            <Prose>
+              The held deployment is released only once every discovered package is individually
+              approved; rejecting any single package blocks the whole release. The review workbench
+              lists the package roster, tracks how many are approved, and links each package to its
+              own diff-first review.
             </Prose>
           </Subsection>
 
@@ -255,16 +273,18 @@ export default function DocsPage() {
                 </>,
                 <>
                   Drydock derives the release set from the uploaded bundle, recomputes each
-                  artifact's sha256, runs the scan pipeline, and records an advisory recommendation.
-                  The review never posts to GitHub — it leaves the gate <Code>pending</Code> and
-                  hands off to a human.
+                  artifact's sha256, and runs the scan pipeline — one review per discovered package,
+                  each against its own baseline — recording an advisory recommendation. The review
+                  never posts to GitHub — it leaves the gate <Code>pending</Code> and hands off to a
+                  human.
                 </>,
                 <>
                   A maintainer opens the review in the diff-first workbench at{" "}
-                  <Code>/dashboard/scans/:id</Code> and approves or rejects. Only that decision is
-                  posted back to GitHub, releasing or blocking the held publish job. A bundle whose
-                  artifacts can't be verified is auto-rejected fail-closed — no human is needed to
-                  block something Drydock can't identify.
+                  <Code>/dashboard/scans/:id</Code> and approves or rejects each package. The held
+                  publish job is released only once every package is approved, and blocked the
+                  moment any one is rejected — only that final decision is posted back to GitHub. A
+                  bundle whose artifacts can't be verified is auto-rejected fail-closed — no human
+                  is needed to block something Drydock can't identify.
                 </>,
                 <>
                   The decision callback hits{" "}
