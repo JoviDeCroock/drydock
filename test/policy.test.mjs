@@ -24,7 +24,7 @@ describe("deterministic policy", () => {
     expect(findings.filter((finding) => finding.severity === "high")).toHaveLength(2);
   });
 
-  test("prompt injection text remains just evidence", () => {
+  test("prompt injection text in docs remains just evidence", () => {
     const files = [
       {
         path: "README.md",
@@ -37,8 +37,6 @@ describe("deterministic policy", () => {
     ];
     const findings = deterministicFindings(files, createPackageDiff([], files));
 
-    expect(findings.map((finding) => finding.evidence)).toEqual([
-      "new/changed added file: secret/environment access",
-    ]);
+    expect(findings).toEqual([]);
   });
 });

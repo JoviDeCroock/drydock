@@ -167,6 +167,79 @@ describe("review", () => {
     );
   });
 
+  test("does not treat fetch method declarations as network access", () => {
+    const previous = [
+      {
+        path: "core/ObservableQuery.js",
+        size: 90,
+        sha256: "old",
+        flags: [],
+        textSample:
+          "export class ObservableQuery {\n  fetchPolicy() { return 'cache-first'; }\n}\n",
+      },
+    ];
+    const staged = [
+      {
+        path: "core/ObservableQuery.js",
+        size: 180,
+        sha256: "new",
+        flags: [],
+        textSample:
+          "export class ObservableQuery {\n  fetchPolicy() { return 'cache-first'; }\n  fetch(options, networkStatus, fetchQuery) {\n    return fetchQuery(options, networkStatus);\n  }\n}\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(previous, staged));
+
+    expect(findings.some((finding) => finding.ruleId === "code.network-access")).toBe(false);
+  });
+
+  test("does not scan documentation as executable capability evidence", () => {
+    const staged = [
+      {
+        path: "CHANGELOG.md",
+        size: 160,
+        sha256: "changelog",
+        flags: [],
+        textSample:
+          "Previously no AbortController was passed to `fetch()`, so the request kept running.\n",
+      },
+      {
+        path: "skills/apollo-client/references/integration-client.md",
+        size: 160,
+        sha256: "skill-doc",
+        flags: [],
+        textSample:
+          'const token = localStorage.getItem("token");\nauthorization: token ? `Bearer ${token}` : ""\n',
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings.some((finding) => finding.ruleId?.startsWith("code."))).toBe(false);
+    expect(findings.some((finding) => finding.ruleId === "file.secret-content")).toBe(false);
+  });
+
+  test("still flags high-confidence token leaks in documentation", () => {
+    const staged = [
+      {
+        path: "README.md",
+        size: 80,
+        sha256: "readme-token",
+        flags: [],
+        textSample: "Do not publish this npm_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA token.\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "file.secret-content",
+          file: "README.md",
+        }),
+      ]),
+    );
+  });
+
   test("does not flag secret-looking source map content", () => {
     // The tar parser strips text samples from .map files (shouldSkipTextSample),
     // so deterministic rules never see source-map contents.

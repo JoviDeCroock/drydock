@@ -1,6 +1,6 @@
 import type { Finding } from "../review";
 import { firstMatchingLine } from "../text-utils";
-import { SECRET_PATTERNS } from "./patterns";
+import { HIGH_CONFIDENCE_SECRET_PATTERNS, SECRET_PATTERNS } from "./patterns";
 import { DETERMINISTIC_RULE_IDS, type DeterministicRuleKey } from "./rule-ids";
 
 // Family modules tag findings with a rule ID only; the deterministic ruleset
@@ -13,19 +13,30 @@ export function tag(
   return { ...finding, ruleId: DETERMINISTIC_RULE_IDS[rule] };
 }
 
-export function containsSecretLikeText(text: string): boolean {
-  return SECRET_PATTERNS.some(([pattern]) => {
+interface SecretTextOptions {
+  highConfidenceOnly?: boolean;
+}
+
+export function containsSecretLikeText(text: string, options: SecretTextOptions = {}): boolean {
+  return secretPatternsFor(options).some(([pattern]) => {
     pattern.lastIndex = 0;
     return pattern.test(text);
   });
 }
 
-export function firstSecretLine(text: string | undefined | null): number | undefined {
+export function firstSecretLine(
+  text: string | undefined | null,
+  options: SecretTextOptions = {},
+): number | undefined {
   if (!text) return undefined;
   return firstMatchingLine(
     text,
-    SECRET_PATTERNS.map(([pattern]) => pattern),
+    secretPatternsFor(options).map(([pattern]) => pattern),
   );
+}
+
+function secretPatternsFor(options: SecretTextOptions): Array<[RegExp, string]> {
+  return options.highConfidenceOnly ? HIGH_CONFIDENCE_SECRET_PATTERNS : SECRET_PATTERNS;
 }
 
 export function firstJsonPropertyLine(

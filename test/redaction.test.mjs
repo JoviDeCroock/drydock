@@ -46,4 +46,9 @@ describe("secret redaction", () => {
     expect(out).toContain("password: [REDACTED_SECRET]");
     expect(out).not.toContain("abc!def@ghi#jkl");
   });
+
+  test("does not redact token getter calls as generic secrets", () => {
+    const source = 'const token = localStorage.getItem("token");';
+    expect(redactText(source)).toBe(source);
+  });
 });

@@ -2,6 +2,7 @@ import { isOutsidePackageFilesAllowlist } from "../review-package-files";
 import type { Finding } from "../review";
 import { containsSecretLikeText, firstSecretLine, tag } from "./helpers";
 import { changedPrefix, type RuleContext } from "./context";
+import { isDocumentationPath } from "./file-types";
 
 // Manifest integrity and secret-exposure rules: parse failures, secret-looking
 // files, files outside the declared allowlist, and credential files added to
@@ -28,13 +29,17 @@ export function metadataFindings(ctx: RuleContext): Finding[] {
     const sample = file.textSample || "";
     const prefix = changedPrefix(ctx, file.path);
     const changed = ctx.diffByPath.get(file.path)?.status;
+    const secretOptions = { highConfidenceOnly: isDocumentationPath(file.path) };
 
-    if (/\.npmrc|\.env|id_rsa|id_ed25519/i.test(file.path) || containsSecretLikeText(sample)) {
+    if (
+      /\.npmrc|\.env|id_rsa|id_ed25519/i.test(file.path) ||
+      containsSecretLikeText(sample, secretOptions)
+    ) {
       findings.push(
         tag("fileSecretContent", {
           severity: changed === "added" ? "critical" : "high",
           file: file.path,
-          line: firstSecretLine(sample),
+          line: firstSecretLine(sample, secretOptions),
           evidence: `${prefix}secret-looking file or content`,
           reason: "published artifacts should not include credentials or private material",
         }),
