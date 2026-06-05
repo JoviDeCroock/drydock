@@ -5,7 +5,7 @@
 - `server/` — Hono Worker. `index.ts` mounts routes under `/api/*`. The worker is the deploy target (`main` in `wrangler.jsonc`).
   - `routes/scan.ts` — `POST /api/v1/scan { stageId }`. Runs the full pipeline.
   - `routes/scans.ts` — `GET /api/v1/scans` (list), `GET /api/v1/scans/:id` (persisted detail).
-  - `routes/github-webhooks.ts` — `POST /webhooks/github`. Public, signed by the GitHub App webhook secret; bypasses Better Auth. Persists `deployment_protection_rule` deliveries into `github_workflow_gates` and updates installation status on lifecycle events. See `docs/pypi-workflow-gate.md`.
+  - `routes/github-webhooks.ts` — `POST /webhooks/github`. Public, signed by the GitHub App webhook secret; bypasses Better Auth. Persists `deployment_protection_rule` deliveries into `github_workflow_gates` and updates installation status on lifecycle events. See `docs/workflow-gates.md`.
   - `lib/sandbox.ts` — Dynamic Worker that downloads + parses a tarball; `NpmStageGateway` is the only egress allowed (staged tarball, published tarball, registry metadata).
   - `lib/review.ts` — Deterministic findings, package diff, package.json diff, risk computation. Shared types are imported by both server and UI.
   - `lib/ai-review.ts` — Workers AI JSON-mode reviewer. Wired into `scan-pipeline.ts` via `maybeRunAiReview`, but **gated by the per-organization `ai-review` Flagship flag and off by default** (planned paid-tier feature). It only runs when Flagship returns `true` for the scanning org; otherwise the pipeline records an `unavailable` AI review. Don't change the default-off gating without a feature decision.
