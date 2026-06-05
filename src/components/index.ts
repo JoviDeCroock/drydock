@@ -8,6 +8,8 @@ export { Badge, severityTone, statusTone } from "./Badge";
 export type { Severity, Status, BadgeTone } from "./Badge";
 export { Alert } from "./Alert";
 export type { AlertTone } from "./Alert";
+export { Toaster, pushToast, dismissToast } from "./Toast";
+export type { ToastTone } from "./Toast";
 export { Dialog } from "./Dialog";
 export { Card, CollapsibleCard, SummaryCard } from "./Card";
 export type { SummaryCardTone, SummaryCardValue } from "./Card";

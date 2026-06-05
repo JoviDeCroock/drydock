@@ -107,7 +107,7 @@ export function OrganizationMembersSection({
         ) : null}
       </div>
 
-      <div class="border-t border-border">
+      <div>
         <MemberList
           members={memberList}
           canManage={canManage}
@@ -118,10 +118,10 @@ export function OrganizationMembersSection({
       </div>
 
       {canManage ? (
-        <div class="border-t border-border">
+        <div>
           <div class="px-5 py-4 flex items-center justify-between gap-3">
-            <SectionLabel>Pending invites</SectionLabel>
-            <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+            <SectionLabel class="flex-1">Pending invites</SectionLabel>
+            <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle shrink-0">
               {invitations.length} pending
             </span>
           </div>
@@ -206,7 +206,7 @@ function InvitationList({
   onRevoke: (id: string) => void;
 }) {
   return (
-    <ul class="m-0 p-0 list-none border-t border-border">
+    <ul class="m-0 p-0 list-none">
       {invitations.map((invitation) => (
         <li
           key={invitation.id}
