@@ -5,7 +5,7 @@
   "verdict": "benign",
   "threatClass": "legit-childprocess",
   "source": "benign-popular",
-  "intent": "A real-world-shaped local build script that legitimately uses child_process. The deterministic rules flag code.process-execution, but the truth is benign. This case measures false-positive precision; it is expected to be a reported false positive until the detector gains context (e.g. not an install hook, well-known build pattern).",
+  "intent": "A real-world-shaped local build script that legitimately uses child_process. build.js is not reachable from any install hook or declared entrypoint, so install-reachability weighting records code.process-execution at low severity instead of high. This case measures false-positive precision: it must stay below the significant-finding threshold (no longer a benign hard-negative false positive).",
   "expectMinRisk": "low",
   "expectAnyRule": [],
   "previousPackageJson": { "name": "buildtool", "version": "2.0.0" },

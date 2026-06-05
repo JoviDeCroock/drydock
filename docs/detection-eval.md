@@ -119,16 +119,17 @@ Recall is measured per class so blind spots are visible. Malicious:
 
 ## Gated thresholds (and the ratchet)
 
-Only regression metrics are gated today (`detection-eval.test.mjs`):
+Gated today (`detection-eval.test.mjs`):
 
 - malicious recall ≥ 90%
 - every `expectMinRisk: critical` case caught (100%)
 - zero false positives on benign controls
+- benign hard-negative FP rate < 10% (newly gated: install-reachability weighting
+  cleared `legit-build-childprocess`, the only standing hard-negative FP)
 
-Frontier recall, benign hard-negative FP rate, and evasion robustness are
-reported, not gated, so they can start red. Ratchet plan as the corpus and
-detector improve: gate benign FP rate < 10%, then gate frontier recall, then
-gate `pushPastWindow` survival once full-bytes scanning lands.
+Frontier recall and evasion robustness are reported, not gated, so they can start
+red. Remaining ratchet plan as the corpus and detector improve: gate frontier
+recall, then gate `pushPastWindow` survival once full-bytes scanning lands.
 
 ## Corpus expansion
 

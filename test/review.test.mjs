@@ -79,6 +79,190 @@ describe("review", () => {
     );
   });
 
+  test("weights process execution down on an unreferenced build file", () => {
+    const staged = [
+      {
+        path: "package.json",
+        size: 41,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({ name: "buildtool", version: "2.1.0" }),
+      },
+      {
+        path: "build.js",
+        size: 120,
+        sha256: "build",
+        flags: [],
+        textSample:
+          "const { execSync } = require('child_process');\n// local build, not an install hook\nexecSync('cc -O2 -o out/app src/app.c');\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged), {
+      name: "buildtool",
+      version: "2.1.0",
+    });
+    const processFinding = findings.find((finding) => finding.ruleId === "code.process-execution");
+
+    expect(processFinding).toBeDefined();
+    expect(processFinding.severity).toBe("low");
+    // A lone build helper that shells out must not inflate release risk.
+    expect(computeRisk(findings)).toBe("low");
+  });
+
+  test("treats pre-existing unreferenced process execution as informational", () => {
+    const file = {
+      path: "scripts/compile.js",
+      size: 90,
+      sha256: "compile",
+      flags: [],
+      textSample: "require('child_process').execSync('make');\n",
+    };
+    const pkg = {
+      path: "package.json",
+      size: 41,
+      sha256: "pkg",
+      flags: [],
+      textSample: JSON.stringify({ name: "buildtool", version: "2.1.0" }),
+    };
+    const previous = [pkg, file];
+    const staged = [pkg, file];
+    const findings = deterministicFindings(staged, createPackageDiff(previous, staged), {
+      name: "buildtool",
+      version: "2.1.0",
+    });
+    const processFinding = findings.find((finding) => finding.ruleId === "code.process-execution");
+
+    expect(processFinding?.severity).toBe("info");
+  });
+
+  test("keeps process execution high when an install hook reaches the file", () => {
+    const staged = [
+      {
+        path: "package.json",
+        size: 90,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({ scripts: { postinstall: "node tools/setup.js" } }),
+      },
+      {
+        path: "tools/setup.js",
+        size: 60,
+        sha256: "setup",
+        flags: [],
+        textSample: "require('child_process').execSync('cc -o out src.c');\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "code.process-execution",
+          severity: "high",
+          file: "tools/setup.js",
+        }),
+      ]),
+    );
+  });
+
+  test("keeps process execution high on a declared bin and the default entry", () => {
+    const binStaged = [
+      {
+        path: "package.json",
+        size: 90,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({ name: "cli", version: "1.0.0", bin: { cli: "./bin/run.js" } }),
+      },
+      {
+        path: "bin/run.js",
+        size: 60,
+        sha256: "run",
+        flags: [],
+        textSample: "require('child_process').execSync('git status');\n",
+      },
+    ];
+    const binFindings = deterministicFindings(binStaged, createPackageDiff([], binStaged));
+    expect(
+      binFindings.find((finding) => finding.ruleId === "code.process-execution")?.severity,
+    ).toBe("high");
+
+    const entryStaged = [
+      {
+        path: "package.json",
+        size: 41,
+        sha256: "pkg2",
+        flags: [],
+        textSample: JSON.stringify({ name: "lib", version: "1.0.0" }),
+      },
+      {
+        path: "index.js",
+        size: 60,
+        sha256: "index",
+        flags: [],
+        textSample: "require('child_process').execSync('uname -a');\n",
+      },
+    ];
+    const entryFindings = deterministicFindings(entryStaged, createPackageDiff([], entryStaged));
+    expect(
+      entryFindings.find((finding) => finding.ruleId === "code.process-execution")?.severity,
+    ).toBe("high");
+
+    const metadataOnlyStaged = [
+      {
+        path: "package.json",
+        size: 120,
+        sha256: "pkg3",
+        flags: [],
+        textSample: JSON.stringify({
+          name: "cli-lib",
+          version: "1.0.0",
+          bin: { cli: "./bin/run.js" },
+          module: "./dist/module.js",
+          types: "./dist/index.d.ts",
+        }),
+      },
+      {
+        path: "index.js",
+        size: 60,
+        sha256: "index2",
+        flags: [],
+        textSample: "require('child_process').execSync('whoami');\n",
+      },
+    ];
+    const metadataOnlyFindings = deterministicFindings(
+      metadataOnlyStaged,
+      createPackageDiff([], metadataOnlyStaged),
+    );
+    expect(
+      metadataOnlyFindings.find((finding) => finding.ruleId === "code.process-execution")?.severity,
+    ).toBe("high");
+  });
+
+  test("does not treat a nested file with the entrypoint basename as runtime reachable", () => {
+    const staged = [
+      {
+        path: "package.json",
+        size: 62,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({ name: "lib", version: "1.0.0", main: "index.js" }),
+      },
+      {
+        path: "src/index.js",
+        size: 60,
+        sha256: "src-index",
+        flags: [],
+        textSample: "require('child_process').execSync('make');\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings.find((finding) => finding.ruleId === "code.process-execution")?.severity).toBe(
+      "low",
+    );
+  });
+
   test("does not apply Python capability patterns to JavaScript packages", () => {
     const staged = [
       {

@@ -3,7 +3,12 @@ import { firstMatchingLine } from "../text-utils";
 import type { Finding } from "../review";
 import { LIFECYCLE_SCRIPTS } from "./patterns";
 import { firstJsonPropertyLine, tag } from "./helpers";
-import { changedPrefix, type RuleContext } from "./context";
+import {
+  changedPrefix,
+  fileReachability,
+  type FileReachability,
+  type RuleContext,
+} from "./context";
 import { isDocumentationPath } from "./file-types";
 import { normalizeCodeForScanning } from "./normalize";
 
@@ -56,7 +61,8 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     const normalized = ctx.codePatternSet === "python" ? sample : normalizeCodeForScanning(sample);
     const prefix = changedPrefix(ctx, file.path);
     const changed = ctx.diffByPath.get(file.path)?.status;
-    const lifecycleScriptFile = isLifecycleScriptFile(ctx, file.path);
+    const reachability = fileReachability(ctx, file.path);
+    const lifecycleScriptFile = reachability === "install";
 
     const processExecution = matchCategory(ctx.patterns.processExecution, sample, normalized);
     const networkAccess = matchCategory(ctx.patterns.networkAccess, sample, normalized);
@@ -66,13 +72,17 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       processExecution.matched || dynamicEvaluation.matched || credentialAccess.matched;
 
     if (processExecution.matched) {
+      const severity = processExecutionSeverity(ctx, reachability, changed);
       findings.push(
         tag("codeProcessExecution", {
-          severity: "high",
+          severity,
           file: file.path,
           line: processExecution.line,
           evidence: `${prefix}process or shell execution`,
-          reason: "package may execute arbitrary commands",
+          reason:
+            severity === "high"
+              ? "package may execute arbitrary commands"
+              : "process or shell execution in a file the manifest neither runs on install nor exposes as an entrypoint; commonly local build tooling, so weighted below release significance",
         }),
       );
     }
@@ -144,31 +154,23 @@ function networkAccessSeverity(
   return changed === "added" && (lifecycleScriptFile || adjacentExecutionRisk) ? "high" : "medium";
 }
 
-function isLifecycleScriptFile(ctx: RuleContext, path: string): boolean {
-  const candidates = scriptPathCandidates(path);
-  return LIFECYCLE_SCRIPTS.some((script) => {
-    const command = ctx.scripts[script];
-    if (!command || ctx.implicitScripts[script] === command) return false;
-    return scriptCommandTokens(command).some((token) => candidates.has(token));
-  });
-}
-
-function scriptPathCandidates(path: string): Set<string> {
-  const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "");
-  const withoutPackage = normalized.startsWith("package/")
-    ? normalized.slice("package/".length)
-    : normalized;
-  const basename = withoutPackage.split("/").at(-1) ?? withoutPackage;
-  const baseValues = [normalized, withoutPackage, basename];
-  const values = [...baseValues];
-  for (const value of baseValues) {
-    values.push(value.replace(/\.[^/.]+$/, ""));
-  }
-  return new Set(values.filter(Boolean));
-}
-
-function scriptCommandTokens(command: string): string[] {
-  return [...command.matchAll(/(?:\.\/)?[\w@./-]+(?:\.[\w-]+)?\b/g)].map((match) =>
-    match[0].replace(/^\.\//, ""),
-  );
+// Weight process/shell execution by where the code sits in the package, so a
+// local build helper that legitimately shells out is not scored the same as an
+// install hook. Install hooks (auto-run on `npm install`) and declared
+// entrypoints (run when the consumer imports/invokes the package) keep full
+// weight; an unreferenced build/source file is recorded but weighted below
+// release significance, with diff novelty splitting newly-introduced from
+// pre-existing capability. Co-occurring network/credential/eval capability still
+// escalates through its own rule, so a real dropper does not slip through.
+function processExecutionSeverity(
+  ctx: RuleContext,
+  reachability: FileReachability,
+  changed: RuleContext["diff"][number]["status"] | undefined,
+): Finding["severity"] {
+  // PyPI install reachability is modeled by the adapter's setup.py / startup-hook
+  // rules rather than the npm manifest map, so the reachability tiers above do
+  // not apply; keep the historical high severity for Python evidence.
+  if (ctx.codePatternSet === "python") return "high";
+  if (reachability !== "unreferenced") return "high";
+  return changed === "unchanged" ? "info" : "low";
 }

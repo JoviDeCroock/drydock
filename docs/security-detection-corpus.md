@@ -14,6 +14,7 @@ The fixture taxonomy is based on the current Drydock rule surface plus public np
 - Recent npm detection benchmark research reports a curated dataset of 6,420 malicious and 7,288 benign npm packages, with 11 behavior categories and 8 evasion categories. The most common behaviors were command execution, data collection, and data exfiltration; install scripts were used by about 72% of malicious packages in that study, and preinstall hooks were the dominant install-time entry point.
 - The same benchmark highlights the central detection trade-off: benign and malicious packages often call the same APIs. A single `process.env` or `https` use is capability evidence, while chains such as collect → serialize → exfiltrate are stronger intent evidence.
 - Network-only code follows that trade-off: unchanged network-only files are suppressed as package context, added network-only files remain medium-severity contextual evidence, and added network access escalates to high when it is tied to lifecycle scripts, process execution, dynamic evaluation, or credential access.
+- Process/shell execution is weighted by **install-reachability** and **diff novelty**, not flagged uniformly. A file the manifest runs on install (an explicit `preinstall`/`install`/`postinstall`/`prepare` hook) or exposes as an entrypoint (`bin`, `main`/`module`/`types`/`exports`, plus the default `index.js` package-root entry unless `main`/`exports` override it) keeps `code.process-execution` at high. A file no manifest field references — typically local maintainer build tooling — is recorded at low when newly added/changed and at info when pre-existing, so a build helper that legitimately shells out (`legit-build-childprocess`) is no longer a significant false positive. Co-occurring network/credential/eval capability still escalates through its own rule, so a real install-time dropper stays high. The reachability map is derived from the npm manifest; PyPI install reachability is modeled by the adapter's `setup.py`/startup-hook rules, so Python evidence keeps the historical high severity.
 - Documentation and prose files remain available as package evidence, but deterministic `code.*` rules do not treat them as executable capability evidence. Secret checks in documentation use only high-confidence token formats; generic key/value examples such as `token = localStorage.getItem("token")` are not `file.secret-content` findings.
 
 ## Safety policy
@@ -96,7 +97,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.2.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.7.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.8.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -113,7 +114,10 @@ JavaScript `code.*` rules also see runtime-assembled identifiers: string-concate
 (`'chi' + 'ld_process'`), `[...].join('')` array assembly, and literal-keyed computed member access
 (`globalThis['re' + 'quire']`) are folded back to their literal form before the regex set runs. A
 tokenizer keeps folding out of comments, string bodies, template literals, and regex literals, and both
-the raw and folded text are scanned so folding can only add detections, never drop one. `pypi.*` grew
+the raw and folded text are scanned so folding can only add detections, never drop one. `1.8.0` weights
+`code.process-execution` on npm files by install-reachability and diff novelty (high for install
+hooks/entrypoints, low/info for unreferenced build files); PyPI keeps the historical high severity
+because its install reachability is modeled by the `setup.py`/startup-hook rules. `pypi.*` grew
 `startup-hook`,
 `record-mismatch`, and `unusual-dependency` in `0.2.0`, and
 `setup-install-command` was upgraded to fire on the top-level sdist `setup.py` install-time code, not
