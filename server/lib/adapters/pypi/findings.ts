@@ -1,4 +1,9 @@
-import { type FileRecord, type Finding, PYTHON_EXECUTION_CAPABILITY_PATTERNS } from "../../review";
+import {
+  type FileRecord,
+  type Finding,
+  PYTHON_EXECUTION_CAPABILITY_PATTERNS,
+  scanContent,
+} from "../../review";
 import { firstMatchingLine } from "../../text-utils";
 import { normalizePyPiProjectName } from "./manifest";
 import {
@@ -105,14 +110,13 @@ export function pyPiReleaseFindings(
     for (const file of artifact.files) {
       const filePath = namespacedPath(artifact.path, file.path);
       if (/\.pth$/i.test(file.path) && isPythonInstallRootFile(artifact, file.path)) {
-        const hasImportLine = Boolean(
-          file.textSample?.split(/\r?\n/).some((line) => /^\s*import\s+/.test(line)),
-        );
+        const pthText = scanContent(file);
+        const hasImportLine = pthText.split(/\r?\n/).some((line) => /^\s*import\s+/.test(line));
         findings.push(
           tag("pthExecution", {
             severity: hasImportLine ? "high" : "medium",
             file: filePath,
-            line: hasImportLine ? firstMatchingLine(file.textSample, [/^\s*import\s+/]) : undefined,
+            line: hasImportLine ? firstMatchingLine(pthText, [/^\s*import\s+/]) : undefined,
             evidence: hasImportLine
               ? ".pth file contains an import line"
               : ".pth file included in wheel",
@@ -136,7 +140,7 @@ export function pyPiReleaseFindings(
         );
       }
       if (artifact.kind === "sdist" && /^setup\.py$/i.test(file.path)) {
-        const setupText = file.textSample ?? "";
+        const setupText = scanContent(file);
         const matchedInstallCommand = SETUP_INSTALL_COMMAND_PATTERNS.some((pattern) =>
           pattern.test(setupText),
         );

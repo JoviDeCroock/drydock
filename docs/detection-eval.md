@@ -111,24 +111,29 @@ Recall is measured per class so blind spots are visible. Malicious:
 - `base64Wrap` — wrap the payload in `eval(atob("…"))`. Note this _trips_ the
   dynamic-evaluation rule, so the file stays "blocked" while the specific
   network/process/credential rules are lost — the report shows that split.
-- `pushPastWindow` — prepend >64KB of filler, then truncate to the sandbox
-  sample limit so the payload falls off the end. `codeRetention` goes to 0 and
-  any case without a surviving manifest signal stops being blocked. This is the
-  acceptance test for the "scan full bytes, persist a bounded sample" refactor:
-  once detection scans pre-truncation bytes, these variants should survive.
+- `pushPastWindow` — prepend filler past the persisted sample window so the
+  payload would fall off the end of `textSample`. This is the acceptance test for
+  the "scan full bytes, persist a bounded sample" refactor (issue #191). Now that
+  the sandbox scans the full pre-truncation bytes (`scanText`) while persisting
+  only the bounded `textSample`, these variants survive: `blockedRate` is 100%
+  (block-slip 0%) and `codeRetention` fully recovers. This metric is **gated**
+  (see below). Before the refactor, `codeRetention` went to 0 and any case
+  without a surviving manifest signal stopped being blocked.
 
 ## Gated thresholds (and the ratchet)
 
-Only regression metrics are gated today (`detection-eval.test.mjs`):
+Gated today (`detection-eval.test.mjs`):
 
 - malicious recall ≥ 90%
 - every `expectMinRisk: critical` case caught (100%)
 - zero false positives on benign controls
+- `pushPastWindow` survival: `blockedRate` 100% (block-slip 0%) and
+  `codeRetention` 100% — full-bytes scanning landed (issue #191), so this no
+  longer starts red.
 
-Frontier recall, benign hard-negative FP rate, and evasion robustness are
-reported, not gated, so they can start red. Ratchet plan as the corpus and
-detector improve: gate benign FP rate < 10%, then gate frontier recall, then
-gate `pushPastWindow` survival once full-bytes scanning lands.
+Frontier recall, benign hard-negative FP rate, and the other evasion transforms
+are reported, not gated, so they can start red. Ratchet plan as the corpus and
+detector improve: gate benign FP rate < 10%, then gate frontier recall.
 
 ## Corpus expansion
 

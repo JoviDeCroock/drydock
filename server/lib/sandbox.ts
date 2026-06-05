@@ -17,6 +17,7 @@ const MAX_TAR_BYTES = SANDBOX_MAX_TAR_BYTES;
 const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.readString,
   tarParser.decodeText,
+  tarParser.decodeScanText,
   tarParser.isPlainObject,
   tarParser.normalizeStringRecord,
   tarParser.normalizeStringList,

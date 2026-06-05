@@ -98,6 +98,10 @@ Rationale: staged packages may contain secrets, proprietary code, or malicious c
 
 Redaction is a defense-in-depth feature, not a proof that data is safe. Redact known token/key patterns before persistence and AI review, but still treat all package-derived text as sensitive.
 
+### Scan full bytes, persist a bounded sample
+
+Bytes scanned and bytes persisted are decoupled. The persisted `textSample` is truncated to the per-file sample bound (`SANDBOX_MAX_BYTES_PER_FILE`) for the UI/diff, but deterministic detection runs over the **full** decoded file text. The sandbox emits a `scanText` field carrying the full body when (and only when) the body exceeds the sample bound; deterministic rules scan `scanText` and fall back to `textSample` when it is absent (`scanContent` in `server/lib/review.ts`). `scanText` is never persisted, never digested into the report, and never shown to the AI reviewer — `redactFileRecords` strips it before any of those paths. This closes the evasion where an attacker prepends filler so the real payload falls past the persisted sample window (issue #191; the eval's `pushPastWindow` transform is the acceptance test). Full-byte scanning is still bounded by the existing tarball-size and `MAX_FILES` caps.
+
 ## Sandbox egress policy
 
 Allowed credentialed egress through `NpmStageGateway`:

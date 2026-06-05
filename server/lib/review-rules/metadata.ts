@@ -1,5 +1,5 @@
 import { isOutsidePackageFilesAllowlist } from "../review-package-files";
-import type { Finding } from "../review";
+import { scanContent, type Finding } from "../review";
 import { containsSecretLikeText, firstSecretLine, tag } from "./helpers";
 import { changedPrefix, type RuleContext } from "./context";
 import { isDocumentationPath } from "./file-types";
@@ -26,7 +26,7 @@ export function metadataFindings(ctx: RuleContext): Finding[] {
   }
 
   for (const file of ctx.files) {
-    const sample = file.textSample || "";
+    const sample = scanContent(file);
     const prefix = changedPrefix(ctx, file.path);
     const changed = ctx.diffByPath.get(file.path)?.status;
     const secretOptions = { highConfidenceOnly: isDocumentationPath(file.path) };

@@ -1,6 +1,6 @@
 import { hasImplicitNodeGypInstall } from "../tar-parser.js";
 import { firstMatchingLine } from "../text-utils";
-import type { Finding } from "../review";
+import { scanContent, type Finding } from "../review";
 import { LIFECYCLE_SCRIPTS } from "./patterns";
 import { firstJsonPropertyLine, tag } from "./helpers";
 import { changedPrefix, type RuleContext } from "./context";
@@ -20,9 +20,7 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       tag("installScriptImplicitNodeGyp", {
         severity: "high",
         file: ctx.rootGypFile?.path ?? ctx.packageJsonFile?.path ?? "package.json",
-        line: ctx.rootGypFile
-          ? 1
-          : firstJsonPropertyLine(ctx.packageJsonFile?.textSample, "gypfile"),
+        line: ctx.rootGypFile ? 1 : firstJsonPropertyLine(ctx.packageJsonText, "gypfile"),
         evidence: "implicit install: node-gyp rebuild",
         reason: ctx.rootGypFile
           ? "npm defaults install to node-gyp rebuild when a root *.gyp file exists and no install/preinstall script or gypfile=false is declared"
@@ -37,7 +35,7 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       tag(script === "preinstall" ? "installScriptPreinstall" : "installScript", {
         severity: script === "preinstall" ? "critical" : "high",
         file: ctx.packageJsonFile?.path ?? "package.json",
-        line: firstJsonPropertyLine(ctx.packageJsonFile?.textSample, script, ctx.scripts[script]),
+        line: firstJsonPropertyLine(ctx.packageJsonText, script, ctx.scripts[script]),
         evidence: `${script}: ${ctx.scripts[script]}`,
         reason: "install lifecycle hooks execute on consumer machines",
       }),
@@ -47,7 +45,9 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
   for (const file of ctx.files) {
     if (isDocumentationPath(file.path)) continue;
 
-    const sample = file.textSample || "";
+    // Scan the full pre-truncation bytes (scanText when the sample was
+    // truncated), so a payload pushed past the persisted window is still seen.
+    const sample = scanContent(file);
     // Constant-fold runtime-assembled identifiers (`'chi'+'ld_process'`,
     // `globalThis['re'+'quire']`) so the literal regex set sees them. Matching
     // both raw and normalized text means folding can only add detections, never

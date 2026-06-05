@@ -35,6 +35,16 @@ export function decodeText(bytes) {
   return text;
 }
 
+// Full-body decode used only for deterministic scanning. decodeText spreads the
+// decoded string into codepoints for its control-char ratio check, which is
+// O(n) memory and far too costly for multi-MB bodies; here we do a single cheap
+// NUL scan (binary marker) and one native decode. The caller only reaches this
+// after the bounded sample already decoded as text, so the prefix is known good.
+export function decodeScanText(bytes) {
+  if (bytes.some((b) => b === 0)) return "";
+  return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+}
+
 export function isPlainObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -166,7 +176,8 @@ export async function summarizeFile(path, body, maxBytesPerFile) {
   const flags = [];
   const skipTextSample = shouldSkipTextSample(path);
   if (skipTextSample) flags.push("text-sample-skipped");
-  if (body.length > maxBytesPerFile) flags.push("truncated");
+  const truncated = body.length > maxBytesPerFile;
+  if (truncated) flags.push("truncated");
   const hash = await sha256Hex(body);
   if (skipTextSample) {
     return {
@@ -179,12 +190,18 @@ export async function summarizeFile(path, body, maxBytesPerFile) {
   const sample = body.subarray(0, Math.min(body.length, maxBytesPerFile));
   const text = decodeText(sample);
   if (!text) flags.push("binary");
+  // Deterministic detection scans the full file bytes, but only the bounded
+  // sample is persisted for the UI/diff. When the body fits the sample bound,
+  // textSample already holds the whole file, so scanText would be redundant —
+  // emit it only when the body is truncated, to keep the sandbox response small.
+  const scanText = text && truncated ? decodeScanText(body) : "";
   return {
     path,
     size: body.length,
     sha256: hash,
     flags,
     ...(text ? { textSample: text } : {}),
+    ...(scanText ? { scanText } : {}),
   };
 }
 

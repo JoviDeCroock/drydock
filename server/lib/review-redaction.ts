@@ -9,7 +9,9 @@ export function redactText(text: string): string {
 }
 
 export function redactFileRecords(files: FileRecord[]): FileRecord[] {
-  return files.map((file) => ({
+  // Drop scanText: it is the full pre-truncation body used only for scanning and
+  // must never reach persistence, the report digest, or the AI reviewer.
+  return files.map(({ scanText: _scanText, ...file }) => ({
     ...file,
     textSample: file.textSample ? redactText(file.textSample) : file.textSample,
   }));

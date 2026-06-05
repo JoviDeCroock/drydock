@@ -5,9 +5,60 @@ import {
   createPackageDiff,
   deterministicFindings,
   packageJsonDiffFindings,
+  redactFileRecords,
+  scanContent,
   summarizePackageJsonDiff,
   tarSuspiciousEntryFindings,
 } from "../server/lib/review.ts";
+
+describe("scanText: scan full bytes, persist a bounded sample", () => {
+  // A payload prepended with >sample-window filler: textSample drops it, scanText
+  // keeps it. Detection must read scanText so the evasion in issue #191 fails.
+  const padding = "// padding\n".repeat(8000);
+  const stagedFiles = [
+    {
+      path: "package.json",
+      size: 70,
+      sha256: "pkg",
+      flags: [],
+      textSample: JSON.stringify({ name: "pkg", version: "1.0.1" }),
+    },
+    {
+      path: "install.js",
+      size: padding.length + 80,
+      sha256: "install",
+      flags: ["truncated"],
+      textSample: padding.slice(0, 1024),
+      scanText: `${padding}process.env.NPM_TOKEN;\nrequire('https').request('https://example.invalid');\n`,
+    },
+  ];
+
+  test("detection reads scanText when the persisted sample is truncated", () => {
+    const findings = deterministicFindings(stagedFiles, createPackageDiff([], stagedFiles));
+    const ruleIds = findings.map((finding) => finding.ruleId);
+    expect(ruleIds).toContain("code.credential-access");
+    expect(ruleIds).toContain("code.network-access");
+  });
+
+  test("the same payload is missed when only the truncated sample is scanned", () => {
+    const sampleOnly = stagedFiles.map(({ scanText: _scanText, ...file }) => file);
+    const findings = deterministicFindings(sampleOnly, createPackageDiff([], sampleOnly));
+    expect(findings.map((finding) => finding.ruleId)).not.toContain("code.credential-access");
+  });
+
+  test("redactFileRecords strips scanText so it is never persisted or sent to AI", () => {
+    const redacted = redactFileRecords(stagedFiles);
+    expect(redacted.every((file) => file.scanText === undefined)).toBe(true);
+    // The bounded textSample still survives (and is redacted) for the UI/diff.
+    expect(redacted[1].textSample).toBe(padding.slice(0, 1024));
+  });
+
+  test("scanContent falls back to textSample when scanText is absent", () => {
+    expect(scanContent({ textSample: "hello" })).toBe("hello");
+    expect(scanContent({ scanText: "full", textSample: "sample" })).toBe("full");
+    expect(scanContent({})).toBe("");
+  });
+});
 
 describe("review", () => {
   test("diff highlights added modified and removed package files", () => {

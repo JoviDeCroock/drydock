@@ -8,8 +8,28 @@ export interface FileRecord {
   path: string;
   size: number;
   sha256: string;
+  /**
+   * Bounded text sample persisted for the UI/diff display. Truncated to the
+   * sandbox `maxBytesPerFile` bound; never the authority for detection.
+   */
   textSample?: string;
+  /**
+   * Full decoded file text used only for deterministic scanning. Present when
+   * the body exceeds the sample bound (otherwise `textSample` already holds the
+   * whole file). Never persisted or shown to the AI reviewer — `redactFileRecords`
+   * strips it before any storage, report, or AI path sees it. Scanning this
+   * instead of `textSample` is what closes the "prepend filler to push the
+   * payload past the sample window" evasion.
+   */
+  scanText?: string;
   flags: string[];
+}
+
+// Detection scans the full file bytes (`scanText`) when the sandbox truncated
+// the persisted sample; otherwise `textSample` already holds the whole file.
+// Re-annotation of persisted scans only has `textSample`, so fall back to it.
+export function scanContent(file: Pick<FileRecord, "scanText" | "textSample">): string {
+  return file.scanText ?? file.textSample ?? "";
 }
 
 export interface Finding {

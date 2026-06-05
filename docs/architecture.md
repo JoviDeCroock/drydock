@@ -57,7 +57,8 @@ The Dynamic Worker handles untrusted package bytes. It:
 - never receives npm credentials;
 - cannot directly reach the Internet except through `globalOutbound`;
 - parses archive bytes into bounded file summaries;
-- returns metadata and text samples, not executable behavior.
+- returns metadata and text samples, not executable behavior;
+- emits a full-body `scanText` (detection-only, never persisted) when a file exceeds the persisted sample bound, so deterministic scanning sees the full bytes while only the bounded `textSample` is stored (see [security-model.md](security-model.md) "Scan full bytes, persist a bounded sample").
 
 The sandbox must stay small and boring. Do not add package execution, dependency installation, build steps, import resolution, or rendering.
 
