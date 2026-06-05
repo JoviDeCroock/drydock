@@ -140,6 +140,8 @@ export function DiffView({ path, status, before, after, beforeLabel, afterLabel 
         beforeSample={beforeSample}
         afterSample={afterSample}
         binary={binary}
+        before={before}
+        after={after}
         beforeLabel={beforeLabel}
         afterLabel={afterLabel}
       />
@@ -153,6 +155,8 @@ function DiffBody({
   beforeSample,
   afterSample,
   binary,
+  before,
+  after,
   beforeLabel,
   afterLabel,
 }: {
@@ -161,6 +165,8 @@ function DiffBody({
   beforeSample: string;
   afterSample: string;
   binary: boolean;
+  before: DiffSide | null;
+  after: DiffSide | null;
   beforeLabel: string;
   afterLabel: string;
 }) {
@@ -208,7 +214,14 @@ function DiffBody({
     );
   }
   if (!beforeSample && !afterSample) {
-    return <Muted class="text-[13px]">No text samples available to diff.</Muted>;
+    const skipped = hasFlag(before, "text-sample-skipped") || hasFlag(after, "text-sample-skipped");
+    return (
+      <Muted class="text-[13px]">
+        {skipped
+          ? "Text sample not extracted for this generated file."
+          : "No text samples available to diff."}
+      </Muted>
+    );
   }
   if (!beforeSample) {
     return (

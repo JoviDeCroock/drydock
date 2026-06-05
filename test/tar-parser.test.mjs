@@ -215,7 +215,9 @@ describe("readTar regular files", () => {
     const byPath = Object.fromEntries(files.map((file) => [file.path, file]));
 
     expect(byPath["dist/index.js"].textSample).toBe("export const value = 1;\n");
-    for (const path of ["dist/index.js.map", "dist/index.d.ts", "dist/index.min.js"]) {
+    expect(byPath["dist/index.d.ts"].textSample).toBe("export declare const value: number;\n");
+    expect(byPath["dist/index.d.ts"].flags).not.toContain("text-sample-skipped");
+    for (const path of ["dist/index.js.map", "dist/index.min.js"]) {
       expect(byPath[path].textSample).toBeUndefined();
       expect(byPath[path].sha256).toMatch(/^[0-9a-f]{64}$/);
       expect(byPath[path].size).toBeGreaterThan(0);

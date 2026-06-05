@@ -195,7 +195,6 @@ export function shouldSkipTextSample(path) {
   const basename = normalized.slice(normalized.lastIndexOf("/") + 1);
 
   if (basename.endsWith(".map")) return true;
-  if (/\.d\.(?:c|m)?ts$/.test(basename)) return true;
   if (/\.min\.(?:js|mjs|cjs|css)$/.test(basename)) return true;
 
   return false;
