@@ -1,15 +1,7 @@
 import { useModel } from "@preact/signals";
 import { formatTimestamp } from "../../../lib/format";
 import { NpmConnectionModel } from "../../../models/npm-connection";
-import {
-  Alert,
-  Badge,
-  Button,
-  CollapsibleCard,
-  Field,
-  Input,
-  Muted,
-} from "../../../components";
+import { Alert, Badge, Button, CollapsibleCard, Field, Input, Muted } from "../../../components";
 
 export function NpmConnectionSection({
   npm,
