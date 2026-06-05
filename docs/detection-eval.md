@@ -101,8 +101,12 @@ Recall is measured per class so blind spots are visible. Malicious:
 ### Evasion transforms
 
 - `splitStringLiterals` — `'child_process'` → `'chi'+'ld_process'`; defeats
-  literal-based matches like `require('https')`.
-- `bracketifyMemberAccess` — `process.env` → `process['e'+'nv']`.
+  literal-based matches like `require('https')`. Now defeated by the
+  constant-folding pre-pass (`server/lib/review-rules/normalize.ts`), which folds
+  the chain back to `'child_process'` before the regex set runs, so
+  `codeRetention` is back to baseline.
+- `bracketifyMemberAccess` — `process.env` → `process['e'+'nv']`. Also folded
+  back (concat → `process['env']` → member access → `process.env`).
 - `base64Wrap` — wrap the payload in `eval(atob("…"))`. Note this _trips_ the
   dynamic-evaluation rule, so the file stays "blocked" while the specific
   network/process/credential rules are lost — the report shows that split.

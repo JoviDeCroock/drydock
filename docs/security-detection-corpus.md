@@ -96,7 +96,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.2.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.6.2`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.7.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -108,7 +108,13 @@ the same Python matcher must be used when annotating modified-file findings so r
 classification stays consistent for extensionless Python files. `1.6.2` excludes documentation from
 shared `code.*` capability findings, narrows JavaScript `fetch` matching to calls rather than class
 method declarations, and limits documentation secret-content matches to high-confidence token formats.
-`pypi.*` grew `startup-hook`,
+`1.7.0` adds a constant-folding normalization pre-pass (`server/lib/review-rules/normalize.ts`) so the
+JavaScript `code.*` rules also see runtime-assembled identifiers: string-concatenation chains
+(`'chi' + 'ld_process'`), `[...].join('')` array assembly, and literal-keyed computed member access
+(`globalThis['re' + 'quire']`) are folded back to their literal form before the regex set runs. A
+tokenizer keeps folding out of comments, string bodies, template literals, and regex literals, and both
+the raw and folded text are scanned so folding can only add detections, never drop one. `pypi.*` grew
+`startup-hook`,
 `record-mismatch`, and `unusual-dependency` in `0.2.0`, and
 `setup-install-command` was upgraded to fire on the top-level sdist `setup.py` install-time code, not
 just `cmdclass`.

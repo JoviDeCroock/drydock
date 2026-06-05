@@ -1,0 +1,46 @@
+{
+  "id": "assembled-identifier-exfil",
+  "title": "Runtime-assembled child_process/process.env exfil is caught after constant folding",
+  "category": "obfuscation-assembly",
+  "intent": "An added file assembles child_process, require, process, env, and execSync from string fragments and computed member access so the literal regex set never sees a contiguous identifier. The constant-folding normalization pre-pass (server/lib/review-rules/normalize.ts) folds them back before scanning, so code.process-execution and code.credential-access fire. No real secret or live endpoint is present.",
+  "previousPackageJson": { "name": "assembled-identifier-exfil", "version": "1.0.0" },
+  "stagedPackageJson": { "name": "assembled-identifier-exfil", "version": "1.0.1" },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 54,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"assembled-identifier-exfil\",\"version\":\"1.0.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 54,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"assembled-identifier-exfil\",\"version\":\"1.0.1\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 200,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "const r = globalThis['re' + 'quire'];\nconst cp = r(['chi','ld_pro','cess'].join(''));\nconst data = globalThis['proc' + 'ess']['e' + 'nv'];\ncp['exec' + 'Sync']('echo ' + data);\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.process-execution",
+      "severity": "high",
+      "file": "index.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "index.js"
+    }
+  ]
+}

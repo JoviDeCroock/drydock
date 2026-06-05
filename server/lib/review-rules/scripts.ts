@@ -5,6 +5,7 @@ import { LIFECYCLE_SCRIPTS } from "./patterns";
 import { firstJsonPropertyLine, tag } from "./helpers";
 import { changedPrefix, type RuleContext } from "./context";
 import { isDocumentationPath } from "./file-types";
+import { normalizeCodeForScanning } from "./normalize";
 
 // Install lifecycle hooks and in-file code-execution capability: the scripts and
 // code paths that run on, or are pulled in by, a consumer install.
@@ -47,17 +48,29 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     if (isDocumentationPath(file.path)) continue;
 
     const sample = file.textSample || "";
+    // Constant-fold runtime-assembled identifiers (`'chi'+'ld_process'`,
+    // `globalThis['re'+'quire']`) so the literal regex set sees them. Matching
+    // both raw and normalized text means folding can only add detections, never
+    // drop one a literal scan already finds. JavaScript only for now; the
+    // normalizer is JS-flavored and Python evasion is out of scope.
+    const normalized = ctx.codePatternSet === "python" ? sample : normalizeCodeForScanning(sample);
     const prefix = changedPrefix(ctx, file.path);
     const changed = ctx.diffByPath.get(file.path)?.status;
     const lifecycleScriptFile = isLifecycleScriptFile(ctx, file.path);
-    const adjacentExecutionRisk = hasAdjacentExecutionRisk(ctx, sample);
 
-    if (ctx.patterns.processExecution.some((pattern) => pattern.test(sample))) {
+    const processExecution = matchCategory(ctx.patterns.processExecution, sample, normalized);
+    const networkAccess = matchCategory(ctx.patterns.networkAccess, sample, normalized);
+    const dynamicEvaluation = matchCategory(ctx.patterns.dynamicEvaluation, sample, normalized);
+    const credentialAccess = matchCategory(ctx.patterns.credentialAccess, sample, normalized);
+    const adjacentExecutionRisk =
+      processExecution.matched || dynamicEvaluation.matched || credentialAccess.matched;
+
+    if (processExecution.matched) {
       findings.push(
         tag("codeProcessExecution", {
           severity: "high",
           file: file.path,
-          line: firstMatchingLine(sample, ctx.patterns.processExecution),
+          line: processExecution.line,
           evidence: `${prefix}process or shell execution`,
           reason: "package may execute arbitrary commands",
         }),
@@ -65,36 +78,36 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     }
     if (
       (changed !== "unchanged" || lifecycleScriptFile || adjacentExecutionRisk) &&
-      ctx.patterns.networkAccess.some((pattern) => pattern.test(sample))
+      networkAccess.matched
     ) {
       findings.push(
         tag("codeNetworkAccess", {
           severity: networkAccessSeverity(changed, lifecycleScriptFile, adjacentExecutionRisk),
           file: file.path,
-          line: firstMatchingLine(sample, ctx.patterns.networkAccess),
+          line: networkAccess.line,
           evidence: `${prefix}network-capable code path`,
           reason:
             "unexpected network access in package code can be used for exfiltration or staged payload retrieval",
         }),
       );
     }
-    if (ctx.patterns.dynamicEvaluation.some((pattern) => pattern.test(sample))) {
+    if (dynamicEvaluation.matched) {
       findings.push(
         tag("codeDynamicEvaluation", {
           severity: changed === "added" ? "high" : "medium",
           file: file.path,
-          line: firstMatchingLine(sample, ctx.patterns.dynamicEvaluation),
+          line: dynamicEvaluation.line,
           evidence: `${prefix}dynamic code or obfuscation primitive`,
           reason: "common malware and obfuscation technique",
         }),
       );
     }
-    if (ctx.patterns.credentialAccess.some((pattern) => pattern.test(sample))) {
+    if (credentialAccess.matched) {
       findings.push(
         tag("codeCredentialAccess", {
           severity: changed === "added" ? "high" : "medium",
           file: file.path,
-          line: firstMatchingLine(sample, ctx.patterns.credentialAccess),
+          line: credentialAccess.line,
           evidence: `${prefix}secret/environment access`,
           reason: "package may read credentials from the install environment",
         }),
@@ -105,12 +118,22 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
   return findings;
 }
 
-function hasAdjacentExecutionRisk(ctx: RuleContext, sample: string): boolean {
-  return (
-    ctx.patterns.processExecution.some((pattern) => pattern.test(sample)) ||
-    ctx.patterns.dynamicEvaluation.some((pattern) => pattern.test(sample)) ||
-    ctx.patterns.credentialAccess.some((pattern) => pattern.test(sample))
-  );
+// Match a capability category against the raw sample and, only if that misses,
+// the constant-folded text. Prefers the raw line so evidence keeps pointing at
+// the literal match when one exists; folding preserves line numbers, so the
+// normalized line still maps to the real source line.
+function matchCategory(
+  patterns: RegExp[],
+  sample: string,
+  normalized: string,
+): { matched: boolean; line: number | undefined } {
+  const line = firstMatchingLine(sample, patterns);
+  if (line !== undefined) return { matched: true, line };
+  if (normalized !== sample) {
+    const normalizedLine = firstMatchingLine(normalized, patterns);
+    if (normalizedLine !== undefined) return { matched: true, line: normalizedLine };
+  }
+  return { matched: false, line: undefined };
 }
 
 function networkAccessSeverity(

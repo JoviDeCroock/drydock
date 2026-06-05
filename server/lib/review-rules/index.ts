@@ -15,7 +15,7 @@ import { dependencyDiffFindings } from "./deps";
 // way that should invalidate cached scan reports. Stored alongside each finding
 // so historical reports can be traced back to the ruleset that produced them.
 // Lives here (not in a family module) because versioning spans every family.
-export const DETERMINISTIC_RULES_VERSION = "1.6.2";
+export const DETERMINISTIC_RULES_VERSION = "1.7.0";
 
 export { DETERMINISTIC_RULE_IDS } from "./rule-ids";
 export {
@@ -27,6 +27,7 @@ export {
   HIGH_CONFIDENCE_SECRET_PATTERNS,
 } from "./patterns";
 export { safeJson } from "./helpers";
+export { normalizeCodeForScanning } from "./normalize";
 export type { DeterministicFindingOptions } from "./context";
 
 // Every deterministic finding carries the same ruleset version, so the family
