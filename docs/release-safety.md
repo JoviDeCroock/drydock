@@ -37,6 +37,10 @@ for the lifecycle behavior behind it.
   archives, excessive files, and excessive expanded size.
 - Deterministic findings are authoritative while AI review is unavailable, and AI
   cannot downgrade deterministic findings when the Flagship gate enables it.
+- AI review fails safe: an enabled review that was attempted but could not complete
+  escalates the scan to manual-review risk rather than reading as clean, and a
+  near-miss submission is clamped to bounds instead of discarded. See
+  [`docs/security-model.md`](security-model.md).
 
 ## Operational observability
 

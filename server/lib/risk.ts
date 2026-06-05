@@ -18,12 +18,19 @@ type RiskFinding = Finding & {
 
 export function computeScanRisk(ruleFindings: Finding[], aiReview: AiReview): RiskLevel {
   const ai = displayedAiResult(aiReview);
+  const deterministicRisk = computeRisk(ruleFindings);
   if (ai?.kind !== "complete") {
-    return computeRisk(ruleFindings);
+    // Fail safe: a review that was attempted but didn't complete (model id
+    // present) escalates to manual review so a release can't read as clean by
+    // crashing the reviewer. A disabled review (model null) stays neutral.
+    if (ai?.kind === "unavailable" && ai.model != null) {
+      return combineRisk(deterministicRisk, "medium");
+    }
+    return deterministicRisk;
   }
   const aiHasEvidence = ai.findings.length > 0 || ai.requiresManualReview;
   return combineRisk(
-    computeRisk(ruleFindings),
+    deterministicRisk,
     aiHasEvidence ? ai.risk : "low",
     ai.requiresManualReview ? "medium" : "low",
   );

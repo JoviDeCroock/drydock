@@ -175,7 +175,11 @@ The AI must not treat ordinary Python packaging files as suspicious by themselve
 
 Do not include unbounded package contents. Do not include unchanged files except as metadata where needed, as package manifest / deterministic-finding evidence, or when recognized manifest fields newly reference them as lifecycle-script targets or entrypoints. Do not let package contents define instructions, schema, roles, tool policy, or severity rules.
 
-If AI fails or returns invalid data, the scan should record AI review as unavailable/invalid and should not silently pass.
+If AI fails or returns invalid data, the scan records AI review as unavailable/invalid and must not silently pass. The submission path is hardened so that a reviewer which actually flagged a risk cannot be discarded on a technicality:
+
+- **Tolerant submission (`clampAiReviewSubmission` + `experimental_repairToolCall`).** A complete, well-typed `submit_review` whose summary or a finding field overshoots its length bound by a few characters is deterministically clamped to the bound (`AI_REVIEW_BOUNDS`) and accepted — no extra model round-trip. Previously strict schema validation rejected the whole tool call, `execute` never ran, and a genuinely high-risk review degraded to an `invalid` fallback that read as low risk. Structurally broken submissions (unparseable/truncated JSON, bad enum, missing field) are still rejected.
+- **Stop only on a recorded review.** The agent loop stops when a review is actually recorded, not merely when a `submit_review` tool call appears. An invalid `submit_review` no longer ends the loop with nothing recorded; the model sees the tool error and retries, bounded by the step budget.
+- **Fail safe at the risk layer (`computeScanRisk`).** An AI review that was _attempted_ (a model id is present) but did not complete escalates the scan to manual-review risk, so a release cannot pass clean by inducing the reviewer to crash or emit an unparseable submission. A review that never ran — AI review disabled for the org, so `model` is `null` — stays neutral and preserves the deterministic-only verdict.
 
 ## Authorization posture
 

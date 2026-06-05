@@ -1,5 +1,5 @@
 import { type AppDb, type WorkspaceSession } from "../db";
-import { runSelectiveAiReview, type AiReview } from "./ai-review";
+import { AI_MODEL, runSelectiveAiReview, type AiReview } from "./ai-review";
 import type {
   AdapterBroker,
   AdapterConnectionRef,
@@ -183,7 +183,7 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
       summary: "AI review failed; deterministic findings remain available.",
       findings: [],
       requiresManualReview: false,
-      model: null,
+      model: AI_MODEL,
     };
   }
 }

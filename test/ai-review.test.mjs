@@ -230,7 +230,7 @@ describe("ai review orchestration", () => {
     expect(ai.releaseAssessment).toBe("nothing_unusual");
   });
 
-  test("non-JSON text without a tool call degrades to invalid, not medium risk", async () => {
+  test("non-JSON text without a tool call fails safe: invalid review escalates to manual review", async () => {
     const { review: ai } = await analyzeWithAi(
       {},
       "mock-reviewer",
@@ -239,13 +239,11 @@ describe("ai review orchestration", () => {
     );
 
     expect(ai.status).toBe("invalid");
-    expect(ai.risk).toBe("low");
     expect(ai.releaseAssessment).toBe("not_assessed");
-    expect(ai.requiresManualReview).toBe(false);
-    expect(computeScanRisk([], ai)).toBe("low");
+    expect(computeScanRisk([], ai)).toBe("medium");
   });
 
-  test("an incomplete submission degrades to invalid", async () => {
+  test("an incomplete submission fails safe: invalid review escalates to manual review", async () => {
     const { review: ai } = await analyzeWithAi(
       {},
       "mock-reviewer",
@@ -255,10 +253,10 @@ describe("ai review orchestration", () => {
 
     expect(ai.status).toBe("invalid");
     expect(ai.releaseAssessment).toBe("not_assessed");
-    expect(computeScanRisk([], ai)).toBe("low");
+    expect(computeScanRisk([], ai)).toBe("medium");
   });
 
-  test("a model error degrades to unavailable", async () => {
+  test("a model error fails safe: unavailable review escalates to manual review", async () => {
     const { review: ai, usage } = await analyzeWithAi(
       {},
       "mock-reviewer",
@@ -269,12 +267,78 @@ describe("ai review orchestration", () => {
     );
 
     expect(ai.status).toBe("unavailable");
-    expect(ai.risk).toBe("low");
     expect(ai.releaseAssessment).toBe("not_assessed");
     expect(ai.model).toBe("mock-reviewer");
-    expect(computeScanRisk([], ai)).toBe("low");
+    expect(computeScanRisk([], ai)).toBe("medium");
     // No generateText result on the error path, so there is no usage to report.
     expect(usage).toBeNull();
+  });
+
+  test("a complete submission slightly over the summary bound is clamped, not discarded", async () => {
+    // Reproduces the reported failure: validation used to reject the whole call
+    // over a few-char overage, dropping a critical finding and collapsing to low.
+    const overLongSummary = "x".repeat(1031);
+    const { review: ai } = await analyzeWithAi(
+      {},
+      "mock-reviewer",
+      BASE_OPTIONS,
+      submittingModel({
+        risk: "high",
+        releaseAssessment: "suspicious",
+        summary: overLongSummary,
+        findings: [aiFinding("critical", "package.json")],
+        requiresManualReview: true,
+      }),
+    );
+
+    expect(ai.status).toBe("complete");
+    expect(ai.summary.length).toBe(1000);
+    expect(ai.findings).toHaveLength(1);
+    expect(ai.findings[0].severity).toBe("critical");
+    expect(computeScanRisk([], ai)).toBe("high");
+  });
+
+  test("an invalid submit_review does not end the loop; the model retries and completes", async () => {
+    // First attempt has a bad severity enum (unrepairable); the loop must keep
+    // going instead of stopping on the call's presence. Second attempt is valid.
+    let calls = 0;
+    const retryingModel = mockModel(async () => {
+      calls += 1;
+      const review =
+        calls === 1
+          ? {
+              risk: "high",
+              releaseAssessment: "suspicious",
+              summary: "first try",
+              findings: [{ ...aiFinding("high", "package/a.js"), severity: "BOGUS" }],
+              requiresManualReview: true,
+            }
+          : {
+              risk: "high",
+              releaseAssessment: "suspicious",
+              summary: "second try",
+              findings: [aiFinding("high", "package/a.js")],
+              requiresManualReview: true,
+            };
+      return generateResult(
+        [
+          {
+            type: "tool-call",
+            toolCallId: `submit-${calls}`,
+            toolName: "submit_review",
+            input: JSON.stringify(review),
+          },
+        ],
+        "tool-calls",
+      );
+    });
+
+    const { review: ai } = await analyzeWithAi({}, "mock-reviewer", BASE_OPTIONS, retryingModel);
+
+    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(ai.status).toBe("complete");
+    expect(ai.summary).toBe("second try");
+    expect(computeScanRisk([], ai)).toBe("high");
   });
 });
 
@@ -375,5 +439,33 @@ describe("displayedAiResult", () => {
       model: "test-model",
       summary: "Stored without an assessment.",
     });
+  });
+});
+
+describe("computeScanRisk fail-safe for incomplete AI reviews", () => {
+  const incomplete = (status, model) => ({
+    status,
+    risk: "low",
+    releaseAssessment: "not_assessed",
+    summary: status === "unavailable" ? "AI review is disabled." : "Could not complete.",
+    findings: [],
+    requiresManualReview: false,
+    model,
+  });
+
+  test("a disabled review (no model) stays neutral and keeps the deterministic verdict", () => {
+    // AI review off for the org: the fallback carries model === null and must
+    // not escalate, or every flag-off scan would force manual review.
+    expect(computeScanRisk([], incomplete("unavailable", null))).toBe("low");
+    expect(computeScanRisk([{ severity: "high" }], incomplete("unavailable", null))).toBe("high");
+  });
+
+  test("an attempted-but-failed review (model present) escalates to manual review", () => {
+    expect(computeScanRisk([], incomplete("unavailable", "mock-reviewer"))).toBe("medium");
+    expect(computeScanRisk([], incomplete("invalid", "mock-reviewer"))).toBe("medium");
+    // Escalation only raises the floor; a higher deterministic risk still wins.
+    expect(
+      computeScanRisk([{ severity: "critical" }], incomplete("invalid", "mock-reviewer")),
+    ).toBe("critical");
   });
 });

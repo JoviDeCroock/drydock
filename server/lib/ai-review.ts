@@ -1,14 +1,9 @@
-import {
-  generateText,
-  hasToolCall,
-  stepCountIs,
-  type LanguageModel,
-  type LanguageModelUsage,
-} from "ai";
+import { generateText, stepCountIs, type LanguageModel, type LanguageModelUsage } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
 import {
   aiReviewSubmissionSchema,
   buildReviewerSystemPrompt,
+  clampAiReviewSubmission,
   MAX_AGENT_STEPS,
   MAX_REVIEW_OUTPUT_TOKENS,
   selectReportedFindings,
@@ -88,7 +83,25 @@ export async function analyzeWithAi(
       system: buildReviewerSystemPrompt(options.ecosystem),
       messages: [{ role: "user", content: JSON.stringify(payload) }],
       tools,
-      stopWhen: [hasToolCall("submit_review"), stepCountIs(MAX_AGENT_STEPS)],
+      // Stop on a recorded review, not on the mere presence of a submit_review
+      // call: an invalid one (rejected by validation, so `execute` never fires)
+      // must let the model see the tool error and retry instead of ending the loop.
+      stopWhen: [() => submittedReview !== null, stepCountIs(MAX_AGENT_STEPS)],
+      // Clamp a near-miss submission to the schema limits rather than discarding
+      // the whole review. Substitute the repaired call only once it re-validates;
+      // anything we can't make valid returns null so the model retries.
+      experimental_repairToolCall: async ({ toolCall }) => {
+        if (toolCall.toolName !== "submit_review") return null;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(toolCall.input);
+        } catch {
+          return null;
+        }
+        const repaired = clampAiReviewSubmission(parsed);
+        if (!aiReviewSubmissionSchema.safeParse(repaired).success) return null;
+        return { ...toolCall, input: JSON.stringify(repaired) };
+      },
       temperature: 0,
       maxOutputTokens: MAX_REVIEW_OUTPUT_TOKENS,
     });
