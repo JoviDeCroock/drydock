@@ -1,16 +1,7 @@
 import { useModel } from "@preact/signals";
 import { formatTimestamp } from "../../../lib/format";
 import { NpmConnectionModel } from "../../../models/npm-connection";
-import {
-  Alert,
-  Badge,
-  Button,
-  CollapsibleCard,
-  Field,
-  Input,
-  LinkButton,
-  Muted,
-} from "../../../components";
+import { Alert, Badge, Button, CollapsibleCard, Field, Input, Muted } from "../../../components";
 
 export function NpmConnectionSection({
   npm,
@@ -133,10 +124,7 @@ export function NpmConnectionSection({
         {error ? <Alert tone="critical">{error}</Alert> : null}
 
         {connection ? (
-          <div class="flex items-center justify-between border-t border-border pt-4 gap-3">
-            <LinkButton variant="ghost" size="sm" href="/dashboard">
-              Back to dashboard
-            </LinkButton>
+          <div class="flex items-center justify-end border-t border-border pt-4 gap-3">
             <Button variant="danger" size="sm" onClick={() => void npm.remove()} disabled={busy}>
               {status === "deleting" ? "Removing…" : "Disconnect npm"}
             </Button>
