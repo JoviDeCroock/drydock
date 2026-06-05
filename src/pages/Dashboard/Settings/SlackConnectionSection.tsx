@@ -59,14 +59,14 @@ export function SlackConnectionSection({
         ) : null}
 
         {!loaded ? (
-          <LoadingLine class="border-y border-border py-3">loading Slack connection</LoadingLine>
+          <LoadingLine>loading Slack connection</LoadingLine>
         ) : !configured ? (
-          <Muted class="text-[13px] m-0 border-y border-border py-3">
+          <Muted class="text-[13px] m-0">
             Slack is not configured on this Drydock instance. Ask the operator to add the Slack app
             credentials.
           </Muted>
         ) : connected ? (
-          <div class="flex flex-col gap-4 border-y border-border py-4">
+          <div class="flex flex-col gap-4">
             <div class="flex items-center justify-between gap-3">
               <div class="flex items-center gap-2 min-w-0">
                 <span class="text-[13px] text-ink break-all">
@@ -159,7 +159,7 @@ export function SlackConnectionSection({
             ) : null}
           </div>
         ) : (
-          <div class="flex flex-col gap-3 border-y border-border py-4">
+          <div class="flex flex-col gap-3">
             <Muted class="text-[13px] m-0">No Slack workspace connected.</Muted>
             {canManage ? (
               <Button onClick={() => void slack.connect()} disabled={busy} class="self-start">

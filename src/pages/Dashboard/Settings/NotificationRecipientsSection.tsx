@@ -53,9 +53,9 @@ export function NotificationRecipientsSection({
         </Muted>
 
         {!loaded ? (
-          <LoadingLine class="border-y border-border py-3">loading recipients</LoadingLine>
+          <LoadingLine>loading recipients</LoadingLine>
         ) : list.length > 0 ? (
-          <ul class="flex flex-col gap-2 m-0 p-0 list-none border-y border-border py-3">
+          <ul class="flex flex-col gap-2 m-0 p-0 list-none">
             {list.map((recipient: NotificationRecipient) => (
               <li key={recipient.id} class="flex items-center justify-between gap-3">
                 <code class="text-[13px] text-ink-muted break-all">{recipient.email}</code>
@@ -76,7 +76,7 @@ export function NotificationRecipientsSection({
             ))}
           </ul>
         ) : (
-          <Muted class="text-[13px] m-0 border-y border-border py-3">
+          <Muted class="text-[13px] m-0">
             No recipients configured — notifications go to{" "}
             {fallbackEmail ?? "the organization owner"}.
           </Muted>
