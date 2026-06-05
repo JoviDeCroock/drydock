@@ -42,7 +42,9 @@ export function CollapsibleCard({
           <SectionLabel class="flex-1">{title}</SectionLabel>
           {aside ? <div class="flex items-center gap-2 shrink-0">{aside}</div> : null}
         </summary>
-        <div class="border-t border-border">{children}</div>
+        {/* The section-label's trailing rule is the header divider; a border-t
+            here would stack a second hairline right below it (double border). */}
+        <div>{children}</div>
       </details>
     </Card>
   );

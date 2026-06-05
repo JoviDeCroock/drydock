@@ -1,13 +1,13 @@
-import { useModel } from "@preact/signals";
+import { useModel, useSignalEffect } from "@preact/signals";
 import { SlackConnectionModel, type SlackChannelOption } from "../../../models/slack-connection";
 import {
   Alert,
   Badge,
   Button,
   CollapsibleCard,
-  Field,
   LoadingLine,
   Muted,
+  pushToast,
   Select,
 } from "../../../components";
 
@@ -29,14 +29,11 @@ export function SlackConnectionSection({
   const channels = slack.channels.value;
   const channelsLoaded = slack.channelsLoaded.value;
   const channelsError = slack.channelsError.value;
-  const lastTest = slack.lastTest.value;
   const callbackNotice = slack.callbackNotice.value;
 
   const connected = connection !== null;
   const aside = connected ? (
-    <Badge tone={connection.enabled ? "ok" : "neutral"}>
-      {connection.enabled ? "connected" : "paused"}
-    </Badge>
+    <Badge tone="ok">connected</Badge>
   ) : (
     <Badge tone="neutral">not connected</Badge>
   );
@@ -44,6 +41,26 @@ export function SlackConnectionSection({
   const onSelectChannel = (channelId: string) => {
     if (channelId) void slack.selectChannel(channelId);
   };
+
+  const onTest = async () => {
+    const result = await slack.test();
+    if (result) pushToast(result.message, result.ok ? "ok" : "critical");
+  };
+
+  // Load the channel list up front for managing users so the picker is ready
+  // without an extra click. Guarded so it fires once: a finished load flips
+  // channelsLoaded, a failure sets channelsError, and an in-flight request moves
+  // status off "idle" — each stops the effect from re-firing. Signals are read
+  // unconditionally so they are always tracked as dependencies.
+  useSignalEffect(() => {
+    const hasConnection = slack.connection.value !== null;
+    const loadedChannels = slack.channelsLoaded.value;
+    const channelsFailed = slack.channelsError.value !== null;
+    const idle = slack.status.value === "idle";
+    if (canManage && hasConnection && !loadedChannels && !channelsFailed && idle) {
+      void slack.loadChannels();
+    }
+  });
 
   return (
     <CollapsibleCard title="slack" defaultOpen={defaultOpen} aside={aside}>
@@ -83,18 +100,10 @@ export function SlackConnectionSection({
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => void slack.test()}
-                    disabled={busy || !connection.channelId || !connection.enabled}
+                    onClick={() => void onTest()}
+                    disabled={busy || !connection.channelId}
                   >
                     {status === "testing" ? "Testing…" : "Test"}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => void slack.setEnabled(!connection.enabled)}
-                    disabled={busy}
-                  >
-                    {connection.enabled ? "Pause" : "Resume"}
                   </Button>
                   <Button
                     variant="ghost"
@@ -109,39 +118,38 @@ export function SlackConnectionSection({
             </div>
 
             {canManage ? (
-              <Field label="Channel" for="slackChannel">
-                {channelsLoaded ? (
-                  <Select
-                    id="slackChannel"
-                    value={connection.channelId ?? ""}
-                    disabled={busy || channels.length === 0}
-                    onChange={onSelectChannel}
+              channelsLoaded ? (
+                <div class="flex flex-wrap items-center gap-3">
+                  <label
+                    for="slackChannel"
+                    class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle shrink-0"
                   >
-                    <option value="" disabled>
-                      {channels.length === 0 ? "No public channels found" : "Choose a channel…"}
-                    </option>
-                    {channels.map((channel: SlackChannelOption) => (
-                      <option key={channel.id} value={channel.id}>
-                        #{channel.name}
+                    Channel
+                  </label>
+                  <div class="flex-1 min-w-[200px] max-w-[360px]">
+                    <Select
+                      id="slackChannel"
+                      value={connection.channelId ?? ""}
+                      disabled={busy || channels.length === 0}
+                      onChange={onSelectChannel}
+                    >
+                      <option value="" disabled>
+                        {channels.length === 0 ? "No public channels found" : "Choose a channel…"}
                       </option>
-                    ))}
-                  </Select>
-                ) : (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => void slack.loadChannels()}
-                    disabled={busy}
-                    class="self-start"
-                  >
-                    {status === "loadingChannels"
-                      ? "Loading channels…"
-                      : connection.channelId
-                        ? "Change channel"
-                        : "Choose a channel"}
-                  </Button>
-                )}
-              </Field>
+                      {channels.map((channel: SlackChannelOption) => (
+                        <option key={channel.id} value={channel.id}>
+                          #{channel.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                  {status === "savingChannel" ? (
+                    <Muted class="text-[12px] m-0">Saving…</Muted>
+                  ) : null}
+                </div>
+              ) : channelsError ? null : (
+                <LoadingLine size="inline">loading channels</LoadingLine>
+              )
             ) : connection.channelName ? (
               <Muted class="text-[13px] m-0">
                 Posting to <span class="text-ink">#{connection.channelName}</span>.
@@ -150,13 +158,7 @@ export function SlackConnectionSection({
               <Muted class="text-[13px] m-0">No channel selected yet.</Muted>
             )}
 
-            {status === "savingChannel" ? (
-              <Muted class="text-[12px] m-0">Saving channel…</Muted>
-            ) : null}
             {channelsError ? <Alert tone="critical">{channelsError}</Alert> : null}
-            {lastTest ? (
-              <Alert tone={lastTest.ok ? "ok" : "critical"}>{lastTest.message}</Alert>
-            ) : null}
           </div>
         ) : (
           <div class="flex flex-col gap-3">

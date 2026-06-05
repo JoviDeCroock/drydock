@@ -65,7 +65,7 @@ export function NpmConnectionSection({
         ) : null}
 
         {connection ? (
-          <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-8 gap-y-4 border-y border-border py-4 m-0">
+          <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-8 gap-y-4 m-0">
             <MetadataField label="label" value={connection.label} />
             <MetadataField label="registry" value={connection.registryUrl} />
             <MetadataField label="token" value={`•••• ${connection.tokenLast4 || "stored"}`} />

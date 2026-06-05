@@ -81,27 +81,22 @@ export function GeneralSection({
         <Muted class="text-[13px] m-0">No organization selected.</Muted>
       )}
 
-      <div class="flex flex-col gap-3 border-t border-border pt-5">
-        <SectionLabel>Danger zone</SectionLabel>
-        <Muted class="text-[13px] m-0 max-w-[760px]">
-          Deleting this organization permanently removes its members, npm and GitHub connections,
-          notification recipients, and scan history. This cannot be undone.
-        </Muted>
-
-        {isPersonal ? (
-          <Muted class="text-[13px] m-0">Your personal workspace can't be deleted.</Muted>
-        ) : !isOwner ? (
-          <Muted class="text-[13px] m-0">
-            Only the organization owner can delete this organization.
+      {/* Only the owner of a non-personal org can delete it, so the Danger zone
+          is shown only when the action is actually available. */}
+      {canDelete ? (
+        <div class="flex flex-col gap-3">
+          <SectionLabel>Danger zone</SectionLabel>
+          <Muted class="text-[13px] m-0 max-w-[760px]">
+            Deleting this organization permanently removes its members, npm and GitHub connections,
+            notification recipients, and scan history. This cannot be undone.
           </Muted>
-        ) : (
           <div>
-            <Button variant="danger" size="sm" onClick={openConfirm} disabled={!canDelete}>
+            <Button variant="danger" size="sm" onClick={openConfirm}>
               Delete organization
             </Button>
           </div>
-        )}
-      </div>
+        </div>
+      ) : null}
 
       {active ? (
         <Dialog

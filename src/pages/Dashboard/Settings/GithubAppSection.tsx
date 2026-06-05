@@ -26,7 +26,6 @@ export function GithubAppSection({
   defaultOpen?: boolean;
 }) {
   const configured = githubApp.config.value?.configured === true;
-  const appSlug = githubApp.config.value?.appSlug;
   const installations: PublicGithubAppInstallation[] = githubApp.installations.value;
   const status = githubApp.status.value;
   const error = githubApp.error.value;
@@ -47,16 +46,7 @@ export function GithubAppSection({
       title="GitHub App"
       defaultOpen={defaultOpen}
       aside={
-        <div class="flex flex-col items-end gap-2">
-          {configured ? (
-            <Badge tone="ok">configured</Badge>
-          ) : (
-            <Badge tone="info">not configured</Badge>
-          )}
-          {configured && appSlug ? (
-            <span class="font-mono text-[11px] text-ink-subtle">{appSlug}</span>
-          ) : null}
-        </div>
+        configured ? <Badge tone="ok">configured</Badge> : <Badge tone="info">not configured</Badge>
       }
     >
       <div class="p-5 flex flex-col gap-5">
@@ -106,10 +96,10 @@ export function GithubAppSection({
         </div>
       </div>
 
-      <div class="border-t border-border">
+      <div>
         <div class="px-5 py-4 flex items-center justify-between gap-3">
-          <SectionLabel>Linked installations</SectionLabel>
-          <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+          <SectionLabel class="flex-1">Linked installations</SectionLabel>
+          <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle shrink-0">
             {installations.length} linked
           </span>
         </div>
@@ -122,10 +112,10 @@ export function GithubAppSection({
         )}
       </div>
 
-      <div class="border-t border-border">
+      <div>
         <div class="px-5 py-4 flex items-center justify-between gap-3">
-          <SectionLabel>Release targets</SectionLabel>
-          <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+          <SectionLabel class="flex-1">Release targets</SectionLabel>
+          <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle shrink-0">
             {releaseTargets.length} mapped
           </span>
         </div>
@@ -166,7 +156,7 @@ function ReleaseTargetList({
   onDelete: (id: string) => void;
 }) {
   return (
-    <ul class="m-0 p-0 list-none border-t border-border">
+    <ul class="m-0 p-0 list-none">
       {releaseTargets.map((target) => {
         const installation = installations.find((row) => row.id === target.installationRowId);
         return (
@@ -204,7 +194,7 @@ function ReleaseTargetList({
 
 function InstallationList({ installations }: { installations: PublicGithubAppInstallation[] }) {
   return (
-    <ul class="m-0 p-0 list-none border-t border-border">
+    <ul class="m-0 p-0 list-none">
       {installations.map((installation) => (
         <li
           key={installation.id}

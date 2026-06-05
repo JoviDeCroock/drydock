@@ -46,7 +46,6 @@ export type SlackConnectionStatus =
   | "connecting"
   | "loadingChannels"
   | "savingChannel"
-  | "updating"
   | "disconnecting"
   | "testing";
 
@@ -63,7 +62,6 @@ export const SlackConnectionModel = createModel(() => {
   const channelsLoaded = signal(false);
   const channelsError = signal<string | null>(null);
 
-  const lastTest = signal<SlackTestResult | null>(null);
   // Set from the OAuth callback redirect (?slack=connected|error).
   const callbackNotice = signal<SlackTestResult | null>(null);
 
@@ -87,7 +85,6 @@ export const SlackConnectionModel = createModel(() => {
     channels,
     channelsLoaded,
     channelsError,
-    lastTest,
     callbackNotice,
     busy,
 
@@ -98,7 +95,6 @@ export const SlackConnectionModel = createModel(() => {
       this.configured.value = false;
       this.loaded.value = false;
       this.error.value = null;
-      this.lastTest.value = null;
       resetChannelPicker();
       if (!organizationId) {
         this.loaded.value = true;
@@ -172,7 +168,6 @@ export const SlackConnectionModel = createModel(() => {
       if (!channel) return;
       this.status.value = "savingChannel";
       this.error.value = null;
-      this.lastTest.value = null;
       try {
         const data = await apiJson<{ connection: SlackConnection }>(
           `${SLACK_BASE}/channel`,
@@ -192,34 +187,10 @@ export const SlackConnectionModel = createModel(() => {
       }
     },
 
-    async setEnabled(enabled: boolean): Promise<void> {
-      const org = currentOrganizationId;
-      this.status.value = "updating";
-      this.error.value = null;
-      try {
-        const data = await apiJson<{ connection: SlackConnection }>(
-          SLACK_BASE,
-          { enabled },
-          { method: "PATCH" },
-        );
-        if (currentOrganizationId !== org) return;
-        this.connection.value = data.connection;
-      } catch (err) {
-        if (currentOrganizationId === org) {
-          this.error.value = errorMessage(err);
-        }
-      } finally {
-        if (currentOrganizationId === org) {
-          this.status.value = "idle";
-        }
-      }
-    },
-
     async disconnect(): Promise<void> {
       const org = currentOrganizationId;
       this.status.value = "disconnecting";
       this.error.value = null;
-      this.lastTest.value = null;
       try {
         await apiFetch<{ ok: boolean }>(SLACK_BASE, { method: "DELETE" });
         if (currentOrganizationId !== org) return;
@@ -236,15 +207,16 @@ export const SlackConnectionModel = createModel(() => {
       }
     },
 
-    async test(): Promise<void> {
+    // Returns the result so the caller can surface it as a toast. Null when the
+    // active organization changed mid-request (the result is no longer relevant).
+    async test(): Promise<SlackTestResult | null> {
       const org = currentOrganizationId;
       this.status.value = "testing";
       this.error.value = null;
-      this.lastTest.value = null;
       try {
         const result = await apiJson<TestResponse>(`${SLACK_BASE}/test`, {});
-        if (currentOrganizationId !== org) return;
-        this.lastTest.value = {
+        if (currentOrganizationId !== org) return null;
+        return {
           ok: result.ok,
           message: result.ok
             ? "Test message sent."
@@ -253,9 +225,7 @@ export const SlackConnectionModel = createModel(() => {
               : `Slack rejected the test${result.reason ? `: ${result.reason}` : "."}`,
         };
       } catch (err) {
-        if (currentOrganizationId === org) {
-          this.lastTest.value = { ok: false, message: errorMessage(err) };
-        }
+        return currentOrganizationId === org ? { ok: false, message: errorMessage(err) } : null;
       } finally {
         if (currentOrganizationId === org) {
           this.status.value = "idle";

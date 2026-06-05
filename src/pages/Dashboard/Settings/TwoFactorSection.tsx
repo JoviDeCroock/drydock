@@ -236,42 +236,40 @@ export function TwoFactorSection() {
   }
 
   return (
-    <Card as="section" class="p-0 overflow-hidden">
-      <div class="p-5 flex flex-col gap-5">
-        <div class="flex flex-wrap items-start justify-between gap-3">
-          <div class="flex flex-col gap-1.5 max-w-[760px]">
-            <SectionLabel>Two-factor authentication</SectionLabel>
-            <Muted class="text-[13px] m-0">
-              Protect your account with a time-based code from an authenticator app. Once enabled,
-              you'll enter a code each time you sign in.
-            </Muted>
-            <MonoDetail
-              parts={[
-                <span key="totp">totp authenticator</span>,
-                <span key="backup">10 backup codes</span>,
-              ]}
-            />
-          </div>
-          <div class="shrink-0">
+    <Card as="section" class="flex flex-col gap-5">
+      <div class="flex flex-col gap-1.5">
+        <div class="flex items-center gap-3">
+          <SectionLabel class="flex-1">Two-factor authentication</SectionLabel>
+          <span class="shrink-0">
             {enabled ? <Badge tone="ok">enabled</Badge> : <Badge tone="neutral">not enabled</Badge>}
-          </div>
+          </span>
         </div>
-
-        {enabled ? (
-          <div class="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => open("regenerate")}>
-              Regenerate backup codes
-            </Button>
-            <Button variant="danger" onClick={() => open("disable")}>
-              Disable two-factor
-            </Button>
-          </div>
-        ) : (
-          <div>
-            <Button onClick={() => open("enroll")}>Enable two-factor</Button>
-          </div>
-        )}
+        <Muted class="text-[13px] m-0 max-w-[760px]">
+          Protect your account with a time-based code from an authenticator app. Once enabled,
+          you'll enter a code each time you sign in.
+        </Muted>
+        <MonoDetail
+          parts={[
+            <span key="totp">totp authenticator</span>,
+            <span key="backup">10 backup codes</span>,
+          ]}
+        />
       </div>
+
+      {enabled ? (
+        <div class="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={() => open("regenerate")}>
+            Regenerate backup codes
+          </Button>
+          <Button variant="danger" onClick={() => open("disable")}>
+            Disable two-factor
+          </Button>
+        </div>
+      ) : (
+        <div>
+          <Button onClick={() => open("enroll")}>Enable two-factor</Button>
+        </div>
+      )}
 
       <Dialog
         open={dialog.value !== "none"}
