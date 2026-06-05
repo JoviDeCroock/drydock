@@ -155,7 +155,7 @@ organization (`x-organization-id` header to scope writes).
   when the scan is not a gate review or belongs to another org.
 - `POST /workflow-gates/:gateId/decision` — records a maintainer's decision on
   **one package** of the gate: `{ scanId, decision: "approved" | "rejected",
-  comment?, totpCode? }`, where `scanId` is the completed or failed
+comment?, totpCode? }`, where `scanId` is the completed or failed
   `workflow_gate` scan of the package being decided. `scanId` is required (400 if
   missing); a scan that has not reached a human decision point for this gate
   returns 409
@@ -179,7 +179,7 @@ organization (`x-organization-id` header to scope writes).
   handed to the gate job (over `SCAN_QUEUE`, with inline fallback) so the decided
   gate posts its stored decision. Rate-limited to 60/min per org. The public gate
   shape carries a `packages: [{ scanId, packageName, version, status,
-  releaseRisk, decision }]` array (one entry per distinct package).
+releaseRisk, decision }]` array (one entry per distinct package).
   - **2FA step-up (issue #162):** releasing or blocking a held deployment is
     irreversible (approval immediately releases the job and publishing proceeds
     over Trusted Publishing/OIDC), so when the deciding maintainer has two-factor

@@ -464,40 +464,6 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     return c.json({ error: "gate has already been decided" }, 409);
   }
 
-  // 2FA step-up. Releasing or blocking a held deployment is a high-trust action
-  // — approval immediately releases the GitHub job and publishing proceeds via
-  // Trusted Publishing/OIDC, which can't be reversed. So a maintainer who has
-  // enrolled in two-factor auth must prove a *fresh* second factor here; an
-  // existing session is not enough. Members without 2FA decide as before. (The
-  // staged-publish decision in scans.ts is an audit record only — it never
-  // publishes or cancels anything — and deliberately never requires this.)
-  let twoFactorVerified = false;
-  if (await userHasTwoFactor(db, session.userId)) {
-    try {
-      await enforceRateLimit(db, {
-        key: `github-app:gate-decision-2fa:${session.userId}`,
-        limit: 10,
-        windowMs: 15 * 60 * 1000,
-      });
-    } catch (err) {
-      if (err instanceof RateLimitError) {
-        return rateLimitResponse(c, "too many two-factor attempts", err);
-      }
-      throw err;
-    }
-    const totpCode = typeof body.totpCode === "string" ? body.totpCode.trim() : "";
-    if (!totpCode) {
-      return c.json(
-        { error: "two-factor verification required", code: "two_factor_required" },
-        401,
-      );
-    }
-    if (!(await verifyTotpStepUp(c.get("auth"), c.req.raw, totpCode))) {
-      return c.json({ error: "invalid two-factor code", code: "two_factor_invalid" }, 401);
-    }
-    twoFactorVerified = true;
-  }
-
   // The decision targets one package scan that has reached a human decision
   // point. A completed review gives the maintainer the full diff; a failed
   // package can still be rejected by the human, or retried through the retry
@@ -524,6 +490,42 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
       },
       409,
     );
+  }
+
+  // 2FA step-up. Releasing or blocking a held deployment is a high-trust action
+  // — approval immediately releases the GitHub job and publishing proceeds via
+  // Trusted Publishing/OIDC, which can't be reversed. So a maintainer who has
+  // enrolled in two-factor auth must prove a *fresh* second factor here; an
+  // existing session is not enough. Members without 2FA decide as before. This
+  // runs only after the decision is confirmed actionable above, so an enrolled
+  // maintainer is never prompted for a code on a decision that would 409 anyway.
+  // (The staged-publish decision in scans.ts is an audit record only — it never
+  // publishes or cancels anything — and deliberately never requires this.)
+  let twoFactorVerified = false;
+  if (await userHasTwoFactor(db, session.userId)) {
+    try {
+      await enforceRateLimit(db, {
+        key: `github-app:gate-decision-2fa:${session.userId}`,
+        limit: 10,
+        windowMs: 15 * 60 * 1000,
+      });
+    } catch (err) {
+      if (err instanceof RateLimitError) {
+        return rateLimitResponse(c, "too many two-factor attempts", err);
+      }
+      throw err;
+    }
+    const totpCode = typeof body.totpCode === "string" ? body.totpCode.trim() : "";
+    if (!totpCode) {
+      return c.json(
+        { error: "two-factor verification required", code: "two_factor_required" },
+        401,
+      );
+    }
+    if (!(await verifyTotpStepUp(c.get("auth"), c.req.raw, totpCode))) {
+      return c.json({ error: "invalid two-factor code", code: "two_factor_invalid" }, 401);
+    }
+    twoFactorVerified = true;
   }
 
   // Persist the per-package decision while the gate is still pending.
