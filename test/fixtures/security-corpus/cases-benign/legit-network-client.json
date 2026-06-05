@@ -1,0 +1,38 @@
+{
+  "id": "legit-network-client",
+  "title": "HTTP client wrapper legitimately calls fetch (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-network",
+  "source": "benign-popular",
+  "intent": "An API-client package whose whole purpose is to make HTTP requests. The deterministic rules emit code.network-access (authoritative evidence), but an isolated network capability with no credential read, process-execution, or code-evaluation capability alongside it is not the exfiltration shape. The weighted risk roll-up must keep this at low risk.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": { "name": "tiny-http-client", "version": "3.0.0" },
+  "stagedPackageJson": { "name": "tiny-http-client", "version": "3.1.0" },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 48,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tiny-http-client\",\"version\":\"3.0.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 48,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tiny-http-client\",\"version\":\"3.1.0\"}"
+    },
+    {
+      "path": "client.js",
+      "size": 160,
+      "sha256": "client-js",
+      "flags": [],
+      "textSample": "export async function getJson(url) {\n  const res = await fetch(url);\n  return res.json();\n}\n"
+    }
+  ]
+}

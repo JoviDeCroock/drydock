@@ -99,11 +99,82 @@ function tarSuspiciousReason(entry: TarSuspiciousEntry): string {
   }
 }
 
-export function computeRisk(findings: Array<{ severity?: string | null }>): RiskLevel {
-  if (findings.some((f) => f.severity === "critical")) return "critical";
-  if (findings.some((f) => f.severity === "high")) return "high";
-  if (findings.some((f) => f.severity === "medium")) return "medium";
-  return "low";
+// The four `code.*` rules detect runtime *capabilities*: the package can spawn
+// processes, reach the network, evaluate code at runtime, or read credentials.
+// Individually these are weak signals — benign build tooling and application code
+// use them constantly — so the literal max-severity roll-up both over-detected
+// (a lone `child_process` in a build helper landed high) and under-detected (a
+// chain of individually-medium capabilities never escalated). Risk roll-up scores
+// these by co-occurrence instead: an isolated capability is not risk on its own,
+// while a combination (read-env + network, or any code-evaluation primitive
+// paired with another capability) is the collect→exfiltrate / dropper shape.
+type CodeCapability = "process-execution" | "network" | "dynamic-evaluation" | "credential-access";
+
+const CODE_CAPABILITY_BY_RULE: Record<string, CodeCapability> = {
+  [DETERMINISTIC_RULE_IDS.codeProcessExecution]: "process-execution",
+  [DETERMINISTIC_RULE_IDS.codeNetworkAccess]: "network",
+  [DETERMINISTIC_RULE_IDS.codeDynamicEvaluation]: "dynamic-evaluation",
+  [DETERMINISTIC_RULE_IDS.codeCredentialAccess]: "credential-access",
+};
+
+// High-confidence malware primitives: arbitrary command execution and runtime
+// code evaluation/obfuscation are rare in benign *package* runtime code, so one
+// of them alongside any other capability is enough to escalate to high. Network
+// and credential reads are common in benign code, so two of those alone only
+// reach medium.
+const STRONG_CODE_CAPABILITIES = new Set<CodeCapability>([
+  "process-execution",
+  "dynamic-evaluation",
+]);
+
+function severityToRisk(severity: string | null | undefined): RiskLevel {
+  switch (severity) {
+    case "critical":
+      return "critical";
+    case "high":
+      return "high";
+    case "medium":
+      return "medium";
+    default:
+      return "low"; // "info" | "low" | unknown
+  }
+}
+
+function scoreCodeCapabilities(capabilities: Set<CodeCapability>): RiskLevel {
+  // An isolated capability is not risk by itself (the over-detection fix).
+  if (capabilities.size <= 1) return "low";
+  // Two capabilities only escalate to high when a high-confidence primitive is
+  // involved; two common reads (network + credential) stay medium.
+  if (capabilities.size === 2) {
+    return [...capabilities].some((capability) => STRONG_CODE_CAPABILITIES.has(capability))
+      ? "high"
+      : "medium";
+  }
+  // Three or more co-occurring capabilities is the full collect→exfiltrate shape.
+  return "high";
+}
+
+// Weighted multi-signal risk roll-up. Structural findings (install hooks, secrets,
+// files-allowlist escapes, native artifacts, dependency specs, metadata, …) stay
+// authoritative and floor the risk at their own severity, exactly as before. The
+// noisy `code.*` capability findings are instead scored by co-occurrence. This
+// changes only the risk *roll-up*; deterministic findings are emitted unchanged.
+export function computeRisk(
+  findings: Array<{ severity?: string | null; ruleId?: string | null }>,
+): RiskLevel {
+  let structuralFloor: RiskLevel = "low";
+  const codeCapabilities = new Set<CodeCapability>();
+  for (const finding of findings) {
+    const capability = finding.ruleId ? CODE_CAPABILITY_BY_RULE[finding.ruleId] : undefined;
+    // A code capability finding that is itself critical (not expected today) is
+    // never downgraded: it floors at critical like any other authoritative signal.
+    if (capability && finding.severity !== "critical") {
+      codeCapabilities.add(capability);
+      continue;
+    }
+    structuralFloor = combineRisk(structuralFloor, severityToRisk(finding.severity));
+  }
+  return combineRisk(structuralFloor, scoreCodeCapabilities(codeCapabilities));
 }
 
 export function combineRisk(...risks: Array<RiskLevel | null | undefined>): RiskLevel {

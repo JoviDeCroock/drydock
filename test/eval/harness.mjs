@@ -115,8 +115,13 @@ function caughtAsMalicious(record, result) {
   return riskOk && ruleOk;
 }
 
-function hasSignificantFinding(result) {
-  return result.findings.some((f) => severityRank(f.severity) >= SIGNIFICANT_SEVERITY);
+// A benign package is a false positive when the *risk roll-up* — the verdict the
+// product surfaces — treats it as risky (medium or higher), not merely when a
+// finding fires. Deterministic findings stay authoritative evidence; the weighted
+// roll-up (computeRisk) decides whether that evidence amounts to risk. This keeps
+// the benign-FP metric symmetric with malicious recall, which is also risk-based.
+function flaggedRisky(result) {
+  return riskRank(result.risk) >= RISK_RANK.medium;
 }
 
 // --- Evasion transforms (npm/JS). Each mutates file text the way an attacker
@@ -189,11 +194,11 @@ export function runEval() {
   const regBenign = regression.filter((r) => r.verdict === "benign");
   const regCritical = regMalicious.filter((r) => r.expectMinRisk === "critical");
 
-  const benignFalsePositives = regBenign.filter((r) => hasSignificantFinding(detect(r)));
+  const benignFalsePositives = regBenign.filter((r) => flaggedRisky(detect(r)));
 
   const frontierMisses = frontier.filter((r) => !caughtAsMalicious(r, detect(r)));
 
-  const hardNegativeHits = benign.filter((r) => hasSignificantFinding(detect(r)));
+  const hardNegativeHits = benign.filter((r) => flaggedRisky(detect(r)));
 
   // Evasion: only mutate npm malicious cases we currently catch and that have a
   // code file to mutate. blockedRate = product still treats it as risky;

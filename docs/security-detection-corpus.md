@@ -12,7 +12,7 @@ The fixture taxonomy is based on the current Drydock rule surface plus public np
 - [OpenSSF Package Analysis](https://github.com/ossf/package-analysis) tracks package behavior by asking what files packages access, what addresses they connect to, and what commands they run. Its public case studies are useful for behavior taxonomy, but Drydock should not execute packages.
 - [Datadog's malicious-software-packages-dataset](https://github.com/DataDog/malicious-software-packages-dataset/) is human-triaged and useful for taxonomy validation, but its samples are actively malicious and distributed as encrypted `infected` archives. Do not copy those samples into this repository.
 - Recent npm detection benchmark research reports a curated dataset of 6,420 malicious and 7,288 benign npm packages, with 11 behavior categories and 8 evasion categories. The most common behaviors were command execution, data collection, and data exfiltration; install scripts were used by about 72% of malicious packages in that study, and preinstall hooks were the dominant install-time entry point.
-- The same benchmark highlights the central detection trade-off: benign and malicious packages often call the same APIs. A single `process.env` or `https` use is capability evidence, while chains such as collect → serialize → exfiltrate are stronger intent evidence.
+- The same benchmark highlights the central detection trade-off: benign and malicious packages often call the same APIs. A single `process.env` or `https` use is capability evidence, while chains such as collect → serialize → exfiltrate are stronger intent evidence. The risk roll-up encodes exactly this: an isolated `code.*` capability is not risk on its own, while co-occurring capabilities escalate (see "Risk roll-up" below).
 - Network-only code follows that trade-off: unchanged network-only files are suppressed as package context, added network-only files remain medium-severity contextual evidence, and added network access escalates to high when it is tied to lifecycle scripts, process execution, dynamic evaluation, or credential access.
 - Documentation and prose files remain available as package evidence, but deterministic `code.*` rules do not treat them as executable capability evidence. Secret checks in documentation use only high-confidence token formats; generic key/value examples such as `token = localStorage.getItem("token")` are not `file.secret-content` findings.
 
@@ -37,7 +37,7 @@ Required fields:
 - `category` — taxonomy bucket.
 - `intent` — what behavior the fixture is meant to protect.
 - `stagedFiles` — sandbox-shaped `FileRecord[]` for the staged package.
-- `expectedRisk` — expected deterministic risk from `computeRisk()`.
+- `expectedRisk` — expected deterministic risk from the weighted `computeRisk()` roll-up (see "Risk roll-up" below).
 - `expectedFindings` — exact expected `{ ruleId, severity, file }` entries.
 
 Optional fields:
@@ -64,6 +64,15 @@ The first corpus slice covers:
 - files that appear in the tarball outside a declared `package.json.files` allowlist;
 - malformed `package.json` parse failure;
 - dependency and entrypoint package-json diff changes; unusual non-registry dependency specs now raise deterministic findings while entrypoint changes remain a documented coverage gap.
+
+## Risk roll-up
+
+`computeRisk()` is a weighted multi-signal roll-up, not the max single-finding severity. Findings split into two groups:
+
+- **Structural findings** (install hooks, secrets, files-allowlist escapes, native artifacts, dependency specs, metadata, tar anomalies) are authoritative on their own and floor the risk at their declared severity — exactly as before. Two high structural findings stay high (they do not stack into critical); a critical structural finding is critical.
+- **`code.*` capability findings** (process execution, network, dynamic evaluation, credential access) are scored by **co-occurrence**, because benign code uses each of them constantly. An isolated capability is low; two capabilities are high when a high-confidence primitive (process execution or code evaluation) is involved, otherwise medium; three or more is high.
+
+The final risk is the maximum of the structural floor and the co-occurrence score. This is a roll-up change only: the deterministic findings themselves are emitted unchanged, so a fixture's `expectedFindings` still asserts the raw evidence while `expectedRisk` asserts the weighted verdict. See `docs/detection-eval.md` for the eval that gates the resulting benign false-positive rate.
 
 ## Known coverage gaps
 
@@ -122,7 +131,7 @@ Required fields:
   `pypi`, `package`, `version`, and `artifacts[{path, sha256 (64 hex), url?}]`.
 - `artifacts` — `[{path, files: FileRecord[]}]`. Artifact paths must **exactly** match the manifest's
   artifact paths or `assertManifestArtifactSet` throws.
-- `expectedRisk` — expected risk from `computeRisk()`.
+- `expectedRisk` — expected risk from the weighted `computeRisk()` roll-up (shared with npm; see "Risk roll-up").
 - `expectedFindings` — exact `{ruleId, severity, file}` entries.
 
 Optional fields:

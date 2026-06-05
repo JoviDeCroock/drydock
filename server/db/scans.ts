@@ -479,7 +479,12 @@ function countChangedFileEntries(diff: Array<{ status?: unknown }>): number {
  */
 function computeRiskSummary(
   persistedRisk: string,
-  findings: Array<{ severity?: string | null; releaseDelta: boolean; diffStatus: string }>,
+  findings: Array<{
+    severity?: string | null;
+    ruleId?: string | null;
+    releaseDelta: boolean;
+    diffStatus: string;
+  }>,
   persistedBreakdown?: Partial<ScanRiskBreakdown> | null,
 ): ScanRiskBreakdown {
   const releaseFindings = findings.filter((finding) => finding.releaseDelta);

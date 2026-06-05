@@ -935,3 +935,94 @@ describe("review", () => {
     );
   });
 });
+
+describe("computeRisk weighted multi-signal roll-up", () => {
+  const finding = (ruleId, severity) => ({ ruleId, severity, file: "x", evidence: "", reason: "" });
+
+  test("no findings roll up to low", () => {
+    expect(computeRisk([])).toBe("low");
+  });
+
+  test("an isolated code capability is not risk on its own", () => {
+    // The over-detection fix: a lone capability finding (even one the rule emits
+    // at high severity) no longer escalates the risk roll-up.
+    expect(computeRisk([finding("code.process-execution", "high")])).toBe("low");
+    expect(computeRisk([finding("code.network-access", "medium")])).toBe("low");
+    expect(computeRisk([finding("code.credential-access", "high")])).toBe("low");
+    expect(computeRisk([finding("code.dynamic-evaluation", "high")])).toBe("low");
+  });
+
+  test("two co-occurring capabilities escalate by confidence", () => {
+    // A high-confidence primitive (process execution / code evaluation) alongside
+    // any other capability reaches high; two common reads only reach medium.
+    expect(
+      computeRisk([
+        finding("code.process-execution", "high"),
+        finding("code.network-access", "medium"),
+      ]),
+    ).toBe("high");
+    expect(
+      computeRisk([
+        finding("code.dynamic-evaluation", "high"),
+        finding("code.network-access", "high"),
+      ]),
+    ).toBe("high");
+    expect(
+      computeRisk([
+        finding("code.network-access", "medium"),
+        finding("code.credential-access", "medium"),
+      ]),
+    ).toBe("medium");
+  });
+
+  test("three co-occurring capabilities are the full exfiltrate shape", () => {
+    expect(
+      computeRisk([
+        finding("code.process-execution", "high"),
+        finding("code.network-access", "high"),
+        finding("code.credential-access", "high"),
+      ]),
+    ).toBe("high");
+  });
+
+  test("duplicate findings of one capability stay a single isolated signal", () => {
+    expect(
+      computeRisk([
+        finding("code.network-access", "medium"),
+        finding("code.network-access", "medium"),
+      ]),
+    ).toBe("low");
+  });
+
+  test("structural findings stay authoritative and floor the risk", () => {
+    expect(computeRisk([finding("file.outside-files-list", "high")])).toBe("high");
+    expect(computeRisk([finding("package-json.parse-failed", "medium")])).toBe("medium");
+    expect(computeRisk([finding("file.secret-content", "critical")])).toBe("critical");
+  });
+
+  test("multiple high structural findings stay high, not critical", () => {
+    expect(
+      computeRisk([
+        finding("dependency.unusual-spec", "high"),
+        finding("dependency.unusual-spec", "high"),
+      ]),
+    ).toBe("high");
+  });
+
+  test("an install hook plus code capabilities lands high; preinstall stays critical", () => {
+    expect(
+      computeRisk([
+        finding("install-script.lifecycle", "high"),
+        finding("code.process-execution", "high"),
+        finding("code.network-access", "medium"),
+        finding("code.credential-access", "medium"),
+      ]),
+    ).toBe("high");
+    expect(
+      computeRisk([
+        finding("install-script.preinstall", "critical"),
+        finding("code.process-execution", "high"),
+      ]),
+    ).toBe("critical");
+  });
+});

@@ -1,0 +1,38 @@
+{
+  "id": "legit-env-read",
+  "title": "Config module legitimately reads process.env (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-env-read",
+  "source": "benign-popular",
+  "intent": "Almost every package reads configuration from process.env. The deterministic rules emit code.credential-access (authoritative evidence), but an isolated environment read with no network, process-execution, or code-evaluation capability alongside it is not risk. The weighted risk roll-up must keep this at low risk.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": { "name": "configlib", "version": "1.4.0" },
+  "stagedPackageJson": { "name": "configlib", "version": "1.5.0" },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 40,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"configlib\",\"version\":\"1.4.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 40,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"configlib\",\"version\":\"1.5.0\"}"
+    },
+    {
+      "path": "config.js",
+      "size": 150,
+      "sha256": "config-js",
+      "flags": [],
+      "textSample": "const mode = process.env.NODE_ENV || 'development';\nexport const config = { mode, debug: mode !== 'production' };\n"
+    }
+  ]
+}

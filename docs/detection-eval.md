@@ -78,7 +78,7 @@ Recall is measured per class so blind spots are visible. Malicious:
 `network-exfil`, `native-artifact-smuggle`, `files-allowlist-escape`,
 `typosquat-metadata`, `protestware`, `dependency-confusion`,
 `wheel-integrity` (PyPI), `pth-injection` (PyPI). Benign hard-negatives:
-`legit-native`, `legit-childprocess`, `legit-env-read`.
+`legit-native`, `legit-childprocess`, `legit-env-read`, `legit-network`.
 
 ## Metrics
 
@@ -88,9 +88,14 @@ Recall is measured per class so blind spots are visible. Malicious:
 - **Frontier recall (reported).** Recall over `cases-frontier/`, which are
   labeled by _truth_ and intentionally hard. These are where real detection gaps
   show up. Starts low; that is the point.
-- **Benign false-positive rate (reported).** Over `cases-benign/`. Popular
+- **Benign false-positive rate (gated < 10%).** Over `cases-benign/`. Popular
   packages that legitimately use scary capabilities (native binaries, build-time
-  `child_process`, reading `process.env`). This is where precision is lost.
+  `child_process`, reading `process.env`). A benign case counts as a false
+  positive when the **risk roll-up** (`computeRisk`) treats it as risky (medium
+  or higher) — not merely when a finding fires. Deterministic findings stay
+  authoritative evidence; the weighted roll-up decides whether that evidence adds
+  up to risk. This keeps the benign-FP metric symmetric with malicious recall,
+  which is also risk-based. This is where precision is lost.
 - **Evasion robustness (reported).** For each transform, over npm malicious cases
   we currently catch:
   - `blockedRate` — would the product still treat it as risky? (often high,
@@ -103,9 +108,14 @@ Recall is measured per class so blind spots are visible. Malicious:
 - `splitStringLiterals` — `'child_process'` → `'chi'+'ld_process'`; defeats
   literal-based matches like `require('https')`.
 - `bracketifyMemberAccess` — `process.env` → `process['e'+'nv']`.
-- `base64Wrap` — wrap the payload in `eval(atob("…"))`. Note this _trips_ the
-  dynamic-evaluation rule, so the file stays "blocked" while the specific
-  network/process/credential rules are lost — the report shows that split.
+- `base64Wrap` — wrap the payload in `eval(atob("…"))`. This _trips_ the
+  dynamic-evaluation rule but loses the specific network/process/credential
+  rules (they are now inside the base64 string). Under the weighted roll-up an
+  isolated capability is not risk, so a wrapped payload whose only surviving
+  signal is the lone dynamic-evaluation no longer blocks unless a manifest signal
+  (e.g. `preinstall`) survives — the report shows that split. This is the same
+  gap as the assembled-identifier frontier case: it needs an AST/de-obfuscation
+  detector, not a regex.
 - `pushPastWindow` — prepend >64KB of filler, then truncate to the sandbox
   sample limit so the payload falls off the end. `codeRetention` goes to 0 and
   any case without a surviving manifest signal stops being blocked. This is the
@@ -114,16 +124,42 @@ Recall is measured per class so blind spots are visible. Malicious:
 
 ## Gated thresholds (and the ratchet)
 
-Only regression metrics are gated today (`detection-eval.test.mjs`):
+Gated metrics today (`detection-eval.test.mjs`):
 
 - malicious recall ≥ 90%
 - every `expectMinRisk: critical` case caught (100%)
 - zero false positives on benign controls
+- benign hard-negative FP rate < 10%
 
-Frontier recall, benign hard-negative FP rate, and evasion robustness are
-reported, not gated, so they can start red. Ratchet plan as the corpus and
-detector improve: gate benign FP rate < 10%, then gate frontier recall, then
+The benign hard-negative gate was turned on once the weighted multi-signal risk
+roll-up landed (see "Risk roll-up" below) — it dropped the FP rate from 100% (a
+lone build-time `child_process` landed high) to 0%.
+
+Frontier recall and evasion robustness are reported, not gated, so they can start
+red. Ratchet plan as the corpus and detector improve: gate frontier recall, then
 gate `pushPastWindow` survival once full-bytes scanning lands.
+
+## Risk roll-up (weighted multi-signal)
+
+The npm/PyPI risk roll-up (`computeRisk`, `server/lib/review.ts`) is not the max
+single-finding severity. Structural findings (install hooks, secrets,
+files-allowlist escapes, native artifacts, dependency specs, metadata) stay
+authoritative and floor the risk at their own severity. The noisy `code.*`
+capability findings — process execution, network, dynamic evaluation, credential
+access — are instead scored by **co-occurrence**, because benign build tooling and
+application code use each of them constantly:
+
+- an isolated capability is not risk on its own (the over-detection fix);
+- two capabilities escalate to high when a high-confidence primitive (process
+  execution or code evaluation) is involved, otherwise to medium;
+- three or more co-occurring capabilities is the full collect→exfiltrate shape →
+  high.
+
+This changes only the risk **roll-up**; deterministic findings are emitted
+unchanged, so they remain authoritative evidence on the diff. Install-context and
+diff-weighting refinements (e.g. distinguishing a build-time `child_process` from
+an install-hook one, or escalating an exfil chain inside a lifecycle script) are
+tracked separately.
 
 ## Corpus expansion
 

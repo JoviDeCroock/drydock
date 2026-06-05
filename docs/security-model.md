@@ -79,7 +79,7 @@ Persist by default:
 - package.json summary and diff;
 - deterministic findings;
 - AI findings (Flagship-gated and unavailable by default);
-- risk summary split into release, artifact, and context risk so `scans.risk` reflects the full artifact while unchanged hazards remain separated from the package-to-package release verdict;
+- risk summary split into release, artifact, and context risk so `scans.risk` reflects the full artifact while unchanged hazards remain separated from the package-to-package release verdict; each is a weighted multi-signal roll-up (structural findings floor the risk, `code.*` capabilities escalate by co-occurrence — see `docs/detection-eval.md`), not a max single-finding severity;
 - safety posture;
 - audit events;
 - future canonical report JSON.

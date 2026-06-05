@@ -624,7 +624,8 @@ describe("scan pipeline baseline selection", () => {
           size: 80,
           sha256: "same-risk",
           flags: [],
-          textSample: "require('child_process').execSync('true');\n",
+          textSample:
+            "require('child_process').execSync('true');\nrequire('https').get('https://example.invalid');\n",
         },
       ],
       packageJson: { name: "pkg", version: "1.0.1" },
@@ -643,7 +644,8 @@ describe("scan pipeline baseline selection", () => {
           size: 80,
           sha256: "same-risk",
           flags: [],
-          textSample: "require('child_process').execSync('true');\n",
+          textSample:
+            "require('child_process').execSync('true');\nrequire('https').get('https://example.invalid');\n",
         },
       ],
       packageJson: { name: "pkg", version: "1.0.0" },
@@ -663,7 +665,7 @@ describe("scan pipeline baseline selection", () => {
       releaseRisk: "low",
       contextRisk: "high",
       releaseFindingCount: 0,
-      contextFindingCount: 1,
+      contextFindingCount: 2,
     });
     expect(result.ruleFindings).toContainEqual(
       expect.objectContaining({
