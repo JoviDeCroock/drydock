@@ -45,7 +45,7 @@ export function getWorkflowGateAdapter(ecosystem: string): WorkflowGateAdapter {
  * name-indistinguishable from a PyPI sdist `.tar.gz` — the entry is kept but
  * tagged with the `AMBIGUOUS_ARCHIVE_ECOSYSTEM` sentinel. The shared router then
  * parses the bytes and resolves the real ecosystem by content
- * (`detectArchiveEcosystem`), so we never have to make people declare which
+ * (`detectArchiveEcosystems`), so we never have to make people declare which
  * ecosystem they are publishing.
  */
 export function classifyBundleArtifact(path: string): { ecosystem: string; kind: string } | null {
@@ -60,19 +60,28 @@ export function classifyBundleArtifact(path: string): { ecosystem: string; kind:
 }
 
 /**
- * Resolve an ambiguous archive's ecosystem from its parsed contents. The first
- * adapter whose `detectArtifact` claims the contents wins; npm claims an archive
- * with a root `package.json`, PyPI an sdist with a `PKG-INFO`. Returns `null`
- * when no ecosystem recognizes the archive (the runner fail-closes the gate).
+ * Collect every ecosystem whose content detector claims a parsed archive: npm
+ * claims an archive with a root `package.json`, PyPI an sdist with a root
+ * `PKG-INFO`.
+ *
+ * A clean release artifact belongs to exactly one ecosystem, but npm tarballs
+ * can ship arbitrary files — including a decoy `PKG-INFO` at the package root —
+ * so an archive can present as more than one ecosystem. We must not resolve that
+ * by registration order (it would silently route the npm publish through the
+ * PyPI adapter and skip every npm lifecycle/`package.json` finding). The caller
+ * therefore inspects the full claim set and fail-closes a multi-ecosystem match;
+ * a maintainer resolves it by pinning the release target's ecosystem, which
+ * bypasses content detection entirely.
  */
-export function detectArchiveEcosystem(
+export function detectArchiveEcosystems(
   contents: ArchiveContents,
-): { ecosystem: string; kind: string } | null {
+): { ecosystem: string; kind: string }[] {
+  const claims: { ecosystem: string; kind: string }[] = [];
   for (const adapter of Object.values(WORKFLOW_GATE_ADAPTERS)) {
     const kind = adapter.detectArtifact(contents);
-    if (kind) return { ecosystem: adapter.ecosystem, kind };
+    if (kind) claims.push({ ecosystem: adapter.ecosystem, kind });
   }
-  return null;
+  return claims;
 }
 
 /** Ecosystems that currently have a registered workflow-gate adapter. */

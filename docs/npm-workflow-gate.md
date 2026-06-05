@@ -7,7 +7,7 @@ publish npm packages without staged publishing.
 It only describes what is npm-specific. The webhook ingestion, gate persistence,
 artifact download + SHA-256 recomputation, approve/reject callback, 2FA step-up,
 monorepo fan-out, notifications, and timeout handling are all **shared with the
-PyPI gate** and documented in [`pypi-workflow-gate.md`](./pypi-workflow-gate.md).
+PyPI gate** and documented in [`workflow-gates.md`](./workflow-gates.md).
 Read that first for the end-to-end gate lifecycle.
 
 ## When to use it
@@ -54,15 +54,26 @@ by **content** after parsing the archive in the credentials-free sandbox:
 
 - an npm tarball carries a root `package.json` (the sandbox surfaces
   `package/package.json` with the `package/` prefix stripped) → **npm**;
-- a PyPI sdist carries a `PKG-INFO` → **pypi**.
+- a PyPI sdist carries a `PKG-INFO` at the root of its single top-level directory
+  → **pypi**.
 
 This lives in the shared router (`server/lib/workflow-gates/resolve.ts`): every
 artifact is parsed once, and entries the path classifier could not disambiguate
 (tagged with the `AMBIGUOUS_ARCHIVE_ECOSYSTEM` sentinel) are routed by
-`detectArchiveEcosystem`. A single auto-detect gate therefore reviews npm, PyPI,
+`detectArchiveEcosystems`. A single auto-detect gate therefore reviews npm, PyPI,
 or a mixed monorepo that publishes both — no one has to tell Drydock what they're
 shipping. Pinning `ecosystem: "npm"` on the release target is supported but
 optional.
+
+**Ambiguity fails closed.** Package contents are untrusted, and an npm tarball
+can ship arbitrary files — including a decoy root `PKG-INFO`. The router collects
+_every_ ecosystem's content claim rather than taking the first match, so an
+archive that presents as more than one ecosystem is rejected
+(`artifact_identity_inconsistent`) instead of being silently routed to one and
+skipping the other's findings. A maintainer resolves a genuine collision by
+pinning the release target's ecosystem, which bypasses content detection. PyPI's
+`PKG-INFO` match is scoped to the sdist root location so a file vendored deep
+inside an npm tarball does not look like a sdist.
 
 ## Monorepo
 

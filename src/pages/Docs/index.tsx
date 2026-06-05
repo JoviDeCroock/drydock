@@ -146,9 +146,9 @@ export default function DocsPage() {
             </Prose>
             <Prose>
               PyPI and npm are both supported. The GitHub plumbing — install, gate, fetch, review,
-              decide — is shared, and Drydock auto-detects each package's ecosystem from the uploaded
-              artifacts, so future ecosystems plug in behind the same gate. This walkthrough uses
-              PyPI as the example; for npm, a workflow gate is an alternative to{" "}
+              decide — is shared, and Drydock auto-detects each package's ecosystem from the
+              uploaded artifacts, so future ecosystems plug in behind the same gate. This
+              walkthrough uses PyPI as the example; for npm, a workflow gate is an alternative to{" "}
               <a class="underline" href="#staged-publishing">
                 staged-publish review
               </a>{" "}

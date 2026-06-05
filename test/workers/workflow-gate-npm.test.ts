@@ -12,7 +12,7 @@ import {
 import {
   AMBIGUOUS_ARCHIVE_ECOSYSTEM,
   classifyBundleArtifact,
-  detectArchiveEcosystem,
+  detectArchiveEcosystems,
   getWorkflowGateAdapter,
   npmWorkflowGateAdapter,
   prepareReleaseCandidatesForGate,
@@ -72,34 +72,46 @@ describe("workflow-gate registry with npm registered", () => {
     expect(classifyBundleArtifact("dist/SHASUMS.txt")).toBeNull();
   });
 
-  test("content-detects npm via a root package.json and pypi via PKG-INFO", () => {
+  test("content-detects npm via a root package.json and pypi via a root PKG-INFO", () => {
     expect(
-      detectArchiveEcosystem({ files: [], packageJson: { name: "left-pad", version: "1.0.0" } }),
-    ).toEqual({ ecosystem: "npm", kind: "tarball" });
+      detectArchiveEcosystems({ files: [], packageJson: { name: "left-pad", version: "1.0.0" } }),
+    ).toEqual([{ ecosystem: "npm", kind: "tarball" }]);
     expect(
-      detectArchiveEcosystem({
+      detectArchiveEcosystems({
         files: [{ path: "left_pad-1.0.0/PKG-INFO", size: 1, sha256: "x", flags: [] }],
         packageJson: null,
       }),
-    ).toEqual({ ecosystem: "pypi", kind: "sdist" });
+    ).toEqual([{ ecosystem: "pypi", kind: "sdist" }]);
     expect(
-      detectArchiveEcosystem({
+      detectArchiveEcosystems({
         files: [{ path: "a.txt", size: 1, sha256: "x", flags: [] }],
         packageJson: null,
       }),
-    ).toBeNull();
+    ).toEqual([]);
   });
 
   test("keeps npm routing when a tarball contains nested PyPI metadata", () => {
+    // Only a *root* PKG-INFO is a sdist signal; a deeply-vendored one is ignored,
+    // so a tarball with a root package.json is unambiguously npm.
     expect(
-      detectArchiveEcosystem({
+      detectArchiveEcosystems({
         files: [
           { path: "package.json", size: 1, sha256: "x", flags: [] },
           { path: "vendor/foo.egg-info/PKG-INFO", size: 1, sha256: "x", flags: [] },
         ],
         packageJson: { name: "left-pad", version: "1.0.0" },
       }),
-    ).toEqual({ ecosystem: "npm", kind: "tarball" });
+    ).toEqual([{ ecosystem: "npm", kind: "tarball" }]);
+  });
+
+  test("reports an archive that claims both ecosystems (root decoy PKG-INFO)", () => {
+    // An npm tarball with a root PKG-INFO claims both ecosystems; the resolver
+    // must refuse to guess rather than route by registration order.
+    const claims = detectArchiveEcosystems({
+      files: [{ path: "PKG-INFO", size: 1, sha256: "x", flags: [] }],
+      packageJson: { name: "evil", version: "1.0.0" },
+    });
+    expect(claims.map((claim) => claim.ecosystem).sort()).toEqual(["npm", "pypi"]);
   });
 });
 
@@ -598,6 +610,54 @@ describe("prepareReleaseCandidatesForGate · npm auto-detect", () => {
     const refreshed = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
     expect(refreshed?.status).toBe("pending");
     expect(refreshed?.failureReason).toBe("artifact_identity_missing");
+    vi.unstubAllGlobals();
+  });
+
+  test("fails the gate closed when a tarball looks like both npm and PyPI", async () => {
+    const seeded = await seedAutoDetectGate({
+      installationExternalId: "9303",
+      repositoryId: 73004,
+      runId: 6004,
+    });
+    stubGithubFetch(6004, ["dist/evil-1.0.0.tgz"]);
+    // An npm tarball carrying a decoy root PKG-INFO would otherwise be routed to
+    // the PyPI adapter by registration order, skipping every npm finding.
+    const loader = buildLoaderMock([
+      {
+        files: [
+          {
+            path: "package.json",
+            size: 20,
+            sha256: "00",
+            flags: [],
+            textSample: '{"name":"evil","version":"1.0.0"}',
+          },
+          { path: "PKG-INFO", size: 5, sha256: "00", flags: [] },
+        ],
+        packageJson: { name: "evil", version: "1.0.0" },
+      },
+    ]);
+    const ctx = buildCtxWithGateway();
+    const bindings = configBindings();
+    const config = readGithubAppConfig(bindings);
+    const sandboxEnv = {
+      ...env,
+      ...bindings,
+      LOADER: loader.binding as unknown as WorkerLoader,
+    } as Cloudflare.Env;
+    const db = createDb(env.DB);
+
+    await expect(
+      prepareReleaseCandidatesForGate(sandboxEnv, ctx, db, {
+        config,
+        organizationId: seeded.organizationId,
+        gateId: seeded.gateId,
+      }),
+    ).rejects.toMatchObject({ code: "artifact_identity_inconsistent" });
+
+    const refreshed = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(refreshed?.status).toBe("pending");
+    expect(refreshed?.failureReason).toBe("artifact_identity_inconsistent");
     vi.unstubAllGlobals();
   });
 });

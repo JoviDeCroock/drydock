@@ -1,6 +1,6 @@
 import { type ResolvedReleaseBundle, WorkflowArtifactError } from "../github-app";
 import { downloadInSandboxInline } from "../sandbox";
-import { AMBIGUOUS_ARCHIVE_ECOSYSTEM, detectArchiveEcosystem } from "./registry";
+import { AMBIGUOUS_ARCHIVE_ECOSYSTEM, detectArchiveEcosystems } from "./registry";
 import type { ParsedGateArtifact } from "./types";
 
 /**
@@ -33,15 +33,26 @@ export async function resolveBundleArtifacts(
     let ecosystem = file.ecosystem;
     let kind = file.kind;
     if (ecosystem === AMBIGUOUS_ARCHIVE_ECOSYSTEM) {
-      const detected = detectArchiveEcosystem(contents);
-      if (!detected) {
+      const claims = detectArchiveEcosystems(contents);
+      if (claims.length === 0) {
         throw new WorkflowArtifactError(
           "artifact_identity_missing",
           `${file.path} is not a recognizable npm or PyPI release artifact`,
         );
       }
-      ecosystem = detected.ecosystem;
-      kind = detected.kind;
+      if (claims.length > 1) {
+        // The archive presents as several ecosystems (e.g. an npm tarball that
+        // also ships a root PKG-INFO). Routing it to one would skip the other's
+        // findings, so fail closed and let the maintainer pin the ecosystem.
+        throw new WorkflowArtifactError(
+          "artifact_identity_inconsistent",
+          `${file.path} matches more than one ecosystem (${claims
+            .map((claim) => claim.ecosystem)
+            .join(", ")}); pin the release target's ecosystem to review it`,
+        );
+      }
+      ecosystem = claims[0].ecosystem;
+      kind = claims[0].kind;
     }
 
     resolved.push({
