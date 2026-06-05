@@ -1,7 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "staged-publish-review-test",
-  "main": "server/index.ts",
   "compatibility_date": "2026-05-20",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {

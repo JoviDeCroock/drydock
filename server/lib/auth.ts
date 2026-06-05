@@ -1,3 +1,4 @@
+import { scrypt as nodeScrypt, scryptSync } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { twoFactor } from "better-auth/plugins";
@@ -13,6 +14,66 @@ export interface AuthSession {
 }
 
 const VERIFICATION_TOKEN_TTL_SECONDS = 60 * 60 * 24; // 24 hours
+
+function toHex(bytes: Uint8Array): string {
+  let out = "";
+  for (const byte of bytes) out += byte.toString(16).padStart(2, "0");
+  return out;
+}
+
+// Better Auth's password KDF is scrypt with these parameters. On the Workers
+// runtime it resolves to the pure-JS `@noble/hashes` scrypt, which runs
+// synchronously in the isolate and costs ~hundreds of ms per hash — slow for
+// every production login and the dominant cost of the auth-heavy Worker test
+// suite. node:crypto's native scrypt (libuv thread pool, C implementation) is an
+// order of magnitude faster and, for identical parameters/salt, produces
+// byte-identical output. We keep the exact format Better Auth uses — salt is the
+// lowercase hex of 16 random bytes, stored as `salt:hex(key)` — so hashes are
+// compatible in both directions (a hash written by either implementation
+// verifies under the other). The parity invariant is locked by
+// test/workers/auth-password-hash.test.ts; mirrors better-auth#8456.
+const SCRYPT_N = 16384;
+const SCRYPT_R = 16;
+const SCRYPT_P = 1;
+const SCRYPT_DKLEN = 64;
+const SCRYPT_MAXMEM = 128 * SCRYPT_N * SCRYPT_R * 2;
+
+export function scryptKeyHex(password: string, salt: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    nodeScrypt(
+      password.normalize("NFKC"),
+      salt,
+      SCRYPT_DKLEN,
+      { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P, maxmem: SCRYPT_MAXMEM },
+      (err, key) => (err ? reject(err) : resolve(key.toString("hex"))),
+    );
+  });
+}
+
+export const nativeScryptPassword = {
+  hash: async (password: string): Promise<string> => {
+    const salt = toHex(crypto.getRandomValues(new Uint8Array(16)));
+    return `${salt}:${await scryptKeyHex(password, salt)}`;
+  },
+  verify: async ({ hash, password }: { hash: string; password: string }): Promise<boolean> => {
+    const [salt, key] = hash.split(":");
+    if (!salt || !key) return false;
+    return (await scryptKeyHex(password, salt)) === key;
+  },
+};
+
+// Use native scrypt when the runtime supports it (all of prod/test/dev run with
+// `nodejs_compat`), otherwise leave Better Auth on its own scrypt default — never
+// a silent downgrade. Probed once with tiny work-factor params so import stays
+// cheap; the real work factor above is exercised on every hash/verify.
+const nativeScryptAvailable = (() => {
+  try {
+    scryptSync("probe", "probe", SCRYPT_DKLEN, { N: 2, r: 1, p: 1, maxmem: SCRYPT_MAXMEM });
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 export function createAuth(env: Cloudflare.Env) {
   if (!env.DB) throw new Error("DB binding is required for Better Auth");
@@ -52,6 +113,7 @@ export function createAuth(env: Cloudflare.Env) {
       requireEmailVerification: emailVerificationEnabled,
       minPasswordLength: 12,
       maxPasswordLength: 256,
+      ...(nativeScryptAvailable ? { password: nativeScryptPassword } : {}),
     },
     plugins: [twoFactor({ issuer: "Drydock" })],
     advanced: {
