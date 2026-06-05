@@ -100,12 +100,9 @@ export function GithubAppSection({
             {status === "starting"
               ? "Redirecting…"
               : installations.length
-                ? "Install on another organization"
+                ? "Modify installation"
                 : "Install GitHub App"}
           </Button>
-          <Muted class="text-[12px] m-0">
-            You'll be sent to GitHub to pick which account to install on, then returned here.
-          </Muted>
         </div>
       </div>
 
