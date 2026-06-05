@@ -1,5 +1,5 @@
 import { type AppDb, type WorkspaceSession } from "../db";
-import { AI_MODEL, runSelectiveAiReview, type AiReview } from "./ai-review";
+import type { AiReview } from "./ai-review-types";
 import type {
   AdapterBroker,
   AdapterConnectionRef,
@@ -136,6 +136,13 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
       })
     : false;
   if (!aiReviewEnabled) return disabled;
+
+  // Loaded lazily so the Vercel AI SDK + workers-ai-provider stay out of the
+  // Worker's boot graph: AI review is off by default, so pulling these heavy
+  // modules eagerly would tax every cold start (and every per-file test isolate)
+  // for a path most scans never take. AI_MODEL rides along — it lives in the same
+  // module, so importing it statically would defeat the point.
+  const { runSelectiveAiReview, AI_MODEL } = await import("./ai-review");
 
   const startedAtMs = Date.now();
   try {

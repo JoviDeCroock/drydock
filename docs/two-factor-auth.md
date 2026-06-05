@@ -125,7 +125,8 @@ already covers these POSTs.
 - `test/workers/two-factor-routes.test.ts` — drives the real Better Auth handler via
   `worker.fetch`: enroll → verify TOTP → assert `twoFactorEnabled`, sign-in challenge
   (`twoFactorRedirect`), backup-code sign-in, disable, and the rate-limit bucket. (The full TOTP
-  flow runs several scrypt hashes, so the test sets a 30s timeout.)
+  flow runs several scrypt hashes; the test keeps a generous 30s timeout even though
+  `auth.ts` now uses native scrypt — see [`tooling.md`](./tooling.md#worker-suite-performance).)
 - `test/e2e/two-factor.spec.ts` — Playwright flow: register → enable 2FA in Settings (reads the
   secret, computes a TOTP with `otpauth`) → sign out → sign in through the challenge step.
 - `test/workers/github-gate-two-factor.test.ts` — drives the real worker for the gate-decision

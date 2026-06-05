@@ -29,6 +29,30 @@ can express. See [`release-safety.md`](./release-safety.md) for the expected
 Worker-route, sandbox invariant, fake-registry e2e, security-corpus, and
 observability coverage by change type.
 
+## Worker-suite performance
+
+The `workers` Vitest project runs every test file in its own Miniflare isolate,
+so anything paid per file is paid ~24×. Two deliberate choices keep it fast:
+
+- **`wrangler.test.jsonc` has no `main`.** The worker tests don't use `SELF` —
+  they `import worker from "../../server/index"` and call `worker.fetch(req, env, ctx)`
+  directly. Setting `main` makes Miniflare eagerly evaluate the whole app graph
+  in _every_ isolate at boot (~5s/file → most of the suite's wall time). Leaving
+  it unset drops per-file boot to ~0.3s; the files that need the app still import
+  it themselves. **Do not add `main` back** unless a test genuinely needs `SELF`
+  or a Durable Object binding — and if one does, scope it to a separate project
+  rather than taxing all 24 files.
+- **Native scrypt for password hashing.** `server/lib/auth.ts` overrides Better
+  Auth's KDF with `node:crypto`'s native scrypt (same params, byte-identical
+  output — see `test/workers/auth-password-hash.test.ts`). On `workerd` the
+  default falls back to a pure-JS scrypt that runs synchronously in the isolate;
+  native scrypt is ~10× faster, which matters for production logins and for the
+  auth-heavy worker tests that sign up / sign in / enroll TOTP.
+
+Heavy, conditionally-used modules (e.g. the Vercel AI SDK behind the off-by-default
+AI reviewer) are loaded with `await import(...)` past their feature gate, to keep
+them out of the worker boot graph.
+
 ## Pre-commit verification
 
 Run `pnpm run verify` before every commit, so each commit passes lint + format + typecheck + tests. There is no git hook enforcing this — it is run explicitly. CI (`.github/workflows/ci.yml`) runs the same core checks and then installs Chromium and runs `pnpm run test:e2e`.

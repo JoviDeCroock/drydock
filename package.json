@@ -44,7 +44,7 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.33.2",
-    "@cloudflare/vitest-pool-workers": "^0.16.7",
+    "@cloudflare/vitest-pool-workers": "^0.16.13",
     "@cloudflare/workers-types": "^4.20260520.0",
     "@playwright/test": "^1.60.0",
     "@preact/eslint-plugin-signals": "^0.2.0",
