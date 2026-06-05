@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
@@ -39,14 +40,14 @@ export default function LandingPage() {
       }
     >
       <section class="py-8 md:py-12 border-y border-border flex flex-col gap-5">
-        <Eyebrow tone="accent">Release confidence for npm maintainers</Eyebrow>
+        <Eyebrow tone="accent">Release confidence for npm and PyPI maintainers</Eyebrow>
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
           See exactly what your next publish ships.
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-          A publish-level diff of the staged tarball, with deterministic risk signals pinned to the
-          hunks that triggered them — without executing package code or exposing credentials to
-          untrusted package contents.
+          A publish-level diff of what a release actually ships, with deterministic risk signals
+          pinned to the hunks that triggered them — for npm staged tarballs and for PyPI builds held
+          at a CI gate, without executing package code or holding your publish credential.
         </p>
         <div class="flex gap-3 mt-2">
           <Show
@@ -67,44 +68,61 @@ export default function LandingPage() {
 
       <ScanPreview />
 
-      <StatusStrip>
-        <StatusStripItem label="credentials" status="scoped" tone="ok">
-          Your npm token is used only to fetch staged release evidence, never exposed to package
-          contents.
-        </StatusStripItem>
-        <StatusStripItem label="retention" status="redacted" tone="ok">
-          Reports keep redacted review evidence, not raw release archives.
-        </StatusStripItem>
-        <StatusStripItem label="approval" status="human" tone="neutral">
-          Maintainers approve in npm with normal 2FA. We never publish on their behalf.
-        </StatusStripItem>
-      </StatusStrip>
+      <section aria-label="Safeguards" class="flex flex-col gap-4">
+        <SectionLabel>Safeguards</SectionLabel>
+        <StatusStrip>
+          <StatusStripItem label="credentials" status="scoped" tone="ok">
+            Tokens only fetch release evidence, never package contents — and Drydock never holds
+            your publish credential.
+          </StatusStripItem>
+          <StatusStripItem label="retention" status="redacted" tone="ok">
+            Reports keep redacted review evidence, not raw release archives.
+          </StatusStripItem>
+          <StatusStripItem label="approval" status="human" tone="neutral">
+            Maintainers approve the publish themselves — npm 2FA or the CI gate. We never publish on
+            their behalf.
+          </StatusStripItem>
+        </StatusStrip>
+      </section>
 
-      <section aria-label="Safety features" class="flex flex-col gap-4">
-        <SectionLabel>How it protects releases</SectionLabel>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Feature title="Credentials stay protected">
-            Connect npm once. Reviews can fetch staged releases without exposing your token to
-            untrusted package contents.
-          </Feature>
-          <Feature title="Changes take center stage">
-            See the release delta that matters: scripts, dependencies, entrypoints, new files,
-            binaries, and suspicious code paths.
-          </Feature>
-          <Feature title="Assistant that knows its place">
-            The reviewer treats package contents as evidence, not instructions — adding context
-            without overriding hard safety signals.
-          </Feature>
+      <section aria-label="How Drydock hooks in" class="flex flex-col gap-4">
+        <SectionLabel>How it hooks in</SectionLabel>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <RegistryCard title="npm — staged tarballs">
+            A maintainer runs{" "}
+            <code class="font-mono text-[12px] text-ink">npm publish --stage</code> and the registry
+            parks the candidate. Drydock reviews that tarball and pins risk signals to the diff
+            before the 2FA confirmation runs.
+          </RegistryCard>
+          <RegistryCard title="PyPI — GitHub Actions gate" badge="Preview">
+            PyPI has no staged artifact, so a GitHub Environment holds the publish job. Drydock
+            reviews the release candidate; a maintainer approves or rejects from the workbench, and
+            the job publishes on its own Trusted Publishing credential.
+          </RegistryCard>
         </div>
+        <LinkButton href="/docs" variant="ghost" size="sm" class="self-start">
+          Read the docs →
+        </LinkButton>
       </section>
     </PageShell>
   );
 }
 
-function Feature({ title, children }: { title: string; children: string }) {
+function RegistryCard({
+  title,
+  badge,
+  children,
+}: {
+  title: string;
+  badge?: string;
+  children: ComponentChildren;
+}) {
   return (
     <Card as="article" class="p-5 flex flex-col gap-2">
-      <h2 class="text-base font-medium tracking-[-0.005em] m-0">{title}</h2>
+      <div class="flex flex-wrap items-center gap-2">
+        <h2 class="text-base font-medium tracking-[-0.005em] m-0">{title}</h2>
+        {badge ? <Badge tone="info">{badge}</Badge> : null}
+      </div>
       <p class="text-[13px] text-ink-muted leading-[1.55] m-0">{children}</p>
     </Card>
   );

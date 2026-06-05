@@ -25,7 +25,7 @@ export {
 export { IndeterminateBar, LoadingState } from "./Loading";
 export { FileTree } from "./FileTree";
 export { DiffView } from "./DiffView";
-export type { DiffViewProps } from "./DiffView";
+export type { DiffViewProps, DiffFinding } from "./DiffView";
 export { VersionPicker } from "./VersionPicker";
 export { SeverityBar } from "./SeverityBar";
 export type { SeverityCounts, SeverityKey } from "./SeverityBar";

@@ -2,9 +2,33 @@ import { describe, expect, test } from "vitest";
 import {
   annotatePersistedFindings,
   filterDiffEntries,
+  findingCountsByPath,
   scanFilesToFileRecords,
   selectDiffWorkbenchState,
 } from "../src/pages/Dashboard/ScanDetail/diff-helpers.ts";
+
+describe("findingCountsByPath", () => {
+  const item = (file, severity) => ({
+    finding: { id: `${file}:${severity}`, file, severity },
+    diffStatus: "modified",
+    releaseDelta: true,
+  });
+
+  test("counts findings per file path and keeps the highest severity", () => {
+    const counts = findingCountsByPath([
+      item("lib/a.js", "low"),
+      item("lib/a.js", "critical"),
+      item("lib/a.js", "medium"),
+      item("b.js", "info"),
+    ]);
+    expect(counts.get("lib/a.js")).toEqual({ count: 3, maxSeverity: "critical" });
+    expect(counts.get("b.js")).toEqual({ count: 1, maxSeverity: "info" });
+  });
+
+  test("returns an empty map for no findings", () => {
+    expect(findingCountsByPath([]).size).toBe(0);
+  });
+});
 
 describe("filterDiffEntries", () => {
   const entries = [

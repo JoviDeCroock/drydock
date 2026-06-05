@@ -199,17 +199,19 @@ function RecentReviewsSection({
             size="sm"
             onClick={() => void onDiscover()}
             disabled={discoveryRefreshing || !ready}
+            title="Discover new staged publishes on npm and start reviews"
           >
-            {discoveryRefreshing ? "Checking…" : "Check npm"}
+            {discoveryRefreshing ? "Checking npm…" : "Check npm"}
           </Button>
           {showFreshness ? <ScanFreshnessIndicator at={discoveredAt} /> : null}
         </div>
         <Button
-          variant="secondary"
+          variant="ghost"
           size="sm"
           onClick={() => void scans.refresh()}
           class="shrink-0"
           disabled={scans.refreshing.value}
+          title="Reload the reviews list"
         >
           {scans.refreshing.value ? "Refreshing…" : "Refresh"}
         </Button>
@@ -375,7 +377,9 @@ function ScanTable({ scans }: { scans: ScanListItem[] }) {
               <Td>
                 <ScanChangedCell scan={scan} />
               </Td>
-              <Td class="font-mono text-xs text-ink-muted">{scan.status}</Td>
+              <Td>
+                <ScanStatusBadge status={scan.status} />
+              </Td>
               <Td>
                 <DecisionBadge decision={scan.decision} />
               </Td>
@@ -413,6 +417,14 @@ function DecisionBadge({ decision }: { decision?: string | null }) {
   return <Badge tone="neutral">undecided</Badge>;
 }
 
+// Status and Decision are both state columns, so both render as Badges (Status
+// was previously raw mono text). Lifecycle status is not a severity: only a
+// failed run is critical; running is info; pending/complete stay neutral.
+function ScanStatusBadge({ status }: { status: string }) {
+  const tone = status === "failed" ? "critical" : status === "running" ? "info" : "neutral";
+  return <Badge tone={tone}>{status}</Badge>;
+}
+
 function Th({ children }: { children: ComponentChildren }) {
   return (
     <th class="text-left font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle px-4 py-2.5">
@@ -425,6 +437,9 @@ function Td({ children, class: className }: { children: ComponentChildren; class
   return <td class={`px-4 py-2.5 align-middle ${className || ""}`}>{children}</td>;
 }
 
+// Freshness is shown as a readable mono line ("checked 2 minutes ago") rather
+// than a bare ✓ — the check read as a pass/fail state it doesn't represent, and
+// its meaning was hidden in a tooltip.
 function ScanFreshnessIndicator({ at }: { at: number }) {
   const now = useSignal(Date.now());
   useEffect(() => {
@@ -433,14 +448,9 @@ function ScanFreshnessIndicator({ at }: { at: number }) {
     }, 30_000);
     return () => window.clearInterval(id);
   }, []);
-  const label = `scanned ${formatRelativeTime(at, now.value)}`;
   return (
-    <span
-      class="font-mono text-[14px] leading-none text-ok-text cursor-help select-none"
-      title={label}
-      aria-label={label}
-    >
-      ✓
+    <span class="font-mono text-[11px] text-ink-subtle whitespace-nowrap select-none">
+      checked {formatRelativeTime(at, now.value)}
     </span>
   );
 }

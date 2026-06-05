@@ -21,8 +21,8 @@ export function PersistedReportSections({
   ai: DisplayedAiResult | null;
 }) {
   return (
-    <section class="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-6">
-      <ReportSection title="Manifest changes" class="lg:col-span-2">
+    <section class="flex flex-col gap-6">
+      <ReportSection title="Manifest changes">
         {summary.packageJsonDiff ? (
           <PackageJsonDiffView diff={summary.packageJsonDiff} />
         ) : (
@@ -31,7 +31,7 @@ export function PersistedReportSections({
       </ReportSection>
 
       {ai != null && ai.model != null && (
-        <ReportSection title="Reviewer notes" class="lg:col-span-2">
+        <ReportSection title="Reviewer notes">
           {ai.kind === "complete" ? (
             <>
               <div class="flex flex-wrap gap-2">

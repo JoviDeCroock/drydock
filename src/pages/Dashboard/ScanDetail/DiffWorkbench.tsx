@@ -1,6 +1,12 @@
 import type { DiffEntry, FileRecord } from "../../../../server/lib/review";
 import type { PersistedScanDetail } from "../../../models/scan";
-import { DiffView, EmptyLine, IndeterminateBar, LoadingLine } from "../../../components";
+import {
+  DiffView,
+  EmptyLine,
+  IndeterminateBar,
+  LoadingLine,
+  type DiffFinding,
+} from "../../../components";
 import { selectDiffWorkbenchState } from "./diff-helpers";
 
 export function DiffWorkbench({
@@ -12,6 +18,7 @@ export function DiffWorkbench({
   compareLoading,
   selectedVersion,
   stagedVersion,
+  findings,
 }: {
   entry: DiffEntry | null;
   staged: PersistedScanDetail["files"][number] | null;
@@ -21,6 +28,7 @@ export function DiffWorkbench({
   compareLoading: boolean;
   selectedVersion: string | null;
   stagedVersion: string | null | undefined;
+  findings: DiffFinding[];
 }) {
   if (!entry) {
     return <DiffPanelMessage>Select a file from the tree to diff.</DiffPanelMessage>;
@@ -59,6 +67,7 @@ export function DiffWorkbench({
             : null
       }
       after={staged ? scanFileToDiffSide(staged) : null}
+      findings={findings}
     />
   );
 }

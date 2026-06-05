@@ -9,6 +9,7 @@ import {
 } from "@preact/signals";
 import { useLocation, useRoute } from "preact-iso";
 import { useQuerySignal } from "../../../lib/query-state";
+import { sortFindingsBySeverity } from "../../../lib/findings";
 import { sessionModel } from "../../../models/auth";
 import { ScanDetailModel, type DecisionStatus, type ScanDecision } from "../../../models/scan";
 import type { WorkflowGateDecision } from "../../../models/github-app";
@@ -32,7 +33,7 @@ import { RiskSignalsSection } from "./FindingsSection";
 import { ReleaseRecommendation } from "./ReleaseRecommendation";
 import { PersistedReportSections } from "./ReportSections";
 import { ScanDetailHeader, ScanFailureAlert, VersionPickerSkeleton } from "./ScanDetailChrome";
-import { filterDiffEntries, scanFilesToFileRecords } from "./diff-helpers";
+import { filterDiffEntries, findingCountsByPath, scanFilesToFileRecords } from "./diff-helpers";
 import { useFindingsWithDiff } from "./hooks/useFindingsWithDiff";
 import { useScanFileContent } from "./hooks/useScanFileContent";
 import { useScanVersions } from "./hooks/useScanVersions";
@@ -147,6 +148,22 @@ export default function ScanDetailPage() {
     diffEntries,
     model.isDefaultComparison,
   );
+
+  // Deterministic findings for the file open in the workbench, pinned to their
+  // staged line inside DiffView. The diff is the headline; findings ride the
+  // hunk that triggered them rather than a separate list (diff-first direction).
+  const selectedFindings = useComputed(() => {
+    const path = model.selectedPath.value;
+    const all = findingsWithDiffStatus.value;
+    if (!path) return [];
+    return sortFindingsBySeverity(
+      all.filter((item) => item.finding.file === path).map((item) => item.finding),
+    );
+  });
+
+  // Per-file finding counts for the tree, built once from the same finding set
+  // that feeds the inline annotations and the risk-signals index.
+  const findingCounts = useComputed(() => findingCountsByPath(findingsWithDiffStatus.value));
 
   const stagedFile = useComputed(() => {
     const path = model.selectedPath.value;
@@ -286,7 +303,7 @@ export default function ScanDetailPage() {
             ) : null}
 
             <section class={workbenchGridClass}>
-              <Card as="aside" class="p-5 flex flex-col gap-3 h-[720px] overflow-hidden">
+              <Card as="aside" class="p-5 flex flex-col gap-3 lg:h-[720px] overflow-hidden">
                 <SectionLabel>Release tree</SectionLabel>
                 <Input
                   type="search"
@@ -316,11 +333,12 @@ export default function ScanDetailPage() {
                     entries={visibleDiffEntries.value}
                     selectedPath={model.selectedPath.value}
                     onSelect={(path) => model.selectPath(path)}
+                    findingCounts={findingCounts.value}
                   />
                 </div>
               </Card>
 
-              <Card class="p-5 flex flex-col gap-3 h-[720px]">
+              <Card class="p-5 flex flex-col gap-3 lg:h-[720px]">
                 <SectionLabel>File diff</SectionLabel>
                 <DiffWorkbench
                   entry={selectedEntry.value}
@@ -331,12 +349,16 @@ export default function ScanDetailPage() {
                   compareLoading={compareLoading}
                   selectedVersion={selectedVersion}
                   stagedVersion={detail.scan.stagedVersion}
+                  findings={selectedFindings.value}
                 />
               </Card>
             </section>
 
             {hasRuleFindings ? (
-              <RiskSignalsSection findings={findingsWithDiffStatus.value} />
+              <RiskSignalsSection
+                findings={findingsWithDiffStatus.value}
+                onSelect={(file) => model.selectPath(file)}
+              />
             ) : null}
 
             <PersistedReportSections summary={summary.value} ai={ai.value} />
