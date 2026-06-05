@@ -1,0 +1,53 @@
+{
+  "id": "npm-event-stream-flatmap-decrypt",
+  "title": "Runtime stage decrypts an embedded blob keyed by the package description",
+  "ecosystem": "npm",
+  "verdict": "malicious",
+  "threatClass": "obfuscated-dropper",
+  "source": "real-sanitized",
+  "provenance": "event-stream 3.3.6 -> flatmap-stream 0.1.1 (Nov 2018): a transitive dependency shipped a minified second stage that AES-decrypted an embedded payload using the consuming package's description as the key, targeting Copay/BitPay wallet keys. Defanged: the ciphertext is a placeholder, no working key or endpoint is present.",
+  "intent": "Models the encrypted-payload dropper: a newly added module reads an environment value to derive a decryption key and runs the decrypted bytes via new Function. Drydock should catch this via the credential (process.env) read and the dynamic-evaluation primitive on an added file. Safe: the blob is a literal placeholder that decrypts to nothing meaningful.",
+  "expectMinRisk": "high",
+  "expectAnyRule": [],
+  "previousPackageJson": { "name": "flatmap-stream", "version": "0.1.0" },
+  "stagedPackageJson": { "name": "flatmap-stream", "version": "0.1.1" },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 48,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"flatmap-stream\",\"version\":\"0.1.0\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 38,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "module.exports = require('./flatmap');\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 48,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"flatmap-stream\",\"version\":\"0.1.1\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 38,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "module.exports = require('./flatmap');\n"
+    },
+    {
+      "path": "index.min.js",
+      "size": 360,
+      "sha256": "index-min-js",
+      "flags": [],
+      "textSample": "const crypto = require('crypto');\n// Minified second stage: decrypt an embedded blob keyed by the package description.\nconst key = process.env.npm_package_description || '';\nconst blob = 'QkxPQl9QTEFDRUhPTERFUg==';\nconst d = crypto.createDecipheriv('aes-256-cbc', crypto.createHash('sha256').update(key).digest(), Buffer.alloc(16));\nconst code = Buffer.concat([d.update(Buffer.from(blob, 'base64')), d.final()]).toString('utf8');\nnew Function('module', code)(module);\n"
+    }
+  ]
+}

