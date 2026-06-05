@@ -63,6 +63,9 @@ export interface PublicWorkflowGate {
   reportUrl: string | null;
   scanId: string | null;
   failureReason: string | null;
+  // Org policy: every member must step up with a fresh code to decide this gate,
+  // and a member who has not enrolled in 2FA cannot decide it at all.
+  organizationRequiresTwoFactor: boolean;
   packages: GatePackageScan[];
   requestedAt: string;
   decidedAt: string | null;
@@ -118,6 +121,18 @@ export function decideWorkflowGate(
       if (err.code === "two_factor_invalid") {
         throw new ApiError("That authentication code is invalid.", 401, err.detail, err.code);
       }
+    }
+    if (
+      err instanceof ApiError &&
+      err.status === 403 &&
+      err.code === "two_factor_enrollment_required"
+    ) {
+      throw new ApiError(
+        "Your organization requires two-factor authentication to decide releases. Enable it in Settings, then try again.",
+        403,
+        err.detail,
+        err.code,
+      );
     }
     throw err;
   });

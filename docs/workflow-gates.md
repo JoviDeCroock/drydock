@@ -202,6 +202,16 @@ releaseRisk, decision }]` array (one entry per distinct package).
     the staged-publish decision (`POST /api/v1/scans/:id/decision`) is an audit
     record only — it never publishes or cancels anything — and deliberately does
     not require a step-up.
+  - **Org-enforced 2FA:** an organization owner can make the step-up mandatory
+    for every member via `organizations.require_two_factor_for_release_decisions`
+    (owner-only `PUT /api/v1/organizations/:id/release-two-factor`; Settings →
+    General → "Release security"). With the policy on, an **unenrolled** member is
+    blocked outright — `403 { code: "two_factor_enrollment_required" }`, gate left
+    `pending`, nothing posted to GitHub — and enrolled members still present a
+    fresh `totpCode`. The public gate shape carries `organizationRequiresTwoFactor`
+    so the decision dialog prompts (or blocks) before submit, and the scan event
+    records `twoFactorRequiredByOrg`. See
+    [`two-factor-auth.md`](./two-factor-auth.md#org-enforced-step-up-organization-policy).
 
 - `POST /workflow-gates/:gateId/retry` — requeues a failed package-review batch
   while the gate is still pending. It is only accepted when at least one package

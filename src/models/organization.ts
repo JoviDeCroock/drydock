@@ -9,6 +9,7 @@ export interface Organization {
   role: string;
   isPersonal: boolean;
   npmConnectionConfigured: boolean;
+  requireTwoFactorForReleaseDecisions: boolean;
   createdAt: string | number | Date;
   updatedAt: string | number | Date;
 }
@@ -17,7 +18,13 @@ interface ListResponse {
   organizations: Organization[];
 }
 
-export type OrganizationStatus = "idle" | "loading" | "creating" | "renaming" | "deleting";
+export type OrganizationStatus =
+  | "idle"
+  | "loading"
+  | "creating"
+  | "renaming"
+  | "deleting"
+  | "updating";
 
 export const OrganizationModel = createModel(() => {
   const organizations = signal<Organization[]>([]);
@@ -133,6 +140,27 @@ export const OrganizationModel = createModel(() => {
             method: "PATCH",
           },
         );
+        await this.load();
+        return true;
+      } catch (err) {
+        this.error.value = errorMessage(err);
+        return false;
+      } finally {
+        this.status.value = "idle";
+      }
+    },
+
+    async setReleaseTwoFactor(organizationId: string, enabled: boolean): Promise<boolean> {
+      this.status.value = "updating";
+      this.error.value = null;
+      try {
+        await apiJson<{ requireTwoFactorForReleaseDecisions: boolean }>(
+          `/api/v1/organizations/${encodeURIComponent(organizationId)}/release-two-factor`,
+          { enabled },
+          { method: "PUT" },
+        );
+        // Reload so `active.requireTwoFactorForReleaseDecisions` reflects the new
+        // policy everywhere that reads the org list.
         await this.load();
         return true;
       } catch (err) {

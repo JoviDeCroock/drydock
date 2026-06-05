@@ -260,6 +260,16 @@ export function GateDecisionDialog({
   const needsCode = requireTwoFactor && !gateDecided;
   const code = codeDraft.value.trim();
   const blockedOnCode = needsCode && code.length === 0;
+  // The org requires a second factor to decide releases but this member hasn't
+  // enrolled — they're blocked until they do. `requireTwoFactor` is the member's
+  // own enrollment, so this is exactly the case the route answers with 403
+  // `two_factor_enrollment_required`. Decided gates/packages are read-only, so
+  // there's nothing to block there.
+  const mustEnroll =
+    gate.organizationRequiresTwoFactor &&
+    !requireTwoFactor &&
+    !gateDecided &&
+    !packageAlreadyDecided;
 
   useEffect(() => {
     if (open) {
@@ -269,7 +279,7 @@ export function GateDecisionDialog({
   }, [open]);
 
   const submit = (next: WorkflowGateDecision) => {
-    if (saving || gateDecided || packageAlreadyDecided || blockedOnCode) return;
+    if (saving || gateDecided || packageAlreadyDecided || blockedOnCode || mustEnroll) return;
     const trimmed = commentDraft.value.trim();
     void onSubmit(next, trimmed.length ? trimmed : null, needsCode ? code : null);
   };
@@ -322,6 +332,17 @@ export function GateDecisionDialog({
         </Alert>
       ) : null}
 
+      {mustEnroll ? (
+        <Alert tone="warn">
+          Your organization requires two-factor authentication to approve or block releases. Enable
+          it in{" "}
+          <a class="underline text-accent" href="/dashboard/settings">
+            Settings → General
+          </a>
+          , then reopen this decision.
+        </Alert>
+      ) : null}
+
       <Field label="Comment (optional, shown in the GitHub run log)" for="gateComment">
         <Input
           id="gateComment"
@@ -329,7 +350,7 @@ export function GateDecisionDialog({
           value={commentDraft.value}
           placeholder="e.g. reviewed changed files, no risk signals"
           onInput={(e) => (commentDraft.value = (e.target as HTMLInputElement).value)}
-          disabled={saving || gateDecided || packageAlreadyDecided}
+          disabled={saving || gateDecided || packageAlreadyDecided || mustEnroll}
           maxLength={500}
           autoComplete="off"
           spellcheck={false}
@@ -368,7 +389,10 @@ export function GateDecisionDialog({
       ) : (
         <div class="flex flex-wrap gap-2">
           {canApprove ? (
-            <Button onClick={() => submit("approved")} disabled={saving || blockedOnCode}>
+            <Button
+              onClick={() => submit("approved")}
+              disabled={saving || blockedOnCode || mustEnroll}
+            >
               {saving
                 ? "Submitting…"
                 : reviewFailed
@@ -383,7 +407,7 @@ export function GateDecisionDialog({
           <Button
             variant="danger"
             onClick={() => submit("rejected")}
-            disabled={saving || blockedOnCode}
+            disabled={saving || blockedOnCode || mustEnroll}
           >
             {saving ? "Submitting…" : "Reject & block release"}
           </Button>

@@ -28,6 +28,7 @@ import {
   UserMenu,
 } from "../../../components";
 import { GeneralSection } from "./GeneralSection";
+import { ReleaseSecuritySection } from "./ReleaseSecuritySection";
 import { GithubAppSection } from "./GithubAppSection";
 import { NotificationRecipientsSection } from "./NotificationRecipientsSection";
 import { SlackConnectionSection } from "./SlackConnectionSection";
@@ -158,11 +159,17 @@ export default function SettingsPage() {
 
           <div class="min-w-0 flex flex-col gap-6">
             {tab === "general" ? (
-              <GeneralSection
-                organizations={organizations}
-                currentUserRole={activeRole(organizations)}
-                onDeleted={reloadActiveOrgScopedData}
-              />
+              <>
+                <GeneralSection
+                  organizations={organizations}
+                  currentUserRole={activeRole(organizations)}
+                  onDeleted={reloadActiveOrgScopedData}
+                />
+                <ReleaseSecuritySection
+                  organizations={organizations}
+                  currentUserRole={activeRole(organizations)}
+                />
+              </>
             ) : null}
             {tab === "members" ? (
               <OrganizationMembersSection

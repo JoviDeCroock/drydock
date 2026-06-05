@@ -14,6 +14,7 @@ import {
   listUserOrganizations,
   recordScanEvent,
   renameOrganization,
+  setRequireTwoFactorForReleaseDecisions,
   type NotificationRecipient,
 } from "../db";
 import { sanitizeAddress } from "../lib/email";
@@ -90,6 +91,46 @@ organizationsRoutes.patch("/:id", async (c) => {
     metadata: { name },
   });
   return c.json({ organization: { id: organizationId, name } });
+});
+
+// Enforce (or relax) the org-wide two-factor requirement for release-gate
+// decisions. Owner-only — this is a security policy that binds every member, so
+// it sits alongside rename/delete rather than the admin-level integration
+// controls; an admin must not be able to weaken a gate the owner hardened.
+organizationsRoutes.put("/:id/release-two-factor", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { enabled?: unknown };
+  if (typeof body.enabled !== "boolean") {
+    return c.json({ error: "enabled must be a boolean" }, 400);
+  }
+  const enabled = body.enabled;
+
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = c.req.param("id");
+  const owner = await isOrganizationOwner(db, organizationId, session.userId);
+  if (!owner) return c.json({ error: "not found" }, 404);
+
+  try {
+    await enforceRateLimit(db, {
+      key: `organizations:release-two-factor:${session.userId}`,
+      limit: 30,
+      windowMs: 60 * 60 * 1000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return rateLimitResponse(c, "release two-factor rate limit exceeded", err);
+    }
+    throw err;
+  }
+
+  await setRequireTwoFactorForReleaseDecisions(db, organizationId, enabled);
+  await recordScanEvent(db, {
+    organizationId,
+    actorUserId: session.userId,
+    type: "organization.release_two_factor_changed",
+    metadata: { enabled },
+  });
+  return c.json({ requireTwoFactorForReleaseDecisions: enabled });
 });
 
 organizationsRoutes.delete("/:id", async (c) => {

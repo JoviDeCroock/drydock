@@ -96,6 +96,7 @@ export interface OrganizationListEntry {
   role: string;
   isPersonal: boolean;
   npmConnectionConfigured: boolean;
+  requireTwoFactorForReleaseDecisions: boolean;
   createdAt: Date | string | number;
   updatedAt: Date | string | number;
 }
@@ -111,6 +112,7 @@ export async function listUserOrganizations(
       name: organizations.name,
       ownerUserId: organizations.ownerUserId,
       role: organizationMembers.role,
+      requireTwoFactorForReleaseDecisions: organizations.requireTwoFactorForReleaseDecisions,
       createdAt: organizations.createdAt,
       updatedAt: organizations.updatedAt,
       npmConnectionConfigured: sql<boolean>`exists (
@@ -131,6 +133,7 @@ export async function listUserOrganizations(
       role: row.role,
       isPersonal: row.id === personalId,
       npmConnectionConfigured: Boolean(row.npmConnectionConfigured),
+      requireTwoFactorForReleaseDecisions: Boolean(row.requireTwoFactorForReleaseDecisions),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     }))
@@ -185,6 +188,36 @@ export async function renameOrganization(db: AppDb, organizationId: string, name
   await db
     .update(organizations)
     .set({ name, updatedAt: new Date() })
+    .where(eq(organizations.id, organizationId));
+}
+
+/**
+ * Whether this org enforces a two-factor step-up on release-gate decisions for
+ * every member. Read at decision time as an authoritative org-level policy on
+ * top of the per-user enrollment check — fail closed: a missing org row reads as
+ * "not required" only because such a row cannot reach the decision path (the
+ * gate is scoped to a real org the caller belongs to).
+ */
+export async function organizationRequiresTwoFactorForReleaseDecisions(
+  db: AppDb,
+  organizationId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ enabled: organizations.requireTwoFactorForReleaseDecisions })
+    .from(organizations)
+    .where(eq(organizations.id, organizationId))
+    .limit(1);
+  return Boolean(row?.enabled);
+}
+
+export async function setRequireTwoFactorForReleaseDecisions(
+  db: AppDb,
+  organizationId: string,
+  enabled: boolean,
+) {
+  await db
+    .update(organizations)
+    .set({ requireTwoFactorForReleaseDecisions: enabled, updatedAt: new Date() })
     .where(eq(organizations.id, organizationId));
 }
 
