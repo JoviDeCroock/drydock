@@ -63,7 +63,8 @@ function applySecurityHeaders(c: { res: Response; req: { path: string } }) {
           "frame-ancestors 'none'",
           "form-action 'self'",
           "script-src 'self'",
-          "style-src 'self' 'unsafe-inline'",
+          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+          "font-src 'self' https://fonts.gstatic.com",
           "img-src 'self' data:",
           "connect-src 'self'",
         ].join("; "),
@@ -189,7 +190,6 @@ app.get("/api/health", (c) =>
     ok: true,
     auth: true,
     db: true,
-    userId: c.get("authSession").userId,
   }),
 );
 
