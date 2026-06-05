@@ -7,3 +7,4 @@ packages/experiments/build/
 .dev.vars
 .gstack/
 .context/
+.claude/scheduled_tasks.lock

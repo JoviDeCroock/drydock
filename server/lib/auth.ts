@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { twoFactor } from "better-auth/plugins";
 import { createDb } from "../db";
 import * as schema from "../db/schema";
 import { sendAccountVerificationEmail } from "./account-email";
@@ -24,6 +25,7 @@ export function createAuth(env: Cloudflare.Env) {
   // always binds SEND_EMAIL, so verification is always enforced there.
   const emailVerificationEnabled = Boolean(env.SEND_EMAIL);
   return betterAuth({
+    appName: "Drydock",
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.BETTER_AUTH_URL,
     basePath: "/api/auth",
@@ -50,6 +52,7 @@ export function createAuth(env: Cloudflare.Env) {
       minPasswordLength: 12,
       maxPasswordLength: 256,
     },
+    plugins: [twoFactor({ issuer: "Drydock" })],
     advanced: {
       cookiePrefix: "spr",
       ipAddress: {

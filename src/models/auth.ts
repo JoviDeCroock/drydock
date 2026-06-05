@@ -5,6 +5,7 @@ export interface SessionUser {
   id: string;
   name?: string;
   email?: string;
+  twoFactorEnabled?: boolean;
 }
 
 export interface AuthSession {
@@ -62,13 +63,33 @@ export const SessionModel = createModel(() => {
       }
     },
 
-    async signIn(email: string, password: string, returnTo?: string): Promise<void> {
-      await authPost("/api/auth/sign-in/email", {
+    async signIn(
+      email: string,
+      password: string,
+      returnTo?: string,
+    ): Promise<{ twoFactorRequired: boolean }> {
+      const data = await authPost("/api/auth/sign-in/email", {
         email,
         password,
         rememberMe: true,
         callbackURL: verificationCallbackPath(returnTo),
       });
+      if (
+        data &&
+        typeof data === "object" &&
+        (data as { twoFactorRedirect?: unknown }).twoFactorRedirect
+      ) {
+        return { twoFactorRequired: true };
+      }
+      await this.load();
+      return { twoFactorRequired: false };
+    },
+
+    async completeTwoFactorSignIn(code: string, options: { backup?: boolean } = {}): Promise<void> {
+      const path = options.backup
+        ? "/api/auth/two-factor/verify-backup-code"
+        : "/api/auth/two-factor/verify-totp";
+      await authPost(path, { code });
       await this.load();
     },
 
@@ -106,7 +127,7 @@ async function fetchSession(): Promise<AuthSession | null> {
   return (await res.json()) as AuthSession | null;
 }
 
-async function authPost(path: string, body: unknown) {
+export async function authPost(path: string, body: unknown): Promise<unknown> {
   const res = await fetch(path, {
     method: "POST",
     credentials: "same-origin",
@@ -125,4 +146,5 @@ async function authPost(path: string, body: unknown) {
       res.status,
     );
   }
+  return data;
 }
