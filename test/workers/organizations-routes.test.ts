@@ -1,7 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   addOrganizationMember,
   createDb,
@@ -70,6 +70,13 @@ async function call(
   await waitOnExecutionContext(ctx);
   return res;
 }
+
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  vi.restoreAllMocks();
+});
 
 describe("organizations routes", () => {
   test("GET / returns the caller's organizations with the personal one first", async () => {

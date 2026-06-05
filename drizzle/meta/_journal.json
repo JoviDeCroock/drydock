@@ -127,6 +127,13 @@
       "when": 1780630576632,
       "tag": "0017_normal_zodiak",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1780635692540,
+      "tag": "0018_brainy_catseye",
+      "breakpoints": true
     }
   ]
 }

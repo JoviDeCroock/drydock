@@ -1,6 +1,7 @@
 import {
   getOrganizationOwnerUserId,
   getScan,
+  getSlackConnectionSecret,
   recordScanEvent,
   resolveNotificationEmails,
   type AppDb,
@@ -8,6 +9,13 @@ import {
 import { sendNotificationEmail } from "./email";
 import type { RiskLevel } from "./review";
 import type { OrganizationRole } from "./roles";
+import { decryptSlackBotToken } from "./secret-box";
+import {
+  postSlackMessage,
+  renderSlackMessage,
+  type SlackDeliveryResult,
+  type SlackNotificationPayload,
+} from "./slack";
 
 export interface NotifyScanCompletionInput {
   env: Cloudflare.Env;
@@ -27,16 +35,6 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
     resolveNotificationEmails(db, organizationId, notificationOwnerUserId),
     getScan(db, scanId, organizationId),
   ]);
-  if (recipients.length === 0) {
-    await recordScanEvent(db, {
-      organizationId,
-      actorUserId: notificationOwnerUserId,
-      scanId,
-      type: "scan.notification_failed",
-      metadata: { outcome, channel: "email", reason: "no_recipients" },
-    });
-    return;
-  }
 
   const scan = detail?.scan;
   const packageLabel = formatPackageLabel(scan?.packageName, scan?.stagedVersion);
@@ -68,18 +66,61 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
         ];
   const text = lines.filter((line): line is string => line !== null).join("\n");
 
-  await deliverToRecipients(env, db, recipients, { subject, text }, (recipient, result) => ({
-    organizationId,
-    actorUserId: notificationOwnerUserId,
-    scanId,
-    type: result.ok ? "scan.notification_sent" : "scan.notification_failed",
-    metadata: {
-      outcome,
-      channel: "email",
-      recipient,
-      ...(result.ok ? {} : { reason: result.reason }),
-    },
-  }));
+  const slackPayload: SlackNotificationPayload = {
+    title: outcome === "complete" ? "Staged release scan complete" : "Staged release scan failed",
+    packageLabel,
+    source: "npm staged publish",
+    risk: scan?.risk ?? null,
+    findingsSummary: formatFindingsSummary(detail?.riskSummary),
+    statusLine:
+      outcome === "failed"
+        ? error?.message
+          ? `Could not finish the scan: ${error.message}`
+          : "Could not finish the scan."
+        : null,
+    dashboardUrl,
+  };
+
+  const emailDelivery = (async () => {
+    if (recipients.length === 0) {
+      await recordScanEvent(db, {
+        organizationId,
+        actorUserId: notificationOwnerUserId,
+        scanId,
+        type: "scan.notification_failed",
+        metadata: { outcome, channel: "email", reason: "no_recipients" },
+      });
+      return;
+    }
+    await deliverToRecipients(env, db, recipients, { subject, text }, (recipient, result) => ({
+      organizationId,
+      actorUserId: notificationOwnerUserId,
+      scanId,
+      type: result.ok ? "scan.notification_sent" : "scan.notification_failed",
+      metadata: {
+        outcome,
+        channel: "email",
+        recipient,
+        ...(result.ok ? {} : { reason: result.reason }),
+      },
+    }));
+  })();
+
+  const slackDelivery = deliverToSlackConnection(
+    env,
+    db,
+    { organizationId, actorUserId: notificationOwnerUserId, scanId },
+    slackPayload,
+    (channel, result) => ({
+      organizationId,
+      actorUserId: notificationOwnerUserId,
+      scanId,
+      type: result.ok ? "scan.notification_sent" : "scan.notification_failed",
+      metadata: slackEventMetadata({ outcome }, channel, result),
+    }),
+  );
+
+  await Promise.all([emailDelivery, slackDelivery]);
 }
 
 export interface NotifyNpmConnectionExpiredInput {
@@ -201,16 +242,6 @@ export async function notifyWorkflowGateReview(
   } = input;
 
   const recipients = await resolveNotificationEmails(db, organizationId, ownerUserId);
-  if (recipients.length === 0) {
-    await recordScanEvent(db, {
-      organizationId,
-      actorUserId: ownerUserId,
-      scanId,
-      type: "github_workflow_gate.notification_failed",
-      metadata: { gateId, channel: "email", reason: "no_recipients" },
-    });
-    return;
-  }
 
   const packageLabel = formatPackageLabel(packageName, version);
   const dashboardUrl = scanUrl(env, scanId);
@@ -237,21 +268,62 @@ export async function notifyWorkflowGateReview(
   ];
   const text = lines.filter((line): line is string => line !== null).join("\n");
 
-  await deliverToRecipients(env, db, recipients, { subject, text }, (recipient, result) => ({
-    organizationId,
-    actorUserId: ownerUserId,
-    scanId,
-    type: result.ok
-      ? "github_workflow_gate.notification_sent"
-      : "github_workflow_gate.notification_failed",
-    metadata: {
-      gateId,
-      channel: "email",
-      releaseRisk,
-      recipient,
-      ...(result.ok ? {} : { reason: result.reason }),
-    },
-  }));
+  const slackPayload: SlackNotificationPayload = {
+    title: "Release gate needs a decision",
+    packageLabel,
+    source: "GitHub workflow gate",
+    risk: releaseRisk,
+    repository: repositoryFullName,
+    environment,
+    statusLine: `Held in ${repositoryFullName} — the deployment stays blocked until someone approves or rejects it.`,
+    dashboardUrl,
+  };
+
+  const emailDelivery = (async () => {
+    if (recipients.length === 0) {
+      await recordScanEvent(db, {
+        organizationId,
+        actorUserId: ownerUserId,
+        scanId,
+        type: "github_workflow_gate.notification_failed",
+        metadata: { gateId, channel: "email", reason: "no_recipients" },
+      });
+      return;
+    }
+    await deliverToRecipients(env, db, recipients, { subject, text }, (recipient, result) => ({
+      organizationId,
+      actorUserId: ownerUserId,
+      scanId,
+      type: result.ok
+        ? "github_workflow_gate.notification_sent"
+        : "github_workflow_gate.notification_failed",
+      metadata: {
+        gateId,
+        channel: "email",
+        releaseRisk,
+        recipient,
+        ...(result.ok ? {} : { reason: result.reason }),
+      },
+    }));
+  })();
+
+  const slackDelivery = deliverToSlackConnection(
+    env,
+    db,
+    { organizationId, actorUserId: ownerUserId, scanId },
+    slackPayload,
+    (channel, result) => ({
+      organizationId,
+      actorUserId: ownerUserId,
+      scanId,
+      type: result.ok
+        ? "github_workflow_gate.notification_sent"
+        : "github_workflow_gate.notification_failed",
+      metadata: slackEventMetadata({ gateId, releaseRisk }, channel, result),
+    }),
+  );
+
+  await Promise.all([emailDelivery, slackDelivery]);
 }
 
 export interface NotifyWorkflowGateTimeoutInput {
@@ -361,6 +433,74 @@ async function deliverToRecipients(
       await recordScanEvent(db, event(recipient, result));
     }),
   );
+}
+
+interface SlackDeliveryChannel {
+  channelId: string;
+  channelName: string | null;
+}
+
+/**
+ * Post a rendered Slack message to the organization's single connected channel.
+ * Best-effort and isolated from email: if there is no connection, it's disabled,
+ * or no channel has been chosen, we silently skip. A failing post only records a
+ * `notification_failed` event and never throws, so it cannot block scan
+ * completion or workflow-gate processing. The bot token is decrypted only in
+ * memory for the POST and never enters the recorded event metadata.
+ */
+async function deliverToSlackConnection(
+  env: Cloudflare.Env,
+  db: AppDb,
+  context: { organizationId: string; actorUserId: string; scanId: string },
+  payload: SlackNotificationPayload,
+  event: (
+    channel: SlackDeliveryChannel,
+    result: SlackDeliveryResult,
+  ) => Parameters<typeof recordScanEvent>[1],
+): Promise<void> {
+  const connection = await getSlackConnectionSecret(db, context.organizationId);
+  if (!connection || !connection.enabled || !connection.channelId) return;
+  const channel: SlackDeliveryChannel = {
+    channelId: connection.channelId,
+    channelName: connection.channelName,
+  };
+  let result: SlackDeliveryResult;
+  try {
+    const botToken = await decryptSlackBotToken(env, {
+      ciphertext: connection.botTokenCiphertext,
+      nonce: connection.botTokenNonce,
+    });
+    result = await postSlackMessage(botToken, connection.channelId, renderSlackMessage(payload));
+  } catch {
+    result = { ok: false, statusClass: "other", reason: "delivery_error" };
+  }
+  await recordScanEvent(db, event(channel, result));
+}
+
+function slackEventMetadata(
+  base: Record<string, unknown>,
+  channel: SlackDeliveryChannel,
+  result: SlackDeliveryResult,
+): Record<string, unknown> {
+  return {
+    ...base,
+    channel: "slack",
+    channelName: channel.channelName,
+    ...(result.statusClass ? { statusClass: result.statusClass } : {}),
+    ...(result.rateLimited
+      ? { rateLimited: true, retryAfterSeconds: result.retryAfterSeconds ?? null }
+      : {}),
+    ...(result.ok ? {} : { reason: result.reason }),
+  };
+}
+
+function formatFindingsSummary(
+  riskSummary: { releaseFindingCount: number; contextFindingCount: number } | null | undefined,
+): string | null {
+  if (!riskSummary) return null;
+  const total = riskSummary.releaseFindingCount + riskSummary.contextFindingCount;
+  if (total === 0) return "No findings";
+  return `${total} findings (${riskSummary.releaseFindingCount} on the release diff)`;
 }
 
 export interface NotifyOrganizationInviteInput {

@@ -25,6 +25,8 @@ declare global {
       GITHUB_APP_WEBHOOK_SECRET?: string;
       GITHUB_APP_STATE_SECRET?: string;
       WORKFLOW_GATE_CALLBACK_WINDOW_MS?: string;
+      SLACK_CLIENT_ID?: string;
+      SLACK_CLIENT_SECRET?: string;
     }
   }
 

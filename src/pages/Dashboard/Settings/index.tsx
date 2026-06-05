@@ -1,10 +1,15 @@
 import { useEffect } from "preact/hooks";
 import { useModel, useSignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
-import { rememberDashboardReturnUrl, useQuerySignal } from "../../../lib/query-state";
+import {
+  buildQueryUrl,
+  rememberDashboardReturnUrl,
+  useQuerySignal,
+} from "../../../lib/query-state";
 import { sessionModel } from "../../../models/auth";
 import { NpmConnectionModel } from "../../../models/npm-connection";
 import { NotificationRecipientsModel } from "../../../models/notification-recipients";
+import { SlackConnectionModel } from "../../../models/slack-connection";
 import { OrganizationModel } from "../../../models/organization";
 import { GithubAppModel } from "../../../models/github-app";
 import { MembersModel } from "../../../models/organization-members";
@@ -25,6 +30,7 @@ import {
 import { GeneralSection } from "./GeneralSection";
 import { GithubAppSection } from "./GithubAppSection";
 import { NotificationRecipientsSection } from "./NotificationRecipientsSection";
+import { SlackConnectionSection } from "./SlackConnectionSection";
 import { NpmConnectionSection } from "./NpmConnectionSection";
 import { OrganizationMembersSection } from "./OrganizationMembersSection";
 import { SettingsNav, isSettingsTab, type SettingsTab } from "./SettingsNav";
@@ -37,6 +43,7 @@ export default function SettingsPage() {
   const githubApp = useModel(GithubAppModel);
   const members = useModel(MembersModel);
   const recipients = useModel(NotificationRecipientsModel);
+  const slack = useModel(SlackConnectionModel);
   const sessionChecked = useSignal(false);
   const activeTab = useSignal<SettingsTab>("general");
 
@@ -49,6 +56,15 @@ export default function SettingsPage() {
   useEffect(() => {
     rememberDashboardReturnUrl(location.url);
   }, [location.url]);
+
+  // Surface the result of the Slack OAuth callback redirect, then strip the
+  // one-shot params so a refresh doesn't replay the notice.
+  useEffect(() => {
+    const slackParam = location.query.slack;
+    if (!slackParam) return;
+    slack.noteCallback(slackParam, location.query.slackError);
+    location.route(buildQueryUrl({ slack: null, slackError: null }), true);
+  }, [location.query.slack]);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,6 +84,7 @@ export default function SettingsPage() {
         githubApp.loadReleaseTargets(),
         members.load(canManageMembers(organizations)),
         recipients.load(organizations.active.peek()?.id ?? null),
+        slack.load(organizations.active.peek()?.id ?? null),
       ]);
     })();
     return () => {
@@ -81,6 +98,7 @@ export default function SettingsPage() {
     if (!githubApp.configLoaded.peek()) loaders.push(githubApp.loadConfig());
     loaders.push(githubApp.loadInstallations(), githubApp.loadReleaseTargets());
     loaders.push(recipients.load(organizations.active.peek()?.id ?? null));
+    loaders.push(slack.load(organizations.active.peek()?.id ?? null));
     await Promise.all(loaders);
   };
 
@@ -158,13 +176,20 @@ export default function SettingsPage() {
               />
             ) : null}
             {tab === "notifications" ? (
-              <NotificationRecipientsSection
-                recipients={recipients}
-                organizationId={organizations.active.value?.id ?? null}
-                canManage={canManageIntegrations(organizations)}
-                fallbackEmail={ownerFallbackEmail(organizations, user)}
-                defaultOpen
-              />
+              <>
+                <NotificationRecipientsSection
+                  recipients={recipients}
+                  organizationId={organizations.active.value?.id ?? null}
+                  canManage={canManageIntegrations(organizations)}
+                  fallbackEmail={ownerFallbackEmail(organizations, user)}
+                  defaultOpen
+                />
+                <SlackConnectionSection
+                  slack={slack}
+                  canManage={canManageIntegrations(organizations)}
+                  defaultOpen
+                />
+              </>
             ) : null}
             {tab === "integrations" ? (
               <>

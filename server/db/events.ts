@@ -26,6 +26,10 @@ const SENSITIVE_EVENT_METADATA_KEYS = new Set([
   "tokenFingerprint",
   "tokenLast4",
   "tokenNonce",
+  "botToken",
+  "botTokenCiphertext",
+  "botTokenNonce",
+  "accessToken",
 ]);
 
 export function redactScanEventForClient<T extends { metadataJson: unknown }>(event: T): T {
