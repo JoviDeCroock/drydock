@@ -75,7 +75,7 @@ finding ≥ medium, otherwise `malicious`; `expectMinRisk = expectedRisk`;
 ### Threat-class taxonomy
 
 Recall is measured per class so blind spots are visible. Malicious:
-`install-script-exfil`, `obfuscated-dropper`, `credential-steal`,
+`install-script-exfil`, `phantom-gyp`, `obfuscated-dropper`, `credential-steal`,
 `network-exfil`, `native-artifact-smuggle`, `files-allowlist-escape`,
 `typosquat-metadata`, `protestware`, `dependency-confusion`,
 `wheel-integrity` (PyPI), `pth-injection` (PyPI). Benign hard-negatives:
@@ -161,6 +161,7 @@ shapes only:
 | `npm-ua-parser-js-preinstall-dropper` | install-script-exfil    | ua-parser-js (2021)                | yes (preinstall dropper)                                                  |
 | `npm-event-stream-flatmap-decrypt`    | obfuscated-dropper      | event-stream/flatmap-stream (2018) | yes (env read + dynamic eval)                                             |
 | `npm-shai-hulud-secret-harvest`       | credential-steal        | Shai-Hulud worm (2025)             | yes (postinstall harvest)                                                 |
+| `npm-miasma-phantom-gyp`              | phantom-gyp             | Miasma / Phantom Gyp (2026)        | yes (root `binding.gyp` command substitution)                             |
 | `npm-prebuilt-node-addon-smuggle`     | native-artifact-smuggle | OpenSSF prebuilt-addon family      | yes (native artifact)                                                     |
 | `npm-dependency-confusion-beacon`     | dependency-confusion    | Birsan research (2021)             | yes (preinstall beacon)                                                   |
 | `npm-node-ipc-protestware-wiper`      | protestware             | node-ipc 10.1.x (2022)             | **no** — modified-file network is only medium; fs wiping is unmodeled     |

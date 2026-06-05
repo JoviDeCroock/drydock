@@ -10,6 +10,7 @@ export const DETERMINISTIC_RULE_IDS = {
   fileNativeArtifact: "file.native-artifact",
   fileOutsideFilesList: "file.outside-files-list",
   installScriptImplicitNodeGyp: "install-script.implicit-node-gyp",
+  installScriptGypCommandSubstitution: "install-script.gyp-command-substitution",
   packageJsonParseFailed: "package-json.parse-failed",
   diffCredentialFileAdded: "diff.credential-file-added",
   diffLargeNewFile: "diff.large-new-file",

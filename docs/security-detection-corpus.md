@@ -57,7 +57,7 @@ The first corpus slice covers:
 
 - benign version bump control;
 - preinstall credential/environment collection with command and network capability;
-- implicit `node-gyp rebuild` from root `binding.gyp` plus native artifact review;
+- implicit `node-gyp rebuild` from root `binding.gyp`, GYP command substitution that executes package JavaScript, and native artifact review;
 - base64/dynamic evaluation plus network-capable code;
 - secret-looking file addition;
 - large opaque binary addition;
@@ -96,7 +96,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.2.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.7.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.8.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -117,7 +117,10 @@ the raw and folded text are scanned so folding can only add detections, never dr
 `startup-hook`,
 `record-mismatch`, and `unusual-dependency` in `0.2.0`, and
 `setup-install-command` was upgraded to fire on the top-level sdist `setup.py` install-time code, not
-just `cmdclass`.
+just `cmdclass`. `1.8.0` adds `install-script.gyp-command-substitution`, a critical npm rule for root
+`*.gyp` files whose GYP command expansion (`<!...`) invokes package-local JavaScript such as
+`node index.js`; this covers the Miasma / Phantom Gyp install-time bypass while avoiding ordinary
+native-addon probes like `node -p` include lookups.
 
 ### Fixture format
 

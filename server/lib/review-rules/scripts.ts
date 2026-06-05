@@ -1,4 +1,4 @@
-import { hasImplicitNodeGypInstall } from "../tar-parser.js";
+import { hasImplicitNodeGypInstall, isRootGypPath } from "../tar-parser.js";
 import { firstMatchingLine } from "../text-utils";
 import type { Finding } from "../review";
 import { LIFECYCLE_SCRIPTS } from "./patterns";
@@ -6,6 +6,11 @@ import { firstJsonPropertyLine, tag } from "./helpers";
 import { changedPrefix, type RuleContext } from "./context";
 import { isDocumentationPath } from "./file-types";
 import { normalizeCodeForScanning } from "./normalize";
+
+const GYP_PACKAGE_JAVASCRIPT_COMMAND_PATTERNS = [
+  /<!@?\([^)\n]*\bnode\b(?:\s+--[^\s'")]+)*\s+["']?(?:\.\/)?[\w@./-]+\.(?:cjs|mjs|js)["']?/i,
+  /<!@?\([^)\n]*\bbun\b(?:\s+run)?\s+["']?(?:\.\/)?[\w@./-]+\.(?:cjs|mjs|js|ts)["']?/i,
+];
 
 // Install lifecycle hooks and in-file code-execution capability: the scripts and
 // code paths that run on, or are pulled in by, a consumer install.
@@ -27,6 +32,22 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
         reason: ctx.rootGypFile
           ? "npm defaults install to node-gyp rebuild when a root *.gyp file exists and no install/preinstall script or gypfile=false is declared"
           : "npm staged metadata reports the default node-gyp install hook; the source root had a *.gyp file even if that file is not present in the packed tarball",
+      }),
+    );
+  }
+
+  for (const file of ctx.files) {
+    if (!isRootGypPath(file.path)) continue;
+    const line = firstMatchingLine(file.textSample, GYP_PACKAGE_JAVASCRIPT_COMMAND_PATTERNS);
+    if (line === undefined) continue;
+    findings.push(
+      tag("installScriptGypCommandSubstitution", {
+        severity: "critical",
+        file: file.path,
+        line,
+        evidence: "gyp command substitution executes package JavaScript",
+        reason:
+          "GYP command substitutions run shell commands during node-gyp configure; in a root gyp file this is an install-time execution path outside package.json lifecycle scripts",
       }),
     );
   }

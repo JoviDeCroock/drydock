@@ -1,0 +1,68 @@
+{
+  "id": "npm-miasma-phantom-gyp",
+  "title": "Root binding.gyp command substitution runs an obfuscated root index.js payload",
+  "ecosystem": "npm",
+  "verdict": "malicious",
+  "threatClass": "phantom-gyp",
+  "source": "real-sanitized",
+  "provenance": "Miasma / Phantom Gyp npm worm (June 2026): compromised packages shipped a root binding.gyp with a GYP command substitution that ran `node index.js` during node-gyp configure while package.json had no install lifecycle scripts. Public analyses reported an obfuscated multi-stage loader that later downloaded Bun, harvested CI/developer credentials, exfiltrated through GitHub repositories, and republished packages. Defanged: package names are synthetic, the JavaScript payload is an inert eval wrapper, no C2 or credential strings are present, and no executable malware is included.",
+  "intent": "Models the install-time bypass: root binding.gyp is enough for npm to invoke node-gyp, and the `<!(node index.js ... && echo stub.c)` expansion executes package-owned JavaScript during configure. Drydock should catch the gyp command substitution itself, independent of whether the inner obfuscated loader can be decoded from the bounded text sample.",
+  "expectMinRisk": "critical",
+  "expectAnyRule": ["install-script.gyp-command-substitution"],
+  "previousPackageJson": {
+    "name": "voice-sdk",
+    "version": "1.2.1",
+    "main": "dist/index.js"
+  },
+  "stagedPackageJson": {
+    "name": "voice-sdk",
+    "version": "1.2.2",
+    "main": "dist/index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 62,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"voice-sdk\",\"version\":\"1.2.1\",\"main\":\"dist/index.js\"}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 35,
+      "sha256": "dist-index",
+      "flags": [],
+      "textSample": "module.exports = require('./client');\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 62,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"voice-sdk\",\"version\":\"1.2.2\",\"main\":\"dist/index.js\"}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 35,
+      "sha256": "dist-index",
+      "flags": [],
+      "textSample": "module.exports = require('./client');\n"
+    },
+    {
+      "path": "binding.gyp",
+      "size": 157,
+      "sha256": "binding-gyp",
+      "flags": [],
+      "textSample": "{\n  \"targets\": [\n    {\n      \"target_name\": \"Setup\",\n      \"type\": \"none\",\n      \"sources\": [\"<!(node index.js > /dev/null 2>&1 && echo stub.c)\"]\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "index.js",
+      "size": 4500000,
+      "sha256": "root-index-obfuscated",
+      "flags": ["truncated"],
+      "textSample": "eval(function rotate(payload, shift) {\n  return payload.replace(/[a-zA-Z]/g, function(ch) { return ch; });\n}('defanged-obfuscated-loader-placeholder', 14));\n"
+    }
+  ]
+}
