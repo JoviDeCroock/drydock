@@ -91,6 +91,7 @@ async function writeWranglerConfig() {
     compatibility_flags: ["nodejs_compat"],
     assets: {
       not_found_handling: "single-page-application",
+      run_worker_first: ["/api", "/api/*", "/webhooks/*"],
     },
     worker_loaders: [{ binding: "LOADER" }],
     d1_databases: [
