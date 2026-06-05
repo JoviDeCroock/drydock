@@ -20,5 +20,6 @@ export function isDocumentationPath(path: string): boolean {
 
   const dot = basename.lastIndexOf(".");
   if (dot > 0 && DOCUMENTATION_EXTENSIONS.has(basename.slice(dot + 1))) return true;
-  return DOCUMENTATION_BASENAMES.has(dot > 0 ? basename.slice(0, dot) : basename);
+  if (dot > 0) return false;
+  return DOCUMENTATION_BASENAMES.has(basename);
 }
