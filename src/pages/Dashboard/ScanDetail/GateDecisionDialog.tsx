@@ -94,6 +94,7 @@ export function GateDecisionDialog({
   status,
   error,
   canApprove,
+  requireTwoFactor,
   onSubmit,
 }: {
   open: boolean;
@@ -103,20 +104,32 @@ export function GateDecisionDialog({
   status: DecisionStatus;
   error: string | null;
   canApprove: boolean;
-  onSubmit: (decision: WorkflowGateDecision, comment: string | null) => void | Promise<void>;
+  requireTwoFactor: boolean;
+  onSubmit: (
+    decision: WorkflowGateDecision,
+    comment: string | null,
+    totpCode: string | null,
+  ) => void | Promise<void>;
 }) {
   const commentDraft = useSignal("");
+  const codeDraft = useSignal("");
   const saving = status === "saving";
   const decided = gate.status === "approved" || gate.status === "rejected";
+  const needsCode = requireTwoFactor && !decided;
+  const code = codeDraft.value.trim();
+  const blockedOnCode = needsCode && code.length === 0;
 
   useEffect(() => {
-    if (open) commentDraft.value = "";
+    if (open) {
+      commentDraft.value = "";
+      codeDraft.value = "";
+    }
   }, [open]);
 
   const submit = (next: WorkflowGateDecision) => {
-    if (saving || decided) return;
+    if (saving || decided || blockedOnCode) return;
     const trimmed = commentDraft.value.trim();
-    void onSubmit(next, trimmed.length ? trimmed : null);
+    void onSubmit(next, trimmed.length ? trimmed : null, needsCode ? code : null);
   };
 
   const handleClose = () => {
@@ -159,6 +172,26 @@ export function GateDecisionDialog({
         />
       </Field>
 
+      {needsCode ? (
+        <Field label="Authentication code" for="gateTotp">
+          <Input
+            id="gateTotp"
+            type="text"
+            value={codeDraft.value}
+            placeholder="6-digit code"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            maxLength={8}
+            spellcheck={false}
+            disabled={saving}
+            onInput={(e) => (codeDraft.value = (e.target as HTMLInputElement).value)}
+          />
+          <Muted class="m-0 mt-1 text-[12px]">
+            Confirm with the code from your authenticator app to release or block this deployment.
+          </Muted>
+        </Field>
+      ) : null}
+
       {decided ? (
         <Muted class="m-0 text-[13px]">
           This gate has already been decided. The decision is final — GitHub has been notified.
@@ -166,11 +199,15 @@ export function GateDecisionDialog({
       ) : (
         <div class="flex flex-wrap gap-2">
           {canApprove ? (
-            <Button onClick={() => submit("approved")} disabled={saving}>
+            <Button onClick={() => submit("approved")} disabled={saving || blockedOnCode}>
               {saving ? "Submitting…" : "Approve & release"}
             </Button>
           ) : null}
-          <Button variant="danger" onClick={() => submit("rejected")} disabled={saving}>
+          <Button
+            variant="danger"
+            onClick={() => submit("rejected")}
+            disabled={saving || blockedOnCode}
+          >
             {saving ? "Submitting…" : "Reject & block"}
           </Button>
         </div>

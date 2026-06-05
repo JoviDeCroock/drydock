@@ -1,7 +1,8 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { twoFactor } from "better-auth/plugins";
-import { createDb } from "../db";
+import { eq } from "drizzle-orm";
+import { createDb, type AppDb } from "../db";
 import * as schema from "../db/schema";
 import { sendAccountVerificationEmail } from "./account-email";
 
@@ -85,6 +86,47 @@ export async function getAuthSession(auth: Auth, request: Request): Promise<Auth
 
 export async function isAuthenticated(auth: Auth, request: Request) {
   return Boolean(await getAuthSession(auth, request));
+}
+
+/**
+ * Whether the user has completed two-factor enrollment. Drives the step-up
+ * requirement on high-trust actions: a member who turned on 2FA must prove a
+ * fresh second factor before releasing or blocking a held deployment gate.
+ */
+export async function userHasTwoFactor(db: AppDb, userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ enabled: schema.user.twoFactorEnabled })
+    .from(schema.user)
+    .where(eq(schema.user.id, userId))
+    .limit(1);
+  return Boolean(row?.enabled);
+}
+
+/**
+ * Verify a *fresh* TOTP step-up for the request's authenticated session.
+ *
+ * Delegates to Better Auth's own `verifyTOTP` so the code is checked against the
+ * session user's encrypted secret (never decrypted here) and is bound to the
+ * very session making the request — a member cannot step up on another's behalf.
+ * Returns `false` on any invalid code rather than throwing, so callers map it to
+ * a 401. No session side effects: for an already-authenticated, already-verified
+ * user the plugin only validates the code.
+ */
+export async function verifyTotpStepUp(
+  auth: Auth,
+  request: Request,
+  code: string,
+): Promise<boolean> {
+  try {
+    await (
+      auth.api as {
+        verifyTOTP(args: { body: { code: string }; headers: Headers }): Promise<unknown>;
+      }
+    ).verifyTOTP({ body: { code }, headers: request.headers });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function normalizeSession(data: unknown): AuthSession | null {

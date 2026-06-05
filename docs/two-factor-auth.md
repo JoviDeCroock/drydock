@@ -48,6 +48,37 @@ Enrolled users can regenerate backup codes
 (`POST /api/auth/two-factor/generate-backup-codes`, password-gated) or disable 2FA
 (`POST /api/auth/two-factor/disable`, password-gated) from Settings → General.
 
+### Step-up: deciding a workflow gate (issue #162)
+
+Two-factor is also a **step-up** factor for the highest-trust action in the product:
+releasing or blocking a held GitHub deployment gate (`POST
+/api/v1/github-app/workflow-gates/:gateId/decision`). Approving a gate immediately
+releases the held Actions job and publishing proceeds over Trusted Publishing/OIDC,
+which cannot be reversed — so an existing session alone is not enough.
+
+When the deciding maintainer has 2FA enabled, the request must carry a **fresh**
+`totpCode`. The route checks enrollment with `userHasTwoFactor` and verifies the code
+with `verifyTotpStepUp` (both in `server/lib/auth.ts`), which delegates to Better
+Auth's own `verifyTOTP` so the code is checked against the request's session user and
+the encrypted secret is never decrypted in app code. Outcomes:
+
+- no code → `401 { code: "two_factor_required" }`
+- wrong code → `401 { code: "two_factor_invalid" }`
+- valid code → the decision proceeds and the verified method is stamped on the
+  `github_workflow_gate.approved` / `.rejected` scan event (`twoFactor`,
+  `twoFactorMethod: "totp"`).
+
+A failed/missing step-up never mutates the gate (it stays `pending`) and never posts
+to GitHub. Step-up attempts have their own rate-limit bucket
+(`github-app:gate-decision-2fa:<userId>`, 10 per 15 min) on top of the route's
+60/min-per-org limit. The dialog (`GateDecisionDialog`) only shows the code field when
+the signed-in user has `twoFactorEnabled`.
+
+This is scoped to the approval gate. The **staged-publish** decision (`POST
+/api/v1/scans/:id/decision`) is an audit record only — it never publishes or cancels a
+release on npm — and intentionally does **not** require a step-up. Maintainers without
+2FA enabled decide gates without a code, as before.
+
 ## Endpoints
 
 All under the Better Auth base path `/api/auth` and handled by `auth.handler`:
@@ -97,3 +128,8 @@ already covers these POSTs.
   flow runs several scrypt hashes, so the test sets a 30s timeout.)
 - `test/e2e/two-factor.spec.ts` — Playwright flow: register → enable 2FA in Settings (reads the
   secret, computes a TOTP with `otpauth`) → sign out → sign in through the challenge step.
+- `test/workers/github-gate-two-factor.test.ts` — drives the real worker for the gate-decision
+  step-up: an enrolled maintainer is rejected without a code (`two_factor_required`) and with a
+  wrong code (`two_factor_invalid`) — the gate stays `pending` and nothing is posted to GitHub — a
+  fresh TOTP releases the gate and posts the decision exactly once, and a maintainer without 2FA
+  decides without a code.

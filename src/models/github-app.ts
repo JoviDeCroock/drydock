@@ -68,10 +68,16 @@ export function decideWorkflowGate(
   gateId: string,
   decision: WorkflowGateDecision,
   comment: string | null,
+  totpCode?: string | null,
 ): Promise<{ gate: PublicWorkflowGate }> {
+  const payload: { decision: WorkflowGateDecision; comment?: string; totpCode?: string } = {
+    decision,
+  };
+  if (comment) payload.comment = comment;
+  if (totpCode) payload.totpCode = totpCode;
   return apiJson<{ gate: PublicWorkflowGate }>(
     `/api/v1/github-app/workflow-gates/${encodeURIComponent(gateId)}/decision`,
-    comment ? { decision, comment } : { decision },
+    payload,
   );
 }
 

@@ -415,13 +415,17 @@ export const ScanDetailModel = createModel((id: string) => {
       }
     },
 
-    async decideGate(decision: WorkflowGateDecision, comment: string | null): Promise<void> {
+    async decideGate(
+      decision: WorkflowGateDecision,
+      comment: string | null,
+      totpCode: string | null = null,
+    ): Promise<void> {
       const current = this.gate.peek();
       if (!current) return;
       this.gateDecisionStatus.value = "saving";
       this.gateDecisionError.value = null;
       try {
-        const { gate: updated } = await decideWorkflowGate(current.id, decision, comment);
+        const { gate: updated } = await decideWorkflowGate(current.id, decision, comment, totpCode);
         this.gate.value = updated;
         this.gateDecisionStatus.value = "idle";
         // The decision also writes the scan's publish/no_publish decision and an
