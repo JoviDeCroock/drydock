@@ -14,9 +14,9 @@ account. Backup codes use the plugin default: 10 single-use codes.
 
 ## User flows
 
-### Enrollment (Settings → General)
+### Enrollment (Account settings)
 
-`src/pages/Dashboard/Settings/TwoFactorSection.tsx` drives a dialog:
+`src/pages/Dashboard/Account/TwoFactorSection.tsx` drives a dialog:
 
 1. Confirm the current password (`POST /api/auth/two-factor/enable`). The response carries the
    `totpURI` and the freshly generated `backupCodes`.
@@ -46,7 +46,7 @@ and `src/models/two-factor.ts`.
 
 Enrolled users can regenerate backup codes
 (`POST /api/auth/two-factor/generate-backup-codes`, password-gated) or disable 2FA
-(`POST /api/auth/two-factor/disable`, password-gated) from Settings → General.
+(`POST /api/auth/two-factor/disable`, password-gated) from Account settings.
 
 ### Step-up: deciding a workflow gate (issue #162)
 
@@ -127,8 +127,8 @@ already covers these POSTs.
   (`twoFactorRedirect`), backup-code sign-in, disable, and the rate-limit bucket. (The full TOTP
   flow runs several scrypt hashes; the test keeps a generous 30s timeout even though
   `auth.ts` now uses native scrypt — see [`tooling.md`](./tooling.md#worker-suite-performance).)
-- `test/e2e/two-factor.spec.ts` — Playwright flow: register → enable 2FA in Settings (reads the
-  secret, computes a TOTP with `otpauth`) → sign out → sign in through the challenge step.
+- `test/e2e/two-factor.spec.ts` — Playwright flow: register → enable 2FA in Account settings (reads
+  the secret, computes a TOTP with `otpauth`) → sign out → sign in through the challenge step.
 - `test/workers/github-gate-two-factor.test.ts` — drives the real worker for the gate-decision
   step-up: an enrolled maintainer is rejected without a code (`two_factor_required`) and with a
   wrong code (`two_factor_invalid`) — the gate stays `pending` and nothing is posted to GitHub — a

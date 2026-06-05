@@ -1,4 +1,4 @@
-import { Menu, MenuItem, MenuLabel, MenuSeparator } from "./Menu";
+import { Menu, MenuItem, MenuLabel, MenuLink, MenuSeparator } from "./Menu";
 import { cn } from "./cn";
 
 interface UserMenuProps {
@@ -39,6 +39,7 @@ export function UserMenu({ email, name, onSignOut }: UserMenuProps) {
       <MenuLabel>signed in</MenuLabel>
       <div class="px-3 pb-1.5 text-[13px] text-ink font-mono break-all">{label}</div>
       <MenuSeparator />
+      <MenuLink href="/dashboard/account">Account settings</MenuLink>
       <MenuItem onSelect={onSignOut}>Sign out</MenuItem>
     </Menu>
   );

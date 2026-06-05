@@ -26,8 +26,8 @@ test("enrolls in TOTP 2FA and signs in through the challenge", async ({ browser,
   try {
     const email = await register(page);
 
-    // Enroll from Settings → Security.
-    await page.goto("/dashboard/settings");
+    // Enroll from Account settings.
+    await page.goto("/dashboard/account");
     await page.getByRole("button", { name: "Enable two-factor" }).click();
 
     const dialog = page.getByRole("dialog");

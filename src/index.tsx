@@ -11,6 +11,7 @@ const VerifyEmailPage = lazy(() => import("./pages/Auth/VerifyEmail"));
 const DashboardPage = lazy(() => import("./pages/Dashboard"));
 const ScanDetailPage = lazy(() => import("./pages/Dashboard/ScanDetail"));
 const SettingsPage = lazy(() => import("./pages/Dashboard/Settings"));
+const AccountPage = lazy(() => import("./pages/Dashboard/Account"));
 const InvitePage = lazy(() => import("./pages/Dashboard/Invite"));
 const GithubAppCallbackPage = lazy(() => import("./pages/Dashboard/GithubAppCallback"));
 const NotFoundPage = lazy(() => import("./pages/NotFound"));
@@ -28,6 +29,7 @@ export function App() {
           <Route path="/dashboard" component={DashboardPage} />
           <Route path="/dashboard/scans/:id" component={ScanDetailPage} />
           <Route path="/dashboard/settings" component={SettingsPage} />
+          <Route path="/dashboard/account" component={AccountPage} />
           <Route path="/dashboard/invite" component={InvitePage} />
           <Route path="/dashboard/settings/github-app/callback" component={GithubAppCallbackPage} />
           <Route default component={NotFoundPage} />
