@@ -16,6 +16,7 @@ import {
 } from "../db";
 import { sanitizeAddress } from "../lib/email";
 import { withRateLimit } from "../lib/http";
+import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
 import { personalOrganizationId } from "../lib/ownership";
 import { roleCanManageIntegrations, type OrganizationRole } from "../lib/roles";
 import type { Bindings, Variables } from "../types";
@@ -61,7 +62,9 @@ organizationsRoutes.post("/", async (c) => {
     });
     return c.json({ organization: { id, name } }, 201);
   } catch (err) {
-    console.error("organization create failed", err);
+    emitOperationalEvent("error", "organization.create_failed", {
+      error: describeOperationalError(err),
+    });
     return c.json({ error: "failed to create organization" }, 500);
   }
 });

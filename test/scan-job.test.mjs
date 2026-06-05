@@ -90,7 +90,7 @@ describe("scan job retry classification", () => {
     expect(JSON.stringify(safe)).not.toContain("D1_ERROR");
     expect(errorSpy).toHaveBeenCalledWith("scan.error.unclassified", {
       event: "scan.error.unclassified",
-      error: { name: "Error" },
+      error: { name: "Error", message: "D1_ERROR: column not found" },
     });
     errorSpy.mockRestore();
   });

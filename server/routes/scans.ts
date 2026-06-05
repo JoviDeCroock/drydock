@@ -25,6 +25,7 @@ import {
 import { isPublishedTarballUrlAllowed } from "../lib/published-tarball";
 import { compareSemver, fetchPackageMetadata, pickPreviousVersion } from "../lib/registry";
 import { annotateFindingsWithDiffStatus, createPackageDiff, type FileRecord } from "../lib/review";
+import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
 import { parseScanInput } from "../lib/scan-input";
 import { executeScanJob, type ScanQueueMessage } from "../lib/scan-job";
 import type { Bindings, ScanInput, Variables } from "../types";
@@ -210,14 +211,26 @@ scansRoutes.get("/:id/versions", async (c) => {
       { key: `compare-versions:${session.userId}`, limit: 60, windowMs: 60 * 1000 },
       "rate limit exceeded",
     ),
-    getOrganizationNpmToken(db, c.env, organizationId).catch(() => null),
+    getOrganizationNpmToken(db, c.env, organizationId).catch((err) => {
+      emitOperationalEvent("warn", "npm_connection.token_retrieval_failed", {
+        organizationId,
+        error: describeOperationalError(err),
+      });
+      return null;
+    }),
   ]);
   if (limited) return limited;
 
   const metadata = await fetchPackageMetadata(c.env, scan.scan.packageName, {
     npmToken: connection?.token,
     npmRegistry: connection?.registryUrl,
-  }).catch(() => null);
+  }).catch((err) => {
+    emitOperationalEvent("warn", "registry.metadata_fetch_failed", {
+      packageName: scan.scan.packageName,
+      error: describeOperationalError(err),
+    });
+    return null;
+  });
   if (!metadata) {
     return c.json({
       packageName: scan.scan.packageName,
@@ -326,14 +339,26 @@ async function loadCompareArchive(
       { key: options.rateLimitKey, limit: options.rateLimit, windowMs: 60 * 1000 },
       "rate limit exceeded",
     ),
-    getOrganizationNpmToken(ctx.db, c.env, ctx.organizationId).catch(() => null),
+    getOrganizationNpmToken(ctx.db, c.env, ctx.organizationId).catch((err) => {
+      emitOperationalEvent("warn", "npm_connection.token_retrieval_failed", {
+        organizationId: ctx.organizationId,
+        error: describeOperationalError(err),
+      });
+      return null;
+    }),
   ]);
   if (limited) return { error: limited } as const;
 
   const metadata = await fetchPackageMetadata(c.env, ctx.packageName, {
     npmToken: connection?.token,
     npmRegistry: connection?.registryUrl,
-  }).catch(() => null);
+  }).catch((err) => {
+    emitOperationalEvent("warn", "registry.metadata_fetch_failed", {
+      packageName: ctx.packageName,
+      error: describeOperationalError(err),
+    });
+    return null;
+  });
   const tarballUrl = metadata?.versions?.[ctx.version]?.dist?.tarball;
   if (!tarballUrl) return { error: c.json({ error: "unknown version" }, 404) } as const;
 
