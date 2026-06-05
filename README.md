@@ -11,7 +11,7 @@ This repository is moving from prototype to real product. The current implementa
 - **SaaS, organization-scoped.** Scans belong to an organization boundary. RBAC is intentionally deferred for the first production slice, but the data model should keep organization ownership explicit.
 - **Per-organization npm credentials.** Production SaaS should not use a deployment-wide npm token. Each organization will connect its own npm credential, scoped as narrowly as npm permits, and the credential will only be used by the gateway that talks to npm.
 - **Manual publish approval.** The product reviews and explains a staged publish. It does not run `npm stage approve`, does not bypass npm 2FA, and does not become the final publisher.
-- **Two operating modes.** npm uses registry-stage mode: Drydock reviews npm-staged bytes before the maintainer approves in npm. PyPI uses workflow-gate mode: a GitHub Environment deployment-protection rule blocks the trusted-publishing job while Drydock reviews the built wheel/sdist artifacts. See [`docs/pypi-workflow-gate.md`](docs/pypi-workflow-gate.md).
+- **Two operating modes.** npm uses registry-stage mode: Drydock reviews npm-staged bytes before the maintainer approves in npm. Ecosystems without a staged artifact use workflow-gate mode: a GitHub Environment deployment-protection rule blocks the publish job while Drydock reviews the built release artifacts. PyPI is the first workflow-gate ecosystem (built wheel/sdist artifacts); the gate plumbing is ecosystem-neutral. See [`docs/workflow-gates.md`](docs/workflow-gates.md).
 - **AI review default-off.** Cloudflare Workers AI review is wired into the pipeline, but it is gated by the per-organization Flagship `ai-review` flag and defaults to unavailable. Deterministic findings are the review authority unless a complete, schema-valid AI review is enabled; AI remains advisory and cannot downgrade deterministic findings.
 - **Safe artifact defaults.** Do not retain raw tarballs by default in SaaS. Persist redacted summaries, manifests, diffs, findings, and report metadata. Raw artifact retention may become an explicit short-TTL organization setting later.
 - **Signed reports later.** Prepare report data to be canonical and signable, but do not launch public signed report generation yet.
@@ -21,7 +21,7 @@ Use the docs by layer:
 - [`docs/architecture.md`](docs/architecture.md) — runtime shape, trust boundaries, adapters, APIs.
 - [`docs/security-model.md`](docs/security-model.md) — non-negotiable security posture and known gaps.
 - [`docs/production-roadmap.md`](docs/production-roadmap.md) — remaining product slices, with closed work collapsed.
-- [`docs/pypi-workflow-gate.md`](docs/pypi-workflow-gate.md) — PyPI GitHub Environment gate contract and implementation notes.
+- [`docs/workflow-gates.md`](docs/workflow-gates.md) — workflow-gate product mode: ecosystem-neutral GitHub Environment gate contract, with PyPI as the first ecosystem.
 - [`docs/release-safety.md`](docs/release-safety.md), [`docs/security-detection-corpus.md`](docs/security-detection-corpus.md), [`docs/detection-eval.md`](docs/detection-eval.md), and [`docs/e2e-test-environment.md`](docs/e2e-test-environment.md) — change safety, detection quality, and local verification.
 
 ## Current capabilities

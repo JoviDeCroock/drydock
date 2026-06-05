@@ -298,19 +298,19 @@ Current API:
 - `POST /api/v1/organizations/invitations` — invite an email at a chosen role (owner/admin; rate-limited; the raw token is emailed, never returned);
 - `DELETE /api/v1/organizations/invitations/:invitationId` — revoke a pending invitation (owner/admin);
 - `POST /api/v1/organizations/invitations/accept` — accept an invitation by token (authenticated invitee; **not** org-header scoped — the org is resolved from the token and the caller's account email must equal the invited address);
-- `GET /api/v1/github-app/config`, `POST /api/v1/github-app/install`, `POST /api/v1/github-app/install/callback`, installation/repository/environment proxy reads, release-target CRUD, and workflow-gate decision endpoints — see [`pypi-workflow-gate.md`](./pypi-workflow-gate.md) for the full GitHub App surface.
+- `GET /api/v1/github-app/config`, `POST /api/v1/github-app/install`, `POST /api/v1/github-app/install/callback`, installation/repository/environment proxy reads, release-target CRUD, and workflow-gate decision endpoints — see [`workflow-gates.md`](./workflow-gates.md) for the full GitHub App surface.
 
 All other `/api/v1/*` endpoints honor the `x-organization-id` request header to pick the active org; absent or non-member ids silently fall back to the caller's personal org.
 
 Keep `POST /api/v1/scan` only as a compatibility shim during migration.
 
-## PyPI workflow-gate foundation
+## Workflow-gate foundation
 
-PyPI support is intentionally modeled as a separate workflow-gate mode because PyPI does not have npm's staged-publish review primitive. The implementation is mounted through the GitHub App routes and the public `POST /webhooks/github` deployment-protection webhook, and reviews are persisted as ordinary scans with `source: "workflow_gate"` and a synthetic `stageId: "workflow-gate:<gateId>"`.
+Workflow gates are a separate product mode from npm staged publishing, for ecosystems with no staged-publish review primitive. The pipeline is ecosystem-neutral — everything GitHub-shaped (install, webhook, artifact fetch, digest recomputation, decision callback, persistence) is shared, and only an ecosystem's artifact semantics are pluggable behind a `WorkflowGateAdapter`. PyPI is the first (and currently only) ecosystem. The implementation is mounted through the GitHub App routes and the public `POST /webhooks/github` deployment-protection webhook, and reviews are persisted as ordinary scans with `source: "workflow_gate"` and a synthetic `stageId: "workflow-gate:<gateId>:<ecosystem>:<package>"`.
 
 Implemented pieces:
 
-- GitHub App install/callback, installation listing, repository/environment proxy reads, and PyPI release-target CRUD in `server/routes/github-app.ts`;
+- GitHub App install/callback, installation listing, repository/environment proxy reads, and ecosystem-neutral release-target CRUD in `server/routes/github-app.ts`;
 - `deployment_protection_rule` webhook handling in `server/routes/github-webhooks.ts`, backed by `github_workflow_gates`;
 - queue-driven gate review in `server/lib/workflow-gate-job.ts`, including fail-closed rejection for unverifiable artifact bundles and human approve/reject delivery back to GitHub;
 - release-candidate derivation from the held workflow run's uploaded GitHub Actions artifacts: every wheel/sdist SHA-256 is recomputed from upload bytes, package identity is derived from wheel `METADATA` / sdist `PKG-INFO`, and no maintainer-declared manifest is required;
@@ -320,4 +320,4 @@ Implemented pieces:
 - PyPI project JSON metadata helpers for baseline release selection and wheel/sdist download metadata;
 - settings UI for GitHub App installation/release-target mapping and workbench controls for pending gate decisions.
 
-The target gate is a GitHub custom deployment protection rule on the same GitHub Environment configured in PyPI Trusted Publishers. CI must build artifacts before the gate and the publish job must download the reviewed artifact bundle rather than rebuilding. There is no publish-side digest manifest check in the current contract, so byte continuity rests on GitHub artifact immutability plus workflow discipline. Remaining work is to persist the reviewed artifact digests in the report payload for audit/provenance. See [`pypi-workflow-gate.md`](./pypi-workflow-gate.md).
+The target gate is a GitHub custom deployment protection rule on the same GitHub Environment configured in PyPI Trusted Publishers. CI must build artifacts before the gate and the publish job must download the reviewed artifact bundle rather than rebuilding. There is no publish-side digest manifest check in the current contract, so byte continuity rests on GitHub artifact immutability plus workflow discipline. Remaining work is to persist the reviewed artifact digests in the report payload for audit/provenance. See [`workflow-gates.md`](./workflow-gates.md).

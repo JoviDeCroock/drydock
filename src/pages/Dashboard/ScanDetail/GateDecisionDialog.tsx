@@ -274,8 +274,8 @@ export function GateDecisionDialog({
       title={multi ? "Package decision" : "Release decision"}
       description={
         multi
-          ? "Decide this package. The held GitHub Actions job releases only once every package in the release is approved; rejecting any one blocks the whole release. Publishing then proceeds through PyPI Trusted Publishing (OIDC) — Drydock never holds PyPI credentials."
-          : "Approve to release the held GitHub Actions job — publishing then proceeds through PyPI Trusted Publishing (OIDC). Reject to block the job. Drydock never holds PyPI credentials or uploads the package."
+          ? "Decide this package. The held GitHub Actions job releases only once every package in the release is approved; rejecting any one blocks the whole release. Publishing then proceeds through your release workflow's own publish step (e.g. Trusted Publishing / OIDC) — Drydock never holds your registry credentials."
+          : "Approve to release the held GitHub Actions job — publishing then proceeds through your release workflow's own publish step (e.g. Trusted Publishing / OIDC). Reject to block the job. Drydock never holds your registry credentials or uploads the package."
       }
     >
       <div class="flex flex-col gap-2 border border-border rounded-md p-3">

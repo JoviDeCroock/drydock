@@ -1,8 +1,13 @@
-# PyPI Workflow-Gate Support
+# Workflow Gates
 
-PyPI support uses a different product shape from npm staged publishing.
+Workflow gates are a Drydock **product mode distinct from npm staged publishing**.
 
-npm owns a pending staged tarball, so Drydock can fetch `/-/stage/<stage-id>/tarball` and leave final approval in npm. PyPI does not expose an equivalent registry-staged artifact. The PyPI path is therefore **workflow gate mode**: CI builds wheels/sdists first, uploads them as GitHub Actions artifacts for review, and a GitHub Environment blocks the publish job until the reviewed release is approved. There is no `drydock-manifest.json` to write — the release set is whatever wheels/sdists the workflow uploads, and the package identity is derived from the artifacts themselves.
+- **npm staged publishing** works because npm owns a pending staged tarball: Drydock fetches `/-/stage/<stage-id>/tarball`, reviews it, and leaves final approval in npm.
+- **Workflow gates** cover ecosystems with no registry-staged artifact. CI builds the release artifacts first, uploads them as GitHub Actions artifacts, and a GitHub Environment custom deployment-protection rule holds the publish job until the reviewed release is approved or rejected.
+
+The gate pipeline is **ecosystem-neutral**: everything GitHub-shaped (App installation, webhook verification, artifact fetch, digest recomputation, decision callback, persistence, audit) is shared, and only an ecosystem's artifact semantics are pluggable behind a `WorkflowGateAdapter`. See [Multi-ecosystem workflow gates](#multi-ecosystem-workflow-gates) and [Adding a new ecosystem](#adding-a-new-ecosystem).
+
+**PyPI is the first — and currently only — workflow-gate ecosystem.** The rest of this document uses PyPI as the reference ecosystem: the GitHub plumbing it describes is shared by every future ecosystem (npm, VSIX, …), and only the wheel/sdist-specific parts are PyPI's adapter. For PyPI there is no `drydock-manifest.json` to write — the release set is whatever wheels/sdists the workflow uploads, and package identity is derived from the artifacts themselves.
 
 Official references:
 

@@ -20,15 +20,16 @@ export default function DocsPage() {
           <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
             Drydock reviews what a release ships before it goes public, and never holds your publish
             credential. How it hooks in depends on the registry: npm hands Drydock a staged tarball
-            to inspect; PyPI has no staged artifact, so a GitHub Actions gate holds the publish
-            until the build is reviewed.
+            to inspect; registries without a staged artifact (PyPI today) use a workflow gate, where
+            a GitHub Actions deployment-protection rule holds the publish until the build is
+            reviewed.
           </p>
           <nav class="flex flex-wrap gap-x-5 gap-y-2 mt-1 font-mono text-[11px] uppercase tracking-[0.1em]">
             <a class="text-accent hover:text-accent-hover" href="#staged-publishing">
               → Staged publishing (npm)
             </a>
             <a class="text-accent hover:text-accent-hover" href="#workflow-gating">
-              → Workflow gating (PyPI)
+              → Workflow gating
             </a>
           </nav>
         </header>
@@ -128,19 +129,24 @@ export default function DocsPage() {
         <section id="workflow-gating" class="flex flex-col gap-8 scroll-mt-6">
           <div class="flex flex-col gap-3">
             <SectionLabel>
-              Workflow gating — PyPI &amp; GitHub Actions <Badge tone="info">Preview</Badge>
+              Workflow gating — GitHub Actions <Badge tone="info">Preview</Badge>
             </SectionLabel>
             <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
               When the registry can't hold the candidate, the workflow does.
             </h2>
             <Prose>
-              PyPI does not expose a staged tarball. The publish job itself becomes the boundary: CI
-              builds the wheels and sdists, uploads them as a release candidate, and a GitHub
-              Environment with a Drydock-owned deployment protection rule holds the publish job.
-              Drydock reviews the candidate and records a recommendation, but never approves on its
-              own — a maintainer approves or rejects from the review workbench, and only then is the
-              held job released or blocked. The publish runs on the workflow's own PyPI Trusted
-              Publishing credential via OIDC; Drydock never holds it.
+              Some registries don't expose a staged candidate. For those, the publish job itself
+              becomes the boundary: CI builds the release artifacts, uploads them as a release
+              candidate, and a GitHub Environment with a Drydock-owned deployment protection rule
+              holds the publish job. Drydock reviews the candidate and records a recommendation, but
+              never approves on its own — a maintainer approves or rejects from the review
+              workbench, and only then is the held job released or blocked. The publish runs on the
+              workflow's own credential (e.g. Trusted Publishing via OIDC); Drydock never holds it.
+            </Prose>
+            <Prose>
+              PyPI is the first supported ecosystem. The GitHub plumbing below — install, gate,
+              fetch, review, decide — is shared, so future ecosystems plug in behind the same gate;
+              this walkthrough uses PyPI as the example.
             </Prose>
             <Alert tone="info">
               The full gate runs in production today: Drydock fetches the release candidate, reviews
