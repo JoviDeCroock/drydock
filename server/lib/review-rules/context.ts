@@ -21,6 +21,7 @@ export interface RuleContext {
   implicitScripts: Record<string, string>;
   rootGypFile: FileRecord | undefined;
   patterns: typeof JS_PATTERN_SET;
+  codePatternSet: CodePatternSet | undefined;
 }
 
 export function buildRuleContext(
@@ -47,6 +48,7 @@ export function buildRuleContext(
     implicitScripts: normalizeStringRecord(packageJson?.implicitScripts),
     rootGypFile: files.find((file) => isRootGypPath(file.path)),
     patterns: codePatternsFor(options.codePatternSet),
+    codePatternSet: options.codePatternSet,
   };
 }
 
