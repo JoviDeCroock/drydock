@@ -25,6 +25,7 @@ import {
 import { isValidStageId } from "../lib/stage-id";
 import { errorMessage } from "../lib/errors";
 import { rateLimitResponse } from "../lib/http";
+import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
 import type { Bindings, Variables } from "../types";
 
 export const npmConnectionRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -97,8 +98,10 @@ npmConnectionRoutes.post("/", async (c) => {
     if (err instanceof RateLimitError) {
       return rateLimitResponse(c, "npm connection save rate limit exceeded", err);
     }
-    console.error("npm connection upsert failed", err);
-    return c.json({ error: "failed to store npm connection" }, 400);
+    emitOperationalEvent("error", "npm_connection.upsert_failed", {
+      error: describeOperationalError(err),
+    });
+    return c.json({ error: "failed to store npm connection" }, 500);
   }
 });
 
@@ -151,8 +154,10 @@ npmConnectionRoutes.post("/validate", async (c) => {
     if (err instanceof RateLimitError) {
       return rateLimitResponse(c, "npm validation rate limit exceeded", err);
     }
-    console.error("npm connection validation failed", err);
-    return c.json({ error: "failed to validate npm connection" }, 400);
+    emitOperationalEvent("error", "npm_connection.validation_failed", {
+      error: describeOperationalError(err),
+    });
+    return c.json({ error: "failed to validate npm connection" }, 500);
   }
 });
 

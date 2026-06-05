@@ -18,6 +18,7 @@ import {
 } from "../db";
 import { sanitizeAddress } from "../lib/email";
 import { rateLimitResponse } from "../lib/http";
+import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
 import { personalOrganizationId } from "../lib/ownership";
 import { roleCanManageIntegrations, type OrganizationRole } from "../lib/roles";
 import type { Bindings, Variables } from "../types";
@@ -63,7 +64,9 @@ organizationsRoutes.post("/", async (c) => {
     if (err instanceof RateLimitError) {
       return rateLimitResponse(c, "organization create rate limit exceeded", err);
     }
-    console.error("organization create failed", err);
+    emitOperationalEvent("error", "organization.create_failed", {
+      error: describeOperationalError(err),
+    });
     return c.json({ error: "failed to create organization" }, 500);
   }
 });

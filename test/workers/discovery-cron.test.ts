@@ -210,7 +210,7 @@ describe("staged publishes discovery cron", () => {
     expect(sentMeta).not.toMatchObject({ recipient: orgB.connectionCreatorEmail });
     const genericFailureForOrgB = errorSpy.mock.calls.find(
       (call) =>
-        call[0] === "staged publishes cron sweep failed for organization" &&
+        call[0] === "staged_publishes.cron.org_failed" &&
         (call[1] as { organizationId?: string })?.organizationId === orgB.organizationId,
     );
     expect(genericFailureForOrgB).toBeUndefined();
@@ -252,10 +252,11 @@ describe("staged publishes discovery cron", () => {
     await waitOnExecutionContext(ctx);
 
     const failureCall = errorSpy.mock.calls.find(
-      (call) => call[0] === "staged publishes cron sweep failed for organization",
+      (call) => call[0] === "staged_publishes.cron.org_failed",
     );
     expect(failureCall).toBeDefined();
     expect(failureCall![1]).toMatchObject({
+      event: "staged_publishes.cron.org_failed",
       organizationId: org.organizationId,
       error: { status: 500 },
     });

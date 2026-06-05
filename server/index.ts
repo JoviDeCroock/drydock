@@ -7,7 +7,6 @@ import {
   RateLimitError,
 } from "./db";
 import { createAuth, getAuthSession } from "./lib/auth";
-import { errorMessage } from "./lib/errors";
 import { rateLimitResponse } from "./lib/http";
 import { allowInsecureLocalRegistry } from "./lib/npm-connection";
 import {
@@ -93,7 +92,9 @@ app.use("/api/*", async (c, next) => {
   try {
     c.set("auth", createAuth(c.env));
   } catch (err) {
-    console.error("auth initialization failed", err);
+    emitOperationalEvent("error", "auth.initialization_failed", {
+      error: describeOperationalError(err),
+    });
     return c.json({ error: "auth is not configured" }, 503);
   }
   await next();
@@ -238,12 +239,10 @@ app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
 app.notFound((c) => c.json({ error: "not found" }, 404));
 
 app.onError((err, c) => {
-  console.error("unhandled request error", {
+  emitOperationalEvent("error", "request.unhandled_error", {
     method: c.req.method,
     path: c.req.path,
-    name: err instanceof Error ? err.name : "UnknownError",
-    message: errorMessage(err),
-    stack: err instanceof Error ? err.stack : undefined,
+    error: describeOperationalError(err),
   });
   return c.json({ error: "internal error" }, 500);
 });
@@ -274,7 +273,9 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
   const startedAtMs = Date.now();
   const db = createDb(env.DB);
   const connections = await listAutoDiscoveryNpmConnections(db);
-  console.log("staged publishes cron sweep", { organizations: connections.length });
+  emitOperationalEvent("info", "staged_publishes.cron.started", {
+    organizations: connections.length,
+  });
   const allowInsecureLocalhost = allowInsecureLocalRegistry(env);
 
   let orgsProcessed = 0;
@@ -286,8 +287,9 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
       );
       const actorUserId = connection.createdByUserId ?? notificationOwnerUserId;
       if (!notificationOwnerUserId || !actorUserId) {
-        console.error("staged publishes cron sweep skipped: organization owner missing", {
+        emitOperationalEvent("error", "staged_publishes.cron.skipped", {
           organizationId: connection.organizationId,
+          reason: "organization_owner_missing",
         });
         return;
       }
@@ -312,7 +314,7 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
           },
           usable,
         );
-        console.log("staged publishes cron sweep result", {
+        emitOperationalEvent("info", "staged_publishes.cron.org_completed", {
           organizationId: connection.organizationId,
           ...result,
         });
@@ -341,10 +343,8 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
         const detail =
           err instanceof StagedPublishesFetchError
             ? { status: err.status, detail: err.detail }
-            : err instanceof Error
-              ? { name: err.name, message: err.message }
-              : { message: String(err) };
-        console.error("staged publishes cron sweep failed for organization", {
+            : describeOperationalError(err);
+        emitOperationalEvent("error", "staged_publishes.cron.org_failed", {
           organizationId: connection.organizationId,
           error: detail,
         });

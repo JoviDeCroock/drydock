@@ -810,7 +810,9 @@ function validationErrorResponse(c: RouteContext, err: unknown) {
   if (err instanceof GithubAppValidationError) {
     return c.json({ error: err.message, code: err.code }, statusForCode(err.code));
   }
-  console.error("github app route error", err);
+  emitOperationalEvent("error", "github_app.route_error", {
+    error: describeOperationalError(err),
+  });
   return c.json({ error: "internal error" }, 500);
 }
 
