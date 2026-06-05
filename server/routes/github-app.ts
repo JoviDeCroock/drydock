@@ -429,6 +429,19 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     throw err;
   }
 
+  const gateId = c.req.param("gateId");
+  const existing = await getGateForOrganization(db, organizationId, gateId);
+  if (!existing) return c.json({ error: "not found" }, 404);
+  if (decision === "approved") {
+    if (!existing.scanId) {
+      return c.json({ error: "approval requires a completed workflow-gate review" }, 409);
+    }
+    const scan = await getScan(db, existing.scanId, organizationId);
+    if (!scan || scan.scan.source !== "workflow_gate" || scan.scan.status !== "complete") {
+      return c.json({ error: "approval requires a completed workflow-gate review" }, 409);
+    }
+  }
+
   // 2FA step-up. Releasing or blocking a held deployment is a high-trust action
   // — approval immediately releases the GitHub job and publishing proceeds via
   // Trusted Publishing/OIDC, which can't be reversed. So a maintainer who has
@@ -461,19 +474,6 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
       return c.json({ error: "invalid two-factor code", code: "two_factor_invalid" }, 401);
     }
     twoFactorVerified = true;
-  }
-
-  const gateId = c.req.param("gateId");
-  const existing = await getGateForOrganization(db, organizationId, gateId);
-  if (!existing) return c.json({ error: "not found" }, 404);
-  if (decision === "approved") {
-    if (!existing.scanId) {
-      return c.json({ error: "approval requires a completed workflow-gate review" }, 409);
-    }
-    const scan = await getScan(db, existing.scanId, organizationId);
-    if (!scan || scan.scan.source !== "workflow_gate" || scan.scan.status !== "complete") {
-      return c.json({ error: "approval requires a completed workflow-gate review" }, 409);
-    }
   }
 
   const reportUrl = buildReportUrl(c.env, existing.scanId);

@@ -78,7 +78,22 @@ export function decideWorkflowGate(
   return apiJson<{ gate: PublicWorkflowGate }>(
     `/api/v1/github-app/workflow-gates/${encodeURIComponent(gateId)}/decision`,
     payload,
-  );
+  ).catch((err) => {
+    if (err instanceof ApiError && err.status === 401) {
+      if (err.code === "two_factor_required") {
+        throw new ApiError(
+          "Enter your authentication code to decide this gate.",
+          401,
+          err.detail,
+          err.code,
+        );
+      }
+      if (err.code === "two_factor_invalid") {
+        throw new ApiError("That authentication code is invalid.", 401, err.detail, err.code);
+      }
+    }
+    throw err;
+  });
 }
 
 export interface InstallationRepository {

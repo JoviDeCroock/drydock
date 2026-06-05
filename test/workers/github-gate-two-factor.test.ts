@@ -142,7 +142,12 @@ async function enrollTwoFactor(jar: Jar): Promise<string> {
 
 // Seed an installation + release target + a pending gate whose linked review
 // scan is already complete, so the gate is decidable (approval requires it).
-async function seedDecidableGate(organizationId: string, ownerUserId: string): Promise<string> {
+async function seedDecidableGate(
+  organizationId: string,
+  ownerUserId: string,
+  options: { completeScan?: boolean } = {},
+): Promise<string> {
+  const completeScan = options.completeScan ?? true;
   const db = createDb(env.DB);
   const now = new Date();
   const installation = await upsertInstallation(db, {
@@ -193,22 +198,24 @@ async function seedDecidableGate(organizationId: string, ownerUserId: string): P
     createdAt: now,
     updatedAt: now,
   });
-  await persistScan(db, {
-    id: scanId,
-    stageId: `workflow-gate:${gateId}`,
-    organizationId,
-    ownerUserId,
-    packageJson: { name: "pkg", version: "1.0.0" },
-    previousPackageJson: null,
-    risk: "low",
-    status: "complete",
-    summary: { diff: [] },
-    ai: null,
-    files: [],
-    previousFiles: [],
-    diff: [],
-    findings: [],
-  });
+  if (completeScan) {
+    await persistScan(db, {
+      id: scanId,
+      stageId: `workflow-gate:${gateId}`,
+      organizationId,
+      ownerUserId,
+      packageJson: { name: "pkg", version: "1.0.0" },
+      previousPackageJson: null,
+      risk: "low",
+      status: "complete",
+      summary: { diff: [] },
+      ai: null,
+      files: [],
+      previousFiles: [],
+      diff: [],
+      findings: [],
+    });
+  }
   return gateId;
 }
 
@@ -233,6 +240,36 @@ afterEach(() => {
 });
 
 describe("workflow-gate decision 2FA step-up", () => {
+  test(
+    "an enrolled maintainer is not prompted for 2FA when approval is not yet allowed",
+    { timeout: 30_000 },
+    async () => {
+      const jar: Jar = new Map();
+      const userId = await signUp(jar);
+      await enrollTwoFactor(jar);
+      const organizationId = personalOrganizationId(userId);
+      await ensurePersonalOrganization(createDb(env.DB), { userId });
+      const gateId = await seedDecidableGate(organizationId, userId, { completeScan: false });
+
+      const decisionCalls: { state: string }[] = [];
+      mockGithubDecisionFetch(decisionCalls);
+
+      const res = await call("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
+        body: { decision: "approved" },
+        jar,
+        env: await githubEnv(),
+      });
+
+      expect(res.res.status).toBe(409);
+      expect(res.json).toMatchObject({
+        error: "approval requires a completed workflow-gate review",
+      });
+      const stored = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
+      expect(stored?.status).toBe("pending");
+      expect(decisionCalls).toHaveLength(0);
+    },
+  );
+
   test(
     "an enrolled maintainer cannot decide a gate without a fresh code",
     { timeout: 30_000 },
