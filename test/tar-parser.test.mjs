@@ -606,6 +606,30 @@ describe("parsePackageJson", () => {
     expect(parsed?.files).toEqual(["dist", "README.md"]);
   });
 
+  test("parses a truncated manifest from scanText", () => {
+    const fullManifest = JSON.stringify({
+      name: "@scope/padded",
+      version: "1.2.4",
+      optionalDependencies: { platformpkg: "https://example.invalid/pkg.tgz" },
+      main: "dist/index.js",
+    });
+    const parsed = parsePackageJson([
+      {
+        path: "package.json",
+        size: fullManifest.length,
+        sha256: "pkg",
+        flags: ["truncated"],
+        textSample: fullManifest.slice(0, 24),
+        scanText: fullManifest,
+      },
+    ]);
+
+    expect(parsed?.name).toBe("@scope/padded");
+    expect(parsed?.version).toBe("1.2.4");
+    expect(parsed?.optionalDependencies?.platformpkg).toBe("https://example.invalid/pkg.tgz");
+    expect(parsed?.main).toBe("dist/index.js");
+  });
+
   test("models npm's implicit node-gyp install script for root gyp files", () => {
     const parsed = parsePackageJson([
       {

@@ -15,6 +15,7 @@ import {
   redactFileRecords,
   redactFindings,
   redactJson,
+  scanContent,
   summarizePackageJsonDiff,
   DETERMINISTIC_RULES_VERSION,
   type DiffEntry,
@@ -84,7 +85,7 @@ export function computeDiff(resolved: ResolvedArtifacts): ComputedDiff {
     summarizePackageJsonDiff(baseline.artifact?.manifest, staged.artifact.manifest),
   );
   const stagedManifestText =
-    staged.artifact.files.find((file) => file.path === "package.json")?.textSample ?? null;
+    scanContent(staged.artifact.files.find((file) => file.path === "package.json") ?? {}) || null;
   return { fileDiff, manifestDiff, stagedManifestText };
 }
 

@@ -13,7 +13,7 @@
 //   - Identifier names matter: when the rendered source runs in the sandbox,
 //     cross-function calls resolve by the lexical names below.
 
-/** @typedef {{ path: string, size: number, sha256: string, flags: string[], textSample?: string }} ParsedFile */
+/** @typedef {{ path: string, size: number, sha256: string, flags: string[], textSample?: string, scanText?: string }} ParsedFile */
 /** @typedef {{ kind: "non-regular"|"duplicate"|"unicode-confusable", path: string, detail: string }} TarSuspiciousEntry */
 
 export function readString(bytes, start, len) {
@@ -481,10 +481,11 @@ export async function readStreamBounded(body, maxBytes) {
 }
 
 export function parsePackageJson(files) {
-  const pkg = files.find((f) => f.path === "package.json" && f.textSample);
-  if (!pkg || !pkg.textSample) return null;
+  const pkg = files.find((f) => f.path === "package.json" && (f.scanText || f.textSample));
+  const text = pkg?.scanText || pkg?.textSample;
+  if (!text) return null;
   try {
-    const parsed = JSON.parse(pkg.textSample);
+    const parsed = JSON.parse(text);
     if (!isPlainObject(parsed)) return null;
     const scripts = normalizeStringRecord(parsed.scripts);
     const npmAddsNodeGypInstall = hasImplicitNodeGypInstall(files, parsed);
