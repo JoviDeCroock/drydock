@@ -62,18 +62,22 @@ npmConnectionRoutes.post("/", async (c) => {
   const session = c.get("authSession");
   const { organizationId, role } = await requireActiveOrganizationContext(c, db);
   if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
-  const [limited, encrypted] = await Promise.all([
-    withRateLimit(
-      c,
-      db,
-      { key: `npm-connection:save:${organizationId}`, limit: 20, windowMs: 60 * 60 * 1000 },
-      "npm connection save rate limit exceeded",
-    ),
-    encryptNpmToken(c.env, token),
-  ]);
-  if (limited) return limited;
-
   try {
+    // Keep encryption inside the try so a crypto failure is reported as
+    // `npm_connection.upsert_failed` rather than escaping to the global handler.
+    // `withRateLimit` returns a 429 Response instead of throwing, so the early
+    // return below is control flow, not an error path.
+    const [limited, encrypted] = await Promise.all([
+      withRateLimit(
+        c,
+        db,
+        { key: `npm-connection:save:${organizationId}`, limit: 20, windowMs: 60 * 60 * 1000 },
+        "npm connection save rate limit exceeded",
+      ),
+      encryptNpmToken(c.env, token),
+    ]);
+    if (limited) return limited;
+
     const [connection] = await Promise.all([
       upsertNpmConnection(db, {
         organizationId,
@@ -121,10 +125,10 @@ npmConnectionRoutes.post("/validate", async (c) => {
   );
   if (limited) return limited;
 
-  const connection = await getNpmConnection(db, organizationId);
-  if (!connection) return c.json({ error: "npm connection is not configured" }, 404);
-
   try {
+    const connection = await getNpmConnection(db, organizationId);
+    if (!connection) return c.json({ error: "npm connection is not configured" }, 404);
+
     const token = await decryptNpmToken(c.env, connection);
     const validation = await validateNpmCredential(connection.registryUrl, token, {
       stageId,

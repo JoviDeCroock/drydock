@@ -164,17 +164,25 @@ function splitCiphertext(value: string): { version: "v0" | "v1"; payload: string
  * Replaces the repeated null-check + `validationStatus !== "valid"` guard that
  * appeared in `scan.ts`, `scans.ts`, `staged-publishes.ts`, `scan-job.ts`, and
  * `adapters/npm/broker.ts`.
+ *
+ * `action` tailors the user-facing message to the caller — scan endpoints want
+ * "scanning", the staged-publishes discovery endpoint wants "discovering" so its
+ * pre-flight guard stays consistent with its other connection errors.
  */
-export async function requireValidNpmConnection(db: AppDb, organizationId: string) {
+export async function requireValidNpmConnection(
+  db: AppDb,
+  organizationId: string,
+  action: "scanning" | "discovering" = "scanning",
+) {
   const connection = await getNpmConnection(db, organizationId);
   if (!connection) {
     throw new NpmConnectionError(
-      "Connect an organization npm token before scanning staged publishes.",
+      `Connect an organization npm token before ${action} staged publishes.`,
     );
   }
   if (connection.validationStatus !== "valid") {
     throw new NpmConnectionError(
-      "Validate the organization npm token before scanning staged publishes.",
+      `Validate the organization npm token before ${action} staged publishes.`,
     );
   }
   return connection;

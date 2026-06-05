@@ -32,7 +32,7 @@ stagedPublishesRoutes.post("/scan", async (c) => {
 
   let savedConnection;
   try {
-    savedConnection = await requireValidNpmConnection(db, organizationId);
+    savedConnection = await requireValidNpmConnection(db, organizationId, "discovering");
   } catch (err) {
     if (err instanceof NpmConnectionError) {
       return c.json({ error: err.message }, 400);

@@ -128,4 +128,50 @@ describe("staged publishes route", () => {
     const { scans } = await listScans(db, owner.organizationId);
     expect(scans.map((scan) => scan.stageId)).toContain("stage-new-123");
   });
+
+  test("POST /scan rejects when no npm connection is configured", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const ctx = createExecutionContext();
+    const res = await app.fetch(
+      new Request("http://test.local/api/v1/staged-publishes/scan", { method: "POST" }),
+      env as unknown as Bindings,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(400);
+    // Wording stays "discovering" — this endpoint discovers staged publishes; it
+    // must not drift to the shared helper's default "scanning" message.
+    expect(await res.json()).toEqual({
+      error: "Connect an organization npm token before discovering staged publishes.",
+    });
+  });
+
+  test("POST /scan rejects when the npm connection is not validated", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const encrypted = await encryptNpmToken(env, "npm_test_token_0123456789");
+    await upsertNpmConnection(db, {
+      organizationId: owner.organizationId,
+      registryUrl: "https://registry.npmjs.org",
+      label: "npm registry",
+      createdByUserId: owner.userId,
+      ...encrypted,
+    });
+
+    const app = buildTestApp(owner);
+    const ctx = createExecutionContext();
+    const res = await app.fetch(
+      new Request("http://test.local/api/v1/staged-publishes/scan", { method: "POST" }),
+      env as unknown as Bindings,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "Validate the organization npm token before discovering staged publishes.",
+    });
+  });
 });
