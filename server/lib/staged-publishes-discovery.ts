@@ -8,7 +8,12 @@ import {
   type AppDb,
   type ScanSource,
 } from "../db";
-import { decryptNpmToken, validateNpmCredential } from "./npm-connection";
+import {
+  decryptNpmToken,
+  validateNpmCredential,
+  type NpmCredentialValidation,
+} from "./npm-connection";
+import { notifyNpmConnectionExpired } from "./notify";
 import { executeScanJob, type ScanQueueMessage } from "./scan-job";
 import {
   listStagedPublishes,
@@ -44,7 +49,10 @@ export class MissingNpmConnectionError extends Error {
 }
 
 export class InvalidNpmConnectionError extends Error {
-  constructor(public organizationId: string) {
+  constructor(
+    public organizationId: string,
+    public validation?: NpmCredentialValidation,
+  ) {
     super(`npm connection is not valid for org ${organizationId}`);
     this.name = "InvalidNpmConnectionError";
   }
@@ -53,6 +61,83 @@ export class InvalidNpmConnectionError extends Error {
 export interface TokenForDiscovery {
   token: string;
   registryUrl: string;
+}
+
+/**
+ * Whether a cron sweep error means the org's npm token can no longer authenticate
+ * against the staging registry (expired, revoked, or scope-stripped) rather than
+ * a transient registry/network problem. An unvalidated token is only treated as
+ * expired when credential validation saw a 401/403; a token that was last seen
+ * valid surfaces as a 401/403 on the staged-list fetch. Both mean the maintainer
+ * must re-add a token.
+ */
+export function isNpmConnectionAuthFailure(err: unknown): boolean {
+  if (err instanceof InvalidNpmConnectionError) {
+    return err.validation ? credentialValidationAuthFailed(err.validation) : false;
+  }
+  if (err instanceof StagedPublishesFetchError) return err.status === 401 || err.status === 403;
+  return false;
+}
+
+function describeNpmAuthFailure(err: unknown): string {
+  if (err instanceof StagedPublishesFetchError) return `staged_list_${err.status}`;
+  if (err instanceof InvalidNpmConnectionError && err.validation) {
+    const status = credentialValidationAuthStatus(err.validation);
+    return status ? `validation_${status}` : "validation_failed";
+  }
+  return "unknown";
+}
+
+function credentialValidationAuthFailed(validation: NpmCredentialValidation): boolean {
+  return credentialValidationAuthStatus(validation) !== null;
+}
+
+function credentialValidationAuthStatus(validation: NpmCredentialValidation): number | null {
+  const { capabilities } = validation;
+  const statuses = [
+    capabilities.status,
+    capabilities.stagedListStatus,
+    capabilities.stagedViewStatus,
+    capabilities.stagedTarballStatus,
+  ];
+  return statuses.find((status) => status === 401 || status === 403) ?? null;
+}
+
+/**
+ * Record that an org's npm token stopped working during a cron sweep: mark the
+ * connection `invalid` (which removes it from future sweeps and raises the
+ * Settings banner), write the `npm_connection.token_expired` audit event, and
+ * email the maintainer. Marking invalid first is what keeps this to one email
+ * per expiry — the next sweep no longer sees the connection.
+ */
+export async function recordExpiredNpmConnection(input: {
+  db: AppDb;
+  env: Cloudflare.Env;
+  connection: { organizationId: string; registryUrl: string };
+  actorUserId: string;
+  notificationOwnerUserId: string;
+  error: unknown;
+}): Promise<void> {
+  const { db, env, connection, actorUserId, notificationOwnerUserId, error } = input;
+  const reason = describeNpmAuthFailure(error);
+  await updateNpmConnectionValidation(db, {
+    organizationId: connection.organizationId,
+    validationStatus: "invalid",
+    validatedAt: null,
+  });
+  await recordScanEvent(db, {
+    organizationId: connection.organizationId,
+    actorUserId,
+    type: "npm_connection.token_expired",
+    metadata: { source: "cron", reason },
+  });
+  await notifyNpmConnectionExpired({
+    env,
+    db,
+    organizationId: connection.organizationId,
+    ownerUserId: notificationOwnerUserId,
+    registryUrl: connection.registryUrl,
+  });
 }
 
 export async function ensureUsableNpmConnection(input: {
@@ -81,10 +166,15 @@ export async function ensureUsableNpmConnection(input: {
   const validation = await validateNpmCredential(connection.registryUrl, token, {
     allowInsecureLocalhost,
   });
+  const validationStatus = validation.ok
+    ? "valid"
+    : credentialValidationAuthFailed(validation)
+      ? "invalid"
+      : "unvalidated";
   await Promise.all([
     updateNpmConnectionValidation(db, {
       organizationId: connection.organizationId,
-      validationStatus: validation.status,
+      validationStatus,
       capabilities: validation.capabilities,
       validatedAt: validation.ok ? new Date() : null,
     }),
@@ -100,7 +190,7 @@ export async function ensureUsableNpmConnection(input: {
       },
     }),
   ]);
-  if (!validation.ok) throw new InvalidNpmConnectionError(connection.organizationId);
+  if (!validation.ok) throw new InvalidNpmConnectionError(connection.organizationId, validation);
   return { token, registryUrl: connection.registryUrl };
 }
 

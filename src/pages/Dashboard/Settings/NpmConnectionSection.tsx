@@ -57,6 +57,13 @@ export function NpmConnectionSection({
           it, hide it after save, and use it only to retrieve release evidence.
         </Muted>
 
+        {connection && connection.validationStatus === "invalid" ? (
+          <Alert tone="critical">
+            Drydock can no longer reach the staging registry with this token, so staged-release
+            reviews are paused. Rotate the token below to resume.
+          </Alert>
+        ) : null}
+
         {connection ? (
           <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-8 gap-y-4 border-y border-border py-4 m-0">
             <MetadataField label="label" value={connection.label} />

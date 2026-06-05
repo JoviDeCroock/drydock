@@ -82,6 +82,73 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
   }));
 }
 
+export interface NotifyNpmConnectionExpiredInput {
+  env: Cloudflare.Env;
+  db: AppDb;
+  organizationId: string;
+  ownerUserId: string;
+  registryUrl: string;
+}
+
+/**
+ * Email the organization's notification recipients that Drydock can no longer
+ * reach the staging registry with their saved npm token, so staged-release
+ * reviews have stopped. This is the only proactive signal that the system meant
+ * to watch their publishes has silently stopped watching them.
+ *
+ * The caller (`recordExpiredNpmConnection`) marks the connection `invalid`
+ * before this runs, which both drives the Settings banner and removes the
+ * connection from the cron sweep — so a single expiry produces a single email
+ * per recipient. Delivery is best-effort: each send is recorded as an
+ * `npm_connection.notification_sent` / `notification_failed` event and never
+ * throws back into the sweep. The body carries only the registry URL and a
+ * Settings link; no token material ever reaches the email.
+ */
+export async function notifyNpmConnectionExpired(
+  input: NotifyNpmConnectionExpiredInput,
+): Promise<void> {
+  const { env, db, organizationId, ownerUserId, registryUrl } = input;
+  const recipients = await resolveNotificationEmails(db, organizationId, ownerUserId);
+  if (recipients.length === 0) {
+    await recordScanEvent(db, {
+      organizationId,
+      actorUserId: ownerUserId,
+      type: "npm_connection.notification_failed",
+      metadata: { channel: "email", trigger: "token_expired", reason: "no_recipients" },
+    });
+    return;
+  }
+
+  const settingsLink = settingsUrl(env);
+  const subject = "Your npm token can no longer reach the staging registry";
+  const lines = [
+    "Hi there,",
+    "",
+    "Drydock can no longer reach the npm staging registry with your saved token, so staged-release reviews are paused for your organization.",
+    "",
+    `Registry: ${registryUrl}`,
+    "",
+    settingsLink
+      ? `Re-add a working token on Settings to resume reviews: ${settingsLink}`
+      : "Re-add a working token on the Settings page to resume reviews.",
+    "",
+    "— Drydock",
+  ];
+  const text = lines.filter((line): line is string => line !== null).join("\n");
+
+  await deliverToRecipients(env, db, recipients, { subject, text }, (recipient, result) => ({
+    organizationId,
+    actorUserId: ownerUserId,
+    type: result.ok ? "npm_connection.notification_sent" : "npm_connection.notification_failed",
+    metadata: {
+      channel: "email",
+      trigger: "token_expired",
+      recipient,
+      ...(result.ok ? {} : { reason: result.reason }),
+    },
+  }));
+}
+
 export interface NotifyWorkflowGateReviewInput {
   env: Cloudflare.Env;
   db: AppDb;
@@ -174,6 +241,93 @@ export async function notifyWorkflowGateReview(
       gateId,
       channel: "email",
       releaseRisk,
+      recipient,
+      ...(result.ok ? {} : { reason: result.reason }),
+    },
+  }));
+}
+
+export interface NotifyWorkflowGateTimeoutInput {
+  env: Cloudflare.Env;
+  db: AppDb;
+  organizationId: string;
+  ownerUserId: string;
+  gateId: string;
+  repositoryFullName: string;
+  environment: string;
+  scanId: string;
+  packageName: string | null;
+  version: string | null;
+}
+
+/**
+ * Email the organization's notification recipients that a workflow gate review
+ * did not finish inside GitHub's deployment-protection callback window. By the
+ * time we detect this the release was likely already auto-rejected by GitHub, so
+ * — unlike `notifyWorkflowGateReview` — this email does not ask for an
+ * approve/block decision; it reports the timeout and points at the now-completed
+ * review. Delivery is best-effort and recorded as
+ * `github_workflow_gate.notification_sent` / `notification_failed`.
+ */
+export async function notifyWorkflowGateTimeout(
+  input: NotifyWorkflowGateTimeoutInput,
+): Promise<void> {
+  const {
+    env,
+    db,
+    organizationId,
+    ownerUserId,
+    gateId,
+    repositoryFullName,
+    environment,
+    scanId,
+    packageName,
+    version,
+  } = input;
+
+  const recipients = await resolveNotificationEmails(db, organizationId, ownerUserId);
+  if (recipients.length === 0) {
+    await recordScanEvent(db, {
+      organizationId,
+      actorUserId: ownerUserId,
+      scanId,
+      type: "github_workflow_gate.notification_failed",
+      metadata: { gateId, channel: "email", trigger: "timeout_missed", reason: "no_recipients" },
+    });
+    return;
+  }
+
+  const packageLabel = formatPackageLabel(packageName, version);
+  const dashboardUrl = scanUrl(env, scanId);
+  const subject = `GitHub gate for ${packageLabel} timed out before scan completed`;
+  const lines = [
+    "Hi there,",
+    "",
+    `The GitHub release gate for ${packageLabel} in ${repositoryFullName} timed out before Drydock finished scanning it.`,
+    "GitHub may have already blocked the release because the review did not return inside its decision window.",
+    "",
+    `Repository: ${repositoryFullName}`,
+    `Environment: ${environment}`,
+    "",
+    dashboardUrl ? `See the completed review: ${dashboardUrl}` : null,
+    "",
+    "Re-run the workflow to request a fresh review.",
+    "",
+    "— Drydock",
+  ];
+  const text = lines.filter((line): line is string => line !== null).join("\n");
+
+  await deliverToRecipients(env, db, recipients, { subject, text }, (recipient, result) => ({
+    organizationId,
+    actorUserId: ownerUserId,
+    scanId,
+    type: result.ok
+      ? "github_workflow_gate.notification_sent"
+      : "github_workflow_gate.notification_failed",
+    metadata: {
+      gateId,
+      channel: "email",
+      trigger: "timeout_missed",
       recipient,
       ...(result.ok ? {} : { reason: result.reason }),
     },
@@ -286,6 +440,16 @@ function scanUrl(env: Cloudflare.Env, scanId: string): string | null {
   try {
     const url = new URL(`/dashboard/scans/${encodeURIComponent(scanId)}`, base);
     return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function settingsUrl(env: Cloudflare.Env): string | null {
+  const base = env.BETTER_AUTH_URL;
+  if (typeof base !== "string" || !base) return null;
+  try {
+    return new URL("/dashboard/settings", base).toString();
   } catch {
     return null;
   }

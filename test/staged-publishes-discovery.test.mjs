@@ -27,8 +27,12 @@ vi.mock("../server/lib/npm-connection.ts", () => npmConnectionMock);
 vi.mock("../server/lib/staged-publishes.ts", () => stagedPublishesMock);
 vi.mock("../server/lib/scan-job.ts", () => scanJobMock);
 
-const { ensureUsableNpmConnection, discoverAndQueueStagedPublishes, InvalidNpmConnectionError } =
-  await import("../server/lib/staged-publishes-discovery.ts");
+const {
+  ensureUsableNpmConnection,
+  discoverAndQueueStagedPublishes,
+  InvalidNpmConnectionError,
+  isNpmConnectionAuthFailure,
+} = await import("../server/lib/staged-publishes-discovery.ts");
 
 const env = { DB: {}, SCAN_QUEUE: { send: vi.fn() } };
 const ctx = { waitUntil: vi.fn() };
@@ -120,11 +124,83 @@ describe("ensureUsableNpmConnection token state branching", () => {
     );
   });
 
-  test("marks unvalidated connections as invalid when validation fails", async () => {
+  test("marks unvalidated connections as invalid when validation fails with an auth status", async () => {
     npmConnectionMock.validateNpmCredential.mockResolvedValueOnce({
       ok: false,
       status: "invalid",
-      capabilities: { registryAuth: false, stagedListAccess: false, registryUrl: "" },
+      capabilities: {
+        registryAuth: false,
+        stagedListAccess: false,
+        registryUrl: "",
+        status: 401,
+      },
+    });
+
+    const failure = await ensureUsableNpmConnection({
+      db,
+      env,
+      connection: {
+        organizationId: "org_a",
+        registryUrl: "https://registry.npmjs.org",
+        validationStatus: "unvalidated",
+        tokenCiphertext: "x",
+        tokenNonce: "y",
+      },
+      actorUserId: "user_a",
+    }).catch((err) => err);
+
+    expect(failure).toBeInstanceOf(InvalidNpmConnectionError);
+    expect(isNpmConnectionAuthFailure(failure)).toBe(true);
+    expect(dbMock.updateNpmConnectionValidation).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ organizationId: "org_a", validationStatus: "invalid" }),
+    );
+  });
+
+  test("keeps unvalidated connections retryable when validation fails without auth status", async () => {
+    npmConnectionMock.validateNpmCredential.mockResolvedValueOnce({
+      ok: false,
+      status: "invalid",
+      capabilities: {
+        registryAuth: false,
+        stagedListAccess: false,
+        registryUrl: "",
+        status: 500,
+        stagedListStatus: 500,
+      },
+    });
+
+    const failure = await ensureUsableNpmConnection({
+      db,
+      env,
+      connection: {
+        organizationId: "org_a",
+        registryUrl: "https://registry.npmjs.org",
+        validationStatus: "unvalidated",
+        tokenCiphertext: "x",
+        tokenNonce: "y",
+      },
+      actorUserId: "user_a",
+    }).catch((err) => err);
+
+    expect(failure).toBeInstanceOf(InvalidNpmConnectionError);
+    expect(isNpmConnectionAuthFailure(failure)).toBe(false);
+    expect(dbMock.updateNpmConnectionValidation).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ organizationId: "org_a", validationStatus: "unvalidated" }),
+    );
+  });
+
+  test("keeps unvalidated connections retryable when validation has no status", async () => {
+    npmConnectionMock.validateNpmCredential.mockResolvedValueOnce({
+      ok: false,
+      status: "invalid",
+      capabilities: {
+        registryAuth: false,
+        stagedListAccess: false,
+        registryUrl: "",
+        detail: "fetch failed",
+      },
     });
 
     await expect(
@@ -142,9 +218,11 @@ describe("ensureUsableNpmConnection token state branching", () => {
       }),
     ).rejects.toBeInstanceOf(InvalidNpmConnectionError);
 
+    const failure = dbMock.updateNpmConnectionValidation.mock.calls[0];
+    expect(failure).toBeDefined();
     expect(dbMock.updateNpmConnectionValidation).toHaveBeenCalledWith(
       db,
-      expect.objectContaining({ organizationId: "org_a", validationStatus: "invalid" }),
+      expect.objectContaining({ organizationId: "org_a", validationStatus: "unvalidated" }),
     );
   });
 });

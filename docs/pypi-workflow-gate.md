@@ -587,10 +587,14 @@ and the consumer re-checks gate status, so a re-enqueue is safe.
    `approved`) and record `github_workflow_gate.reviewed` with it. Then link the
    scan to the gate via `attachScanToGate` and **leave the gate pending** — the
    review never posts to GitHub.
-8. Email the maintainer that a gate is parked pending their decision
-   (`notifyWorkflowGateReview` in `server/lib/notify.ts`). Because Drydock never
+8. Classify the review against GitHub's deployment-protection **callback
+   window** (`classifyGateTimeout`) and email the maintainer the matching
+   notice. A gate still inside its window gets the "parked pending your
+   decision" email (`notifyWorkflowGateReview`); a gate whose review outran the
+   window gets the timeout notice (`notifyWorkflowGateTimeout`) instead, because
+   GitHub has most likely already auto-rejected it. Because Drydock never
    auto-decides, this email is the only proactive signal that a held GitHub
-   deployment is waiting on a human.
+   deployment is waiting on a human (or has already lapsed).
 
 ### Notifying the maintainer
 
@@ -641,6 +645,42 @@ The persisted review is an ordinary `scans` row scoped to the org with
 `source: "workflow_gate"`, reachable at `/dashboard/scans/<scanId>` — no
 separate review table. The gate row already links scan ↔ release target, so no
 schema change was needed.
+
+### Callback-window timeout
+
+GitHub holds a `deployment_protection_rule` open only for a fixed window. If the
+protection rule does not POST a decision inside that window, GitHub **silently
+auto-rejects** the deployment — it never calls back to tell us, so a slow review
+would otherwise leave a maintainer staring at a "needs review" email for a gate
+GitHub has already closed.
+
+Step 8 guards against that silent failure. After the review attaches, the job
+measures elapsed time from the persisted gate request timestamp
+(`gate.requestedAt`) against the configured window (`workflowGateCallbackWindowMs`,
+default **30 days** to match GitHub's custom deployment protection rule timeout,
+overridable per-environment with `WORKFLOW_GATE_CALLBACK_WINDOW_MS`; a
+non-positive or unparseable value falls back to the default) and classifies it
+with `classifyGateTimeout`:
+
+- `ok` — under 80% of the window. Normal review-ready path: send
+  `notifyWorkflowGateReview`.
+- `imminent` — at or past 80% of the window. Record a
+  `github_workflow_gate.timeout_imminent` event and emit a `warn` operational
+  event, but still send the normal review email (the gate is probably still
+  open). This is a leading signal for tuning the window or the pipeline's speed.
+- `missed` — at or past the full window. Record a
+  `github_workflow_gate.timeout_missed` event, emit an `error` operational event,
+  and send `notifyWorkflowGateTimeout` **instead of** the review email. The
+  timeout notice does not ask for an approve/block decision — GitHub has likely
+  already rejected it — it reports the timeout, points at the completed review,
+  and tells the maintainer to re-run the workflow for a fresh gate.
+
+Both timeout events carry `{ gateId, elapsedMs, windowMs }`. The job still leaves
+the gate **pending** and posts **no decision** to GitHub on a `missed` gate: we
+never race GitHub's auto-reject with a late callback. The timeout email reuses
+the same best-effort delivery and `notification_sent` / `notification_failed`
+recording as the review email, with `metadata.trigger: "timeout_missed"` to
+distinguish it.
 
 ## Remaining work
 

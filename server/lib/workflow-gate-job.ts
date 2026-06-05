@@ -20,7 +20,7 @@ import {
   WorkflowArtifactError,
   type WorkflowGateRecord,
 } from "./github-app";
-import { notifyWorkflowGateReview } from "./notify";
+import { notifyWorkflowGateReview, notifyWorkflowGateTimeout } from "./notify";
 import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
 import { prepareReleaseCandidateForGate } from "./workflow-gates";
 import type { RiskLevel } from "./review";
@@ -35,6 +35,30 @@ const BLOCKING_RISKS: ReadonlySet<RiskLevel> = new Set<RiskLevel>(["high", "crit
 
 export function recommendationForReleaseRisk(releaseRisk: RiskLevel): "approved" | "rejected" {
   return BLOCKING_RISKS.has(releaseRisk) ? "rejected" : "approved";
+}
+
+// GitHub auto-rejects a held deployment if the protection rule does not call
+// back inside its decision window. We don't get told when that happens, so we
+// compare the review's wall-clock duration against this window to flag a gate
+// that almost certainly already lapsed (`missed`) or is close to it
+// (`imminent`). GitHub's custom deployment protection rule callback window is
+// 30 days; override with WORKFLOW_GATE_CALLBACK_WINDOW_MS if GitHub changes it
+// or a test needs a shorter deterministic window.
+const DEFAULT_GATE_CALLBACK_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const GATE_TIMEOUT_IMMINENT_FRACTION = 0.8;
+
+export function workflowGateCallbackWindowMs(env: Cloudflare.Env): number {
+  const raw = Number(env.WORKFLOW_GATE_CALLBACK_WINDOW_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_GATE_CALLBACK_WINDOW_MS;
+}
+
+export function classifyGateTimeout(
+  elapsedMs: number,
+  windowMs: number,
+): "ok" | "imminent" | "missed" {
+  if (elapsedMs >= windowMs) return "missed";
+  if (elapsedMs >= windowMs * GATE_TIMEOUT_IMMINENT_FRACTION) return "imminent";
+  return "ok";
 }
 
 /**
@@ -305,25 +329,68 @@ export async function executeWorkflowGateJob(
     return;
   }
 
-  // Tell the maintainer there is a gate to decide. This is the only review-ready
-  // transition for the gate (a re-delivery short-circuits above at
-  // `already_reviewed`), so it produces exactly one email. Delivery is
-  // best-effort: a failure is recorded inside the notifier and must never fail
-  // or stall the held deployment.
-  try {
-    await notifyWorkflowGateReview({
-      env,
-      db,
+  // Detect whether the review outran GitHub's deployment-protection callback
+  // window. GitHub never tells us when it auto-rejects, so a `missed` gate is
+  // most likely already lost — we tell the maintainer it timed out instead of
+  // asking them to decide a gate GitHub has already closed.
+  const gateElapsedMs = Date.now() - gate.requestedAt.getTime();
+  const jobDurationMs = durationMsSince(startedAtMs);
+  const windowMs = workflowGateCallbackWindowMs(env);
+  const timeoutState = classifyGateTimeout(gateElapsedMs, windowMs);
+  if (timeoutState !== "ok") {
+    await recordScanEvent(db, {
       organizationId,
-      ownerUserId,
-      gateId: gate.id,
-      repositoryFullName: gate.repositoryFullName,
-      environment: gate.environment,
+      actorUserId: ownerUserId,
       scanId,
-      packageName: result.package.name,
-      version: result.package.stagedVersion,
-      releaseRisk,
+      type:
+        timeoutState === "missed"
+          ? "github_workflow_gate.timeout_missed"
+          : "github_workflow_gate.timeout_imminent",
+      metadata: { gateId: gate.id, elapsedMs: gateElapsedMs, windowMs },
     });
+    emitOperationalEvent(
+      timeoutState === "missed" ? "error" : "warn",
+      timeoutState === "missed"
+        ? "github_workflow_gate.timeout_missed"
+        : "github_workflow_gate.timeout_imminent",
+      { organizationId, gateId, scanId, elapsedMs: gateElapsedMs, windowMs },
+    );
+  }
+
+  // Tell the maintainer the outcome. For a gate still inside its window this is
+  // the only review-ready transition (a re-delivery short-circuits above at
+  // `already_reviewed`), so it produces exactly one email; for a `missed` gate
+  // we send the timeout notice instead. Delivery is best-effort: a failure is
+  // recorded inside the notifier and must never fail or stall the deployment.
+  try {
+    if (timeoutState === "missed") {
+      await notifyWorkflowGateTimeout({
+        env,
+        db,
+        organizationId,
+        ownerUserId,
+        gateId: gate.id,
+        repositoryFullName: gate.repositoryFullName,
+        environment: gate.environment,
+        scanId,
+        packageName: result.package.name,
+        version: result.package.stagedVersion,
+      });
+    } else {
+      await notifyWorkflowGateReview({
+        env,
+        db,
+        organizationId,
+        ownerUserId,
+        gateId: gate.id,
+        repositoryFullName: gate.repositoryFullName,
+        environment: gate.environment,
+        scanId,
+        packageName: result.package.name,
+        version: result.package.stagedVersion,
+        releaseRisk,
+      });
+    }
   } catch (err) {
     emitOperationalEvent("warn", "github_workflow_gate.notification_error", {
       organizationId,
@@ -339,7 +406,8 @@ export async function executeWorkflowGateJob(
     scanId,
     releaseRisk,
     recommendation,
-    durationMs: durationMsSince(startedAtMs),
+    timeoutState,
+    durationMs: jobDurationMs,
   });
 }
 
