@@ -205,7 +205,3 @@ Exit criteria:
 - Deep native/binary malware analysis.
 - Automated publish approval. This remains intentionally out of scope.
 - Additional ecosystems beyond npm/PyPI until one private-beta path is polished and the workflow-gate byte-continuity contract is proven.
-
-## Suggested next implementation slice
-
-Report/workbench polish plus PyPI digest persistence: render scan-event timeline and report provenance, persist reviewed PyPI artifact digests, and tighten finding grouping around the release decision.

@@ -149,7 +149,7 @@ Three tracks, in priority order:
      how it was defanged).
 
 This is the corpus that proves Drydock would catch the real thing rather than a
-mock of its own rules. It is the ongoing Phase 13 track in the roadmap.
+mock of its own rules. It is the ongoing Phase 6 (detection defensibility) track in the roadmap.
 
 The first real-sanitized batch lives in `cases-frontier/` and is truth-labeled,
 so frontier recall now reflects real technique coverage rather than synthetic

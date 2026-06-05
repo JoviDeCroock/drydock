@@ -46,7 +46,7 @@ Workers AI is ~90% of the variable cost at every scale above the smallest tier.
 - **D1**: 50M writes + 25B reads/mo included on the paid plan, $1/M writes and $0.001/1k reads beyond. Storage $0.75/GB-mo.
 - **KV**: $0.50/M reads, $5/M writes, $0.50/GB-mo storage. ~5 MB per cached `package@version` entry.
 - **Queues**: $0.40/M operations.
-- **Workers AI (Kimi)**: `server/lib/ai-review.ts` still declares `AI_MODEL = "@cf/moonshotai/kimi-k2.5"`, but Cloudflare scheduled Kimi K2.5 requests to auto-alias to Kimi K2.6 on May 30, 2026. Treat K2.6 pricing ($0.95/M input + $0.16/M cached input + $4.00/M output) as the effective current margin model until the constant is migrated; K2.5's listed legacy price was $0.60/M input + $0.10/M cached input + $3.00/M output. Confirm against current Cloudflare AI pricing before sizing margins.
+- **Workers AI (Kimi)**: `server/lib/ai-review.ts` still declares `AI_MODEL = "@cf/moonshotai/kimi-k2.5"`, but Cloudflare aliases Kimi K2.5 requests to Kimi K2.6 (effective May 30, 2026). Treat K2.6 pricing ($0.95/M input + $0.16/M cached input + $4.00/M output) as the effective current margin model until the constant is migrated; K2.5's listed legacy price was $0.60/M input + $0.10/M cached input + $3.00/M output. Confirm against current Cloudflare AI pricing before sizing margins.
 - **Dynamic Workers / Worker Loader**: treated as regular Worker billing; Cloudflare hasn't published a separate model at the time of writing.
 
 ## Where the money goes
@@ -63,7 +63,7 @@ AI review is wired into the pipeline through `maybeRunAiReview`, but the per-org
 The scanner's actual security boundary is deterministic analysis plus human npm approval; AI is advisory triage. The intended production posture, implemented in [`server/lib/ai-review.ts`](../server/lib/ai-review.ts), is:
 
 1. run deterministic rules first;
-2. send the resulting evidence to Kimi for AI review. The code currently points at `AI_MODEL = "@cf/moonshotai/kimi-k2.5"`, but Cloudflare aliases that model to Kimi K2.6 as of May 30, 2026; migrate the constant before enabling paid AI review.
+2. send the resulting evidence to Kimi for AI review (migrate the `AI_MODEL` constant to the effective K2.6 model before enabling paid AI review — see the pricing-inputs note above).
 
 The reviewer in [`server/lib/ai-review.ts`](../server/lib/ai-review.ts) uses the Vercel AI SDK with the Workers AI provider. The first prompt contains deterministic findings, a normalized manifest diff, ecosystem id, and a changed-file manifest. The model can then call app-owned tools to read bounded redacted file evidence — the `read` tool batches up to 10 paths per call (dividing the per-call character budget fairly across them so later paths are not starved) and auto-returns a unified text diff for changed files (or the staged sample otherwise), `search_files` batches up to 5 literal queries, `list_files` filters file subsets — and finally submit the review through a schema-validated `submit_review` tool. The controller enforces max steps, per-tool character caps, a total evidence budget, an output-token cap, and scan-ID-suffixed cache affinity; the model never gets raw tarballs, arbitrary filesystem access, network access, or package execution. The submission schema is sized to fit the output-token cap, and the persisted review keeps only the top critical/high findings (most severe first); medium and lower observations live in the summary, while overall risk still derives from the model's risk plus its manual-review flag.
 
