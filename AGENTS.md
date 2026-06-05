@@ -27,6 +27,7 @@
 - Styling is Tailwind CSS v4 (`@tailwindcss/vite`); tokens live in `src/style.css` under `@theme`, with light/dark via `prefers-color-scheme`. Reach for primitives in `src/components/` (`Button`, `Input`, `Field`, `Badge`, `Alert`, `Card`, `PageShell`, `Eyebrow`, …) before one-off classes. No CSS-in-JS.
 - We use `preact`, `preact-iso`, and `@preact/signals`. Never `preact/compat`.
 - `useState`/`useReducer` are banned (oxlint `no-restricted-imports`). Component-local state goes through `useSignal`/`useComputed` or `createModel`/`useModel`. See `docs/tooling.md` and the `.claude/skills/preact-signals-*` skills.
+- Comments explain _why_ — rationale, trust boundaries, concurrency/fail-closed behavior, edge cases, units, magic numbers. Don't restate what the code already says, narrate obvious control flow, or label a self-evident symbol; never leave commented-out code or stale TODOs. The codebase keeps a deliberately high signal-to-noise ratio.
 - Never hand-write SQL migrations — run `pnpm db:generate` against `server/db/schema.ts`.
 - Read `docs/` before starting work; update `docs/` when you finish.
 
