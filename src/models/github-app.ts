@@ -68,11 +68,32 @@ export function decideWorkflowGate(
   gateId: string,
   decision: WorkflowGateDecision,
   comment: string | null,
+  totpCode?: string | null,
 ): Promise<{ gate: PublicWorkflowGate }> {
+  const payload: { decision: WorkflowGateDecision; comment?: string; totpCode?: string } = {
+    decision,
+  };
+  if (comment) payload.comment = comment;
+  if (totpCode) payload.totpCode = totpCode;
   return apiJson<{ gate: PublicWorkflowGate }>(
     `/api/v1/github-app/workflow-gates/${encodeURIComponent(gateId)}/decision`,
-    comment ? { decision, comment } : { decision },
-  );
+    payload,
+  ).catch((err) => {
+    if (err instanceof ApiError && err.status === 401) {
+      if (err.code === "two_factor_required") {
+        throw new ApiError(
+          "Enter your authentication code to decide this gate.",
+          401,
+          err.detail,
+          err.code,
+        );
+      }
+      if (err.code === "two_factor_invalid") {
+        throw new ApiError("That authentication code is invalid.", 401, err.detail, err.code);
+      }
+    }
+    throw err;
+  });
 }
 
 export interface InstallationRepository {

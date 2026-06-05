@@ -11,6 +11,7 @@ import {
   requireActiveOrganization,
   requireActiveOrganizationContext,
 } from "../lib/active-organization";
+import { userHasTwoFactor, verifyTotpStepUp } from "../lib/auth";
 import { roleCanManageIntegrations } from "../lib/roles";
 import { rateLimitResponse } from "../lib/http";
 import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
@@ -401,6 +402,7 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as Partial<{
     decision: string;
     comment: string;
+    totpCode: string;
   }>;
   if (!GATE_DECISION_SET.has(body.decision as GateDecision)) {
     return c.json({ error: "decision must be 'approved' or 'rejected'" }, 400);
@@ -440,6 +442,40 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     }
   }
 
+  // 2FA step-up. Releasing or blocking a held deployment is a high-trust action
+  // — approval immediately releases the GitHub job and publishing proceeds via
+  // Trusted Publishing/OIDC, which can't be reversed. So a maintainer who has
+  // enrolled in two-factor auth must prove a *fresh* second factor here; an
+  // existing session is not enough. Members without 2FA decide as before. (The
+  // staged-publish decision in scans.ts is an audit record only — it never
+  // publishes or cancels anything — and deliberately never requires this.)
+  let twoFactorVerified = false;
+  if (await userHasTwoFactor(db, session.userId)) {
+    try {
+      await enforceRateLimit(db, {
+        key: `github-app:gate-decision-2fa:${session.userId}`,
+        limit: 10,
+        windowMs: 15 * 60 * 1000,
+      });
+    } catch (err) {
+      if (err instanceof RateLimitError) {
+        return rateLimitResponse(c, "too many two-factor attempts", err);
+      }
+      throw err;
+    }
+    const totpCode = typeof body.totpCode === "string" ? body.totpCode.trim() : "";
+    if (!totpCode) {
+      return c.json(
+        { error: "two-factor verification required", code: "two_factor_required" },
+        401,
+      );
+    }
+    if (!(await verifyTotpStepUp(c.get("auth"), c.req.raw, totpCode))) {
+      return c.json({ error: "invalid two-factor code", code: "two_factor_invalid" }, 401);
+    }
+    twoFactorVerified = true;
+  }
+
   const reportUrl = buildReportUrl(c.env, existing.scanId);
   const decided = await markGateDecided(db, {
     gateId,
@@ -477,7 +513,13 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
       scanId: decided.scanId,
       type:
         decision === "approved" ? "github_workflow_gate.approved" : "github_workflow_gate.rejected",
-      metadata: { gateId, decidedBy: "human", reportUrl },
+      metadata: {
+        gateId,
+        decidedBy: "human",
+        reportUrl,
+        twoFactor: twoFactorVerified,
+        twoFactorMethod: twoFactorVerified ? "totp" : null,
+      },
     });
   } catch (err) {
     emitOperationalEvent("warn", "github_workflow_gate.decision_bookkeeping_failed", {

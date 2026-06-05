@@ -149,8 +149,8 @@ organization (`x-organization-id` header to scope writes).
   controls. Returns the public gate shape (no `deployment_callback_url`); 404
   when the scan is not a gate review or belongs to another org.
 - `POST /workflow-gates/:gateId/decision` — records a maintainer's
-  `{ decision: "approved" | "rejected", comment? }` and releases/blocks the held
-  GitHub job. `markGateDecided` is the single CAS out of `pending`, so a
+  `{ decision: "approved" | "rejected", comment?, totpCode? }` and releases/blocks
+  the held GitHub job. `markGateDecided` is the single CAS out of `pending`, so a
   double-submit (or a race with the fail-closed artifact reject) returns 409.
   Approval requires the gate to be linked to a completed `workflow_gate` scan;
   rejection is allowed without one so maintainers can still fail closed.
@@ -160,6 +160,21 @@ organization (`x-organization-id` header to scope writes).
   also mirrored onto the underlying scan as `publish` for approved gates or
   `no_publish` for rejected gates when that write succeeds. Rate-limited to
   60/min per org.
+  - **2FA step-up (issue #162):** releasing or blocking a held deployment is
+    irreversible (approval immediately releases the job and publishing proceeds
+    over Trusted Publishing/OIDC), so when the deciding maintainer has two-factor
+    auth enabled they must include a **fresh** `totpCode` from their authenticator
+    app. A missing code returns `401 { code: "two_factor_required" }` and a wrong
+    code `401 { code: "two_factor_invalid" }`; both leave the gate `pending` and
+    never post to GitHub. The code is verified against the request's own session
+    via Better Auth's `verifyTOTP` (`server/lib/auth.ts`), so a stale session is
+    not enough. Step-up attempts are rate-limited to 10 per 15 min per user, and
+    the verified method is recorded on the `github_workflow_gate.approved` /
+    `.rejected` scan event (`twoFactor`, `twoFactorMethod`). Maintainers without
+    2FA decide as before. This requirement is specific to the **approval gate**;
+    the staged-publish decision (`POST /api/v1/scans/:id/decision`) is an audit
+    record only — it never publishes or cancels anything — and deliberately does
+    not require a step-up.
 
 `POST /release-targets` enforces every validation listed in issue #114:
 

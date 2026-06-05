@@ -190,8 +190,12 @@ export default function ScanDetailPage() {
     }
   };
 
-  const handleGateDecision = async (decision: WorkflowGateDecision, comment: string | null) => {
-    await model.decideGate(decision, comment);
+  const handleGateDecision = async (
+    decision: WorkflowGateDecision,
+    comment: string | null,
+    totpCode: string | null,
+  ) => {
+    await model.decideGate(decision, comment, totpCode);
     if (model.gateDecisionStatus.peek() === "idle") {
       gateDialogOpen.value = false;
     }
@@ -388,16 +392,24 @@ function GateDialogHost({
   statusSignal,
   errorSignal,
   ...props
-}: Omit<ComponentProps<typeof GateDecisionDialog>, "open" | "status" | "error"> & {
+}: Omit<
+  ComponentProps<typeof GateDecisionDialog>,
+  "open" | "status" | "error" | "requireTwoFactor"
+> & {
   openSignal: ReadonlySignal<boolean>;
   statusSignal: ReadonlySignal<DecisionStatus>;
   errorSignal: ReadonlySignal<string | null>;
 }) {
+  // Read the session here so a step-up prompt only appears for members who
+  // enrolled in 2FA. Reading it inside the host keeps the subscription off the
+  // page body (which renders the per-finding risk list).
+  const requireTwoFactor = Boolean(sessionModel.session.value?.user.twoFactorEnabled);
   return (
     <GateDecisionDialog
       open={openSignal.value}
       status={statusSignal.value}
       error={errorSignal.value}
+      requireTwoFactor={requireTwoFactor}
       {...props}
     />
   );
