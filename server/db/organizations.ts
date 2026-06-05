@@ -50,7 +50,7 @@ export async function ensurePersonalOrganization(db: AppDb, session: WorkspaceSe
 
 export async function getUserContact(db: AppDb, userId: string) {
   const [row] = await db
-    .select({ id: user.id, email: user.email, name: user.name })
+    .select({ id: user.id, email: user.email, emailVerified: user.emailVerified, name: user.name })
     .from(user)
     .where(eq(user.id, userId))
     .limit(1);

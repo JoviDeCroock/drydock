@@ -90,14 +90,16 @@ The raw token exists only in the invite email and the accept request; it is
 3. **Accept** (`POST /invitations/accept`, authenticated invitee): this route is
    deliberately **not** scoped by the `x-organization-id` header — an invitee is
    not a member yet, so the org is determined solely by the token (matched by
-   hash). The caller's account email must equal the invited address, so a leaked
-   link cannot enroll a third party. The transition out of `pending` is a
-   compare-and-swap (`markInvitationAccepted`), so concurrent accepts race and
-   only one wins. On success it adds the member, records
+   hash). The caller's account email must equal the invited address **and** the
+   account's `emailVerified` flag must be true, so a leaked link cannot be
+   redeemed by registering an unverified account with the invitee's address. The
+   transition out of `pending` is a compare-and-swap (`markInvitationAccepted`),
+   so concurrent accepts race and only one wins. On success it adds the member, records
    `organization.member_joined`, and returns `{ organizationId, role }`.
 
 Accept failure codes: `404` unknown token, `409` already used/revoked (or lost
-the CAS race), `410` expired, `403` the caller's email does not match the invite.
+the CAS race), `410` expired, `403` the caller's email does not match the invite
+or has not been verified.
 
 ### Front end
 
@@ -125,5 +127,5 @@ All recorded via `recordScanEvent` into `scan_events`:
 
 `test/workers/organization-members-routes.test.ts` covers invite creation,
 token-never-leaked, role enforcement (member 403, admin allowed), accept →
-membership, leaked-link rejection, expiry, revoke-then-accept, owner-removal
-guard, and roster ordering.
+membership, leaked-link rejection, unverified-email rejection, expiry,
+revoke-then-accept, owner-removal guard, and roster ordering.
