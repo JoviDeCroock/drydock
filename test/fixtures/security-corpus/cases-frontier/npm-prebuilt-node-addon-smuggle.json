@@ -1,0 +1,52 @@
+{
+  "id": "npm-prebuilt-node-addon-smuggle",
+  "title": "Malicious logic ships inside a require()-loaded prebuilt .node addon",
+  "ecosystem": "npm",
+  "verdict": "malicious",
+  "threatClass": "native-artifact-smuggle",
+  "source": "real-sanitized",
+  "provenance": "Sanitized composite of prebuilt-binary droppers catalogued in OpenSSF malicious-packages: the package entrypoint is a thin loader that require()s a compiled .node addon, so the malicious behavior lives in opaque native bytes the source scanner cannot read. Defanged: the addon is an inert placeholder blob.",
+  "intent": "Models native-artifact smuggling: the loader JS is innocuous and all logic is hidden in a native addon. Drydock cannot read the binary, but the native-artifact rule still flags the .node file at high — this case proves the vector is caught even though the payload itself is unanalyzable. Safe: the .node file is an inert placeholder.",
+  "expectMinRisk": "high",
+  "expectAnyRule": [],
+  "previousPackageJson": { "name": "fast-hash-native", "version": "1.2.0", "main": "index.js" },
+  "stagedPackageJson": { "name": "fast-hash-native", "version": "1.3.0", "main": "index.js" },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 64,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"fast-hash-native\",\"version\":\"1.2.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 42,
+      "sha256": "index-js-prev",
+      "flags": [],
+      "textSample": "module.exports = require('./build/Release/hash');\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 64,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"fast-hash-native\",\"version\":\"1.3.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 52,
+      "sha256": "index-js-staged",
+      "flags": [],
+      "textSample": "// Load the prebuilt native addon; all logic lives in the compiled binary.\nmodule.exports = require('./prebuilds/linux-x64/addon.node');\n"
+    },
+    {
+      "path": "prebuilds/linux-x64/addon.node",
+      "size": 248320,
+      "sha256": "addon-node",
+      "flags": ["binary"]
+    }
+  ]
+}

