@@ -26,8 +26,7 @@
     "e2e:registry": "node test/e2e/fake-registry.mjs",
     "e2e:dev": "node test/e2e/dev-server.mjs",
     "test:e2e": "playwright test",
-    "verify": "node scripts/verify.mjs",
-    "prepare": "git config core.hooksPath .githooks"
+    "verify": "node scripts/verify.mjs"
   },
   "dependencies": {
     "@preact/signals": "^2.7.0",

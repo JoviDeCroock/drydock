@@ -29,11 +29,9 @@ can express. See [`release-safety.md`](./release-safety.md) for the expected
 Worker-route, sandbox invariant, fake-registry e2e, security-corpus, and
 observability coverage by change type.
 
-## Pre-commit hook
+## Pre-commit verification
 
-`pnpm install` runs a `prepare` script that points `git config core.hooksPath` at `.githooks/`. The `.githooks/pre-commit` script then runs `pnpm run verify`, so every commit on this repo must pass lint + format + typecheck + tests. CI (`.github/workflows/ci.yml`) runs the same core checks and then installs Chromium and runs `pnpm run test:e2e`.
-
-If a commit must skip the hook, pass `git commit --no-verify` — only do that when the gate is broken for reasons unrelated to your change.
+Run `pnpm run verify` before every commit, so each commit passes lint + format + typecheck + tests. There is no git hook enforcing this — it is run explicitly. CI (`.github/workflows/ci.yml`) runs the same core checks and then installs Chromium and runs `pnpm run test:e2e`.
 
 ## Banned hooks
 
