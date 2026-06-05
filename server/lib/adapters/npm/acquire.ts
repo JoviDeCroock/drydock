@@ -44,9 +44,16 @@ export async function acquireStagedNpm(
   };
 }
 
+/**
+ * Resolve + fetch the currently-published npm version to diff against. Shared by
+ * the staged-publish adapter and the workflow-gate adapter: both select the
+ * baseline through the organization's npm connection (so private packages
+ * resolve) and parse it in the credentials-free sandbox. Only the download
+ * limits are read here, so the gate adapter passes its limits without a stageId.
+ */
 export async function acquireBaselineNpm(
   _ctx: AdapterContext,
-  input: NpmAdapterInput,
+  input: { maxFiles?: number; maxBytesPerFile?: number },
   broker: NpmBroker,
   staged: { artifact: AcquiredArtifact; details: StagedDetails },
 ): Promise<{ artifact: AcquiredArtifact | null; baseline: BaselineInfo }> {

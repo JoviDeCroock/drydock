@@ -144,11 +144,13 @@ function EcosystemSelector({ githubApp }: { githubApp: GithubApp }) {
       >
         <option value="auto">Auto-detect from artifacts</option>
         <option value="pypi">PyPI</option>
+        <option value="npm">npm</option>
       </Select>
       <Muted class="text-[12px] mt-1.5">
-        Auto-detect derives each package's ecosystem from the uploaded artifacts — the right choice
-        for a monorepo publishing several packages from one workflow. Pin an ecosystem only when the
-        release always publishes that one kind.
+        Auto-detect derives each package's ecosystem from the uploaded artifacts (npm by its
+        package.json, PyPI by its wheel/sdist) — the right choice for a monorepo publishing several
+        packages from one workflow. Pin an ecosystem only when the release always publishes that one
+        kind.
       </Muted>
     </Field>
   );
