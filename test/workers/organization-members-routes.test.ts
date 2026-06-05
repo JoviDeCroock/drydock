@@ -23,7 +23,7 @@ interface SeededUser {
   personalOrganizationId: string;
 }
 
-async function seedUser(): Promise<SeededUser> {
+async function seedUser(options: { emailVerified?: boolean } = {}): Promise<SeededUser> {
   const db = createDb(env.DB);
   const now = new Date();
   const userId = `user_${crypto.randomUUID()}`;
@@ -32,7 +32,7 @@ async function seedUser(): Promise<SeededUser> {
     id: userId,
     name: "Tester",
     email,
-    emailVerified: true,
+    emailVerified: options.emailVerified ?? true,
     createdAt: now,
     updatedAt: now,
   });
@@ -230,6 +230,32 @@ describe("organization member routes", () => {
 
     const db = createDb(env.DB);
     expect(await getOrganizationRole(db, organizationId, stranger.userId)).toBeNull();
+  });
+
+  test("an unverified account cannot accept an invitation for its email", async () => {
+    const owner = await seedUser();
+    const invitee = await seedUser({ emailVerified: false });
+    const organizationId = await createOrganization(owner, "verify-first");
+    const { token } = await seedInvitation({
+      owner,
+      organizationId,
+      email: invitee.email,
+      role: "admin",
+    });
+
+    const accept = await call(
+      buildTestApp(invitee),
+      "POST",
+      "/api/v1/organizations/invitations/accept",
+      { body: { token } },
+    );
+    expect(accept.status).toBe(403);
+    await expect(accept.json()).resolves.toEqual({
+      error: "verify your email address before accepting this invitation",
+    });
+
+    const db = createDb(env.DB);
+    expect(await getOrganizationRole(db, organizationId, invitee.userId)).toBeNull();
   });
 
   test("an expired invitation cannot be accepted", async () => {

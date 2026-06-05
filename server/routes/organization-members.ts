@@ -158,8 +158,9 @@ organizationMembersRoutes.delete("/invitations/:invitationId", async (c) => {
 
 // The accept path is deliberately NOT scoped by the active-organization header:
 // an invitee is not a member yet, so the invitation token alone determines which
-// org they join. The token is matched by hash and the caller's account email
-// must equal the invited address, so a leaked link cannot enroll a third party.
+// org they join. The token is matched by hash and the caller must have verified
+// ownership of the invited email address, so a leaked link cannot enroll a third
+// party.
 organizationMembersRoutes.post("/invitations/accept", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { token?: unknown };
   const token = typeof body.token === "string" ? body.token.trim() : "";
@@ -180,6 +181,9 @@ organizationMembersRoutes.post("/invitations/accept", async (c) => {
   const contact = await getUserContact(db, session.userId);
   if (!contact?.email || normalizeEmail(contact.email) !== invitation.email) {
     return c.json({ error: "this invitation was sent to a different email address" }, 403);
+  }
+  if (!contact.emailVerified) {
+    return c.json({ error: "verify your email address before accepting this invitation" }, 403);
   }
 
   const accepted = await markInvitationAccepted(db, {
