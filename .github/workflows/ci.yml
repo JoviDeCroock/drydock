@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   check:
-    name: lint · format · typecheck · test · e2e
+    name: lint · format · typecheck · test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,17 +31,57 @@ jobs:
       - name: Lint
         run: pnpm run lint
 
+      # Keep running the remaining checks even if an earlier one fails so a single
+      # CI run surfaces every failure (mirrors `pnpm run verify`). `!cancelled()`
+      # still lets concurrency cancellation skip them.
       - name: Format check
+        if: ${{ !cancelled() }}
         run: pnpm run format:check
 
       - name: Typecheck
+        if: ${{ !cancelled() }}
         run: pnpm run typecheck
 
       - name: Test
+        if: ${{ !cancelled() }}
         run: pnpm run test
 
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
+
       - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm exec playwright install --with-deps chromium
+
+      - name: Install Playwright system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
 
       - name: E2E test
         run: E2E_APP_PORT=5200 E2E_REGISTRY_PORT=5201 pnpm run test:e2e
