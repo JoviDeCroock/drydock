@@ -50,9 +50,10 @@ describe("operational observability helpers", () => {
     }
   });
 
-  test("describes errors without carrying raw messages", () => {
+  test("describes errors with sanitizable messages", () => {
     expect(describeOperationalError(new Error("D1_ERROR: column not found"))).toEqual({
       name: "Error",
+      message: "D1_ERROR: column not found",
     });
   });
 });

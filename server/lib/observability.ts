@@ -30,12 +30,13 @@ export function emitOperationalEvent(
 
 export function describeOperationalError(err: unknown) {
   if (err instanceof Error) {
-    return { name: err.name };
+    return { name: err.name, message: err.message };
   }
   if (err && typeof err === "object") {
     const value = err as Record<string, unknown>;
     return {
       name: typeof value.name === "string" ? value.name : "UnknownError",
+      message: typeof value.message === "string" ? value.message : undefined,
     };
   }
   return { name: typeof err };
