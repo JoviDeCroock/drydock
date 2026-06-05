@@ -2,7 +2,7 @@
 
 Order-of-magnitude estimates for running Drydock on Cloudflare. Numbers are based on Cloudflare's published rates for the Workers Paid plan and assume a typical scan profile (≤2,500 files, ≤128 KB per eligible file textSample). Low-value generated artifacts such as source maps, TypeScript declaration files, and minified bundles keep metadata/hashes but skip persisted text samples. Treat this as a sanity check, not a quote.
 
-> **AI review is Flagship-gated and off by default**. The Workers-AI lines below describe what scans cost for organizations where the per-organization `ai-review` flag is enabled; until then, the dominant per-scan cost is the sandbox + D1 path. The cost-model scenarios already reflect AI as the dominant variable cost for the paid-tier rollout.
+> **AI review runs only on the gated-target surface and is Flagship-gated, off by default**. The staged-publish hot path is deterministic-only and never incurs Workers-AI cost or latency. The Workers-AI lines below describe what _gated-target_ scans cost for organizations where the per-organization `ai-review` flag is enabled; until then, the dominant per-scan cost is the sandbox + D1 path. The cost-model scenarios already reflect AI as the dominant variable cost for the paid-tier rollout.
 
 ## Per-scan cost components
 
@@ -56,9 +56,9 @@ Workers AI is ~90% of the variable cost at every scale above the smallest tier.
 - **KV storage**: trivial. The added `COMPARE_CACHE` is essentially free across any realistic catalog of cached versions; it primarily saves sandbox CPU and tarball egress.
 - **Sandbox compute**: bounded per scan (2 Dynamic Workers, ~3s CPU each). The KV cache means alternate-version diffs in the detail page no longer linearly multiply this cost.
 
-## AI model strategy (Flagship-gated, planned paid tier)
+## AI model strategy (gated-target surface, Flagship-gated, planned paid tier)
 
-AI review is wired into the pipeline through `maybeRunAiReview`, but the per-organization Flagship `ai-review` flag is off by default. This section documents the design used when that paid-tier flag is enabled. The module — `server/lib/ai-review.ts` — remains active behind the gate and returns an `unavailable` review when the flag is off.
+AI review is wired into the pipeline through `maybeRunAiReview`, but it runs only on the gated-target surface (`runScanPipeline`'s `surface` argument) and even there the per-organization Flagship `ai-review` flag is off by default. The staged-publish hot path never reaches the reviewer. This section documents the design used when a gated-target scan runs with that paid-tier flag enabled. The module — `server/lib/ai-review.ts` — remains active behind the gate and returns an `unavailable` review when the surface is staged-publish or the flag is off.
 
 The scanner's actual security boundary is deterministic analysis plus human npm approval; AI is advisory triage. The intended production posture, implemented in [`server/lib/ai-review.ts`](../server/lib/ai-review.ts), is:
 

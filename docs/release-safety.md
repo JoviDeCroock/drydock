@@ -37,6 +37,9 @@ for the lifecycle behavior behind it.
   archives, excessive files, and excessive expanded size.
 - Deterministic findings are authoritative while AI review is unavailable, and AI
   cannot downgrade deterministic findings when the Flagship gate enables it.
+- AI review runs only on the gated-target surface (`runScanPipeline`'s `surface`
+  argument); the staged-publish hot path is deterministic-only and never reaches
+  the reviewer, regardless of the Flagship flag.
 
 ## Operational observability
 
@@ -49,7 +52,8 @@ Current structured events cover:
 
 - `scan.pipeline.completed` / `scan.pipeline.failed` with adapter, duration,
   file counts, finding count, and risk.
-- `scan.ai_review.completed` / `scan.ai_review.failed` when AI review is enabled.
+- `scan.ai_review.completed` / `scan.ai_review.failed` when AI review is enabled
+  (gated-target surface only).
 - `scan.job.completed`, `scan.job.failed`, `scan.job.retryable_failed`, and
   `scan.job.skipped` with scan ID, organization ID, source, attempt, duration,
   and safe error code.

@@ -264,7 +264,9 @@ export async function executeWorkflowGateJob(
   let result;
   try {
     result = await runScanPipeline(
-      { env, executionCtx, db, session: { userId: ownerUserId } },
+      // Gated-target path: a gate, not the publish, so it may run the additive
+      // AI/AST semantic reviewer (still behind the `ai-review` Flagship flag).
+      { env, executionCtx, db, session: { userId: ownerUserId }, surface: "gated-target" },
       prepared.adapter.packageAdapter,
       {
         scanId,

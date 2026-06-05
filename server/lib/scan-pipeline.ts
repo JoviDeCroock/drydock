@@ -28,11 +28,29 @@ export interface ScanPipelineOptions extends ScanInput {
   [key: string]: unknown;
 }
 
+/**
+ * Which product surface invoked this pipeline run.
+ *
+ * - `staged-publish` is the deterministic-only hot path users drive with their
+ *   own npm CLI/UI. It must never run AI review — no AI cost, no added latency —
+ *   so the publish stays fast.
+ * - `gated-target` is the GitHub deployment-protection workflow gate (PyPI
+ *   today, npm planned). It is a gate, not the publish, so it may run the
+ *   additive AI/AST semantic reviewer (still behind the per-organization
+ *   `ai-review` Flagship flag).
+ *
+ * See `docs/architecture.md` (Workers AI) and the staged-vs-gated detection
+ * split. AI review only ever runs on `gated-target`.
+ */
+export type ScanSurface = "staged-publish" | "gated-target";
+
 export interface ScanPipelineContext {
   env: Cloudflare.Env;
   executionCtx: ExecutionContext;
   db: AppDb;
   session: WorkspaceSession;
+  /** Product surface driving this run; decides whether AI review may run. */
+  surface: ScanSurface;
 }
 
 export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
@@ -40,7 +58,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
   adapter: PackageAdapter<TInput, TBroker>,
   input: ScanPipelineOptions,
 ): Promise<ScanResult> {
-  const { env, executionCtx, db, session } = context;
+  const { env, executionCtx, db, session, surface } = context;
   const adapterCtx: AdapterContext = { env, executionCtx, db, session };
   const adapterInput = adapter.parseInput(input);
   const connectionRef: AdapterConnectionRef = { organizationId: input.organizationId };
@@ -59,6 +77,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
     };
     const aiFindings = await maybeRunAiReview({
       env,
+      surface,
       identity,
       ecosystem: adapter.id,
       previousVersionAvailable: resolved.baseline.artifact !== null,
@@ -109,6 +128,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
 
 interface AiReviewArgs {
   env: Cloudflare.Env;
+  surface: ScanSurface;
   identity: PipelineIdentity;
   ecosystem: string;
   previousVersionAvailable: boolean;
@@ -117,25 +137,34 @@ interface AiReviewArgs {
 }
 
 async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
-  // AI review is gated by the Cloudflare Flagship `ai-review` flag in the
-  // `drydock` app, evaluated per-organization. Default-off until Flagship
-  // returns true for the organization placing the scan.
-  const disabled: AiReview = {
+  const disabled = (summary: string): AiReview => ({
     status: "unavailable",
     risk: "low",
     releaseAssessment: "not_assessed",
-    summary: "AI review is disabled.",
+    summary,
     findings: [],
     requiresManualReview: false,
     model: null,
-  };
+  });
+
+  // The staged-publish hot path is deterministic-only by product decision: no
+  // AI cost or latency so users can keep publishing with their own npm CLI/UI.
+  // AI review only runs on the gated-target path, regardless of the Flagship
+  // flag. See `ScanSurface` and docs/architecture.md (Workers AI).
+  if (args.surface !== "gated-target") {
+    return disabled("AI review does not run on the staged-publish path.");
+  }
+
+  // On the gated-target path AI review is additionally gated by the Cloudflare
+  // Flagship `ai-review` flag in the `drydock` app, evaluated per-organization.
+  // Default-off until Flagship returns true for the organization being scanned.
   const aiReviewEnabled = args.env.FLAGS
     ? await args.env.FLAGS.getBooleanValue("ai-review", false, {
         targetingKey: args.identity.organizationId,
         organizationId: args.identity.organizationId,
       })
     : false;
-  if (!aiReviewEnabled) return disabled;
+  if (!aiReviewEnabled) return disabled("AI review is disabled.");
 
   const startedAtMs = Date.now();
   try {

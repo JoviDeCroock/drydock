@@ -10,7 +10,7 @@ This roadmap tracks remaining product slices. Closed implementation history is i
 - npm uses registry-stage mode: Drydock reviews npm-staged bytes, then the maintainer approves in npm.
 - PyPI uses workflow-gate mode: GitHub Environment protection blocks the trusted-publishing job while Drydock reviews built artifacts.
 - Per-organization npm credentials are required for npm evidence retrieval; no deployment-wide production npm token.
-- AI review is wired but default-off behind the per-organization Flagship `ai-review` flag. Deterministic findings remain authoritative.
+- AI review is wired but runs only on the gated-target surface (workflow-gate mode) and is default-off behind the per-organization Flagship `ai-review` flag. The staged-publish hot path stays deterministic-only. Deterministic findings remain authoritative.
 - Raw tarballs are not retained by default.
 - Signed/public reports are prepared for but not launched yet.
 

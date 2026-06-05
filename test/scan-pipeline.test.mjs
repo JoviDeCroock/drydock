@@ -129,11 +129,15 @@ describe("scan pipeline baseline selection", () => {
     aiReviewMock.runSelectiveAiReview.mockReset();
   });
 
+  // Default surface for these tests is the staged-publish hot path, which is
+  // deterministic-only and never runs AI review. Gated-target tests build their
+  // own context.
   const baseContext = {
     env: { NPM_REGISTRY: "https://registry.npmjs.org", DB: {} },
     executionCtx: {},
     db: {},
     session: { userId: "user_1" },
+    surface: "staged-publish",
   };
 
   test("refuses to decrypt a rotated unvalidated npm connection", async () => {
@@ -252,10 +256,11 @@ describe("scan pipeline baseline selection", () => {
     });
   });
 
-  test("persists deterministic results when enabled AI review fails", async () => {
+  test("persists deterministic results when enabled gated-target AI review fails", async () => {
     aiReviewMock.runSelectiveAiReview.mockRejectedValue(new Error("workers ai unavailable"));
     const context = {
       ...baseContext,
+      surface: "gated-target",
       env: {
         ...baseContext.env,
         FLAGS: {
@@ -277,6 +282,90 @@ describe("scan pipeline baseline selection", () => {
     });
     expect(result.risk).toBe("low");
     expect(dbMock.persistScan).toHaveBeenCalled();
+  });
+
+  test("never runs AI review on the staged-publish path even when the flag is on", async () => {
+    aiReviewMock.runSelectiveAiReview.mockResolvedValue({
+      review: {
+        status: "complete",
+        risk: "critical",
+        releaseAssessment: "blocked",
+        summary: "should not be reached",
+        findings: [],
+        requiresManualReview: true,
+        model: "test-model",
+      },
+      usage: null,
+    });
+    const getBooleanValue = vi.fn(async () => true);
+    const context = {
+      ...baseContext,
+      surface: "staged-publish",
+      env: { ...baseContext.env, FLAGS: { getBooleanValue } },
+    };
+
+    const result = await runScanPipeline(context, npmAdapter, {
+      scanId: "scan_staged_no_ai",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
+
+    // The staged-publish path short-circuits before consulting the flag or the
+    // reviewer: no AI cost, no added latency.
+    expect(getBooleanValue).not.toHaveBeenCalled();
+    expect(aiReviewMock.runSelectiveAiReview).not.toHaveBeenCalled();
+    expect(result.aiFindings).toMatchObject({
+      status: "unavailable",
+      summary: "AI review does not run on the staged-publish path.",
+      findings: [],
+    });
+  });
+
+  test("runs gated-target AI review and merges its additive findings", async () => {
+    aiReviewMock.runSelectiveAiReview.mockResolvedValue({
+      review: {
+        status: "complete",
+        risk: "high",
+        releaseAssessment: "suspicious",
+        summary: "Assembled require + network exfil pattern.",
+        findings: [
+          {
+            severity: "high",
+            file: "index.js",
+            evidence: "globalThis['req'+'uire']('child_process')",
+            reason: "Runtime-assembled require evades static rules.",
+            recommendation: "Reject and investigate the staged release.",
+          },
+        ],
+        requiresManualReview: true,
+        model: "test-model",
+      },
+      usage: null,
+    });
+    const getBooleanValue = vi.fn(async () => true);
+    const context = {
+      ...baseContext,
+      surface: "gated-target",
+      env: { ...baseContext.env, FLAGS: { getBooleanValue } },
+    };
+
+    const result = await runScanPipeline(context, npmAdapter, {
+      scanId: "scan_gated_ai",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
+
+    expect(getBooleanValue).toHaveBeenCalledWith(
+      "ai-review",
+      false,
+      expect.objectContaining({ organizationId: "org_1" }),
+    );
+    expect(aiReviewMock.runSelectiveAiReview).toHaveBeenCalledTimes(1);
+    expect(result.aiFindings).toMatchObject({
+      status: "complete",
+      releaseAssessment: "suspicious",
+      findings: [expect.objectContaining({ file: "index.js", severity: "high" })],
+    });
   });
 
   test("preserves diff-scoped deterministic findings from the npm adapter", async () => {

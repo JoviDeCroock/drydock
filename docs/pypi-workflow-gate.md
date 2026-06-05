@@ -576,8 +576,12 @@ and the consumer re-checks gate status, so a re-enqueue is safe.
 6. Create a scan job (`source: "workflow_gate"`, synthetic
    `stageId: "workflow-gate:<gateId>"`), claim the gate's `scanId` with a CAS
    against the scan link the worker observed, and run `runScanPipeline` with the
-   selected adapter's `packageAdapter` over the verified pipeline input. If
-   another delivery
+   selected adapter's `packageAdapter` over the verified pipeline input. The
+   gate runner passes `surface: "gated-target"`, so — unlike the staged-publish
+   hot path — this run may also invoke the additive AI/AST semantic reviewer
+   (`maybeRunAiReview`), still subject to the per-organization `ai-review`
+   Flagship flag; AI findings can raise risk or add context but never downgrade
+   deterministic findings. If another delivery
    already claimed the gate, the worker deletes its just-created pending scan
    and exits. A pipeline throw marks the linked scan failed, records
    `review_failed`, and leaves the gate pending; a later retry can replace that

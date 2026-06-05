@@ -111,13 +111,19 @@ export async function executeScanJob(
       }),
     ]);
 
-    const result = await runScanPipeline({ env, executionCtx, db, session }, npmAdapter, {
-      scanId: message.scanId,
-      stageId: message.stageId,
-      maxFiles: message.maxFiles,
-      maxBytesPerFile: message.maxBytesPerFile,
-      organizationId: message.organizationId,
-    });
+    // Staged-publish is deterministic-only: never run AI review here so the
+    // publish hot path stays fast. See `ScanSurface` in scan-pipeline.ts.
+    const result = await runScanPipeline(
+      { env, executionCtx, db, session, surface: "staged-publish" },
+      npmAdapter,
+      {
+        scanId: message.scanId,
+        stageId: message.stageId,
+        maxFiles: message.maxFiles,
+        maxBytesPerFile: message.maxBytesPerFile,
+        organizationId: message.organizationId,
+      },
+    );
     emitOperationalEvent("info", "scan.job.completed", {
       scanId: message.scanId,
       organizationId: message.organizationId,
