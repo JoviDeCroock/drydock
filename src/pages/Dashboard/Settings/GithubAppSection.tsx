@@ -50,20 +50,32 @@ export function GithubAppSection({
       }
     >
       <div class="p-5 flex flex-col gap-5">
-        <div class="flex flex-col gap-1.5 max-w-[760px]">
-          <Muted class="text-[13px] m-0">
-            Install the Drydock GitHub App on your organization so releases gated by a GitHub
-            Actions environment can be approved here. Drydock never asks for publish credentials —
-            your workflow keeps its own OIDC/Trusted Publishing trust and Drydock only acts as the
-            deployment-protection approver.
-          </Muted>
-          <MonoDetail
-            parts={[
-              <span key="ecosystem">workflow gate</span>,
-              <span key="oidc">no publish credentials</span>,
-              <span key="env">github environment required</span>,
-            ]}
-          />
+        {/* Pair the install action with the intro copy and anchor it to the card's
+            right edge — same axis as the header badge and section counts — so it
+            reads as this section's primary action instead of a stranded button. */}
+        <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+          <div class="flex flex-col gap-1.5 max-w-[600px]">
+            <Muted class="text-[13px] m-0">
+              Install the Drydock GitHub App on your organization so releases gated by a GitHub
+              Actions environment can be approved here. Drydock never asks for publish credentials —
+              your workflow keeps its own OIDC/Trusted Publishing trust and Drydock only acts as the
+              deployment-protection approver.
+            </Muted>
+            <MonoDetail
+              parts={[
+                <span key="ecosystem">workflow gate</span>,
+                <span key="oidc">no publish credentials</span>,
+                <span key="env">github environment required</span>,
+              ]}
+            />
+          </div>
+          <Button onClick={onInstall} disabled={!configured || busy} class="shrink-0 self-start">
+            {status === "starting"
+              ? "Redirecting…"
+              : installations.length
+                ? "Modify installation"
+                : "Install GitHub App"}
+          </Button>
         </div>
 
         {!configured ? (
@@ -84,16 +96,6 @@ export function GithubAppSection({
             <code class="font-mono text-[12px]">{lastLinked.installationId}</code>.
           </Alert>
         ) : null}
-
-        <div class="flex flex-wrap items-center gap-3">
-          <Button onClick={onInstall} disabled={!configured || busy}>
-            {status === "starting"
-              ? "Redirecting…"
-              : installations.length
-                ? "Modify installation"
-                : "Install GitHub App"}
-          </Button>
-        </div>
       </div>
 
       <div>
