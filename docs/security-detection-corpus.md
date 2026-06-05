@@ -105,7 +105,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.2.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.6.2`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.6.3`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -117,6 +117,8 @@ the same Python matcher must be used when annotating modified-file findings so r
 classification stays consistent for extensionless Python files. `1.6.2` excludes documentation from
 shared `code.*` capability findings, narrows JavaScript `fetch` matching to calls rather than class
 method declarations, and limits documentation secret-content matches to high-confidence token formats.
+`1.6.3` changes the visible risk roll-up so structural findings still floor risk by severity while
+`code.*` capability findings escalate by co-occurrence.
 `pypi.*` grew `startup-hook`,
 `record-mismatch`, and `unusual-dependency` in `0.2.0`, and
 `setup-install-command` was upgraded to fire on the top-level sdist `setup.py` install-time code, not
