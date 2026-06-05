@@ -97,16 +97,11 @@ export function buildReviewerSystemPrompt(ecosystem: string | undefined): string
 }
 
 export const MAX_AGENT_STEPS = 20;
-// Per-step output-token cap. The submit_review schema bounds (AI_REVIEW_BOUNDS)
-// are sized so a worst-case submission (all findings at full length plus the
-// summary) serializes to comfortably under this budget. A submission that
-// slightly overshoots a length bound is now clamped by clampAiReviewSubmission
-// (via experimental_repairToolCall) rather than discarded. The remaining
-// unrecoverable case is a submission truncated mid-JSON by this cap: the
-// arguments stop being parseable JSON, so there is nothing to clamp. That case
-// is left to fail safe — the loop retries and, if it still cannot submit, the
-// review degrades to `invalid`, which the risk layer escalates to manual
-// review. Keep this cap comfortably above the worst-case serialized size.
+// Per-step output-token cap, sized comfortably above a worst-case submission so
+// findings plus summary serialize without truncation. A slight overshoot is
+// clamped by clampAiReviewSubmission; only a submission truncated mid-JSON by
+// this cap is unrecoverable, and that degrades to `invalid` which the risk layer
+// escalates to manual review.
 export const MAX_REVIEW_OUTPUT_TOKENS = 8_000;
 export const MAX_CHANGED_FILE_MANIFEST = 300;
 export const MAX_TOOL_RESPONSE_CHARS = 16_000;
@@ -127,10 +122,8 @@ const releaseAssessmentSchema = z.enum([
   "blocked",
 ]);
 
-// Length/count bounds for a submitted review. Declared as named constants (not
-// inline `.max()` literals) so `clampAiReviewSubmission` can clamp to the exact
-// same limits the schema enforces. These bounds keep a worst-case submission
-// inside MAX_REVIEW_OUTPUT_TOKENS; see the comment on that constant.
+// Shared by the schema and `clampAiReviewSubmission` so both enforce the exact
+// same limits. Sized to keep a worst-case submission inside MAX_REVIEW_OUTPUT_TOKENS.
 export const AI_REVIEW_BOUNDS = {
   summary: 1_000,
   file: 300,
@@ -163,17 +156,11 @@ export const aiReviewSubmissionSchema = z
   })
   .strict();
 
-// Reviewers occasionally overshoot a prose/length bound by a handful of
-// characters while otherwise producing a complete, well-typed review. Strict
-// schema validation would reject the whole tool call, `execute` would never
-// run, and a genuinely high-risk review would silently degrade to an `invalid`
-// fallback that reads as low risk — a release could slip through that way. This
-// helper deterministically clamps the known string/array fields to their bounds
-// (no LLM round-trip) so a near-miss submission is normalized instead of
-// discarded. It only projects the known keys and clamps lengths; it never
-// invents enums or required fields, so a structurally broken submission still
-// fails validation and the model is asked to retry. Used by the
-// `experimental_repairToolCall` hook in ai-review.ts.
+// Clamp a near-miss submission to bounds instead of letting strict validation
+// reject the whole tool call (which would silently degrade a high-risk review to
+// a low-risk `invalid` fallback). Only projects known keys and clamps lengths —
+// never invents enums or required fields, so a structurally broken submission
+// still fails validation and the model is asked to retry.
 export function clampAiReviewSubmission(raw: unknown): unknown {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
   const value = raw as Record<string, unknown>;

@@ -83,19 +83,13 @@ export async function analyzeWithAi(
       system: buildReviewerSystemPrompt(options.ecosystem),
       messages: [{ role: "user", content: JSON.stringify(payload) }],
       tools,
-      // Stop only once a review is actually recorded — not merely when a
-      // submit_review tool call appears. An invalid submit_review (rejected by
-      // schema validation, so `execute` never fires) must NOT end the loop:
-      // that would terminate the review with nothing recorded. Leaving it
-      // running lets the model see the tool error and retry, bounded by the
-      // step budget.
+      // Stop on a recorded review, not on the mere presence of a submit_review
+      // call: an invalid one (rejected by validation, so `execute` never fires)
+      // must let the model see the tool error and retry instead of ending the loop.
       stopWhen: [() => submittedReview !== null, stepCountIs(MAX_AGENT_STEPS)],
-      // Deterministically repair a near-miss submission (e.g. a summary a few
-      // characters over the bound) by clamping it to the schema limits instead
-      // of discarding the whole review. No extra model round-trip: we clamp,
-      // re-validate, and only substitute the repaired call when it now passes.
-      // A submission we cannot make valid (unparseable/truncated JSON, bad
-      // enum, missing field) returns null, so the model is asked to retry.
+      // Clamp a near-miss submission to the schema limits rather than discarding
+      // the whole review. Substitute the repaired call only once it re-validates;
+      // anything we can't make valid returns null so the model retries.
       experimental_repairToolCall: async ({ toolCall }) => {
         if (toolCall.toolName !== "submit_review") return null;
         let parsed: unknown;

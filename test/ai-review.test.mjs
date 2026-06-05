@@ -240,9 +240,6 @@ describe("ai review orchestration", () => {
 
     expect(ai.status).toBe("invalid");
     expect(ai.releaseAssessment).toBe("not_assessed");
-    // A review that ran but could not complete must not read as clean. It
-    // contributes no findings, but the scan escalates to manual-review risk so
-    // a release cannot slip through by inducing the reviewer to fail.
     expect(computeScanRisk([], ai)).toBe("medium");
   });
 
@@ -272,19 +269,14 @@ describe("ai review orchestration", () => {
     expect(ai.status).toBe("unavailable");
     expect(ai.releaseAssessment).toBe("not_assessed");
     expect(ai.model).toBe("mock-reviewer");
-    // The review was attempted (model id present) but produced nothing usable,
-    // so the scan escalates rather than reading as low.
     expect(computeScanRisk([], ai)).toBe("medium");
     // No generateText result on the error path, so there is no usage to report.
     expect(usage).toBeNull();
   });
 
   test("a complete submission slightly over the summary bound is clamped, not discarded", async () => {
-    // Reproduces the reported failure: the model returns a complete, well-typed
-    // review whose summary is a few characters over the bound. Strict schema
-    // validation used to reject the whole tool call, dropping a critical
-    // finding and collapsing the scan to low risk. The repair hook now clamps
-    // the summary and keeps the review.
+    // Reproduces the reported failure: validation used to reject the whole call
+    // over a few-char overage, dropping a critical finding and collapsing to low.
     const overLongSummary = "x".repeat(1031);
     const { review: ai } = await analyzeWithAi(
       {},
@@ -307,9 +299,8 @@ describe("ai review orchestration", () => {
   });
 
   test("an invalid submit_review does not end the loop; the model retries and completes", async () => {
-    // First attempt is structurally broken (bad severity enum) so it cannot be
-    // repaired; the loop must keep going instead of stopping on the mere
-    // presence of a submit_review call. The second attempt is valid.
+    // First attempt has a bad severity enum (unrepairable); the loop must keep
+    // going instead of stopping on the call's presence. Second attempt is valid.
     let calls = 0;
     const retryingModel = mockModel(async () => {
       calls += 1;

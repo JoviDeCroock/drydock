@@ -20,13 +20,9 @@ export function computeScanRisk(ruleFindings: Finding[], aiReview: AiReview): Ri
   const ai = displayedAiResult(aiReview);
   const deterministicRisk = computeRisk(ruleFindings);
   if (ai?.kind !== "complete") {
-    // Fail safe, not safe-looking. An AI review that was attempted but did not
-    // complete (status invalid/unavailable while a model id is present) must
-    // not let a release read as clean: a release could otherwise slip through
-    // by inducing the reviewer to crash or emit an unparseable submission.
-    // Escalate to manual-review risk. A review that never ran — AI review
-    // disabled for the org, so `model` is null — stays neutral and contributes
-    // nothing, preserving the deterministic-only verdict.
+    // Fail safe: a review that was attempted but didn't complete (model id
+    // present) escalates to manual review so a release can't read as clean by
+    // crashing the reviewer. A disabled review (model null) stays neutral.
     if (ai?.kind === "unavailable" && ai.model != null) {
       return combineRisk(deterministicRisk, "medium");
     }
