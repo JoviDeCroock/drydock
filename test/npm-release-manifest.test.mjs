@@ -47,9 +47,24 @@ describe("npm release manifest", () => {
     ).toThrow(/ecosystem must be npm/);
   });
 
+  test("accepts a legacy uppercase package name", () => {
+    // npm enforces lowercase only for new names; legacy packages like JSONStream
+    // still publish, so the gate must not reject them at manifest synthesis.
+    expect(() =>
+      buildNpmReleaseManifest("JSONStream", "1.0.0", [{ path: "p.tgz", sha256: SHA }]),
+    ).not.toThrow();
+    expect(() =>
+      buildNpmReleaseManifest("@MyScope/Pkg", "1.0.0", [{ path: "p.tgz", sha256: SHA }]),
+    ).not.toThrow();
+  });
+
   test("rejects an invalid package name", () => {
     expect(() =>
       buildNpmReleaseManifest("Invalid Name", "1.0.0", [{ path: "p.tgz", sha256: SHA }]),
+    ).toThrow(/valid npm package name/);
+    // A name that smuggles a path separator or control character must still fail.
+    expect(() =>
+      buildNpmReleaseManifest("../evil", "1.0.0", [{ path: "p.tgz", sha256: SHA }]),
     ).toThrow(/valid npm package name/);
   });
 

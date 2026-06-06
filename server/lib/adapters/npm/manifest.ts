@@ -1,5 +1,3 @@
-import { isValidNpmPackageName } from "../../registry";
-
 /**
  * npm workflow-gate release manifest.
  *
@@ -18,6 +16,12 @@ export const NPM_RELEASE_MANIFEST_SCHEMA = "drydock.release-artifacts.v1";
 // npm versions are semver; keep the charset tight so a hostile version string
 // cannot smuggle path or control characters into report/UI surfaces.
 const SAFE_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
+// npm only enforces lowercase for *new* names; legacy packages (e.g. `JSONStream`)
+// keep uppercase names and still publish, so the registration-time validator
+// (`isValidNpmPackageName`) would fail their gate closed. Accept any name the
+// registry still serves while blocking the path/control characters that could
+// poison report/UI surfaces — the same concern the version charset guards against.
+const SAFE_PACKAGE_NAME_RE = /^(?:@[A-Za-z0-9][A-Za-z0-9._~-]*\/)?[A-Za-z0-9][A-Za-z0-9._~-]*$/;
 const SHA256_RE = /^[a-f0-9]{64}$/i;
 // A single npm package version is exactly one tarball; keep a small bound to
 // guard against a degenerate group somehow accumulating many artifacts.
@@ -59,7 +63,7 @@ export function parseNpmReleaseManifest(value: unknown): NpmReleaseManifest {
   if (value.ecosystem !== "npm") throw new Error("manifest ecosystem must be npm");
   const packageName = String(value.package || "");
   const version = String(value.version || "");
-  if (!isValidNpmPackageName(packageName)) {
+  if (!isSafeManifestPackageName(packageName)) {
     throw new Error("manifest package is not a valid npm package name");
   }
   if (!SAFE_VERSION_RE.test(version)) {
@@ -94,6 +98,10 @@ export function parseNpmReleaseManifest(value: unknown): NpmReleaseManifest {
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSafeManifestPackageName(name: string): boolean {
+  return name.length >= 1 && name.length <= 214 && SAFE_PACKAGE_NAME_RE.test(name);
 }
 
 function isSafeManifestPath(path: string): boolean {
