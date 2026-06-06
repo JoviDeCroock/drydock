@@ -2,7 +2,7 @@ import { isOutsidePackageFilesAllowlist } from "../review-package-files";
 import type { Finding } from "../review";
 import { containsSecretLikeText, firstSecretLine, tag } from "./helpers";
 import { changedPrefix, type RuleContext } from "./context";
-import { isDocumentationPath } from "./file-types";
+import { isDocumentationPath, isTypeDeclarationPath } from "./file-types";
 
 // Manifest integrity and secret-exposure rules: parse failures, secret-looking
 // files, files outside the declared allowlist, and credential files added to
@@ -30,10 +30,13 @@ export function metadataFindings(ctx: RuleContext): Finding[] {
     const prefix = changedPrefix(ctx, file.path);
     const changed = ctx.diffByPath.get(file.path)?.status;
     const secretOptions = { highConfidenceOnly: isDocumentationPath(file.path) };
+    // Type declarations keep a diffable sample but are excluded from content
+    // scanning (perf/memory); the cheap path-based checks below still apply.
+    const scanContent = !isTypeDeclarationPath(file.path);
 
     if (
       /\.npmrc|\.env|id_rsa|id_ed25519/i.test(file.path) ||
-      containsSecretLikeText(sample, secretOptions)
+      (scanContent && containsSecretLikeText(sample, secretOptions))
     ) {
       findings.push(
         tag("fileSecretContent", {
