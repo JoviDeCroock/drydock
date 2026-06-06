@@ -4,7 +4,7 @@ import type { Finding } from "../review";
 import { LIFECYCLE_SCRIPTS } from "./patterns";
 import { firstJsonPropertyLine, tag } from "./helpers";
 import { changedPrefix, type RuleContext } from "./context";
-import { isDocumentationPath } from "./file-types";
+import { isDocumentationPath, isTypeDeclarationPath } from "./file-types";
 import { normalizeCodeForScanning } from "./normalize";
 
 // Install lifecycle hooks and in-file code-execution capability: the scripts and
@@ -45,7 +45,7 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
   }
 
   for (const file of ctx.files) {
-    if (isDocumentationPath(file.path)) continue;
+    if (isDocumentationPath(file.path) || isTypeDeclarationPath(file.path)) continue;
 
     const sample = file.textSample || "";
     // Constant-fold runtime-assembled identifiers (`'chi'+'ld_process'`,

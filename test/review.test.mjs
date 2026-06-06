@@ -218,6 +218,36 @@ describe("review", () => {
     expect(findings.some((finding) => finding.ruleId === "file.secret-content")).toBe(false);
   });
 
+  test("excludes type declaration files from content scanning", () => {
+    // .d.ts files keep a diffable sample but must not drive deterministic
+    // findings: declaration syntax like `fetch(...)` is a type signature, and
+    // scanning large bundled declarations is pure perf/memory cost.
+    const staged = [
+      {
+        path: "dist/index.d.ts",
+        size: 200,
+        sha256: "decl",
+        flags: [],
+        textSample:
+          "export declare function run(): void;\n" +
+          "export declare const fetch: (url: string) => Promise<Response>;\n" +
+          "export declare const child_process: typeof import('child_process');\n" +
+          "export declare const token: 'npm_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';\n",
+      },
+      {
+        path: "dist/index.d.mts",
+        size: 80,
+        sha256: "decl-mts",
+        flags: [],
+        textSample: "export declare const exec: (cmd: string) => void;\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings.some((finding) => finding.ruleId?.startsWith("code."))).toBe(false);
+    expect(findings.some((finding) => finding.ruleId === "file.secret-content")).toBe(false);
+  });
+
   test("still flags high-confidence token leaks in documentation", () => {
     const staged = [
       {
