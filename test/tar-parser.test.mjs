@@ -215,11 +215,32 @@ describe("readTar regular files", () => {
     const byPath = Object.fromEntries(files.map((file) => [file.path, file]));
 
     expect(byPath["dist/index.js"].textSample).toBe("export const value = 1;\n");
-    for (const path of ["dist/index.js.map", "dist/index.d.ts", "dist/index.min.js"]) {
+    for (const path of ["dist/index.js.map", "dist/index.min.js"]) {
       expect(byPath[path].textSample).toBeUndefined();
       expect(byPath[path].sha256).toMatch(/^[0-9a-f]{64}$/);
       expect(byPath[path].size).toBeGreaterThan(0);
       expect(byPath[path].flags).toContain("text-sample-skipped");
+    }
+  });
+
+  test("keeps text samples for TypeScript declaration files", async () => {
+    // .d.ts files describe the public API surface and are first-class review
+    // material, so they must retain a diffable text sample.
+    const tar = buildTar([
+      { name: "package/dist/index.d.ts", body: "export declare const value: number;\n" },
+      { name: "package/dist/index.d.mts", body: "export declare const m: string;\n" },
+      { name: "package/dist/index.d.cts", body: "export declare const c: boolean;\n" },
+    ]);
+    const files = await parse(tar);
+    const byPath = Object.fromEntries(files.map((file) => [file.path, file]));
+
+    for (const [path, body] of [
+      ["dist/index.d.ts", "export declare const value: number;\n"],
+      ["dist/index.d.mts", "export declare const m: string;\n"],
+      ["dist/index.d.cts", "export declare const c: boolean;\n"],
+    ]) {
+      expect(byPath[path].textSample).toBe(body);
+      expect(byPath[path].flags).not.toContain("text-sample-skipped");
     }
   });
 });
