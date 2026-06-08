@@ -79,6 +79,61 @@ describe("review", () => {
     );
   });
 
+  test("escalates root gyp command substitution that executes package JavaScript", () => {
+    const previous = [
+      {
+        path: "package.json",
+        size: 42,
+        sha256: "prev-package-json",
+        flags: [],
+        textSample: JSON.stringify({ name: "pkg", version: "1.0.0" }),
+      },
+    ];
+    const staged = [
+      {
+        path: "package.json",
+        size: 42,
+        sha256: "staged-package-json",
+        flags: [],
+        textSample: JSON.stringify({ name: "pkg", version: "1.0.1" }),
+      },
+      {
+        path: "binding.gyp",
+        size: 157,
+        sha256: "binding-gyp",
+        flags: [],
+        textSample:
+          '{\n  "targets": [{\n    "target_name": "Setup",\n    "type": "none",\n    "sources": ["<!(node index.js > /dev/null 2>&1 && echo stub.c)"]\n  }]\n}\n',
+      },
+      {
+        path: "index.js",
+        size: 160,
+        sha256: "index-js",
+        flags: [],
+        textSample:
+          "eval(function rotate(payload) { return payload; }('defanged payload placeholder'));\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(previous, staged));
+
+    expect(computeRisk(findings)).toBe("critical");
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "install-script.implicit-node-gyp",
+          severity: "high",
+          file: "binding.gyp",
+        }),
+        expect.objectContaining({
+          ruleId: "install-script.gyp-command-substitution",
+          severity: "critical",
+          file: "binding.gyp",
+          line: 5,
+        }),
+      ]),
+    );
+  });
+
   test("does not apply Python capability patterns to JavaScript packages", () => {
     const staged = [
       {
