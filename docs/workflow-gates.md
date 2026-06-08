@@ -7,7 +7,7 @@ Workflow gates are a Drydock **product mode distinct from npm staged publishing*
 
 The gate pipeline is **ecosystem-neutral**: everything GitHub-shaped (App installation, webhook verification, artifact fetch, digest recomputation, decision callback, persistence, audit) is shared, and only an ecosystem's artifact semantics are pluggable behind a `WorkflowGateAdapter`. See [Multi-ecosystem workflow gates](#multi-ecosystem-workflow-gates) and [Adding a new ecosystem](#adding-a-new-ecosystem).
 
-**PyPI is the first — and currently only — workflow-gate ecosystem.** The rest of this document uses PyPI as the reference ecosystem: the GitHub plumbing it describes is shared by every future ecosystem (npm, VSIX, …), and only the wheel/sdist-specific parts are PyPI's adapter. For PyPI there is no `drydock-manifest.json` to write — the release set is whatever wheels/sdists the workflow uploads, and package identity is derived from the artifacts themselves.
+**PyPI and npm are the supported workflow-gate ecosystems.** The rest of this document uses PyPI as the reference ecosystem: the GitHub plumbing it describes is shared by every ecosystem (npm, VSIX, …), and only the artifact-specific parts live in each adapter. For PyPI there is no `drydock-manifest.json` to write — the release set is whatever wheels/sdists the workflow uploads, and package identity is derived from the artifacts themselves. npm workflow-gate specifics are documented separately in [`npm-workflow-gate.md`](./npm-workflow-gate.md).
 
 Official references:
 
@@ -304,16 +304,16 @@ the operator can retry once the underlying issue is fixed.
 - Signatures are required. There is no "trust the header" fallback.
 - Callback URLs are pinned to `api.github.com` and the deployment-protection
   path; spoofed URLs are rejected even when the signature is valid.
-- The decision API uses a fresh installation access token; no long-lived
-  PyPI credential ever touches Drydock.
+- The decision API uses a fresh installation access token; registry publish
+  credentials stay in the GitHub workflow and never touch Drydock.
 - `markGateDecided` is a CAS on the pending status, so a race between
   webhook retries and the review pipeline cannot double-approve.
 
 ### Trust boundary
 
-The mapping never holds PyPI credentials or OIDC tokens. The publish job on
-GitHub Actions exchanges its OIDC token with PyPI directly; Drydock only
-controls whether the deployment protection gate releases that job.
+The mapping never holds registry publish credentials or OIDC tokens. The publish
+job on GitHub Actions exchanges its own identity with the registry directly;
+Drydock only controls whether the deployment protection gate releases that job.
 
 ### Env bindings
 
@@ -552,10 +552,10 @@ therefore covers a **set** of packages, not just one:
 
 ## Multi-ecosystem workflow gates
 
-PyPI is the first workflow-gate ecosystem, not the only intended one. The gate
-pipeline is split so that everything GitHub-shaped is shared and only the
-ecosystem's artifact semantics are pluggable. Two distinct adapter layers are
-involved — do not conflate them:
+PyPI and npm are the first workflow-gate ecosystems. The gate pipeline is split
+so that everything GitHub-shaped is shared and only the ecosystem's artifact
+semantics are pluggable. Two distinct adapter layers are involved — do not
+conflate them:
 
 - **`WorkflowGateAdapter`** (`server/lib/workflow-gates/types.ts`) — gate-time
   artifact semantics: which uploaded files are reviewable, and how to derive the
