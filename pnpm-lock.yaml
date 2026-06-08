@@ -100,8 +100,6 @@ importers:
         specifier: ^4.85.0
         version: 4.93.0(@cloudflare/workers-types@4.20260520.1)
 
-  packages/experiments: {}
-
 packages:
 
   '@ai-sdk/gateway@3.0.120':
