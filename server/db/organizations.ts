@@ -15,6 +15,7 @@ import {
   scanFiles,
   scanFindings,
   scans,
+  twoFactor,
   user,
 } from "./schema";
 
@@ -208,6 +209,116 @@ export async function deleteOrganization(db: AppDb, organizationId: string): Pro
       .where(eq(organizationInvitations.organizationId, organizationId)),
     db.delete(organizationMembers).where(eq(organizationMembers.organizationId, organizationId)),
     db.delete(organizations).where(eq(organizations.id, organizationId)),
+  ]);
+}
+
+export interface CoOwnedOrganization {
+  id: string;
+  name: string;
+  otherMemberCount: number;
+}
+
+/**
+ * Non-personal organizations this user owns that still have *other* members.
+ * Account deletion is refused while any of these exist: silently removing the
+ * owner would either orphan the org or, if we cascaded, wipe other members'
+ * scans, npm token, and GitHub gates. The owner must hand these off or delete
+ * them first. The personal workspace is always sole-owned, so it never blocks.
+ */
+export async function findCoOwnedOrganizations(
+  db: AppDb,
+  userId: string,
+): Promise<CoOwnedOrganization[]> {
+  const personalId = personalOrganizationId(userId);
+  const owned = await db
+    .select({ id: organizations.id, name: organizations.name })
+    .from(organizations)
+    .where(eq(organizations.ownerUserId, userId));
+
+  const conflicts: CoOwnedOrganization[] = [];
+  for (const org of owned) {
+    if (org.id === personalId) continue;
+    const members = await db
+      .select({ userId: organizationMembers.userId })
+      .from(organizationMembers)
+      .where(eq(organizationMembers.organizationId, org.id));
+    const otherMemberCount = members.filter((member) => member.userId !== userId).length;
+    if (otherMemberCount > 0) conflicts.push({ id: org.id, name: org.name, otherMemberCount });
+  }
+  return conflicts;
+}
+
+/**
+ * Permanently delete everything Drydock owns for a user. Better Auth removes the
+ * `user`, `session`, and `account` rows itself once its `beforeDelete` hook (our
+ * caller) returns; this clears the rest. Because D1 does not enforce foreign
+ * keys, none of it cascades on its own — mirroring deleteOrganization, we delete
+ * by hand:
+ *   - every organization the user owns outright (the personal workspace, plus
+ *     any owned org that has no other members) via deleteOrganization, which
+ *     also clears their membership rows there;
+ *   - the user out of rows they created or decided on in organizations owned by
+ *     *others*, which survive. Those columns are ON DELETE SET NULL, so we null
+ *     them so a join to the now-deleted user can't dangle;
+ *   - the user's remaining memberships and their 2FA secret.
+ * Co-owned organizations (non-personal, with other members) must be rejected by
+ * findCoOwnedOrganizations before this runs; if one reaches here it is left
+ * intact rather than destroying another member's data.
+ */
+export async function deleteUserAccount(db: AppDb, userId: string): Promise<void> {
+  const personalId = personalOrganizationId(userId);
+  const owned = await db
+    .select({ id: organizations.id })
+    .from(organizations)
+    .where(eq(organizations.ownerUserId, userId));
+
+  for (const org of owned) {
+    if (org.id !== personalId) {
+      const others = (
+        await db
+          .select({ userId: organizationMembers.userId })
+          .from(organizationMembers)
+          .where(eq(organizationMembers.organizationId, org.id))
+      ).filter((member) => member.userId !== userId).length;
+      if (others > 0) continue; // co-owned: rejected upstream, never wiped here
+    }
+    await deleteOrganization(db, org.id);
+  }
+
+  await db.batch([
+    db.update(scans).set({ ownerUserId: null }).where(eq(scans.ownerUserId, userId)),
+    db.update(scans).set({ decidedByUserId: null }).where(eq(scans.decidedByUserId, userId)),
+    db.update(scanEvents).set({ actorUserId: null }).where(eq(scanEvents.actorUserId, userId)),
+    db
+      .update(npmConnections)
+      .set({ createdByUserId: null })
+      .where(eq(npmConnections.createdByUserId, userId)),
+    db
+      .update(organizationSlackConnections)
+      .set({ createdByUserId: null })
+      .where(eq(organizationSlackConnections.createdByUserId, userId)),
+    db
+      .update(githubAppInstallations)
+      .set({ createdByUserId: null })
+      .where(eq(githubAppInstallations.createdByUserId, userId)),
+    db
+      .update(githubReleaseTargets)
+      .set({ createdByUserId: null })
+      .where(eq(githubReleaseTargets.createdByUserId, userId)),
+    db
+      .update(organizationNotificationRecipients)
+      .set({ createdByUserId: null })
+      .where(eq(organizationNotificationRecipients.createdByUserId, userId)),
+    db
+      .update(organizationInvitations)
+      .set({ invitedByUserId: null })
+      .where(eq(organizationInvitations.invitedByUserId, userId)),
+    db
+      .update(organizationInvitations)
+      .set({ acceptedByUserId: null })
+      .where(eq(organizationInvitations.acceptedByUserId, userId)),
+    db.delete(organizationMembers).where(eq(organizationMembers.userId, userId)),
+    db.delete(twoFactor).where(eq(twoFactor.userId, userId)),
   ]);
 }
 

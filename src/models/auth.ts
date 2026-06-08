@@ -113,6 +113,15 @@ export const SessionModel = createModel(() => {
       await authPost("/api/auth/sign-out", {});
       this.session.value = null;
     },
+
+    // Permanently delete the signed-in account. The password is re-verified
+    // server-side (reauth) and Better Auth cascades Drydock-owned data; on
+    // success the session is gone, so we drop it locally too. Throws AuthError
+    // on failure (e.g. wrong password, or still owning a shared organization).
+    async deleteAccount(password: string): Promise<void> {
+      await authPost("/api/auth/delete-user", { password });
+      this.session.value = null;
+    },
   };
 });
 

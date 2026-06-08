@@ -1,9 +1,10 @@
 import { scrypt as nodeScrypt, scryptSync } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { APIError } from "better-auth/api";
 import { twoFactor } from "better-auth/plugins";
 import { eq } from "drizzle-orm";
-import { createDb, type AppDb } from "../db";
+import { createDb, deleteUserAccount, findCoOwnedOrganizations, type AppDb } from "../db";
 import * as schema from "../db/schema";
 import { sendAccountVerificationEmail } from "./account-email";
 
@@ -114,6 +115,31 @@ export function createAuth(env: Cloudflare.Env) {
       minPasswordLength: 12,
       maxPasswordLength: 256,
       ...(nativeScryptAvailable ? { password: nativeScryptPassword } : {}),
+    },
+    user: {
+      deleteUser: {
+        enabled: true,
+        // Reauth reuses Better Auth's credential check: the caller must resend
+        // the account password, which Better Auth verifies before invoking this
+        // hook. We then tear down everything Drydock owns for the user; Better
+        // Auth removes the user/session/account rows once the hook returns.
+        // Throwing aborts the deletion with nothing partially removed — we refuse
+        // outright when the user still owns a shared organization rather than
+        // destroying co-members' data.
+        beforeDelete: async (deletedUser) => {
+          const conflicts = await findCoOwnedOrganizations(db, deletedUser.id);
+          if (conflicts.length > 0) {
+            const names = conflicts.map((org) => org.name).join(", ");
+            throw new APIError("BAD_REQUEST", {
+              code: "OWNS_SHARED_ORGANIZATIONS",
+              message: `Delete or hand off ${
+                conflicts.length === 1 ? "this organization" : "these organizations"
+              } before deleting your account: ${names}`,
+            });
+          }
+          await deleteUserAccount(db, deletedUser.id);
+        },
+      },
     },
     plugins: [twoFactor({ issuer: "Drydock" })],
     advanced: {

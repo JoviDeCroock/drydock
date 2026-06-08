@@ -122,6 +122,34 @@ export function MenuItem({
   );
 }
 
+type MenuLinkProps = {
+  href: string;
+  tone?: "default" | "accent";
+  class?: string;
+  children: ComponentChildren;
+};
+
+// Anchor counterpart to MenuItem for in-app navigation: preact-iso intercepts
+// the click for client-side routing, and the `data-menu-item` marker lets the
+// panel close on select just like a button item.
+export function MenuLink({ href, tone = "default", class: className, children }: MenuLinkProps) {
+  return (
+    <a
+      href={href}
+      data-menu-item
+      role="menuitem"
+      class={cn(
+        "block w-full text-left text-[13px] px-3 py-1.5 cursor-pointer no-underline",
+        "hover:bg-surface-2",
+        tone === "accent" ? "text-accent" : "text-ink",
+        className,
+      )}
+    >
+      {children}
+    </a>
+  );
+}
+
 export function MenuSeparator() {
   return <div class="my-1 border-t border-border" />;
 }
