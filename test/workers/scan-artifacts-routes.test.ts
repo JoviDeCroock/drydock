@@ -17,6 +17,7 @@ import {
   summarizePackageJsonDiff,
 } from "../../server/lib/review";
 import type { ScanRiskBreakdown } from "../../server/lib/risk";
+import { writeScanArtifacts } from "../../server/lib/scan-artifacts";
 import { sha256Hex, stableJson } from "../../server/lib/stable-json";
 import { parsePackageJson } from "../../server/lib/tar-parser.js";
 import { scansRoutes } from "../../server/routes/scans";
@@ -91,7 +92,10 @@ const safety = {
   fileExplorerPolicy: "test file policy",
 };
 
-async function seedDigestMatchedLegacyScan(owner: SeededUser) {
+async function seedDigestMatchedLegacyScan(
+  owner: SeededUser,
+  options: { artifactBacked?: boolean } = {},
+) {
   const db = createDb(env.DB);
   const scanId = `scan_${crypto.randomUUID()}`;
   const stageId = `stage-${crypto.randomUUID().slice(0, 12)}`;
@@ -177,7 +181,19 @@ async function seedDigestMatchedLegacyScan(owner: SeededUser) {
     risk,
     safety,
   };
-  const digest = await sha256Hex(stableJson(reportPayload));
+  const reportJson = stableJson(reportPayload);
+  const digest = await sha256Hex(reportJson);
+  const artifacts = options.artifactBacked
+    ? await writeScanArtifacts(env.ARTIFACTS, {
+        organizationId: owner.organizationId,
+        scanId,
+        reportJson,
+        reportDigest: digest,
+        files,
+        diff,
+        generatedAt: "2026-06-08T00:00:00.000Z",
+      })
+    : null;
 
   await createScanJob(db, {
     id: scanId,
@@ -214,11 +230,42 @@ async function seedDigestMatchedLegacyScan(owner: SeededUser) {
     findings,
     riskSummary: risk,
     report: { version: 1, digest },
+    artifacts,
   });
   return { db, scanId };
 }
 
 describe("scan artifact backfill route", () => {
+  test("new artifact-backed scans keep D1 file rows compact", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const { db, scanId } = await seedDigestMatchedLegacyScan(owner, { artifactBacked: true });
+
+    const d1Rows = await db
+      .select({
+        path: schema.scanFiles.path,
+        textSample: schema.scanFiles.textSample,
+      })
+      .from(schema.scanFiles)
+      .where(eq(schema.scanFiles.scanId, scanId));
+    expect(d1Rows.length).toBeGreaterThan(0);
+    expect(d1Rows.every((row) => row.textSample === null)).toBe(true);
+
+    const d1Only = await getScan(db, scanId, owner.organizationId);
+    expect(d1Only?.files.find((file) => file.path === "index.js")?.textSample).toBeNull();
+
+    const detailRes = await fetchJsonWithSession(app, `/api/v1/scans/${scanId}`, {
+      method: "GET",
+    });
+    expect(detailRes.status).toBe(200);
+    const detail = (await detailRes.json()) as {
+      files: Array<{ path: string; textSample: string | null }>;
+    };
+    expect(detail.files.find((file) => file.path === "index.js")?.textSample).toContain(
+      "npm_config_user_agent",
+    );
+  });
+
   test("backfills legacy scan artifacts and detail reads survive D1 sample compaction", async () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);

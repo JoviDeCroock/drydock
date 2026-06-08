@@ -183,7 +183,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
       size: file.size,
       sha256: file.sha256,
       flagsJson: file.flagsJson,
-      textSample: file.textSample,
+      textSample: input.artifacts ? null : file.textSample,
     };
   });
   const findingRows = input.findings.map((finding) => ({

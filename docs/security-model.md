@@ -82,7 +82,7 @@ Persist by default:
 - risk summary split into release, artifact, and context risk so `scans.risk` reflects the full artifact while unchanged hazards remain separated from the package-to-package release verdict;
 - safety posture;
 - audit events;
-- canonical report JSON plus redacted file/diff artifacts in R2, with D1 metadata and first-rollout D1 fallback samples.
+- canonical report JSON plus redacted file/diff artifacts in R2, with D1 retaining compact metadata and historical fallback samples until compaction.
 
 Avoid by default:
 

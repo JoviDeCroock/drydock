@@ -24,7 +24,7 @@ Completed scans can be artifact-backed when these `scans` columns are set:
 - `file_samples_artifact_key`
 - `diff_artifact_key`
 
-D1 still keeps scan status/lifecycle fields, ownership, package/version metadata, decisions, compact list summaries, report digest/version, file metadata, and findings. The first rollout keeps existing `scan_files.text_sample` values so reads can fall back without data loss.
+D1 still keeps scan status/lifecycle fields, ownership, package/version metadata, decisions, compact list summaries, report digest/version, file metadata, and findings. Artifact-backed new scans write `scan_files` rows with `text_sample = NULL`; the redacted samples live in R2. Existing rows keep their historical `scan_files.text_sample` values until a later explicit compaction step.
 
 ## Object Layout
 
@@ -43,7 +43,7 @@ The manifest records each object key, SHA-256 digest, byte size, content type, a
 
 ## Write And Read Flow
 
-New completed scans write `report.json`, `files.json`, `diff.json`, and `manifest.json` to R2 before `persistScan` marks the D1 row artifact-backed. Each object is read back and verified against its expected size and SHA-256 digest before D1 metadata is saved.
+New completed scans write `report.json`, `files.json`, `diff.json`, and `manifest.json` to R2 before `persistScan` marks the D1 row artifact-backed. Each object is read back and verified against its expected size and SHA-256 digest before D1 metadata is saved. When the R2 write succeeds, D1 stores compact file metadata only and leaves `scan_files.text_sample` null.
 
 `GET /api/v1/scans/:id` shadow-reads R2 when all artifact metadata exists. The read path verifies:
 
@@ -52,7 +52,7 @@ New completed scans write `report.json`, `files.json`, `diff.json`, and `manifes
 - report object digest against `scans.report_digest`;
 - file/diff payload shape.
 
-Any mismatch, missing object, invalid payload, or R2 read failure logs `scan.artifacts.fallback_read` and returns the existing D1-backed detail instead.
+Any mismatch, missing object, invalid payload, or R2 read failure logs `scan.artifacts.fallback_read` and returns the existing D1-backed detail instead. For artifact-backed scans created after this rollout, that fallback keeps file metadata and findings readable but does not include redacted file text samples because new samples are not duplicated into D1.
 
 ## Backfill
 
@@ -69,6 +69,6 @@ The route processes small idempotent batches and returns counts for `scanned`, `
 
 ## Rollback
 
-Set `SCAN_ARTIFACT_READS_DISABLED=true` (or `1`) to force scan-detail reads back to D1 while leaving R2 artifacts untouched. Do not delete R2 objects during rollback. In this first rollout D1 text samples are retained, so disabling artifact reads restores the pre-R2 read path.
+Set `SCAN_ARTIFACT_READS_DISABLED=true` (or `1`) to force scan-detail reads back to D1 while leaving R2 artifacts untouched. Do not delete R2 objects during rollback. This restores historical D1-backed samples for old rows; new artifact-backed rows continue to show compact file metadata without samples until R2 reads are re-enabled.
 
 D1 compaction is a later explicit step after backfill and shadow-read confidence. Compaction must not run until operators are comfortable with fallback/read metrics and have a separate rollback plan for any compacted rows.

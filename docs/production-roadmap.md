@@ -141,13 +141,13 @@ Priority: medium; high before larger reports, exports, or signing.
 
 Goal: keep D1 metadata-focused while preserving useful redacted evidence.
 
-Initial no-data-loss artifact backing is now in place: new completed scans dual-write verified R2 artifacts, scan detail shadow-reads R2 with D1 fallback, and old rows can be backfilled in small digest-gated batches. See [`artifact-storage.md`](./artifact-storage.md).
+Initial artifact backing is now in place: new completed scans write verified R2 artifacts and compact D1 file metadata, scan detail shadow-reads R2 with D1 metadata fallback, and old rows can be backfilled in small digest-gated batches. See [`artifact-storage.md`](./artifact-storage.md).
 
 Tasks:
 
 - Continue monitoring artifact fallback/digest-mismatch events during the shadow-read period.
 - Add retention cleanup that removes both D1 metadata and R2 objects.
-- Add D1 text-sample compaction only after backfill and shadow-read confidence.
+- Add D1 text-sample compaction for historical rows only after backfill and shadow-read confidence.
 - Add export/signing flows on top of the canonical R2 report object.
 
 Exit criteria:
