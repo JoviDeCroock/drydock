@@ -17,7 +17,11 @@ import {
   summarizePackageJsonDiff,
 } from "../../server/lib/review";
 import type { ScanRiskBreakdown } from "../../server/lib/risk";
-import { writeScanArtifacts } from "../../server/lib/scan-artifacts";
+import {
+  SCAN_ARTIFACT_WRITE_ATTEMPTS,
+  maybeWriteScanArtifacts,
+  writeScanArtifacts,
+} from "../../server/lib/scan-artifacts";
 import { sha256Hex, stableJson } from "../../server/lib/stable-json";
 import { parsePackageJson } from "../../server/lib/tar-parser.js";
 import { scansRoutes } from "../../server/routes/scans";
@@ -91,6 +95,91 @@ const safety = {
   aiInputPolicy: "test AI policy",
   fileExplorerPolicy: "test file policy",
 };
+
+function createFlakyArtifactBucket(options: { failFirstPuts?: number; failAllPuts?: boolean }) {
+  const objects = new Map<string, string>();
+  let putCalls = 0;
+  const bucket = {
+    async put(key: string, body: string) {
+      putCalls += 1;
+      if (options.failAllPuts || putCalls <= (options.failFirstPuts ?? 0)) {
+        throw new Error("simulated R2 write failure");
+      }
+      objects.set(key, body);
+      return {};
+    },
+    async get(key: string) {
+      const body = objects.get(key);
+      if (body === undefined) return null;
+      return {
+        async arrayBuffer() {
+          return new TextEncoder().encode(body).buffer;
+        },
+      };
+    },
+  } as unknown as R2Bucket;
+  return { bucket, putCalls: () => putCalls };
+}
+
+async function buildArtifactWriteInput(owner: SeededUser) {
+  const scanId = `scan_${crypto.randomUUID()}`;
+  const diff = [
+    {
+      path: "index.js",
+      status: "added" as const,
+      stagedSize: 18,
+      stagedSha256: "index-sha",
+      flags: [],
+    },
+  ];
+  const reportPayload = {
+    version: 1,
+    rulesVersion: DETERMINISTIC_RULES_VERSION,
+    stageId: "stage-artifact-write",
+    package: {
+      name: "@org/artifact-write",
+      stagedVersion: "1.0.0",
+      stagedTag: "latest",
+      previousVersion: null,
+    },
+    baseline: null,
+    fileCount: 1,
+    previousFileCount: 0,
+    packageJson: null,
+    packageJsonDiff: {},
+    diff,
+    ruleFindings: [],
+    findingAnnotations: [],
+    aiFindings: disabledAi,
+    risk: {
+      artifactRisk: "low",
+      releaseRisk: "low",
+      contextRisk: "low",
+      releaseFindingCount: 0,
+      contextFindingCount: 0,
+      unknownFindingCount: 0,
+    },
+    safety,
+  };
+  const reportJson = stableJson(reportPayload);
+  return {
+    organizationId: owner.organizationId,
+    scanId,
+    reportJson,
+    reportDigest: await sha256Hex(reportJson),
+    files: [
+      {
+        path: "index.js",
+        size: 18,
+        sha256: "index-sha",
+        flags: [],
+        textSample: "console.log('ok');\n",
+      },
+    ],
+    diff,
+    generatedAt: "2026-06-08T00:00:00.000Z",
+  };
+}
 
 async function seedDigestMatchedLegacyScan(
   owner: SeededUser,
@@ -236,6 +325,29 @@ async function seedDigestMatchedLegacyScan(
 }
 
 describe("scan artifact backfill route", () => {
+  test("retries transient artifact write failures before marking a scan backed", async () => {
+    const owner = await seedUser();
+    const input = await buildArtifactWriteInput(owner);
+    const fake = createFlakyArtifactBucket({ failFirstPuts: 2 });
+
+    const metadata = await maybeWriteScanArtifacts(fake.bucket, input);
+
+    expect(metadata?.artifactStorageVersion).toBe(1);
+    expect(metadata?.artifactManifestKey).toContain(`/scans/${input.scanId}/v1/manifest.json`);
+    expect(fake.putCalls()).toBe(6);
+  });
+
+  test("exhausted artifact write failures fall back to D1-backed scans", async () => {
+    const owner = await seedUser();
+    const input = await buildArtifactWriteInput(owner);
+    const fake = createFlakyArtifactBucket({ failAllPuts: true });
+
+    const metadata = await maybeWriteScanArtifacts(fake.bucket, input);
+
+    expect(metadata).toBeNull();
+    expect(fake.putCalls()).toBe(SCAN_ARTIFACT_WRITE_ATTEMPTS);
+  });
+
   test("new artifact-backed scans keep D1 file rows compact", async () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);

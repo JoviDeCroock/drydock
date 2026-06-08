@@ -3,6 +3,7 @@ import { describeOperationalError, emitOperationalEvent } from "./observability"
 import { sha256Hex, stableJson, utf8Size } from "./stable-json";
 
 export const SCAN_ARTIFACT_STORAGE_VERSION = 1;
+export const SCAN_ARTIFACT_WRITE_ATTEMPTS = 3;
 const ARTIFACT_CONTENT_TYPE = "application/json; charset=utf-8";
 
 export interface ScanArtifactMetadata {
@@ -109,7 +110,22 @@ export async function maybeWriteScanArtifacts(
     });
     return null;
   }
-  return writeScanArtifacts(bucket, input);
+  for (let attempt = 1; attempt <= SCAN_ARTIFACT_WRITE_ATTEMPTS; attempt += 1) {
+    try {
+      return await writeScanArtifacts(bucket, input);
+    } catch (err) {
+      const finalAttempt = attempt === SCAN_ARTIFACT_WRITE_ATTEMPTS;
+      emitOperationalEvent(finalAttempt ? "error" : "warn", "scan.artifacts.write_failed", {
+        scanId: input.scanId,
+        organizationId: input.organizationId,
+        attempt,
+        finalAttempt,
+        error: describeOperationalError(err),
+      });
+      if (finalAttempt) return null;
+    }
+  }
+  return null;
 }
 
 export async function writeScanArtifacts(

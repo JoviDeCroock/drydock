@@ -43,7 +43,7 @@ The manifest records each object key, SHA-256 digest, byte size, content type, a
 
 ## Write And Read Flow
 
-New completed scans write `report.json`, `files.json`, `diff.json`, and `manifest.json` to R2 before `persistScan` marks the D1 row artifact-backed. Each object is read back and verified against its expected size and SHA-256 digest before D1 metadata is saved. When the R2 write succeeds, D1 stores compact file metadata only and leaves `scan_files.text_sample` null.
+New completed scans try to write `report.json`, `files.json`, `diff.json`, and `manifest.json` to R2 before `persistScan` marks the D1 row artifact-backed. Each object is read back and verified against its expected size and SHA-256 digest before D1 metadata is saved. Transient write or verification failures are retried; exhausted failures log `scan.artifacts.write_failed` and the scan is persisted D1-backed instead. When the R2 write succeeds, D1 stores compact file metadata only and leaves `scan_files.text_sample` null.
 
 `GET /api/v1/scans/:id` shadow-reads R2 when all artifact metadata exists. The read path verifies:
 
