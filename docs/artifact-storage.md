@@ -56,7 +56,7 @@ Any mismatch, missing object, invalid payload, or R2 read failure logs `scan.art
 
 ## Backfill
 
-Owners/admins can backfill old completed scans for their active organization:
+The Worker exposes an owner/admin backfill route for app-level maintenance:
 
 ```http
 POST /api/v1/scans/artifacts/backfill
@@ -67,27 +67,24 @@ Content-Type: application/json
 
 The route processes small idempotent batches and returns counts for `scanned`, `backfilled`, `alreadyBacked`, `digestMismatch`, `failed`, and `nextCursor`. A legacy row is marked artifact-backed only after the reconstructed canonical report digest equals the persisted `report_digest`; rows that cannot be reconstructed exactly stay D1-backed.
 
-Use the repo-local runner to drain the endpoint until every eligible row has been visited:
+Production operators should use the repo-local runner instead of browser cookies. It uses the same Cloudflare credentials as Wrangler, reads from D1 with `wrangler d1 execute --json`, writes verified R2 objects with `wrangler r2 object put/get`, then updates D1 artifact metadata:
 
 ```sh
-DRYDOCK_SESSION_COOKIE='better-auth.session_token=...' \
-  pnpm run scan-artifacts:backfill -- \
-  --base-url https://drydock.resynapse.dev \
+pnpm exec wrangler login
+pnpm run scan-artifacts:backfill -- \
   --organization-id org_... \
   --limit 50
 ```
 
-To process every owner/admin organization visible to the session:
+To process every organization in D1:
 
 ```sh
-DRYDOCK_SESSION_COOKIE='better-auth.session_token=...' \
-  pnpm run scan-artifacts:backfill -- \
-  --base-url https://drydock.resynapse.dev \
+pnpm run scan-artifacts:backfill -- \
   --all-organizations \
   --limit 50
 ```
 
-The script prints one progress line per batch and exits nonzero if any row-level `failed` count remains. Use `--cursor <scan_id>` to resume a single-organization run from the last printed `nextCursor`; `--cursor` is intentionally not accepted with `--all-organizations` because cursors are organization-scoped. `digestMismatch` rows are reported but do not fail the script because they remain safely D1-backed.
+The script defaults to the production `staged-publish-review` D1 database and `staged-publish-review-artifacts` R2 bucket through remote Wrangler operations. Use `--database`, `--bucket`, `--config`, `--env`, `--local`, or `--persist-to` when targeting a different Wrangler setup. The script prints one progress line per batch and exits nonzero if any row-level `failed` count remains. Use `--cursor <scan_id>` to resume a single-organization run from the last printed `nextCursor`; `--cursor` is intentionally not accepted with `--all-organizations` because cursors are organization-scoped. `digestMismatch` rows are reported but do not fail the script because they remain safely D1-backed.
 
 ## Rollback
 

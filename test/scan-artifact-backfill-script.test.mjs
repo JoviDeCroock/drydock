@@ -1,12 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { parseBackfillArgs, runBackfill } from "../scripts/backfill-scan-artifacts.mjs";
 
-function jsonResponse(body, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
+const ENCODER = new TextEncoder();
 
 function captureStream() {
   let output = "";
@@ -20,112 +15,230 @@ function captureStream() {
   };
 }
 
-describe("scan artifact backfill script", () => {
-  test("drains one organization by cursor", async () => {
-    const calls = [];
-    const fetch = async (url, init) => {
-      calls.push({ url, init });
-      const body = JSON.parse(init.body);
-      if (body.cursor === null) {
-        return jsonResponse({
-          scanned: 2,
-          backfilled: 2,
-          alreadyBacked: 0,
-          digestMismatch: 0,
-          failed: 0,
-          nextCursor: "scan_2",
-        });
-      }
-      return jsonResponse({
-        scanned: 1,
-        backfilled: 0,
-        alreadyBacked: 1,
-        digestMismatch: 0,
-        failed: 0,
-        nextCursor: null,
-      });
-    };
-    const stdout = captureStream();
-    const options = parseBackfillArgs(
-      [
-        "--base-url",
-        "https://drydock.example.test/",
-        "--cookie",
-        "better-auth.session_token=secret",
-        "--organization-id",
-        "org_123",
-        "--limit",
-        "25",
-      ],
-      {},
-    );
+function d1Response(results) {
+  return JSON.stringify([{ results, success: true, meta: { duration: 0 } }]);
+}
 
-    await expect(runBackfill(options, { fetch, stdout })).resolves.toMatchObject({
-      scanned: 3,
-      backfilled: 2,
-      alreadyBacked: 1,
+function stableJson(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  const entries = Object.entries(value)
+    .filter(([, item]) => item !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b));
+  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
+}
+
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest("SHA-256", ENCODER.encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function buildLegacyScanRows() {
+  const diff = [
+    { path: "index.js", status: "added", stagedSize: 18, stagedSha256: "index-sha", flags: [] },
+  ];
+  const summary = {
+    report: {
+      version: 1,
+      generatedAt: "2026-06-08T00:00:00.000Z",
+      rulesVersion: "rules-v1",
+    },
+    baseline: { version: null, tag: "latest", source: "none", distTagVersion: null },
+    risk: {
+      artifactRisk: "low",
+      releaseRisk: "low",
+      contextRisk: "low",
+      releaseFindingCount: 0,
+      contextFindingCount: 0,
+      unknownFindingCount: 0,
+    },
+    safety: {
+      tokenExposedToSandbox: false,
+      directSandboxNetwork: false,
+      outboundPolicy: "test",
+      aiInputPolicy: "test",
+      fileExplorerPolicy: "test",
+    },
+    stagedPublish: {
+      id: "stage-123",
+      packageName: "@org/wrangler-backfill",
+      version: "1.0.0",
+      tag: "latest",
+      access: "public",
+    },
+    packageJsonDiff: {},
+    diff,
+    findingAnnotations: [],
+  };
+  const aiFindings = {
+    status: "unavailable",
+    risk: "low",
+    releaseAssessment: "not_assessed",
+    summary: "AI review is disabled.",
+    findings: [],
+    requiresManualReview: false,
+    model: null,
+  };
+  const payload = {
+    version: 1,
+    rulesVersion: "rules-v1",
+    stageId: "stage-123",
+    stagedPublish: summary.stagedPublish,
+    package: {
+      name: "@org/wrangler-backfill",
+      stagedVersion: "1.0.0",
+      stagedTag: "latest",
+      previousVersion: null,
+    },
+    baseline: summary.baseline,
+    fileCount: 1,
+    previousFileCount: 0,
+    packageJson: { name: "@org/wrangler-backfill", version: "1.0.0" },
+    packageJsonDiff: {},
+    diff,
+    ruleFindings: [],
+    findingAnnotations: [],
+    aiFindings,
+    risk: summary.risk,
+    safety: summary.safety,
+  };
+  return {
+    scan: {
+      id: "scan_1",
+      stageId: "stage-123",
+      organizationId: "org_123",
+      packageName: "@org/wrangler-backfill",
+      stagedVersion: "1.0.0",
+      previousVersion: null,
+      summaryJson: JSON.stringify(summary),
+      aiJson: JSON.stringify(aiFindings),
+      reportVersion: 1,
+      reportDigest: await sha256Hex(stableJson(payload)),
+    },
+    files: [
+      {
+        path: "index.js",
+        status: "added",
+        size: 18,
+        sha256: "index-sha",
+        flagsJson: JSON.stringify([]),
+        textSample: "console.log('ok');\n",
+      },
+    ],
+    findings: [],
+  };
+}
+
+function createWranglerHarness({ organizations, rows }) {
+  const calls = [];
+  const objects = new Map();
+  const state = {
+    candidatesServed: new Set(),
+    artifactManifestKey: null,
+  };
+
+  return {
+    calls,
+    objects,
+    async runWrangler(args, options = {}) {
+      calls.push({ args, input: options.input });
+      if (args.includes("d1")) {
+        const sql = args[args.indexOf("--command") + 1];
+        if (sql.includes("FROM organizations")) return d1Response(organizations);
+        if (sql.includes("FROM scans") && sql.includes("artifact_storage_version IS NULL")) {
+          const org = organizations.find((item) => sql.includes(`organization_id = '${item.id}'`));
+          if (!org || state.candidatesServed.has(org.id)) return d1Response([]);
+          state.candidatesServed.add(org.id);
+          return d1Response(rows[org.id]?.scan ? [rows[org.id].scan] : []);
+        }
+        if (sql.includes("FROM scan_files")) return d1Response(rows.org_123.files);
+        if (sql.includes("FROM scan_findings")) return d1Response(rows.org_123.findings);
+        if (sql.includes("UPDATE scans")) {
+          state.artifactManifestKey = /artifact_manifest_key = '([^']+)'/.exec(sql)?.[1] ?? null;
+          return d1Response([]);
+        }
+        if (sql.includes("SELECT") && sql.includes("artifact_storage_version")) {
+          return d1Response([
+            {
+              artifactStorageVersion: 1,
+              artifactManifestKey: state.artifactManifestKey,
+            },
+          ]);
+        }
+        throw new Error(`unexpected d1 sql: ${sql}`);
+      }
+
+      const objectPath = args[args.indexOf("object") + 2];
+      if (args.includes("put")) {
+        objects.set(objectPath, options.input);
+        return "";
+      }
+      if (args.includes("get")) {
+        return objects.get(objectPath);
+      }
+      throw new Error(`unexpected wrangler args: ${args.join(" ")}`);
+    },
+  };
+}
+
+describe("scan artifact backfill script", () => {
+  test("backfills one organization through Wrangler D1 and R2 commands", async () => {
+    const rows = { org_123: await buildLegacyScanRows() };
+    const harness = createWranglerHarness({
+      organizations: [{ id: "org_123", name: "Org 123" }],
+      rows,
+    });
+    const stdout = captureStream();
+    const options = parseBackfillArgs(["--organization-id", "org_123", "--limit", "25"], {});
+
+    await expect(
+      runBackfill(options, { runWrangler: harness.runWrangler, stdout }),
+    ).resolves.toMatchObject({
+      scanned: 1,
+      backfilled: 1,
     });
 
-    expect(calls).toHaveLength(2);
-    expect(calls[0].url).toBe("https://drydock.example.test/api/v1/scans/artifacts/backfill");
-    expect(calls[0].init.headers.get("x-organization-id")).toBe("org_123");
-    expect(JSON.parse(calls[0].init.body)).toEqual({ limit: 25, cursor: null });
-    expect(JSON.parse(calls[1].init.body)).toEqual({ limit: 25, cursor: "scan_2" });
+    expect(harness.calls.some((call) => call.args.includes("d1"))).toBe(true);
+    expect(
+      harness.calls.some((call) => call.args.includes("r2") && call.args.includes("put")),
+    ).toBe(true);
+    expect([...harness.objects.keys()]).toContain(
+      "staged-publish-review-artifacts/orgs/org_123/scans/scan_1/v1/manifest.json",
+    );
+    expect(JSON.stringify(harness.calls)).not.toContain("cookie");
     expect(stdout.output()).toContain("nextCursor=done");
   });
 
-  test("filters all-organization runs to owner and admin memberships", async () => {
-    const organizationHeaders = [];
-    const fetch = async (url, init) => {
-      if (url.endsWith("/api/v1/organizations")) {
-        return jsonResponse({
-          organizations: [
-            { id: "org_owner", name: "Owner Org", role: "owner" },
-            { id: "org_member", name: "Member Org", role: "member" },
-            { id: "org_admin", name: "Admin Org", role: "admin" },
-          ],
-        });
-      }
-      organizationHeaders.push(init.headers.get("x-organization-id"));
-      return jsonResponse({
-        scanned: 1,
-        backfilled: 1,
-        alreadyBacked: 0,
-        digestMismatch: 0,
-        failed: 0,
-        nextCursor: null,
-      });
-    };
-    const stdout = captureStream();
-    const options = parseBackfillArgs(
-      [
-        "--base-url=https://drydock.example.test",
-        "--cookie=better-auth.session_token=secret",
-        "--all-organizations",
+  test("all-organization runs enumerate organizations from D1", async () => {
+    const rows = { org_123: await buildLegacyScanRows(), org_empty: {} };
+    const harness = createWranglerHarness({
+      organizations: [
+        { id: "org_123", name: "Org 123" },
+        { id: "org_empty", name: "Empty Org" },
       ],
-      {},
-    );
+      rows,
+    });
+    const stdout = captureStream();
+    const options = parseBackfillArgs(["--all-organizations"], {});
 
-    await expect(runBackfill(options, { fetch, stdout })).resolves.toMatchObject({
-      scanned: 2,
-      backfilled: 2,
+    await expect(
+      runBackfill(options, { runWrangler: harness.runWrangler, stdout }),
+    ).resolves.toMatchObject({
+      scanned: 1,
+      backfilled: 1,
     });
 
-    expect(organizationHeaders).toEqual(["org_owner", "org_admin"]);
-    expect(stdout.output()).toContain("skipped 1 organization(s) without admin access");
+    expect(stdout.output()).toContain("Org 123 (org_123)");
+    expect(stdout.output()).toContain("Empty Org (org_empty)");
   });
 
   test("rejects ambiguous all-organization resume cursors", () => {
-    expect(() =>
-      parseBackfillArgs(
-        [
-          "--base-url=https://drydock.example.test",
-          "--cookie=better-auth.session_token=secret",
-          "--all-organizations",
-          "--cursor=scan_123",
-        ],
-        {},
-      ),
-    ).toThrow("--cursor is only supported for a single organization run");
+    expect(() => parseBackfillArgs(["--all-organizations", "--cursor=scan_123"], {})).toThrow(
+      "--cursor is only supported for a single organization run",
+    );
+  });
+
+  test("requires an organization target", () => {
+    expect(() => parseBackfillArgs([], {})).toThrow("set --organization-id or --all-organizations");
   });
 });
