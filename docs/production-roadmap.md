@@ -54,7 +54,7 @@ Tasks:
 
 - Surface report digest, report schema version, deterministic rules version, and generated timestamp in scan detail.
 - Add a provenance section: package name, staged version, selected baseline, stage ID or workflow gate ID, artifact digests, review limitations, and AI availability/model metadata when applicable.
-- Add canonical report JSON export.
+- Canonical report JSON export shipped: `GET /api/v1/scans/:id/report.json` serves a stable-ordered document (provenance metadata, package/baseline, risk summary, manifest/file diffs, deterministic findings) and is downloadable from scan detail. Re-exports are byte-identical; reproducing the stored digest from the database is still future work.
 - Add digest tests for stable canonical ordering and evidence changes.
 - Add human-readable report export, initially HTML.
 - Keep public signed report URLs deferred until access controls, revocation semantics, and report payload stability are ready.

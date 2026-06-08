@@ -25,6 +25,7 @@ import { compareSemver, fetchPackageMetadata, pickPreviousVersion } from "../lib
 import { annotateFindingsWithDiffStatus, createPackageDiff, type FileRecord } from "../lib/review";
 import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
 import { parseScanInput } from "../lib/scan-input";
+import { serializeReportExport } from "../lib/report-export";
 import { executeScanJob, type ScanQueueMessage } from "../lib/scan-job";
 import type { Bindings, ScanInput, Variables } from "../types";
 
@@ -195,6 +196,27 @@ scansRoutes.get("/:id", async (c) => {
     });
   }
   return c.json(scan);
+});
+
+scansRoutes.get("/:id/report.json", async (c) => {
+  const db = createDb(c.env.DB);
+  const organizationId = await requireActiveOrganization(c, db);
+  const detail = await getScan(db, c.req.param("id"), organizationId);
+  if (!detail) return c.json({ error: "not found" }, 404);
+  if (detail.scan.status !== "complete") {
+    return c.json({ error: "report export is only available for completed scans" }, 409);
+  }
+  // Canonical, stable-ordered serialization so re-exports are byte-identical and
+  // two artifacts describing the same evidence compare equal. Served as a
+  // download; no scan.viewed event is recorded for a pure export.
+  return new Response(serializeReportExport(detail), {
+    status: 200,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "content-disposition": `attachment; filename="drydock-report-${detail.scan.id}.json"`,
+      "cache-control": "private, no-store",
+    },
+  });
 });
 
 scansRoutes.get("/:id/versions", async (c) => {

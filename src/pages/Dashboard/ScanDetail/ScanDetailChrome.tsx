@@ -1,7 +1,15 @@
 import { getDashboardReturnUrl } from "../../../lib/query-state";
 import { formatDateTime } from "../../../lib/format";
 import type { PersistedScanDetail } from "../../../models/scan";
-import { Alert, Badge, Button, LoadingLine, MonoDetail, severityTone } from "../../../components";
+import {
+  Alert,
+  Badge,
+  Button,
+  LinkButton,
+  LoadingLine,
+  MonoDetail,
+  severityTone,
+} from "../../../components";
 
 export function ScanDetailHeader({
   detail,
@@ -42,7 +50,7 @@ export function ScanDetailHeader({
           <LoadingLine size="inline">Loading saved review</LoadingLine>
         )}
       </div>
-      {decision || onDecideClick ? (
+      {decision || onDecideClick || (detail && isComplete) ? (
         <div class="flex flex-wrap items-start gap-3">
           {decision ? (
             <div class="flex flex-col items-end gap-1">
@@ -55,6 +63,16 @@ export function ScanDetailHeader({
                 </span>
               ) : null}
             </div>
+          ) : null}
+          {detail && isComplete ? (
+            <LinkButton
+              variant="ghost"
+              size="sm"
+              href={`/api/v1/scans/${detail.scan.id}/report.json`}
+              download={`drydock-report-${detail.scan.id}.json`}
+            >
+              Export JSON
+            </LinkButton>
           ) : null}
           {onDecideClick ? (
             <Button variant={decision ? "secondary" : "primary"} onClick={onDecideClick}>
