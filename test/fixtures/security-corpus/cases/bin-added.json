@@ -1,0 +1,73 @@
+{
+  "id": "bin-added",
+  "title": "Release newly exposes an executable on the consumer PATH",
+  "category": "entrypoint-surface-change",
+  "intent": "A package that shipped no bin in the previous version adds one. npm symlinks bin entries into the consumer's node_modules/.bin, so the release puts a new command on the install path even though no install script or risky code pattern fires. The diff.bin-added rule surfaces this install-path behavior change for review. The added cli.js is inert (a plain console log).",
+  "previousPackageJson": {
+    "name": "tool",
+    "version": "1.0.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "tool",
+    "version": "1.0.1",
+    "main": "index.js",
+    "bin": { "tool": "cli.js" }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 60,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tool\",\"version\":\"1.0.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 26,
+      "sha256": "index-v1",
+      "flags": [],
+      "textSample": "export const answer = 42;\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 88,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tool\",\"version\":\"1.0.1\",\"main\":\"index.js\",\"bin\":{\"tool\":\"cli.js\"}}"
+    },
+    {
+      "path": "index.js",
+      "size": 26,
+      "sha256": "index-v1",
+      "flags": [],
+      "textSample": "export const answer = 42;\n"
+    },
+    {
+      "path": "cli.js",
+      "size": 40,
+      "sha256": "cli-v1",
+      "flags": [],
+      "textSample": "#!/usr/bin/env node\nconsole.log('tool');\n"
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedFindings": [
+    {
+      "ruleId": "diff.bin-added",
+      "severity": "medium",
+      "file": "package.json"
+    }
+  ],
+  "expectedPackageJsonDiff": {
+    "bin": [
+      {
+        "key": "tool",
+        "status": "added",
+        "staged": "cli.js"
+      }
+    ]
+  }
+}

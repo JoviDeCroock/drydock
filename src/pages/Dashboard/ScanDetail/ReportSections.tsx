@@ -115,6 +115,10 @@ function PackageJsonDiffView({ diff }: { diff: PackageJsonDiff }) {
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <ChangeList title="scripts" rows={diff.scripts} />
         <ChangeList title="dependencies" rows={diff.dependencies} />
+        {/* Only surfaced when present: most releases change no bin, and a new
+            bin command is the install-path change flagged by diff.bin-added.
+            Optional-chained for reports persisted before bin was diffed. */}
+        {diff.bin?.length ? <ChangeList title="bin" rows={diff.bin} /> : null}
       </div>
     </div>
   );

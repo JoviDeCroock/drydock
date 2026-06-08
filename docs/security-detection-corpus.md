@@ -66,14 +66,14 @@ The first corpus slice covers:
 - large opaque binary addition;
 - files that appear in the tarball outside a declared `package.json.files` allowlist;
 - malformed `package.json` parse failure;
-- dependency and entrypoint package-json diff changes; unusual non-registry dependency specs now raise deterministic findings while entrypoint changes remain a documented coverage gap.
+- dependency and entrypoint package-json diff changes; unusual non-registry dependency specs raise deterministic findings, and a newly added `bin` command raises `diff.bin-added` because npm links it onto the consumer's install path;
 
 ## Known coverage gaps
 
 The corpus deliberately records some product gaps instead of hiding them:
 
 - Plain dependency additions are visible in `packageJsonDiff`, but they do not yet raise deterministic findings unless they use unusual specs such as `github:`, `git+ssh:`, `http(s):`, `file:`, or `npm:` aliases. Newly added optional dependencies also raise deterministic findings because they can fail softly while still running install-time lifecycle hooks.
-- Entrypoint changes are visible in `packageJsonDiff`, but they do not yet raise deterministic findings or risk.
+- A newly added `bin` command raises `diff.bin-added` (medium), but `main`/`module`/`types`/`exports` retargets are intentionally not flagged: they change on almost every build (`index.js` → `dist/index.js`) and would be noise. They remain visible as the `entrypointsChanged` diff flag.
 - Maintainer/package transfer signals, new publisher signals, package reputation, and OpenSSF/package intelligence integrations are not implemented.
 - Behavior-chain detection is regex-based and does not yet prove source-to-sink intent. The one modeled chain is a heuristic: credential access co-located with a network egress path in the same file escalates to high (the collect-and-exfiltrate shape), without proving the value actually flows from the read to the send.
 - Anti-analysis and environment-detection patterns are not deeply modeled because Drydock intentionally avoids package execution.

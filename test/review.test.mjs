@@ -669,6 +669,47 @@ describe("review", () => {
     expect(summary.entrypointsChanged).toBe(true);
   });
 
+  test("diffs bin commands and flags newly added executables", () => {
+    const objectForm = summarizePackageJsonDiff(
+      { name: "tool", version: "1.0.0" },
+      { name: "tool", version: "1.0.1", bin: { tool: "cli.js", helper: "helper.js" } },
+    );
+    expect(objectForm.bin).toEqual([
+      { key: "helper", status: "added", staged: "helper.js" },
+      { key: "tool", status: "added", staged: "cli.js" },
+    ]);
+
+    // A string bin installs one command named after the package (unscoped part).
+    const stringForm = summarizePackageJsonDiff(
+      { name: "@scope/tool", version: "1.0.0" },
+      { name: "@scope/tool", version: "1.0.1", bin: "cli.js" },
+    );
+    expect(stringForm.bin).toEqual([{ key: "tool", status: "added", staged: "cli.js" }]);
+
+    expect(packageJsonDiffFindings(objectForm)).toEqual([
+      expect.objectContaining({
+        ruleId: "diff.bin-added",
+        severity: "medium",
+        evidence: "bin helper: helper.js",
+      }),
+      expect.objectContaining({
+        ruleId: "diff.bin-added",
+        severity: "medium",
+        evidence: "bin tool: cli.js",
+      }),
+    ]);
+
+    // A bin command whose target only moves (build-path churn) is not flagged.
+    const retarget = summarizePackageJsonDiff(
+      { name: "tool", version: "1.0.0", bin: { tool: "cli.js" } },
+      { name: "tool", version: "1.0.1", bin: { tool: "dist/cli.js" } },
+    );
+    expect(retarget.bin).toEqual([
+      { key: "tool", status: "modified", previous: "cli.js", staged: "dist/cli.js" },
+    ]);
+    expect(packageJsonDiffFindings(retarget)).toEqual([]);
+  });
+
   test("flags unusual dependency specs in package json diffs", () => {
     const diff = summarizePackageJsonDiff(
       { name: "pkg", version: "1.0.0", dependencies: { safe: "^1.0.0" } },

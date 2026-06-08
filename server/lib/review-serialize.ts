@@ -32,6 +32,10 @@ export interface PackageJsonDiff {
   stagedVersion: string | null;
   scripts: PackageJsonDiffEntry[];
   dependencies: PackageJsonDiffEntry[];
+  // Per-command diff of the `bin` map: npm links each entry into the consumer's
+  // node_modules/.bin, so a newly added command is an install-path behavior
+  // change that release review should surface (see diff.bin-added).
+  bin: PackageJsonDiffEntry[];
   entrypointsChanged: boolean;
 }
 
@@ -47,6 +51,7 @@ export function summarizePackageJsonDiff(
     stagedVersion: stagedPkg?.version || null,
     scripts: changedScripts,
     dependencies: changedDependencies,
+    bin: diffObject(normalizeBin(previousPkg), normalizeBin(stagedPkg)),
     entrypointsChanged:
       JSON.stringify([
         previousPkg?.bin,
@@ -80,6 +85,30 @@ function diffDependencySections(
     ...sectionEntries("optionalDependencies"),
     ...sectionEntries("peerDependencies"),
   ].sort((a, b) => a.key.localeCompare(b.key) || a.section.localeCompare(b.section));
+}
+
+// Normalize the two npm `bin` shapes to a command -> target map. A string `bin`
+// installs one command named after the package (the unscoped part for scoped
+// names), matching how npm derives the command. Non-string targets are dropped
+// so a malformed manifest cannot crash the diff.
+function normalizeBin(pkg: PackageJsonSummary | null | undefined): Record<string, string> {
+  const bin = pkg?.bin;
+  if (!bin) return {};
+  if (typeof bin === "string") {
+    const command = unscopedName(pkg?.name) ?? "(package)";
+    return { [command]: bin };
+  }
+  const out: Record<string, string> = {};
+  for (const [command, target] of Object.entries(bin)) {
+    if (typeof target === "string") out[command] = target;
+  }
+  return out;
+}
+
+function unscopedName(name: string | undefined): string | undefined {
+  if (!name) return undefined;
+  const slash = name.lastIndexOf("/");
+  return slash >= 0 ? name.slice(slash + 1) : name;
 }
 
 function diffObject(

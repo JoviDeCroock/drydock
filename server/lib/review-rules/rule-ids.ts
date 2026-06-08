@@ -14,6 +14,7 @@ export const DETERMINISTIC_RULE_IDS = {
   packageJsonParseFailed: "package-json.parse-failed",
   diffCredentialFileAdded: "diff.credential-file-added",
   diffLargeNewFile: "diff.large-new-file",
+  diffBinAdded: "diff.bin-added",
   dependencyUnusualSpec: "dependency.unusual-spec",
   dependencyOptionalAdded: "dependency.optional-added",
   stageMetadataMismatch: "stage.metadata-mismatch",
