@@ -124,13 +124,23 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       );
     }
     if (credentialAccess.matched) {
+      // A single file that both reads credentials and can reach the network is a
+      // source→sink exfiltration chain: collect-then-exfil live together, so it
+      // is high regardless of whether the file is newly added or a modification
+      // to an existing module (the shape behind file-based credential stealers).
+      // Credential access on its own stays high only when added.
+      const exfiltrationSink = networkAccess.matched;
       findings.push(
         tag("codeCredentialAccess", {
-          severity: changed === "added" ? "high" : "medium",
+          severity: changed === "added" || exfiltrationSink ? "high" : "medium",
           file: file.path,
           line: credentialAccess.line,
-          evidence: `${prefix}secret/environment access`,
-          reason: "package may read credentials from the install environment",
+          evidence: exfiltrationSink
+            ? `${prefix}credential read paired with network egress`
+            : `${prefix}secret/environment access`,
+          reason: exfiltrationSink
+            ? "package reads credentials and has a network egress path in the same file: the collect-and-exfiltrate shape used to steal install-time and cloud secrets"
+            : "package may read credentials from the install environment",
         }),
       );
     }

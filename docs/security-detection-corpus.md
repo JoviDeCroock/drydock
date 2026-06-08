@@ -58,6 +58,8 @@ The first corpus slice covers:
 
 - benign version bump control;
 - preinstall credential/environment collection with command and network capability;
+- credential file-path reads (`.aws/credentials`, `.ssh/id_`, `.netrc`) in addition to `process.env` and known token names, matching the Python rule coverage;
+- the collect-and-exfiltrate sink: a single file that reads credentials and has a network egress path escalates `code.credential-access` to high even on a modified (not newly added) module;
 - implicit `node-gyp rebuild` from root `binding.gyp`, GYP command substitution that executes package JavaScript, and native artifact review;
 - base64/dynamic evaluation plus network-capable code;
 - secret-looking file addition;
@@ -73,7 +75,7 @@ The corpus deliberately records some product gaps instead of hiding them:
 - Plain dependency additions are visible in `packageJsonDiff`, but they do not yet raise deterministic findings unless they use unusual specs such as `github:`, `git+ssh:`, `http(s):`, `file:`, or `npm:` aliases. Newly added optional dependencies also raise deterministic findings because they can fail softly while still running install-time lifecycle hooks.
 - Entrypoint changes are visible in `packageJsonDiff`, but they do not yet raise deterministic findings or risk.
 - Maintainer/package transfer signals, new publisher signals, package reputation, and OpenSSF/package intelligence integrations are not implemented.
-- Behavior-chain detection is regex-based and does not yet prove source-to-sink intent.
+- Behavior-chain detection is regex-based and does not yet prove source-to-sink intent. The one modeled chain is a heuristic: credential access co-located with a network egress path in the same file escalates to high (the collect-and-exfiltrate shape), without proving the value actually flows from the read to the send.
 - Anti-analysis and environment-detection patterns are not deeply modeled because Drydock intentionally avoids package execution.
 
 ## Adding fixtures
