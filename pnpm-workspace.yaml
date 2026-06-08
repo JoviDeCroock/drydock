@@ -1,6 +1,14 @@
 packages:
   - .
 
+# kysely 0.29.x dropped DEFAULT_MIGRATION_TABLE / DEFAULT_MIGRATION_LOCK_TABLE from its
+# root export; @better-auth/kysely-adapter still imports them from "kysely", so rolldown
+# (vite 8) fails the build with MISSING_EXPORT. Pin to the 0.28.x line, which re-exports
+# them and satisfies every consumer's peer range. Revisit when the adapter stops importing
+# those constants from the package root.
+overrides:
+  kysely: ^0.28.17
+
 allowBuilds:
   "0": esbuild
   "1": sharp
