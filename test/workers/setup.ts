@@ -4,6 +4,7 @@ import { beforeAll } from "vitest";
 declare module "cloudflare:test" {
   interface ProvidedEnv {
     DB: D1Database;
+    ARTIFACTS: R2Bucket;
     TEST_MIGRATIONS: D1Migration[];
   }
 }

@@ -25,6 +25,8 @@ import {
   type PackageJsonSummary,
 } from "./review";
 import { computeScanRiskBreakdown, type ScanRiskBreakdown } from "./risk";
+import { maybeWriteScanArtifacts } from "./scan-artifacts";
+import { sha256Hex, stableJson } from "./stable-json";
 import type { ScanResult } from "../types";
 
 export interface PipelineIdentity {
@@ -151,6 +153,7 @@ export function scoreRisk(
 }
 
 export interface PersistResultsArgs<TInput, TBroker extends AdapterBroker> {
+  env?: Cloudflare.Env;
   db: AppDb;
   session: WorkspaceSession;
   adapter: PackageAdapter<TInput, TBroker>;
@@ -221,7 +224,18 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     risk: args.riskSummary,
     safety,
   };
-  const reportDigest = await sha256Hex(stableJson(reportPayload));
+  const reportJson = stableJson(reportPayload);
+  const reportDigest = await sha256Hex(reportJson);
+  const generatedAt = new Date().toISOString();
+  const artifacts = await maybeWriteScanArtifacts(args.env?.ARTIFACTS, {
+    organizationId: identity.organizationId,
+    scanId: identity.scanId,
+    reportJson,
+    reportDigest,
+    files: findings.redactedStagedFiles,
+    diff: diff.fileDiff,
+    generatedAt,
+  });
 
   const persisted = await persistScan(db, {
     id: identity.scanId,
@@ -237,7 +251,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
         version: reportPayload.version,
         digest: reportDigest,
         digestAlgorithm: "sha256",
-        generatedAt: new Date().toISOString(),
+        generatedAt,
         rulesVersion: reportPayload.rulesVersion,
       },
       packageJsonDiff: diff.manifestDiff,
@@ -255,6 +269,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     codePatternSet: adapter.codePatternSet,
     riskSummary: args.riskSummary,
     report: { version: reportPayload.version, digest: reportDigest },
+    artifacts,
   });
 
   return { result, persisted: persisted.persisted };
@@ -341,18 +356,4 @@ function stripFindingAnnotations(
     ...(finding.ruleId !== undefined ? { ruleId: finding.ruleId } : {}),
     ...(finding.ruleVersion !== undefined ? { ruleVersion: finding.ruleVersion } : {}),
   }));
-}
-
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function stableJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, item]) => item !== undefined)
-    .sort(([a], [b]) => a.localeCompare(b));
-  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
 }

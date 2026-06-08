@@ -15,6 +15,7 @@ import { userHasTwoFactor, verifyTotpStepUp } from "../lib/auth";
 import { roleCanManageIntegrations } from "../lib/roles";
 import { rateLimitResponse } from "../lib/http";
 import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
+import { scanArtifactReadBucket } from "../lib/scan-artifacts";
 import {
   buildHumanDecisionComment,
   buildReportUrl,
@@ -532,14 +533,18 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   // `recordGatePackageDecision` also writes the `scan.decided` audit event and
   // keeps the workbench decision filters consistent (approved → publish,
   // rejected → no_publish).
-  const decidedPackage = await recordGatePackageDecision(db, {
-    scanId: packageScanId,
-    organizationId,
-    gateId,
-    actorUserId: session.userId,
-    decision: decision === "approved" ? "publish" : "no_publish",
-    reason: comment || null,
-  });
+  const decidedPackage = await recordGatePackageDecision(
+    db,
+    {
+      scanId: packageScanId,
+      organizationId,
+      gateId,
+      actorUserId: session.userId,
+      decision: decision === "approved" ? "publish" : "no_publish",
+      reason: comment || null,
+    },
+    scanArtifactReadBucket(c.env),
+  );
   if (!decidedPackage) {
     const current = await getGateForOrganization(db, organizationId, gateId);
     const currentPackages = await listGatePackageScans(db, organizationId, gateId);

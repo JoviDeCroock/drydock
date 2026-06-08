@@ -68,6 +68,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
     const riskSummary = scoreRisk(findings.annotatedFindings, aiFindings);
 
     const { result, persisted } = await persistResults({
+      env,
       db,
       session,
       adapter,

@@ -5,6 +5,8 @@ declare global {
       AI_CACHE_AFFINITY?: string;
       LOADER: WorkerLoader;
       DB: D1Database;
+      ARTIFACTS?: R2Bucket;
+      SCAN_ARTIFACT_READS_DISABLED?: string;
       COMPARE_CACHE?: KVNamespace;
       SCAN_QUEUE?: Queue<import("./lib/scan-job").QueueMessage>;
       NPM_REGISTRY: string;

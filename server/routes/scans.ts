@@ -16,7 +16,12 @@ import {
   recordScanDecision,
   recordScanEvent,
 } from "../db";
-import { requireActiveOrganization } from "../lib/active-organization";
+import {
+  requireActiveOrganization,
+  requireActiveOrganizationContext,
+} from "../lib/active-organization";
+import { backfillScanArtifactsBatch } from "../lib/scan-artifact-backfill";
+import { scanArtifactReadBucket } from "../lib/scan-artifacts";
 import { loadCompare, stripTextSamples } from "../lib/compare-cache";
 import { rateLimitResponse } from "../lib/http";
 import { allowInsecureLocalRegistry, getOrganizationNpmToken } from "../lib/npm-connection";
@@ -27,6 +32,7 @@ import { describeOperationalError, emitOperationalEvent } from "../lib/observabi
 import { parseScanInput } from "../lib/scan-input";
 import { serializeReportExport } from "../lib/report-export";
 import { executeScanJob, type ScanQueueMessage } from "../lib/scan-job";
+import { roleCanManageIntegrations } from "../lib/roles";
 import type { Bindings, ScanInput, Variables } from "../types";
 
 export const scansRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -146,6 +152,46 @@ scansRoutes.get("/", async (c) => {
   });
 });
 
+const BACKFILL_LIMIT_DEFAULT = 10;
+const BACKFILL_LIMIT_MAX = 50;
+
+scansRoutes.post("/artifacts/backfill", async (c) => {
+  if (!c.env.ARTIFACTS) return c.json({ error: "artifact bucket is not configured" }, 503);
+
+  const body = (await c.req.json().catch(() => ({}))) as Partial<{
+    limit: number;
+    cursor: string | null;
+  }>;
+  const rawLimit = Number(body.limit);
+  const limit = Number.isFinite(rawLimit)
+    ? Math.min(BACKFILL_LIMIT_MAX, Math.max(1, Math.floor(rawLimit)))
+    : BACKFILL_LIMIT_DEFAULT;
+  const cursor = typeof body.cursor === "string" && body.cursor ? body.cursor : null;
+
+  const db = createDb(c.env.DB);
+  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
+  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
+
+  try {
+    await enforceRateLimit(db, {
+      key: `scan-artifact-backfill:${organizationId}`,
+      limit: 60,
+      windowMs: 60 * 60 * 1000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return rateLimitResponse(c, "artifact backfill rate limit exceeded", err);
+    }
+    throw err;
+  }
+
+  const result = await backfillScanArtifactsBatch(db, c.env.ARTIFACTS, organizationId, {
+    limit,
+    cursor,
+  });
+  return c.json(result);
+});
+
 scansRoutes.post("/:id/decision", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as Partial<{
     decision: string;
@@ -163,16 +209,25 @@ scansRoutes.post("/:id/decision", async (c) => {
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
 
-  const updated = await recordScanDecision(db, {
-    scanId: c.req.param("id"),
-    organizationId,
-    actorUserId: session.userId,
-    decision: body.decision as ScanDecision,
-    reason,
-  });
+  const updated = await recordScanDecision(
+    db,
+    {
+      scanId: c.req.param("id"),
+      organizationId,
+      actorUserId: session.userId,
+      decision: body.decision as ScanDecision,
+      reason,
+    },
+    scanArtifactReadBucket(c.env),
+  );
 
   if (!updated) {
-    const existing = await getScan(db, c.req.param("id"), organizationId);
+    const existing = await getScan(
+      db,
+      c.req.param("id"),
+      organizationId,
+      scanArtifactReadBucket(c.env),
+    );
     if (!existing) return c.json({ error: "not found" }, 404);
     return c.json({ error: "decision can only be set on completed scans" }, 409);
   }
@@ -184,7 +239,7 @@ scansRoutes.get("/:id", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
-  const scan = await getScan(db, c.req.param("id"), organizationId);
+  const scan = await getScan(db, c.req.param("id"), organizationId, scanArtifactReadBucket(c.env));
   if (!scan) return c.json({ error: "not found" }, 404);
   if (c.req.query("poll") !== "1") {
     await recordScanEvent(db, {
@@ -223,7 +278,7 @@ scansRoutes.get("/:id/versions", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
-  const scan = await getScan(db, c.req.param("id"), organizationId);
+  const scan = await getScan(db, c.req.param("id"), organizationId, scanArtifactReadBucket(c.env));
   if (!scan) return c.json({ error: "not found" }, 404);
   if (!scan.scan.packageName) {
     return c.json({
@@ -320,7 +375,7 @@ async function resolveCompareContext(
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
-  const scan = await getScan(db, scanId, organizationId);
+  const scan = await getScan(db, scanId, organizationId, scanArtifactReadBucket(c.env));
   if (!scan) return { error: c.json({ error: "not found" }, 404) } as const;
   if (!scan.scan.packageName)
     return { error: c.json({ error: "scan has no package name" }, 400) } as const;
