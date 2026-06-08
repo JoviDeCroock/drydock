@@ -122,7 +122,7 @@ export async function maybeWriteScanArtifacts(
         finalAttempt,
         error: describeOperationalError(err),
       });
-      if (finalAttempt) return null;
+      if (finalAttempt) throw err;
     }
   }
   return null;

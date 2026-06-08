@@ -167,9 +167,10 @@ export const scans = sqliteTable(
     packageIdx: index("scans_package_idx").on(table.packageName),
     gateIdx: index("scans_gate_org_idx").on(table.gateId, table.organizationId),
     artifactBackfillIdx: index("scans_artifact_backfill_idx").on(
+      table.organizationId,
       table.status,
       table.artifactStorageVersion,
-      table.completedAt,
+      table.id,
     ),
     orgDecisionCreatedIdx: index("scans_org_decision_created_idx").on(
       table.organizationId,

@@ -43,7 +43,7 @@ The manifest records each object key, SHA-256 digest, byte size, content type, a
 
 ## Write And Read Flow
 
-New completed scans try to write `report.json`, `files.json`, `diff.json`, and `manifest.json` to R2 before `persistScan` marks the D1 row artifact-backed. Each object is read back and verified against its expected size and SHA-256 digest before D1 metadata is saved. Transient write or verification failures are retried; exhausted failures log `scan.artifacts.write_failed` and the scan is persisted D1-backed instead. When the R2 write succeeds, D1 stores compact file metadata only and leaves `scan_files.text_sample` null.
+New completed scans try to write `report.json`, `files.json`, `diff.json`, and `manifest.json` to R2 before `persistScan` marks the D1 row artifact-backed. Each object is read back and verified against its expected size and SHA-256 digest before D1 metadata is saved. Transient write or verification failures are retried; exhausted failures log `scan.artifacts.write_failed` and fail closed so the scan can retry instead of persisting new file samples into D1. When the R2 write succeeds, D1 stores compact file metadata only and leaves `scan_files.text_sample` null.
 
 `GET /api/v1/scans/:id` shadow-reads R2 when all artifact metadata exists. The read path verifies:
 
@@ -66,6 +66,28 @@ Content-Type: application/json
 ```
 
 The route processes small idempotent batches and returns counts for `scanned`, `backfilled`, `alreadyBacked`, `digestMismatch`, `failed`, and `nextCursor`. A legacy row is marked artifact-backed only after the reconstructed canonical report digest equals the persisted `report_digest`; rows that cannot be reconstructed exactly stay D1-backed.
+
+Use the repo-local runner to drain the endpoint until every eligible row has been visited:
+
+```sh
+DRYDOCK_SESSION_COOKIE='better-auth.session_token=...' \
+  pnpm run scan-artifacts:backfill -- \
+  --base-url https://drydock.resynapse.dev \
+  --organization-id org_... \
+  --limit 50
+```
+
+To process every owner/admin organization visible to the session:
+
+```sh
+DRYDOCK_SESSION_COOKIE='better-auth.session_token=...' \
+  pnpm run scan-artifacts:backfill -- \
+  --base-url https://drydock.resynapse.dev \
+  --all-organizations \
+  --limit 50
+```
+
+The script prints one progress line per batch and exits nonzero if any row-level `failed` count remains. Use `--cursor <scan_id>` to resume a single-organization run from the last printed `nextCursor`; `--cursor` is intentionally not accepted with `--all-organizations` because cursors are organization-scoped. `digestMismatch` rows are reported but do not fail the script because they remain safely D1-backed.
 
 ## Rollback
 

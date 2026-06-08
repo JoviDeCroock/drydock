@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "5c1cc4da-bc41-4272-8a35-a252ce5a03bd",
+  "id": "be683958-6507-4fe0-a22f-258e3726906d",
   "prevId": "22e88e41-4668-48d2-80b1-9e7902ba4693",
   "tables": {
     "account": {
@@ -2009,9 +2009,10 @@
         "scans_artifact_backfill_idx": {
           "name": "scans_artifact_backfill_idx",
           "columns": [
+            "organization_id",
             "status",
             "artifact_storage_version",
-            "completed_at"
+            "id"
           ],
           "isUnique": false
         },

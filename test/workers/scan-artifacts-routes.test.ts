@@ -337,14 +337,14 @@ describe("scan artifact backfill route", () => {
     expect(fake.putCalls()).toBe(6);
   });
 
-  test("exhausted artifact write failures fall back to D1-backed scans", async () => {
+  test("exhausted artifact write failures fail closed", async () => {
     const owner = await seedUser();
     const input = await buildArtifactWriteInput(owner);
     const fake = createFlakyArtifactBucket({ failAllPuts: true });
 
-    const metadata = await maybeWriteScanArtifacts(fake.bucket, input);
-
-    expect(metadata).toBeNull();
+    await expect(maybeWriteScanArtifacts(fake.bucket, input)).rejects.toThrow(
+      "simulated R2 write failure",
+    );
     expect(fake.putCalls()).toBe(SCAN_ARTIFACT_WRITE_ATTEMPTS);
   });
 
