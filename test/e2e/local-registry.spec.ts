@@ -23,9 +23,27 @@ interface RegistryScenario {
     previousVersion?: string | null;
     ruleIds?: string[];
     baseline?: Record<string, unknown>;
-    errorStatus?: number;
+    errorCode?: string;
     errorIncludes?: string;
   };
+}
+
+// Shape returned by GET /api/v1/scans/:id — mirrors PersistedScanDetail in
+// src/models/scan.ts (the contract the browser UI actually consumes).
+interface ScanDetailBody {
+  scan: {
+    id: string;
+    stageId: string;
+    status: string;
+    risk: string;
+    packageName: string | null;
+    stagedVersion: string | null;
+    previousVersion: string | null;
+    summaryJson?: { baseline?: Record<string, unknown> } | null;
+    errorJson?: { code?: string; message?: string } | null;
+  };
+  riskSummary?: { artifactRisk: string; releaseRisk: string } | null;
+  findings: Array<{ ruleId?: string | null }>;
 }
 
 const scenarios = readScenarioDefinitions();
@@ -49,15 +67,19 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
       timeout: 30_000,
     });
 
-    // Run the report assertions first via the synchronous scan API. Check npm
-    // fans out nine concurrent background scans on the dev Worker, and CI's
-    // workerd serializes them so badly that one scan can take minutes to
-    // surface a report — letting that contention happen before the heavy work
-    // is done makes the test unreliable.
-    const created = await scanStage(page, uiStageId);
-    expect(created.status, "implicit-node-gyp sync scan").toBe(200);
-    const scanId = (created.body as { id?: string } | null)?.id;
-    expect(scanId, "scan id present in sync scan response").toBeTruthy();
+    // Run the report assertions first via the async scan API. Check npm fans
+    // out nine concurrent background scans on the dev Worker, and CI's workerd
+    // serializes them so badly that one scan can take minutes to surface a
+    // report — waiting for this scan to finish before that contention starts
+    // keeps the test reliable.
+    const created = await createScan(page, uiStageId);
+    expect(created.status, "implicit-node-gyp scan accepted").toBe(202);
+    const scanId = created.body?.scan?.id;
+    expect(scanId, "scan id present in create-scan response").toBeTruthy();
+    expect(typeof created.body?.queued, "queued flag present").toBe("boolean");
+
+    const detail = await pollScanUntilTerminal(page, String(scanId));
+    expect(detail.scan.status, "implicit-node-gyp scan completed").toBe("complete");
 
     await page.goto(`/dashboard/scans/${scanId}`);
     await expect(page.getByRole("heading", { name: "@drydock/e2e-native" })).toBeVisible({
@@ -102,17 +124,23 @@ for (const scenario of scenarios.filter((item) => item.stageId !== uiStageId)) {
         timeout: 30_000,
       });
 
-      const response = await scanStage(page, scenario.stageId);
-      if (scenario.expected.errorStatus) {
-        expect(response.status, scenario.name).toBe(scenario.expected.errorStatus);
-        expect(String(response.body?.error ?? ""), scenario.name).toContain(
+      const created = await createScan(page, scenario.stageId);
+      expect(created.status, scenario.name).toBe(202);
+      const scanId = created.body?.scan?.id;
+      expect(scanId, `${scenario.name}: scan id present`).toBeTruthy();
+
+      const detail = await pollScanUntilTerminal(page, String(scanId));
+      if (scenario.expected.errorCode) {
+        expect(detail.scan.status, scenario.name).toBe("failed");
+        expect(detail.scan.errorJson?.code, scenario.name).toBe(scenario.expected.errorCode);
+        expect(String(detail.scan.errorJson?.message ?? ""), scenario.name).toContain(
           scenario.expected.errorIncludes,
         );
         return;
       }
 
-      expect(response.status, scenario.name).toBe(200);
-      assertScanMatchesScenario(response.body, scenario);
+      expect(detail.scan.status, scenario.name).toBe("complete");
+      assertScanMatchesScenario(detail, scenario);
     } finally {
       await context.close();
     }
@@ -196,11 +224,11 @@ async function openAuthenticatedPage(
   return { context, page };
 }
 
-async function scanStage(page: Page, stageId: string): Promise<{ status: number; body: any }> {
+async function createScan(page: Page, stageId: string): Promise<{ status: number; body: any }> {
   return evaluateOnStablePage(
     page,
     async (inputStageId) => {
-      const response = await fetch("/api/v1/scan", {
+      const response = await fetch("/api/v1/scans", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ stageId: inputStageId }),
@@ -210,6 +238,40 @@ async function scanStage(page: Page, stageId: string): Promise<{ status: number;
     },
     stageId,
   );
+}
+
+// Poll the persisted detail route the way the dashboard does (?poll=1 skips
+// the scan.viewed audit event) until the background job reaches a terminal
+// status. The deadline stays inside the 90s Playwright test timeout so a stuck
+// scan fails with the last observed status instead of an opaque test timeout.
+async function pollScanUntilTerminal(
+  page: Page,
+  scanId: string,
+  timeoutMs = 80_000,
+): Promise<ScanDetailBody> {
+  const deadline = Date.now() + timeoutMs;
+  let lastStatus: string | undefined;
+  for (;;) {
+    const { status, body } = await evaluateOnStablePage(
+      page,
+      async (id) => {
+        const response = await fetch(`/api/v1/scans/${encodeURIComponent(id)}?poll=1`);
+        const body = await response.json().catch(() => null);
+        return { status: response.status, body };
+      },
+      scanId,
+    );
+    expect(status, `scan ${scanId} detail fetch`).toBe(200);
+    const detail = body as ScanDetailBody;
+    lastStatus = detail?.scan?.status;
+    if (lastStatus === "complete" || lastStatus === "failed") return detail;
+    if (Date.now() > deadline) {
+      throw new Error(
+        `scan ${scanId} did not reach a terminal status within ${timeoutMs}ms (last status: ${lastStatus})`,
+      );
+    }
+    await page.waitForTimeout(1_000);
+  }
 }
 
 async function evaluateOnStablePage<Arg, Result>(
@@ -241,30 +303,28 @@ function isNavigationContextError(err: unknown) {
   );
 }
 
-function assertScanMatchesScenario(result: any, scenario: RegistryScenario) {
+function assertScanMatchesScenario(detail: ScanDetailBody, scenario: RegistryScenario) {
   const expected = scenario.expected;
-  expect(result.stageId, scenario.name).toBe(scenario.stageId);
-  expect(result.risk, scenario.name).toBe(expected.artifactRisk ?? expected.releaseRisk);
-  expect(result.riskSummary?.artifactRisk, scenario.name).toBe(
+  expect(detail.scan.stageId, scenario.name).toBe(scenario.stageId);
+  expect(detail.scan.risk, scenario.name).toBe(expected.artifactRisk ?? expected.releaseRisk);
+  expect(detail.riskSummary?.artifactRisk, scenario.name).toBe(
     expected.artifactRisk ?? expected.releaseRisk,
   );
-  expect(result.riskSummary?.releaseRisk, scenario.name).toBe(expected.releaseRisk);
-  expect(result.package?.name, scenario.name).toBe(
+  expect(detail.riskSummary?.releaseRisk, scenario.name).toBe(expected.releaseRisk);
+  expect(detail.scan.packageName, scenario.name).toBe(
     "packageName" in expected ? expected.packageName : scenario.packageName,
   );
   if ("stagedVersion" in expected) {
-    expect(result.package?.stagedVersion, scenario.name).toBe(expected.stagedVersion);
+    expect(detail.scan.stagedVersion, scenario.name).toBe(expected.stagedVersion ?? null);
   }
   if ("previousVersion" in expected) {
-    expect(result.package?.previousVersion, scenario.name).toBe(expected.previousVersion);
+    expect(detail.scan.previousVersion, scenario.name).toBe(expected.previousVersion ?? null);
   }
   if (expected.baseline) {
-    expect(result.baseline, scenario.name).toMatchObject(expected.baseline);
+    expect(detail.scan.summaryJson?.baseline, scenario.name).toMatchObject(expected.baseline);
   }
 
-  const ruleIds = result.ruleFindings
-    .map((finding: { ruleId?: string }) => finding.ruleId)
-    .filter(Boolean);
+  const ruleIds = detail.findings.map((finding) => finding.ruleId).filter(Boolean);
   const expectedRuleIds = expected.ruleIds ?? [];
   expect(ruleIds, scenario.name).toEqual(expect.arrayContaining(expectedRuleIds));
   if (expectedRuleIds.length === 0) {
@@ -280,8 +340,8 @@ function readScenarioDefinitions(): RegistryScenario[] {
       return { ...JSON.parse(text), name: entry.name } as RegistryScenario;
     })
     .sort((left, right) => {
-      const leftFails = left.expected.errorStatus ? 1 : 0;
-      const rightFails = right.expected.errorStatus ? 1 : 0;
+      const leftFails = left.expected.errorCode ? 1 : 0;
+      const rightFails = right.expected.errorCode ? 1 : 0;
       return leftFails - rightFails || left.name.localeCompare(right.name);
     });
 }

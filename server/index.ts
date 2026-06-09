@@ -35,7 +35,6 @@ import { githubWebhookRoutes } from "./routes/github-webhooks";
 import { npmConnectionRoutes } from "./routes/npm-connection";
 import { organizationMembersRoutes } from "./routes/organization-members";
 import { organizationsRoutes } from "./routes/organizations";
-import { scanRoutes } from "./routes/scan";
 import { slackRoutes } from "./routes/slack";
 import { scansRoutes } from "./routes/scans";
 import { stagedPublishesRoutes } from "./routes/staged-publishes";
@@ -199,7 +198,6 @@ app.get("/api", (c) =>
     name: "staged-publish-review",
     endpoints: {
       createScan: "POST /api/v1/scans { stageId }",
-      compatibilityScan: "POST /api/v1/scan { stageId }",
       scans: "GET /api/v1/scans",
       scanDetail: "GET /api/v1/scans/:id",
       stagedPublishes: "POST /api/v1/staged-publishes/scan",
@@ -224,18 +222,13 @@ app.route("/api/v1/github-app", githubAppRoutes);
 app.route("/api/v1/npm-connection", npmConnectionRoutes);
 app.route("/api/v1/organizations", organizationsRoutes);
 app.route("/api/v1/organizations", organizationMembersRoutes);
-// Two scan-submit surfaces, both sharing executeScanJob/runScanPipeline; they
-// differ only in how the caller waits for the result:
-//   /api/v1/scan  (scanRoutes)  — synchronous shim: runs the pipeline inline
-//     and returns the full result in one 200 response. Kept for compatibility
-//     and exercised by route/e2e tests; the browser UI does not call it.
-//   /api/v1/scans (scansRoutes) — queued/background product path: creates a
-//     pending scan, returns 202, and runs the pipeline on SCAN_QUEUE (or a
-//     waitUntil() fallback in local/dev). The UI polls GET /api/v1/scans/:id.
-// The automated paths don't go through either HTTP route: scheduled discovery
-// (the cron + /staged-publishes/scan) and the GitHub gate enqueue onto the same
-// SCAN_QUEUE directly.
-app.route("/api/v1/scan", scanRoutes);
+// Single scan-submit surface: POST /api/v1/scans creates a pending scan,
+// returns 202, and runs the pipeline on SCAN_QUEUE (or a waitUntil() fallback
+// in local/dev). The UI polls GET /api/v1/scans/:id. The automated paths don't
+// go through this HTTP route: scheduled discovery (the cron +
+// /staged-publishes/scan) and the GitHub gate enqueue onto the same SCAN_QUEUE
+// directly. Running the full pipeline inline in a request handler is a Workers
+// CPU-timeout risk, so no synchronous submit route exists.
 app.route("/api/v1/scans", scansRoutes);
 app.route("/api/v1/slack", slackRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);

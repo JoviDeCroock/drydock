@@ -22,7 +22,6 @@ const protectedRoutes: RouteCase[] = [
   },
   { method: "DELETE", path: "/api/v1/npm-connection" },
   { method: "POST", path: "/api/v1/npm-connection/validate", body: {} },
-  { method: "POST", path: "/api/v1/scan", body: { stageId: "stage-auth-route-000001" } },
   { method: "GET", path: "/api/v1/scans" },
   { method: "POST", path: "/api/v1/scans", body: { stageId: "stage-auth-route-000001" } },
   { method: "GET", path: "/api/v1/scans/scan_auth_route" },

@@ -25,7 +25,7 @@ Dynamic Worker sandbox
   └─ returns bounded file metadata + text samples
 ```
 
-Scan orchestration lives in `server/lib/scan-pipeline.ts` and is shared by both entrypoints. The product path is the queued/background lifecycle: `POST /api/v1/scans` creates a scan, a Queue consumer or local `waitUntil()` job runs the pipeline, and the UI reads status/report data from `GET /api/v1/scans/:id`. `POST /api/v1/scan` remains only as a synchronous compatibility shim during the migration.
+Scan orchestration lives in `server/lib/scan-pipeline.ts` and is shared by the HTTP and Queue entrypoints. Scans run only through the queued/background lifecycle: `POST /api/v1/scans` creates a scan, a Queue consumer or local `waitUntil()` job runs the pipeline, and the UI reads status/report data from `GET /api/v1/scans/:id`.
 
 The pipeline is **ecosystem-agnostic**: it accepts a `PackageAdapter` (`server/lib/adapters/types.ts`) and delegates ecosystem-specific behavior — input parsing, artifact acquisition, baseline selection, deterministic findings, package projection, staged-details summarization — to it. The npm adapter (`server/lib/adapters/npm/`) backs staged publishes today, and the backend PyPI adapter (`server/lib/adapters/pypi/`) backs workflow-gate release-candidate reviews.
 
@@ -122,16 +122,11 @@ Current async-capable flow:
 6. Exhausted retryable Queue jobs are sent to the configured dead-letter queue for operator review.
 7. UI polls `GET /api/v1/scans/:id` until terminal state.
 
-`POST /api/v1/scan` remains a synchronous compatibility route while the product moves to the persisted report surface.
+### One scan-submit surface
 
-### Two scan-submit surfaces
+`POST /api/v1/scans` is the only scan-submit route. It creates a `pending` scan, returns `202`, and runs the pipeline asynchronously on `SCAN_QUEUE` (or a `waitUntil()` fallback in local/dev, scheduled as a final attempt because no queue retry will follow). The UI then polls `GET /api/v1/scans/:id`. The synchronous `POST /api/v1/scan` compatibility shim from the queued-lifecycle migration has been removed — the UI had long stopped calling it, and running the full pipeline inline in a request handler is a Workers CPU-timeout risk.
 
-Both submit routes share `executeScanJob` / `runScanPipeline` and differ only in how the caller waits for the result:
-
-- `POST /api/v1/scans` (plural) is the product path. It creates a `pending` scan, returns `202`, and runs the pipeline asynchronously on `SCAN_QUEUE` (or a `waitUntil()` fallback in local/dev). The UI then polls `GET /api/v1/scans/:id`.
-- `POST /api/v1/scan` (singular) is a synchronous compatibility shim. It runs the pipeline inline and returns the full result in one `200` response. It is retained for compatibility and exercised by route/e2e tests; the browser UI no longer calls it.
-
-Neither HTTP route is on the automated paths: scheduled discovery (the `*/15` cron and `POST /api/v1/staged-publishes/scan`) and the GitHub deployment-protection gate both enqueue messages onto the same `SCAN_QUEUE` directly.
+The HTTP route is not on the automated paths: scheduled discovery (the `*/15` cron and `POST /api/v1/staged-publishes/scan`) and the GitHub deployment-protection gate both enqueue messages onto the same `SCAN_QUEUE` directly.
 
 ## Scheduled auto-discovery
 
@@ -277,7 +272,6 @@ Stage ID validation is centralized in `server/lib/stage-id.ts` and reused by sca
 Current API:
 
 - `POST /api/v1/scans` — create queued/background scan;
-- `POST /api/v1/scan` — synchronous compatibility scan;
 - `POST /api/v1/staged-publishes/scan` — discover open staged publishes and create scans for newly found stage IDs;
 - `GET /api/v1/scans` — list organization scans. Supports `filter=undecided|publish|no_publish|all` (default `undecided`), `limit` (default 20, max 100), and `cursor` (opaque `<createdAtMs>:<id>` token). Response includes `nextCursor` for the next page; retries are no longer deduplicated by stage id so every scan appears in the timeline;
 - `GET /api/v1/scans/:id` — scan status/report detail;
@@ -302,7 +296,7 @@ Current API:
 
 All other `/api/v1/*` endpoints honor the `x-organization-id` request header to pick the active org; absent or non-member ids silently fall back to the caller's personal org.
 
-Keep `POST /api/v1/scan` only as a compatibility shim during migration.
+The synchronous `POST /api/v1/scan` compatibility shim has been removed; `POST /api/v1/scans` is the only scan-submit endpoint.
 
 ## Workflow-gate foundation
 

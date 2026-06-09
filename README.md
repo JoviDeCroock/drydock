@@ -84,7 +84,7 @@ pnpm dev          # vite + cloudflare plugin, http://localhost:5173
 pnpm test:e2e     # Playwright + local fake npm staging registry
 ```
 
-The Vite dev server runs the Worker locally and serves the UI at the same origin, so authenticated `fetch("/api/v1/scan")` works without CORS.
+The Vite dev server runs the Worker locally and serves the UI at the same origin, so authenticated `fetch("/api/v1/scans")` works without CORS.
 
 For deterministic browser testing without real npm staged publishes, use the local E2E harness in [`docs/e2e-test-environment.md`](docs/e2e-test-environment.md). It packs fixture packages, runs a fake npm staging registry, starts the Worker locally, and writes inspectable screenshots/traces/journals under `.context/`.
 
@@ -129,11 +129,6 @@ Current scan API:
 ```sh
 # Create a queued/background scan and return immediately with a scan ID
 curl -X POST http://localhost:5173/api/v1/scans \
-  -H 'content-type: application/json' \
-  -d '{"stageId":"<stage-id>"}'
-
-# Compatibility path: run a scan synchronously and return the report payload
-curl -X POST http://localhost:5173/api/v1/scan \
   -H 'content-type: application/json' \
   -d '{"stageId":"<stage-id>"}'
 
