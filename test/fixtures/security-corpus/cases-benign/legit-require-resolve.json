@@ -1,0 +1,38 @@
+{
+  "id": "legit-require-resolve",
+  "title": "Tooling config legitimately resolves dependency paths with require.resolve (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-dynamic-require",
+  "source": "benign-popular",
+  "intent": "require.resolve is the standard way jest/babel/webpack-style tooling turns a package name into an absolute path; it resolves but never executes code. This case guards the dynamic-evaluation rule against ever matching require.resolve — the pattern was evaluated and rejected as pure noise.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": { "name": "tooling-preset", "version": "3.4.0" },
+  "stagedPackageJson": { "name": "tooling-preset", "version": "3.5.0" },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 46,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tooling-preset\",\"version\":\"3.4.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 46,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tooling-preset\",\"version\":\"3.5.0\"}"
+    },
+    {
+      "path": "preset.js",
+      "size": 213,
+      "sha256": "preset-js",
+      "flags": [],
+      "textSample": "// Resolve plugin entry points to absolute paths so downstream tools can load\n// them regardless of hoisting layout.\nmodule.exports = {\n  transform: require.resolve('ts-transformer'),\n  reporter: require.resolve('pretty-reporter/dist/index.js'),\n};\n"
+    }
+  ]
+}

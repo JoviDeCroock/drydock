@@ -43,7 +43,13 @@ const PYTHON_NETWORK_ACCESS_PATTERNS = [
 const JS_DYNAMIC_EVALUATION_PATTERNS = [
   /\beval\s*\(/,
   /\bnew\s+Function\s*\(/,
-  /\bWebAssembly\.compile\s*\(/,
+  // The whole compile/instantiate family: instantiate(Streaming) — not bare
+  // compile — is the loader idiom packed wasm payloads actually use (typically
+  // `WebAssembly.instantiateStreaming(fetch(...))`).
+  /\bWebAssembly\.(?:compile|compileStreaming|instantiate|instantiateStreaming)\s*\(/,
+  // require.resolve( was evaluated as a candidate here and rejected: it only
+  // resolves a path (never executes code) and is the standard jest/babel/webpack
+  // preset idiom, so it flagged the legit-require-resolve benign hard-negative.
   /\batob\s*\(/,
   /\bBuffer\.from\s*\([^,]+,\s*["']base64["']\s*\)/,
 ];

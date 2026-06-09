@@ -61,7 +61,7 @@ The first corpus slice covers:
 - credential file-path reads (`.aws/credentials`, `.ssh/id_`, `.netrc`) in addition to `process.env` and known token names, matching the Python rule coverage;
 - the collect-and-exfiltrate sink: a single file that reads credentials and has a network egress path escalates `code.credential-access` to high even on a modified (not newly added) module;
 - implicit `node-gyp rebuild` from root `binding.gyp`, GYP command substitution that executes package JavaScript, and native artifact review;
-- base64/dynamic evaluation plus network-capable code;
+- base64/dynamic evaluation plus network-capable code, including the `WebAssembly.instantiateStreaming(fetch(...))` loader idiom (the whole `compile`/`compileStreaming`/`instantiate`/`instantiateStreaming` family counts as dynamic evaluation);
 - secret-looking file addition;
 - large opaque binary addition;
 - files that appear in the tarball outside a declared `package.json.files` allowlist;
@@ -99,7 +99,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.2.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.8.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.11.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -123,7 +123,12 @@ the raw and folded text are scanned so folding can only add detections, never dr
 just `cmdclass`. `1.8.0` adds `install-script.gyp-command-substitution`, a critical npm rule for root
 `*.gyp` files whose GYP command expansion (`<!...`) invokes package-local JavaScript such as
 `node index.js`; this covers the Miasma / Phantom Gyp install-time bypass while avoiding ordinary
-native-addon probes like `node -p` include lookups.
+native-addon probes like `node -p` include lookups. `1.11.0` extends the JavaScript
+dynamic-evaluation family from `WebAssembly.compile` to the whole
+`compile`/`compileStreaming`/`instantiate`/`instantiateStreaming` set, since
+`instantiateStreaming(fetch(...))` is the loader idiom packed wasm payloads actually use;
+`require.resolve` was evaluated for the same family and rejected — it resolves paths without
+executing code and flagged the `legit-require-resolve` benign hard-negative.
 
 ### Fixture format
 
