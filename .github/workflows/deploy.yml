@@ -1,0 +1,83 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One production deploy at a time. Never cancel an in-flight run: killing it
+# between "migrations applied" and "worker deployed" would leave the schema
+# ahead of the live code. Queued runs wait their turn instead.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify (lint · format · typecheck · test)
+        run: pnpm run verify
+
+  deploy:
+    name: deploy
+    needs: verify
+    runs-on: ubuntu-latest
+    # Repo-level protection rules on the "production" environment (required
+    # reviewers, branch restrictions) gate this job and hold the secrets.
+    environment:
+      name: production
+      url: https://drydock.resynapse.dev
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Migrations apply before the new Worker goes live, so Worker code must
+      # stay backward compatible with a schema one migration ahead. This step
+      # also runs before the build on purpose: `vite build` emits a redirected
+      # Wrangler config (.wrangler/deploy/config.json -> dist/**/wrangler.json)
+      # that later wrangler invocations resolve instead of the checked-in
+      # wrangler.jsonc, and migrations need the source config's
+      # `migrations_dir: "drizzle"`.
+      - name: Apply D1 migrations
+        run: pnpm run db:migrate:remote
+
+      # The Cloudflare Vite plugin bundles the Worker + prerendered UI assets
+      # into dist/ and writes the redirected Wrangler config the deploy step
+      # consumes. A bare `wrangler deploy` against wrangler.jsonc cannot work:
+      # its `assets` block has no `directory` — only the build output provides
+      # one.
+      - name: Build
+        run: pnpm run build
+
+      - name: Deploy Worker
+        run: pnpm run deploy

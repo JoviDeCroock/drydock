@@ -57,6 +57,58 @@ them out of the worker boot graph.
 
 Run `pnpm run verify` before every commit, so each commit passes lint + format + typecheck + tests. There is no git hook enforcing this — it is run explicitly. CI (`.github/workflows/ci.yml`) runs the same core checks and then installs Chromium and runs `pnpm run test:e2e`.
 
+## Production deploys
+
+`.github/workflows/deploy.yml` deploys the Worker to production. It runs on
+every push to `main` and on demand via `workflow_dispatch` (Actions → Deploy →
+"Run workflow", or `gh workflow run deploy.yml`). A `deploy-production`
+concurrency group serializes runs without cancelling an in-flight deploy, so a
+deploy is never killed between applying migrations and uploading the Worker.
+
+Two jobs:
+
+1. **verify** — same setup as CI, runs `pnpm run verify`.
+2. **deploy** — `needs: verify` and runs in the `production` GitHub
+   Environment, so repo-level environment protection rules (required
+   reviewers, branch restrictions) can gate it. Steps, in order:
+   1. `pnpm run db:migrate:remote` — applies pending D1 migrations to the
+      remote `staged-publish-review` database **before** the new Worker code
+      goes live. Worker code must therefore stay backward compatible with a
+      schema one migration ahead. This step also deliberately runs before the
+      build: `vite build` writes a redirected Wrangler config
+      (`.wrangler/deploy/config.json` → `dist/**/wrangler.json`) that later
+      wrangler invocations resolve instead of the checked-in `wrangler.jsonc`,
+      and migrations need the source config's `migrations_dir: "drizzle"`.
+   2. `pnpm run build` — the Cloudflare Vite plugin bundles the Worker and the
+      prerendered UI assets into `dist/` and emits the redirected Wrangler
+      config. A bare `wrangler deploy` against `wrangler.jsonc` cannot work:
+      its `assets` block has no `directory`; only the build output provides
+      one.
+   3. `pnpm run deploy` — `wrangler deploy`, which picks up the redirected
+      config and uploads the built Worker, assets, cron triggers, queue
+      consumers, and routes.
+
+### Required repo secrets
+
+Configure these as repository (or `production` environment) secrets before the
+first run — the workflow cannot be exercised without them:
+
+- `CLOUDFLARE_API_TOKEN` — minimum permissions:
+  - Account → **Workers Scripts: Edit** (upload Worker + assets, crons,
+    bindings)
+  - Account → **D1: Edit** (apply migrations)
+  - Account → **Queues: Edit** (register the `staged-publish-review-scans`
+    consumer)
+  - Zone `resynapse.dev` → **Workers Routes: Edit** (the
+    `drydock.resynapse.dev` custom-domain routes)
+
+  If a deploy fails with a permissions error, Cloudflare's "Edit Cloudflare
+  Workers" token template plus D1 Edit and Queues Edit is the known-good
+  superset.
+
+- `CLOUDFLARE_ACCOUNT_ID` — the Cloudflare account id. Required in
+  non-interactive CI whenever the token can see more than one account.
+
 ## Banned hooks
 
 `useState` and `useReducer` are forbidden via oxlint's `no-restricted-imports` from `preact/hooks` (and `react`, defensively). The codebase is migrating component-local state to:
