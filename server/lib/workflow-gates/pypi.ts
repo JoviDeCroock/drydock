@@ -6,18 +6,18 @@ import {
   pypiAdapter,
   PYPI_RELEASE_MANIFEST_SCHEMA,
   type PyPiArtifactInput,
-  type PyPiArtifactKind,
   type PyPiPreparedArtifact,
   type PyPiReleaseManifest,
 } from "../adapters/pypi/index";
 import type { AdapterBroker, PackageAdapter } from "../adapters/types";
-import {
-  type ResolvedReleaseBundle,
-  type ResolvedReleaseFile,
-  WorkflowArtifactError,
-} from "../github-app";
-import { downloadInSandboxInline, type DownloadResult } from "../sandbox";
-import type { PreparedReleaseCandidate, WorkflowArtifactKind, WorkflowGateAdapter } from "./types";
+import { WorkflowArtifactError } from "../github-app";
+import type {
+  ArchiveContents,
+  ParsedGateArtifact,
+  PreparedReleaseCandidate,
+  WorkflowArtifactKind,
+  WorkflowGateAdapter,
+} from "./types";
 
 /**
  * PyPI workflow-gate adapter.
@@ -25,7 +25,7 @@ import type { PreparedReleaseCandidate, WorkflowArtifactKind, WorkflowGateAdapte
  * There is no maintainer-declared manifest: the release set is whatever
  * wheel/sdist files the bundle contains, and identity (`package`/`version`) is
  * derived from each wheel's `METADATA` / sdist's `PKG-INFO` after the bytes are
- * parsed in the credentials-free sandbox. The deterministic review + baseline
+ * parsed in the shared sandbox router. The deterministic review + baseline
  * selection live in the shared `pypiAdapter` (`server/lib/adapters/pypi`); this
  * adapter only owns the gate-time artifact semantics.
  */
@@ -38,23 +38,24 @@ export const pypiWorkflowGateAdapter: WorkflowGateAdapter = {
     return inferPyPiArtifactKind(path);
   },
 
-  async prepareReleaseCandidates(
-    env: Cloudflare.Env,
-    ctx: ExecutionContext,
-    { bundle }: { bundle: ResolvedReleaseBundle },
-  ): Promise<PreparedReleaseCandidate[]> {
-    const entries: PreparedArtifactEntry[] = [];
-    for (const file of bundle.artifacts) {
-      const files = await parseArtifactBytes(env, ctx, file);
-      const input: PyPiArtifactInput = { path: file.path, files };
-      entries.push({ file, input, prepared: preparePyPiArtifact(input) });
-    }
+  detectArtifact(contents: ArchiveContents): WorkflowArtifactKind | null {
+    // A PyPI sdist carries `PKG-INFO` at the archive root, usually under the
+    // single project-version directory. Nested egg-info metadata can appear in
+    // vendored files inside npm tarballs, so it must not claim the archive.
+    return contents.files.some((file) => isSdistRootMetadataPath(file.path)) ? "sdist" : null;
+  },
+
+  prepareReleaseCandidates(artifacts: ParsedGateArtifact[]): PreparedReleaseCandidate[] {
+    const entries: PreparedArtifactEntry[] = artifacts.map((artifact) => {
+      const input: PyPiArtifactInput = { path: artifact.path, files: artifact.files };
+      return { artifact, input, prepared: preparePyPiArtifact(input) };
+    });
     return deriveReleaseCandidates(entries);
   },
 };
 
 interface PreparedArtifactEntry {
-  file: ResolvedReleaseFile;
+  artifact: ParsedGateArtifact;
   input: PyPiArtifactInput;
   prepared: PyPiPreparedArtifact;
 }
@@ -84,7 +85,7 @@ function deriveReleaseCandidates(entries: PreparedArtifactEntry[]): PreparedRele
     if (!summary.name || !summary.version) {
       throw new WorkflowArtifactError(
         "artifact_identity_missing",
-        `${entry.file.path} does not expose a PyPI Name/Version in its metadata`,
+        `${entry.artifact.path} does not expose a PyPI Name/Version in its metadata`,
       );
     }
     const normalized = normalizePyPiProjectName(summary.name);
@@ -96,7 +97,7 @@ function deriveReleaseCandidates(entries: PreparedArtifactEntry[]): PreparedRele
     if (summary.version !== group.version) {
       throw new WorkflowArtifactError(
         "artifact_identity_inconsistent",
-        `${entry.file.path} version ${summary.version} disagrees with ${group.version} for ${group.name}`,
+        `${entry.artifact.path} version ${summary.version} disagrees with ${group.version} for ${group.name}`,
       );
     }
     group.entries.push(entry);
@@ -108,7 +109,7 @@ function deriveReleaseCandidates(entries: PreparedArtifactEntry[]): PreparedRele
     const manifest = buildReleaseManifest(
       group.name,
       group.version,
-      group.entries.map((entry) => entry.file),
+      group.entries.map((entry) => entry.artifact),
     );
     return {
       ecosystem: "pypi",
@@ -121,7 +122,7 @@ function deriveReleaseCandidates(entries: PreparedArtifactEntry[]): PreparedRele
 function buildReleaseManifest(
   name: string,
   version: string,
-  files: ResolvedReleaseFile[],
+  files: ParsedGateArtifact[],
 ): PyPiReleaseManifest {
   const candidate = {
     schema: PYPI_RELEASE_MANIFEST_SCHEMA,
@@ -140,19 +141,8 @@ function buildReleaseManifest(
   }
 }
 
-async function parseArtifactBytes(
-  env: Cloudflare.Env,
-  ctx: ExecutionContext,
-  artifact: ResolvedReleaseFile,
-): Promise<DownloadResult["files"]> {
-  const format = inlineFormatForKind(artifact.kind as PyPiArtifactKind);
-  const result = await downloadInSandboxInline(env, ctx, {
-    bytes: artifact.bytes,
-    format,
-  });
-  return result.files;
-}
-
-function inlineFormatForKind(kind: PyPiArtifactKind): "zip" | "tgz" {
-  return kind === "wheel" ? "zip" : "tgz";
+function isSdistRootMetadataPath(path: string): boolean {
+  if (path === "PKG-INFO") return true;
+  const parts = path.split("/");
+  return parts.length === 2 && parts[1] === "PKG-INFO";
 }

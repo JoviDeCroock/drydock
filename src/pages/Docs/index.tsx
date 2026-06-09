@@ -19,17 +19,16 @@ export default function DocsPage() {
           </h1>
           <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
             Drydock reviews what a release ships before it goes public, and never holds your publish
-            credential. How it hooks in depends on the registry: npm hands Drydock a staged tarball
-            to inspect; registries without a staged artifact (PyPI today) use a workflow gate, where
-            a GitHub Actions deployment-protection rule holds the publish until the build is
-            reviewed.
+            credential. How it hooks in depends on the release: npm hands Drydock a staged tarball
+            to inspect; when there's no staged artifact — PyPI, or an npm publish that skips staging
+            — a GitHub Actions gate holds the publish until the build is reviewed.
           </p>
           <nav class="flex flex-wrap gap-x-5 gap-y-2 mt-1 font-mono text-[11px] uppercase tracking-[0.1em]">
             <a class="text-accent hover:text-accent-hover" href="#staged-publishing">
               → Staged publishing (npm)
             </a>
             <a class="text-accent hover:text-accent-hover" href="#workflow-gating">
-              → Workflow gating
+              → Workflow gating (PyPI &amp; npm)
             </a>
           </nav>
         </header>
@@ -129,24 +128,31 @@ export default function DocsPage() {
         <section id="workflow-gating" class="flex flex-col gap-8 scroll-mt-6">
           <div class="flex flex-col gap-3">
             <SectionLabel>
-              Workflow gating — GitHub Actions <Badge tone="info">Preview</Badge>
+              Workflow gating — PyPI &amp; npm on GitHub Actions <Badge tone="info">Preview</Badge>
             </SectionLabel>
             <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
               When the registry can't hold the candidate, the workflow does.
             </h2>
             <Prose>
-              Some registries don't expose a staged candidate. For those, the publish job itself
-              becomes the boundary: CI builds the release artifacts, uploads them as a release
-              candidate, and a GitHub Environment with a Drydock-owned deployment protection rule
-              holds the publish job. Drydock reviews the candidate and records a recommendation, but
-              never approves on its own — a maintainer approves or rejects from the review
-              workbench, and only then is the held job released or blocked. The publish runs on the
-              workflow's own credential (e.g. Trusted Publishing via OIDC); Drydock never holds it.
+              PyPI does not expose a staged tarball, and not every npm publish goes through staged
+              publishing. For those, the publish job itself becomes the boundary: CI builds the
+              release artifacts — wheels and sdists for PyPI, <Code>npm pack</Code> tarballs for npm
+              — uploads them as a release candidate, and a GitHub Environment with a Drydock-owned
+              deployment protection rule holds the publish job. Drydock reviews the candidate and
+              records a recommendation, but never approves on its own — a maintainer approves or
+              rejects from the review workbench, and only then is the held job released or blocked.
+              The publish runs on the workflow's own credential (PyPI Trusted Publishing, or npm via
+              OIDC); Drydock never holds it.
             </Prose>
             <Prose>
-              PyPI is the first supported ecosystem. The GitHub plumbing below — install, gate,
-              fetch, review, decide — is shared, so future ecosystems plug in behind the same gate;
-              this walkthrough uses PyPI as the example.
+              PyPI and npm are both supported. The GitHub plumbing — install, gate, fetch, review,
+              decide — is shared, and Drydock auto-detects each package's ecosystem from the
+              uploaded artifacts, so future ecosystems plug in behind the same gate. This
+              walkthrough uses PyPI as the example; for npm, a workflow gate is an alternative to{" "}
+              <a class="underline" href="#staged-publishing">
+                staged-publish review
+              </a>{" "}
+              for repositories that publish without staging.
             </Prose>
             <Alert tone="info">
               The full gate runs in production today: Drydock fetches the release candidate, reviews
@@ -202,10 +208,17 @@ export default function DocsPage() {
             </Prose>
             <Prose>
               The release identity is derived from the artifacts themselves — package name and
-              version from each wheel's <Code>METADATA</Code> and each sdist's <Code>PKG-INFO</Code>
-              , with every sha256 recomputed server-side from the uploaded bytes. The reviewed wheel
-              or sdist must be the exact file published: the publish job only downloads the reviewed
-              bundle and never rebuilds, so the reviewed bytes are the published bytes.
+              version from each wheel's <Code>METADATA</Code>, each sdist's <Code>PKG-INFO</Code>,
+              and each npm tarball's <Code>package.json</Code> — with every sha256 recomputed
+              server-side from the uploaded bytes. The reviewed artifact must be the exact file
+              published: the publish job only downloads the reviewed bundle and never rebuilds, so
+              the reviewed bytes are the published bytes.
+            </Prose>
+            <Prose>
+              You never declare which ecosystem you're publishing. Drydock tells an npm tarball from
+              a PyPI sdist by content — an npm <Code>.tgz</Code> carries a <Code>package.json</Code>
+              , a PyPI sdist a <Code>PKG-INFO</Code> — so the same auto-detect target reviews
+              either, or both at once for a mixed monorepo.
             </Prose>
           </Subsection>
 
@@ -259,6 +272,41 @@ export default function DocsPage() {
               approves the review in Drydock, then publishes the downloaded bundle with whatever
               tool you prefer.
             </Prose>
+            <Prose>
+              npm looks the same — <Code>npm pack</Code> the workspaces, upload{" "}
+              <Code>dist/*.tgz</Code>, and gate the publish job on a GitHub Environment. The publish
+              job downloads the reviewed tarballs and runs <Code>npm publish &lt;tarball&gt;</Code>{" "}
+              with <Code>--provenance</Code>; it never re-packs.
+            </Prose>
+            <CodeBlock name=".github/workflows/release.yml (npm)">
+              {`jobs:
+  build-release-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm run pack:all   # npm pack each workspace into dist/*.tgz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-release-candidates
+          path: dist/*.tgz
+
+  publish:
+    needs: build-release-artifacts
+    environment: npm
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-release-candidates
+          path: dist
+      # no checkout, no re-pack: publish exactly the reviewed bytes
+      - run: |
+          for tgz in dist/*.tgz; do
+            npm publish "$tgz" --access public --provenance
+          done`}
+            </CodeBlock>
           </Subsection>
 
           <Subsection title="Decision flow">

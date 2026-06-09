@@ -306,7 +306,7 @@ Keep `POST /api/v1/scan` only as a compatibility shim during migration.
 
 ## Workflow-gate foundation
 
-Workflow gates are a separate product mode from npm staged publishing, for ecosystems with no staged-publish review primitive. The pipeline is ecosystem-neutral — everything GitHub-shaped (install, webhook, artifact fetch, digest recomputation, decision callback, persistence) is shared, and only an ecosystem's artifact semantics are pluggable behind a `WorkflowGateAdapter`. PyPI is the first (and currently only) ecosystem. The implementation is mounted through the GitHub App routes and the public `POST /webhooks/github` deployment-protection webhook, and reviews are persisted as ordinary scans with `source: "workflow_gate"` and a synthetic `stageId: "workflow-gate:<gateId>:<ecosystem>:<package>"`.
+Workflow gates are a separate product mode from npm staged publishing, for releases where the registry is not holding a staged candidate for Drydock to review. The pipeline is ecosystem-neutral — everything GitHub-shaped (install, webhook, artifact fetch, digest recomputation, decision callback, persistence) is shared, and only an ecosystem's artifact semantics are pluggable behind a `WorkflowGateAdapter`. PyPI and npm are supported today. The implementation is mounted through the GitHub App routes and the public `POST /webhooks/github` deployment-protection webhook, and reviews are persisted as ordinary scans with `source: "workflow_gate"` and a synthetic `stageId: "workflow-gate:<gateId>:<ecosystem>:<package>"`.
 
 Implemented pieces:
 

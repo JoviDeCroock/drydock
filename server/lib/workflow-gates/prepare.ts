@@ -9,7 +9,6 @@ import {
   type GithubAppConfig,
   markGateErrored,
   type ResolvedReleaseBundle,
-  type ResolvedReleaseFile,
   WorkflowArtifactError,
   type WorkflowGateRecord,
 } from "../github-app";
@@ -19,7 +18,8 @@ import {
   getWorkflowGateAdapter,
   UnsupportedEcosystemError,
 } from "./registry";
-import type { PreparedReleaseCandidate, WorkflowGateAdapter } from "./types";
+import { resolveBundleArtifacts } from "./resolve";
+import type { ParsedGateArtifact, PreparedReleaseCandidate, WorkflowGateAdapter } from "./types";
 
 export interface PrepareForGateInput {
   config: GithubAppConfig;
@@ -207,27 +207,29 @@ function resolveBundleClassifier(
 }
 
 /**
- * Group the verified artifacts by ecosystem and let each ecosystem's adapter
- * split its slice into one prepared candidate per distinct package.
+ * Parse every verified artifact once in the shared sandbox router, group the
+ * parsed artifacts by their (possibly content-resolved) ecosystem, and let each
+ * ecosystem's adapter split its slice into one prepared candidate per distinct
+ * package.
  */
 async function prepareBundlePackages(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
   bundle: ResolvedReleaseBundle,
 ): Promise<PreparedGatePackage[]> {
-  const byEcosystem = new Map<string, ResolvedReleaseFile[]>();
-  for (const file of bundle.artifacts) {
-    const slice = byEcosystem.get(file.ecosystem);
-    if (slice) slice.push(file);
-    else byEcosystem.set(file.ecosystem, [file]);
+  const resolved = await resolveBundleArtifacts(env, ctx, bundle);
+
+  const byEcosystem = new Map<string, ParsedGateArtifact[]>();
+  for (const artifact of resolved) {
+    const slice = byEcosystem.get(artifact.ecosystem);
+    if (slice) slice.push(artifact);
+    else byEcosystem.set(artifact.ecosystem, [artifact]);
   }
 
   const packages: PreparedGatePackage[] = [];
   for (const [ecosystem, artifacts] of byEcosystem) {
     const adapter = getWorkflowGateAdapter(ecosystem);
-    const candidates = await adapter.prepareReleaseCandidates(env, ctx, {
-      bundle: { ...bundle, artifacts },
-    });
+    const candidates = adapter.prepareReleaseCandidates(artifacts);
     for (const candidate of candidates) {
       packages.push({ candidate, packageAdapter: adapter.packageAdapter });
     }

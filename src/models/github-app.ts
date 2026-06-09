@@ -16,7 +16,7 @@ export interface PublicGithubAppInstallation {
   updatedAt: string;
 }
 
-export type SupportedEcosystem = "pypi";
+export type SupportedEcosystem = "pypi" | "npm";
 
 export interface PublicReleaseTarget {
   id: string;
