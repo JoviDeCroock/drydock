@@ -143,6 +143,9 @@ curl http://localhost:5173/api/v1/scans
 # Read status/report detail for a persisted scan
 curl http://localhost:5173/api/v1/scans/<scan-id>
 
+# Export a completed scan's report as canonical, stable-ordered JSON (download)
+curl http://localhost:5173/api/v1/scans/<scan-id>/report.json
+
 # List published versions that can be compared against the staged release
 curl http://localhost:5173/api/v1/scans/<scan-id>/versions
 
