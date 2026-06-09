@@ -4,7 +4,7 @@ import { pluralize } from "../../../lib/format";
 import { getReleaseRecommendation } from "../recommendation";
 import type { AiFinding, DisplayedAiResult } from "../../../../server/lib/ai-review-types";
 import type { PersistedScanDetail } from "../../../models/scan";
-import { Badge, SectionLabel, SeverityBar } from "../../../components";
+import { Badge, Card, SectionLabel, SeverityBar } from "../../../components";
 import type { FindingWithDiffStatus, PersistedFinding, PersistedSummary } from "./types";
 
 export function ReleaseRecommendation({
@@ -55,25 +55,38 @@ export function ReleaseRecommendation({
   const severityCounts = countSeverities([...detail.findings, ...aiFindings]);
   const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
 
+  // The recommendation is the report's verdict, so it gets the only elevated
+  // (carded) section among the supplementary bare sections below it, plus a
+  // headline-scale verdict in the matching severity text color. Elevation +
+  // scale make it out-rank Risk signals / Manifest / Reviewer notes, which all
+  // share the flat SectionLabel altitude.
   return (
-    <section class="flex flex-col gap-3">
-      <SectionLabel>Recommendation</SectionLabel>
-      <div class="flex flex-wrap items-center gap-2">
-        <Badge tone={recommendation.tone}>{recommendation.label}</Badge>
-        {artifactRisk !== releaseRisk ? (
-          <Badge tone="neutral">artifact {artifactRisk}</Badge>
-        ) : null}
-        {ai?.model != null &&
-          (ai.kind === "complete" ? (
-            <>
-              <Badge tone={ai.requiresManualReview ? "medium" : "ok"}>
-                {ai.requiresManualReview ? "manual review" : "no extra review"}
-              </Badge>
-              <Badge tone="neutral">{ai.releaseAssessment.replaceAll("_", " ")}</Badge>
-            </>
-          ) : (
-            <Badge tone="neutral">assistant unavailable</Badge>
-          ))}
+    <Card class="p-5 sm:p-6 flex flex-col gap-4">
+      <div class="flex flex-col gap-2">
+        <SectionLabel>Recommendation</SectionLabel>
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <h2
+            class={`m-0 text-lg font-semibold tracking-[-0.01em] ${verdictColor(recommendation.tone)}`}
+          >
+            {capitalize(recommendation.label)}
+          </h2>
+          <div class="flex flex-wrap items-center gap-2">
+            {artifactRisk !== releaseRisk ? (
+              <Badge tone="neutral">artifact {artifactRisk}</Badge>
+            ) : null}
+            {ai?.model != null &&
+              (ai.kind === "complete" ? (
+                <>
+                  <Badge tone={ai.requiresManualReview ? "medium" : "ok"}>
+                    {ai.requiresManualReview ? "manual review" : "no extra review"}
+                  </Badge>
+                  <Badge tone="neutral">{ai.releaseAssessment.replaceAll("_", " ")}</Badge>
+                </>
+              ) : (
+                <Badge tone="neutral">assistant unavailable</Badge>
+              ))}
+          </div>
+        </div>
       </div>
       {recommendation.copy ? (
         <p class="m-0 max-w-[760px] text-[14px] leading-[1.55] text-ink-muted">
@@ -94,8 +107,21 @@ export function ReleaseRecommendation({
         ))}
       </ul>
       {findingTotal ? <SeverityBar counts={severityCounts} class="max-w-[520px]" /> : null}
-    </section>
+    </Card>
   );
+}
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+// The verdict heading carries severity meaning, so it uses the `-text` severity
+// variants (text role), never the saturated tokens. Neutral verdicts stay --ink.
+function verdictColor(tone: string): string {
+  if (tone === "critical" || tone === "high") return "text-danger-text";
+  if (tone === "medium") return "text-warn-text";
+  if (tone === "ok") return "text-ok-text";
+  return "text-ink";
 }
 
 function buildRecommendationEvidence(

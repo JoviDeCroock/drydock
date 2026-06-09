@@ -5,8 +5,33 @@ import {
   type FileRecord,
   type FindingDiffAnnotation,
 } from "../../../../server/lib/review";
+import { maxSeverity } from "../../../components/diff-annotations";
 import type { PersistedScanDetail } from "../../../models/scan";
 import type { FindingWithDiffStatus, PersistedFinding } from "./types";
+
+export interface FindingCount {
+  count: number;
+  maxSeverity: string;
+}
+
+// Per-file finding counts (with the highest severity for tone), keyed by the
+// finding's file path. FileTree bubbles these up to parent folders. Feeds the
+// tree-count surface from the same finding set as the inline diff annotations
+// and the risk-signals index, so all three stay in sync.
+export function findingCountsByPath(findings: FindingWithDiffStatus[]): Map<string, FindingCount> {
+  const counts = new Map<string, FindingCount>();
+  for (const { finding } of findings) {
+    const existing = counts.get(finding.file);
+    if (existing) {
+      existing.count += 1;
+      existing.maxSeverity =
+        maxSeverity(existing.maxSeverity, finding.severity) ?? existing.maxSeverity;
+    } else {
+      counts.set(finding.file, { count: 1, maxSeverity: finding.severity });
+    }
+  }
+  return counts;
+}
 
 const DIFF_STATUS_RANK: Record<DiffEntry["status"], number> = {
   added: 0,

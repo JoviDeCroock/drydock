@@ -1,6 +1,14 @@
 import { diffLines } from "diff";
+import { Fragment } from "preact";
 import { useMemo } from "preact/hooks";
-import { Badge, statusTone } from "./Badge";
+import { Badge, severityTone, statusTone } from "./Badge";
+import {
+  annotationLabel,
+  partitionFindingsByLine,
+  severityGroup,
+  type DiffFinding,
+  type SeverityGroup,
+} from "./diff-annotations";
 import {
   ensureHighlighter,
   highlighterReady,
@@ -10,6 +18,8 @@ import {
 } from "./highlight";
 import { Muted } from "./Typography";
 import { cn } from "./cn";
+
+export type { DiffFinding } from "./diff-annotations";
 
 interface DiffSide {
   textSample?: string | null;
@@ -25,6 +35,10 @@ export interface DiffViewProps {
   after: DiffSide | null;
   beforeLabel: string;
   afterLabel: string;
+  // Deterministic findings for this file, pinned to the staged line they
+  // reference. Findings without a matching line surface in a banner above the
+  // diff so a truncated sample can't hide a signal.
+  findings?: DiffFinding[];
 }
 
 interface Row {
@@ -111,7 +125,15 @@ function hasFlag(side: DiffSide | null, flag: string): boolean {
   return Boolean(side?.flags?.includes(flag));
 }
 
-export function DiffView({ path, status, before, after, beforeLabel, afterLabel }: DiffViewProps) {
+export function DiffView({
+  path,
+  status,
+  before,
+  after,
+  beforeLabel,
+  afterLabel,
+  findings = [],
+}: DiffViewProps) {
   const beforeSample = before?.textSample ?? "";
   const afterSample = after?.textSample ?? "";
 
@@ -142,6 +164,7 @@ export function DiffView({ path, status, before, after, beforeLabel, afterLabel 
         binary={binary}
         beforeLabel={beforeLabel}
         afterLabel={afterLabel}
+        findings={findings}
       />
     </div>
   );
@@ -155,6 +178,7 @@ function DiffBody({
   binary,
   beforeLabel,
   afterLabel,
+  findings,
 }: {
   path: string;
   status: string;
@@ -163,6 +187,7 @@ function DiffBody({
   binary: boolean;
   beforeLabel: string;
   afterLabel: string;
+  findings: DiffFinding[];
 }) {
   const lang = langForPath(path);
   if (lang && !binary) ensureHighlighter();
@@ -170,20 +195,28 @@ function DiffBody({
   const afterTokens = useLineTokens(afterSample, lang);
 
   if (binary) {
-    return <Muted class="text-[13px]">Binary file — no text diff available.</Muted>;
+    return <DiffMessage findings={findings}>Binary file — no text diff available.</DiffMessage>;
   }
 
   if (status === "added") {
     if (!afterSample) {
-      return <Muted class="text-[13px]">No preview stored for this added file.</Muted>;
+      return <DiffMessage findings={findings}>No preview stored for this added file.</DiffMessage>;
     }
     return (
-      <SingleSidedView label={afterLabel} tone="added" text={afterSample} tokens={afterTokens} />
+      <SingleSidedView
+        label={afterLabel}
+        tone="added"
+        text={afterSample}
+        tokens={afterTokens}
+        findings={findings}
+      />
     );
   }
   if (status === "removed") {
     if (!beforeSample) {
-      return <Muted class="text-[13px]">No preview stored for this removed file.</Muted>;
+      return (
+        <DiffMessage findings={findings}>No preview stored for this removed file.</DiffMessage>
+      );
     }
     return (
       <SingleSidedView
@@ -191,12 +224,13 @@ function DiffBody({
         tone="removed"
         text={beforeSample}
         tokens={beforeTokens}
+        findings={findings}
       />
     );
   }
   if (status === "unchanged") {
     if (!afterSample && !beforeSample) {
-      return <Muted class="text-[13px]">No preview stored for this file.</Muted>;
+      return <DiffMessage findings={findings}>No preview stored for this file.</DiffMessage>;
     }
     return (
       <SingleSidedView
@@ -204,15 +238,22 @@ function DiffBody({
         tone="unchanged"
         text={afterSample || beforeSample}
         tokens={afterSample ? afterTokens : beforeTokens}
+        findings={findings}
       />
     );
   }
   if (!beforeSample && !afterSample) {
-    return <Muted class="text-[13px]">No text samples available to diff.</Muted>;
+    return <DiffMessage findings={findings}>No text samples available to diff.</DiffMessage>;
   }
   if (!beforeSample) {
     return (
-      <SingleSidedView label={afterLabel} tone="added" text={afterSample} tokens={afterTokens} />
+      <SingleSidedView
+        label={afterLabel}
+        tone="added"
+        text={afterSample}
+        tokens={afterTokens}
+        findings={findings}
+      />
     );
   }
   if (!afterSample) {
@@ -222,23 +263,34 @@ function DiffBody({
         tone="removed"
         text={beforeSample}
         tokens={beforeTokens}
+        findings={findings}
       />
     );
   }
 
   const rows = buildRows(beforeSample, afterSample, beforeTokens, afterTokens);
+  const presentLines = new Set<number>();
+  for (const row of rows) if (row.afterLine !== null) presentLines.add(row.afterLine);
+  const { pinned, unpinned } = partitionFindingsByLine(findings, presentLines);
   return (
     <div class="border border-border rounded-md overflow-hidden">
       <div class="bg-surface-2 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle flex justify-between">
         <span>{beforeLabel}</span>
         <span>{afterLabel}</span>
       </div>
+      {unpinned.length ? <AnnotationBanner findings={unpinned} /> : null}
       <div class="overflow-auto h-[560px]">
         <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
           <tbody>
-            {rows.map((row, index) => (
-              <DiffRow key={index} row={row} />
-            ))}
+            {rows.map((row, index) => {
+              const pins = row.afterLine !== null ? pinned.get(row.afterLine) : undefined;
+              return (
+                <Fragment key={index}>
+                  <DiffRow row={row} />
+                  {pins ? <AnnotationRows findings={pins} colSpan={4} /> : null}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -270,17 +322,21 @@ function SingleSidedView({
   tone,
   text,
   tokens,
+  findings,
 }: {
   label: string;
   tone: "added" | "removed" | "unchanged";
   text: string;
   tokens: TokenLine[] | null;
+  findings: DiffFinding[];
 }) {
   const headerBg =
     tone === "added" ? "bg-ok-soft" : tone === "removed" ? "bg-danger-soft" : "bg-surface-2";
   const rowBg = tone === "added" ? "bg-ok-soft" : tone === "removed" ? "bg-danger-soft" : "";
   const lines = text.split("\n");
   if (lines.length && lines[lines.length - 1] === "") lines.pop();
+  const presentLines = new Set<number>(lines.map((_, index) => index + 1));
+  const { pinned, unpinned } = partitionFindingsByLine(findings, presentLines);
   return (
     <div class="border border-border rounded-md overflow-hidden">
       <div
@@ -291,22 +347,127 @@ function SingleSidedView({
       >
         {label}
       </div>
+      {unpinned.length ? <AnnotationBanner findings={unpinned} /> : null}
       <div class="overflow-auto h-[560px]">
         <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
           <tbody>
-            {lines.map((line, index) => (
-              <tr key={index} class={cn(rowBg)}>
-                <td class="px-2 py-[2px] text-ink-subtle select-none w-[44px] text-right border-r border-border align-top">
-                  {index + 1}
-                </td>
-                <td class="px-2 py-[2px] whitespace-pre-wrap break-words align-top">
-                  <LineContent text={line} tokens={tokens?.[index] ?? null} />
-                </td>
-              </tr>
-            ))}
+            {lines.map((line, index) => {
+              const pins = pinned.get(index + 1);
+              return (
+                <Fragment key={index}>
+                  <tr class={cn(rowBg)}>
+                    <td class="px-2 py-[2px] text-ink-subtle select-none w-[44px] text-right border-r border-border align-top">
+                      {index + 1}
+                    </td>
+                    <td class="px-2 py-[2px] whitespace-pre-wrap break-words align-top">
+                      <LineContent text={line} tokens={tokens?.[index] ?? null} />
+                    </td>
+                  </tr>
+                  {pins ? <AnnotationRows findings={pins} colSpan={2} /> : null}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// Severity-tinted fills and left bars for a pinned finding. The fill uses the
+// soft severity token at reduced opacity so it reads as a callout over the
+// green/red row backgrounds; the bar uses the saturated token (shapes, per
+// DESIGN.md "color = signal"). Both are static class strings so Tailwind keeps
+// them.
+const ANNOTATION_FILL: Record<SeverityGroup, string> = {
+  danger: "bg-danger-soft/60",
+  warn: "bg-warn-soft/60",
+  info: "bg-info-soft/60",
+  ok: "bg-ok-soft/60",
+};
+
+const ANNOTATION_BAR: Record<SeverityGroup, string> = {
+  danger: "border-danger",
+  warn: "border-warn",
+  info: "border-info",
+  ok: "border-ok",
+};
+
+// The body of a pinned finding: severity Badge + mono `ruleId · line N` caption,
+// the reason, and (when present) the triggering evidence in mono. Mirrors the
+// landing page's review-preview annotation so what we advertise matches the app.
+function FindingAnnotationBody({ finding }: { finding: DiffFinding }) {
+  const group = severityGroup(finding.severity);
+  const label = annotationLabel(finding);
+  return (
+    <div
+      class={cn(
+        // font-sans: the callout sits inside the mono diff table, but the reason
+        // is body copy and must not inherit Geist Mono (label/evidence set their
+        // own mono explicitly).
+        "border-l-2 px-3 py-2.5 flex flex-col gap-1.5 font-sans",
+        ANNOTATION_FILL[group],
+        ANNOTATION_BAR[group],
+      )}
+    >
+      <div class="flex flex-wrap items-center gap-2">
+        <Badge tone={severityTone(finding.severity)}>{finding.severity}</Badge>
+        {label ? (
+          <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+            {label}
+          </span>
+        ) : null}
+      </div>
+      <p class="m-0 text-[13px] leading-[1.55] text-ink whitespace-normal">{finding.reason}</p>
+      {finding.evidence ? (
+        <code class="font-mono text-[11px] leading-[1.5] text-ink-muted break-words whitespace-pre-wrap">
+          {finding.evidence}
+        </code>
+      ) : null}
+    </div>
+  );
+}
+
+// Findings pinned beneath their diff line, rendered as full-width table rows.
+function AnnotationRows({ findings, colSpan }: { findings: DiffFinding[]; colSpan: number }) {
+  return (
+    <>
+      {findings.map((finding) => (
+        <tr key={finding.id}>
+          <td colSpan={colSpan} class="p-0">
+            <FindingAnnotationBody finding={finding} />
+          </td>
+        </tr>
+      ))}
+    </>
+  );
+}
+
+// Findings that can't be pinned (no line, or a line past a truncated sample),
+// shown between the header strip and the scroll region so they're never hidden.
+function AnnotationBanner({ findings }: { findings: DiffFinding[] }) {
+  return (
+    <div class="flex flex-col divide-y divide-border border-b border-border">
+      {findings.map((finding) => (
+        <FindingAnnotationBody key={finding.id} finding={finding} />
+      ))}
+    </div>
+  );
+}
+
+// A non-table fallback (binary / no-sample) that still surfaces any findings as
+// standalone callouts above the explanatory line, so a missing diff body never
+// drops a deterministic signal.
+function DiffMessage({ children, findings }: { children: string; findings: DiffFinding[] }) {
+  if (!findings.length) return <Muted class="text-[13px]">{children}</Muted>;
+  return (
+    <div class="flex flex-col gap-3">
+      <div class="border border-border rounded-md overflow-hidden flex flex-col divide-y divide-border">
+        {findings.map((finding) => (
+          <FindingAnnotationBody key={finding.id} finding={finding} />
+        ))}
+      </div>
+      <Muted class="text-[13px]">{children}</Muted>
     </div>
   );
 }

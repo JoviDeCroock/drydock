@@ -9,6 +9,7 @@ export function FindingCard({
   diffStatus,
   diffLabel,
   ruleId,
+  onSelect,
   children,
   class: className,
 }: {
@@ -18,6 +19,9 @@ export function FindingCard({
   diffStatus?: string | null;
   diffLabel?: string | null;
   ruleId?: string | null;
+  // When provided, the filename becomes a button that opens this file in the
+  // diff workbench, turning the signal list into an index into the diff.
+  onSelect?: () => void;
   children: ComponentChildren;
   class?: string;
 }) {
@@ -33,9 +37,23 @@ export function FindingCard({
           <Badge tone={severityTone(severity)} dot>
             {severity}
           </Badge>
-          <code class="text-[13px] text-ink-muted truncate text-left [direction:rtl]" title={file}>
-            <bdi>{file}</bdi>
-          </code>
+          {onSelect ? (
+            <button
+              type="button"
+              onClick={onSelect}
+              title={`Open ${file} in the diff`}
+              class="font-mono text-[13px] text-ink-muted hover:text-accent truncate text-left [direction:rtl] bg-transparent border-0 p-0 m-0 cursor-pointer transition-colors duration-150 ease-out"
+            >
+              <bdi>{file}</bdi>
+            </button>
+          ) : (
+            <code
+              class="text-[13px] text-ink-muted truncate text-left [direction:rtl]"
+              title={file}
+            >
+              <bdi>{file}</bdi>
+            </code>
+          )}
           {diffStatus ? (
             <Badge tone={statusTone(diffStatus)} class="flex-shrink-0">
               {diffLabel ?? diffStatus}

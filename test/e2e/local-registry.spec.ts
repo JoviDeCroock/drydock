@@ -64,8 +64,14 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
       timeout: 60_000,
     });
     await expect(page.getByText("release high").first()).toBeVisible();
-    await expect(page.getByText("implicit install: node-gyp rebuild")).toBeVisible();
-    await expect(page.getByText("install-script.implicit-node-gyp")).toBeVisible();
+    // Deterministic findings now render both pinned inline on the diff and in
+    // the risk-signals index, so the evidence/reason and rule id can each match
+    // more than one node — assert the first like the release-risk badge above.
+    await expect(page.getByText("implicit install: node-gyp rebuild").first()).toBeVisible();
+    await expect(page.getByText("install-script.implicit-node-gyp").first()).toBeVisible();
+    // The file tree carries a severity-toned finding count badge for the flagged
+    // file (#188 surface 2); the fixture has a single finding on binding.gyp.
+    await expect(page.getByLabel("1 finding").first()).toBeVisible();
 
     await page.screenshot({
       path: path.join(artifactsDir, "implicit-node-gyp-report.png"),
