@@ -1,11 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { useModel } from "@preact/signals";
-import {
-  GithubAppModel,
-  type PublicGithubAppInstallation,
-  type SupportedEcosystem,
-} from "../../../models/github-app";
-import { Alert, Button, Field, Input, Muted, Select } from "../../../components";
+import { GithubAppModel, type PublicGithubAppInstallation } from "../../../models/github-app";
+import { Alert, Button, Field, Muted, Select } from "../../../components";
 
 type GithubApp = ReturnType<typeof useModel<typeof GithubAppModel.prototype>>;
 
@@ -43,11 +39,6 @@ export function ReleaseTargetForm({
         <EnvironmentSelector githubApp={githubApp} />
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <EcosystemSelector githubApp={githubApp} />
-        <ArtifactNameField githubApp={githubApp} />
-      </div>
-
       {formError ? <Alert tone="critical">{formError}</Alert> : null}
 
       <div class="flex items-center gap-3">
@@ -55,7 +46,9 @@ export function ReleaseTargetForm({
           {submitting ? "Mapping…" : "Map release target"}
         </Button>
         <Muted class="text-[12px] m-0">
-          Drydock revalidates installation, repo access, and environment names before saving.
+          Drydock revalidates installation, repo access, and environment before saving, then scans
+          every artifact the held run uploads — detecting each package's ecosystem (npm or PyPI)
+          automatically.
         </Muted>
       </div>
     </form>
@@ -126,57 +119,6 @@ function RepositorySelector({ githubApp }: { githubApp: GithubApp }) {
           and refresh.
         </Muted>
       ) : null}
-    </Field>
-  );
-}
-
-function EcosystemSelector({ githubApp }: { githubApp: GithubApp }) {
-  const ecosystem = githubApp.formEcosystem.value;
-  const submitting = githubApp.formSubmitting.value;
-
-  return (
-    <Field label="Ecosystem" for="releaseTargetEcosystem">
-      <Select
-        id="releaseTargetEcosystem"
-        value={ecosystem}
-        disabled={submitting}
-        onChange={(value) => (githubApp.formEcosystem.value = value as "auto" | SupportedEcosystem)}
-      >
-        <option value="auto">Auto-detect from artifacts</option>
-        <option value="pypi">PyPI</option>
-        <option value="npm">npm</option>
-      </Select>
-      <Muted class="text-[12px] mt-1.5">
-        Auto-detect derives each package's ecosystem from the uploaded artifacts (npm by its
-        package.json, PyPI by its wheel/sdist) — the right choice for a monorepo publishing several
-        packages from one workflow. Pin an ecosystem only when the release always publishes that one
-        kind.
-      </Muted>
-    </Field>
-  );
-}
-
-function ArtifactNameField({ githubApp }: { githubApp: GithubApp }) {
-  const artifactName = githubApp.formArtifactName.value;
-  const submitting = githubApp.formSubmitting.value;
-
-  return (
-    <Field label="Artifact name (optional)" for="releaseTargetArtifact">
-      <Input
-        id="releaseTargetArtifact"
-        type="text"
-        value={artifactName}
-        placeholder="e.g. pypi-release-candidate"
-        onInput={(e) => (githubApp.formArtifactName.value = (e.target as HTMLInputElement).value)}
-        disabled={submitting}
-        maxLength={200}
-        autoComplete="off"
-        spellcheck={false}
-      />
-      <Muted class="text-[12px] mt-1.5">
-        Leave blank to scan every non-expired artifact uploaded by the held workflow run. Set a name
-        only when you want Drydock to inspect one specific upload.
-      </Muted>
     </Field>
   );
 }
