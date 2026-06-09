@@ -246,9 +246,14 @@ export async function notifyWorkflowGateReview(
   const packageLabel = formatPackageLabel(packageName, version);
   const dashboardUrl = scanUrl(env, scanId);
   const otherPackages = packageCount && packageCount > 1 ? packageCount - 1 : 0;
-  const packageLine = otherPackages
-    ? `Package: ${packageLabel} (+${otherPackages} more in this release; each must be approved)`
-    : `Package: ${packageLabel}`;
+  // A monorepo release fans out into several per-package scans behind one gate;
+  // the gate carries only its headline (highest-risk) package. Surface the bundle
+  // size in every channel so the headline isn't mistaken for the whole release —
+  // each package must be approved before the held deployment can publish.
+  const packageDisplay = otherPackages
+    ? `${packageLabel} (+${otherPackages} more in this release; each must be approved)`
+    : packageLabel;
+  const packageLine = `Package: ${packageDisplay}`;
   const subject = `Release gate needs your review — ${packageLabel}`;
   const lines = [
     "Hi there,",
@@ -270,7 +275,7 @@ export async function notifyWorkflowGateReview(
 
   const slackPayload: SlackNotificationPayload = {
     title: "Release gate needs a decision",
-    packageLabel,
+    packageLabel: packageDisplay,
     source: "GitHub workflow gate",
     risk: releaseRisk,
     repository: repositoryFullName,

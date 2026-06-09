@@ -287,6 +287,27 @@ describe("Slack connection delivery", () => {
     expect(serialized).not.toContain("ciphertext");
   });
 
+  test("flags a monorepo bundle in the Slack payload so the headline isn't read as the whole release", async () => {
+    dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+
+    await notifyWorkflowGateReview(gateInput({ packageCount: 2 }));
+
+    expect(slackMock.renderSlackMessage).toHaveBeenCalledTimes(1);
+    const [payload] = slackMock.renderSlackMessage.mock.calls[0];
+    expect(payload.packageLabel).toBe(
+      "demo-package@1.2.0 (+1 more in this release; each must be approved)",
+    );
+  });
+
+  test("keeps the Slack package label bare for a single-package gate", async () => {
+    dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+
+    await notifyWorkflowGateReview(gateInput({ packageCount: 1 }));
+
+    const [payload] = slackMock.renderSlackMessage.mock.calls[0];
+    expect(payload.packageLabel).toBe("demo-package@1.2.0");
+  });
+
   test("records a delivery failure with its reason but no token", async () => {
     dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
     slackMock.postSlackMessage.mockResolvedValue({
