@@ -205,10 +205,6 @@ export const GithubAppModel = createModel(() => {
   const formInstallationRowId = signal<string>("");
   const formRepositoryFullName = signal<string>("");
   const formEnvironment = signal<string>("");
-  // "auto" lets the runner derive each package's ecosystem from the uploaded
-  // artifacts (the monorepo-friendly default); a named ecosystem pins it.
-  const formEcosystem = signal<"auto" | SupportedEcosystem>("auto");
-  const formArtifactName = signal<string>("");
   const formStatus = signal<ReleaseTargetFormStatus>("idle");
   const formError = signal<string | null>(null);
 
@@ -300,8 +296,6 @@ export const GithubAppModel = createModel(() => {
     formInstallationRowId.value = "";
     formRepositoryFullName.value = "";
     formEnvironment.value = "";
-    formEcosystem.value = "auto";
-    formArtifactName.value = "";
     formError.value = null;
   }
 
@@ -325,8 +319,6 @@ export const GithubAppModel = createModel(() => {
     formInstallationRowId,
     formRepositoryFullName,
     formEnvironment,
-    formEcosystem,
-    formArtifactName,
     formStatus,
     formError,
     formSubmitting,
@@ -462,15 +454,15 @@ export const GithubAppModel = createModel(() => {
       formStatus.value = "submitting";
       formError.value = null;
       try {
-        const artifactName = formArtifactName.value.trim();
+        // Ecosystem and artifact name are intentionally omitted: the server
+        // treats both as auto-detect (null), deriving each package's ecosystem
+        // from the uploaded artifacts and scanning every artifact the held run
+        // uploads — the monorepo-friendly default, now the only behavior.
         const payload: Record<string, string> = {
           installationRowId: formInstallationRowId.value.trim(),
-          // "auto" maps to a null ecosystem server-side (artifact-derived).
-          ecosystem: formEcosystem.value,
           repositoryFullName: formRepositoryFullName.value.trim(),
           environment: formEnvironment.value.trim(),
         };
-        if (artifactName) payload.artifactName = artifactName;
         const data = await apiJson<{ releaseTarget: PublicReleaseTarget }>(
           "/api/v1/github-app/release-targets",
           payload,
