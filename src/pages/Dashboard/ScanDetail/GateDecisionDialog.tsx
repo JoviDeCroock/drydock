@@ -72,7 +72,8 @@ function packageLabel(pkg: GatePackageScan): string {
  * out into one scan per package and the held deployment only releases once all
  * of them are approved — so this panel makes the sibling packages and their
  * per-package decision state visible from any one package's review page, with a
- * link to open each sibling's own review.
+ * link to open each sibling's own review and an inline decide action on the row
+ * for the package you're currently looking at.
  *
  * Renders nothing for a single-package gate, where the roster would just echo
  * the page you're already on.
@@ -80,9 +81,12 @@ function packageLabel(pkg: GatePackageScan): string {
 export function GatePackagesPanel({
   gate,
   currentScanId,
+  onDecide,
 }: {
   gate: PublicWorkflowGate;
   currentScanId: string;
+  /** Opens the decision dialog for the current package; absent until its review resolves. */
+  onDecide?: () => void;
 }) {
   const packages = gate.packages;
   if (packages.length <= 1) return null;
@@ -121,9 +125,17 @@ export function GatePackagesPanel({
               <div class="flex items-center gap-3 shrink-0">
                 <Badge tone={packageDecisionTone(pkg)}>{packageDecisionLabel(pkg)}</Badge>
                 {isCurrent ? (
-                  <span class="font-mono text-[11px] text-ink-subtle">
-                    {pending && !pkg.decision ? "decide below" : "shown here"}
-                  </span>
+                  onDecide && pending && !pkg.decision ? (
+                    <button
+                      type="button"
+                      onClick={onDecide}
+                      class="font-mono text-[11px] underline text-accent bg-transparent border-0 p-0 cursor-pointer"
+                    >
+                      decide →
+                    </button>
+                  ) : (
+                    <span class="font-mono text-[11px] text-ink-subtle">shown here</span>
+                  )
                 ) : (
                   <a
                     class="font-mono text-[11px] underline text-accent"
