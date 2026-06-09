@@ -239,7 +239,7 @@ export default function ScanDetailPage() {
         />
       ) : null}
       {isWorkflowGate && detail && gate ? (
-        <GatePackagesPanel gate={gate} currentScanId={detail.scan.id} />
+        <GatePackagesPanel gate={gate} currentScanId={detail.scan.id} onDecide={onDecideClick} />
       ) : null}
       {detail?.scan.status === "failed" ? (
         <ScanFailureAlert errorJson={detail.scan.errorJson} />
