@@ -66,6 +66,13 @@ const JS_CREDENTIAL_ACCESS_PATTERNS = [
   /\bGITHUB_TOKEN\b/,
   /\bAWS_SECRET\b/,
   /\bPRIVATE_KEY\b/,
+  // Sensitive credential file paths read directly from disk. The Python set
+  // already covers these; JS code that reads them (e.g.
+  // `fs.readFileSync(os.homedir() + '/.aws/credentials')`) is the same
+  // credential-theft capability and was previously an unmodeled gap.
+  /\.aws\/credentials/,
+  /\.ssh\/id_/,
+  /\.netrc/,
 ];
 const PYTHON_CREDENTIAL_ACCESS_PATTERNS = [
   /\bos\.environ\b/,
