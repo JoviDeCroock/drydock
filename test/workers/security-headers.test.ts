@@ -1,0 +1,29 @@
+import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
+import { describe, expect, test } from "vitest";
+import worker from "../../server/index";
+
+const HSTS_VALUE = "max-age=31536000; includeSubDomains; preload";
+
+// HSTS guards against protocol-downgrade / SSL-stripping man-in-the-middle
+// attacks by forcing clients onto HTTPS. It must ride on every response the
+// Worker emits, including error responses, so a single missed path can't be the
+// one a downgrade attack lands on. The static-asset delivery path is covered
+// separately by test/security-headers.test.ts (public/_headers drift guard).
+describe("worker security headers", () => {
+  async function fetchHeaders(path: string, method = "GET"): Promise<Headers> {
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(new Request(`http://example.com${path}`, { method }), env, ctx);
+    await waitOnExecutionContext(ctx);
+    return res.headers;
+  }
+
+  test("sets a one-year HSTS policy with includeSubDomains and preload", async () => {
+    const headers = await fetchHeaders("/api/health");
+    expect(headers.get("Strict-Transport-Security")).toBe(HSTS_VALUE);
+  });
+
+  test("applies HSTS to non-API responses too", async () => {
+    const headers = await fetchHeaders("/does-not-exist");
+    expect(headers.get("Strict-Transport-Security")).toBe(HSTS_VALUE);
+  });
+});

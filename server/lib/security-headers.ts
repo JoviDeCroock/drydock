@@ -15,6 +15,12 @@
 
 // Non-CSP headers; identical for every response regardless of content type.
 export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
+  // Pin clients to HTTPS for a year so a stripped/downgraded request can't reach
+  // the origin in cleartext. Drydock is only ever served over TLS at the edge,
+  // and browsers ignore this header on plaintext responses, so it's safe to emit
+  // unconditionally. includeSubDomains + preload satisfy the HSTS preload-list
+  // requirements that surface scanners (Aikido) check for.
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
   "Referrer-Policy": "strict-origin-when-cross-origin",
