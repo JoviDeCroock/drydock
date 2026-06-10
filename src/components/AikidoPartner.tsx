@@ -1,6 +1,7 @@
 import aikidoLight from "../assets/aikido-wordmark.svg";
 import aikidoDark from "../assets/aikido-wordmark-inverted.svg";
 import { cn } from "./cn";
+import { SectionLabel } from "./Typography";
 
 const AIKIDO_URL = "https://www.aikido.dev";
 
@@ -52,12 +53,13 @@ export function AikidoFootnote({ class: className }: { class?: string }) {
 
 export function AikidoPartnerStrip({ class: className }: { class?: string }) {
   return (
-    <section aria-label="Aikido Security" class={cn("flex justify-center", className)}>
+    <section aria-label="Sponsored by Aikido Security" class={cn("flex flex-col gap-4", className)}>
+      <SectionLabel>Sponsored by</SectionLabel>
       <a
         href={AIKIDO_URL}
         target="_blank"
         rel="noopener noreferrer"
-        class="group inline-flex flex-col items-center gap-2"
+        class="group self-center inline-flex flex-col items-center gap-2"
         aria-label="Visit Aikido Security"
       >
         <AikidoMark
