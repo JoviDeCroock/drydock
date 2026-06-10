@@ -222,12 +222,8 @@ scansRoutes.post("/:id/decision", async (c) => {
   );
 
   if (!updated) {
-    const existing = await getScan(
-      db,
-      c.req.param("id"),
-      organizationId,
-      scanArtifactReadBucket(c.env),
-    );
+    // Existence check only — skip the R2 artifact load; the detail is discarded.
+    const existing = await getScan(db, c.req.param("id"), organizationId);
     if (!existing) return c.json({ error: "not found" }, 404);
     return c.json({ error: "decision can only be set on completed scans" }, 409);
   }
@@ -278,7 +274,8 @@ scansRoutes.get("/:id/versions", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
-  const scan = await getScan(db, c.req.param("id"), organizationId, scanArtifactReadBucket(c.env));
+  // Metadata-only read (package name/versions) — skip the R2 artifact load.
+  const scan = await getScan(db, c.req.param("id"), organizationId);
   if (!scan) return c.json({ error: "not found" }, 404);
   if (!scan.scan.packageName) {
     return c.json({
