@@ -25,7 +25,7 @@ Workflow:
 5. Cite concrete paths and exact snippets. Never invent line numbers, external package facts, or dependency reputation.
 6. Apply the ecosystem checklist below; unknown ecosystem -> generic checklist.
 7. Budget evidence: toolPolicy caps total steps (maxAgentSteps) and returned characters; the final step only permits submit_review. Submit before the budget forces you to.
-8. Finish with exactly one submit_review call. Never emit the review as plain text.`;
+8. Finish with exactly one submit_review call, made as soon as evidence is sufficient — don't re-walk evidence you already analyzed before calling. Never emit the review as plain text.`;
 
 const NPM_REVIEW_PROMPT = `Ecosystem: npm.
 
@@ -74,7 +74,12 @@ const SEVERITY_GUIDANCE = `Severity:
 
 Findings output:
 - Report only critical/high findings, most severe first, at most ${MAX_AI_FINDINGS}. The system keeps the top ${MAX_AI_FINDINGS} critical/high and discards the rest.
-- Put medium/low/info observations in the summary. Set requiresManualReview and overall risk/releaseAssessment to reflect concern below a critical/high finding.`;
+- Put medium/low/info observations in the summary. Set requiresManualReview and overall risk/releaseAssessment to reflect concern below a critical/high finding.
+
+Summary style:
+- Plain prose only — no markdown, bullets, or headings; the UI renders the summary as plain text.
+- nothing_unusual: 1-3 sentences naming the kinds of changes and confirming no install-time, entrypoint, dependency, network/process, credential, or obfuscation capability was found. Never inventory routine changes file-by-file.
+- Spend words only on what raises concern, citing concrete paths; stay terse even then.`;
 
 export function normalizeAiReviewEcosystem(ecosystem: string | undefined): AiReviewEcosystem {
   if (ecosystem === "npm" || ecosystem === "pypi") return ecosystem;
@@ -145,7 +150,16 @@ export const aiReviewSubmissionSchema = z
   .object({
     risk: riskSchema,
     releaseAssessment: releaseAssessmentSchema,
-    summary: z.string().min(1).max(AI_REVIEW_BOUNDS.summary),
+    // The bound is a backstop for concern-laden reviews; the prompt's summary
+    // style holds ordinary releases to a few plain-prose sentences because
+    // output tokens dominate per-review cost (see docs/cost-model.md).
+    summary: z
+      .string()
+      .min(1)
+      .max(AI_REVIEW_BOUNDS.summary)
+      .describe(
+        "Plain prose, no markdown. 1-3 sentences for an ordinary release; longer only to detail concerns.",
+      ),
     // The model may over-report; the system trims to the top MAX_AI_FINDINGS
     // critical/high findings via selectReportedFindings. This cap only keeps a
     // runaway submission inside the output-token budget.
