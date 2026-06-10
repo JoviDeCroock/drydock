@@ -1,7 +1,10 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript", "unicorn", "oxc", "import", "react", "promise"],
-  "jsPlugins": ["@preact/eslint-plugin-signals"],
+  "jsPlugins": [
+    "@preact/eslint-plugin-signals",
+    { "name": "signals-local", "specifier": "./tooling/oxlint/signals-local/index.mjs" }
+  ],
   "categories": {
     "correctness": "error"
   },
@@ -42,6 +45,7 @@
     "@preact/signals/no-signal-truthiness": "warn",
     "@preact/signals/no-signal-in-component-body": "error",
     "@preact/signals/no-conditional-value-read": "error",
+    "signals-local/no-signal-conditional-jsx": "error",
     "react-hooks/exhaustive-deps": "off"
   },
   "ignorePatterns": [
@@ -50,6 +54,7 @@
     "drizzle/**",
     "node_modules/**",
     "worker-configuration.d.ts",
-    "**/*.d.ts"
+    "**/*.d.ts",
+    "test/fixtures/oxlint-signals/**"
   ]
 }
