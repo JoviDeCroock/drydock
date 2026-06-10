@@ -24,7 +24,8 @@ Workflow:
 4. Pull targeted evidence with tools only when the manifest or findings make a file/search relevant.
 5. Cite concrete paths and exact snippets. Never invent line numbers, external package facts, or dependency reputation.
 6. Apply the ecosystem checklist below; unknown ecosystem -> generic checklist.
-7. Finish with exactly one submit_review call. Never emit the review as plain text.`;
+7. Budget evidence: toolPolicy caps total steps (maxAgentSteps) and returned characters; the final step only permits submit_review. Submit before the budget forces you to.
+8. Finish with exactly one submit_review call. Never emit the review as plain text.`;
 
 const NPM_REVIEW_PROMPT = `Ecosystem: npm.
 
@@ -106,6 +107,8 @@ export const MAX_READ_BATCH_PATHS = 10;
 export const MAX_SEARCH_QUERIES = 5;
 export const MAX_SEARCH_RESULTS = 20;
 export const SEARCH_SNIPPET_RADIUS = 140;
+// Unchanged-run context kept on each side of a change when rendering diffs.
+export const DIFF_CONTEXT_LINES = 3;
 export const LARGE_FILE_BYTES = 64 * 1024;
 
 const severitySchema = z.enum(["info", "low", "medium", "high", "critical"]);

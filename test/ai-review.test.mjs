@@ -3,6 +3,7 @@ import { MockLanguageModelV3 } from "ai/test";
 import { AI_MODEL, analyzeWithAi, displayedAiResult } from "../server/lib/ai-review.ts";
 import {
   buildReviewerSystemPrompt,
+  MAX_AGENT_STEPS,
   MAX_AI_FINDINGS,
   normalizeAiReviewEcosystem,
 } from "../server/lib/ai-review-contract.ts";
@@ -339,6 +340,59 @@ describe("ai review orchestration", () => {
     expect(ai.status).toBe("complete");
     expect(ai.summary).toBe("second try");
     expect(computeScanRisk([], ai)).toBe("high");
+  });
+
+  test("the final step of the budget restricts the toolset and forces submit_review", async () => {
+    // A model that keeps gathering evidence forever. Without the forced final
+    // step the whole run's spend would degrade to an `invalid` fallback.
+    const stepCalls = [];
+    const stallingModel = mockModel(async (options) => {
+      stepCalls.push({
+        toolChoice: options.toolChoice,
+        toolNames: (options.tools ?? []).map((tool) => tool.name),
+      });
+      if (options.toolChoice?.type === "tool" && options.toolChoice.toolName === "submit_review") {
+        return generateResult(
+          [
+            {
+              type: "tool-call",
+              toolCallId: `submit-${stepCalls.length}`,
+              toolName: "submit_review",
+              input: JSON.stringify(VALID_REVIEW),
+            },
+          ],
+          "tool-calls",
+        );
+      }
+      return generateResult(
+        [
+          {
+            type: "tool-call",
+            toolCallId: `read-${stepCalls.length}`,
+            toolName: "read",
+            input: JSON.stringify({ paths: ["index.js"] }),
+          },
+        ],
+        "tool-calls",
+      );
+    });
+
+    const { review: ai, usage } = await analyzeWithAi(
+      {},
+      "mock-reviewer",
+      BASE_OPTIONS,
+      stallingModel,
+    );
+
+    expect(usage.steps).toBe(MAX_AGENT_STEPS);
+    for (const call of stepCalls.slice(0, -1)) {
+      expect(call.toolChoice?.type ?? "auto").not.toBe("tool");
+    }
+    const finalCall = stepCalls.at(-1);
+    expect(finalCall.toolChoice).toEqual({ type: "tool", toolName: "submit_review" });
+    expect(finalCall.toolNames).toEqual(["submit_review"]);
+    expect(ai.status).toBe("complete");
+    expect(ai.releaseAssessment).toBe("nothing_unusual");
   });
 });
 
