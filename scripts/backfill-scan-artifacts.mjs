@@ -390,6 +390,7 @@ async function backfillOneScan(client, scan) {
     `),
     client.d1(`
       SELECT
+        id,
         severity,
         file,
         evidence,

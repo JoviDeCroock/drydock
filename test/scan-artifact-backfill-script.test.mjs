@@ -48,7 +48,7 @@ async function buildLegacyScanRows() {
       artifactRisk: "low",
       releaseRisk: "low",
       contextRisk: "low",
-      releaseFindingCount: 0,
+      releaseFindingCount: 1,
       contextFindingCount: 0,
       unknownFindingCount: 0,
     },
@@ -68,7 +68,7 @@ async function buildLegacyScanRows() {
     },
     packageJsonDiff: {},
     diff,
-    findingAnnotations: [],
+    findingAnnotations: [{ id: "finding_1", diffStatus: "added", releaseDelta: true }],
   };
   const aiFindings = {
     status: "unavailable",
@@ -96,8 +96,17 @@ async function buildLegacyScanRows() {
     packageJson: { name: "@org/wrangler-backfill", version: "1.0.0" },
     packageJsonDiff: {},
     diff,
-    ruleFindings: [],
-    findingAnnotations: [],
+    ruleFindings: [
+      {
+        severity: "high",
+        file: "index.js",
+        evidence: "process.env access",
+        reason: "install-time script reads npm environment",
+        ruleId: "code.credential-access",
+        ruleVersion: "rules-v1",
+      },
+    ],
+    findingAnnotations: [{ findingIndex: 0, diffStatus: "added", releaseDelta: true }],
     aiFindings,
     risk: summary.risk,
     safety: summary.safety,
@@ -125,7 +134,18 @@ async function buildLegacyScanRows() {
         textSample: "console.log('ok');\n",
       },
     ],
-    findings: [],
+    findings: [
+      {
+        id: "finding_1",
+        severity: "high",
+        file: "index.js",
+        evidence: "process.env access",
+        reason: "install-time script reads npm environment",
+        line: null,
+        ruleId: "code.credential-access",
+        ruleVersion: "rules-v1",
+      },
+    ],
   };
 }
 
@@ -152,7 +172,17 @@ function createWranglerHarness({ organizations, rows }) {
           return d1Response(rows[org.id]?.scan ? [rows[org.id].scan] : []);
         }
         if (sql.includes("FROM scan_files")) return d1Response(rows.org_123.files);
-        if (sql.includes("FROM scan_findings")) return d1Response(rows.org_123.findings);
+        if (sql.includes("FROM scan_findings")) {
+          const selectList = sql.slice(sql.indexOf("SELECT"), sql.indexOf("FROM scan_findings"));
+          const includesId = selectList
+            .split("\n")
+            .some((line) => line.trim().replace(/,$/, "") === "id");
+          return d1Response(
+            includesId
+              ? rows.org_123.findings
+              : rows.org_123.findings.map(({ id, ...finding }) => finding),
+          );
+        }
         if (sql.includes("UPDATE scans")) {
           state.artifactManifestKey = /artifact_manifest_key = '([^']+)'/.exec(sql)?.[1] ?? null;
           return d1Response([]);
