@@ -91,6 +91,42 @@ The following rules from `@preact/eslint-plugin-signals` are enforced (see [`pre
 - `no-conditional-value-read` (error)
 - `no-signal-truthiness` (warn)
 
+### Local rule: `signals-local/no-signal-conditional-jsx`
+
+A project-specific oxlint JS plugin lives in `tooling/oxlint/signals-local/` and is loaded
+through `jsPlugins` in `.oxlintrc.json` under the `signals-local` alias. Its one rule
+(`no-signal-conditional-jsx`, error) flags conditional rendering — a ternary or
+`&&`/`||`/`??` in JSX **child** position — whose condition reads (or derives from) a
+signal's `.value`, and points you at `<Show>`:
+
+```tsx
+{
+  error.value ? <Alert>{error.value}</Alert> : null;
+} // ❌ flagged
+<Show when={error}>{(msg) => <Alert>{msg}</Alert>}</Show>; // ✅
+
+{
+  loading.value ? "Saving…" : "Save";
+} // ❌ flagged (text counts too)
+<Show when={loading} fallback="Save">
+  Saving…
+</Show>; // ✅
+```
+
+It deliberately does not flag attribute positions (a `<Show>` can't live there — use a
+`useComputed`) or single derivations like `{format(size.value)}`. Detection is scope-based,
+so it catches local signals (`useSignal`/`useComputed`) and `Signal<T>`-typed props but not
+member-access signals (`model.count.value`) — fix those by hand. See the
+[`preact-signals-no-eager-unwrap`](../.claude/skills/preact-signals-no-eager-unwrap/SKILL.md)
+skill for the full set of eager-unwrap anti-patterns and fixes. Fixture and test:
+`test/fixtures/oxlint-signals/` and `test/oxlint-signal-conditional-jsx.test.mjs`.
+
+The rule ships as `error`, but the pre-existing call sites are grandfathered in a baseline
+at `tooling/oxlint/signals-local/suppressions.json` (repo-relative path → 1-based lines), so
+only **new** infractions fail lint. Burn the baseline down as sites migrate to `<Show>`, then
+regenerate it with `node tooling/oxlint/signals-local/regenerate-suppressions.mjs` (it runs
+oxlint with `SIGNALS_NO_SUPPRESS=1` to see through the baseline). The list should only shrink.
+
 ## Client API helpers
 
 Use `apiFetch` from `src/models/api.ts` for same-origin JSON requests so active organization headers and `ApiError` handling stay consistent. Use `apiJson` for JSON request bodies instead of repeating `content-type` and `JSON.stringify` at call sites. Use `errorMessage(err)` when model actions need to surface caught errors into a signal.
@@ -107,4 +143,5 @@ The `.claude/skills/` directory ships the canonical signals/models reference set
 - `preact-signals-preact-integration` — `useSignal`, JSX rendering choices, `Show`/`For`, `useLiveSignal`.
 - `preact-signals-models-utils` — `createModel`/`useModel` patterns and state shape.
 - `preact-signals-eslint-plugin` — what the rules catch.
+- `preact-signals-no-eager-unwrap` — eager-unwrap anti-patterns (conditional render → `Show`, text/attr → direct signal, derivations → `useComputed`) and the local lint rule.
 - `preact-signals-debugging` — triage map for stale renders, missing updates, SSR issues.
