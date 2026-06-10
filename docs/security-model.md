@@ -206,6 +206,10 @@ Before SaaS launch:
 
 RBAC is not required for the first launch slice, but the schema and route boundaries should not assume resources are global or user-only.
 
+## Browser response headers
+
+Security response headers reach the browser by two delivery paths that must carry the same policy: Worker-served responses (the `run_worker_first` paths — `/api`, `/api/*`, `/webhooks/*`) get them from `applySecurityHeaders()` in `server/index.ts`, while static assets and the SPA document are served by Cloudflare's edge and get them from `public/_headers`. `server/lib/security-headers.ts` is the single source of truth; `test/security-headers.test.ts` fails if the hand-copied `_headers` values drift. HSTS (`Strict-Transport-Security`) lives in both so every response — API, webhook, page, and bundled asset — pins clients to HTTPS and a stripped/downgraded request can't reach the origin in cleartext.
+
 ## Signed reports later
 
 Signed reports are not launching yet. Prepare by making report payloads canonical and digestible.
