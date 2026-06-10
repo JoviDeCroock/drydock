@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { Alert, Badge, Eyebrow, LinkButton, PageShell, SectionLabel } from "../../components";
+import { Alert, Badge, Card, Eyebrow, LinkButton, PageShell, SectionLabel } from "../../components";
 
 export default function DocsPage() {
   return (
@@ -18,18 +18,27 @@ export default function DocsPage() {
             How Drydock guards a publish.
           </h1>
           <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-            Drydock reviews what a release ships before it goes public, and never holds your publish
-            credential. How it hooks in depends on the release: npm hands Drydock a staged tarball
-            to inspect; when there's no staged artifact — PyPI, or an npm publish that skips staging
-            — a GitHub Actions gate holds the publish until the build is reviewed.
+            The package that reaches a registry is built, packed output — code review never sees it.
+            Drydock holds the release candidate before it goes public, diffs it against the last
+            published version, and pins deterministic findings to the lines that introduced them. A
+            maintainer makes the final call: Drydock never publishes and never holds a publish
+            credential, and package contents are evidence to review, never code to execute.
           </p>
-          <nav class="flex flex-wrap gap-x-5 gap-y-2 mt-1 font-mono text-[11px] uppercase tracking-[0.1em]">
-            <a class="text-accent hover:text-accent-hover" href="#staged-publishing">
-              → Staged publishing (npm)
-            </a>
-            <a class="text-accent hover:text-accent-hover" href="#workflow-gating">
-              → Workflow gating (PyPI &amp; npm)
-            </a>
+          <p class="m-0 max-w-[680px] text-[14px] text-ink-muted leading-[1.65]">
+            How the candidate is held depends on how you publish. npm can park a staged tarball on
+            the registry itself; PyPI has no staged artifact — and not every npm publish goes
+            through staging — so a GitHub Actions environment gate holds the publish job instead.
+            Both paths end in the same diff-first review. Pick the one that matches your release:
+          </p>
+          <nav class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-1" aria-label="Integration modes">
+            <ModeCard href="#staged-publishing" title="Staged publishing — npm">
+              You publish with <Code>npm publish --stage</Code>. The registry parks the candidate
+              tarball; Drydock reviews it, and you confirm the publish in npm with your own 2FA.
+            </ModeCard>
+            <ModeCard href="#workflow-gating" title="Workflow gating — PyPI & npm" badge="Preview">
+              You publish from GitHub Actions — PyPI via Trusted Publishing, or npm without staging.
+              An environment gate holds the publish job until a maintainer approves the review.
+            </ModeCard>
           </nav>
         </header>
 
@@ -374,6 +383,36 @@ export default function DocsPage() {
   );
 }
 
+function ModeCard({
+  href,
+  title,
+  badge,
+  children,
+}: {
+  href: string;
+  title: string;
+  badge?: string;
+  children: ComponentChildren;
+}) {
+  return (
+    <a href={href} class="no-underline group">
+      <Card
+        as="div"
+        class="p-5 h-full flex flex-col gap-2 transition-colors group-hover:border-border-strong"
+      >
+        <div class="flex flex-wrap items-center gap-2">
+          <h2 class="text-base font-medium tracking-[-0.005em] m-0 text-ink">{title}</h2>
+          {badge ? <Badge tone="info">{badge}</Badge> : null}
+        </div>
+        <p class="m-0 text-[13px] text-ink-muted leading-[1.55]">{children}</p>
+        <span class="mt-auto pt-1 font-mono text-[11px] uppercase tracking-[0.1em] text-accent group-hover:text-accent-hover">
+          → jump to setup
+        </span>
+      </Card>
+    </a>
+  );
+}
+
 function Subsection({ title, children }: { title: string; children: ComponentChildren }) {
   return (
     <div class="flex flex-col gap-3.5">
@@ -400,7 +439,13 @@ function Steps({ items }: { items: ComponentChildren[] }) {
               <span class="w-px flex-1 bg-border mt-2" aria-hidden />
             ) : null}
           </div>
-          <div class="pb-5 last:pb-0 text-[13px] text-ink-muted leading-[1.6] min-w-0">{item}</div>
+          <div
+            class={`text-[13px] text-ink-muted leading-[1.6] min-w-0 ${
+              index < items.length - 1 ? "pb-5" : ""
+            }`}
+          >
+            {item}
+          </div>
         </li>
       ))}
     </ol>
