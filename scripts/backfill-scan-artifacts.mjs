@@ -275,6 +275,11 @@ function spawnWrangler(command, args, input) {
     const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
+    // Decode via stream encoding so multi-byte UTF-8 sequences split across
+    // chunk boundaries are buffered instead of mangled into U+FFFD; per-chunk
+    // Buffer stringification would silently corrupt non-ASCII text samples.
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => (stdout += chunk));
     child.stderr.on("data", (chunk) => (stderr += chunk));
     child.on("error", reject);

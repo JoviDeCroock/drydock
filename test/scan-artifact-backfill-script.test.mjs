@@ -180,7 +180,7 @@ function createWranglerHarness({ organizations, rows }) {
           return d1Response(
             includesId
               ? rows.org_123.findings
-              : rows.org_123.findings.map(({ id, ...finding }) => finding),
+              : rows.org_123.findings.map(({ id: _id, ...finding }) => finding),
           );
         }
         if (sql.includes("UPDATE scans")) {
