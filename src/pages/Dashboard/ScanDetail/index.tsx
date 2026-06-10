@@ -17,6 +17,7 @@ import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-revi
 import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
 import {
   Alert,
+  Button,
   Card,
   FileTree,
   Input,
@@ -190,6 +191,7 @@ export default function ScanDetailPage() {
   const detail = model.detail.value;
   const versions = versionsSignal.value;
   const error = model.error.value;
+  const pollingStalled = model.pollingStalled.value;
   const compareLoading = model.compareLoading.value;
   const compareError = model.compareError.value;
   const selectedVersion = model.selectedVersion.value;
@@ -245,6 +247,16 @@ export default function ScanDetailPage() {
       <ScanDetailHeader detail={detail} onDecideClick={onDecideClick} />
 
       {error ? <Alert tone="critical">{error}</Alert> : null}
+      {pollingStalled ? (
+        <Alert tone="warn">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <span>Automatic refresh stopped after 10 minutes without the review finishing.</span>
+            <Button variant="secondary" size="sm" onClick={() => model.resumePolling()}>
+              Resume refresh
+            </Button>
+          </div>
+        </Alert>
+      ) : null}
       {isWorkflowGate && detail ? (
         <GateContextPanel
           gate={gate}
@@ -364,10 +376,14 @@ export default function ScanDetailPage() {
             <PersistedReportSections summary={summary.value} ai={ai.value} />
           </>
         ) : detail.scan.status === "pending" || detail.scan.status === "running" ? (
-          <LoadingState
-            title={detail.scan.status === "pending" ? "Review queued" : "Reviewing release"}
-            detail="auto-refreshes when the report is ready"
-          />
+          // While stalled the pulsing line would falsely promise an
+          // auto-refresh; the warn Alert above carries the state instead.
+          pollingStalled ? null : (
+            <LoadingState
+              title={detail.scan.status === "pending" ? "Review queued" : "Reviewing release"}
+              detail="auto-refreshes when the report is ready"
+            />
+          )
         ) : null
       ) : null}
 

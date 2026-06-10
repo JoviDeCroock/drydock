@@ -239,11 +239,21 @@ export const ScanListModel = createModel(() => {
 
 export type DecisionStatus = "idle" | "saving" | "error";
 
+// Polling cadence for scans still in pending/running. The base delay doubles
+// per consecutive poll failure (so an unreachable API isn't hammered at a
+// fixed rate) up to the max, and resets on success. A scan that never reaches
+// a terminal status stops polling entirely after the stall window; the UI
+// offers a manual resume via `resumePolling()`.
+export const SCAN_POLL_BASE_DELAY_MS = 2_500;
+export const SCAN_POLL_MAX_DELAY_MS = 30_000;
+export const SCAN_POLL_STALL_AFTER_MS = 10 * 60_000;
+
 export const ScanDetailModel = createModel((id: string) => {
   const scanId = signal(id);
   const detail = signal<PersistedScanDetail | null>(null);
   const selectedPath = signal<string | null>(null);
   const error = signal<string | null>(null);
+  const pollingStalled = signal(false);
   const versions = signal<ScanVersionsResponse | null>(null);
   const selectedVersion = signal<string | null>(null);
   const compareCache = signal<Record<string, ScanCompareResponse>>({});
@@ -278,13 +288,38 @@ export const ScanDetailModel = createModel((id: string) => {
     return v ? (cache[v] ?? null) : null;
   });
 
-  // Background polling while the scan is still running.
+  // Background polling while the scan is still running. A self-scheduling
+  // timeout chain (not setInterval) lets the cadence adapt: consecutive
+  // failures back off exponentially, and a scan stuck non-terminal past the
+  // stall window latches `pollingStalled` instead of polling forever. Both
+  // signals are read unconditionally so the effect tracks them on every run.
   effect(() => {
-    if (!isPolling.value) return;
-    const timer = window.setInterval(() => {
-      void pollDetail();
-    }, 2500);
-    return () => window.clearInterval(timer);
+    const polling = isPolling.value;
+    const stalled = pollingStalled.value;
+    if (!polling || stalled) return;
+
+    let disposed = false;
+    let delay = SCAN_POLL_BASE_DELAY_MS;
+    const startedAt = Date.now();
+
+    const tick = async () => {
+      if (Date.now() - startedAt >= SCAN_POLL_STALL_AFTER_MS) {
+        pollingStalled.value = true;
+        return;
+      }
+      const ok = await pollDetail();
+      // The poll itself can flip isPolling (terminal status) and re-run the
+      // effect; the disposed flag keeps the stale chain from rescheduling.
+      if (disposed) return;
+      delay = ok ? SCAN_POLL_BASE_DELAY_MS : Math.min(delay * 2, SCAN_POLL_MAX_DELAY_MS);
+      timer = setTimeout(() => void tick(), delay);
+    };
+
+    let timer = setTimeout(() => void tick(), delay);
+    return () => {
+      disposed = true;
+      clearTimeout(timer);
+    };
   });
 
   // Auto-load comparison data when the user picks a version.
@@ -296,7 +331,7 @@ export const ScanDetailModel = createModel((id: string) => {
     void loadCompare(version);
   });
 
-  async function pollDetail() {
+  async function pollDetail(): Promise<boolean> {
     const id = scanId.peek();
     try {
       const data = await getScan(id, { poll: true });
@@ -305,8 +340,10 @@ export const ScanDetailModel = createModel((id: string) => {
       if (selectedPath.peek() === null) {
         selectedPath.value = pickInitialPath(data);
       }
+      return true;
     } catch (err) {
       error.value = errorMessage(err);
+      return false;
     }
   }
 
@@ -329,6 +366,7 @@ export const ScanDetailModel = createModel((id: string) => {
     detail,
     selectedPath,
     error,
+    pollingStalled,
     versions,
     selectedVersion,
     compareCache,
@@ -383,6 +421,13 @@ export const ScanDetailModel = createModel((id: string) => {
 
     selectPath(path: string | null) {
       this.selectedPath.value = path;
+    },
+
+    // Manual recovery from the stalled state: refetch right away and clear
+    // the latch so the polling effect restarts a fresh backoff chain.
+    resumePolling(): void {
+      this.pollingStalled.value = false;
+      void pollDetail();
     },
 
     selectVersion(version: string | null) {
