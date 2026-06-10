@@ -72,16 +72,20 @@ The system has three small-text sizes (10/11/12px). They are not interchangeable
 
 ### Dark mode
 
-| Token             | Hex       | Usage              |
-| ----------------- | --------- | ------------------ |
-| `--bg`            | `#0a0a0a` | Page background    |
-| `--bg-elev`       | `#141414` | Cards              |
-| `--bg-elev-2`     | `#1c1c1c` | Secondary surfaces |
-| `--border`        | `#27272a` | Default borders    |
-| `--border-strong` | `#3f3f46` | Hover borders      |
-| `--fg`            | `#fafafa` | Primary text       |
-| `--fg-muted`      | `#a1a1aa` | Secondary text     |
-| `--fg-subtle`     | `#71717a` | Tertiary text      |
+| Token             | Hex       | Usage                                            |
+| ----------------- | --------- | ------------------------------------------------ |
+| `--bg`            | `#0a0a0a` | Page background                                  |
+| `--bg-elev`       | `#141414` | Cards                                            |
+| `--bg-elev-2`     | `#1c1c1c` | Secondary surfaces                               |
+| `--border`        | `#27272a` | Default borders                                  |
+| `--border-strong` | `#3f3f46` | Hover borders                                    |
+| `--fg`            | `#fafafa` | Primary text                                     |
+| `--fg-muted`      | `#a1a1aa` | Secondary text                                   |
+| `--fg-subtle`     | `#8b8b94` | Tertiary text, mono labels (AA on dark surfaces) |
+
+`--fg-subtle` in dark is `#8b8b94` — it clears WCAG AA (≥5:1) on `--bg`, `--surface`, _and_ `--surface-2` for the 11px mono labels and the mono detail line. The earlier `#71717a` was only 3.8:1 on cards (the dark-mode counterpart to the light-mode floor codified 2026-06-03). Don't lower it back toward `#71717a`.
+
+**Theme application (Tailwind v4):** the dark tokens are set on a plain `:root` inside `@media (prefers-color-scheme: dark)` in `src/style.css`, **never** inside a nested `@theme`. Tailwind v4 hoists every `@theme` block to one unconditional top-level `:root` and discards the surrounding `@media` — a nested dark `@theme` overrides light for everyone and strands the site in dark mode. Keep new dark overrides on the media-scoped `:root`.
 
 ### Accent (brand action)
 
@@ -136,6 +140,10 @@ Don't naively invert. Surfaces darken (true neutrals, no warm tint), accent + se
   - `8px` — Cards, alerts, larger surfaces.
   - `10px` — Mockup/window shells.
   - `999px` — Reserved for true circle elements (avatars, toggle handles). Avoid for badges.
+
+### Page structure (`PageShell`)
+
+Every page is a min-height flex column: header → content (`main`, grows) → site footer pinned to the bottom. The footer matches the page's content width and carries the brand mark, a mono `11px / --fg-subtle` line (`Pre-publish review for npm and PyPI · © Drydock`), and `Docs` / `Feedback` / `Security` links — the only trust/legal surface, so it stays on every route (marketing _and_ app). `width="narrow"` pages (auth, 404, invite) are single short cards: they vertically center in the space between header and footer (via `my-auto`, which never clips over-tall content) rather than pinning to the top.
 
 ## Marketing surfaces
 
@@ -360,3 +368,4 @@ The canonical "labeled control with metadata" row pattern. Re-use this compositi
 | 2026-06-03 | Light-mode contrast pass: `--fg-subtle` darkened, accent shifted to orange-700, severity text split into `*-text` variants, small-text size floor codified.           | The system's signature treatment (mono detail line, mono labels) was rendered in `--fg-subtle` `#a8a29e` — 2.4:1 contrast, well below WCAG AA. White text on `--accent` `#ea580c` and `text-accent` body both failed AA (3.5–3.6:1). Light-mode `text-warn` and `text-ok` failed AA on white. The pass darkens `--fg-subtle` to `#6b6660` (5.9:1), unifies the accent at orange-700 `#c2410c` (4.97:1 in both surface and text roles), adds `--*-text` severity variants for text-on-bg use, and codifies the 10/11/12px role split so future contributors keep load-bearing labels at the 11px floor.                                                                                                                                                                                                                                                                                                                                 |
 | 2026-06-05 | Information-hierarchy pass: findings pinned inline on diff hunks; Recommendation elevated as the one primary section; landing brought to npm + PyPI parity.           | Holistic review found the marketed interaction (findings on the hunk that triggered them) absent from the real workbench — findings lived in a separate card grid — and every report section sharing one flat `SectionLabel` altitude so the verdict didn't out-rank supplements. DiffView now pins deterministic findings to their staged line (banner fallback for unpinned/truncated); the Risk-signals list becomes a clickable index into the diff. The Recommendation is the only carded/headline-scale section. The landing eyebrow/copy and a new "how it hooks in" two-registry section now cover PyPI workflow gating (was npm-only), replacing the redundant three-pillar feature grid that duplicated the status strip. Also: workbench panels go `lg:`-only fixed-height to avoid nested scroll on mobile; dashboard Status renders as a Badge to match Decision; freshness shows readable mono text instead of a bare ✓. |
 | 2026-06-10 | What/why pass on landing + docs: problem-first copy, "Why review a publish" prose section, three-step "How it works", closing CTA; docs gain a two-card mode chooser. | Both pages led with mechanism (staged tarballs, hunks, CI gates) before stating the problem, so first-time visitors couldn't tell what the product was for or why it matters. The landing now runs problem → proof (sample review) → mechanism → trust; the docs header states the problem and trust posture in two paragraphs and a card-shaped mode chooser replaces the bare anchor nav. The "why" section is deliberately prose (document-shaped, security-advisory mood), not another card grid, to avoid card fatigue next to the status strip and registry cards. Also fixed a latent step-list spacing bug: `last:pb-0` sat on a div that is always its `li`'s last child, zeroing inter-step padding in both step components.                                                                                                                                                                                                 |
+| 2026-06-10 | Design-review fixes: light mode un-stranded, dark subtle text bumped to AA, site footer added, narrow pages centered.                                                 | A design pass found the site permanently dark for everyone: the dark tokens lived in an `@theme` nested inside `@media (prefers-color-scheme: dark)`, which Tailwind v4 hoists to an unconditional `:root`, so dark overrode the light default for all users (light mode — the documented default surface — was unreachable). Moved the dark tokens to a media-scoped plain `:root`. Same pass: dark `--fg-subtle` `#71717a` was 3.8:1 on cards (fails AA for the signature mono detail line) → `#8b8b94` (≥5:1); added the always-present site footer (first trust/legal link surface, was none); `width="narrow"` card pages now vertically center instead of floating high with a void below. Landing sample-review mockup: version label dropped the `v` prefix to match the app's `4.2.0 → 4.3.0` convention, file-tree column widened `200px → 220px` so `package.json` stops truncating.                                        |
