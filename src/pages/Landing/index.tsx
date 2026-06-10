@@ -175,29 +175,6 @@ export default function LandingPage() {
           </StatusStripItem>
         </StatusStrip>
       </section>
-
-      <section aria-label="Get started" class="border-t border-border pt-10 flex flex-col gap-4">
-        <SectionLabel>Get started</SectionLabel>
-        <p class="m-0 text-[14px] text-ink-muted max-w-[620px] leading-[1.6]">
-          Create an organization, connect an npm token or install the GitHub App, and your next
-          release shows up reviewed on the dashboard.
-        </p>
-        <div class="flex flex-wrap gap-3">
-          <Show
-            when={authed}
-            fallback={
-              <>
-                <LinkButton href="/register">Create account</LinkButton>
-                <LinkButton href="/docs" variant="secondary">
-                  Read the docs
-                </LinkButton>
-              </>
-            }
-          >
-            <LinkButton href="/dashboard">Open dashboard</LinkButton>
-          </Show>
-        </div>
-      </section>
     </PageShell>
   );
 }
