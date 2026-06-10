@@ -589,7 +589,9 @@ describe("executeWorkflowGateJob", () => {
     );
     expect(reviewed?.recommendation).toBe("rejected");
 
-    const persisted = await getScan(db, gate!.scanId!, seeded.organizationId);
+    // The gate scan is R2-artifact-backed, so its findings live in report.json,
+    // not D1 — read with the artifact bucket like the real detail route does.
+    const persisted = await getScan(db, gate!.scanId!, seeded.organizationId, env.ARTIFACTS);
     expect(persisted?.scan.riskSummaryJson).toMatchObject({
       artifactRisk: "high",
       releaseRisk: "high",

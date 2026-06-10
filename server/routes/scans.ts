@@ -294,7 +294,14 @@ scansRoutes.get("/:id/report.json", async (c) => {
   const db = createDb(c.env.DB);
   const organizationId = await resolveReportExportOrganization(c, db);
   if (!organizationId) return c.json({ error: "not found" }, 404);
-  const detail = await getScan(db, c.req.param("id"), organizationId);
+  // Full-detail export: the findings come from R2 for artifact-backed scans, so
+  // load the artifact bucket (unlike the metadata-only reads below).
+  const detail = await getScan(
+    db,
+    c.req.param("id"),
+    organizationId,
+    scanArtifactReadBucket(c.env),
+  );
   if (!detail) return c.json({ error: "not found" }, 404);
   if (detail.scan.status !== "complete") {
     return c.json({ error: "report export is only available for completed scans" }, 409);
@@ -425,7 +432,7 @@ async function resolveCompareContext(
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
-  const scan = await getScanCompareData(db, scanId, organizationId);
+  const scan = await getScanCompareData(db, scanId, organizationId, scanArtifactReadBucket(c.env));
   if (!scan) return { error: c.json({ error: "not found" }, 404) } as const;
   if (!scan.scan.packageName)
     return { error: c.json({ error: "scan has no package name" }, 400) } as const;
