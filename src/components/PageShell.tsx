@@ -2,12 +2,15 @@ import type { ComponentChildren } from "preact";
 import { cn } from "./cn";
 import { BrandMark } from "./BrandMark";
 import { LinkButton } from "./Button";
+import { AikidoFootnote, AikidoMark } from "./AikidoPartner";
 
 const FEEDBACK_MAILTO =
   "mailto:drydock@resynapse.dev?subject=Drydock%20feedback&body=Tell%20us%20what%27s%20broken%2C%20confusing%2C%20or%20missing%3A%0A%0A";
 
 const SECURITY_MAILTO =
   "mailto:drydock@resynapse.dev?subject=Drydock%20security%20report&body=Describe%20the%20issue%20and%20how%20to%20reproduce%20it%3A%0A%0A";
+
+const AIKIDO_URL = "https://www.aikido.dev";
 
 const WIDTH_CLASS = {
   narrow: "max-w-[640px]",
@@ -39,7 +42,19 @@ export function PageShell({
       >
         {brand ? (
           <div class="flex flex-wrap items-center justify-between gap-3">
-            <BrandMark href="/" size="sm" />
+            <div class="flex items-center gap-2.5">
+              <BrandMark href="/" size="sm" />
+              <span aria-hidden class="h-3.5 w-px bg-border-strong" />
+              <a
+                href={AIKIDO_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center opacity-90 hover:opacity-100 transition-opacity duration-150 ease-out"
+                title="Aikido Security"
+              >
+                <AikidoMark size="xs" />
+              </a>
+            </div>
             <div class="flex items-center gap-2">
               <LinkButton
                 href={FEEDBACK_MAILTO}
@@ -92,6 +107,7 @@ function SiteFooter({ maxWidth }: { maxWidth: string }) {
           <a href={SECURITY_MAILTO} class={linkClass}>
             Security
           </a>
+          <AikidoFootnote />
         </nav>
       </div>
     </footer>
