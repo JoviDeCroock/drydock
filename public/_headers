@@ -1,0 +1,19 @@
+# Security headers for Cloudflare-served static assets.
+#
+# The SPA HTML document, JS and CSS are served by Cloudflare's edge BEFORE the
+# Worker runs (only run_worker_first paths — /api, /api/*, /webhooks/* — reach
+# the Worker), so the Worker's applySecurityHeaders() never touches them. This
+# file is how those static responses get a Content-Security-Policy and the rest
+# of the security headers. Worker-served JSON responses keep their own policy.
+#
+# Vite copies public/ to the asset root at build time, so this lands at /_headers
+# where Cloudflare consumes it as config rather than serving it.
+#
+# Keep in sync with server/lib/security-headers.ts (DOCUMENT_CSP +
+# SECURITY_HEADERS); test/security-headers.test.ts fails if they drift.
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+  Content-Security-Policy: default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'

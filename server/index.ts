@@ -9,6 +9,7 @@ import {
 import { createAuth, getAuthSession } from "./lib/auth";
 import { rateLimitResponse } from "./lib/http";
 import { allowInsecureLocalRegistry } from "./lib/npm-connection";
+import { API_CSP, DOCUMENT_CSP, SECURITY_HEADERS } from "./lib/security-headers";
 import {
   describeOperationalError,
   durationMsSince,
@@ -47,28 +48,12 @@ const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 function applySecurityHeaders(c: { res: Response; req: { path: string } }) {
   const headers = new Headers(c.res.headers);
-  const apiResponse = c.req.path.startsWith("/api/");
-  headers.set("X-Content-Type-Options", "nosniff");
-  headers.set("X-Frame-Options", "DENY");
-  headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
-  headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
-  headers.set(
-    "Content-Security-Policy",
-    apiResponse
-      ? "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
-      : [
-          "default-src 'self'",
-          "base-uri 'self'",
-          "object-src 'none'",
-          "frame-ancestors 'none'",
-          "form-action 'self'",
-          "script-src 'self'",
-          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-          "font-src 'self' https://fonts.gstatic.com",
-          "img-src 'self' data:",
-          "connect-src 'self'",
-        ].join("; "),
-  );
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
+  // Static assets (the HTML document, JS, CSS) are served by Cloudflare's edge
+  // before the Worker runs, so only run_worker_first paths reach here; those are
+  // all JSON API/webhook responses and take the locked-down policy. The static
+  // document CSP lives in public/_headers — see server/lib/security-headers.ts.
+  headers.set("Content-Security-Policy", c.req.path.startsWith("/api/") ? API_CSP : DOCUMENT_CSP);
 
   c.res = new Response(c.res.body, {
     status: c.res.status,
