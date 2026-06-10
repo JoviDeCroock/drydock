@@ -275,7 +275,7 @@ function ScanPreview() {
           <SeverityBar counts={{ critical: 1, medium: 1 }} class="max-w-[420px]" />
         </header>
 
-        <div class="grid grid-cols-1 md:grid-cols-[200px_minmax(0,1fr)] divide-y md:divide-y-0 md:divide-x divide-border">
+        <div class="grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] divide-y md:divide-y-0 md:divide-x divide-border">
           <aside class="p-4 flex flex-col gap-2 bg-bg/40">
             <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
               Release tree
@@ -297,7 +297,7 @@ function ScanPreview() {
                 <code class="font-mono text-xs text-ink-muted truncate">package.json</code>
               </div>
               <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
-                v4.2.0 → v4.3.0
+                4.2.0 → 4.3.0
               </span>
             </div>
 

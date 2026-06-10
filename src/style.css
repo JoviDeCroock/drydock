@@ -48,8 +48,16 @@
   }
 }
 
+/* Dark-mode overrides MUST live on a plain `:root` inside this media query, not
+   inside `@theme`. Tailwind v4 hoists every `@theme` block to one unconditional
+   top-level `:root` and discards the surrounding `@media` — so a nested dark
+   `@theme` overwrote the light tokens for everyone, leaving the whole site stuck
+   in dark mode. The light tokens above still register the namespaces, so utilities
+   keep emitting `var(--color-*)`; re-binding those variables here flips the theme
+   only when the user actually prefers dark. (The `--sh-token-*` block below has
+   always used this pattern correctly.) */
 @media (prefers-color-scheme: dark) {
-  @theme {
+  :root {
     --color-bg: #0a0a0a;
     --color-surface: #141414;
     --color-surface-2: #1c1c1c;
@@ -57,7 +65,10 @@
     --color-border-strong: #3f3f46;
     --color-ink: #fafafa;
     --color-ink-muted: #a1a1aa;
-    --color-ink-subtle: #71717a;
+    /* #71717a was only 3.8:1 on cards — failing AA for the mono detail line and
+       11px labels. #8b8b94 clears AA (≥5:1) on bg, surface, and surface-2 while
+       staying clearly below --color-ink-muted in the hierarchy. */
+    --color-ink-subtle: #8b8b94;
 
     --color-accent: #fb923c;
     --color-accent-hover: #fdba74;
@@ -79,9 +90,7 @@
 
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
-  }
 
-  :root {
     --sh-token-string: #4db6a4;
     --sh-token-string-expression: #4db6a4;
     --sh-token-link: #4db6a4;

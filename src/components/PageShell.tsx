@@ -6,6 +6,15 @@ import { LinkButton } from "./Button";
 const FEEDBACK_MAILTO =
   "mailto:drydock@resynapse.dev?subject=Drydock%20feedback&body=Tell%20us%20what%27s%20broken%2C%20confusing%2C%20or%20missing%3A%0A%0A";
 
+const SECURITY_MAILTO =
+  "mailto:drydock@resynapse.dev?subject=Drydock%20security%20report&body=Describe%20the%20issue%20and%20how%20to%20reproduce%20it%3A%0A%0A";
+
+const WIDTH_CLASS = {
+  narrow: "max-w-[640px]",
+  doc: "max-w-[880px]",
+  wide: "max-w-[1160px]",
+} as const;
+
 export function PageShell({
   class: className,
   children,
@@ -19,27 +28,72 @@ export function PageShell({
   brand?: boolean;
   headerActions?: ComponentChildren;
 }) {
-  const maxWidth =
-    width === "narrow" ? "max-w-[640px]" : width === "doc" ? "max-w-[880px]" : "max-w-[1160px]";
+  const maxWidth = WIDTH_CLASS[width];
+  // Narrow pages are single short cards (auth, 404, invite). Center them in the
+  // viewport instead of pinning them to the top with a large void below.
+  const centered = width === "narrow";
   return (
-    <main class={cn("mx-auto w-full px-6 pt-6 pb-24 flex flex-col gap-6", maxWidth, className)}>
-      {brand ? (
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <BrandMark href="/" size="sm" />
-          <div class="flex items-center gap-2">
-            <LinkButton
-              href={FEEDBACK_MAILTO}
-              variant="ghost"
-              size="sm"
-              title="Email drydock@resynapse.dev with any issues"
-            >
-              Feedback
-            </LinkButton>
-            {headerActions}
+    <div class="flex min-h-[100svh] flex-col">
+      <main
+        class={cn("mx-auto w-full grow px-6 pt-6 pb-16 flex flex-col gap-6", maxWidth, className)}
+      >
+        {brand ? (
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <BrandMark href="/" size="sm" />
+            <div class="flex items-center gap-2">
+              <LinkButton
+                href={FEEDBACK_MAILTO}
+                variant="ghost"
+                size="sm"
+                title="Email drydock@resynapse.dev with any issues"
+              >
+                Feedback
+              </LinkButton>
+              {headerActions}
+            </div>
           </div>
+        ) : null}
+        {centered ? (
+          // `my-auto` (not justify-center) so over-tall content never clips off-screen.
+          <div class="my-auto flex w-full flex-col gap-6">{children}</div>
+        ) : (
+          children
+        )}
+      </main>
+      <SiteFooter maxWidth={maxWidth} />
+    </div>
+  );
+}
+
+function SiteFooter({ maxWidth }: { maxWidth: string }) {
+  const linkClass =
+    "text-ink-muted no-underline transition-colors hover:text-ink focus-visible:text-ink";
+  return (
+    <footer class="border-t border-border">
+      <div
+        class={cn(
+          "mx-auto flex w-full flex-col gap-4 px-6 py-8 sm:flex-row sm:items-center sm:justify-between",
+          maxWidth,
+        )}
+      >
+        <div class="flex flex-col gap-1">
+          <BrandMark href="/" size="sm" />
+          <p class="m-0 font-mono text-[11px] text-ink-subtle">
+            Pre-publish review for npm and PyPI · © 2026 Drydock
+          </p>
         </div>
-      ) : null}
-      {children}
-    </main>
+        <nav class="flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px]" aria-label="Footer">
+          <a href="/docs" class={linkClass}>
+            Docs
+          </a>
+          <a href={FEEDBACK_MAILTO} class={linkClass}>
+            Feedback
+          </a>
+          <a href={SECURITY_MAILTO} class={linkClass}>
+            Security
+          </a>
+        </nav>
+      </div>
+    </footer>
   );
 }
