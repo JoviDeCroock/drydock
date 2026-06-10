@@ -18,7 +18,7 @@
     "stagedTarballStatus": 503
   },
   "expected": {
-    "errorStatus": 502,
-    "errorIncludes": "Could not download or inspect the staged tarball."
+    "errorCode": "sandbox_download_transient",
+    "errorIncludes": "temporarily failed while downloading release evidence"
   }
 }
