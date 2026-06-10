@@ -87,6 +87,18 @@ export async function analyzeWithAi(
       // call: an invalid one (rejected by validation, so `execute` never fires)
       // must let the model see the tool error and retry instead of ending the loop.
       stopWhen: [() => submittedReview !== null, stepCountIs(MAX_AGENT_STEPS)],
+      // The last step the budget allows offers only submit_review and forces
+      // the call: a run that spends every step gathering evidence would
+      // otherwise end unrecorded, discarding the whole token spend and
+      // degrading to the `invalid` fallback. A forced submission that still
+      // fails validation falls through to that fallback as before.
+      prepareStep: ({ stepNumber }) =>
+        stepNumber >= MAX_AGENT_STEPS - 1
+          ? {
+              toolChoice: { type: "tool", toolName: "submit_review" },
+              activeTools: ["submit_review"],
+            }
+          : undefined,
       // Clamp a near-miss submission to the schema limits rather than discarding
       // the whole review. Substitute the repaired call only once it re-validates;
       // anything we can't make valid returns null so the model retries.

