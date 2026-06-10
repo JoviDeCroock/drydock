@@ -52,7 +52,7 @@ export default function LandingPage() {
           See exactly what your next publish ships.
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-          The package that lands on the registry is built, packed output — not the pull request you
+          The package that lands on the registry is built, packed output, not the pull request you
           reviewed. Drydock holds each release before it goes public, diffs it against the last
           published version, and pins risk findings to the lines that introduced them. You make the
           final call.
@@ -85,14 +85,14 @@ export default function LandingPage() {
           <p class="m-0 text-[14px] text-ink-muted leading-[1.65]">
             Between a reviewed pull request and a published package sit build scripts, bundlers, and
             a CI pipeline holding a publish credential. Install hooks, minified bundles, and files
-            that never existed in the repo all ship in the artifact — and a stolen maintainer
-            account or compromised CI runner can publish a malicious version without touching git
-            history. The major npm supply-chain attacks went out exactly this way: in the published
-            bytes, invisible in the repo.
+            that never existed in the repo all ship in the artifact, and a stolen maintainer account
+            or compromised CI runner can publish a malicious version without touching git history.
+            The major npm supply-chain attacks went out exactly this way: in the published bytes,
+            invisible in the repo.
           </p>
           <p class="m-0 text-[14px] text-ink-muted leading-[1.65]">
             Once a version is live it is immutable and being installed within minutes. The one
-            moment left to look is after the release is built and before it is public — that is
+            moment left to look is after the release is built and before it is public, and that is
             where Drydock sits. It reads the exact bytes that would ship, never executes them, and
             nothing publishes until a maintainer says so.
           </p>
@@ -109,7 +109,7 @@ export default function LandingPage() {
                 <>
                   A maintainer stages the npm publish on the registry, or CI uploads the built
                   artifacts and a GitHub environment gate holds the publish job. Either way the
-                  candidate is parked where Drydock can read it — and where no one can install it.
+                  candidate is parked where Drydock can read it and no one can install it.
                 </>
               ),
             },
@@ -117,10 +117,10 @@ export default function LandingPage() {
               title: "Drydock reviews the exact bytes",
               body: (
                 <>
-                  It diffs the candidate against the last published version and runs deterministic
-                  checks over what changed — new install scripts, process execution, network and
-                  credential access, added binaries — pinning every finding to the line that
-                  introduced it. Nothing in the package is executed.
+                  It diffs the candidate against the last published version and checks what changed:
+                  new install scripts, process execution, network and credential access, added
+                  binaries. Every finding is pinned to the line that introduced it, and nothing in
+                  the package is executed.
                 </>
               ),
             },
@@ -148,10 +148,10 @@ export default function LandingPage() {
             before the 2FA confirmation runs.
           </RegistryCard>
           <RegistryCard title="Workflow gating — PyPI & npm" badge="Preview">
-            When there's no staged artifact — PyPI, or an npm publish that skips staging — a GitHub
-            Environment holds the publish job. Drydock reviews the release candidate; a maintainer
-            approves or rejects from the workbench, and the job publishes on its own credential:
-            PyPI Trusted Publishing, or npm via OIDC.
+            When there is no staged version to review, for PyPI or an npm publish that skips
+            staging, a GitHub Environment holds the publish job instead. Drydock reviews the upload,
+            a maintainer approves or rejects from the workbench, and the job publishes on its own
+            credential.
           </RegistryCard>
         </div>
         <LinkButton href="/docs" variant="ghost" size="sm" class="self-start">
@@ -163,15 +163,15 @@ export default function LandingPage() {
         <SectionLabel>Safeguards</SectionLabel>
         <StatusStrip>
           <StatusStripItem label="credentials" status="scoped" tone="ok">
-            Tokens only fetch release evidence, never package contents — and Drydock never holds
-            your publish credential.
+            Tokens are only used to fetch release evidence, and Drydock never holds your publish
+            credential.
           </StatusStripItem>
           <StatusStripItem label="retention" status="redacted" tone="ok">
             Reports keep redacted review evidence, not raw release archives.
           </StatusStripItem>
           <StatusStripItem label="approval" status="human" tone="neutral">
-            Maintainers approve the publish themselves — npm 2FA or the CI gate. We never publish on
-            their behalf.
+            Maintainers approve the publish themselves, with npm 2FA or the CI gate. We never
+            publish on their behalf.
           </StatusStripItem>
         </StatusStrip>
       </section>
@@ -422,8 +422,8 @@ function FindingAnnotation() {
       <p class="m-0 text-[13px] leading-[1.55] text-ink">
         <code class="font-mono text-[12px] text-ink-muted">postinstall</code> now executes during{" "}
         <code class="font-mono text-[12px] text-ink-muted">npm install</code>, invoking{" "}
-        <code class="font-mono text-[12px] text-ink-muted">lib/install.js</code> — a newly added
-        file in this release. Inspect before approving.
+        <code class="font-mono text-[12px] text-ink-muted">lib/install.js</code>, a newly added file
+        in this release. Inspect before approving.
       </p>
     </div>
   );
