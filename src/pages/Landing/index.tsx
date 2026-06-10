@@ -141,16 +141,17 @@ export default function LandingPage() {
       <section aria-label="How Drydock hooks in" class="flex flex-col gap-4">
         <SectionLabel>How it hooks in</SectionLabel>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <RegistryCard title="npm — staged tarballs">
+          <RegistryCard title="Staged publishing — npm">
             A maintainer runs{" "}
             <code class="font-mono text-[12px] text-ink">npm publish --stage</code> and the registry
             parks the candidate. Drydock reviews that tarball and pins risk signals to the diff
             before the 2FA confirmation runs.
           </RegistryCard>
-          <RegistryCard title="PyPI — GitHub Actions gate" badge="Preview">
-            PyPI has no staged artifact, so a GitHub Environment holds the publish job. Drydock
-            reviews the release candidate; a maintainer approves or rejects from the workbench, and
-            the job publishes on its own Trusted Publishing credential.
+          <RegistryCard title="Workflow gating — PyPI & npm" badge="Preview">
+            When there's no staged artifact — PyPI, or an npm publish that skips staging — a GitHub
+            Environment holds the publish job. Drydock reviews the release candidate; a maintainer
+            approves or rejects from the workbench, and the job publishes on its own credential:
+            PyPI Trusted Publishing, or npm via OIDC.
           </RegistryCard>
         </div>
         <LinkButton href="/docs" variant="ghost" size="sm" class="self-start">
