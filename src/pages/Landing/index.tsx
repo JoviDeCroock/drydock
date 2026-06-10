@@ -47,14 +47,15 @@ export default function LandingPage() {
       }
     >
       <section class="py-8 md:py-12 border-y border-border flex flex-col gap-5">
-        <Eyebrow tone="accent">Release confidence for npm and PyPI maintainers</Eyebrow>
+        <Eyebrow tone="accent">Pre-publish review for npm and PyPI packages</Eyebrow>
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
           See exactly what your next publish ships.
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-          A publish-level diff of what a release actually ships, with deterministic risk signals
-          pinned to the hunks that triggered them — for npm staged tarballs and for PyPI builds held
-          at a CI gate, without executing package code or holding your publish credential.
+          The package that lands on the registry is built, packed output, not the pull request you
+          reviewed. Drydock holds each release before it goes public, diffs it against the last
+          published version, and pins risk findings to the lines that introduced them. You make the
+          final call.
         </p>
         <div class="flex gap-3 mt-2">
           <Show
@@ -75,43 +76,156 @@ export default function LandingPage() {
 
       <ScanPreview />
 
-      <section aria-label="Safeguards" class="flex flex-col gap-4">
-        <SectionLabel>Safeguards</SectionLabel>
-        <StatusStrip>
-          <StatusStripItem label="credentials" status="scoped" tone="ok">
-            Tokens only fetch release evidence, never package contents — and Drydock never holds
-            your publish credential.
-          </StatusStripItem>
-          <StatusStripItem label="retention" status="redacted" tone="ok">
-            Reports keep redacted review evidence, not raw release archives.
-          </StatusStripItem>
-          <StatusStripItem label="approval" status="human" tone="neutral">
-            Maintainers approve the publish themselves — npm 2FA or the CI gate. We never publish on
-            their behalf.
-          </StatusStripItem>
-        </StatusStrip>
+      <section aria-label="Why review a publish" class="flex flex-col gap-4">
+        <SectionLabel>Why review a publish</SectionLabel>
+        <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
+          Code review stops at the repository. Attacks don't.
+        </h2>
+        <div class="flex flex-col gap-3 max-w-[680px]">
+          <p class="m-0 text-[14px] text-ink-muted leading-[1.65]">
+            Between a reviewed pull request and a published package sit build scripts, bundlers, and
+            a CI pipeline holding a publish credential. Install hooks, minified bundles, and files
+            that never existed in the repo all ship in the artifact, and a stolen maintainer account
+            or compromised CI runner can publish a malicious version without touching git history.
+            The major npm supply-chain attacks went out exactly this way: in the published bytes,
+            invisible in the repo.
+          </p>
+          <p class="m-0 text-[14px] text-ink-muted leading-[1.65]">
+            Once a version is live it is immutable and being installed within minutes. The one
+            moment left to look is after the release is built and before it is public, and that is
+            where Drydock sits. It reads the exact bytes that would ship, never executes them, and
+            nothing publishes until a maintainer says so.
+          </p>
+        </div>
+      </section>
+
+      <section aria-label="How it works" class="flex flex-col gap-5">
+        <SectionLabel>How it works</SectionLabel>
+        <HowSteps
+          items={[
+            {
+              title: "The release is held before it goes public",
+              body: (
+                <>
+                  A maintainer stages the npm publish on the registry, or CI uploads the built
+                  artifacts and a GitHub environment gate holds the publish job. Either way the
+                  candidate is parked where Drydock can read it and no one can install it.
+                </>
+              ),
+            },
+            {
+              title: "Drydock reviews the exact bytes",
+              body: (
+                <>
+                  It diffs the candidate against the last published version and checks what changed:
+                  new install scripts, process execution, network and credential access, added
+                  binaries. Every finding is pinned to the line that introduced it, and nothing in
+                  the package is executed.
+                </>
+              ),
+            },
+            {
+              title: "A maintainer makes the call",
+              body: (
+                <>
+                  Approve the npm publish yourself with 2FA, or approve or reject the gated job from
+                  the review workbench. Drydock never publishes and never holds your publish
+                  credential.
+                </>
+              ),
+            },
+          ]}
+        />
       </section>
 
       <section aria-label="How Drydock hooks in" class="flex flex-col gap-4">
         <SectionLabel>How it hooks in</SectionLabel>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <RegistryCard title="npm — staged tarballs">
+          <RegistryCard title="Staged publishing — npm">
             A maintainer runs{" "}
             <code class="font-mono text-[12px] text-ink">npm publish --stage</code> and the registry
             parks the candidate. Drydock reviews that tarball and pins risk signals to the diff
             before the 2FA confirmation runs.
           </RegistryCard>
-          <RegistryCard title="PyPI — GitHub Actions gate" badge="Preview">
-            PyPI has no staged artifact, so a GitHub Environment holds the publish job. Drydock
-            reviews the release candidate; a maintainer approves or rejects from the workbench, and
-            the job publishes on its own Trusted Publishing credential.
+          <RegistryCard title="Workflow gating — PyPI & npm" badge="Preview">
+            When there is no staged version to review, for PyPI or an npm publish that skips
+            staging, a GitHub Environment holds the publish job instead. Drydock reviews the upload,
+            a maintainer approves or rejects from the workbench, and the job publishes on its own
+            credential.
           </RegistryCard>
         </div>
         <LinkButton href="/docs" variant="ghost" size="sm" class="self-start">
           Read the docs →
         </LinkButton>
       </section>
+
+      <section aria-label="Safeguards" class="flex flex-col gap-4">
+        <SectionLabel>Safeguards</SectionLabel>
+        <StatusStrip>
+          <StatusStripItem label="credentials" status="scoped" tone="ok">
+            Tokens are only used to fetch release evidence, and Drydock never holds your publish
+            credential.
+          </StatusStripItem>
+          <StatusStripItem label="retention" status="redacted" tone="ok">
+            Reports keep redacted review evidence, not raw release archives.
+          </StatusStripItem>
+          <StatusStripItem label="approval" status="human" tone="neutral">
+            Maintainers approve the publish themselves, with npm 2FA or the CI gate. We never
+            publish on their behalf.
+          </StatusStripItem>
+        </StatusStrip>
+      </section>
+
+      <section aria-label="Get started" class="border-t border-border pt-10 flex flex-col gap-4">
+        <SectionLabel>Get started</SectionLabel>
+        <p class="m-0 text-[14px] text-ink-muted max-w-[620px] leading-[1.6]">
+          Create an organization, connect an npm token or install the GitHub App, and your next
+          release shows up reviewed on the dashboard.
+        </p>
+        <div class="flex flex-wrap gap-3">
+          <Show
+            when={authed}
+            fallback={
+              <>
+                <LinkButton href="/register">Create account</LinkButton>
+                <LinkButton href="/docs" variant="secondary">
+                  Read the docs
+                </LinkButton>
+              </>
+            }
+          >
+            <LinkButton href="/dashboard">Open dashboard</LinkButton>
+          </Show>
+        </div>
+      </section>
     </PageShell>
+  );
+}
+
+function HowSteps({ items }: { items: Array<{ title: string; body: ComponentChildren }> }) {
+  return (
+    <ol class="list-none p-0 m-0 flex flex-col">
+      {items.map((item, index) => (
+        <li key={index} class="grid grid-cols-[2rem_minmax(0,1fr)] gap-x-3">
+          <div class="flex flex-col items-center">
+            <span class="font-mono text-[11px] font-medium text-ink-subtle tabular-nums leading-none pt-[3px]">
+              {String(index + 1).padStart(2, "0")}
+            </span>
+            {index < items.length - 1 ? (
+              <span class="w-px flex-1 bg-border mt-2" aria-hidden />
+            ) : null}
+          </div>
+          <div
+            class={`flex flex-col gap-1.5 min-w-0 max-w-[680px] ${
+              index < items.length - 1 ? "pb-6" : ""
+            }`}
+          >
+            <h3 class="text-base font-medium tracking-[-0.005em] m-0">{item.title}</h3>
+            <p class="m-0 text-[13px] text-ink-muted leading-[1.6]">{item.body}</p>
+          </div>
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -308,8 +422,8 @@ function FindingAnnotation() {
       <p class="m-0 text-[13px] leading-[1.55] text-ink">
         <code class="font-mono text-[12px] text-ink-muted">postinstall</code> now executes during{" "}
         <code class="font-mono text-[12px] text-ink-muted">npm install</code>, invoking{" "}
-        <code class="font-mono text-[12px] text-ink-muted">lib/install.js</code> — a newly added
-        file in this release. Inspect before approving.
+        <code class="font-mono text-[12px] text-ink-muted">lib/install.js</code>, a newly added file
+        in this release. Inspect before approving.
       </p>
     </div>
   );
