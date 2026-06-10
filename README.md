@@ -20,7 +20,6 @@ Use the docs by layer:
 
 - [`docs/architecture.md`](docs/architecture.md) — runtime shape, trust boundaries, adapters, APIs.
 - [`docs/security-model.md`](docs/security-model.md) — non-negotiable security posture and known gaps.
-- [`docs/production-roadmap.md`](docs/production-roadmap.md) — remaining product slices, with closed work collapsed.
 - [`docs/workflow-gates.md`](docs/workflow-gates.md) — workflow-gate product mode: ecosystem-neutral GitHub Environment gate contract, with PyPI as the first ecosystem.
 - [`docs/release-safety.md`](docs/release-safety.md), [`docs/security-detection-corpus.md`](docs/security-detection-corpus.md), [`docs/detection-eval.md`](docs/detection-eval.md), and [`docs/e2e-test-environment.md`](docs/e2e-test-environment.md) — change safety, detection quality, and local verification.
 
@@ -68,7 +67,7 @@ src/           Preact UI served as static assets by the worker
   pages/       Landing, Auth login/register, Dashboard, persisted scan detail
   models/      Fetch wrappers that talk to /api/* (re-use server types)
 drizzle/       D1 migrations generated from server/db/schema.ts
-docs/          Architecture, security, roadmap, and UI implementation notes
+docs/          Architecture, security, and UI implementation notes
 test/          Vitest specs for pure logic
 packages/      Publishable test packages, including @pracht/experiments
 ```

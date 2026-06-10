@@ -214,7 +214,7 @@ Organization-owned resources scope by the active org:
 
 Team membership, invitations, and RBAC ship today — see [`organization-members.md`](./organization-members.md). Each membership row carries one of three roles (`owner`, `admin`, `member`) defined in `server/lib/roles.ts`. Owners and admins manage members, invitations, npm connections, and GitHub release targets; members get read access to org-scoped resources and can act on releases. The owner is the `organizations.ownerUserId` and cannot be removed or demoted through the API. Route guards still verify membership through `organization_members` via `requireActiveOrganization`; sensitive mutations additionally resolve the caller's role with `requireActiveOrganizationContext` and gate on `roleCanManageMembers` / `roleCanManageIntegrations` rather than trusting client-supplied org ids.
 
-Deletion, audit-log UI, billing, and quotas remain deferred (see Phase 7 in `docs/production-roadmap.md`).
+Deletion, audit-log UI, billing, and quotas remain deferred as team/commercial-readiness work.
 
 ## Account email verification
 
@@ -257,7 +257,7 @@ Implemented foundation:
 - newly completed scans dual-write canonical report/file/diff artifacts to R2 when the `ARTIFACTS` binding is present, then persist the object keys and manifest digest on `scans`;
 - newly completed scans store `summary_json.risk` with release, artifact, and context risk; `scans.risk` stores the primary artifact risk for new reports, while `summary_json.risk.releaseRisk` carries the package-to-package release verdict;
 - each deterministic finding carries `ruleId` and `ruleVersion` (see `DETERMINISTIC_RULES_VERSION` in `server/lib/review.ts`), persisted on `scan_findings.rule_id` / `rule_version`;
-- persisted scan detail APIs return report version, digest, rules version, package diff, and safety posture. The current workbench renders recommendation, diff, findings, manifest changes, and AI availability/results; full report provenance and fingerprint display remain roadmap work.
+- persisted scan detail APIs return report version, digest, rules version, package diff, and safety posture. The current workbench renders recommendation, diff, findings, manifest changes, and AI availability/results; full report provenance and fingerprint display remain follow-up work.
 
 Prepare next for report export/provenance UI, future `scan_report_signatures` rows signed by a user, and D1 compaction only after artifact backfill and shadow-read confidence.
 
