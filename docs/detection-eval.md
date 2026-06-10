@@ -79,7 +79,7 @@ Recall is measured per class so blind spots are visible. Malicious:
 `network-exfil`, `native-artifact-smuggle`, `files-allowlist-escape`,
 `typosquat-metadata`, `protestware`, `dependency-confusion`,
 `wheel-integrity` (PyPI), `pth-injection` (PyPI). Benign hard-negatives:
-`legit-native`, `legit-childprocess`, `legit-env-read`.
+`legit-native`, `legit-childprocess`, `legit-env-read`, `legit-dynamic-require`.
 
 ## Metrics
 
