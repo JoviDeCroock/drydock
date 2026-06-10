@@ -71,6 +71,28 @@ async function call(
   return res;
 }
 
+async function readReleasePolicy(
+  session: { userId: string },
+  orgId: string,
+): Promise<boolean | undefined> {
+  const list = await call(buildTestApp(session), "GET", "/api/v1/organizations");
+  return (
+    (await list.json()) as {
+      organizations: Array<{ id: string; requireTwoFactorForReleaseDecisions: boolean }>;
+    }
+  ).organizations.find((o) => o.id === orgId)?.requireTwoFactorForReleaseDecisions;
+}
+
+// Flip Better Auth's enrollment flag directly. The stub harness has no real
+// `auth` to run TOTP enrollment through, but enabling the policy only checks
+// enrollment (no fresh code), so the column is all these specs need.
+async function setEnrolledInTwoFactor(userId: string, enabled: boolean): Promise<void> {
+  await createDb(env.DB)
+    .update(schema.user)
+    .set({ twoFactorEnabled: enabled })
+    .where(eq(schema.user.id, userId));
+}
+
 const originalFetch = globalThis.fetch;
 
 afterEach(() => {
@@ -162,21 +184,29 @@ describe("organizations routes", () => {
     expect(intruder.status).toBe(404);
   });
 
-  test("PUT /:id/release-two-factor toggles the policy and reflects it in GET /", async () => {
+  test("PUT /:id/release-two-factor requires the owner to be enrolled before enabling", async () => {
     const owner = await seedUser();
     const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
       body: { name: "secure-org" },
     });
     const orgId = ((await create.json()) as { organization: { id: string } }).organization.id;
+    expect(await readReleasePolicy(owner, orgId)).toBe(false);
 
-    const beforeList = await call(buildTestApp(owner), "GET", "/api/v1/organizations");
-    const beforeOrg = (
-      (await beforeList.json()) as {
-        organizations: Array<{ id: string; requireTwoFactorForReleaseDecisions: boolean }>;
-      }
-    ).organizations.find((o) => o.id === orgId);
-    expect(beforeOrg?.requireTwoFactorForReleaseDecisions).toBe(false);
+    // An owner who has not turned on 2FA themselves cannot mandate it for everyone.
+    const blocked = await call(
+      buildTestApp(owner),
+      "PUT",
+      `/api/v1/organizations/${orgId}/release-two-factor`,
+      { body: { enabled: true } },
+    );
+    expect(blocked.status).toBe(403);
+    expect((await blocked.json()) as unknown).toMatchObject({
+      code: "two_factor_enrollment_required",
+    });
+    expect(await readReleasePolicy(owner, orgId)).toBe(false);
 
+    // Once enrolled, enabling only hardens the gate, so it needs no fresh code.
+    await setEnrolledInTwoFactor(owner.userId, true);
     const enable = await call(
       buildTestApp(owner),
       "PUT",
@@ -187,29 +217,38 @@ describe("organizations routes", () => {
     expect((await enable.json()) as unknown).toMatchObject({
       requireTwoFactorForReleaseDecisions: true,
     });
+    expect(await readReleasePolicy(owner, orgId)).toBe(true);
+  });
 
-    const afterList = await call(buildTestApp(owner), "GET", "/api/v1/organizations");
-    const afterOrg = (
-      (await afterList.json()) as {
-        organizations: Array<{ id: string; requireTwoFactorForReleaseDecisions: boolean }>;
-      }
-    ).organizations.find((o) => o.id === orgId);
-    expect(afterOrg?.requireTwoFactorForReleaseDecisions).toBe(true);
+  test("PUT /:id/release-two-factor refuses to relax the policy without a fresh code", async () => {
+    const owner = await seedUser();
+    await setEnrolledInTwoFactor(owner.userId, true);
+    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
+      body: { name: "hardened-org" },
+    });
+    const orgId = ((await create.json()) as { organization: { id: string } }).organization.id;
 
+    const enable = await call(
+      buildTestApp(owner),
+      "PUT",
+      `/api/v1/organizations/${orgId}/release-two-factor`,
+      { body: { enabled: true } },
+    );
+    expect(enable.status).toBe(200);
+
+    // Relaxing the policy is the security-weakening direction: a live session is
+    // not enough, the route demands a fresh second factor (verified for real in
+    // the worker e2e specs). Without a code it stops at `two_factor_required` and
+    // the policy stays on.
     const disable = await call(
       buildTestApp(owner),
       "PUT",
       `/api/v1/organizations/${orgId}/release-two-factor`,
       { body: { enabled: false } },
     );
-    expect(disable.status).toBe(200);
-    const finalList = await call(buildTestApp(owner), "GET", "/api/v1/organizations");
-    const finalOrg = (
-      (await finalList.json()) as {
-        organizations: Array<{ id: string; requireTwoFactorForReleaseDecisions: boolean }>;
-      }
-    ).organizations.find((o) => o.id === orgId);
-    expect(finalOrg?.requireTwoFactorForReleaseDecisions).toBe(false);
+    expect(disable.status).toBe(401);
+    expect((await disable.json()) as unknown).toMatchObject({ code: "two_factor_required" });
+    expect(await readReleasePolicy(owner, orgId)).toBe(true);
   });
 
   test("PUT /:id/release-two-factor is owner-only (admins and strangers get 404)", async () => {

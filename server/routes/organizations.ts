@@ -17,6 +17,7 @@ import {
   setRequireTwoFactorForReleaseDecisions,
   type NotificationRecipient,
 } from "../db";
+import { userHasTwoFactor, verifyTotpStepUp } from "../lib/auth";
 import { sanitizeAddress } from "../lib/email";
 import { rateLimitResponse } from "../lib/http";
 import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
@@ -97,8 +98,20 @@ organizationsRoutes.patch("/:id", async (c) => {
 // decisions. Owner-only — this is a security policy that binds every member, so
 // it sits alongside rename/delete rather than the admin-level integration
 // controls; an admin must not be able to weaken a gate the owner hardened.
+//
+// Changing this policy is itself a 2FA-guarded action, mirroring the gate
+// decision it governs: the owner must have enrolled in 2FA before they can
+// mandate it for everyone (you cannot enforce a control you have not adopted,
+// and it would otherwise lock the owner out of their own release decisions), and
+// *relaxing* the policy weakens a security control — so, like deciding a gate, it
+// demands a fresh second factor rather than just a live session. Enabling only
+// hardens, so enrollment alone is enough there; disabling additionally needs a
+// fresh `totpCode`.
 organizationsRoutes.put("/:id/release-two-factor", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { enabled?: unknown };
+  const body = (await c.req.json().catch(() => ({}))) as {
+    enabled?: unknown;
+    totpCode?: unknown;
+  };
   if (typeof body.enabled !== "boolean") {
     return c.json({ error: "enabled must be a boolean" }, 400);
   }
@@ -123,12 +136,44 @@ organizationsRoutes.put("/:id/release-two-factor", async (c) => {
     throw err;
   }
 
+  const ownerEnrolledInTwoFactor = await userHasTwoFactor(db, session.userId);
+  if (!ownerEnrolledInTwoFactor) {
+    return c.json(
+      {
+        error:
+          "enable two-factor authentication on your account before changing the release two-factor policy",
+        code: "two_factor_enrollment_required",
+      },
+      403,
+    );
+  }
+  let twoFactorVerified = false;
+  if (!enabled) {
+    const totpCode = typeof body.totpCode === "string" ? body.totpCode.trim() : "";
+    if (!totpCode) {
+      return c.json(
+        { error: "two-factor verification required", code: "two_factor_required" },
+        401,
+      );
+    }
+    if (!(await verifyTotpStepUp(c.get("auth"), c.req.raw, totpCode))) {
+      return c.json({ error: "invalid two-factor code", code: "two_factor_invalid" }, 401);
+    }
+    twoFactorVerified = true;
+  }
+
   await setRequireTwoFactorForReleaseDecisions(db, organizationId, enabled);
   await recordScanEvent(db, {
     organizationId,
     actorUserId: session.userId,
     type: "organization.release_two_factor_changed",
-    metadata: { enabled },
+    metadata: {
+      enabled,
+      // Records whether a fresh step-up gated the change — true only on a relax,
+      // which is the security-weakening direction worth auditing precisely.
+      twoFactor: twoFactorVerified,
+      twoFactorMethod: twoFactorVerified ? "totp" : null,
+    },
   });
   return c.json({ requireTwoFactorForReleaseDecisions: enabled });
 });

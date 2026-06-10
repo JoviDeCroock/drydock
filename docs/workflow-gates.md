@@ -210,7 +210,9 @@ releaseRisk, decision }]` array (one entry per distinct package).
     `pending`, nothing posted to GitHub — and enrolled members still present a
     fresh `totpCode`. The public gate shape carries `organizationRequiresTwoFactor`
     so the decision dialog prompts (or blocks) before submit, and the scan event
-    records `twoFactorRequiredByOrg`. See
+    records `twoFactorRequiredByOrg`. Flipping the policy is itself 2FA-guarded: the
+    owner must be enrolled to enable it, and must present a fresh `totpCode` to
+    relax it (a failed step-up leaves the policy on). See
     [`two-factor-auth.md`](./two-factor-auth.md#org-enforced-step-up-organization-policy).
 
 - `POST /workflow-gates/:gateId/retry` — requeues a failed package-review batch

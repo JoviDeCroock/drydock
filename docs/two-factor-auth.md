@@ -99,6 +99,25 @@ submits, matching what the route enforces. The decision audit event records
 `twoFactorRequiredByOrg` alongside `twoFactor`/`twoFactorMethod`. Only the owner can change
 the policy — an admin cannot weaken a gate the owner hardened.
 
+**Changing the policy is itself 2FA-guarded** (it mirrors the gate decision it governs, so
+an owner cannot mandate a control they have not adopted, nor silently relax it from a
+hijacked session). The `PUT /api/v1/organizations/:id/release-two-factor` route, after the
+owner check, applies:
+
+- the owner must have **enrolled** in 2FA, regardless of direction → otherwise
+  `403 { code: "two_factor_enrollment_required" }` (you cannot enforce a control you have not
+  adopted, and it would otherwise lock the owner out of their own release decisions);
+- **enabling** then needs nothing more — hardening the gate is allowed with enrollment alone;
+- **disabling** (relaxing the control) additionally requires a fresh `totpCode` →
+  `401 { code: "two_factor_required" }` when absent, `401 { code: "two_factor_invalid" }` when
+  wrong. A failed step-up leaves the policy untouched.
+
+The `organization.release_two_factor_changed` audit event records `enabled` plus
+`twoFactor`/`twoFactorMethod` (the step-up is recorded only on a relax, the
+security-weakening direction). `ReleaseSecuritySection` mirrors this: it blocks an unenrolled
+owner with a link to enroll, and asks for an authenticator code before letting them stop
+requiring 2FA.
+
 ## Endpoints
 
 All under the Better Auth base path `/api/auth` and handled by `auth.handler`:
@@ -159,5 +178,12 @@ already covers these POSTs.
   decides without a code. The org-enforced policy adds: an unenrolled member is blocked
   (`two_factor_enrollment_required`), and an enrolled member still needs a fresh code.
 - `test/workers/organizations-routes.test.ts` — covers the owner-only
-  `PUT /api/v1/organizations/:id/release-two-factor` toggle (reflected in `GET /`, rejected for
-  admins/strangers, body validated).
+  `PUT /api/v1/organizations/:id/release-two-factor` toggle that needs no real authenticator:
+  rejected for admins/strangers (404) and a non-boolean body (400); an unenrolled owner is
+  blocked from enabling (`two_factor_enrollment_required`) while an enrolled owner enables with
+  no code; and relaxing without a code stops at `two_factor_required` with the policy left on.
+- `test/workers/organizations-release-two-factor.test.ts` — drives the real worker for the
+  toggle's step-up: an enrolled owner enables without a code and relaxes with a fresh code, but
+  cannot relax without one (`two_factor_required`) or with a wrong one (`two_factor_invalid`),
+  and an owner without 2FA cannot enable (`two_factor_enrollment_required`) — a failed step-up
+  never changes the stored policy.
