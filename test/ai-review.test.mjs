@@ -258,21 +258,71 @@ describe("ai review orchestration", () => {
   });
 
   test("a model error fails safe: unavailable review escalates to manual review", async () => {
+    // A non-transient error (not capacity/overload) is not retried — retrying a
+    // deterministic failure would just burn budget — so the model is hit once.
+    let calls = 0;
     const { review: ai, usage } = await analyzeWithAi(
       {},
       "mock-reviewer",
       BASE_OPTIONS,
       mockModel(async () => {
+        calls += 1;
         throw new Error("model exploded");
       }),
     );
 
+    expect(calls).toBe(1);
     expect(ai.status).toBe("unavailable");
     expect(ai.releaseAssessment).toBe("not_assessed");
     expect(ai.model).toBe("mock-reviewer");
     expect(computeScanRisk([], ai)).toBe("medium");
     // No generateText result on the error path, so there is no usage to report.
     expect(usage).toBeNull();
+  });
+
+  test("a transient capacity error is retried and the review completes", async () => {
+    // Reproduces the reported 3040 failure: the first call hits a capacity
+    // rejection that the model itself asks us to retry; the retry succeeds.
+    let calls = 0;
+    const flakyModel = mockModel(async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw new Error("3040: Capacity temporarily exceeded, please try again.");
+      }
+      return generateResult(
+        [
+          {
+            type: "tool-call",
+            toolCallId: "submit-1",
+            toolName: "submit_review",
+            input: JSON.stringify(VALID_REVIEW),
+          },
+        ],
+        "tool-calls",
+      );
+    });
+
+    const { review: ai } = await analyzeWithAi({}, "mock-reviewer", BASE_OPTIONS, flakyModel);
+
+    expect(calls).toBe(2);
+    expect(ai.status).toBe("complete");
+    expect(ai.summary).toBe("No unusual changes.");
+  });
+
+  test("a persistent capacity error exhausts retries and fails safe to unavailable", async () => {
+    let calls = 0;
+    const downModel = mockModel(async () => {
+      calls += 1;
+      throw new Error("3040: Capacity temporarily exceeded, please try again.");
+    });
+
+    const { review: ai } = await analyzeWithAi({}, "mock-reviewer", BASE_OPTIONS, downModel);
+
+    // Retried up to the attempt cap before degrading, not retried forever.
+    expect(calls).toBe(3);
+    expect(ai.status).toBe("unavailable");
+    expect(ai.summary).toContain("Capacity temporarily exceeded");
+    expect(computeScanRisk([], ai)).toBe("medium");
   });
 
   test("a complete submission slightly over the summary bound is clamped, not discarded", async () => {
