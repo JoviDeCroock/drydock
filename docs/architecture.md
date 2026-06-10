@@ -164,13 +164,14 @@ Dashboard list rendering (`GET /api/v1/scans`) reads only compact metadata. `per
 
 ### R2
 
-R2 is the target store for durable derived artifacts:
+R2 stores durable derived artifacts for completed scans:
 
 - canonical report JSON;
-- redacted package manifests;
-- changed-file safe text samples;
+- redacted staged file samples;
 - generated diff JSON;
 - future signed-report payloads.
+
+`ARTIFACTS` is the Worker binding for this bucket. New completed scans write and verify a versioned manifest plus report/files/diff objects before D1 is marked artifact-backed. Scan detail reads prefer R2 when artifact metadata exists, verify the manifest and report digest, and fall back to D1 on any mismatch or read failure. See [`artifact-storage.md`](./artifact-storage.md) for object keys, backfill, and rollback.
 
 Raw tarballs should not be retained by default in SaaS. If needed later, make raw retention an explicit organization setting with a short TTL, access logging, and clear warnings.
 
@@ -253,15 +254,12 @@ Implemented foundation:
 
 - newly completed scans store report metadata inside `summary_json.report` and denormalize `report_version`, `report_digest`, and `completed_at` onto the `scans` row for queryability;
 - `digest` is SHA-256 over stable canonical report JSON built from redacted scan evidence, including the deterministic rules version and release/context finding annotations so digests change when the ruleset or visible risk interpretation changes;
+- newly completed scans dual-write canonical report/file/diff artifacts to R2 when the `ARTIFACTS` binding is present, then persist the object keys and manifest digest on `scans`;
 - newly completed scans store `summary_json.risk` with release, artifact, and context risk; `scans.risk` stores the primary artifact risk for new reports, while `summary_json.risk.releaseRisk` carries the package-to-package release verdict;
 - each deterministic finding carries `ruleId` and `ruleVersion` (see `DETERMINISTIC_RULES_VERSION` in `server/lib/review.ts`), persisted on `scan_findings.rule_id` / `rule_version`;
 - persisted scan detail APIs return report version, digest, rules version, package diff, and safety posture. The current workbench renders recommendation, diff, findings, manifest changes, and AI availability/results; full report provenance and fingerprint display remain roadmap work.
 
-Prepare next for:
-
-- immutable report payload snapshots in R2;
-- report export/provenance UI;
-- future `scan_report_signatures` rows signed by a user.
+Prepare next for report export/provenance UI, future `scan_report_signatures` rows signed by a user, and D1 compaction only after artifact backfill and shadow-read confidence.
 
 Do not expose public signed report generation until the report payload is stable and access controls are ready.
 

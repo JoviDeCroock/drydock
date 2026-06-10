@@ -12,6 +12,12 @@ import {
   type PackageJsonSummary,
 } from "../lib/review";
 import { normalizeScanRiskBreakdown, type ScanRiskBreakdown } from "../lib/risk";
+import {
+  loadScanArtifacts,
+  scanFileRowsForArtifacts,
+  type ScanArtifactFileRow,
+  type ScanArtifactMetadata,
+} from "../lib/scan-artifacts";
 import type { AppDb } from "./client";
 import { recordScanEvent, redactScanEventForClient } from "./events";
 import { githubWorkflowGates, scanEvents, scanFiles, scanFindings, scans } from "./schema";
@@ -34,6 +40,7 @@ export interface PersistedScanInput {
   codePatternSet?: CodePatternSet;
   riskSummary?: ScanRiskBreakdown;
   report?: { version: number; digest: string };
+  artifacts?: ScanArtifactMetadata | null;
 }
 
 export interface ScanRiskSummary {
@@ -166,18 +173,17 @@ export async function discardGateScans(db: AppDb, gateId: string, organizationId
 
 export async function persistScan(db: AppDb, input: PersistedScanInput) {
   const now = new Date();
-  const diffByPath = new Map(input.diff.map((entry) => [entry.path, entry]));
-  const fileRows = input.files.map((file) => {
-    const entry = diffByPath.get(file.path);
+  const artifactFileRows = scanFileRowsForArtifacts(input.files, input.diff);
+  const fileRows = artifactFileRows.map((file) => {
     return {
       id: crypto.randomUUID(),
       scanId: input.id,
       path: file.path,
-      status: entry?.status || "unknown",
+      status: file.status,
       size: file.size,
       sha256: file.sha256,
-      flagsJson: file.flags,
-      textSample: file.textSample || null,
+      flagsJson: file.flagsJson,
+      textSample: input.artifacts ? null : file.textSample,
     };
   });
   const findingRows = input.findings.map((finding) => ({
@@ -230,6 +236,13 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     riskSummaryJson: riskSummary,
     reportVersion: input.report?.version ?? null,
     reportDigest: input.report?.digest ?? null,
+    artifactStorageVersion: input.artifacts?.artifactStorageVersion ?? null,
+    artifactManifestKey: input.artifacts?.artifactManifestKey ?? null,
+    artifactManifestDigest: input.artifacts?.artifactManifestDigest ?? null,
+    artifactManifestSize: input.artifacts?.artifactManifestSize ?? null,
+    reportArtifactKey: input.artifacts?.reportArtifactKey ?? null,
+    fileSamplesArtifactKey: input.artifacts?.fileSamplesArtifactKey ?? null,
+    diffArtifactKey: input.artifacts?.diffArtifactKey ?? null,
     completedAt: now,
     createdAt: now,
     updatedAt: now,
@@ -251,6 +264,13 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
       riskSummaryJson: scanValues.riskSummaryJson,
       reportVersion: scanValues.reportVersion,
       reportDigest: scanValues.reportDigest,
+      artifactStorageVersion: scanValues.artifactStorageVersion,
+      artifactManifestKey: scanValues.artifactManifestKey,
+      artifactManifestDigest: scanValues.artifactManifestDigest,
+      artifactManifestSize: scanValues.artifactManifestSize,
+      reportArtifactKey: scanValues.reportArtifactKey,
+      fileSamplesArtifactKey: scanValues.fileSamplesArtifactKey,
+      diffArtifactKey: scanValues.diffArtifactKey,
       completedAt: scanValues.completedAt,
       updatedAt: now,
     })
@@ -544,7 +564,11 @@ export interface RecordScanDecisionInput {
   reason?: string | null;
 }
 
-export async function recordScanDecision(db: AppDb, input: RecordScanDecisionInput) {
+export async function recordScanDecision(
+  db: AppDb,
+  input: RecordScanDecisionInput,
+  artifactBucket?: R2Bucket,
+) {
   const now = new Date();
   const reason = input.reason?.trim() ? input.reason.trim() : null;
   const updated = await db
@@ -575,7 +599,7 @@ export async function recordScanDecision(db: AppDb, input: RecordScanDecisionInp
     metadata: { decision: input.decision, reason },
   });
 
-  return getScan(db, input.scanId, input.organizationId);
+  return getScan(db, input.scanId, input.organizationId, artifactBucket);
 }
 
 export interface RecordGatePackageDecisionInput extends RecordScanDecisionInput {
@@ -587,7 +611,11 @@ export interface RecordGatePackageDecisionInput extends RecordScanDecisionInput 
  * still pending. This keeps stale concurrent submits from mutating package state
  * after the aggregate gate decision has already released or blocked GitHub.
  */
-export async function recordGatePackageDecision(db: AppDb, input: RecordGatePackageDecisionInput) {
+export async function recordGatePackageDecision(
+  db: AppDb,
+  input: RecordGatePackageDecisionInput,
+  artifactBucket?: R2Bucket,
+) {
   const now = new Date();
   const reason = input.reason?.trim() ? input.reason.trim() : null;
   const updated = await db
@@ -627,10 +655,15 @@ export async function recordGatePackageDecision(db: AppDb, input: RecordGatePack
     metadata: { decision: input.decision, reason },
   });
 
-  return getScan(db, input.scanId, input.organizationId);
+  return getScan(db, input.scanId, input.organizationId, artifactBucket);
 }
 
-export async function getScan(db: AppDb, id: string, organizationId: string) {
+export async function getScan(
+  db: AppDb,
+  id: string,
+  organizationId: string,
+  artifactBucket?: R2Bucket,
+) {
   const [scanRows, files, findings, events] = await Promise.all([
     db
       .select()
@@ -647,13 +680,15 @@ export async function getScan(db: AppDb, id: string, organizationId: string) {
   ]);
   const scan = scanRows[0];
   if (!scan) return null;
-  const diff = diffForFindingAnnotations(scan.summaryJson, files);
+  const artifactDetail = await loadScanArtifacts(artifactBucket, scan);
+  const detailFiles = artifactDetail ? mergeArtifactFiles(files, artifactDetail.files, id) : files;
+  const diff = artifactDetail?.diff ?? diffForFindingAnnotations(scan.summaryJson, detailFiles);
   const annotatedFindings = annotateFindingsWithDiffStatus(findings, diff, {
     persistedAnnotations: readFindingAnnotations(scan.summaryJson),
   });
   return {
     scan,
-    files,
+    files: detailFiles,
     findings: annotatedFindings,
     riskSummary:
       scan.status === "complete"
@@ -665,6 +700,33 @@ export async function getScan(db: AppDb, id: string, organizationId: string) {
         : null,
     events: events.map(redactScanEventForClient),
   };
+}
+
+function mergeArtifactFiles(
+  d1Files: (typeof scanFiles.$inferSelect)[],
+  artifactFiles: ScanArtifactFileRow[],
+  scanId: string,
+): (typeof scanFiles.$inferSelect)[] {
+  const d1ByPath = new Map(d1Files.map((file) => [file.path, file]));
+  const seen = new Set<string>();
+  const merged = artifactFiles.map((file) => {
+    seen.add(file.path);
+    const d1 = d1ByPath.get(file.path);
+    return {
+      id: d1?.id ?? `${scanId}:${file.path}`,
+      scanId: d1?.scanId ?? scanId,
+      path: file.path,
+      status: d1?.status ?? file.status,
+      size: d1?.size ?? file.size,
+      sha256: d1?.sha256 ?? file.sha256,
+      flagsJson: d1?.flagsJson ?? file.flagsJson,
+      textSample: file.textSample ?? d1?.textSample ?? null,
+    };
+  });
+  for (const file of d1Files) {
+    if (!seen.has(file.path)) merged.push(file);
+  }
+  return merged;
 }
 
 function readPersistedRiskBreakdown(summaryJson: unknown) {

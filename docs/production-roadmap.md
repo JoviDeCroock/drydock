@@ -141,13 +141,14 @@ Priority: medium; high before larger reports, exports, or signing.
 
 Goal: keep D1 metadata-focused while preserving useful redacted evidence.
 
+Initial artifact backing is now in place: new completed scans write verified R2 artifacts and compact D1 file metadata, scan detail shadow-reads R2 with D1 metadata fallback, and old rows can be backfilled in small digest-gated batches. See [`artifact-storage.md`](./artifact-storage.md).
+
 Tasks:
 
-- Add R2 binding and bucket provisioning docs.
-- Store derived/redacted artifacts in R2: canonical report JSON, manifest JSON, redacted changed-file samples, and diff JSON.
-- Store R2 object references in D1.
+- Continue monitoring artifact fallback/digest-mismatch events during the shadow-read period.
 - Add retention cleanup that removes both D1 metadata and R2 objects.
-- Document object key format, access rules, and expected object sizes.
+- Add D1 text-sample compaction for historical rows only after backfill and shadow-read confidence.
+- Add export/signing flows on top of the canonical R2 report object.
 
 Exit criteria:
 

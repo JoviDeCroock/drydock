@@ -8,7 +8,7 @@ Drydock handles untrusted package artifacts and sensitive npm credentials. The c
 - Better Auth sessions and user data.
 - Scan reports and package evidence.
 - Package contents that may be private/proprietary before approval.
-- Cloudflare account resources: D1, Queues, Workers AI, Dynamic Worker loader, and future R2.
+- Cloudflare account resources: D1, R2, Queues, Workers AI, and Dynamic Worker loader.
 - Maintainer trust in the final report.
 
 ## Adversaries and risky inputs
@@ -82,7 +82,7 @@ Persist by default:
 - risk summary split into release, artifact, and context risk so `scans.risk` reflects the full artifact while unchanged hazards remain separated from the package-to-package release verdict;
 - safety posture;
 - audit events;
-- future canonical report JSON.
+- canonical report JSON plus redacted file/diff artifacts in R2, with D1 retaining compact metadata and historical fallback samples until compaction.
 
 Avoid by default:
 
@@ -97,6 +97,10 @@ Rationale: staged packages may contain secrets, proprietary code, or malicious c
 ### Redaction
 
 Redaction is a defense-in-depth feature, not a proof that data is safe. Redact known token/key patterns before persistence and AI review, but still treat all package-derived text as sensitive.
+
+### R2 artifact reads
+
+R2 artifacts are redacted derived evidence only. The scan-detail read path verifies the R2 manifest and canonical report digest before using artifact-backed file samples/diffs. Any mismatch falls back to D1 and logs a structured event without raw package contents. Operators can set `SCAN_ARTIFACT_READS_DISABLED=true` to force D1 reads while leaving R2 objects untouched. See [`artifact-storage.md`](artifact-storage.md).
 
 ## Sandbox egress policy
 
@@ -213,7 +217,7 @@ Current foundation:
 
 Future signed report requirements:
 
-- store immutable report payload snapshots in R2 or another artifact store before exposing public signed reports;
+- use immutable report payload snapshots in R2 before exposing public signed reports;
 - signature records include signer user, organization, scan, digest, and timestamp;
 - revocation/withdrawal is represented without mutating the original report;
 - public access requires explicit sharing controls.

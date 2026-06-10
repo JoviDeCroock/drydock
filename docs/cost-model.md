@@ -13,6 +13,7 @@ A single scan exercises the deterministic pipeline (staged tarball download, pre
 | Worker requests   | ~5              | `POST /scans` + queue producer + queue consumer + 2 sandbox spins (staged via gateway; previous fetched by the parent, then parsed inline)       |
 | Worker CPU-ms     | ~3,000          | Dominated by tar parse + sha256 hashing in the sandbox                                                                                           |
 | D1 row writes     | ~150            | one scans row + N scan_files + M scan_findings                                                                                                   |
+| R2 writes         | 4               | artifact-backed completed scans write canonical report, redacted file sample bundle, diff bundle, and manifest JSON                              |
 | Workers AI tokens | flag-gated      | When AI review is enabled: compact manifest input plus bounded evidence-tool turns; static safety preamble prompt-cached via `AI_CACHE_AFFINITY` |
 | KV write          | 1               | Previous-version parsed payload cached in `COMPARE_CACHE`                                                                                        |
 | Queue operations  | 2               | Enqueue + consume                                                                                                                                |
@@ -25,6 +26,7 @@ Viewing a finished scan and re-diffing against alternate versions.
 | ------------------- | ----------------- | ---------------------------------------------------------------------------------------- |
 | Worker requests     | 3–8               | `GET /scans/:id` + `/versions` + `/compare` + N × `/compare/file`                        |
 | D1 reads            | ~5                | scan + files + findings + ownership checks                                               |
+| R2 reads            | 4 when backed     | manifest, canonical report digest check, file sample bundle, and diff bundle             |
 | KV reads            | 1–5               | One per `/compare` metadata fetch, one per file opened                                   |
 | Sandbox invocations | 0 cached / 1 cold | After the first global viewer of `package@version`, all subsequent compares are KV reads |
 
@@ -52,7 +54,8 @@ Workers AI is ~90% of the variable cost at every scale above the smallest tier.
 ## Where the money goes
 
 - **Workers AI**: dominant at scale. Biggest levers: (a) choose the correct tag-aware comparison baseline so changed files reflect the release channel under review; (b) start AI review with a compact package manifest instead of full changed-file samples; (c) let the model request only targeted redacted file/diff/search evidence through app-owned tools — diffs elide long unchanged runs to a few context lines so the per-call budget is spent on changed lines; (d) keep the system prompt cache-friendly via `AI_CACHE_AFFINITY`; (e) pick the cheapest model that still produces useful structured output; (f) never discard a run's spend — the final agent step forces a `submit_review` call so a step-budget-exhausted run still records a review. See [`diff-baseline.md`](./diff-baseline.md). Per-scan token usage (input/cached-input/output/total) and agent step count are emitted on the `scan.ai_review.completed` observability event, so these napkin estimates can be validated against real traffic. (Token-count fields are nested under `usage` with names that omit the word "token" — the observability secret-redaction regex matches "token" as a substring and would otherwise blank them.)
-- **D1 storage growth**: ~500 KB–2 MB per scan retained. At 50k scans/mo that's 25–100 GB/mo accumulating. Add a retention/GC policy before this becomes a line item.
+- **D1 storage growth**: artifact-backed new scans keep compact file metadata in D1 but store redacted samples in R2, so new large-evidence growth moves out of D1. Existing scans may still carry historical D1 text samples until backfill and an explicit compaction step.
+- **R2 storage growth**: roughly the same redacted evidence payload as current D1 detail rows plus a small manifest/report overhead. This is the intended long-term home for large derived artifacts.
 - **KV storage**: trivial. The added `COMPARE_CACHE` is essentially free across any realistic catalog of cached versions; it primarily saves sandbox CPU and tarball egress.
 - **Sandbox compute**: bounded per scan (2 Dynamic Workers, ~3s CPU each). The KV cache means alternate-version diffs in the detail page no longer linearly multiply this cost.
 

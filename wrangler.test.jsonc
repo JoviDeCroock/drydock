@@ -20,4 +20,10 @@
       "migrations_dir": "drizzle",
     },
   ],
+  "r2_buckets": [
+    {
+      "binding": "ARTIFACTS",
+      "bucket_name": "staged-publish-review-test-artifacts",
+    },
+  ],
 }
