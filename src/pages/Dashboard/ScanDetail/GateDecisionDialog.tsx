@@ -336,8 +336,8 @@ export function GateDecisionDialog({
         <Alert tone="warn">
           Your organization requires two-factor authentication to approve or block releases. Enable
           it in{" "}
-          <a class="underline text-accent" href="/dashboard/settings">
-            Settings → General
+          <a class="underline text-accent" href="/dashboard/account">
+            Account
           </a>
           , then reopen this decision.
         </Alert>
