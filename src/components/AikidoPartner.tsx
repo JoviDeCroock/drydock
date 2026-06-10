@@ -52,29 +52,22 @@ export function AikidoFootnote({ class: className }: { class?: string }) {
 
 export function AikidoPartnerStrip({ class: className }: { class?: string }) {
   return (
-    <section
-      aria-label="Aikido Security"
-      class={cn("flex items-center gap-6 md:gap-10 pb-6", className)}
-    >
-      <span aria-hidden class="h-px flex-1 bg-border" />
-      {/* Caption hangs below the link so the flanking hairlines align with the
-          wordmark's center, not the center of mark + caption combined. */}
+    <section aria-label="Aikido Security" class={cn("flex justify-center", className)}>
       <a
         href={AIKIDO_URL}
         target="_blank"
         rel="noopener noreferrer"
-        class="group relative inline-flex flex-col items-center"
+        class="group inline-flex flex-col items-center gap-2"
         aria-label="Visit Aikido Security"
       >
         <AikidoMark
           size="lg"
           class="opacity-80 transition-opacity duration-150 ease-out group-hover:opacity-100"
         />
-        <span class="absolute top-full mt-2 whitespace-nowrap font-mono text-[10px] tracking-[0.05em] text-ink-subtle transition-colors duration-150 ease-out group-hover:text-ink-muted">
+        <span class="font-mono text-[10px] tracking-[0.05em] text-ink-subtle transition-colors duration-150 ease-out group-hover:text-ink-muted">
           aikido.dev →
         </span>
       </a>
-      <span aria-hidden class="h-px flex-1 bg-border" />
     </section>
   );
 }
