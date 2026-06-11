@@ -1,5 +1,11 @@
-import { useModel, useSignalEffect } from "@preact/signals";
-import { SlackConnectionModel, type SlackChannelOption } from "../../../models/slack-connection";
+import { useComputed, useModel, useSignalEffect, type Signal } from "@preact/signals";
+import { For, Show, useLiveSignal } from "@preact/signals/utils";
+import {
+  SlackConnectionModel,
+  type SlackChannelOption,
+  type SlackConnection,
+  type SlackTestResult,
+} from "../../../models/slack-connection";
 import {
   Alert,
   Badge,
@@ -20,25 +26,12 @@ export function SlackConnectionSection({
   canManage: boolean;
   defaultOpen?: boolean;
 }) {
-  const configured = slack.configured.value;
-  const connection = slack.connection.value;
-  const status = slack.status.value;
-  const busy = slack.busy.value;
-  const loaded = slack.loaded.value;
-  const error = slack.error.value;
-  const channels = slack.channels.value;
-  const channelsLoaded = slack.channelsLoaded.value;
-  const channelsError = slack.channelsError.value;
-  const callbackNotice = slack.callbackNotice.value;
-
-  const connected = connection !== null;
-  const showChannelPicker = canManage && !channelsError;
-  const channelPickerLoading = showChannelPicker && !channelsLoaded;
-  const channelPickerDisabled = busy || channelPickerLoading || channels.length === 0;
-  const aside = connected ? (
-    <Badge tone="ok">connected</Badge>
-  ) : (
-    <Badge tone="neutral">not connected</Badge>
+  const canManageSignal = useLiveSignal(canManage);
+  const loadingConnection = useComputed(() => !slack.loaded.value);
+  const aside = (
+    <Show when={slack.connection} fallback={<Badge tone="neutral">not connected</Badge>}>
+      <Badge tone="ok">connected</Badge>
+    </Show>
   );
 
   const onSelectChannel = (channelId: string) => {
@@ -74,106 +67,199 @@ export function SlackConnectionSection({
           posts to the channel you pick.
         </Muted>
 
-        {callbackNotice ? (
-          <Alert tone={callbackNotice.ok ? "ok" : "critical"}>{callbackNotice.message}</Alert>
-        ) : null}
+        <Show<SlackTestResult | null> when={slack.callbackNotice}>
+          {(notice) => <Alert tone={notice.ok ? "ok" : "critical"}>{notice.message}</Alert>}
+        </Show>
 
-        {!loaded ? (
-          <LoadingLine>loading Slack connection</LoadingLine>
-        ) : !configured ? (
-          <Muted class="text-[13px] m-0">
-            Slack is not configured on this Drydock instance. Ask the operator to add the Slack app
-            credentials.
-          </Muted>
-        ) : connected ? (
-          <div class="flex flex-col gap-4">
-            <div class="flex items-center justify-between gap-3">
-              <div class="flex items-center gap-2 min-w-0">
-                <span class="text-[13px] text-ink break-all">
-                  {connection.teamName ?? "Slack workspace"}
-                </span>
-                {connection.channelName ? (
-                  <Badge tone="info">#{connection.channelName}</Badge>
-                ) : (
-                  <Badge tone="medium">no channel</Badge>
+        <Show
+          when={loadingConnection}
+          fallback={
+            <Show
+              when={slack.configured}
+              fallback={
+                <Muted class="text-[13px] m-0">
+                  Slack is not configured on this Drydock instance. Ask the operator to add the
+                  Slack app credentials.
+                </Muted>
+              }
+            >
+              <Show<SlackConnection | null>
+                when={slack.connection}
+                fallback={<DisconnectedSlackState slack={slack} canManage={canManageSignal} />}
+              >
+                {(connection) => (
+                  <ConnectedSlackState
+                    slack={slack}
+                    canManage={canManageSignal}
+                    connection={connection}
+                    onSelectChannel={onSelectChannel}
+                    onTest={onTest}
+                  />
                 )}
-              </div>
-              {canManage ? (
-                <div class="flex items-center gap-1 shrink-0">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => void onTest()}
-                    disabled={busy || !connection.channelId}
-                  >
-                    {status === "testing" ? "Testing…" : "Test"}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => void slack.disconnect()}
-                    disabled={busy}
-                  >
-                    {status === "disconnecting" ? "Disconnecting…" : "Disconnect"}
-                  </Button>
-                </div>
-              ) : null}
-            </div>
+              </Show>
+            </Show>
+          }
+        >
+          <LoadingLine>loading Slack connection</LoadingLine>
+        </Show>
 
-            {showChannelPicker ? (
-              <div class="flex flex-wrap items-center gap-3">
-                <label
-                  for="slackChannel"
-                  class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle shrink-0"
-                >
-                  Channel
-                </label>
-                <div class="flex-1 min-w-[200px] max-w-[360px]">
-                  <Select
-                    id="slackChannel"
-                    value={channelPickerLoading ? "" : (connection.channelId ?? "")}
-                    disabled={channelPickerDisabled}
-                    onChange={onSelectChannel}
-                  >
-                    <option value="" disabled>
-                      {channelPickerLoading
-                        ? "Loading channels…"
-                        : channels.length === 0
-                          ? "No public channels found"
-                          : "Choose a channel…"}
-                    </option>
-                    {channels.map((channel: SlackChannelOption) => (
-                      <option key={channel.id} value={channel.id}>
-                        #{channel.name}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-                {status === "savingChannel" ? <Muted class="text-[12px] m-0">Saving…</Muted> : null}
-              </div>
-            ) : connection.channelName ? (
-              <Muted class="text-[13px] m-0">
-                Posting to <span class="text-ink">#{connection.channelName}</span>.
-              </Muted>
-            ) : (
-              <Muted class="text-[13px] m-0">No channel selected yet.</Muted>
-            )}
-
-            {channelsError ? <Alert tone="critical">{channelsError}</Alert> : null}
-          </div>
-        ) : (
-          <div class="flex flex-col gap-3">
-            <Muted class="text-[13px] m-0">No Slack workspace connected.</Muted>
-            {canManage ? (
-              <Button onClick={() => void slack.connect()} disabled={busy} class="self-start">
-                {status === "connecting" ? "Redirecting to Slack…" : "Add to Slack"}
-              </Button>
-            ) : null}
-          </div>
-        )}
-
-        {error ? <Alert tone="critical">{error}</Alert> : null}
+        <Show<string | null> when={slack.error}>
+          {(message) => <Alert tone="critical">{message}</Alert>}
+        </Show>
       </div>
     </CollapsibleCard>
+  );
+}
+
+type SlackModel = ReturnType<typeof useModel<typeof SlackConnectionModel.prototype>>;
+
+function ConnectedSlackState({
+  slack,
+  canManage,
+  connection,
+  onSelectChannel,
+  onTest,
+}: {
+  slack: SlackModel;
+  canManage: Signal<boolean>;
+  connection: SlackConnection;
+  onSelectChannel: (channelId: string) => void;
+  onTest: () => Promise<void>;
+}) {
+  const showChannelPicker = useComputed(
+    () => canManage.value && slack.channelsError.value === null,
+  );
+  const channelPickerLoading = useComputed(
+    () => showChannelPicker.value && !slack.channelsLoaded.value,
+  );
+  const channelPickerDisabled = useComputed(
+    () => slack.busy.value || channelPickerLoading.value || slack.channels.value.length === 0,
+  );
+  const channelPickerValue = useComputed(() =>
+    channelPickerLoading.value ? "" : (slack.connection.value?.channelId ?? ""),
+  );
+  const channelPickerPlaceholder = useComputed(() => {
+    const loading = channelPickerLoading.value;
+    const channels = slack.channels.value;
+    if (loading) return "Loading channels…";
+    return channels.length === 0 ? "No public channels found" : "Choose a channel…";
+  });
+  const selectedChannelName = useComputed(() => slack.connection.value?.channelName ?? null);
+  const savingChannel = useComputed(() => slack.status.value === "savingChannel");
+  const testDisabled = useComputed(() => slack.busy.value || !slack.connection.value?.channelId);
+  const testingLabel = useComputed(() => (slack.status.value === "testing" ? "Testing…" : "Test"));
+  const disconnectLabel = useComputed(() =>
+    slack.status.value === "disconnecting" ? "Disconnecting…" : "Disconnect",
+  );
+
+  return (
+    <div class="flex flex-col gap-4">
+      <div class="flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="text-[13px] text-ink break-all">
+            {connection.teamName ?? "Slack workspace"}
+          </span>
+          <Show<string | null>
+            when={selectedChannelName}
+            fallback={<Badge tone="medium">no channel</Badge>}
+          >
+            {(channelName) => <Badge tone="info">#{channelName}</Badge>}
+          </Show>
+        </div>
+        <Show when={canManage}>
+          <div class="flex items-center gap-1 shrink-0">
+            <Button variant="ghost" size="sm" onClick={() => void onTest()} disabled={testDisabled}>
+              {testingLabel}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void slack.disconnect()}
+              disabled={slack.busy}
+            >
+              {disconnectLabel}
+            </Button>
+          </div>
+        </Show>
+      </div>
+
+      <Show
+        when={showChannelPicker}
+        fallback={<ReadOnlyChannelSelection channelName={selectedChannelName} />}
+      >
+        <div class="flex flex-wrap items-center gap-3">
+          <label
+            for="slackChannel"
+            class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle shrink-0"
+          >
+            Channel
+          </label>
+          <div class="flex-1 min-w-[200px] max-w-[360px]">
+            <Select
+              id="slackChannel"
+              value={channelPickerValue}
+              disabled={channelPickerDisabled}
+              onChange={onSelectChannel}
+            >
+              <option value="" disabled>
+                {channelPickerPlaceholder}
+              </option>
+              <For each={slack.channels}>
+                {(channel: SlackChannelOption) => (
+                  <option key={channel.id} value={channel.id}>
+                    #{channel.name}
+                  </option>
+                )}
+              </For>
+            </Select>
+          </div>
+          <Show when={savingChannel}>
+            <Muted class="text-[12px] m-0">Saving…</Muted>
+          </Show>
+        </div>
+      </Show>
+
+      <Show<string | null> when={slack.channelsError}>
+        {(message) => <Alert tone="critical">{message}</Alert>}
+      </Show>
+    </div>
+  );
+}
+
+function ReadOnlyChannelSelection({ channelName }: { channelName: Signal<string | null> }) {
+  return (
+    <Show<string | null>
+      when={channelName}
+      fallback={<Muted class="text-[13px] m-0">No channel selected yet.</Muted>}
+    >
+      {(name) => (
+        <Muted class="text-[13px] m-0">
+          Posting to <span class="text-ink">#{name}</span>.
+        </Muted>
+      )}
+    </Show>
+  );
+}
+
+function DisconnectedSlackState({
+  slack,
+  canManage,
+}: {
+  slack: SlackModel;
+  canManage: Signal<boolean>;
+}) {
+  const connectLabel = useComputed(() =>
+    slack.status.value === "connecting" ? "Redirecting to Slack…" : "Add to Slack",
+  );
+
+  return (
+    <div class="flex flex-col gap-3">
+      <Muted class="text-[13px] m-0">No Slack workspace connected.</Muted>
+      <Show when={canManage}>
+        <Button onClick={() => void slack.connect()} disabled={slack.busy} class="self-start">
+          {connectLabel}
+        </Button>
+      </Show>
+    </div>
   );
 }
