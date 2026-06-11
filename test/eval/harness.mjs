@@ -36,6 +36,13 @@ const SEVERITY_RANK = { info: 0, low: 1, medium: 2, high: 3, critical: 4 };
 // limit; pushPastWindow below relies on it to demonstrate the truncation hole.
 const SAMPLE_LIMIT = 64 * 1024;
 const SIGNIFICANT_SEVERITY = SEVERITY_RANK.medium;
+// A benign hard negative is a precision miss when the *risk roll-up* surfaces it
+// as risky, not merely when a finding fires: these packages legitimately use scary
+// capabilities, so a finding emitting is expected. Weighted scoring (issue #193)
+// is what keeps the roll-up low; measure FP against the roll-up so the metric
+// tracks what the product actually surfaces. Clean regression controls are held
+// to the stricter "no significant finding at all" bar below.
+const SIGNIFICANT_RISK = RISK_RANK.medium;
 
 const riskRank = (level) => RISK_RANK[level] ?? 0;
 const severityRank = (severity) => SEVERITY_RANK[severity] ?? 0;
@@ -119,6 +126,10 @@ function hasSignificantFinding(result) {
   return result.findings.some((f) => severityRank(f.severity) >= SIGNIFICANT_SEVERITY);
 }
 
+function flaggedAsRisky(result) {
+  return riskRank(result.risk) >= SIGNIFICANT_RISK;
+}
+
 // --- Evasion transforms (npm/JS). Each mutates file text the way an attacker
 // would to slip past regex matching; the payload's *intent* is unchanged. ---
 
@@ -193,7 +204,7 @@ export function runEval() {
 
   const frontierMisses = frontier.filter((r) => !caughtAsMalicious(r, detect(r)));
 
-  const hardNegativeHits = benign.filter((r) => hasSignificantFinding(detect(r)));
+  const hardNegativeHits = benign.filter((r) => flaggedAsRisky(detect(r)));
 
   // Evasion: only mutate npm malicious cases we currently catch and that have a
   // code file to mutate. blockedRate = product still treats it as risky;

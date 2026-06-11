@@ -94,6 +94,7 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
           line: processExecution.line,
           evidence: `${prefix}process or shell execution`,
           reason: "package may execute arbitrary commands",
+          ...(processExecution.obfuscated ? { obfuscated: true } : {}),
         }),
       );
     }
@@ -109,6 +110,7 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
           evidence: `${prefix}network-capable code path`,
           reason:
             "unexpected network access in package code can be used for exfiltration or staged payload retrieval",
+          ...(networkAccess.obfuscated ? { obfuscated: true } : {}),
         }),
       );
     }
@@ -120,6 +122,7 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
           line: dynamicEvaluation.line,
           evidence: `${prefix}dynamic code or obfuscation primitive`,
           reason: "common malware and obfuscation technique",
+          ...(dynamicEvaluation.obfuscated ? { obfuscated: true } : {}),
         }),
       );
     }
@@ -141,6 +144,7 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
           reason: exfiltrationSink
             ? "package reads credentials and has a network egress path in the same file: the collect-and-exfiltrate shape used to steal install-time and cloud secrets"
             : "package may read credentials from the install environment",
+          ...(credentialAccess.obfuscated ? { obfuscated: true } : {}),
         }),
       );
     }
@@ -152,19 +156,23 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
 // Match a capability category against the raw sample and, only if that misses,
 // the constant-folded text. Prefers the raw line so evidence keeps pointing at
 // the literal match when one exists; folding preserves line numbers, so the
-// normalized line still maps to the real source line.
+// normalized line still maps to the real source line. `obfuscated` is set when
+// the match came only from the folded text — i.e. the identifier was assembled
+// (`['chi','ld_pro','cess'].join('')`) — which the risk roll-up treats as a
+// co-occurring malice signal.
 function matchCategory(
   patterns: RegExp[],
   sample: string,
   normalized: string,
-): { matched: boolean; line: number | undefined } {
+): { matched: boolean; line: number | undefined; obfuscated: boolean } {
   const line = firstMatchingLine(sample, patterns);
-  if (line !== undefined) return { matched: true, line };
+  if (line !== undefined) return { matched: true, line, obfuscated: false };
   if (normalized !== sample) {
     const normalizedLine = firstMatchingLine(normalized, patterns);
-    if (normalizedLine !== undefined) return { matched: true, line: normalizedLine };
+    if (normalizedLine !== undefined)
+      return { matched: true, line: normalizedLine, obfuscated: true };
   }
-  return { matched: false, line: undefined };
+  return { matched: false, line: undefined, obfuscated: false };
 }
 
 function networkAccessSeverity(
