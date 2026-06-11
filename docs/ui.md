@@ -24,6 +24,7 @@ Prefer existing primitives in `src/components/` before adding one-off classes:
 
 - Lead with maintainer action and release risk, not internal pipeline detail.
 - Keep dense review surfaces scannable: short headings, compact metadata, and findings pinned to evidence.
+- On scan detail, persisted report sections show report provenance, manifest changes, and reviewer notes as section-label blocks, not cards.
 - Use severity stacked bars for risk distribution; avoid decorative charts.
 - Icons are text glyphs only; no SVG icon libraries.
 

@@ -79,7 +79,7 @@ Organizations store their own encrypted npm connection. The UI validates baselin
 
 ## Report model
 
-Reports should remain canonical and future-signable: stable ordering, explicit release/artifact/context risk sections, redacted evidence, and enough metadata to reproduce the reviewed artifact identity. Public signed reports are future work; do not expose signing semantics until the report contract is finalized.
+Reports should remain canonical and future-signable: stable ordering, explicit release/artifact/context risk sections, redacted evidence, and enough metadata to reproduce the reviewed artifact identity. Persisted scan detail APIs return normalized report provenance: report schema/version/digest, rules version, generated timestamp, package/baseline identity, stage ID or workflow gate ID, reviewed artifact digests, review limitations, and AI availability/model metadata. Public signed reports are future work; do not expose signing semantics until the report contract is finalized.
 
 ## API direction
 

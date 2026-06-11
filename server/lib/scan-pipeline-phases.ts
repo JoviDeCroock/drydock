@@ -25,6 +25,7 @@ import {
   type PackageJsonSummary,
 } from "./review";
 import { computeScanRiskBreakdown, type ScanRiskBreakdown } from "./risk";
+import { extractArtifactDigests, REPORT_PROVENANCE_LIMITATIONS } from "./report-provenance";
 import { maybeWriteScanArtifacts } from "./scan-artifacts";
 import { sha256Hex, stableJson } from "./stable-json";
 import type { ScanResult } from "../types";
@@ -59,6 +60,7 @@ export interface DeterministicFindings {
   redactedStagedManifest: PackageJsonSummary | null;
   redactedPreviousManifest: PackageJsonSummary | null;
   redactedDetails: Record<string, unknown> | null;
+  artifactDigests: ReturnType<typeof extractArtifactDigests>;
   annotatedFindings: Array<Finding & FindingDiffAnnotation>;
   releaseRuleFindings: Finding[];
   findingAnnotations: FindingAnnotationRecord[];
@@ -114,7 +116,9 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
   const redactedPreviousFiles = baseline.artifact ? redactFileRecords(baseline.artifact.files) : [];
   const redactedStagedManifest = redactJson(staged.artifact.manifest ?? null);
   const redactedPreviousManifest = redactJson(baseline.artifact?.manifest ?? null);
-  const redactedDetails = redactJson(adapter.summarizeDetails(staged.details));
+  const rawDetails = adapter.summarizeDetails(staged.details);
+  const redactedDetails = redactJson(rawDetails);
+  const artifactDigests = extractArtifactDigests(rawDetails);
 
   const annotatedFindings = annotateFindingsWithDiffStatus(ruleFindings, diff.fileDiff, {
     previousFiles: redactedPreviousFiles,
@@ -137,6 +141,7 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
     redactedStagedManifest,
     redactedPreviousManifest,
     redactedDetails,
+    artifactDigests,
     annotatedFindings,
     releaseRuleFindings,
     findingAnnotations,
@@ -206,11 +211,17 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     safety,
   };
 
+  const provenanceSummary = {
+    artifactDigests: findings.artifactDigests,
+    reviewLimitations: REPORT_PROVENANCE_LIMITATIONS,
+  };
+
   const reportPayload = {
     version: 1,
     rulesVersion: DETERMINISTIC_RULES_VERSION,
     stageId: identity.stageId,
     stagedPublish: findings.redactedDetails,
+    provenance: provenanceSummary,
     package: result.package,
     baseline: baseline.baseline,
     fileCount: result.fileCount,
@@ -258,6 +269,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
       diff: diff.fileDiff,
       risk: args.riskSummary,
       stagedPublish: findings.redactedDetails,
+      provenance: provenanceSummary,
       baseline: baseline.baseline,
       safety: result.safety,
     },

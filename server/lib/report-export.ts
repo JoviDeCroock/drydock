@@ -1,4 +1,5 @@
 import type { getScan } from "../db/scans";
+import { buildReportProvenance, REPORT_EXPORT_SCHEMA } from "./report-provenance";
 
 // A persisted scan detail, as returned by getScan (never null at the call site).
 type ScanDetail = NonNullable<Awaited<ReturnType<typeof getScan>>>;
@@ -9,9 +10,7 @@ interface ReportExportFilenameInput {
   stagedVersion: string | null;
 }
 
-// Schema tag for the exported report document. Bump the suffix when the export
-// shape changes in a way consumers must branch on.
-export const REPORT_EXPORT_SCHEMA = "drydock.report.v1";
+export { REPORT_EXPORT_SCHEMA };
 
 // Build a self-contained, archivable view of a completed review from the data
 // already persisted for it: provenance metadata, package/baseline identity, the
@@ -41,6 +40,7 @@ export function buildReportExport(detail: ScanDetail) {
       stagedVersion: scan.stagedVersion ?? null,
       previousVersion: scan.previousVersion ?? null,
     },
+    provenance: buildReportProvenance(detail),
     baseline: summary.baseline ?? null,
     safety: summary.safety ?? null,
     riskSummary: detail.riskSummary ?? null,

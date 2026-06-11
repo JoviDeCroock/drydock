@@ -61,6 +61,20 @@ async function getReport(
   return res;
 }
 
+async function getScanDetail(
+  app: Hono<{ Bindings: Bindings; Variables: Variables }>,
+  scanId: string,
+) {
+  const ctx = createExecutionContext();
+  const res = await app.fetch(
+    new Request(`http://test.local/api/v1/scans/${scanId}`, { method: "GET" }),
+    env,
+    ctx,
+  );
+  await waitOnExecutionContext(ctx);
+  return res;
+}
+
 async function seedCompletedScan(owner: SeededUser): Promise<string> {
   const db = createDb(env.DB);
   const scanId = `scan_${crypto.randomUUID()}`;
@@ -89,6 +103,22 @@ async function seedCompletedScan(owner: SeededUser): Promise<string> {
       },
       baseline: { kind: "registry", version: "1.0.0" },
       safety: { outboundPolicy: "gateway-only" },
+      stagedPublish: {
+        manifest: {
+          artifacts: [
+            {
+              path: "dist/demo-1.1.0-py3-none-any.whl",
+              kind: "wheel",
+              sha256: "a".repeat(64),
+            },
+            {
+              path: "dist/demo-1.1.0.tar.gz",
+              kind: "sdist",
+              sha256: "b".repeat(64),
+            },
+          ],
+        },
+      },
       packageJsonDiff: {
         name: "@org/pkg",
         previousVersion: "1.0.0",
@@ -135,6 +165,12 @@ describe("scan report JSON export", () => {
       report: { digest: string; rulesVersion: string } | null;
       scan: { id: string; status: string };
       package: { name: string | null; stagedVersion: string | null };
+      provenance: {
+        report: { digest: string | null; rulesVersion: string | null };
+        package: { name: string | null; stagedVersion: string | null };
+        artifacts: Array<{ path: string; kind: string | null; digest: string; source: string }>;
+        review: { limitations: string[] };
+      };
       packageJsonDiff: unknown;
       findings: Array<{ ruleId: string | null; severity: string }>;
     };
@@ -144,6 +180,25 @@ describe("scan report JSON export", () => {
     expect(body.scan.id).toBe(scanId);
     expect(body.package.name).toBe("@org/pkg");
     expect(body.package.stagedVersion).toBe("1.1.0");
+    expect(body.provenance.report.digest).toBe("abc123");
+    expect(body.provenance.report.rulesVersion).toBe("1.8.0");
+    expect(body.provenance.package.name).toBe("@org/pkg");
+    expect(body.provenance.package.stagedVersion).toBe("1.1.0");
+    expect(body.provenance.artifacts).toEqual([
+      expect.objectContaining({
+        path: "dist/demo-1.1.0-py3-none-any.whl",
+        kind: "wheel",
+        digest: "a".repeat(64),
+        source: "staged_publish",
+      }),
+      expect.objectContaining({
+        path: "dist/demo-1.1.0.tar.gz",
+        kind: "sdist",
+        digest: "b".repeat(64),
+        source: "staged_publish",
+      }),
+    ]);
+    expect(body.provenance.review.limitations.length).toBeGreaterThan(0);
     expect(body.packageJsonDiff).toBeTruthy();
     expect(body.findings).toEqual([
       expect.objectContaining({ ruleId: "install-script.lifecycle", severity: "high" }),
@@ -170,6 +225,31 @@ describe("scan report JSON export", () => {
     expect(await res.json()).toMatchObject({
       package: { name: "@org/pkg", stagedVersion: "1.1.0" },
     });
+  });
+
+  test("returns normalized provenance on scan detail", async () => {
+    const owner = await seedUser();
+    const scanId = await seedCompletedScan(owner);
+
+    const res = await getScanDetail(buildTestApp(owner), scanId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      provenance: {
+        report: { digest: string | null; rulesVersion: string | null };
+        scan: { id: string; stageId: string | null };
+        artifacts: Array<{ digestAlgorithm: string; digest: string }>;
+      };
+    };
+    expect(body.provenance.report.digest).toBe("abc123");
+    expect(body.provenance.report.rulesVersion).toBe("1.8.0");
+    expect(body.provenance.scan.id).toBe(scanId);
+    expect(body.provenance.artifacts.map((artifact) => artifact.digest)).toEqual([
+      "a".repeat(64),
+      "b".repeat(64),
+    ]);
+    expect(
+      body.provenance.artifacts.every((artifact) => artifact.digestAlgorithm === "sha256"),
+    ).toBe(true);
   });
 
   test("does not leak another organization's report", async () => {

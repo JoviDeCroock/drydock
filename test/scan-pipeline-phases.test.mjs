@@ -241,7 +241,20 @@ describe("scoreRisk", () => {
 
 describe("persistResults", () => {
   test("assembles the scan result and persists a completed scan", async () => {
-    const adapter = makeAdapter();
+    const adapter = makeAdapter({
+      summarizeDetails: vi.fn(() => ({
+        mode: "workflow_gate",
+        manifest: {
+          artifacts: [
+            {
+              path: "dist/demo-1.0.1-py3-none-any.whl",
+              kind: "wheel",
+              sha256: "a".repeat(64),
+            },
+          ],
+        },
+      })),
+    });
     const diff = computeDiff(resolved);
     const findings = runDeterministicFindings(adapter, resolved, diff);
     const riskSummary = scoreRisk(findings.annotatedFindings, disabledAi);
@@ -285,6 +298,16 @@ describe("persistResults", () => {
     });
     expect(persistArg.summary.report.digest).toMatch(/^[0-9a-f]{64}$/);
     expect(persistArg.summary.report.rulesVersion).toBeDefined();
+    expect(persistArg.summary.provenance.artifactDigests).toEqual([
+      {
+        path: "dist/demo-1.0.1-py3-none-any.whl",
+        kind: "wheel",
+        digestAlgorithm: "sha256",
+        digest: "a".repeat(64),
+        source: "workflow_gate",
+      },
+    ]);
+    expect(persistArg.summary.provenance.reviewLimitations.length).toBeGreaterThan(0);
   });
 
   test("propagates a non-persisted outcome from persistScan", async () => {

@@ -112,6 +112,8 @@ The gate review workbench shows the release target, package identity/version, ar
 
 ## Remaining work
 
-- Continue surfacing artifact digests and callback metadata in completed reports.
+- Publish the recommended GitHub Actions digest-verification snippet that checks the reviewed wheel/sdist SHA-256 values immediately before upload.
 - Expand gate-specific e2e coverage as more ecosystems are added.
 - Keep GitHub/PyPI/npm validation failures user-actionable without leaking credentials or private package bytes.
+
+Drydock records reviewed artifact digests in report provenance; the remaining digest item is the publish-side verification contract.

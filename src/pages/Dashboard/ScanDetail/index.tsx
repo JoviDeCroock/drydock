@@ -374,7 +374,11 @@ export default function ScanDetailPage() {
               />
             ) : null}
 
-            <PersistedReportSections summary={summary.value} ai={ai.value} />
+            <PersistedReportSections
+              summary={summary.value}
+              ai={ai.value}
+              provenance={detail.provenance}
+            />
           </>
         ) : detail.scan.status === "pending" || detail.scan.status === "running" ? (
           // While stalled the pulsing line would falsely promise an

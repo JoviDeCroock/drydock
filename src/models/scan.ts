@@ -5,6 +5,7 @@ import type {
   FindingDiffStatus,
   PackageJsonSummary,
 } from "../../server/lib/review";
+import type { ReportProvenance } from "../../server/lib/report-provenance";
 import { apiFetch, apiJson, errorMessage } from "./api";
 import {
   decideWorkflowGate,
@@ -60,6 +61,7 @@ export interface ScanListItem {
   source?: string | null;
   organizationId?: string | null;
   ownerUserId?: string | null;
+  gateId?: string | null;
   packageName: string | null;
   stagedVersion: string | null;
   previousVersion: string | null;
@@ -124,6 +126,7 @@ export interface PersistedScanDetail {
     metadataJson: unknown;
     createdAt: string | number | Date;
   }>;
+  provenance?: ReportProvenance;
 }
 
 export interface ListScansResponse {

@@ -13,6 +13,7 @@ import {
   type PackageJsonSummary,
 } from "../lib/review";
 import { normalizeScanRiskBreakdown, type ScanRiskBreakdown } from "../lib/risk";
+import { buildReportProvenance } from "../lib/report-provenance";
 import {
   deleteScanArtifacts,
   loadScanArtifactFile,
@@ -823,7 +824,7 @@ export async function getScan(
       ? artifactDetail.findingAnnotations
       : readFindingAnnotations(scan.summaryJson),
   });
-  return {
+  const detail = {
     scan,
     files: responseFiles,
     findings: annotatedFindings,
@@ -837,6 +838,7 @@ export async function getScan(
         : null,
     events: events.map(redactScanEventForClient),
   };
+  return { ...detail, provenance: buildReportProvenance(detail) };
 }
 
 export async function getScanFile(
