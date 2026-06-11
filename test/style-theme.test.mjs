@@ -6,6 +6,10 @@ import { describe, expect, test } from "vitest";
 // light-mode bug these protect against was invisible in normal development
 // (the site renders fine in dark mode), so it needs a source-level guard.
 const css = readFileSync(fileURLToPath(new URL("../src/style.css", import.meta.url)), "utf8");
+const loading = readFileSync(
+  fileURLToPath(new URL("../src/components/Loading.tsx", import.meta.url)),
+  "utf8",
+);
 
 /** Return the body of the first `@media (prefers-color-scheme: dark)` block. */
 function darkMediaBlock(source) {
@@ -77,5 +81,14 @@ describe("theme tokens", () => {
       // 4.5:1 is the AA floor for the 11px mono labels / detail line.
       expect(contrast(subtle, surface)).toBeGreaterThanOrEqual(4.5);
     }
+  });
+});
+
+describe("loading progress animation", () => {
+  test("the indeterminate bar always uses the left-to-right sweep", () => {
+    expect(loading).toContain("animate-progress-sweep");
+    expect(loading).not.toContain("motion-safe:animate-progress-sweep");
+    expect(css).toContain("--animate-progress-sweep");
+    expect(css).toMatch(/@keyframes\s+progress-sweep/);
   });
 });
