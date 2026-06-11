@@ -45,11 +45,6 @@ export function ReleaseTargetForm({
         <Button type="submit" disabled={submitting || !formValid}>
           {submitting ? "Mapping…" : "Map release target"}
         </Button>
-        <Muted class="text-[12px] m-0">
-          Drydock revalidates installation, repo access, and environment before saving, then scans
-          every artifact the held run uploads — detecting each package's ecosystem (npm or PyPI)
-          automatically.
-        </Muted>
       </div>
     </form>
   );
