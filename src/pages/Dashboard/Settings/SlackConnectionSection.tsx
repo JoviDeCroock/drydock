@@ -32,6 +32,9 @@ export function SlackConnectionSection({
   const callbackNotice = slack.callbackNotice.value;
 
   const connected = connection !== null;
+  const showChannelPicker = canManage && !channelsError;
+  const channelPickerLoading = showChannelPicker && !channelsLoaded;
+  const channelPickerDisabled = busy || channelPickerLoading || channels.length === 0;
   const aside = connected ? (
     <Badge tone="ok">connected</Badge>
   ) : (
@@ -117,39 +120,37 @@ export function SlackConnectionSection({
               ) : null}
             </div>
 
-            {canManage ? (
-              channelsLoaded ? (
-                <div class="flex flex-wrap items-center gap-3">
-                  <label
-                    for="slackChannel"
-                    class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle shrink-0"
+            {showChannelPicker ? (
+              <div class="flex flex-wrap items-center gap-3">
+                <label
+                  for="slackChannel"
+                  class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle shrink-0"
+                >
+                  Channel
+                </label>
+                <div class="flex-1 min-w-[200px] max-w-[360px]">
+                  <Select
+                    id="slackChannel"
+                    value={channelPickerLoading ? "" : (connection.channelId ?? "")}
+                    disabled={channelPickerDisabled}
+                    onChange={onSelectChannel}
                   >
-                    Channel
-                  </label>
-                  <div class="flex-1 min-w-[200px] max-w-[360px]">
-                    <Select
-                      id="slackChannel"
-                      value={connection.channelId ?? ""}
-                      disabled={busy || channels.length === 0}
-                      onChange={onSelectChannel}
-                    >
-                      <option value="" disabled>
-                        {channels.length === 0 ? "No public channels found" : "Choose a channel…"}
+                    <option value="" disabled>
+                      {channelPickerLoading
+                        ? "Loading channels…"
+                        : channels.length === 0
+                          ? "No public channels found"
+                          : "Choose a channel…"}
+                    </option>
+                    {channels.map((channel: SlackChannelOption) => (
+                      <option key={channel.id} value={channel.id}>
+                        #{channel.name}
                       </option>
-                      {channels.map((channel: SlackChannelOption) => (
-                        <option key={channel.id} value={channel.id}>
-                          #{channel.name}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-                  {status === "savingChannel" ? (
-                    <Muted class="text-[12px] m-0">Saving…</Muted>
-                  ) : null}
+                    ))}
+                  </Select>
                 </div>
-              ) : channelsError ? null : (
-                <LoadingLine size="inline">loading channels</LoadingLine>
-              )
+                {status === "savingChannel" ? <Muted class="text-[12px] m-0">Saving…</Muted> : null}
+              </div>
             ) : connection.channelName ? (
               <Muted class="text-[13px] m-0">
                 Posting to <span class="text-ink">#{connection.channelName}</span>.
