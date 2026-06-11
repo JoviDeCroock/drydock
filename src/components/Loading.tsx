@@ -11,7 +11,7 @@ export function IndeterminateBar({ class: className }: { class?: string }) {
       aria-label="Loading"
     >
       <span
-        class="absolute inset-y-0 left-0 w-1/3 rounded-sm bg-accent motion-safe:animate-progress-sweep"
+        class="absolute inset-y-0 left-0 w-1/3 rounded-sm bg-accent animate-progress-sweep"
         aria-hidden
       />
     </div>
