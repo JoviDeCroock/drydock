@@ -21,6 +21,16 @@ import { cn } from "./cn";
 
 export type { DiffFinding } from "./diff-annotations";
 
+// A scan comment pinned to a staged (after-side) line, already resolved to
+// display strings by the caller so DiffView stays decoupled from member data.
+export interface DiffComment {
+  id: string;
+  line?: number | null;
+  authorLabel: string;
+  timeLabel: string;
+  segments: Array<{ type: "text"; text: string } | { type: "mention"; label: string }>;
+}
+
 interface DiffSide {
   textSample?: string | null;
   size?: number | null;
@@ -39,6 +49,11 @@ export interface DiffViewProps {
   // reference. Findings without a matching line surface in a banner above the
   // diff so a truncated sample can't hide a signal.
   findings?: DiffFinding[];
+  // Team comments anchored to staged lines of this file, pinned the same way.
+  comments?: DiffComment[];
+  // When provided, every staged line gets a hover "+" affordance that starts
+  // a comment on that line.
+  onLineComment?: (line: number) => void;
 }
 
 interface Row {
@@ -133,6 +148,8 @@ export function DiffView({
   beforeLabel,
   afterLabel,
   findings = [],
+  comments = [],
+  onLineComment,
 }: DiffViewProps) {
   const beforeSample = before?.textSample ?? "";
   const afterSample = after?.textSample ?? "";
@@ -165,6 +182,8 @@ export function DiffView({
         beforeLabel={beforeLabel}
         afterLabel={afterLabel}
         findings={findings}
+        comments={comments}
+        onLineComment={onLineComment}
       />
     </div>
   );
@@ -179,6 +198,8 @@ function DiffBody({
   beforeLabel,
   afterLabel,
   findings,
+  comments,
+  onLineComment,
 }: {
   path: string;
   status: string;
@@ -188,6 +209,8 @@ function DiffBody({
   beforeLabel: string;
   afterLabel: string;
   findings: DiffFinding[];
+  comments: DiffComment[];
+  onLineComment?: (line: number) => void;
 }) {
   const lang = langForPath(path);
   if (lang && !binary) ensureHighlighter();
@@ -209,6 +232,8 @@ function DiffBody({
         text={afterSample}
         tokens={afterTokens}
         findings={findings}
+        comments={comments}
+        onLineComment={onLineComment}
       />
     );
   }
@@ -225,6 +250,7 @@ function DiffBody({
         text={beforeSample}
         tokens={beforeTokens}
         findings={findings}
+        comments={comments}
       />
     );
   }
@@ -239,6 +265,8 @@ function DiffBody({
         text={afterSample || beforeSample}
         tokens={afterSample ? afterTokens : beforeTokens}
         findings={findings}
+        comments={comments}
+        onLineComment={afterSample ? onLineComment : undefined}
       />
     );
   }
@@ -253,6 +281,8 @@ function DiffBody({
         text={afterSample}
         tokens={afterTokens}
         findings={findings}
+        comments={comments}
+        onLineComment={onLineComment}
       />
     );
   }
@@ -264,6 +294,7 @@ function DiffBody({
         text={beforeSample}
         tokens={beforeTokens}
         findings={findings}
+        comments={comments}
       />
     );
   }
@@ -272,6 +303,10 @@ function DiffBody({
   const presentLines = new Set<number>();
   for (const row of rows) if (row.afterLine !== null) presentLines.add(row.afterLine);
   const { pinned, unpinned } = partitionFindingsByLine(findings, presentLines);
+  const { pinned: pinnedComments, unpinned: unpinnedComments } = partitionFindingsByLine(
+    comments,
+    presentLines,
+  );
   return (
     <div class="border border-border rounded-md overflow-hidden">
       <div class="bg-surface-2 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle flex justify-between">
@@ -279,15 +314,19 @@ function DiffBody({
         <span>{afterLabel}</span>
       </div>
       {unpinned.length ? <AnnotationBanner findings={unpinned} /> : null}
+      {unpinnedComments.length ? <CommentBanner comments={unpinnedComments} /> : null}
       <div class="overflow-auto h-[560px]">
         <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
           <tbody>
             {rows.map((row, index) => {
               const pins = row.afterLine !== null ? pinned.get(row.afterLine) : undefined;
+              const commentPins =
+                row.afterLine !== null ? pinnedComments.get(row.afterLine) : undefined;
               return (
                 <Fragment key={index}>
-                  <DiffRow row={row} />
+                  <DiffRow row={row} onLineComment={onLineComment} />
                   {pins ? <AnnotationRows findings={pins} colSpan={4} /> : null}
+                  {commentPins ? <CommentRows comments={commentPins} colSpan={4} /> : null}
                 </Fragment>
               );
             })}
@@ -298,16 +337,21 @@ function DiffBody({
   );
 }
 
-function DiffRow({ row }: { row: Row }) {
+function DiffRow({ row, onLineComment }: { row: Row; onLineComment?: (line: number) => void }) {
   const bg = row.tone === "added" ? "bg-ok-soft" : row.tone === "removed" ? "bg-danger-soft" : "";
   const sign = row.tone === "added" ? "+" : row.tone === "removed" ? "-" : " ";
+  const afterLine = row.afterLine;
   return (
-    <tr class={cn(bg)}>
+    <tr class={cn(bg, "group")}>
       <td class="px-2 py-[2px] text-ink-subtle select-none w-[44px] text-right border-r border-border align-top">
         {row.beforeLine ?? ""}
       </td>
       <td class="px-2 py-[2px] text-ink-subtle select-none w-[44px] text-right border-r border-border align-top">
-        {row.afterLine ?? ""}
+        {afterLine !== null && onLineComment ? (
+          <LineCommentTrigger line={afterLine} onLineComment={onLineComment} />
+        ) : (
+          (afterLine ?? "")
+        )}
       </td>
       <td class="px-2 py-[2px] select-none w-[20px] text-ink-subtle align-top">{sign}</td>
       <td class="px-2 py-[2px] whitespace-pre-wrap break-words align-top">
@@ -317,18 +361,44 @@ function DiffRow({ row }: { row: Row }) {
   );
 }
 
+// The staged line number doubles as the "start a comment here" affordance: a
+// text "+" replaces it on row hover (text glyphs only, per DESIGN.md).
+function LineCommentTrigger({
+  line,
+  onLineComment,
+}: {
+  line: number;
+  onLineComment: (line: number) => void;
+}) {
+  return (
+    <button
+      type="button"
+      class="w-full text-right cursor-pointer text-ink-subtle hover:text-accent focus-visible:text-accent outline-none bg-transparent border-0 p-0 font-mono text-inherit"
+      title={`Comment on line ${line}`}
+      onClick={() => onLineComment(line)}
+    >
+      <span class="group-hover:hidden">{line}</span>
+      <span class="hidden group-hover:inline">+</span>
+    </button>
+  );
+}
+
 function SingleSidedView({
   label,
   tone,
   text,
   tokens,
   findings,
+  comments = [],
+  onLineComment,
 }: {
   label: string;
   tone: "added" | "removed" | "unchanged";
   text: string;
   tokens: TokenLine[] | null;
   findings: DiffFinding[];
+  comments?: DiffComment[];
+  onLineComment?: (line: number) => void;
 }) {
   const headerBg =
     tone === "added" ? "bg-ok-soft" : tone === "removed" ? "bg-danger-soft" : "bg-surface-2";
@@ -337,6 +407,10 @@ function SingleSidedView({
   if (lines.length && lines[lines.length - 1] === "") lines.pop();
   const presentLines = new Set<number>(lines.map((_, index) => index + 1));
   const { pinned, unpinned } = partitionFindingsByLine(findings, presentLines);
+  const { pinned: pinnedComments, unpinned: unpinnedComments } = partitionFindingsByLine(
+    comments,
+    presentLines,
+  );
   return (
     <div class="border border-border rounded-md overflow-hidden">
       <div
@@ -348,22 +422,29 @@ function SingleSidedView({
         {label}
       </div>
       {unpinned.length ? <AnnotationBanner findings={unpinned} /> : null}
+      {unpinnedComments.length ? <CommentBanner comments={unpinnedComments} /> : null}
       <div class="overflow-auto h-[560px]">
         <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
           <tbody>
             {lines.map((line, index) => {
               const pins = pinned.get(index + 1);
+              const commentPins = pinnedComments.get(index + 1);
               return (
                 <Fragment key={index}>
-                  <tr class={cn(rowBg)}>
+                  <tr class={cn(rowBg, "group")}>
                     <td class="px-2 py-[2px] text-ink-subtle select-none w-[44px] text-right border-r border-border align-top">
-                      {index + 1}
+                      {onLineComment ? (
+                        <LineCommentTrigger line={index + 1} onLineComment={onLineComment} />
+                      ) : (
+                        index + 1
+                      )}
                     </td>
                     <td class="px-2 py-[2px] whitespace-pre-wrap break-words align-top">
                       <LineContent text={line} tokens={tokens?.[index] ?? null} />
                     </td>
                   </tr>
                   {pins ? <AnnotationRows findings={pins} colSpan={2} /> : null}
+                  {commentPins ? <CommentRows comments={commentPins} colSpan={2} /> : null}
                 </Fragment>
               );
             })}
@@ -440,6 +521,56 @@ function AnnotationRows({ findings, colSpan }: { findings: DiffFinding[]; colSpa
         </tr>
       ))}
     </>
+  );
+}
+
+// A team comment pinned beneath its staged line. Accent-neutral (no severity
+// tint) so human discussion reads distinctly from machine findings.
+function CommentAnnotationBody({ comment }: { comment: DiffComment }) {
+  return (
+    <div class="border-l-2 border-accent bg-surface-2 px-3 py-2.5 flex flex-col gap-1 font-sans">
+      <div class="flex flex-wrap items-baseline gap-2">
+        <span class="text-[12px] font-medium text-ink">{comment.authorLabel}</span>
+        <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+          {comment.timeLabel}
+        </span>
+      </div>
+      <p class="m-0 text-[13px] leading-[1.55] text-ink whitespace-pre-wrap break-words">
+        {comment.segments.map((segment, index) =>
+          segment.type === "mention" ? (
+            <span key={index} class="text-accent font-medium">
+              @{segment.label}
+            </span>
+          ) : (
+            <Fragment key={index}>{segment.text}</Fragment>
+          ),
+        )}
+      </p>
+    </div>
+  );
+}
+
+function CommentRows({ comments, colSpan }: { comments: DiffComment[]; colSpan: number }) {
+  return (
+    <>
+      {comments.map((comment) => (
+        <tr key={comment.id}>
+          <td colSpan={colSpan} class="p-0">
+            <CommentAnnotationBody comment={comment} />
+          </td>
+        </tr>
+      ))}
+    </>
+  );
+}
+
+function CommentBanner({ comments }: { comments: DiffComment[] }) {
+  return (
+    <div class="flex flex-col divide-y divide-border border-b border-border">
+      {comments.map((comment) => (
+        <CommentAnnotationBody key={comment.id} comment={comment} />
+      ))}
+    </div>
   );
 }
 

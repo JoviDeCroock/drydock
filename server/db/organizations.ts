@@ -11,12 +11,15 @@ import {
   organizationNotificationRecipients,
   organizationSlackConnections,
   organizations,
+  scanCommentMentions,
+  scanComments,
   scanEvents,
   scanFiles,
   scanFindings,
   scans,
   twoFactor,
   user,
+  userNotificationSettings,
 } from "./schema";
 
 export async function ensurePersonalOrganization(db: AppDb, session: WorkspaceSession) {
@@ -187,7 +190,14 @@ export async function deleteOrganization(db: AppDb, organizationId: string): Pro
     .from(scans)
     .where(eq(scans.organizationId, organizationId));
 
+  const orgComments = db
+    .select({ id: scanComments.id })
+    .from(scanComments)
+    .where(eq(scanComments.organizationId, organizationId));
+
   await db.batch([
+    db.delete(scanCommentMentions).where(inArray(scanCommentMentions.commentId, orgComments)),
+    db.delete(scanComments).where(eq(scanComments.organizationId, organizationId)),
     db.delete(scanFindings).where(inArray(scanFindings.scanId, orgScans)),
     db.delete(scanFiles).where(inArray(scanFiles.scanId, orgScans)),
     db.delete(scanEvents).where(eq(scanEvents.organizationId, organizationId)),
@@ -317,6 +327,12 @@ export async function deleteUserAccount(db: AppDb, userId: string): Promise<void
       .update(organizationInvitations)
       .set({ acceptedByUserId: null })
       .where(eq(organizationInvitations.acceptedByUserId, userId)),
+    db
+      .update(scanComments)
+      .set({ authorUserId: null })
+      .where(eq(scanComments.authorUserId, userId)),
+    db.delete(scanCommentMentions).where(eq(scanCommentMentions.mentionedUserId, userId)),
+    db.delete(userNotificationSettings).where(eq(userNotificationSettings.userId, userId)),
     db.delete(organizationMembers).where(eq(organizationMembers.userId, userId)),
     db.delete(twoFactor).where(eq(twoFactor.userId, userId)),
   ]);

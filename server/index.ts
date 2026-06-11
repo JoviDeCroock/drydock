@@ -38,6 +38,8 @@ import { organizationMembersRoutes } from "./routes/organization-members";
 import { organizationsRoutes } from "./routes/organizations";
 import { slackRoutes } from "./routes/slack";
 import { scansRoutes } from "./routes/scans";
+import { scanCommentsRoutes } from "./routes/scan-comments";
+import { accountRoutes } from "./routes/account";
 import { stagedPublishesRoutes } from "./routes/staged-publishes";
 import type { Bindings, Variables } from "./types";
 
@@ -185,6 +187,9 @@ app.get("/api", (c) =>
       createScan: "POST /api/v1/scans { stageId }",
       scans: "GET /api/v1/scans",
       scanDetail: "GET /api/v1/scans/:id",
+      scanComments:
+        "GET/POST /api/v1/scans/:scanId/comments; PATCH/DELETE /api/v1/scans/:scanId/comments/:commentId",
+      accountNotificationSettings: "GET/PATCH /api/v1/account/notification-settings",
       stagedPublishes: "POST /api/v1/staged-publishes/scan",
       npmConnection: "GET/POST/DELETE /api/v1/npm-connection; POST /api/v1/npm-connection/validate",
       organizations:
@@ -215,6 +220,8 @@ app.route("/api/v1/organizations", organizationMembersRoutes);
 // directly. Running the full pipeline inline in a request handler is a Workers
 // CPU-timeout risk, so no synchronous submit route exists.
 app.route("/api/v1/scans", scansRoutes);
+app.route("/api/v1/scans", scanCommentsRoutes);
+app.route("/api/v1/account", accountRoutes);
 app.route("/api/v1/slack", slackRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
 

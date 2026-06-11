@@ -15,6 +15,7 @@ import {
   Card,
 } from "../../../components";
 import { TwoFactorSection } from "./TwoFactorSection";
+import { NotificationsSection } from "./NotificationsSection";
 import { DeleteAccountSection } from "./DeleteAccountSection";
 
 export default function AccountPage() {
@@ -79,6 +80,8 @@ export default function AccountPage() {
         </Card>
 
         <TwoFactorSection />
+
+        <NotificationsSection />
 
         <DeleteAccountSection onDeleted={() => location.route("/", true)} />
       </div>

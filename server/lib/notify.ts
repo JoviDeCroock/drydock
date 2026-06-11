@@ -2,6 +2,9 @@ import {
   getOrganizationOwnerUserId,
   getScan,
   getSlackConnectionSecret,
+  getUserContact,
+  getUserNotificationSettings,
+  markMentionNotified,
   recordScanEvent,
   resolveNotificationEmails,
   type AppDb,
@@ -575,6 +578,94 @@ function inviteAcceptUrl(env: Cloudflare.Env, token: string): string | null {
     return url.toString();
   } catch {
     return null;
+  }
+}
+
+export interface NotifyCommentMentionInput {
+  env: Cloudflare.Env;
+  db: AppDb;
+  organizationId: string;
+  scanId: string;
+  commentId: string;
+  authorUserId: string;
+  authorName: string | null;
+  packageName: string | null;
+  stagedVersion: string | null;
+  anchor: { filePath: string | null; line: number | null } | null;
+  body: string;
+  mentionedUserIds: readonly string[];
+}
+
+const MENTION_BODY_PREVIEW_MAX = 300;
+
+/**
+ * Email each newly mentioned user about a scan comment, honoring their
+ * per-user mention preference. Best-effort: each delivery records a
+ * `scan.comment_mention_sent` / `_failed` audit event, and only a successful
+ * send marks the mention row notified (so a retried edit can re-attempt failed
+ * sends without double-mailing successes). The body carries only the comment
+ * text and a path:line anchor label — never scan evidence or file contents.
+ */
+export async function notifyCommentMention(input: NotifyCommentMentionInput): Promise<void> {
+  const { env, db, organizationId, scanId, commentId, mentionedUserIds } = input;
+  const packageLabel = formatPackageLabel(input.packageName, input.stagedVersion);
+  const authorLabel = input.authorName || "A teammate";
+  const dashboardUrl = scanUrl(env, scanId);
+  const commentUrl = dashboardUrl ? `${dashboardUrl}#comment-${commentId}` : null;
+  const anchorLabel =
+    input.anchor?.filePath != null
+      ? input.anchor.line != null
+        ? `${input.anchor.filePath}:${input.anchor.line}`
+        : input.anchor.filePath
+      : null;
+  const preview =
+    input.body.length > MENTION_BODY_PREVIEW_MAX
+      ? `${input.body.slice(0, MENTION_BODY_PREVIEW_MAX)}…`
+      : input.body;
+
+  for (const mentionedUserId of mentionedUserIds) {
+    if (mentionedUserId === input.authorUserId) continue;
+    const settings = await getUserNotificationSettings(db, mentionedUserId);
+    if (!settings.mentionEmails) continue;
+    const contact = await getUserContact(db, mentionedUserId);
+    if (!contact?.email) continue;
+
+    const result = await sendNotificationEmail(env, {
+      to: contact.email,
+      subject: `${authorLabel} mentioned you on a scan — ${packageLabel}`,
+      text: [
+        "Hi there,",
+        "",
+        `${authorLabel} mentioned you in a comment on the scan for ${packageLabel}.`,
+        anchorLabel ? `Location: ${anchorLabel}` : null,
+        "",
+        preview,
+        "",
+        commentUrl ? `View the discussion: ${commentUrl}` : null,
+        commentUrl ? "" : null,
+        "You can turn these emails off in your account settings.",
+        "",
+        "— Drydock",
+      ]
+        .filter((line): line is string => line !== null)
+        .join("\n"),
+    });
+
+    if (result.ok) {
+      await markMentionNotified(db, commentId, mentionedUserId);
+    }
+    await recordScanEvent(db, {
+      organizationId,
+      actorUserId: input.authorUserId,
+      scanId,
+      type: result.ok ? "scan.comment_mention_sent" : "scan.comment_mention_failed",
+      metadata: {
+        commentId,
+        mentionedUserId,
+        channel: "email",
+        ...(result.ok ? {} : { reason: result.reason }),
+      },
+    });
   }
 }
 

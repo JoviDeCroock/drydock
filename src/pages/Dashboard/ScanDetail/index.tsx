@@ -12,6 +12,10 @@ import { useQuerySignal } from "../../../lib/query-state";
 import { sortFindingsBySeverity } from "../../../lib/findings";
 import { sessionModel } from "../../../models/auth";
 import { ScanDetailModel, type DecisionStatus, type ScanDecision } from "../../../models/scan";
+import { MembersModel } from "../../../models/organization-members";
+import { ScanCommentsModel } from "../../../models/scan-comments";
+import { splitMentionSegments } from "../../../lib/mentions";
+import { roleCanManageMembers, type OrganizationRole } from "../../../../server/lib/roles";
 import type { WorkflowGateDecision } from "../../../models/github-app";
 import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review-types";
 import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
@@ -26,10 +30,12 @@ import {
   PageShell,
   SectionLabel,
   VersionPicker,
+  type DiffComment,
 } from "../../../components";
 import { DecisionDialog } from "./DecisionDialog";
 import { GateContextPanel, GateDecisionDialog, GatePackagesPanel } from "./GateDecisionDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
+import { DiscussionSection } from "./DiscussionSection";
 import { RiskSignalsSection } from "./FindingsSection";
 import { ReleaseRecommendation } from "./ReleaseRecommendation";
 import { PersistedReportSections } from "./ReportSections";
@@ -45,6 +51,8 @@ export default function ScanDetailPage() {
   const route = useRoute();
   const id = route.params.id;
   const model = useModel(() => new ScanDetailModel(id));
+  const commentsModel = useModel(() => new ScanCommentsModel(id));
+  const membersModel = useModel(() => new MembersModel());
   const sessionChecked = useSignal(false);
   const fileFilter = useSignal("");
   const changedFilesOnly = useSignal(true);
@@ -85,6 +93,7 @@ export default function ScanDetailPage() {
         return;
       }
       sessionChecked.value = true;
+      void membersModel.load(false);
       await model.load();
     })();
     return () => {
@@ -93,6 +102,13 @@ export default function ScanDetailPage() {
   }, [id]);
 
   const versionsSignal = useScanVersions(model);
+
+  // Comments only apply to finished reviews; load them once the scan settles.
+  useSignalEffect(() => {
+    if (model.status.value !== "complete") return;
+    if (commentsModel.loaded.peek()) return;
+    void commentsModel.load();
+  });
 
   // Load the workflow gate once the review reaches a terminal state. Completed
   // and failed scans may both be linked to the pending gate so the workbench can
@@ -165,6 +181,33 @@ export default function ScanDetailPage() {
   // Per-file finding counts for the tree, built once from the same finding set
   // that feeds the inline annotations and the risk-signals index.
   const findingCounts = useComputed(() => findingCountsByPath(findingsWithDiffStatus.value));
+
+  // Line-anchored comments for the file open in the workbench, resolved to
+  // display strings here so DiffView stays decoupled from member data.
+  const selectedDiffComments = useComputed<DiffComment[]>(() => {
+    const path = model.selectedPath.value;
+    const memberList = membersModel.members.value;
+    const allComments = commentsModel.visibleComments.value;
+    if (!path) return [];
+    const labelFor = (userId: string | null, fallback: string | null) => {
+      if (!userId) return fallback ?? "former member";
+      const member = memberList.find((entry) => entry.userId === userId);
+      return member?.name || member?.email || fallback || "former member";
+    };
+    return allComments
+      .filter((comment) => comment.filePath === path && comment.line != null)
+      .map((comment) => ({
+        id: comment.id,
+        line: comment.line,
+        authorLabel: labelFor(comment.authorUserId, comment.authorName),
+        timeLabel: new Date(comment.createdAt).toLocaleString(),
+        segments: splitMentionSegments(comment.body).map((segment) =>
+          segment.type === "mention"
+            ? { type: "mention" as const, label: labelFor(segment.userId, segment.userId) }
+            : segment,
+        ),
+      }));
+  });
 
   const stagedFile = useComputed(() => {
     const path = model.selectedPath.value;
@@ -362,6 +405,15 @@ export default function ScanDetailPage() {
                   selectedVersion={selectedVersion}
                   stagedVersion={detail.scan.stagedVersion}
                   findings={selectedFindings.value}
+                  comments={selectedDiffComments.value}
+                  onLineComment={(line) => {
+                    const path = model.selectedPath.peek();
+                    if (!path) return;
+                    commentsModel.setPendingAnchor({ filePath: path, line });
+                    document
+                      .getElementById("discussion")
+                      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }}
                 />
               </Card>
             </section>
@@ -374,6 +426,18 @@ export default function ScanDetailPage() {
             ) : null}
 
             <PersistedReportSections summary={summary.value} ai={ai.value} />
+
+            <DiscussionSection
+              model={commentsModel}
+              members={membersModel.members}
+              currentUserId={sessionModel.session.value?.user.id ?? null}
+              canModerate={roleCanManageMembers(
+                (membersModel.members.value.find(
+                  (member) => member.userId === sessionModel.session.value?.user.id,
+                )?.role ?? "member") as OrganizationRole,
+              )}
+              onSelectPath={(file) => model.selectPath(file)}
+            />
           </>
         ) : detail.scan.status === "pending" || detail.scan.status === "running" ? (
           // While stalled the pulsing line would falsely promise an

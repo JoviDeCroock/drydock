@@ -220,6 +220,81 @@ export const scanFindings = sqliteTable(
   }),
 );
 
+// Team discussion on a scan. Comments are either general (anchorType
+// "general") or pinned to a spot in the immutable scan report: a staged diff
+// line (anchorType "line": filePath + line, with the staged file's sha256
+// captured for tamper detection) or a deterministic finding (anchorType
+// "finding"). Scans never change after completion, so anchors are stable —
+// there is no re-anchoring problem. Soft delete (deletedAt) preserves thread
+// shape and the audit trail.
+export const scanComments = sqliteTable(
+  "scan_comments",
+  {
+    id: text("id").primaryKey(),
+    scanId: text("scan_id")
+      .notNull()
+      .references(() => scans.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    authorUserId: text("author_user_id").references(() => user.id, { onDelete: "set null" }),
+    parentId: text("parent_id").references((): AnySQLiteColumn => scanComments.id, {
+      onDelete: "cascade",
+    }),
+    body: text("body").notNull(),
+    anchorType: text("anchor_type").notNull().default("general"),
+    filePath: text("file_path"),
+    line: integer("line"),
+    fileSha256: text("file_sha256"),
+    findingId: text("finding_id").references(() => scanFindings.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+  },
+  (table) => ({
+    scanCreatedIdx: index("scan_comments_scan_created_idx").on(table.scanId, table.createdAt),
+    orgIdx: index("scan_comments_org_idx").on(table.organizationId),
+  }),
+);
+
+// One row per user @-mentioned in a comment. `notifiedAt` is set only after the
+// mention email is actually dispatched, so edits that add mentions notify just
+// the newly mentioned users and webhook/queue retries never double-send.
+export const scanCommentMentions = sqliteTable(
+  "scan_comment_mentions",
+  {
+    id: text("id").primaryKey(),
+    commentId: text("comment_id")
+      .notNull()
+      .references(() => scanComments.id, { onDelete: "cascade" }),
+    mentionedUserId: text("mentioned_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    notifiedAt: integer("notified_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    commentUserUniqueIdx: uniqueIndex("scan_comment_mentions_comment_user_unique_idx").on(
+      table.commentId,
+      table.mentionedUserId,
+    ),
+    userIdx: index("scan_comment_mentions_user_idx").on(table.mentionedUserId),
+  }),
+);
+
+// Per-user notification preferences. Distinct from the org-level recipient list
+// (organization_notification_recipients), which routes release alerts to
+// addresses the org configures; this governs emails addressed to the user
+// personally. Absence of a row means every preference is at its default (on).
+export const userNotificationSettings = sqliteTable("user_notification_settings", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  mentionEmails: integer("mention_emails", { mode: "boolean" }).notNull().default(true),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
 export const scanEvents = sqliteTable(
   "scan_events",
   {

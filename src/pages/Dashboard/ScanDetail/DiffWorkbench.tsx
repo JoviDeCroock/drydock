@@ -5,6 +5,7 @@ import {
   EmptyLine,
   IndeterminateBar,
   LoadingLine,
+  type DiffComment,
   type DiffFinding,
 } from "../../../components";
 import { selectDiffWorkbenchState } from "./diff-helpers";
@@ -19,6 +20,8 @@ export function DiffWorkbench({
   selectedVersion,
   stagedVersion,
   findings,
+  comments,
+  onLineComment,
 }: {
   entry: DiffEntry | null;
   staged: PersistedScanDetail["files"][number] | null;
@@ -29,6 +32,8 @@ export function DiffWorkbench({
   selectedVersion: string | null;
   stagedVersion: string | null | undefined;
   findings: DiffFinding[];
+  comments?: DiffComment[];
+  onLineComment?: (line: number) => void;
 }) {
   if (!entry) {
     return <DiffPanelMessage>Select a file from the tree to diff.</DiffPanelMessage>;
@@ -68,6 +73,8 @@ export function DiffWorkbench({
       }
       after={staged ? scanFileToDiffSide(staged) : null}
       findings={findings}
+      comments={comments}
+      onLineComment={onLineComment}
     />
   );
 }
