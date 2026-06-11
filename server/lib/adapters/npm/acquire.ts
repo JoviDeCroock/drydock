@@ -8,7 +8,6 @@ import type { NpmBroker, NpmBrokerDownloadOptions } from "./broker";
 export interface NpmAdapterInput {
   stageId: string;
   maxFiles?: number;
-  maxBytesPerFile?: number;
 }
 
 export async function acquireStagedNpm(
@@ -18,7 +17,6 @@ export async function acquireStagedNpm(
 ): Promise<{ artifact: AcquiredArtifact; details: StagedDetails }> {
   const downloadOpts: NpmBrokerDownloadOptions = {
     maxFiles: input.maxFiles,
-    maxBytesPerFile: input.maxBytesPerFile,
   };
   const [staged, stagedDetails] = await Promise.all([
     broker.downloadStaged(input.stageId, downloadOpts),
@@ -53,7 +51,7 @@ export async function acquireStagedNpm(
  */
 export async function acquireBaselineNpm(
   _ctx: AdapterContext,
-  input: { maxFiles?: number; maxBytesPerFile?: number },
+  input: { maxFiles?: number },
   broker: NpmBroker,
   staged: { artifact: AcquiredArtifact; details: StagedDetails },
 ): Promise<{ artifact: AcquiredArtifact | null; baseline: BaselineInfo }> {
@@ -84,7 +82,6 @@ export async function acquireBaselineNpm(
 
   const previous = await broker.downloadPublished(tarballUrl, {
     maxFiles: input.maxFiles,
-    maxBytesPerFile: input.maxBytesPerFile,
   });
   return {
     artifact: {

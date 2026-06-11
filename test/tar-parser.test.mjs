@@ -82,22 +82,16 @@ function buildTar(entries) {
 
 const PARSE_LIMITS = {
   maxFiles: 2_500,
-  maxBytesPerFile: 128 * 1024,
   maxTarBytes: 25 * 1024 * 1024,
 };
 
 async function parse(tar, limits = PARSE_LIMITS) {
-  const result = await readTar(
-    tar.buffer,
-    limits.maxFiles,
-    limits.maxBytesPerFile,
-    limits.maxTarBytes,
-  );
+  const result = await readTar(tar.buffer, limits.maxFiles, limits.maxTarBytes);
   return result.files;
 }
 
 async function parseFull(tar, limits = PARSE_LIMITS) {
-  return readTar(tar.buffer, limits.maxFiles, limits.maxBytesPerFile, limits.maxTarBytes);
+  return readTar(tar.buffer, limits.maxFiles, limits.maxTarBytes);
 }
 
 describe("normalizeTarPath", () => {
@@ -195,13 +189,19 @@ describe("readTar regular files", () => {
     expect(files[0].textSample).toBeUndefined();
   });
 
-  test("flags `truncated` when a file body exceeds maxBytesPerFile", async () => {
-    const big = new Uint8Array(2048).fill(0x41); // 'A' x 2048
-    const tar = buildTar([{ name: "package/large.txt", body: big }]);
-    const files = await parse(tar, { ...PARSE_LIMITS, maxBytesPerFile: 1024 });
-    expect(files[0].flags).toContain("truncated");
-    expect(files[0].size).toBe(2048);
-    expect(files[0].textSample?.length).toBe(1024);
+  test("captures the whole file body without truncation (issue #191)", async () => {
+    // A payload buried past any fixed window must still reach the scanner. The
+    // parser no longer clips the text sample; truncation is a display-only
+    // concern applied at persistence, so detection sees the full file here.
+    const filler = "// padding\n".repeat(40_000); // ~440 KB, well past the old 128 KB window
+    const payload = "eval(process.env.SECRET);\n";
+    const body = new TextEncoder().encode(filler + payload);
+    const tar = buildTar([{ name: "package/large.js", body }]);
+    const files = await parse(tar);
+    expect(files[0].flags).not.toContain("truncated");
+    expect(files[0].size).toBe(body.length);
+    expect(files[0].textSample).toBe(filler + payload);
+    expect(files[0].textSample).toContain("eval(process.env.SECRET)");
   });
 
   test("omits low-value generated text samples while preserving metadata", async () => {

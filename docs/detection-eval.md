@@ -116,11 +116,14 @@ Recall is measured per class so blind spots are visible. Malicious:
 - `base64Wrap` — wrap the payload in `eval(atob("…"))`. Note this _trips_ the
   dynamic-evaluation rule, so the file stays "blocked" while the specific
   network/process/credential rules are lost — the report shows that split.
-- `pushPastWindow` — prepend >64KB of filler, then truncate to the sandbox
-  sample limit so the payload falls off the end. `codeRetention` goes to 0 and
-  any case without a surviving manifest signal stops being blocked. This is the
-  acceptance test for the "scan full bytes, persist a bounded sample" refactor:
-  once detection scans pre-truncation bytes, these variants should survive.
+- `pushPastWindow` — prepend >64KB of filler so the payload sits past the old
+  per-file sandbox window. This is the acceptance test for the "scan full bytes,
+  persist a bounded sample" refactor (issue #191), and it now passes: the sandbox
+  returns whole files (`summarizeFile` no longer clips; truncation moved to the
+  persistence display sample in `scanFileRowsForArtifacts`), so the transform no
+  longer truncates and `blockedRate`/`codeRetention` are back to 100%. The metric
+  is kept in the report as a regression guard against re-introducing a scan-time
+  window.
 
 ## Gated thresholds (and the ratchet)
 
@@ -134,9 +137,10 @@ Gated metrics (`detection-eval.test.mjs`):
 
 Frontier recall and evasion robustness are reported, not gated, so they can start
 red. The benign FP gate was the first ratchet step and landed with weighted
-multi-signal scoring (issue #193). Remaining ratchet plan as the corpus and
-detector improve: gate frontier recall, then gate `pushPastWindow` survival once
-full-bytes scanning lands.
+multi-signal scoring (issue #193). Full-bytes scanning has now landed too (issue
+#191), so `pushPastWindow` already sits at 100% blocked/retained. Remaining
+ratchet plan as the corpus and detector improve: gate frontier recall, then gate
+`pushPastWindow` survival to lock that in.
 
 ## Corpus expansion
 

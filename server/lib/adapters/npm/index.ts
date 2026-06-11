@@ -19,9 +19,7 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
       throw new Error("invalid stageId");
     }
     const maxFiles = typeof value.maxFiles === "number" ? value.maxFiles : undefined;
-    const maxBytesPerFile =
-      typeof value.maxBytesPerFile === "number" ? value.maxBytesPerFile : undefined;
-    return { stageId, maxFiles, maxBytesPerFile };
+    return { stageId, maxFiles };
   },
 
   createBroker(ctx, ref) {

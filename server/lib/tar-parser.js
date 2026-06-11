@@ -30,7 +30,16 @@ export function readString(bytes, start, len) {
 export function decodeText(bytes) {
   if (bytes.some((b) => b === 0)) return "";
   const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-  const control = [...text].filter((ch) => ch < " " && !"\n\r\t".includes(ch)).length;
+  // Count C0 control characters (other than tab/newline/CR) without spreading
+  // the string into a per-codepoint array. decodeText now runs over whole files
+  // rather than a bounded sample (issue #191): `[...text]` on a multi-megabyte
+  // file would allocate one boxed string per character and blow the Worker
+  // memory limit, so iterate code units in place instead.
+  let control = 0;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) control++;
+  }
   if (control > Math.max(5, text.length * 0.02)) return "";
   return text;
 }
@@ -162,11 +171,10 @@ export async function sha256Hex(bytes) {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export async function summarizeFile(path, body, maxBytesPerFile) {
+export async function summarizeFile(path, body) {
   const flags = [];
   const skipTextSample = shouldSkipTextSample(path);
   if (skipTextSample) flags.push("text-sample-skipped");
-  if (body.length > maxBytesPerFile) flags.push("truncated");
   const hash = await sha256Hex(body);
   if (skipTextSample) {
     return {
@@ -176,8 +184,13 @@ export async function summarizeFile(path, body, maxBytesPerFile) {
       flags,
     };
   }
-  const sample = body.subarray(0, Math.min(body.length, maxBytesPerFile));
-  const text = decodeText(sample);
+  // Decode the WHOLE file, not a fixed-size head. Deterministic detection runs
+  // over textSample in the parent worker, so clipping here is exactly the
+  // truncation hole that lets an attacker bury a payload past a fixed window
+  // (issue #191). The persisted/display sample is bounded separately at the
+  // persistence layer; total work stays bounded by the archive cap
+  // (MAX_TAR_BYTES) and MAX_FILES.
+  const text = decodeText(body);
   if (!text) flags.push("binary");
   return {
     path,
@@ -205,7 +218,7 @@ export function shouldSkipTextSample(path) {
   return false;
 }
 
-export async function readTar(buffer, maxFiles, maxBytesPerFile, maxTarBytes) {
+export async function readTar(buffer, maxFiles, maxTarBytes) {
   const nul = String.fromCharCode(0);
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   const files = [];
@@ -289,11 +302,11 @@ export async function readTar(buffer, maxFiles, maxBytesPerFile, maxTarBytes) {
             path,
             detail: "duplicate path; later entry replaced earlier entry",
           });
-          const summarized = await summarizeFile(path, body, maxBytesPerFile);
+          const summarized = await summarizeFile(path, body);
           files[seenPaths.get(path)] = summarized;
         } else {
           if (files.length >= maxFiles) throw new Error("archive contains too many files");
-          const summarized = await summarizeFile(path, body, maxBytesPerFile);
+          const summarized = await summarizeFile(path, body);
           seenPaths.set(path, files.length);
           files.push(summarized);
         }
@@ -367,7 +380,7 @@ export async function inflateRawBounded(bytes, maxBytes) {
   return out;
 }
 
-export async function readZipArchive(buffer, maxFiles, maxBytesPerFile, maxArchiveBytes) {
+export async function readZipArchive(buffer, maxFiles, maxArchiveBytes) {
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   const eocd = findZipEndOfCentralDirectory(bytes);
   if (eocd < 0) throw new Error("zip central directory not found");
@@ -438,7 +451,7 @@ export async function readZipArchive(buffer, maxFiles, maxBytesPerFile, maxArchi
     }
     if (body.length !== uncompressedSize) throw new Error("zip entry size mismatch");
     expandedBytes += body.length;
-    files.push(await summarizeFile(path, body, maxBytesPerFile));
+    files.push(await summarizeFile(path, body));
   }
   return files;
 }

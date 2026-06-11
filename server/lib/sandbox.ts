@@ -5,10 +5,8 @@ import * as tarParser from "./tar-parser.js";
 import type { TarSuspiciousEntry } from "./tar-parser.js";
 
 export const SANDBOX_MAX_FILES = 2_500;
-export const SANDBOX_MAX_BYTES_PER_FILE = 128 * 1024;
 export const SANDBOX_MAX_TAR_BYTES = 25 * 1024 * 1024;
 const MAX_FILES = SANDBOX_MAX_FILES;
-const MAX_BYTES_PER_FILE = SANDBOX_MAX_BYTES_PER_FILE;
 const MAX_TAR_BYTES = SANDBOX_MAX_TAR_BYTES;
 
 // Functions whose source text is concatenated into the sandbox worker module.
@@ -123,7 +121,6 @@ export interface DownloadOptions {
   archiveFormat?: "tgz" | "zip";
   publicArtifactUrls?: string[];
   maxFiles?: number;
-  maxBytesPerFile?: number;
   npmToken?: string;
   npmRegistry?: string;
 }
@@ -167,7 +164,6 @@ export interface InlineDownloadOptions {
   bytes: Uint8Array;
   format: "tgz" | "zip";
   maxFiles?: number;
-  maxBytesPerFile?: number;
 }
 
 /**
@@ -201,10 +197,6 @@ export async function downloadInSandboxInline(
       NPM_REGISTRY: env.NPM_REGISTRY || "https://registry.npmjs.org",
       ARCHIVE_FORMAT: options.format,
       MAX_FILES: Math.min(options.maxFiles ?? MAX_FILES, MAX_FILES),
-      MAX_BYTES_PER_FILE: Math.min(
-        options.maxBytesPerFile ?? MAX_BYTES_PER_FILE,
-        MAX_BYTES_PER_FILE,
-      ),
       MAX_TAR_BYTES,
     },
     globalOutbound: (
@@ -267,10 +259,6 @@ export async function downloadInSandbox(
       NPM_REGISTRY: options.npmRegistry || env.NPM_REGISTRY || "https://registry.npmjs.org",
       ARCHIVE_FORMAT: options.archiveFormat || "tgz",
       MAX_FILES: Math.min(options.maxFiles ?? MAX_FILES, MAX_FILES),
-      MAX_BYTES_PER_FILE: Math.min(
-        options.maxBytesPerFile ?? MAX_BYTES_PER_FILE,
-        MAX_BYTES_PER_FILE,
-      ),
       MAX_TAR_BYTES,
     },
     globalOutbound: (
@@ -338,7 +326,7 @@ export default {
       }
       let files;
       try {
-        files = await readZipArchive(zip, env.MAX_FILES || 2_500, env.MAX_BYTES_PER_FILE || 131072, maxTarBytes);
+        files = await readZipArchive(zip, env.MAX_FILES || 2_500, maxTarBytes);
       } catch (err) {
         const reason = err && err.message === "archive contains too many files"
           ? "archive contains too many files"
@@ -367,7 +355,7 @@ export default {
     let files;
     let suspiciousEntries;
     try {
-      const parsed = await readTar(tar, env.MAX_FILES || 2_500, env.MAX_BYTES_PER_FILE || 131072, maxTarBytes);
+      const parsed = await readTar(tar, env.MAX_FILES || 2_500, maxTarBytes);
       files = parsed.files;
       suspiciousEntries = parsed.suspicious;
     } catch (err) {

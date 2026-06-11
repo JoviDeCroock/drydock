@@ -83,17 +83,11 @@ function buildZip(entries) {
 
 const LIMITS = {
   maxFiles: 2_500,
-  maxBytesPerFile: 128 * 1024,
   maxArchiveBytes: 25 * 1024 * 1024,
 };
 
 function parse(zip, limits = LIMITS) {
-  return readZipArchive(
-    zip.buffer,
-    limits.maxFiles,
-    limits.maxBytesPerFile,
-    limits.maxArchiveBytes,
-  );
+  return readZipArchive(zip.buffer, limits.maxFiles, limits.maxArchiveBytes);
 }
 
 describe("normalizeZipPath", () => {

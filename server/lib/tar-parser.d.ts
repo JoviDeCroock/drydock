@@ -56,15 +56,10 @@ export function parsePax(body: Uint8Array): Record<string, string>;
 export function describeNonRegularType(type: string): string;
 export function sha256Hex(bytes: Uint8Array): Promise<string>;
 export function shouldSkipTextSample(path: string): boolean;
-export function summarizeFile(
-  path: string,
-  body: Uint8Array,
-  maxBytesPerFile: number,
-): Promise<ParsedFile>;
+export function summarizeFile(path: string, body: Uint8Array): Promise<ParsedFile>;
 export function readTar(
   buffer: ArrayBuffer | Uint8Array,
   maxFiles: number,
-  maxBytesPerFile: number,
   maxTarBytes: number,
 ): Promise<ReadTarResult>;
 export function readUint16Le(bytes: Uint8Array, offset: number): number;
@@ -74,7 +69,6 @@ export function inflateRawBounded(bytes: Uint8Array, maxBytes: number): Promise<
 export function readZipArchive(
   buffer: ArrayBuffer | Uint8Array,
   maxFiles: number,
-  maxBytesPerFile: number,
   maxArchiveBytes: number,
 ): Promise<ParsedFile[]>;
 export function readStreamBounded(

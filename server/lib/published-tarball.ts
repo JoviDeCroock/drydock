@@ -96,7 +96,6 @@ export async function fetchPublishedTarballBytes(
 
 export interface DownloadPublishedTarballOptions extends PublishedTarballFetchOptions {
   maxFiles?: number;
-  maxBytesPerFile?: number;
 }
 
 /**
@@ -114,6 +113,5 @@ export async function downloadPublishedTarball(
     bytes,
     format: "tgz",
     maxFiles: options.maxFiles,
-    maxBytesPerFile: options.maxBytesPerFile,
   });
 }

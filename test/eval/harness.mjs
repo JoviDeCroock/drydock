@@ -32,8 +32,10 @@ const CORPUS_DIR = join(__dirname, "..", "fixtures", "security-corpus");
 
 const RISK_RANK = { low: 0, medium: 1, high: 2, critical: 3 };
 const SEVERITY_RANK = { info: 0, low: 1, medium: 2, high: 3, critical: 4 };
-// Mirror the sandbox per-file text sample bound. Keep in sync with the sandbox
-// limit; pushPastWindow below relies on it to demonstrate the truncation hole.
+// Historical per-file scan window. Detection no longer truncates the scanned
+// text (issue #191: the sandbox returns whole files), but pushPastWindow below
+// still buries its payload behind this much filler to prove that content past
+// the old window is now scanned.
 const SAMPLE_LIMIT = 64 * 1024;
 const SIGNIFICANT_SEVERITY = SEVERITY_RANK.medium;
 // A benign hard negative is a precision miss when the *risk roll-up* surfaces it
@@ -154,9 +156,11 @@ function base64Wrap(code) {
 function pushPastWindow(code) {
   const filler = `// ${"x".repeat(118)}\n`;
   const padding = filler.repeat(Math.ceil((SAMPLE_LIMIT + 4096) / filler.length));
-  // Payload sits after the padding, then the captured sample is truncated to
-  // the sandbox window — so the payload falls off the end and is never scanned.
-  return (padding + code).slice(0, SAMPLE_LIMIT);
+  // Payload sits after >SAMPLE_LIMIT of filler. The transform does NOT truncate:
+  // detection now scans the whole file, so the payload past the old window must
+  // still be caught (block-slip -> 0%). The bounded display sample is a
+  // persistence concern the eval does not exercise.
+  return padding + code;
 }
 
 const EVASION_TRANSFORMS = {
