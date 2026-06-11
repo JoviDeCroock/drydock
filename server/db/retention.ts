@@ -1,4 +1,4 @@
-import { inArray, lt, or } from "drizzle-orm";
+import { count, inArray, lt, or } from "drizzle-orm";
 import type { AppDb } from "./client";
 import { githubWorkflowGates, scanEvents, scanFiles, scanFindings, scans } from "./schema";
 
@@ -47,38 +47,39 @@ export async function pruneRetentionData(
     .from(scans)
     .where(lt(scans.createdAt, scanCutoff));
 
-  const [findingsResult, filesResult, eventsResult, gateResult, scansResult] = await db.batch([
-    db
-      .delete(scanFindings)
-      .where(inArray(scanFindings.scanId, expiredScanIds))
-      .returning({ id: scanFindings.id }),
-    db
-      .delete(scanFiles)
-      .where(inArray(scanFiles.scanId, expiredScanIds))
-      .returning({ id: scanFiles.id }),
+  const expiredScanFindingPredicate = inArray(scanFindings.scanId, expiredScanIds);
+  const expiredScanFilePredicate = inArray(scanFiles.scanId, expiredScanIds);
+  const expiredScanEventPredicate = or(
+    lt(scanEvents.createdAt, eventCutoff),
+    inArray(scanEvents.scanId, expiredScanIds),
+  );
+  const expiredGateScanPredicate = inArray(githubWorkflowGates.scanId, expiredScanIds);
+  const expiredScanPredicate = lt(scans.createdAt, scanCutoff);
+
+  const [findingsCount, filesCount, eventsCount, gateCount, scansCount] = await db.batch([
+    db.select({ rowCount: count() }).from(scanFindings).where(expiredScanFindingPredicate),
+    db.select({ rowCount: count() }).from(scanFiles).where(expiredScanFilePredicate),
+    db.select({ rowCount: count() }).from(scanEvents).where(expiredScanEventPredicate),
+    db.select({ rowCount: count() }).from(githubWorkflowGates).where(expiredGateScanPredicate),
+    db.select({ rowCount: count() }).from(scans).where(expiredScanPredicate),
+    db.delete(scanFindings).where(expiredScanFindingPredicate),
+    db.delete(scanFiles).where(expiredScanFilePredicate),
     // Past the (shorter) event window, plus any event still tied to a scan being
     // pruned: a late decision can write an event younger than the event window
     // onto an already-expired scan, and leaving it would dangle on a gone scan.
-    db
-      .delete(scanEvents)
-      .where(or(lt(scanEvents.createdAt, eventCutoff), inArray(scanEvents.scanId, expiredScanIds)))
-      .returning({ id: scanEvents.id }),
+    db.delete(scanEvents).where(expiredScanEventPredicate),
     // github_workflow_gates.scan_id is declared ON DELETE SET NULL; with FK
     // enforcement off we clear the representative-scan pointer ourselves before
     // its scan disappears. Gates are not otherwise pruned here.
-    db
-      .update(githubWorkflowGates)
-      .set({ scanId: null })
-      .where(inArray(githubWorkflowGates.scanId, expiredScanIds))
-      .returning({ id: githubWorkflowGates.id }),
-    db.delete(scans).where(lt(scans.createdAt, scanCutoff)).returning({ id: scans.id }),
+    db.update(githubWorkflowGates).set({ scanId: null }).where(expiredGateScanPredicate),
+    db.delete(scans).where(expiredScanPredicate),
   ]);
 
   return {
-    scansPruned: scansResult.length,
-    scanFilesPruned: filesResult.length,
-    scanFindingsPruned: findingsResult.length,
-    scanEventsPruned: eventsResult.length,
-    gateScanRefsCleared: gateResult.length,
+    scansPruned: scansCount[0]?.rowCount ?? 0,
+    scanFilesPruned: filesCount[0]?.rowCount ?? 0,
+    scanFindingsPruned: findingsCount[0]?.rowCount ?? 0,
+    scanEventsPruned: eventsCount[0]?.rowCount ?? 0,
+    gateScanRefsCleared: gateCount[0]?.rowCount ?? 0,
   };
 }
