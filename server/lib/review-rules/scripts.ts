@@ -87,13 +87,25 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       processExecution.matched || dynamicEvaluation.matched || credentialAccess.matched;
 
     if (processExecution.matched) {
+      const pairedCapability =
+        networkAccess.matched || credentialAccess.matched || dynamicEvaluation.matched;
+      const severity = processExecutionSeverity(
+        ctx,
+        file.path,
+        changed,
+        pairedCapability,
+        processExecution.viaNormalization,
+      );
       findings.push(
         tag("codeProcessExecution", {
-          severity: "high",
+          severity,
           file: file.path,
           line: processExecution.line,
           evidence: `${prefix}process or shell execution`,
-          reason: "package may execute arbitrary commands",
+          reason:
+            severity === "high"
+              ? "package may execute arbitrary commands"
+              : "process or shell execution in ordinary source/build code: not reachable from an install hook or bin entry and not paired with network or credential access, so it reads as build tooling rather than an install-time capability",
         }),
       );
     }
@@ -157,14 +169,18 @@ function matchCategory(
   patterns: RegExp[],
   sample: string,
   normalized: string,
-): { matched: boolean; line: number | undefined } {
+): { matched: boolean; line: number | undefined; viaNormalization: boolean } {
   const line = firstMatchingLine(sample, patterns);
-  if (line !== undefined) return { matched: true, line };
+  if (line !== undefined) return { matched: true, line, viaNormalization: false };
   if (normalized !== sample) {
     const normalizedLine = firstMatchingLine(normalized, patterns);
-    if (normalizedLine !== undefined) return { matched: true, line: normalizedLine };
+    // The literal text missed and only the constant-folded text matched: the
+    // capability was assembled at runtime (`['chi','ld_pro','cess'].join('')`),
+    // which is itself an obfuscation signal callers can weight on.
+    if (normalizedLine !== undefined)
+      return { matched: true, line: normalizedLine, viaNormalization: true };
   }
-  return { matched: false, line: undefined };
+  return { matched: false, line: undefined, viaNormalization: false };
 }
 
 function networkAccessSeverity(
@@ -173,6 +189,61 @@ function networkAccessSeverity(
   adjacentExecutionRisk: boolean,
 ): Finding["severity"] {
   return changed === "added" && (lifecycleScriptFile || adjacentExecutionRisk) ? "high" : "medium";
+}
+
+// Install-context + diff-novelty weighting for process execution (issue #194).
+// A bare child_process/shell capability is weighted by where it sits and whether
+// this release introduced it, so a maintainer's local build script no longer
+// reads the same as an install-time command execution:
+//   - high when the file runs on install or is wired up as an entrypoint (a
+//     declared lifecycle hook or a linked `bin` command), when it is co-located
+//     with a network/credential/dynamic-eval capability (the collect-and-
+//     exfiltrate / dropper shape), or when the capability only surfaced after
+//     constant-folding (the identifier was assembled at runtime — obfuscation
+//     benign build tooling does not do) — all dangerous regardless of novelty;
+//   - low when it is ordinary source/build code newly added or changed in this
+//     release (a release delta worth recording, not a blocker);
+//   - info when that same ordinary capability already shipped in the previous
+//     version (pure pre-existing context).
+// Python keeps the prior high weighting: its install model (setup.py,
+// sitecustomize, .pth) is not described by package.json reachability and the
+// PyPI adapter owns its own install-hook rule (pypi.setup-install-command).
+function processExecutionSeverity(
+  ctx: RuleContext,
+  path: string,
+  changed: RuleContext["diff"][number]["status"] | undefined,
+  pairedCapability: boolean,
+  obfuscated: boolean,
+): Finding["severity"] {
+  if (ctx.codePatternSet === "python") return "high";
+  if (isInstallReachable(ctx, path) || pairedCapability || obfuscated) return "high";
+  return changed === "unchanged" ? "info" : "low";
+}
+
+// Whether `path` runs automatically on install or is an entrypoint npm wires up
+// for consumers: a declared (non-implicit) install lifecycle hook, or a `bin`
+// command linked into the consumer's node_modules/.bin.
+function isInstallReachable(ctx: RuleContext, path: string): boolean {
+  return isLifecycleScriptFile(ctx, path) || isBinTargetFile(ctx, path);
+}
+
+function isBinTargetFile(ctx: RuleContext, path: string): boolean {
+  const bin = ctx.packageJson?.bin;
+  if (!bin) return false;
+  const targets = typeof bin === "string" ? [bin] : Object.values(bin);
+  const filePath = normalizeManifestPath(path);
+  return targets.some(
+    (target) => typeof target === "string" && normalizeManifestPath(target) === filePath,
+  );
+}
+
+// Canonicalize a manifest-relative path for equality against a packed file path:
+// strip a leading `./` and the npm `package/` tarball prefix and unify
+// separators. Exact-path match (no basename fallback) so a bin target never
+// over-claims an unrelated same-named file as install-reachable.
+function normalizeManifestPath(path: string): string {
+  const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "");
+  return normalized.startsWith("package/") ? normalized.slice("package/".length) : normalized;
 }
 
 function isLifecycleScriptFile(ctx: RuleContext, path: string): boolean {

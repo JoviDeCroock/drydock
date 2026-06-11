@@ -99,7 +99,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.2.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.11.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.12.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -128,7 +128,18 @@ dynamic-evaluation family from `WebAssembly.compile` to the whole
 `compile`/`compileStreaming`/`instantiate`/`instantiateStreaming` set, since
 `instantiateStreaming(fetch(...))` is the loader idiom packed wasm payloads actually use;
 `require.resolve` was evaluated for the same family and rejected — it resolves paths without
-executing code and flagged the `legit-require-resolve` benign hard-negative.
+executing code and flagged the `legit-require-resolve` benign hard-negative. `1.12.0` weights the
+JavaScript `code.process-execution` capability by install-context and diff-novelty
+(`processExecutionSeverity` in `server/lib/review-rules/scripts.ts`): a bare child_process/shell
+capability is high only when the file runs on install or is wired up as an entrypoint (a declared
+lifecycle hook or a `bin` target), when it is co-located with a network/credential/dynamic-eval
+capability (the dropper/exfil shape), or when it surfaced only after constant-folding (a runtime-
+assembled identifier — obfuscation that ordinary build tooling does not do). Otherwise it is `low`
+when newly added or changed in this release and `info` when it already shipped in the previous
+version, so a maintainer's local build script (`legit-build-childprocess`) no longer reads as
+install-time command execution. Python keeps the prior high weighting because its install model is
+not described by package.json reachability and the PyPI adapter owns `pypi.setup-install-command`;
+the `build-script-childprocess` and `bin-childprocess` fixtures lock both directions.
 
 ### Fixture format
 

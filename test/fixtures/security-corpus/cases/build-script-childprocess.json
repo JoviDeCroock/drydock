@@ -1,0 +1,60 @@
+{
+  "id": "build-script-childprocess",
+  "title": "Ordinary build scripts that shell out are weighted by install-reachability and novelty",
+  "category": "install-context-weighting",
+  "intent": "Two build helpers run child_process but neither is reachable from an install hook or bin entry and neither is paired with network/credential access. Per issue #194 the process-execution capability is no longer high on its own: the newly added helper is low (a release delta worth recording) and the pre-existing, unchanged helper is info (context). Risk stays low so a maintainer's local build tooling does not read as install-time command execution.",
+  "previousPackageJson": { "name": "build-script-childprocess", "version": "1.0.0" },
+  "stagedPackageJson": { "name": "build-script-childprocess", "version": "1.0.1" },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 56,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"build-script-childprocess\",\"version\":\"1.0.0\"}"
+    },
+    {
+      "path": "scripts/build.js",
+      "size": 96,
+      "sha256": "build-js-stable",
+      "flags": [],
+      "textSample": "const { execSync } = require('child_process');\nexecSync('make', { stdio: 'inherit' });\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 56,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"build-script-childprocess\",\"version\":\"1.0.1\"}"
+    },
+    {
+      "path": "scripts/build.js",
+      "size": 96,
+      "sha256": "build-js-stable",
+      "flags": [],
+      "textSample": "const { execSync } = require('child_process');\nexecSync('make', { stdio: 'inherit' });\n"
+    },
+    {
+      "path": "scripts/postbuild.js",
+      "size": 92,
+      "sha256": "postbuild-js",
+      "flags": [],
+      "textSample": "const { execSync } = require('child_process');\nexecSync('cp -r build dist');\n"
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": [
+    {
+      "ruleId": "code.process-execution",
+      "severity": "info",
+      "file": "scripts/build.js"
+    },
+    {
+      "ruleId": "code.process-execution",
+      "severity": "low",
+      "file": "scripts/postbuild.js"
+    }
+  ]
+}

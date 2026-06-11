@@ -1,0 +1,50 @@
+{
+  "id": "bin-childprocess",
+  "title": "Process execution in a newly linked bin command stays high (install-reachable)",
+  "category": "install-context-weighting",
+  "intent": "A release adds a bin command whose target shells out via child_process. npm symlinks bin entries into the consumer's node_modules/.bin, so the file is install-reachable and the process-execution capability stays high even though it is not paired with network/credential access (issue #194). The added bin entry also surfaces diff.bin-added.",
+  "previousPackageJson": { "name": "cli-childprocess", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "cli-childprocess",
+    "version": "1.0.1",
+    "bin": { "cli-childprocess": "cli.js" }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 50,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"cli-childprocess\",\"version\":\"1.0.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 96,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"cli-childprocess\",\"version\":\"1.0.1\",\"bin\":{\"cli-childprocess\":\"cli.js\"}}"
+    },
+    {
+      "path": "cli.js",
+      "size": 96,
+      "sha256": "cli-js",
+      "flags": [],
+      "textSample": "#!/usr/bin/env node\nrequire('child_process').execSync(process.argv[2]);\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.process-execution",
+      "severity": "high",
+      "file": "cli.js"
+    },
+    {
+      "ruleId": "diff.bin-added",
+      "severity": "medium",
+      "file": "package.json"
+    }
+  ]
+}

@@ -625,7 +625,13 @@ describe("scan pipeline baseline selection", () => {
           size: 80,
           sha256: "same-risk",
           flags: [],
-          textSample: "require('child_process').execSync('true');\n",
+          // Pre-existing dropper shape (process execution paired with network
+          // egress in one file). Identical across versions, so it is not a
+          // release delta — it stays high severity (artifact + context risk) but
+          // contributes nothing to release risk. A bare, unpaired execSync in
+          // ordinary code is no longer high on its own (issue #194).
+          textSample:
+            "require('child_process').execSync('true');\nfetch('https://example.invalid/ping');\n",
         },
       ],
       packageJson: { name: "pkg", version: "1.0.1" },
@@ -644,7 +650,13 @@ describe("scan pipeline baseline selection", () => {
           size: 80,
           sha256: "same-risk",
           flags: [],
-          textSample: "require('child_process').execSync('true');\n",
+          // Pre-existing dropper shape (process execution paired with network
+          // egress in one file). Identical across versions, so it is not a
+          // release delta — it stays high severity (artifact + context risk) but
+          // contributes nothing to release risk. A bare, unpaired execSync in
+          // ordinary code is no longer high on its own (issue #194).
+          textSample:
+            "require('child_process').execSync('true');\nfetch('https://example.invalid/ping');\n",
         },
       ],
       packageJson: { name: "pkg", version: "1.0.0" },
@@ -664,7 +676,7 @@ describe("scan pipeline baseline selection", () => {
       releaseRisk: "low",
       contextRisk: "high",
       releaseFindingCount: 0,
-      contextFindingCount: 1,
+      contextFindingCount: 2,
     });
     expect(result.ruleFindings).toContainEqual(
       expect.objectContaining({
