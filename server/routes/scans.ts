@@ -30,7 +30,7 @@ import { compareSemver, fetchPackageMetadata, pickPreviousVersion } from "../lib
 import { annotateFindingsWithDiffStatus, createPackageDiff, type FileRecord } from "../lib/review";
 import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
 import { parseScanInput } from "../lib/scan-input";
-import { serializeReportExport } from "../lib/report-export";
+import { reportExportFilename, serializeReportExport } from "../lib/report-export";
 import { executeScanJob, type ScanQueueMessage } from "../lib/scan-job";
 import { roleCanManageIntegrations } from "../lib/roles";
 import type { Bindings, ScanInput, Variables } from "../types";
@@ -264,7 +264,7 @@ scansRoutes.get("/:id/report.json", async (c) => {
     status: 200,
     headers: {
       "content-type": "application/json; charset=utf-8",
-      "content-disposition": `attachment; filename="drydock-report-${detail.scan.id}.json"`,
+      "content-disposition": `attachment; filename="${reportExportFilename(detail.scan)}"`,
       "cache-control": "private, no-store",
     },
   });

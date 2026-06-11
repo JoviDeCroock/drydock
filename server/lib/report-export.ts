@@ -3,6 +3,12 @@ import type { getScan } from "../db/scans";
 // A persisted scan detail, as returned by getScan (never null at the call site).
 type ScanDetail = NonNullable<Awaited<ReturnType<typeof getScan>>>;
 
+interface ReportExportFilenameInput {
+  id: string;
+  packageName: string | null;
+  stagedVersion: string | null;
+}
+
 // Schema tag for the exported report document. Bump the suffix when the export
 // shape changes in a way consumers must branch on.
 export const REPORT_EXPORT_SCHEMA = "drydock.report.v1";
@@ -62,6 +68,13 @@ export function serializeReportExport(detail: ScanDetail): string {
   return stableStringify(buildReportExport(detail));
 }
 
+export function reportExportFilename(scan: ReportExportFilenameInput): string {
+  const packageName = filenameSegment(scan.packageName);
+  const version = filenameSegment(scan.stagedVersion);
+  if (packageName && version) return `drydock-${packageName}-${version}.json`;
+  return `drydock-report-${filenameSegment(scan.id) || "scan"}.json`;
+}
+
 function compareFindings(
   a: ScanDetail["findings"][number],
   b: ScanDetail["findings"][number],
@@ -97,4 +110,13 @@ function toIso(value: unknown): string | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function filenameSegment(value: string | null | undefined): string | null {
+  const segment = value
+    ?.trim()
+    .replace(/[/\\]+/g, "-")
+    .replace(/[^A-Za-z0-9@._+-]+/g, "-");
+  const trimmed = segment?.replace(/-+/g, "-").replace(/^-|-$/g, "");
+  return trimmed || null;
 }

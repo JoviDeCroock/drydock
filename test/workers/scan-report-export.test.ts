@@ -113,7 +113,7 @@ describe("scan report JSON export", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("application/json");
     expect(res.headers.get("content-disposition")).toBe(
-      `attachment; filename="drydock-report-${scanId}.json"`,
+      `attachment; filename="drydock-@org-pkg-1.1.0.json"`,
     );
 
     const text = await res.text();

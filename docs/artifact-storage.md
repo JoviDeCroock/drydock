@@ -41,6 +41,8 @@ Path segments are URL-encoded with `%` replaced by `~` so object keys stay path-
 
 The manifest records each object key, SHA-256 digest, byte size, content type, and count where applicable. `report.json` is the canonical report JSON whose digest must equal `scans.report_digest`. `files.json` stores redacted staged file samples plus file metadata. `diff.json` stores the generated file diff.
 
+User-initiated report downloads serve the same canonical `report.json` bytes with a package-scoped filename: `drydock-{package-name}-{version}.json`. Package names are normalized to a path-safe filename segment for the `Content-Disposition` header.
+
 ## Write And Read Flow
 
 New completed scans try to write `report.json`, `files.json`, `diff.json`, and `manifest.json` to R2 before `persistScan` marks the D1 row artifact-backed. Each object is read back and verified against its expected size and SHA-256 digest before D1 metadata is saved. Transient write or verification failures are retried; exhausted failures log `scan.artifacts.write_failed` and fail closed so the scan can retry instead of persisting new file samples into D1. When the R2 write succeeds, D1 stores compact file metadata only and leaves `scan_files.text_sample` null.
