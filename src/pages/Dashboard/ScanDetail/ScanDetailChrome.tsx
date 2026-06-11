@@ -1,5 +1,6 @@
 import { getDashboardReturnUrl } from "../../../lib/query-state";
 import { formatDateTime } from "../../../lib/format";
+import { reportExportFilename } from "../../../../server/lib/report-export";
 import type { PersistedScanDetail } from "../../../models/scan";
 import {
   Alert,
@@ -69,7 +70,7 @@ export function ScanDetailHeader({
               variant="ghost"
               size="sm"
               href={`/api/v1/scans/${detail.scan.id}/report.json`}
-              download={`drydock-report-${detail.scan.id}.json`}
+              download={reportExportFilename(detail.scan)}
             >
               Export JSON
             </LinkButton>
