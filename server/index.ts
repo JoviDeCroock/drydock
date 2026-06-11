@@ -4,7 +4,10 @@ import {
   enforceRateLimit,
   getOrganizationOwnerUserId,
   listAutoDiscoveryNpmConnections,
+  pruneRetentionData,
   RateLimitError,
+  SCAN_EVENT_RETENTION_DAYS,
+  SCAN_RETENTION_DAYS,
 } from "./db";
 import { createAuth, getAuthSession } from "./lib/auth";
 import { rateLimitResponse } from "./lib/http";
@@ -400,9 +403,41 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
   });
 }
 
+// Daily D1 retention sweep. Kept on its own cron rather than piggybacking the
+// */15 discovery tick: pruning only needs to run once a day, and a dedicated
+// entry lets us dispatch on `event.cron` instead of pruning 96×/day. Must match
+// the second entry in wrangler.jsonc `triggers.crons` exactly.
+const RETENTION_PRUNE_CRON = "30 3 * * *";
+
+async function runRetentionPruneCron(env: Cloudflare.Env) {
+  const startedAtMs = Date.now();
+  const db = createDb(env.DB);
+  try {
+    const result = await pruneRetentionData(db);
+    emitOperationalEvent("info", "retention.prune.swept", {
+      ...result,
+      scanRetentionDays: SCAN_RETENTION_DAYS,
+      scanEventRetentionDays: SCAN_EVENT_RETENTION_DAYS,
+      durationMs: durationMsSince(startedAtMs),
+    });
+  } catch (err) {
+    // Pruning is idempotent and runs daily, so a failed tick self-heals on the
+    // next one. Surface it as a structured event rather than crashing the
+    // invocation (which a raw throw would).
+    emitOperationalEvent("error", "retention.prune.failed", {
+      error: describeOperationalError(err),
+      durationMs: durationMsSince(startedAtMs),
+    });
+  }
+}
+
 export default {
   fetch: app.fetch,
-  async scheduled(_event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
+  async scheduled(event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
+    if (event.cron === RETENTION_PRUNE_CRON) {
+      await runRetentionPruneCron(env);
+      return;
+    }
     await runStagedPublishesDiscoveryCron(env, ctx);
   },
   async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {

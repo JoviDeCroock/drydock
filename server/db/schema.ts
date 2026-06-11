@@ -191,6 +191,11 @@ export const scans = sqliteTable(
       table.createdAt,
       table.id,
     ),
+    // Backs the retention prune's `created_at < cutoff` sweep so it stays a range
+    // scan rather than a full-table scan as the table grows. The org-scoped index
+    // above can't serve it (createdAt is not its leftmost column). See
+    // db/retention.ts.
+    createdAtIdx: index("scans_created_at_idx").on(table.createdAt),
   }),
 );
 
@@ -250,6 +255,10 @@ export const scanEvents = sqliteTable(
   (table) => ({
     orgCreatedIdx: index("scan_events_org_created_idx").on(table.organizationId, table.createdAt),
     scanIdx: index("scan_events_scan_idx").on(table.scanId),
+    // The org-scoped index above can't serve the retention prune's org-agnostic
+    // `created_at < cutoff` sweep (createdAt is not its leftmost column), so the
+    // prune needs its own createdAt index. See db/retention.ts.
+    createdAtIdx: index("scan_events_created_at_idx").on(table.createdAt),
   }),
 );
 
