@@ -1202,6 +1202,34 @@ describe("test-scoped capability findings", () => {
     });
   });
 
+  test("keeps full severity for files transitively imported by a lifecycle script", () => {
+    const staged = [
+      {
+        path: "package.json",
+        size: 120,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({
+          name: "pkg",
+          version: "1.0.0",
+          main: "index.js",
+          scripts: { postinstall: "node test/setup.js" },
+        }),
+      },
+      file("index.js", "module.exports = {};\n"),
+      file("test/setup.js", "require('./helper.js');\n"),
+      file(
+        "test/helper.js",
+        "const { execSync } = require('child_process');\nexecSync('node -v');\n",
+      ),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged));
+    expect(findings.find((finding) => finding.ruleId === "code.process-execution")).toMatchObject({
+      file: "test/helper.js",
+      severity: "high",
+    });
+  });
+
   test("keeps full severity for obfuscated capabilities even in test files", () => {
     const staged = [
       pkg(),

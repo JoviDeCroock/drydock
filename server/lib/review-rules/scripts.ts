@@ -5,6 +5,7 @@ import { LIFECYCLE_SCRIPTS } from "./patterns";
 import { firstJsonPropertyLine, tag } from "./helpers";
 import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./context";
 import { isDocumentationPath, isTypeDeclarationPath } from "./file-types";
+import { scriptCommandTokens, scriptPathCandidates } from "./reachability";
 import { normalizeCodeForScanning } from "./normalize";
 
 const GYP_PACKAGE_JAVASCRIPT_COMMAND_PATTERNS = [
@@ -232,24 +233,4 @@ function isLifecycleScriptFile(ctx: RuleContext, path: string): boolean {
     if (!command || ctx.implicitScripts[script] === command) return false;
     return scriptCommandTokens(command).some((token) => candidates.has(token));
   });
-}
-
-function scriptPathCandidates(path: string): Set<string> {
-  const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "");
-  const withoutPackage = normalized.startsWith("package/")
-    ? normalized.slice("package/".length)
-    : normalized;
-  const basename = withoutPackage.split("/").at(-1) ?? withoutPackage;
-  const baseValues = [normalized, withoutPackage, basename];
-  const values = [...baseValues];
-  for (const value of baseValues) {
-    values.push(value.replace(/\.[^/.]+$/, ""));
-  }
-  return new Set(values.filter(Boolean));
-}
-
-function scriptCommandTokens(command: string): string[] {
-  return [...command.matchAll(/(?:\.\/)?[\w@./-]+(?:\.[\w-]+)?\b/g)].map((match) =>
-    match[0].replace(/^\.\//, ""),
-  );
 }

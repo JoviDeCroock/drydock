@@ -1,4 +1,5 @@
 import type { FileRecord, PackageJsonSummary } from "../review";
+import { LIFECYCLE_SCRIPTS } from "./patterns";
 
 // Static require/import edges between files inside the package. The walk is a
 // conservative over-approximation built from relative specifiers only: bare
@@ -24,11 +25,14 @@ const RESOLUTION_SUFFIXES = [
 ];
 
 // Files a consumer install can execute: declared entrypoints (main/module/
-// browser/exports), bin targets, and everything statically importable from
-// them. Lifecycle script files are handled separately by the script rules.
+// browser/exports), bin targets, lifecycle script targets, and everything
+// statically importable from them. Seeding from lifecycle scripts matters for
+// attack chains that split a payload across files an install hook pulls in
+// transitively — those files must keep full finding severity.
 export function consumerReachablePaths(
   files: FileRecord[],
   packageJson: PackageJsonSummary | null,
+  extraSeedPaths: string[] = [],
 ): Set<string> {
   const byNormalizedPath = new Map<string, FileRecord>();
   for (const file of files) {
@@ -36,7 +40,7 @@ export function consumerReachablePaths(
   }
 
   const queue: string[] = [];
-  for (const candidate of entrypointCandidates(packageJson)) {
+  for (const candidate of [...entrypointCandidates(packageJson), ...extraSeedPaths]) {
     const resolved = resolveModulePath(candidate, byNormalizedPath);
     if (resolved) queue.push(resolved);
   }
@@ -83,6 +87,54 @@ function exportTargets(exports: unknown): string[] {
     );
   }
   return [];
+}
+
+// Files a lifecycle script command names directly (`postinstall: "node
+// test/setup.js"`). Matching reuses the same token/candidate scheme as the
+// install-script rules so the two notions of "lifecycle script file" agree.
+export function lifecycleScriptSeedPaths(
+  files: FileRecord[],
+  scripts: Record<string, string>,
+  implicitScripts: Record<string, string>,
+): string[] {
+  const tokens = new Set<string>();
+  for (const script of LIFECYCLE_SCRIPTS) {
+    const command = scripts[script];
+    if (!command || implicitScripts[script] === command) continue;
+    for (const token of scriptCommandTokens(command)) tokens.add(token);
+  }
+  if (!tokens.size) return [];
+  const seeds: string[] = [];
+  for (const file of files) {
+    const candidates = scriptPathCandidates(file.path);
+    for (const candidate of candidates) {
+      if (tokens.has(candidate)) {
+        seeds.push(stripPackagePrefix(file.path));
+        break;
+      }
+    }
+  }
+  return seeds;
+}
+
+export function scriptPathCandidates(path: string): Set<string> {
+  const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "");
+  const withoutPackage = normalized.startsWith("package/")
+    ? normalized.slice("package/".length)
+    : normalized;
+  const basename = withoutPackage.split("/").at(-1) ?? withoutPackage;
+  const baseValues = [normalized, withoutPackage, basename];
+  const values = [...baseValues];
+  for (const value of baseValues) {
+    values.push(value.replace(/\.[^/.]+$/, ""));
+  }
+  return new Set(values.filter(Boolean));
+}
+
+export function scriptCommandTokens(command: string): string[] {
+  return [...command.matchAll(/(?:\.\/)?[\w@./-]+(?:\.[\w-]+)?\b/g)].map((match) =>
+    match[0].replace(/^\.\//, ""),
+  );
 }
 
 function relativeSpecifiers(text: string): string[] {

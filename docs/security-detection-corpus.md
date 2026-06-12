@@ -137,11 +137,13 @@ while two or more distinct capabilities in one release escalate to high. Authori
 severity as a floor, so every golden case and PyPI case holds its expected risk. `1.13.0` adds
 test-path classification with reachability weighting: a `code.*` capability hit in a test-suite file
 (`test/`, `tests/`, `__tests__/`, `spec/`, `*.test.*`, `*.spec.*`) that no consumer entrypoint
-(`main`/`module`/`browser`/`exports`/`bin`) can statically reach and that no lifecycle script invokes
+(`main`/`module`/`browser`/`exports`/`bin`) and no lifecycle script target can statically reach
+(the reachability walk seeds from both, so files transitively imported by an install hook count)
 is demoted one severity step, marked `testScoped`, and excluded from the capability co-occurrence
 escalation (the `test-suite-capabilities` golden case and `legit-test-suite-tape` benign
 hard-negative — a tape-shaped test runner whose shipped tests exec, read env, and eval). Findings are
-demoted, never dropped: obfuscated matches, lifecycle-reachable files, entrypoint-reachable files, and
+demoted, never dropped: obfuscated matches, lifecycle-reachable files (directly named or
+transitively imported by an install hook), entrypoint-reachable files, and
 same-file credential→network exfiltration chains all keep full severity. The release-delta annotator
 also gained finding-set baselining: when a modified-file finding has no line-level evidence (no
 recorded line or no usable text diff), it re-runs the deterministic rules over the baseline files and

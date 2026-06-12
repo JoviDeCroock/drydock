@@ -1,7 +1,11 @@
 import { isRootGypPath, normalizeStringRecord } from "../tar-parser.js";
 import type { CodePatternSet, DiffEntry, FileRecord, PackageJsonSummary } from "../review";
 import { codePatternsFor, type JS_PATTERN_SET } from "./patterns";
-import { consumerReachablePaths, normalizeReachabilityPath } from "./reachability";
+import {
+  consumerReachablePaths,
+  lifecycleScriptSeedPaths,
+  normalizeReachabilityPath,
+} from "./reachability";
 import { isTestPath } from "./file-types";
 import { safeJson } from "./helpers";
 
@@ -40,6 +44,8 @@ export function buildRuleContext(
     : null;
   const packageJsonParseFailed = Boolean(packageJsonFile?.textSample) && rawPackageJson === null;
   const packageJson = packageJsonSummary ?? rawPackageJson;
+  const scripts = normalizeStringRecord(packageJson?.scripts);
+  const implicitScripts = normalizeStringRecord(packageJson?.implicitScripts);
   return {
     files,
     diff,
@@ -47,10 +53,14 @@ export function buildRuleContext(
     packageJson,
     packageJsonFile,
     packageJsonParseFailed,
-    scripts: normalizeStringRecord(packageJson?.scripts),
-    implicitScripts: normalizeStringRecord(packageJson?.implicitScripts),
+    scripts,
+    implicitScripts,
     rootGypFile: files.find((file) => isRootGypPath(file.path)),
-    consumerReachable: consumerReachablePaths(files, packageJson),
+    consumerReachable: consumerReachablePaths(
+      files,
+      packageJson,
+      lifecycleScriptSeedPaths(files, scripts, implicitScripts),
+    ),
     patterns: codePatternsFor(options.codePatternSet),
     codePatternSet: options.codePatternSet,
   };
