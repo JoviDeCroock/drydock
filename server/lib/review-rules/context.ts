@@ -1,6 +1,8 @@
 import { isRootGypPath, normalizeStringRecord } from "../tar-parser.js";
 import type { CodePatternSet, DiffEntry, FileRecord, PackageJsonSummary } from "../review";
 import { codePatternsFor, type JS_PATTERN_SET } from "./patterns";
+import { consumerReachablePaths, normalizeReachabilityPath } from "./reachability";
+import { isTestPath } from "./file-types";
 import { safeJson } from "./helpers";
 
 export interface DeterministicFindingOptions {
@@ -20,6 +22,7 @@ export interface RuleContext {
   scripts: Record<string, string>;
   implicitScripts: Record<string, string>;
   rootGypFile: FileRecord | undefined;
+  consumerReachable: Set<string>;
   patterns: typeof JS_PATTERN_SET;
   codePatternSet: CodePatternSet | undefined;
 }
@@ -47,6 +50,7 @@ export function buildRuleContext(
     scripts: normalizeStringRecord(packageJson?.scripts),
     implicitScripts: normalizeStringRecord(packageJson?.implicitScripts),
     rootGypFile: files.find((file) => isRootGypPath(file.path)),
+    consumerReachable: consumerReachablePaths(files, packageJson),
     patterns: codePatternsFor(options.codePatternSet),
     codePatternSet: options.codePatternSet,
   };
@@ -57,4 +61,12 @@ export function buildRuleContext(
 export function changedPrefix(ctx: RuleContext, path: string): string {
   const changed = ctx.diffByPath.get(path)?.status;
   return changed && changed !== "unchanged" ? `new/changed ${changed} file: ` : "";
+}
+
+// A test-suite file nothing consumer-facing can statically reach. Capability
+// findings in these files are demoted (never dropped): a test runner's own
+// tests legitimately spawn processes and read the environment, but the file is
+// still hostile evidence, so the finding survives at reduced severity.
+export function isUnreachableTestFile(ctx: RuleContext, path: string): boolean {
+  return isTestPath(path) && !ctx.consumerReachable.has(normalizeReachabilityPath(path));
 }

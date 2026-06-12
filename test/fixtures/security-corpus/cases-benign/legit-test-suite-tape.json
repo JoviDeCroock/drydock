@@ -1,0 +1,125 @@
+{
+  "id": "legit-test-suite-tape",
+  "title": "Test runner ships a test/ tree that execs, reads env, and evals (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-test-suite",
+  "source": "benign-popular",
+  "intent": "A tape-shaped test runner publishes its own test suite inside the tarball. The tests legitimately spawn child processes, read process.env, and exercise dynamic evaluation across many files. None of the test files are reachable from the consumer entrypoint or bin, so the capability findings must demote to test-scoped severities and the risk roll-up must stay below medium.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": {
+    "name": "tape-like",
+    "version": "5.9.0",
+    "main": "index.js",
+    "bin": { "tape-like": "bin/tape-like" }
+  },
+  "stagedPackageJson": {
+    "name": "tape-like",
+    "version": "5.9.1",
+    "main": "index.js",
+    "bin": { "tape-like": "bin/tape-like" }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 110,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tape-like\",\"version\":\"5.9.0\",\"main\":\"index.js\",\"bin\":{\"tape-like\":\"bin/tape-like\"}}"
+    },
+    {
+      "path": "index.js",
+      "size": 60,
+      "sha256": "index-v1",
+      "flags": [],
+      "textSample": "const harness = require('./lib/test.js');\nmodule.exports = harness;\n"
+    },
+    {
+      "path": "lib/test.js",
+      "size": 60,
+      "sha256": "lib-test-v1",
+      "flags": [],
+      "textSample": "module.exports = function test(name, cb) { cb(); };\n"
+    },
+    {
+      "path": "bin/tape-like",
+      "size": 80,
+      "sha256": "bin-v1",
+      "flags": [],
+      "textSample": "#!/usr/bin/env node\nrequire('../index.js');\n"
+    },
+    {
+      "path": "test/exit.js",
+      "size": 160,
+      "sha256": "test-exit-v1",
+      "flags": [],
+      "textSample": "const { spawn } = require('child_process');\nconst tape = require('../index.js');\nspawn('node', ['--version']);\n"
+    },
+    {
+      "path": "test/todo.js",
+      "size": 120,
+      "sha256": "test-todo-v1",
+      "flags": [],
+      "textSample": "const tape = require('../index.js');\nif (process.env.TODO_DEBUG) console.log('debug');\n"
+    },
+    {
+      "path": "test/too_many.js",
+      "size": 130,
+      "sha256": "test-too-many-v1",
+      "flags": [],
+      "textSample": "const tape = require('../index.js');\nconst fn = new Function('return 1');\nfn();\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 110,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tape-like\",\"version\":\"5.9.1\",\"main\":\"index.js\",\"bin\":{\"tape-like\":\"bin/tape-like\"}}"
+    },
+    {
+      "path": "index.js",
+      "size": 60,
+      "sha256": "index-v1",
+      "flags": [],
+      "textSample": "const harness = require('./lib/test.js');\nmodule.exports = harness;\n"
+    },
+    {
+      "path": "lib/test.js",
+      "size": 60,
+      "sha256": "lib-test-v1",
+      "flags": [],
+      "textSample": "module.exports = function test(name, cb) { cb(); };\n"
+    },
+    {
+      "path": "bin/tape-like",
+      "size": 80,
+      "sha256": "bin-v1",
+      "flags": [],
+      "textSample": "#!/usr/bin/env node\nrequire('../index.js');\n"
+    },
+    {
+      "path": "test/exit.js",
+      "size": 160,
+      "sha256": "test-exit-v1",
+      "flags": [],
+      "textSample": "const { spawn } = require('child_process');\nconst tape = require('../index.js');\nspawn('node', ['--version']);\n"
+    },
+    {
+      "path": "test/todo.js",
+      "size": 120,
+      "sha256": "test-todo-v1",
+      "flags": [],
+      "textSample": "const tape = require('../index.js');\nif (process.env.TODO_DEBUG) console.log('debug');\n"
+    },
+    {
+      "path": "test/too_many.js",
+      "size": 130,
+      "sha256": "test-too-many-v1",
+      "flags": [],
+      "textSample": "const tape = require('../index.js');\nconst fn = new Function('return 1');\nfn();\n"
+    }
+  ]
+}

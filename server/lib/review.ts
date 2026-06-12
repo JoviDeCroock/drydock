@@ -25,6 +25,12 @@ export interface Finding {
   // Obfuscating a capability is itself a malice signal, so the risk roll-up does
   // not de-escalate a lone obfuscated capability the way it does a plain one.
   obfuscated?: boolean;
+  // True when a code.* capability matched inside a test-suite file that no
+  // consumer-facing entrypoint can statically reach. The finding is emitted at
+  // demoted severity and the risk roll-up keeps it out of the capability
+  // co-occurrence escalation: a test runner's own tests legitimately spawn
+  // processes and read the environment.
+  testScoped?: boolean;
 }
 
 export type FindingDiffStatus = DiffEntry["status"] | "unknown";
@@ -143,7 +149,12 @@ function tarSuspiciousReason(entry: TarSuspiciousEntry): string {
 // This only changes how findings roll up into a level; the findings themselves
 // are unchanged, so the deterministic-findings-are-authoritative boundary holds.
 export function computeRisk(
-  findings: Array<{ severity?: string | null; ruleId?: string | null; obfuscated?: boolean }>,
+  findings: Array<{
+    severity?: string | null;
+    ruleId?: string | null;
+    obfuscated?: boolean;
+    testScoped?: boolean;
+  }>,
 ): RiskLevel {
   let anchorRisk: RiskLevel = "low";
   // Per-capability roll-up: max severity plus whether any matching finding was
@@ -151,10 +162,16 @@ export function computeRisk(
   // eval/atob on an added file stays high — obfuscation survives base64 wrapping
   // — while a modified-file network read stays medium).
   const capabilities = new Map<string, { risk: RiskLevel; obfuscated: boolean }>();
+  // Test-scoped capabilities score separately: tests legitimately combine
+  // process/env/eval, so their co-occurrence is not the collect-and-exfiltrate
+  // shape. Each still contributes its (already demoted) lone-capability risk.
+  const testCapabilities = new Map<string, RiskLevel>();
   for (const finding of findings) {
     const ruleId = finding.ruleId ?? undefined;
     const risk = severityToRisk(finding.severity);
-    if (ruleId && CODE_CAPABILITY_RULE_IDS.has(ruleId)) {
+    if (ruleId && CODE_CAPABILITY_RULE_IDS.has(ruleId) && finding.testScoped) {
+      testCapabilities.set(ruleId, combineRisk(testCapabilities.get(ruleId), risk));
+    } else if (ruleId && CODE_CAPABILITY_RULE_IDS.has(ruleId)) {
       const prior = capabilities.get(ruleId);
       capabilities.set(ruleId, {
         risk: combineRisk(prior?.risk, risk),
@@ -167,7 +184,19 @@ export function computeRisk(
       anchorRisk = combineRisk(anchorRisk, risk);
     }
   }
-  return combineRisk(anchorRisk, codeCapabilityRisk(capabilities));
+  return combineRisk(
+    anchorRisk,
+    codeCapabilityRisk(capabilities),
+    testCapabilityRisk(testCapabilities),
+  );
+}
+
+function testCapabilityRisk(capabilities: Map<string, RiskLevel>): RiskLevel {
+  let highest: RiskLevel = "low";
+  for (const [ruleId, risk] of capabilities) {
+    highest = combineRisk(highest, ruleId === WEAK_LONE_CAPABILITY ? "low" : risk);
+  }
+  return highest;
 }
 
 function codeCapabilityRisk(

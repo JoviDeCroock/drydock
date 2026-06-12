@@ -3,6 +3,7 @@ import { hasImplicitNodeGypInstall } from "./tar-parser.js";
 import {
   codePatternsFor,
   DETERMINISTIC_RULE_IDS,
+  deterministicFindings,
   JS_PATTERN_SET,
   PYTHON_PATTERN_SET,
   safeJson,
@@ -30,6 +31,10 @@ export function annotateFindingsWithDiffStatus<
   const previousByPath = new Map((options.previousFiles ?? []).map((file) => [file.path, file]));
   const stagedByPath = new Map((options.stagedFiles ?? []).map((file) => [file.path, file]));
   const changedLineCache = new Map<string, Set<number> | null>();
+  const baselineFingerprints = lazyBaselineFingerprints(
+    options.previousFiles ?? [],
+    options.codePatternSet,
+  );
   return findings.map((finding) => {
     const persisted = finding.id ? options.persistedAnnotations?.get(finding.id) : null;
     if (persisted) return { ...finding, ...persisted };
@@ -48,6 +53,7 @@ export function annotateFindingsWithDiffStatus<
           stagedByPath,
           changedLineCache,
           options.codePatternSet,
+          baselineFingerprints,
         ),
     };
   });
@@ -93,10 +99,16 @@ function isFindingOnReleaseDelta(
   stagedByPath: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
   changedLineCache: Map<string, Set<number> | null>,
   codePatternSet: CodePatternSet | undefined,
+  baselineFingerprints: () => Set<string> | null,
 ): boolean {
   if (diffStatus === "added") return true;
   if (diffStatus !== "modified") return false;
-  if (!finding.line) return true;
+  // When line-level evidence is unavailable (no recorded line, binary file, or
+  // missing text samples), fall back to the baseline finding set: if the same
+  // rule already fired on the same file in the baseline version, the capability
+  // pre-existed the release and reads as package context. Without a baseline
+  // counterpart the classification still fails open to release delta.
+  if (!finding.line) return !baselineHasFinding(baselineFingerprints, finding);
 
   const changedLines = changedStagedLinesForPath(
     finding.file,
@@ -104,7 +116,7 @@ function isFindingOnReleaseDelta(
     stagedByPath,
     changedLineCache,
   );
-  if (!changedLines) return true;
+  if (!changedLines) return !baselineHasFinding(baselineFingerprints, finding);
   if (changedLines.has(finding.line)) return true;
   return findingPatternMatchesChangedLine(
     finding,
@@ -203,6 +215,45 @@ function patternsForFinding(
     default:
       return [];
   }
+}
+
+// Deterministic findings recomputed over the baseline files, keyed by
+// ruleId + file. Computed lazily because most scans resolve every finding
+// through line-level diff evidence and never need the baseline pass.
+function lazyBaselineFingerprints(
+  previousFiles: Array<Pick<FileRecord, "path" | "textSample" | "flags">>,
+  codePatternSet: CodePatternSet | undefined,
+): () => Set<string> | null {
+  let computed: Set<string> | null | undefined;
+  return () => {
+    if (computed !== undefined) return computed;
+    if (!previousFiles.length) {
+      computed = null;
+      return computed;
+    }
+    const baselineRecords: FileRecord[] = previousFiles.map((file) => ({
+      path: file.path,
+      size: 0,
+      sha256: "",
+      textSample: file.textSample,
+      flags: file.flags,
+    }));
+    const findings = deterministicFindings(baselineRecords, [], null, { codePatternSet });
+    computed = new Set(findings.map((finding) => findingFingerprint(finding)));
+    return computed;
+  };
+}
+
+function baselineHasFinding(
+  baselineFingerprints: () => Set<string> | null,
+  finding: { file: string; ruleId?: string | null },
+): boolean {
+  if (!finding.ruleId) return false;
+  return Boolean(baselineFingerprints()?.has(findingFingerprint(finding)));
+}
+
+function findingFingerprint(finding: { file: string; ruleId?: string | null }): string {
+  return `${finding.ruleId ?? ""}\u0000${finding.file}`;
 }
 
 export function isReleaseDeltaStatus(status: FindingDiffStatus): boolean {
