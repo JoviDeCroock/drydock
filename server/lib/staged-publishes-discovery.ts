@@ -277,17 +277,22 @@ export async function discoverAndQueueStagedPublishes(
     }
   }
 
-  await recordScanEvent(db, {
-    organizationId,
-    actorUserId,
-    type: "staged_publishes.scans_started",
-    metadata: {
-      found: stageIds.length,
-      created: startedScans.length,
-      skipped: stageIds.length - startedScans.length,
-      source: eventSource,
-    },
-  });
+  // Only audit sweeps that start scans: the */15min cron emits one event per
+  // connected org per run, and no-op sweeps were ~97% of all scan_events rows.
+  // Sweep observability itself lives in Workers Logs (staged_publishes.cron.*).
+  if (startedScans.length > 0) {
+    await recordScanEvent(db, {
+      organizationId,
+      actorUserId,
+      type: "staged_publishes.scans_started",
+      metadata: {
+        found: stageIds.length,
+        created: startedScans.length,
+        skipped: stageIds.length - startedScans.length,
+        source: eventSource,
+      },
+    });
+  }
 
   return {
     found: stageIds.length,
