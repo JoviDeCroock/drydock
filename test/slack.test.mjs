@@ -62,6 +62,7 @@ describe("buildSlackAuthorizeUrl", () => {
     expect(url.origin + url.pathname).toBe("https://slack.com/oauth/v2/authorize");
     expect(url.searchParams.get("client_id")).toBe("client-id");
     expect(url.searchParams.get("scope")).toBe(SLACK_OAUTH_SCOPES);
+    expect(url.searchParams.get("scope")).not.toContain("channels:read");
     expect(url.searchParams.get("redirect_uri")).toBe("https://drydock.test/api/v1/slack/callback");
     expect(url.searchParams.get("state")).toBe("state-token");
   });

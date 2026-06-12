@@ -5,14 +5,14 @@ import { errorMessage } from "./errors";
 //
 // Drydock connects a Slack workspace through the "Add to Slack" OAuth v2 flow and
 // posts release alerts with the resulting bot token (`xoxb-…`). We request the
-// minimum scopes for a single public channel:
+// minimum scopes for posting to a manually supplied public channel:
 //   - chat:write          — post messages
 //   - chat:write.public    — post to any *public* channel without an invite
-//   - channels:read        — list public channels for the in-app picker
 // Restricting to public channels is deliberate: chat:write.public means the bot
 // never has to be invited, so delivery to the chosen channel always works.
 
-export const SLACK_OAUTH_SCOPES = "chat:write,chat:write.public,channels:read";
+export const SLACK_CHANNEL_LIST_SCOPE = "channels:read";
+export const SLACK_OAUTH_SCOPES = "chat:write,chat:write.public";
 
 const SLACK_AUTHORIZE_URL = "https://slack.com/oauth/v2/authorize";
 const SLACK_OAUTH_ACCESS_URL = "https://slack.com/api/oauth.v2.access";
@@ -62,6 +62,15 @@ export function buildSlackAuthorizeUrl(input: {
   url.searchParams.set("redirect_uri", input.redirectUri);
   url.searchParams.set("state", input.state);
   return url.toString();
+}
+
+export function canListSlackChannels(scope: string | null): boolean {
+  return (
+    scope
+      ?.split(",")
+      .map((item) => item.trim())
+      .includes(SLACK_CHANNEL_LIST_SCOPE) ?? false
+  );
 }
 
 export interface SlackOAuthResult {

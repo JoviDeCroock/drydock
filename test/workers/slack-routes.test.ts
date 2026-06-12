@@ -47,6 +47,7 @@ async function seedConnection(
   options: {
     token?: string;
     teamId?: string;
+    scope?: string | null;
     channelId?: string | null;
     channelName?: string | null;
     enabled?: boolean;
@@ -59,7 +60,7 @@ async function seedConnection(
     teamId: options.teamId ?? "T0FAKE0001",
     teamName: "Acme",
     botUserId: "U0BOT0001",
-    scope: "chat:write,chat:write.public,channels:read",
+    scope: options.scope ?? "chat:write,chat:write.public,channels:read",
     botTokenCiphertext: encrypted.ciphertext,
     botTokenNonce: encrypted.nonce,
     createdByUserId: null,
@@ -177,6 +178,7 @@ describe("GET /api/v1/slack", () => {
     await seedConnection(owner.personalOrganizationId, {
       channelId: "C0RELEASE",
       channelName: "releases",
+      canListChannels: true,
     });
 
     const res = await call(buildTestApp(owner), "GET", "/api/v1/slack");
@@ -430,6 +432,18 @@ describe("GET /api/v1/slack/channels", () => {
       activeOrganizationId: owner.personalOrganizationId,
     });
     expect(res.status).toBe(403);
+  });
+
+  test("skips Slack API calls when channel list permission is unavailable", async () => {
+    const owner = await seedUser();
+    await seedConnection(owner.personalOrganizationId, {
+      scope: "chat:write,chat:write.public",
+    });
+    globalThis.fetch = vi.fn(async () => jsonResponse({ ok: true }));
+
+    const res = await call(buildTestApp(owner), "GET", "/api/v1/slack/channels");
+    expect(res.status).toBe(403);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });
 

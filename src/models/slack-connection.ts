@@ -6,6 +6,7 @@ export interface SlackConnection {
   teamName: string | null;
   channelId: string | null;
   channelName: string | null;
+  canListChannels: boolean;
   enabled: boolean;
   createdAt: string | number | Date;
 }
@@ -69,6 +70,33 @@ export const SlackConnectionModel = createModel(() => {
   let loadRequestId = 0;
 
   const busy = computed(() => status.value !== "idle");
+
+  async function saveChannel(channelId: string, channelName: string | null): Promise<boolean> {
+    const org = currentOrganizationId;
+    const trimmedChannelId = channelId.trim();
+    if (!trimmedChannelId) return false;
+    status.value = "savingChannel";
+    error.value = null;
+    try {
+      const data = await apiJson<{ connection: SlackConnection }>(
+        `${SLACK_BASE}/channel`,
+        { channelId: trimmedChannelId, channelName },
+        { method: "PUT" },
+      );
+      if (currentOrganizationId !== org) return false;
+      connection.value = data.connection;
+      return true;
+    } catch (err) {
+      if (currentOrganizationId === org) {
+        error.value = errorMessage(err);
+      }
+      return false;
+    } finally {
+      if (currentOrganizationId === org) {
+        status.value = "idle";
+      }
+    }
+  }
 
   function resetChannelPicker() {
     channels.value = [];
@@ -163,28 +191,13 @@ export const SlackConnectionModel = createModel(() => {
     },
 
     async selectChannel(channelId: string): Promise<void> {
-      const org = currentOrganizationId;
       const channel = this.channels.peek().find((option) => option.id === channelId);
       if (!channel) return;
-      this.status.value = "savingChannel";
-      this.error.value = null;
-      try {
-        const data = await apiJson<{ connection: SlackConnection }>(
-          `${SLACK_BASE}/channel`,
-          { channelId: channel.id, channelName: channel.name },
-          { method: "PUT" },
-        );
-        if (currentOrganizationId !== org) return;
-        this.connection.value = data.connection;
-      } catch (err) {
-        if (currentOrganizationId === org) {
-          this.error.value = errorMessage(err);
-        }
-      } finally {
-        if (currentOrganizationId === org) {
-          this.status.value = "idle";
-        }
-      }
+      await saveChannel(channel.id, channel.name);
+    },
+
+    async saveChannelId(channelId: string): Promise<boolean> {
+      return saveChannel(channelId, null);
     },
 
     async disconnect(): Promise<void> {
