@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import {
   LIST_SCANS_DEFAULT_LIMIT,
   LIST_SCANS_MAX_LIMIT,
@@ -11,6 +11,7 @@ import {
   createScanJob,
   enforceRateLimit,
   getNpmConnection,
+  getOrganizationRole,
   getScan,
   listScans,
   recordScanDecision,
@@ -251,7 +252,8 @@ scansRoutes.get("/:id", async (c) => {
 
 scansRoutes.get("/:id/report.json", async (c) => {
   const db = createDb(c.env.DB);
-  const organizationId = await requireActiveOrganization(c, db);
+  const organizationId = await resolveReportExportOrganization(c, db);
+  if (!organizationId) return c.json({ error: "not found" }, 404);
   const detail = await getScan(db, c.req.param("id"), organizationId);
   if (!detail) return c.json({ error: "not found" }, 404);
   if (detail.scan.status !== "complete") {
@@ -269,6 +271,16 @@ scansRoutes.get("/:id/report.json", async (c) => {
     },
   });
 });
+
+async function resolveReportExportOrganization(
+  c: Context<{ Bindings: Bindings; Variables: Variables }>,
+  db: ReturnType<typeof createDb>,
+): Promise<string | null> {
+  const requested = c.req.query("organizationId")?.trim() || null;
+  if (!requested) return requireActiveOrganization(c, db);
+  const session = c.get("authSession");
+  return (await getOrganizationRole(db, requested, session.userId)) ? requested : null;
+}
 
 scansRoutes.get("/:id/versions", async (c) => {
   const db = createDb(c.env.DB);

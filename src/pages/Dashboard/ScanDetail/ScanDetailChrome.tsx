@@ -69,7 +69,7 @@ export function ScanDetailHeader({
             <LinkButton
               variant="ghost"
               size="sm"
-              href={`/api/v1/scans/${detail.scan.id}/report.json`}
+              href={reportExportHref(detail)}
               download={reportExportFilename(detail.scan)}
             >
               Export JSON
@@ -84,6 +84,12 @@ export function ScanDetailHeader({
       ) : null}
     </header>
   );
+}
+
+function reportExportHref(detail: PersistedScanDetail): string {
+  const href = `/api/v1/scans/${encodeURIComponent(detail.scan.id)}/report.json`;
+  const organizationId = detail.scan.organizationId;
+  return organizationId ? `${href}?organizationId=${encodeURIComponent(organizationId)}` : href;
 }
 
 export function VersionPickerSkeleton({ stagedVersion }: { stagedVersion: string | null }) {

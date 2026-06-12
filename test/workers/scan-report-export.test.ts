@@ -1,7 +1,13 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
-import { createDb, createScanJob, ensurePersonalOrganization, persistScan } from "../../server/db";
+import {
+  createDb,
+  createOrganization,
+  createScanJob,
+  ensurePersonalOrganization,
+  persistScan,
+} from "../../server/db";
 import * as schema from "../../server/db/schema";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
@@ -37,10 +43,17 @@ function buildTestApp(session: { userId: string }) {
   return app;
 }
 
-async function getReport(app: Hono<{ Bindings: Bindings; Variables: Variables }>, scanId: string) {
+async function getReport(
+  app: Hono<{ Bindings: Bindings; Variables: Variables }>,
+  scanId: string,
+  options: { organizationId?: string } = {},
+) {
   const ctx = createExecutionContext();
+  const query = options.organizationId
+    ? `?organizationId=${encodeURIComponent(options.organizationId)}`
+    : "";
   const res = await app.fetch(
-    new Request(`http://test.local/api/v1/scans/${scanId}/report.json`, { method: "GET" }),
+    new Request(`http://test.local/api/v1/scans/${scanId}/report.json${query}`, { method: "GET" }),
     env,
     ctx,
   );
@@ -141,6 +154,24 @@ describe("scan report JSON export", () => {
     expect(await again.text()).toBe(text);
   });
 
+  test("uses an organization query for native browser downloads", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const organizationId = await createOrganization(db, {
+      ownerUserId: owner.userId,
+      name: "Team workspace",
+    });
+    const scanId = await seedCompletedScan({ ...owner, organizationId });
+
+    expect((await getReport(buildTestApp(owner), scanId)).status).toBe(404);
+
+    const res = await getReport(buildTestApp(owner), scanId, { organizationId });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      package: { name: "@org/pkg", stagedVersion: "1.1.0" },
+    });
+  });
+
   test("does not leak another organization's report", async () => {
     const owner = await seedUser();
     const scanId = await seedCompletedScan(owner);
@@ -148,6 +179,11 @@ describe("scan report JSON export", () => {
 
     const res = await getReport(buildTestApp(outsider), scanId);
     expect(res.status).toBe(404);
+
+    const queried = await getReport(buildTestApp(outsider), scanId, {
+      organizationId: owner.organizationId,
+    });
+    expect(queried.status).toBe(404);
   });
 
   test("refuses export for a scan that has not completed", async () => {
