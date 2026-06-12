@@ -1,5 +1,5 @@
 export interface RegistryMetadata {
-  versions?: Record<string, { dist?: { tarball?: string } }>;
+  versions?: Record<string, { dist?: { tarball?: string; shasum?: string } }>;
   "dist-tags"?: Record<string, string>;
   time?: Record<string, string>;
 }
@@ -16,6 +16,13 @@ export interface BaselineVersionSelection {
   source: BaselineSelectionSource;
   distTagVersion: string | null;
   reason: string;
+}
+
+export class PackageMetadataFetchError extends Error {
+  constructor(public status: number) {
+    super(`metadata fetch failed: ${status}`);
+    this.name = "PackageMetadataFetchError";
+  }
 }
 
 const NPM_PACKAGE_NAME_RE = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
@@ -44,7 +51,7 @@ export async function fetchPackageMetadata(
   const res = await fetch(`${registry}/${encodeURIComponent(name).replace(/^%40/, "@")}`, {
     headers,
   });
-  if (!res.ok) throw new Error(`metadata fetch failed: ${res.status}`);
+  if (!res.ok) throw new PackageMetadataFetchError(res.status);
   return (await res.json()) as RegistryMetadata;
 }
 

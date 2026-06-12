@@ -149,6 +149,17 @@ export const scans = sqliteTable(
       onDelete: "set null",
     }),
     decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
+    // Auto-detected npm outcome for the staged version, deliberately separate
+    // from `decision` (a human audit record): released | released_mismatch |
+    // withdrawn. `staged_shasum` is the shasum npm reported for the stage, kept
+    // as a column so reconciliation can verify the published bytes without
+    // loading summary_json. `stage_missing_since` tracks when the stage first
+    // vanished from the registry listing so a withdrawal is only concluded
+    // after registry propagation lag has passed.
+    releaseStatus: text("release_status"),
+    releasedAt: integer("released_at", { mode: "timestamp_ms" }),
+    stagedShasum: text("staged_shasum"),
+    stageMissingSince: integer("stage_missing_since", { mode: "timestamp_ms" }),
     summaryJson: text("summary_json", { mode: "json" }),
     aiJson: text("ai_json", { mode: "json" }),
     errorJson: text("error_json", { mode: "json" }),

@@ -147,6 +147,77 @@ for (const scenario of scenarios.filter((item) => item.stageId !== uiStageId)) {
   });
 }
 
+test("release reconciliation: a stage approved on npm resolves its scan", async ({
+  browser,
+  baseURL,
+}) => {
+  const { context, page } = await openAuthenticatedPage(browser, baseURL);
+  try {
+    await page.goto("/dashboard");
+    await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible({
+      timeout: 30_000,
+    });
+
+    // The benign-diff scan completed undecided in the scenario test above.
+    const releasedStageId = "stage-benign-diff-000001";
+
+    // "Approve" the stage on the fake registry: it vanishes from the stage
+    // listing and the staged version appears in the packument, exactly like a
+    // maintainer running the npm-side approval with their OTP.
+    const control = await fetch(`${registryUrl}/__control/release/${releasedStageId}`, {
+      method: "POST",
+    });
+    expect(control.status, "fake-registry control release").toBe(200);
+
+    // A manual discovery sweep runs the same reconciliation as the cron.
+    const sweepStatus = await evaluateOnStablePage(
+      page,
+      async () => {
+        const response = await fetch("/api/v1/staged-publishes/scan", { method: "POST" });
+        return response.status;
+      },
+      undefined,
+    );
+    expect(sweepStatus, "manual discovery sweep accepted").toBe(202);
+
+    const listScans = async (filter: string) =>
+      evaluateOnStablePage(
+        page,
+        async (inputFilter) => {
+          const response = await fetch(`/api/v1/scans?filter=${inputFilter}&limit=50`);
+          const body = await response.json().catch(() => null);
+          return { status: response.status, body };
+        },
+        filter,
+      );
+
+    const all = await listScans("all");
+    expect(all.status).toBe(200);
+    const released = (
+      all.body.scans as Array<{
+        id: string;
+        stageId: string;
+        releaseStatus?: string | null;
+        releasedAt?: string | null;
+      }>
+    ).find((scan) => scan.stageId === releasedStageId);
+    expect(released?.releaseStatus, "scan resolved as released").toBe("released");
+    expect(released?.releasedAt, "release timestamp recorded").toBeTruthy();
+
+    // Released scans leave the review queue without a human decision.
+    const undecided = await listScans("undecided");
+    expect(undecided.status).toBe(200);
+    const undecidedIds = (undecided.body.scans as Array<{ id: string }>).map((scan) => scan.id);
+    expect(undecidedIds, "released scan left the review queue").not.toContain(released?.id);
+
+    // The detail header surfaces the auto-detected outcome.
+    await page.goto(`/dashboard/scans/${released?.id}`);
+    await expect(page.getByText("released on npm")).toBeVisible({ timeout: 30_000 });
+  } finally {
+    await context.close();
+  }
+});
+
 test("registry journal limits credential forwarding", async () => {
   const journal = await readJournal();
   expect(journal.some((entry) => entry.path === "/-/whoami")).toBe(true);

@@ -26,6 +26,25 @@ const server = createServer(async (request, response) => {
   const startedAt = Date.now();
 
   try {
+    // Test-only control plane: "approve" a stage the way npm would, so e2e can
+    // exercise release reconciliation. The stage disappears from the listing
+    // and its staged version surfaces in the packument with the staged shasum.
+    const controlReleaseMatch = /^\/__control\/release\/([^/]+)$/.exec(url.pathname);
+    if (request.method === "POST" && controlReleaseMatch) {
+      const scenario = stageById.get(decodeURIComponent(controlReleaseMatch[1]));
+      if (!scenario) {
+        await sendJson(request, response, startedAt, 404, { error: "stage not found" });
+        return;
+      }
+      releaseStage(scenario);
+      await sendJson(request, response, startedAt, 200, {
+        ok: true,
+        packageName: scenario.packageName,
+        version: scenario.staged.version,
+      });
+      return;
+    }
+
     if (request.method !== "GET") {
       await send(request, response, startedAt, 405, { allow: "GET" }, "method not allowed");
       return;
@@ -119,6 +138,21 @@ server.listen(port, host, () => {
 
 process.on("SIGTERM", () => server.close(() => process.exit(0)));
 process.on("SIGINT", () => server.close(() => process.exit(0)));
+
+function releaseStage(scenario) {
+  registry.scenarios = registry.scenarios.filter((item) => item.stageId !== scenario.stageId);
+  stageById.delete(scenario.stageId);
+  const packument = packages.get(scenario.packageName) ?? {
+    name: scenario.packageName,
+    distTags: {},
+    versions: {},
+    times: {},
+  };
+  packument.versions[scenario.staged.version] = scenario.staged;
+  packument.distTags[scenario.tag || "latest"] = scenario.staged.version;
+  packument.times[scenario.staged.version] = new Date().toISOString();
+  packages.set(scenario.packageName, packument);
+}
 
 function buildPackageMap(scenarios) {
   const byPackage = new Map();
@@ -248,6 +282,9 @@ async function send(request, response, startedAt, status, headers, body) {
 }
 
 async function record(request, startedAt, status) {
+  // The credential-forwarding journal assertions only care about traffic the
+  // Worker generates; the test-only control plane is not registry behavior.
+  if (request.url?.startsWith("/__control/")) return;
   const entry = {
     at: new Date().toISOString(),
     method: request.method,

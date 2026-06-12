@@ -5,11 +5,15 @@ vi.mock("cloudflare:workers", () => ({
 }));
 
 const dbMock = vi.hoisted(() => ({
+  clearScanStageMissing: vi.fn(),
   createScanJob: vi.fn(),
   deletePendingScanJob: vi.fn(),
   listExistingScanStageIds: vi.fn(),
+  listScansAwaitingRelease: vi.fn(),
   markNpmConnectionUsed: vi.fn(),
+  markScanStageMissing: vi.fn(),
   recordScanEvent: vi.fn(),
+  recordScanReleaseOutcome: vi.fn(),
   updateNpmConnectionValidation: vi.fn(),
 }));
 const npmConnectionMock = vi.hoisted(() => ({
@@ -45,6 +49,7 @@ beforeEach(() => {
     status: "valid",
     capabilities: { registryAuth: true, stagedListAccess: true, registryUrl: "" },
   });
+  dbMock.listScansAwaitingRelease.mockResolvedValue([]);
 });
 
 afterEach(() => {

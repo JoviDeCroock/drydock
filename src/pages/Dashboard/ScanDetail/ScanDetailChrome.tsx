@@ -21,6 +21,8 @@ export function ScanDetailHeader({
 } = {}) {
   const decision = detail?.scan.decision;
   const decidedAt = detail?.scan.decidedAt;
+  const releaseStatus = detail?.scan.releaseStatus;
+  const releasedAt = detail?.scan.releasedAt;
   const isComplete = detail?.scan.status === "complete";
   const releaseRisk = isComplete ? (detail.riskSummary?.releaseRisk ?? detail.scan.risk) : null;
   const dashboardHref = getDashboardReturnUrl();
@@ -51,7 +53,7 @@ export function ScanDetailHeader({
           <LoadingLine size="inline">Loading saved review</LoadingLine>
         )}
       </div>
-      {decision || onDecideClick || (detail && isComplete) ? (
+      {decision || releaseStatus || onDecideClick || (detail && isComplete) ? (
         <div class="flex flex-wrap items-start gap-3">
           {decision ? (
             <div class="flex flex-col items-end gap-1">
@@ -61,6 +63,30 @@ export function ScanDetailHeader({
               {decidedAt ? (
                 <span class="font-mono text-[11px] text-ink-subtle">
                   {formatDateTime(decidedAt)}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          {releaseStatus ? (
+            <div class="flex flex-col items-end gap-1">
+              <Badge
+                tone={
+                  releaseStatus === "released"
+                    ? "ok"
+                    : releaseStatus === "released_mismatch"
+                      ? "critical"
+                      : "neutral"
+                }
+              >
+                {releaseStatus === "released"
+                  ? "released on npm"
+                  : releaseStatus === "released_mismatch"
+                    ? "release mismatch"
+                    : "stage withdrawn"}
+              </Badge>
+              {releasedAt ? (
+                <span class="font-mono text-[11px] text-ink-subtle">
+                  {formatDateTime(releasedAt)}
                 </span>
               ) : null}
             </div>

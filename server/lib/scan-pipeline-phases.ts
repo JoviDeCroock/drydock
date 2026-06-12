@@ -266,6 +266,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     previousFiles: findings.redactedPreviousFiles,
     diff: diff.fileDiff,
     findings: findings.ruleFindings,
+    stagedShasum: readStagedShasum(findings.redactedDetails),
     codePatternSet: adapter.codePatternSet,
     riskSummary: args.riskSummary,
     report: { version: reportPayload.version, digest: reportDigest },
@@ -273,6 +274,14 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
   });
 
   return { result, persisted: persisted.persisted };
+}
+
+// The stage's tarball shasum (npm reports it on the stage object) is persisted
+// as its own column so post-publish reconciliation can verify the released
+// bytes without rehydrating the summary JSON.
+function readStagedShasum(details: Record<string, unknown> | null): string | null {
+  const shasum = details?.shasum;
+  return typeof shasum === "string" && shasum ? shasum : null;
 }
 
 export interface RecordCompletionArgs {

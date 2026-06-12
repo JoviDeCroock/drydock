@@ -378,7 +378,7 @@ function ScanTable({ scans }: { scans: ScanListItem[] }) {
                 <ScanStatusBadge status={scan.status} />
               </Td>
               <Td>
-                <DecisionBadge decision={scan.decision} />
+                <DecisionBadge decision={scan.decision} releaseStatus={scan.releaseStatus} />
               </Td>
             </tr>
           ))}
@@ -408,9 +408,20 @@ function ScanChangedCell({ scan }: { scan: ScanListItem }) {
   );
 }
 
-function DecisionBadge({ decision }: { decision?: string | null }) {
+// A human decision always wins the cell; otherwise the auto-detected registry
+// outcome explains why a scan left (or must stay in) the review queue.
+function DecisionBadge({
+  decision,
+  releaseStatus,
+}: {
+  decision?: string | null;
+  releaseStatus?: string | null;
+}) {
   if (decision === "publish") return <Badge tone="ok">approved</Badge>;
   if (decision === "no_publish") return <Badge tone="critical">blocked</Badge>;
+  if (releaseStatus === "released") return <Badge tone="ok">released</Badge>;
+  if (releaseStatus === "released_mismatch") return <Badge tone="critical">release mismatch</Badge>;
+  if (releaseStatus === "withdrawn") return <Badge tone="neutral">withdrawn</Badge>;
   return <Badge tone="neutral">undecided</Badge>;
 }
 

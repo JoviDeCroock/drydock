@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import {
   annotateFindingsWithDiffStatus,
   type CodePatternSet,
@@ -12,6 +12,7 @@ import {
   type PackageJsonSummary,
 } from "../lib/review";
 import { normalizeScanRiskBreakdown, type ScanRiskBreakdown } from "../lib/risk";
+import type { ScanReleaseStatus } from "../lib/release-detection";
 import {
   loadScanArtifactFile,
   loadScanArtifacts,
@@ -38,6 +39,7 @@ export interface PersistedScanInput {
   previousFiles?: FileRecord[];
   diff: DiffEntry[];
   findings: Finding[];
+  stagedShasum?: string | null;
   codePatternSet?: CodePatternSet;
   riskSummary?: ScanRiskBreakdown;
   report?: { version: number; digest: string };
@@ -230,6 +232,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     packageName: input.packageJson?.name || null,
     stagedVersion: input.packageJson?.version || null,
     previousVersion: input.previousPackageJson?.version || null,
+    stagedShasum: input.stagedShasum ?? null,
     risk: input.risk,
     status: input.status,
     summaryJson: withFindingAnnotations(input.summary, findingAnnotations),
@@ -258,6 +261,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
       packageName: scanValues.packageName,
       stagedVersion: scanValues.stagedVersion,
       previousVersion: scanValues.previousVersion,
+      stagedShasum: scanValues.stagedShasum,
       risk: scanValues.risk,
       status: scanValues.status,
       summaryJson: scanValues.summaryJson,
@@ -375,6 +379,8 @@ export interface ListScansResult {
     decisionReason: string | null;
     decidedByUserId: string | null;
     decidedAt: Date | null;
+    releaseStatus: string | null;
+    releasedAt: Date | null;
     changedFileCount: number;
     findingCount: number;
     riskSummary: ScanRiskSummary | null;
@@ -403,8 +409,15 @@ export async function listScans(
   const decisionFilter = options.decisionFilter ?? "undecided";
 
   const conditions = [eq(scans.organizationId, organizationId)];
-  if (decisionFilter === "undecided") conditions.push(isNull(scans.decision));
-  else if (decisionFilter === "publish") conditions.push(eq(scans.decision, "publish"));
+  // "undecided" is the review queue: scans the registry already resolved
+  // (released or withdrawn) no longer need a human verdict, but a shasum
+  // mismatch demands attention and stays in the queue.
+  if (decisionFilter === "undecided") {
+    conditions.push(
+      isNull(scans.decision),
+      or(isNull(scans.releaseStatus), eq(scans.releaseStatus, "released_mismatch"))!,
+    );
+  } else if (decisionFilter === "publish") conditions.push(eq(scans.decision, "publish"));
   else if (decisionFilter === "no_publish") conditions.push(eq(scans.decision, "no_publish"));
 
   if (options.cursor) {
@@ -433,6 +446,8 @@ export async function listScans(
       decisionReason: scans.decisionReason,
       decidedByUserId: scans.decidedByUserId,
       decidedAt: scans.decidedAt,
+      releaseStatus: scans.releaseStatus,
+      releasedAt: scans.releasedAt,
       changedFileCount: scans.changedFileCount,
       findingCount: scans.findingCount,
       riskSummaryJson: scans.riskSummaryJson,
@@ -472,6 +487,8 @@ export async function listScans(
       decisionReason: row.decisionReason,
       decidedByUserId: row.decidedByUserId,
       decidedAt: row.decidedAt,
+      releaseStatus: row.releaseStatus,
+      releasedAt: row.releasedAt,
       changedFileCount: row.changedFileCount ?? 0,
       findingCount: row.findingCount ?? 0,
       riskSummary: row.status === "complete" ? readScanRiskBreakdown(row.riskSummaryJson) : null,
@@ -568,6 +585,107 @@ function readPersistedListRiskSummary(summaryJson: unknown): ScanRiskBreakdown |
     contextFindingCount: partial.contextFindingCount,
     unknownFindingCount: partial.unknownFindingCount,
   };
+}
+
+export interface ReconcilableScan {
+  id: string;
+  stageId: string;
+  packageName: string | null;
+  stagedVersion: string | null;
+  stagedShasum: string | null;
+  stageMissingSince: Date | null;
+}
+
+/**
+ * Completed npm scans whose release outcome is still unknown. Workflow-gate
+ * scans are excluded: their lifecycle is the GitHub gate decision, not a stage
+ * sitting in the registry. Decided scans are included on purpose — a release
+ * after a `no_publish` verdict is exactly the event worth recording.
+ */
+export async function listScansAwaitingRelease(
+  db: AppDb,
+  organizationId: string,
+): Promise<ReconcilableScan[]> {
+  return db
+    .select({
+      id: scans.id,
+      stageId: scans.stageId,
+      packageName: scans.packageName,
+      stagedVersion: scans.stagedVersion,
+      stagedShasum: scans.stagedShasum,
+      stageMissingSince: scans.stageMissingSince,
+    })
+    .from(scans)
+    .where(
+      and(
+        eq(scans.organizationId, organizationId),
+        eq(scans.status, "complete"),
+        isNull(scans.releaseStatus),
+        isNull(scans.gateId),
+        inArray(scans.source, ["manual", "auto_discovery"]),
+      ),
+    );
+}
+
+export async function markScanStageMissing(
+  db: AppDb,
+  organizationId: string,
+  scanIds: string[],
+  when: Date,
+) {
+  if (!scanIds.length) return;
+  await db
+    .update(scans)
+    .set({ stageMissingSince: when, updatedAt: when })
+    .where(
+      and(
+        inArray(scans.id, scanIds),
+        eq(scans.organizationId, organizationId),
+        isNull(scans.stageMissingSince),
+      ),
+    );
+}
+
+export async function clearScanStageMissing(db: AppDb, organizationId: string, scanIds: string[]) {
+  if (!scanIds.length) return;
+  await db
+    .update(scans)
+    .set({ stageMissingSince: null, updatedAt: new Date() })
+    .where(
+      and(
+        inArray(scans.id, scanIds),
+        eq(scans.organizationId, organizationId),
+        isNotNull(scans.stageMissingSince),
+      ),
+    );
+}
+
+export async function recordScanReleaseOutcome(
+  db: AppDb,
+  input: {
+    scanId: string;
+    organizationId: string;
+    releaseStatus: ScanReleaseStatus;
+    releasedAt: Date | null;
+  },
+): Promise<boolean> {
+  const updated = await db
+    .update(scans)
+    .set({
+      releaseStatus: input.releaseStatus,
+      releasedAt: input.releasedAt,
+      stageMissingSince: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(scans.id, input.scanId),
+        eq(scans.organizationId, input.organizationId),
+        isNull(scans.releaseStatus),
+      ),
+    )
+    .returning({ id: scans.id });
+  return updated.length > 0;
 }
 
 export interface RecordScanDecisionInput {

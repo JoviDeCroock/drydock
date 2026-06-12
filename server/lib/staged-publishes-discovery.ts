@@ -1,9 +1,13 @@
 import {
+  clearScanStageMissing,
   createScanJob,
   deletePendingScanJob,
   listExistingScanStageIds,
+  listScansAwaitingRelease,
   markNpmConnectionUsed,
+  markScanStageMissing,
   recordScanEvent,
+  recordScanReleaseOutcome,
   updateNpmConnectionValidation,
   type AppDb,
   type ScanSource,
@@ -14,6 +18,9 @@ import {
   type NpmCredentialValidation,
 } from "./npm-connection";
 import { notifyNpmConnectionExpired } from "./notify";
+import { emitOperationalEvent } from "./observability";
+import { classifyDisappearedStage } from "./release-detection";
+import { fetchPackageMetadata, PackageMetadataFetchError, type RegistryMetadata } from "./registry";
 import { executeScanJob, type ScanQueueMessage } from "./scan-job";
 import {
   listStagedPublishes,
@@ -294,6 +301,15 @@ export async function discoverAndQueueStagedPublishes(
     });
   }
 
+  await reconcileDisappearedStages({
+    db,
+    env,
+    organizationId,
+    connection,
+    liveStageIds: new Set(stageIds),
+    eventSource,
+  });
+
   return {
     found: stageIds.length,
     created: startedScans.length,
@@ -301,6 +317,114 @@ export async function discoverAndQueueStagedPublishes(
     queued: Boolean(env.SCAN_QUEUE),
     scans: startedScans,
   };
+}
+
+/**
+ * Resolve open scans whose stage vanished from the registry listing. npm
+ * removes a stage on approve *and* reject without any status signal, so the
+ * packument is consulted to disambiguate: the staged version appearing with
+ * the staged shasum means it was released; absence (after a confirmation
+ * window for registry lag) means it was withdrawn. The outcome is recorded
+ * separately from the human `decision` — it is an observation, not a verdict.
+ */
+export async function reconcileDisappearedStages(input: {
+  db: AppDb;
+  env: Cloudflare.Env;
+  organizationId: string;
+  connection: TokenForDiscovery;
+  liveStageIds: Set<string>;
+  eventSource: string;
+}): Promise<void> {
+  const { db, env, organizationId, connection, liveStageIds, eventSource } = input;
+  const open = await listScansAwaitingRelease(db, organizationId);
+
+  // A stage that reappears after a listing blip must not keep accruing time
+  // toward the withdrawal confirmation window.
+  const reappeared = open
+    .filter((scan) => liveStageIds.has(scan.stageId) && scan.stageMissingSince)
+    .map((scan) => scan.id);
+  await clearScanStageMissing(db, organizationId, reappeared);
+
+  const missing = open.filter((scan) => !liveStageIds.has(scan.stageId));
+  if (!missing.length) return;
+
+  const now = new Date();
+  const pendingIds: string[] = [];
+  const metadataByPackage = new Map<string, RegistryMetadata | null>();
+
+  for (const scan of missing) {
+    let metadata: RegistryMetadata | null = null;
+    if (scan.packageName) {
+      if (metadataByPackage.has(scan.packageName)) {
+        metadata = metadataByPackage.get(scan.packageName) ?? null;
+      } else {
+        try {
+          metadata = await fetchPackageMetadata(env, scan.packageName, {
+            npmToken: connection.token,
+            npmRegistry: connection.registryUrl,
+          });
+        } catch (err) {
+          // A missing packument just means nothing is published yet; anything
+          // else is transient — leave the scan for the next sweep.
+          if (!(err instanceof PackageMetadataFetchError && err.status === 404)) {
+            emitOperationalEvent("warn", "release_reconciliation.metadata_fetch_failed", {
+              organizationId,
+              scanId: scan.id,
+            });
+            continue;
+          }
+          metadata = null;
+        }
+        metadataByPackage.set(scan.packageName, metadata);
+      }
+    }
+
+    const outcome = classifyDisappearedStage({
+      stagedVersion: scan.stagedVersion,
+      stagedShasum: scan.stagedShasum,
+      metadata,
+      stageMissingSince: scan.stageMissingSince,
+      now,
+    });
+
+    if (outcome.status === "pending") {
+      pendingIds.push(scan.id);
+      continue;
+    }
+
+    const releasedAt = outcome.status === "withdrawn" ? null : (outcome.publishedAt ?? now);
+    const recorded = await recordScanReleaseOutcome(db, {
+      scanId: scan.id,
+      organizationId,
+      releaseStatus: outcome.status,
+      releasedAt,
+    });
+    if (!recorded) continue;
+
+    const eventType =
+      outcome.status === "released"
+        ? "scan.release_detected"
+        : outcome.status === "released_mismatch"
+          ? "scan.release_mismatch_detected"
+          : "scan.stage_withdrawn";
+    await recordScanEvent(db, {
+      organizationId,
+      scanId: scan.id,
+      type: eventType,
+      metadata: {
+        stageId: scan.stageId,
+        packageName: scan.packageName,
+        stagedVersion: scan.stagedVersion,
+        source: eventSource,
+        ...(outcome.status === "released" ? { shasumVerified: outcome.shasumVerified } : {}),
+        ...(outcome.status === "released_mismatch"
+          ? { stagedShasum: scan.stagedShasum, publishedShasum: outcome.publishedShasum }
+          : {}),
+      },
+    });
+  }
+
+  await markScanStageMissing(db, organizationId, pendingIds, now);
 }
 
 async function listAllStagedPublishes(

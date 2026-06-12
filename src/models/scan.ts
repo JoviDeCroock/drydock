@@ -43,6 +43,7 @@ export interface ScanFileResponse {
 }
 
 export type ScanDecision = "publish" | "no_publish";
+export type ScanReleaseStatus = "released" | "released_mismatch" | "withdrawn";
 export type ScanDecisionFilter = "undecided" | "publish" | "no_publish" | "all";
 
 export interface ScanRiskSummary {
@@ -69,6 +70,8 @@ export interface ScanListItem {
   decisionReason?: string | null;
   decidedByUserId?: string | null;
   decidedAt?: string | number | Date | null;
+  releaseStatus?: ScanReleaseStatus | string | null;
+  releasedAt?: string | number | Date | null;
   changedFileCount?: number;
   findingCount?: number;
   riskSummary?: ScanRiskSummary | null;
