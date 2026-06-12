@@ -244,7 +244,7 @@ export type DecisionStatus = "idle" | "saving" | "error";
 // fixed rate) up to the max, and resets on success. A scan that never reaches
 // a terminal status stops polling entirely after the stall window; the UI
 // offers a manual resume via `resumePolling()`.
-export const SCAN_POLL_BASE_DELAY_MS = 2_500;
+export const SCAN_POLL_BASE_DELAY_MS = 10_000;
 export const SCAN_POLL_MAX_DELAY_MS = 30_000;
 export const SCAN_POLL_STALL_AFTER_MS = 10 * 60_000;
 
