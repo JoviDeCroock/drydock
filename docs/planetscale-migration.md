@@ -36,30 +36,30 @@ large redacted samples.
 
 ## Target Shape
 
-Default target: PlanetScale MySQL-compatible database reached from the
-Cloudflare Worker through Hyperdrive, with Drizzle's MySQL schema and driver.
-Cloudflare recommends Hyperdrive for external MySQL/Postgres connections from
-Workers, and its PlanetScale guide supports either Hyperdrive or the
-PlanetScale serverless driver. Use Hyperdrive first because this app is already
-Cloudflare-first and `wrangler.jsonc` already enables `nodejs_compat`.
+Default target: PlanetScale Postgres reached from the Cloudflare Worker through
+Hyperdrive, with Drizzle's PostgreSQL schema and driver. Cloudflare recommends
+using Hyperdrive with a direct PostgreSQL driver such as `node-postgres` or
+Postgres.js for PlanetScale Postgres rather than the PlanetScale serverless
+driver. Use Hyperdrive first because this app is already Cloudflare-first and
+`wrangler.jsonc` already enables `nodejs_compat`.
 
-If the execution-time spike chooses PlanetScale Postgres instead, keep the same
-phases and safety gates but swap the schema package, Drizzle driver, migration
-folder, and Better Auth adapter provider accordingly.
+MySQL/Vitess is no longer the default migration target. Keep it only as a
+fallback if the pre-migration spike finds a concrete PlanetScale Postgres
+blocker.
 
 Expected application changes:
 
 - Add a database backend selector with modes like `d1`, `planetscale`, and
   `dual`.
 - Split the D1-specific schema from the target schema, for example
-  `server/db/schema.d1.ts` and `server/db/schema.planetscale.ts`, or create a
-  shared logical schema layer with dialect-specific table declarations.
-- Add a new migration output folder such as `drizzle-planetscale/`.
+  `server/db/schema.d1.ts` and `server/db/schema.planetscale-pg.ts`, or create
+  a shared logical schema layer with dialect-specific table declarations.
+- Add a new migration output folder such as `drizzle-planetscale-postgres/`.
 - Update the production database factory in `server/db/client.ts` so callers
   still receive an `AppDb`, while the factory hides D1 versus PlanetScale
   construction.
-- Update Better Auth's Drizzle adapter provider from `sqlite` to the selected
-  target provider at cutover.
+- Update Better Auth's Drizzle adapter provider from `sqlite` to `pg` at
+  cutover.
 - Keep local and Worker tests able to run against D1 until the PlanetScale test
   harness exists.
 
@@ -67,17 +67,17 @@ Expected application changes:
 
 Make these decisions before writing migration code:
 
-1. Confirm PlanetScale MySQL versus PlanetScale Postgres.
-2. Confirm the Worker connection path: Hyperdrive plus native driver by default;
-   PlanetScale serverless driver only if Hyperdrive cannot satisfy the runtime
-   or transaction needs.
-3. Decide whether the target schema contains database-enforced foreign keys.
-   Initial recommendation: omit `FOREIGN KEY` constraints and keep explicit
-   indexes plus application-level cleanup, matching today's D1 behavior and
-   PlanetScale's constraint-free operating model.
-4. Choose timestamp storage. The safest target is a millisecond-preserving type
-   that round-trips as `Date` in current code, such as MySQL `datetime(3)`, with
-   export validation normalized back to epoch milliseconds.
+1. Confirm there are no PlanetScale Postgres blockers for Workers runtime,
+   Hyperdrive, migrations, branching, backups, and operational limits.
+2. Confirm the Worker connection path: Hyperdrive plus `node-postgres` by
+   default; Postgres.js only if the spike shows better runtime behavior.
+3. Decide when to enable database-enforced foreign keys. Initial recommendation:
+   generate the Postgres schema with explicit constraints after validating and
+   cleaning the D1 export, but keep application-level cleanup paths because the
+   cutover should not rely on cascades for correctness.
+4. Choose timestamp storage. The safest target is `timestamptz(3)` with Drizzle
+   `mode: "date"`, with export validation normalized back to epoch
+   milliseconds.
 5. Define the rollback retention period. Initial recommendation: keep D1
    dual-written and restorable for at least 14 days after full read cutover.
 
@@ -85,30 +85,29 @@ Make these decisions before writing migration code:
 
 The current schema uses `drizzle-orm/sqlite-core`, D1's `drizzle-orm/d1`
 driver, and `drizzle-kit` with `dialect: "sqlite"` and `driver: "d1-http"`.
-The target schema must be generated separately.
+The Postgres target schema must be generated separately.
 
 Key conversion work:
 
-- Replace `sqliteTable` declarations with target dialect declarations.
-- Replace indexed `text` columns with bounded `varchar` columns where MySQL
-  requires indexable lengths, especially primary keys, unique emails, foreign
-  key-like IDs, stage IDs, package names, repository names, and status fields.
-- Keep long unindexed values as long text equivalents: reasons, evidence,
-  ciphertext, nonces, serialized errors, and large JSON payloads.
-- Move JSON columns from SQLite text JSON mode to the target JSON type only
-  after verifying Drizzle and Better Auth return the same shapes the app expects.
-- Replace SQLite boolean integers with the target boolean or tinyint mapping.
-- Audit every `.returning()` call. MySQL paths generally need affected-row checks
-  plus follow-up `select` queries, and compare-and-set update helpers must keep
-  their current concurrency semantics.
+- Replace `sqliteTable` declarations with `pgTable` declarations.
+- Keep semantically unbounded values as `text`: reasons, evidence, ciphertext,
+  nonces, serialized errors, and large string payloads. Use bounded `varchar`
+  only where the value already has a real domain limit, such as IDs, status
+  fields, roles, and short provider names.
+- Move JSON columns from SQLite text JSON mode to `jsonb` only after verifying
+  Drizzle and Better Auth return the same shapes the app expects.
+- Replace SQLite boolean integers with Postgres `boolean`.
+- Preserve `.returning()` where Postgres supports it, but still audit every
+  compare-and-set update helper so affected-row checks and concurrency semantics
+  remain explicit.
 - Audit `db.batch(...)` call sites. D1 batching does not map one-for-one to all
-  target drivers; use transactions where the target supports them and explicit
-  ordered writes where it does not.
+  target drivers; use Postgres transactions where the writes must be atomic and
+  explicit ordered writes where they do not.
 - Remove or rename D1-specific insert chunking such as `chunkForD1` once the
-  target parameter limits are known. Keep chunking for large scan rows if it
-  still protects latency and packet size.
+  target parameter and payload limits are known. Keep chunking for large scan
+  rows if it still protects latency and memory use.
 - Re-check raw SQL fragments like `sql\`${rateLimits.count} + 1\`` against the
-  target dialect.
+  Postgres dialect.
 - Update Better Auth tables and adapter provider in the same branch as the
   target schema.
 
@@ -139,7 +138,7 @@ samples are already in R2 and the SQL migration mostly moves compact metadata.
    environment-specific binding, leaving `DB` intact.
 4. Add target-only secrets and document rotation.
 5. Generate target migrations from the target Drizzle schema into
-   `drizzle-planetscale/`; do not hand-write migrations.
+   `drizzle-planetscale-postgres/`; do not hand-write migrations.
 6. Apply target migrations to a development branch first, then promote through
    PlanetScale's deployment workflow.
 
@@ -297,11 +296,12 @@ After cutover:
 
 ## Known Risks
 
-- MySQL does not preserve every SQLite/Drizzle behavior. `.returning()`,
-  `db.batch`, JSON mode, boolean mode, timestamp mode, and conflict/upsert
-  behavior need focused tests.
-- PlanetScale foreign-key constraints are an explicit database choice. If they
-  remain disabled, target DDL must not generate `FOREIGN KEY` constraints.
+- Postgres does not preserve every SQLite/Drizzle behavior. JSON mode, boolean
+  mode, timestamp mode, conflict/upsert behavior, transactions, and constraint
+  enforcement need focused tests.
+- PlanetScale Postgres foreign-key constraints are an explicit cutover choice.
+  If they are enabled, historical D1 rows must be cleaned and validated before
+  import so constraints do not block the final delta.
 - Existing code intentionally cleans up child rows in application code. That
   behavior must stay correct even if the target database later enables
   constraints.
@@ -323,9 +323,11 @@ After cutover:
   https://developers.cloudflare.com/workers/databases/connecting-to-databases/
 - Cloudflare Workers best practice for external databases:
   https://developers.cloudflare.com/workers/best-practices/workers-best-practices/#use-hyperdrive-for-external-database-connections
-- Drizzle PlanetScale guide:
-  https://orm.drizzle.team/docs/get-started/planetscale-new
-- PlanetScale foreign-key constraints:
-  https://planetscale.com/docs/vitess/foreign-key-constraints
-- PlanetScale constraint-free referential integrity:
-  https://planetscale.com/docs/vitess/operating-without-foreign-key-constraints
+- Cloudflare Hyperdrive PlanetScale Postgres guide:
+  https://developers.cloudflare.com/hyperdrive/examples/connect-to-postgres/postgres-database-providers/planetscale-postgres/
+- PlanetScale Postgres docs:
+  https://planetscale.com/docs/postgres
+- PlanetScale Postgres with Drizzle:
+  https://planetscale.com/docs/postgres/tutorials/planetscale-postgres-drizzle
+- Drizzle PlanetScale Postgres guide:
+  https://orm.drizzle.team/docs/connect-planetscale-postgres
