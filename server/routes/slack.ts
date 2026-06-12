@@ -22,6 +22,7 @@ import { roleCanManageIntegrations } from "../lib/roles";
 import { decryptSlackBotToken, encryptSlackBotToken } from "../lib/secret-box";
 import {
   buildSlackAuthorizeUrl,
+  canListSlackChannels,
   exchangeSlackOAuthCode,
   listSlackPublicChannels,
   postSlackMessage,
@@ -145,6 +146,9 @@ slackRoutes.get("/channels", async (c) => {
 
   const secret = await getSlackConnectionSecret(db, organizationId);
   if (!secret) return c.json({ error: "Slack is not connected" }, 404);
+  if (!canListSlackChannels(secret.scope)) {
+    return c.json({ error: "Slack channel list permission is unavailable" }, 403);
+  }
 
   try {
     await enforceRateLimit(db, {
@@ -300,6 +304,7 @@ function publicConnection(connection: SlackConnection) {
     teamName: connection.teamName,
     channelId: connection.channelId,
     channelName: connection.channelName,
+    canListChannels: canListSlackChannels(connection.scope),
     enabled: connection.enabled,
     createdAt: connection.createdAt,
   };

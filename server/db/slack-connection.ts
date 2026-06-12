@@ -8,6 +8,7 @@ export interface SlackConnection {
   teamId: string;
   teamName: string | null;
   botUserId: string | null;
+  scope: string | null;
   channelId: string | null;
   channelName: string | null;
   enabled: boolean;
@@ -23,6 +24,7 @@ export interface SlackConnectionSecret {
   channelId: string | null;
   channelName: string | null;
   enabled: boolean;
+  scope: string | null;
   botTokenCiphertext: string;
   botTokenNonce: string;
 }
@@ -33,6 +35,7 @@ const PUBLIC_COLUMNS = {
   teamId: organizationSlackConnections.teamId,
   teamName: organizationSlackConnections.teamName,
   botUserId: organizationSlackConnections.botUserId,
+  scope: organizationSlackConnections.scope,
   channelId: organizationSlackConnections.channelId,
   channelName: organizationSlackConnections.channelName,
   enabled: organizationSlackConnections.enabled,
@@ -70,6 +73,7 @@ export async function getSlackConnectionSecret(
       channelId: organizationSlackConnections.channelId,
       channelName: organizationSlackConnections.channelName,
       enabled: organizationSlackConnections.enabled,
+      scope: organizationSlackConnections.scope,
       botTokenCiphertext: organizationSlackConnections.botTokenCiphertext,
       botTokenNonce: organizationSlackConnections.botTokenNonce,
     })
