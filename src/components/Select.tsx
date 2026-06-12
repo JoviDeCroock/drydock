@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import type { Signal } from "@preact/signals";
 
 export function Select({
   id,
@@ -8,8 +9,8 @@ export function Select({
   children,
 }: {
   id?: string;
-  value: string;
-  disabled?: boolean;
+  value: string | Signal<string>;
+  disabled?: boolean | Signal<boolean>;
   onChange: (value: string) => void;
   children: ComponentChildren;
 }) {
