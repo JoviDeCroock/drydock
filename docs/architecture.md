@@ -120,7 +120,7 @@ Current async-capable flow:
 4. Pipeline stores derived/redacted report data and marks the scan `complete`.
 5. Terminal failures are persisted as `failed` with structured `error_json`; transient npm/sandbox failures are retried before they are marked failed.
 6. Exhausted retryable Queue jobs are sent to the configured dead-letter queue for operator review.
-7. UI polls `GET /api/v1/scans/:id` until terminal state. The scan detail model polls every 2.5s, doubling the delay on consecutive failures (capped at 30s, reset on success), and stops outright after ~10 minutes without a terminal status — the page then surfaces a warn alert whose "Resume refresh" action (`ScanDetailModel.resumePolling`) refetches immediately and restarts a fresh backoff chain.
+7. UI polls `GET /api/v1/scans/:id` until terminal state. The scan detail model polls every 10s, doubling the delay on consecutive failures (capped at 30s, reset on success), and stops outright after ~10 minutes without a terminal status — the page then surfaces a warn alert whose "Resume refresh" action (`ScanDetailModel.resumePolling`) refetches immediately and restarts a fresh backoff chain.
 
 ### One scan-submit surface
 

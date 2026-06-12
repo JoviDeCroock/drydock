@@ -62,6 +62,10 @@ describe("ScanDetailModel polling", () => {
     vi.useRealTimers();
   });
 
+  test("uses a ten second healthy polling cadence", () => {
+    expect(SCAN_POLL_BASE_DELAY_MS).toBe(10_000);
+  });
+
   test("backs off exponentially on consecutive failures, capped at the max delay", async () => {
     const fetchMock = vi.fn(() => Promise.resolve(failedResponse()));
     vi.stubGlobal("fetch", fetchMock);
@@ -74,27 +78,27 @@ describe("ScanDetailModel polling", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(model.error.value).not.toBeNull();
 
-    // One failure doubles the delay: nothing at 4999ms, the poll at 5000ms.
+    // One failure doubles the delay: nothing until the doubled base delay.
     await vi.advanceTimersByTimeAsync(2 * SCAN_POLL_BASE_DELAY_MS - 1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
-    // Keeps doubling: 10s, 20s, then clamps to the 30s cap.
-    await vi.advanceTimersByTimeAsync(4 * SCAN_POLL_BASE_DELAY_MS);
+    // The next failure clamps the cadence to the max delay.
+    await vi.advanceTimersByTimeAsync(SCAN_POLL_MAX_DELAY_MS - 1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
     expect(fetchMock).toHaveBeenCalledTimes(3);
-    await vi.advanceTimersByTimeAsync(8 * SCAN_POLL_BASE_DELAY_MS);
+    await vi.advanceTimersByTimeAsync(SCAN_POLL_MAX_DELAY_MS);
     expect(fetchMock).toHaveBeenCalledTimes(4);
     await vi.advanceTimersByTimeAsync(SCAN_POLL_MAX_DELAY_MS);
     expect(fetchMock).toHaveBeenCalledTimes(5);
-    await vi.advanceTimersByTimeAsync(SCAN_POLL_MAX_DELAY_MS);
-    expect(fetchMock).toHaveBeenCalledTimes(6);
 
     // Disposal clears the pending timer; no further polls leak.
     model[Symbol.dispose]();
     model = null;
     await vi.advanceTimersByTimeAsync(10 * SCAN_POLL_MAX_DELAY_MS);
-    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   test("resets to the base delay after a successful poll", async () => {
