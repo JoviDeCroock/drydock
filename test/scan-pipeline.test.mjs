@@ -625,7 +625,11 @@ describe("scan pipeline baseline selection", () => {
           size: 80,
           sha256: "same-risk",
           flags: [],
-          textSample: "require('child_process').execSync('true');\n",
+          // Two co-occurring capabilities (process execution + network) so the
+          // pre-existing finding rolls up to high under weighted scoring; a lone
+          // child_process would (correctly) de-escalate to low.
+          textSample:
+            "require('child_process').execSync('true');\nfetch('https://example.invalid/ping');\n",
         },
       ],
       packageJson: { name: "pkg", version: "1.0.1" },
@@ -644,7 +648,11 @@ describe("scan pipeline baseline selection", () => {
           size: 80,
           sha256: "same-risk",
           flags: [],
-          textSample: "require('child_process').execSync('true');\n",
+          // Two co-occurring capabilities (process execution + network) so the
+          // pre-existing finding rolls up to high under weighted scoring; a lone
+          // child_process would (correctly) de-escalate to low.
+          textSample:
+            "require('child_process').execSync('true');\nfetch('https://example.invalid/ping');\n",
         },
       ],
       packageJson: { name: "pkg", version: "1.0.0" },
@@ -664,7 +672,7 @@ describe("scan pipeline baseline selection", () => {
       releaseRisk: "low",
       contextRisk: "high",
       releaseFindingCount: 0,
-      contextFindingCount: 1,
+      contextFindingCount: 2,
     });
     expect(result.ruleFindings).toContainEqual(
       expect.objectContaining({
