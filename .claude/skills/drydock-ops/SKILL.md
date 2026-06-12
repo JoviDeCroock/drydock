@@ -39,6 +39,10 @@ You are the customer-feedback loop for Drydock. Read prod usage data, compare ag
 - Risk × decision matrix: `SELECT risk, status, decision, COUNT(*) FROM scans WHERE created_at >= ... GROUP BY risk, status, decision`
 - FP signal: scans with `risk='high' AND decision='publish'` joined to `scan_findings` for their `rule_id`s — every override is a customer saying a detection was probably wrong.
 
+## Headless use
+
+`run.sh` next to this skill runs the loop unattended via `claude -p` (cron/launchd-friendly; it raises the file-descriptor limit launchd jobs need and logs to `~/.drydock-ops/logs/`). It needs `claude`, a logged-in `wrangler`, and an authed `gh` on the machine.
+
 ## Known context (update as reality changes)
 
 - ljharb (Jordan Harband) is the most active external user — his packages (tape, es-iterator-helpers, …) are benign hard-negative material; alert fatigue for him is a top product risk.
