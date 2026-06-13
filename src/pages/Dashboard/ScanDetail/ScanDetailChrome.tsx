@@ -100,15 +100,31 @@ export function VersionPickerSkeleton({ stagedVersion }: { stagedVersion: string
   );
 }
 
+// Token-scope failures are an onboarding dead end without a pointer to the fix:
+// connect-time validation only checks whoami + stage listing, so a granular token
+// can validate fine and still 403 on a specific package's tarball.
+const FAILURE_GUIDANCE: Record<string, { hint: string; action: string }> = {
+  staged_tarball_unavailable: {
+    hint: "This usually means the npm token has expired or its granular scope does not cover this package.",
+    action: "Validate or rotate the token under Settings → npm access.",
+  },
+};
+
 export function ScanFailureAlert({ errorJson }: { errorJson: unknown }) {
   const error =
     errorJson && typeof errorJson === "object"
       ? (errorJson as { message?: unknown; code?: unknown })
       : null;
+  const guidance = typeof error?.code === "string" ? FAILURE_GUIDANCE[error.code] : undefined;
   return (
     <Alert tone="critical">
       <div class="flex flex-col gap-1">
         <strong>{typeof error?.message === "string" ? error.message : "Review failed."}</strong>
+        {guidance ? (
+          <span>
+            {guidance.hint} <a href="/dashboard/settings">{guidance.action}</a>
+          </span>
+        ) : null}
         {typeof error?.code === "string" ? (
           <span class="font-mono text-xs">code: {error.code}</span>
         ) : null}

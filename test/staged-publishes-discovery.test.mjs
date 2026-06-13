@@ -371,4 +371,60 @@ describe("discoverAndQueueStagedPublishes", () => {
       dbMock.recordScanEvent.mock.calls.some(([, payload]) => payload?.type === "scan.queued"),
     ).toBe(false);
   });
+
+  test("does not record scans_started when the sweep starts nothing", async () => {
+    stagedPublishesMock.listStagedPublishes.mockResolvedValue({
+      items: [{ id: "stage-known", packageName: "pkg-a", version: "1.0.0" }],
+    });
+    dbMock.listExistingScanStageIds.mockResolvedValue(new Set(["stage-known"]));
+
+    const result = await discoverAndQueueStagedPublishes(
+      {
+        db,
+        env,
+        executionCtx: ctx,
+        organizationId: "org_a",
+        actorUserId: "user_a",
+        source: "auto_discovery",
+        eventSource: "staged_publishes.cron",
+      },
+      { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
+    );
+
+    expect(result).toEqual(expect.objectContaining({ found: 1, created: 0, skipped: 1 }));
+    expect(
+      dbMock.recordScanEvent.mock.calls.some(
+        ([, payload]) => payload?.type === "staged_publishes.scans_started",
+      ),
+    ).toBe(false);
+  });
+
+  test("records scans_started when the sweep starts scans", async () => {
+    stagedPublishesMock.listStagedPublishes.mockResolvedValue({
+      items: [{ id: "stage-new", packageName: "pkg-a", version: "1.0.0" }],
+    });
+    dbMock.listExistingScanStageIds.mockResolvedValue(new Set());
+    dbMock.createScanJob.mockResolvedValue({ id: "scan-new" });
+
+    await discoverAndQueueStagedPublishes(
+      {
+        db,
+        env,
+        executionCtx: ctx,
+        organizationId: "org_a",
+        actorUserId: "user_a",
+        source: "auto_discovery",
+        eventSource: "staged_publishes.cron",
+      },
+      { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
+    );
+
+    const startedEvents = dbMock.recordScanEvent.mock.calls.filter(
+      ([, payload]) => payload?.type === "staged_publishes.scans_started",
+    );
+    expect(startedEvents).toHaveLength(1);
+    expect(startedEvents[0]?.[1]?.metadata).toEqual(
+      expect.objectContaining({ found: 1, created: 1, skipped: 0 }),
+    );
+  });
 });
