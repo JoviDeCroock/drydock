@@ -3,8 +3,9 @@ import { firstMatchingLine } from "../text-utils";
 import type { Finding } from "../review";
 import { LIFECYCLE_SCRIPTS } from "./patterns";
 import { firstJsonPropertyLine, tag } from "./helpers";
-import { changedPrefix, type RuleContext } from "./context";
+import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./context";
 import { isDocumentationPath, isTypeDeclarationPath } from "./file-types";
+import { scriptCommandTokens, scriptPathCandidates } from "./reachability";
 import { normalizeCodeForScanning } from "./normalize";
 
 const GYP_PACKAGE_JAVASCRIPT_COMMAND_PATTERNS = [
@@ -78,6 +79,9 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     const prefix = changedPrefix(ctx, file.path);
     const changed = ctx.diffByPath.get(file.path)?.status;
     const lifecycleScriptFile = isLifecycleScriptFile(ctx, file.path);
+    // Lifecycle script files keep full severity even under test/ — an install
+    // hook pointing into the test tree is itself the suspicious shape.
+    const testScoped = !lifecycleScriptFile && isUnreachableTestFile(ctx, file.path);
 
     const processExecution = matchCategory(ctx.patterns.processExecution, sample, normalized);
     const networkAccess = matchCategory(ctx.patterns.networkAccess, sample, normalized);
@@ -88,14 +92,18 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
 
     if (processExecution.matched) {
       findings.push(
-        tag("codeProcessExecution", {
-          severity: "high",
-          file: file.path,
-          line: processExecution.line,
-          evidence: `${prefix}process or shell execution`,
-          reason: "package may execute arbitrary commands",
-          ...(processExecution.obfuscated ? { obfuscated: true } : {}),
-        }),
+        testScope(
+          testScoped,
+          processExecution.obfuscated,
+          tag("codeProcessExecution", {
+            severity: "high",
+            file: file.path,
+            line: processExecution.line,
+            evidence: `${prefix}process or shell execution`,
+            reason: "package may execute arbitrary commands",
+            ...(processExecution.obfuscated ? { obfuscated: true } : {}),
+          }),
+        ),
       );
     }
     if (
@@ -103,27 +111,35 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       networkAccess.matched
     ) {
       findings.push(
-        tag("codeNetworkAccess", {
-          severity: networkAccessSeverity(changed, lifecycleScriptFile, adjacentExecutionRisk),
-          file: file.path,
-          line: networkAccess.line,
-          evidence: `${prefix}network-capable code path`,
-          reason:
-            "unexpected network access in package code can be used for exfiltration or staged payload retrieval",
-          ...(networkAccess.obfuscated ? { obfuscated: true } : {}),
-        }),
+        testScope(
+          testScoped,
+          networkAccess.obfuscated,
+          tag("codeNetworkAccess", {
+            severity: networkAccessSeverity(changed, lifecycleScriptFile, adjacentExecutionRisk),
+            file: file.path,
+            line: networkAccess.line,
+            evidence: `${prefix}network-capable code path`,
+            reason:
+              "unexpected network access in package code can be used for exfiltration or staged payload retrieval",
+            ...(networkAccess.obfuscated ? { obfuscated: true } : {}),
+          }),
+        ),
       );
     }
     if (dynamicEvaluation.matched) {
       findings.push(
-        tag("codeDynamicEvaluation", {
-          severity: changed === "added" ? "high" : "medium",
-          file: file.path,
-          line: dynamicEvaluation.line,
-          evidence: `${prefix}dynamic code or obfuscation primitive`,
-          reason: "common malware and obfuscation technique",
-          ...(dynamicEvaluation.obfuscated ? { obfuscated: true } : {}),
-        }),
+        testScope(
+          testScoped,
+          dynamicEvaluation.obfuscated,
+          tag("codeDynamicEvaluation", {
+            severity: changed === "added" ? "high" : "medium",
+            file: file.path,
+            line: dynamicEvaluation.line,
+            evidence: `${prefix}dynamic code or obfuscation primitive`,
+            reason: "common malware and obfuscation technique",
+            ...(dynamicEvaluation.obfuscated ? { obfuscated: true } : {}),
+          }),
+        ),
       );
     }
     if (credentialAccess.matched) {
@@ -133,24 +149,51 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       // to an existing module (the shape behind file-based credential stealers).
       // Credential access on its own stays high only when added.
       const exfiltrationSink = networkAccess.matched;
+      // A same-file credential→network chain stays full severity even in a
+      // test tree: collect-and-exfiltrate is the payload shape itself, not an
+      // expected test-suite capability.
       findings.push(
-        tag("codeCredentialAccess", {
-          severity: changed === "added" || exfiltrationSink ? "high" : "medium",
-          file: file.path,
-          line: credentialAccess.line,
-          evidence: exfiltrationSink
-            ? `${prefix}credential read paired with network egress`
-            : `${prefix}secret/environment access`,
-          reason: exfiltrationSink
-            ? "package reads credentials and has a network egress path in the same file: the collect-and-exfiltrate shape used to steal install-time and cloud secrets"
-            : "package may read credentials from the install environment",
-          ...(credentialAccess.obfuscated ? { obfuscated: true } : {}),
-        }),
+        testScope(
+          testScoped && !exfiltrationSink,
+          credentialAccess.obfuscated,
+          tag("codeCredentialAccess", {
+            severity: changed === "added" || exfiltrationSink ? "high" : "medium",
+            file: file.path,
+            line: credentialAccess.line,
+            evidence: exfiltrationSink
+              ? `${prefix}credential read paired with network egress`
+              : `${prefix}secret/environment access`,
+            reason: exfiltrationSink
+              ? "package reads credentials and has a network egress path in the same file: the collect-and-exfiltrate shape used to steal install-time and cloud secrets"
+              : "package may read credentials from the install environment",
+            ...(credentialAccess.obfuscated ? { obfuscated: true } : {}),
+          }),
+        ),
       );
     }
   }
 
   return findings;
+}
+
+const DEMOTED_SEVERITY: Partial<Record<Finding["severity"], Finding["severity"]>> = {
+  critical: "high",
+  high: "medium",
+  medium: "low",
+};
+
+// Demote a capability finding that lives in an unreachable test file by one
+// severity step and mark it test-scoped so the risk roll-up can keep it out of
+// the capability co-occurrence escalation. Obfuscated matches keep full
+// severity: hiding an identifier inside a test file is still a malice signal.
+function testScope(testScoped: boolean, obfuscated: boolean, finding: Finding): Finding {
+  if (!testScoped || obfuscated) return finding;
+  return {
+    ...finding,
+    severity: DEMOTED_SEVERITY[finding.severity] ?? finding.severity,
+    evidence: `test-scoped ${finding.evidence}`,
+    testScoped: true,
+  };
 }
 
 // Match a capability category against the raw sample and, only if that misses,
@@ -190,24 +233,4 @@ function isLifecycleScriptFile(ctx: RuleContext, path: string): boolean {
     if (!command || ctx.implicitScripts[script] === command) return false;
     return scriptCommandTokens(command).some((token) => candidates.has(token));
   });
-}
-
-function scriptPathCandidates(path: string): Set<string> {
-  const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "");
-  const withoutPackage = normalized.startsWith("package/")
-    ? normalized.slice("package/".length)
-    : normalized;
-  const basename = withoutPackage.split("/").at(-1) ?? withoutPackage;
-  const baseValues = [normalized, withoutPackage, basename];
-  const values = [...baseValues];
-  for (const value of baseValues) {
-    values.push(value.replace(/\.[^/.]+$/, ""));
-  }
-  return new Set(values.filter(Boolean));
-}
-
-function scriptCommandTokens(command: string): string[] {
-  return [...command.matchAll(/(?:\.\/)?[\w@./-]+(?:\.[\w-]+)?\b/g)].map((match) =>
-    match[0].replace(/^\.\//, ""),
-  );
 }

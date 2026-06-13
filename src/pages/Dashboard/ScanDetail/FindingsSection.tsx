@@ -1,4 +1,4 @@
-import { compareSeverity } from "../../../lib/findings";
+import { compareSeverity, groupFindingsByRule } from "../../../lib/findings";
 import { pluralize } from "../../../lib/format";
 import type { FindingDiffStatus } from "../../../../server/lib/review";
 import {
@@ -6,6 +6,7 @@ import {
   EmptyLine,
   FindingCard,
   FindingRow,
+  GroupedFindingCard,
   Muted,
   SectionLabel,
 } from "../../../components";
@@ -79,23 +80,55 @@ function FindingGrid({
   findings: FindingWithDiffStatus[];
   onSelect?: (file: string) => void;
 }) {
+  const groups = groupFindingsByRule(
+    findings.map((item) => ({
+      ruleId: item.finding.ruleId,
+      severity: item.finding.severity,
+      evidence: item.finding.evidence,
+      reason: item.finding.reason,
+      item,
+    })),
+  );
   return (
     <ul class="list-none p-0 m-0 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-      {findings.map(({ finding, diffStatus }) => (
-        <FindingCard
-          key={finding.id}
-          severity={finding.severity}
-          file={finding.file}
-          line={finding.line}
-          diffStatus={diffStatus === "unknown" ? null : diffStatus}
-          diffLabel={findingDiffStatusLabel(diffStatus)}
-          ruleId={finding.ruleId}
-          onSelect={onSelect ? () => onSelect(finding.file) : undefined}
-        >
-          <FindingRow label="evidence" value={finding.evidence} />
-          <FindingRow label="reason" value={finding.reason} />
-        </FindingCard>
-      ))}
+      {groups.map(({ key, items }) => {
+        if (items.length === 1) {
+          const { finding, diffStatus } = items[0].item;
+          return (
+            <FindingCard
+              key={finding.id}
+              severity={finding.severity}
+              file={finding.file}
+              line={finding.line}
+              diffStatus={diffStatus === "unknown" ? null : diffStatus}
+              diffLabel={findingDiffStatusLabel(diffStatus)}
+              ruleId={finding.ruleId}
+              onSelect={onSelect ? () => onSelect(finding.file) : undefined}
+            >
+              <FindingRow label="evidence" value={finding.evidence} />
+              <FindingRow label="reason" value={finding.reason} />
+            </FindingCard>
+          );
+        }
+        const first = items[0].item.finding;
+        return (
+          <GroupedFindingCard
+            key={key}
+            severity={first.severity}
+            ruleId={first.ruleId}
+            files={items.map(({ item }) => ({
+              file: item.finding.file,
+              line: item.finding.line,
+              diffStatus: item.diffStatus === "unknown" ? null : item.diffStatus,
+              diffLabel: findingDiffStatusLabel(item.diffStatus),
+              onSelect: onSelect ? () => onSelect(item.finding.file) : undefined,
+            }))}
+          >
+            <FindingRow label="evidence" value={first.evidence} />
+            <FindingRow label="reason" value={first.reason} />
+          </GroupedFindingCard>
+        );
+      })}
     </ul>
   );
 }

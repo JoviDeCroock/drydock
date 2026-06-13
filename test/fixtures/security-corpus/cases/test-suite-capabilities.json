@@ -1,0 +1,108 @@
+{
+  "id": "test-suite-capabilities",
+  "title": "Shipped test suite spawns processes, reads env, and uses eval-ish constructs",
+  "category": "benign-control",
+  "intent": "A test-runner-shaped package (tape-like) ships its own test/ tree where tests legitimately exec processes, read process.env, and exercise dynamic evaluation. Capability findings in unreachable test files must survive at demoted, test-scoped severity and must not co-occur into a high-risk roll-up.",
+  "previousPackageJson": {
+    "name": "test-runner",
+    "version": "5.0.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "test-runner",
+    "version": "5.0.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 60,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"test-runner\",\"version\":\"5.0.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 40,
+      "sha256": "index-v1",
+      "flags": [],
+      "textSample": "module.exports = function harness() {};\n"
+    },
+    {
+      "path": "test/spawn.js",
+      "size": 160,
+      "sha256": "test-spawn-v1",
+      "flags": [],
+      "textSample": "const { execSync } = require('child_process');\nconst harness = require('../index.js');\nexecSync('node --version');\n"
+    },
+    {
+      "path": "test/env.js",
+      "size": 120,
+      "sha256": "test-env-v1",
+      "flags": [],
+      "textSample": "const harness = require('../index.js');\nconsole.log(process.env.TEST_DEBUG);\n"
+    },
+    {
+      "path": "test/eval.js",
+      "size": 120,
+      "sha256": "test-eval-v1",
+      "flags": [],
+      "textSample": "const harness = require('../index.js');\nconst fn = new Function('return 1');\nfn();\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 60,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"test-runner\",\"version\":\"5.0.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 40,
+      "sha256": "index-v1",
+      "flags": [],
+      "textSample": "module.exports = function harness() {};\n"
+    },
+    {
+      "path": "test/spawn.js",
+      "size": 160,
+      "sha256": "test-spawn-v1",
+      "flags": [],
+      "textSample": "const { execSync } = require('child_process');\nconst harness = require('../index.js');\nexecSync('node --version');\n"
+    },
+    {
+      "path": "test/env.js",
+      "size": 120,
+      "sha256": "test-env-v1",
+      "flags": [],
+      "textSample": "const harness = require('../index.js');\nconsole.log(process.env.TEST_DEBUG);\n"
+    },
+    {
+      "path": "test/eval.js",
+      "size": 120,
+      "sha256": "test-eval-v1",
+      "flags": [],
+      "textSample": "const harness = require('../index.js');\nconst fn = new Function('return 1');\nfn();\n"
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": [
+    {
+      "ruleId": "code.process-execution",
+      "severity": "medium",
+      "file": "test/spawn.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "low",
+      "file": "test/env.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "low",
+      "file": "test/eval.js"
+    }
+  ]
+}

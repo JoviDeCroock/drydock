@@ -32,7 +32,7 @@ export { VersionPicker } from "./VersionPicker";
 export { SeverityBar } from "./SeverityBar";
 export type { SeverityCounts, SeverityKey } from "./SeverityBar";
 export { StatusStrip, StatusStripItem } from "./StatusStrip";
-export { FindingCard, FindingRow } from "./FindingCard";
+export { FindingCard, FindingRow, GroupedFindingCard } from "./FindingCard";
 export { OrgSwitcher } from "./OrgSwitcher";
 export { UserMenu } from "./UserMenu";
 export { Menu, MenuItem, MenuLabel, MenuLink, MenuSeparator } from "./Menu";

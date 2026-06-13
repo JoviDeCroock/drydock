@@ -40,6 +40,37 @@ export function highestFindingRisk(findings: Array<{ severity?: string }>): stri
   return "low";
 }
 
+export interface FindingGroupKeySource {
+  ruleId?: string | null;
+  severity?: string;
+  evidence?: string;
+  reason?: string;
+}
+
+// Findings that share a rule, severity, and wording are one capability observed
+// across many files (e.g. a test suite where every file spawns processes).
+// Grouping them keeps the report one-row-per-signal instead of one-row-per-file.
+// Findings without a ruleId never group: there is no rule identity to share.
+export function groupFindingsByRule<T extends FindingGroupKeySource>(
+  findings: T[],
+): Array<{ key: string; items: T[] }> {
+  const groups = new Map<string, T[]>();
+  const order: string[] = [];
+  let ungroupedIndex = 0;
+  for (const finding of findings) {
+    const key = finding.ruleId
+      ? ["rule", finding.ruleId, finding.severity, finding.evidence, finding.reason].join("\u0000")
+      : `ungrouped\u0000${ungroupedIndex++}`;
+    const existing = groups.get(key);
+    if (existing) existing.push(finding);
+    else {
+      groups.set(key, [finding]);
+      order.push(key);
+    }
+  }
+  return order.map((key) => ({ key, items: groups.get(key) ?? [] }));
+}
+
 export function countSeverities(findings: Array<{ severity?: string }>): SeverityCounts {
   const counts: SeverityCounts = {};
   for (const finding of findings) {

