@@ -2,6 +2,7 @@ declare global {
   namespace Cloudflare {
     interface Env {
       AI: Ai;
+      ASSETS?: Fetcher;
       AI_CACHE_AFFINITY?: string;
       LOADER: WorkerLoader;
       DB: D1Database;

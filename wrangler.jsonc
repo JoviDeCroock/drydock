@@ -15,14 +15,8 @@
 	},
 	"assets": {
 		"not_found_handling": "single-page-application",
-		// Keep server-owned paths out of the SPA fallback. Without this, OAuth
-		// callbacks such as /api/v1/slack/callback can render the client 404
-		// before the Hono route sees the request.
-		"run_worker_first": [
-			"/api",
-			"/api/*",
-			"/webhooks/*"
-		]
+		"binding": "ASSETS",
+		"run_worker_first": true
 	},
 	"ai": {
 		"binding": "AI"
@@ -86,18 +80,22 @@
 			"*/15 * * * *"
 		]
 	},
-	  "routes": [
-    {
-      "pattern": "drydock.resynapse.dev",
-      "custom_domain": true,
-    },
-    {
-      "pattern": "drydock.resynapse.dev/b/*",
-      "zone_name": "resynapse.dev",
-    },
-  ],
+	"routes": [
+		{
+			"pattern": "drydock.org",
+			"custom_domain": true
+		},
+		{
+			"pattern": "drydock.resynapse.dev",
+			"custom_domain": true
+		},
+		{
+			"pattern": "drydock.resynapse.dev/b/*",
+			"zone_name": "resynapse.dev"
+		}
+	],
 	"vars": {
-		"BETTER_AUTH_URL": "https://drydock.resynapse.dev",
+		"BETTER_AUTH_URL": "https://drydock.org",
 		"AI_CACHE_AFFINITY": "staged-publish-review-release-reviewer-v1",
 		"NPM_REGISTRY": "https://registry.npmjs.org",
 		"PNPM_VERSION": "11.1.1",
