@@ -1,0 +1,27 @@
+{
+  "id": "vscode-benign-command-activation",
+  "title": "VSIX with narrow command activation and declared settings",
+  "category": "benign",
+  "intent": "A minimal VS Code command extension with declared configuration should not trigger VS Code-specific malware rules.",
+  "extensionId": "example.remote-text-fetcher",
+  "version": "1.0.0",
+  "sha256": "abababababababababababababababababababababababababababababababab",
+  "stagedFiles": [
+    {
+      "path": "extension/package.json",
+      "size": 383,
+      "sha256": "00",
+      "flags": [],
+      "textSample": "{\n  \"name\": \"remote-text-fetcher\",\n  \"publisher\": \"example\",\n  \"version\": \"1.0.0\",\n  \"engines\": { \"vscode\": \"^1.80.0\" },\n  \"main\": \"./out/extension\",\n  \"activationEvents\": [\"onCommand:remoteTextFetcher.run\"],\n  \"contributes\": {\n    \"configuration\": {\n      \"properties\": {\n        \"remoteTextFetcher.url\": { \"type\": \"string\" }\n      }\n    }\n  }\n}\n"
+    },
+    {
+      "path": "extension/out/extension.js",
+      "size": 126,
+      "sha256": "00",
+      "flags": [],
+      "textSample": "const vscode = require('vscode');\nfunction activate() {\n  return vscode.workspace.getConfiguration('remoteTextFetcher').get('url');\n}\n"
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": []
+}

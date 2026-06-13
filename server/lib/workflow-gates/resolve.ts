@@ -27,7 +27,8 @@ export async function resolveBundleArtifacts(
   bundle: ResolvedReleaseBundle,
 ): Promise<ParsedGateArtifact[]> {
   return mapWithConcurrency(bundle.artifacts, GATE_ARTIFACT_PARSE_CONCURRENCY, async (file) => {
-    const format = file.path.toLowerCase().endsWith(".whl") ? "zip" : "tgz";
+    const lowerPath = file.path.toLowerCase();
+    const format = lowerPath.endsWith(".whl") || lowerPath.endsWith(".vsix") ? "zip" : "tgz";
     const parsed = await downloadInSandboxInline(env, ctx, { bytes: file.bytes, format });
     const contents = { files: parsed.files, packageJson: parsed.packageJson ?? null };
 
