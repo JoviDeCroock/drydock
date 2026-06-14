@@ -4,7 +4,7 @@ import { useLocation } from "preact-iso";
 
 export type QueryUpdates = Record<string, string | null | undefined>;
 
-const DASHBOARD_RETURN_URL_KEY = "staged-publish-review.dashboard-return-url";
+const DASHBOARD_RETURN_URL_KEY = "drydock.dashboard-return-url";
 
 export function buildQueryUrl(updates: QueryUpdates): string {
   const params = new URLSearchParams(window.location.search);

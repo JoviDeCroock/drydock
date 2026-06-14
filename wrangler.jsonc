@@ -1,6 +1,6 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "staged-publish-review",
+	"name": "drydock",
 	"main": "./server/index.ts",
 	"compatibility_date": "2026-05-20",
 	"compatibility_flags": [
@@ -35,7 +35,7 @@
 	"d1_databases": [
 		{
 			"binding": "DB",
-			"database_name": "staged-publish-review",
+			"database_name": "drydock",
 			"database_id": "9c856c2f-51be-4309-a932-103e6a835430",
 			"migrations_dir": "drizzle"
 		}
@@ -49,24 +49,24 @@
 	"r2_buckets": [
 		{
 			"binding": "ARTIFACTS",
-			"bucket_name": "staged-publish-review-artifacts"
+			"bucket_name": "drydock-artifacts"
 		}
 	],
 	"queues": {
 		"producers": [
 			{
 				"binding": "SCAN_QUEUE",
-				"queue": "staged-publish-review-scans"
+				"queue": "drydock-scans"
 			}
 		],
 		"consumers": [
 			{
-				"queue": "staged-publish-review-scans",
+				"queue": "drydock-scans",
 				"max_batch_size": 1,
 				"max_batch_timeout": 5,
 				"max_concurrency": 10,
 				"max_retries": 3,
-				"dead_letter_queue": "staged-publish-review-scans-dlq"
+				"dead_letter_queue": "drydock-scans-dlq"
 			}
 		]
 	},
@@ -95,6 +95,10 @@
 		}
 	],
 	"vars": {
+		"APP_NAME": "Drydock",
+		"APP_TAGLINE": "Pre-publish review for npm and PyPI",
+		"BRAND_WORDMARK": "drydock",
+		"CONTACT_EMAIL": "drydock@drydock.org",
 		"BETTER_AUTH_URL": "https://drydock.org",
 		"AI_CACHE_AFFINITY": "staged-publish-review-release-reviewer-v1",
 		"NPM_REGISTRY": "https://registry.npmjs.org",

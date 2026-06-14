@@ -40,7 +40,7 @@ export const AI_MODEL = "@cf/moonshotai/kimi-k2.5";
 export const AI_FALLBACK_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 export const AI_MODEL_CANDIDATES = [AI_MODEL, AI_FALLBACK_MODEL] as const;
 
-const DEFAULT_CACHE_AFFINITY = "staged-publish-review-agentic-release-reviewer-v1";
+const DEFAULT_CACHE_AFFINITY = "drydock-agentic-release-reviewer-v1";
 
 // Workers AI rejects requests under load with transient errors the model itself
 // asks us to retry (e.g. "3040: Capacity temporarily exceeded, please try

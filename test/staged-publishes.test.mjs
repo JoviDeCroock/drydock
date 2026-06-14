@@ -130,7 +130,7 @@ describe("staged publish metadata", () => {
     const fetchMock = vi.fn(async (url, init) => {
       expect(String(url)).toBe("https://registry.npmjs.org/-/stage/stage-next-123");
       expect(init.headers.authorization).toBe("Bearer npm_secret_token");
-      expect(init.headers["user-agent"]).toBe("staged-publish-review/staged-view");
+      expect(init.headers["user-agent"]).toBe("drydock/staged-view");
       return Response.json({
         id: "stage-next-123",
         packageName: "example-lib",
@@ -154,7 +154,7 @@ describe("staged publish metadata", () => {
     const fetchMock = vi.fn(async (url, init) => {
       expect(String(url)).toBe("https://registry.npmjs.org/-/stage?perPage=50&page=2");
       expect(init.headers.authorization).toBe("Bearer npm_secret_token");
-      expect(init.headers["user-agent"]).toBe("staged-publish-review/staged-list");
+      expect(init.headers["user-agent"]).toBe("drydock/staged-list");
       return Response.json({ items: [], total: 0, perPage: 50, page: 2 });
     });
     globalThis.fetch = fetchMock;

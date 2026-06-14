@@ -62,7 +62,7 @@ describe("buildMimeMessage", () => {
       text: "plain body",
       html: "<p>html body</p>",
     });
-    expect(raw).toMatch(/Content-Type: multipart\/alternative; boundary="=_drydock_/);
+    expect(raw).toMatch(/Content-Type: multipart\/alternative; boundary="=_spr_/);
     expect(raw).toContain("plain body");
     expect(raw).toContain("<p>html body</p>");
   });
@@ -90,6 +90,18 @@ describe("sendNotificationEmail", () => {
       text: "Body",
     });
     expect(result.ok).toBe(false);
+    expect(env.SEND_EMAIL.send).not.toHaveBeenCalled();
+  });
+
+  test("requires an explicit sender address when an email binding is configured", async () => {
+    const env = { SEND_EMAIL: { send: vi.fn() } };
+    const result = await sendNotificationEmail(env, {
+      to: "user@example.com",
+      subject: "Subject",
+      text: "Body",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/EMAIL_FROM_ADDRESS/);
     expect(env.SEND_EMAIL.send).not.toHaveBeenCalled();
   });
 });

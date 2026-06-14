@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { createDb, deleteUserAccount, findCoOwnedOrganizations, type AppDb } from "../db";
 import * as schema from "../db/schema";
 import { sendAccountVerificationEmail } from "./account-email";
+import { appDisplayName } from "./brand";
 
 export interface AuthSession {
   userId: string;
@@ -92,9 +93,16 @@ export function createAuth(env: Cloudflare.Env) {
 
   const db = createDb(env.DB);
   const trustedOrigins = env.BETTER_AUTH_URL ? [env.BETTER_AUTH_URL] : [];
+  const appName = appDisplayName(env);
+  // Only enforce email verification when an email transport is actually wired
+  // up. Without SEND_EMAIL (local dev, e2e harness) we can't deliver the link,
+  // so requiring it would lock every new account out of sign-in. Skip it for a
+  // local auth origin too, so localhost sign-ups aren't blocked on a link that
+  // never arrives. Production binds SEND_EMAIL with a real origin, so
+  // verification is always enforced there.
   const emailVerificationEnabled = Boolean(env.SEND_EMAIL) && !isLocalAuthUrl(env.BETTER_AUTH_URL);
   return betterAuth({
-    appName: "Drydock",
+    appName,
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.BETTER_AUTH_URL,
     basePath: "/api/auth",
@@ -147,7 +155,7 @@ export function createAuth(env: Cloudflare.Env) {
         },
       },
     },
-    plugins: [twoFactor({ issuer: "Drydock" })],
+    plugins: [twoFactor({ issuer: appName })],
     advanced: {
       cookiePrefix: "spr",
       ipAddress: {

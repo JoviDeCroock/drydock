@@ -1,4 +1,5 @@
 import { cn } from "./cn";
+import { BRAND_NAME, BRAND_WORDMARK } from "../brand";
 
 type Size = "sm" | "md" | "lg";
 
@@ -25,14 +26,14 @@ export function BrandMark({
   );
   if (href) {
     return (
-      <a href={href} class={classes} aria-label="Drydock home">
-        drydock
+      <a href={href} class={classes} aria-label={`${BRAND_NAME} home`}>
+        {BRAND_WORDMARK}
       </a>
     );
   }
   return (
-    <span class={classes} aria-label="Drydock">
-      drydock
+    <span class={classes} aria-label={BRAND_NAME}>
+      {BRAND_WORDMARK}
     </span>
   );
 }

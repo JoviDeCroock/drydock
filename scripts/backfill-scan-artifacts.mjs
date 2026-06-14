@@ -3,8 +3,8 @@ import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { parsePackageJson } from "../server/lib/tar-parser.js";
 
-const DEFAULT_DATABASE = "staged-publish-review";
-const DEFAULT_BUCKET = "staged-publish-review-artifacts";
+const DEFAULT_DATABASE = "drydock";
+const DEFAULT_BUCKET = "drydock-artifacts";
 const DEFAULT_LIMIT = 10;
 const ARTIFACT_STORAGE_VERSION = 1;
 const ARTIFACT_CONTENT_TYPE = "application/json; charset=utf-8";

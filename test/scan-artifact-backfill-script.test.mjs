@@ -233,7 +233,7 @@ describe("scan artifact backfill script", () => {
       harness.calls.some((call) => call.args.includes("r2") && call.args.includes("put")),
     ).toBe(true);
     expect([...harness.objects.keys()]).toContain(
-      "staged-publish-review-artifacts/orgs/org_123/scans/scan_1/v1/manifest.json",
+      "drydock-artifacts/orgs/org_123/scans/scan_1/v1/manifest.json",
     );
     expect(JSON.stringify(harness.calls)).not.toContain("cookie");
     expect(stdout.output()).toContain("nextCursor=done");

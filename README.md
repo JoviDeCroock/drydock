@@ -1,4 +1,4 @@
-# Staged Publish Review
+# Drydock
 
 Drydock reviews package artifacts before a maintainer approves publication. For npm, it downloads the staged tarball through a sandbox, compares it with a tag-aware published baseline, runs deterministic supply-chain checks, and, when enabled, sends changed-file evidence to Cloudflare Workers AI. It saves the result as a readable review report.
 
@@ -19,6 +19,7 @@ This repository is moving from prototype to product. The current code already pr
 Use the docs by layer:
 
 - [`docs/architecture.md`](docs/architecture.md) — runtime shape, trust boundaries, adapters, APIs.
+- [`docs/self-hosting.md`](docs/self-hosting.md) — Cloudflare resources, Wrangler vars, secrets, and integration setup for a forked deployment.
 - [`docs/security-model.md`](docs/security-model.md) — non-negotiable security posture and known gaps.
 - [`docs/workflow-gates.md`](docs/workflow-gates.md) — workflow-gate product mode: the shared GitHub Environment gate contract, with PyPI as the first ecosystem.
 - [`docs/release-safety.md`](docs/release-safety.md), [`docs/security-detection-corpus.md`](docs/security-detection-corpus.md), [`docs/detection-eval.md`](docs/detection-eval.md), and [`docs/e2e-test-environment.md`](docs/e2e-test-environment.md) — change safety, detection quality, and local verification.
@@ -100,14 +101,16 @@ Current implementation secrets:
 
 Worker non-secret vars and bindings:
 
-| Name                 | Where                                           | Purpose                                                                                                                      |
-| -------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `BETTER_AUTH_URL`    | `.dev.vars` locally; Wrangler var in production | Canonical app origin for Better Auth, for example `http://localhost:5173` locally or your deployed Worker URL. Not a secret. |
-| `NPM_REGISTRY`       | `wrangler.jsonc` `vars`                         | npm registry base URL. Defaults to `https://registry.npmjs.org`.                                                             |
-| `AI_CACHE_AFFINITY`  | `wrangler.jsonc` `vars`                         | Stable `x-session-affinity` value for Cloudflare Workers AI prefix caching.                                                  |
-| `AI`, `LOADER`, `DB` | `wrangler.jsonc` bindings                       | Cloudflare Workers AI, Dynamic Worker loader, and required D1 database binding.                                              |
-| `SCAN_QUEUE`         | `wrangler.jsonc` Queue binding                  | Optional in local dev; production async scan queue. Configure retry/DLQ policy before private beta.                          |
-| `COMPARE_CACHE`      | `wrangler.jsonc` KV binding                     | Cache for parsed published package versions used by alternate-version compare views.                                         |
+| Name                                                         | Where                                           | Purpose                                                                                                                      |
+| ------------------------------------------------------------ | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `BETTER_AUTH_URL`                                            | `.dev.vars` locally; Wrangler var in production | Canonical app origin for Better Auth, for example `http://localhost:5173` locally or your deployed Worker URL. Not a secret. |
+| `APP_NAME`, `APP_TAGLINE`, `BRAND_WORDMARK`, `CONTACT_EMAIL` | `wrangler.jsonc` `vars`                         | Public display strings used by the static UI and HTML metadata at build time.                                                |
+| `EMAIL_FROM_ADDRESS`, `EMAIL_FROM_NAME`                      | `wrangler.jsonc` `vars`                         | Sender identity for Cloudflare Email notifications. The address must be configured for your sending domain.                  |
+| `NPM_REGISTRY`                                               | `wrangler.jsonc` `vars`                         | npm registry base URL. Defaults to `https://registry.npmjs.org`.                                                             |
+| `AI_CACHE_AFFINITY`                                          | `wrangler.jsonc` `vars`                         | Stable `x-session-affinity` value for Cloudflare Workers AI prefix caching.                                                  |
+| `AI`, `LOADER`, `DB`                                         | `wrangler.jsonc` bindings                       | Cloudflare Workers AI, Dynamic Worker loader, and required D1 database binding.                                              |
+| `SCAN_QUEUE`                                                 | `wrangler.jsonc` Queue binding                  | Optional in local dev; production async scan queue. Configure retry/DLQ policy before private beta.                          |
+| `COMPARE_CACHE`                                              | `wrangler.jsonc` KV binding                     | Cache for parsed published package versions used by alternate-version compare views.                                         |
 
 Generate the Better Auth secret with either command:
 
@@ -198,7 +201,7 @@ pnpm db:generate
 Create D1 database and apply migrations:
 
 ```sh
-pnpm wrangler d1 create staged-publish-review
+pnpm wrangler d1 create drydock
 # copy the real database_id into wrangler.jsonc
 pnpm db:migrate:remote
 ```
@@ -217,9 +220,9 @@ Never write SQL migrations by hand; update `server/db/schema.ts` and generate mi
    ```
 
 3. Create production resources and replace placeholder IDs in `wrangler.jsonc`:
-   - D1 database: `pnpm wrangler d1 create staged-publish-review`
-   - Scan queue: `pnpm wrangler queues create staged-publish-review-scans`
-   - Scan dead-letter queue: `pnpm wrangler queues create staged-publish-review-scans-dlq`
+   - D1 database: `pnpm wrangler d1 create drydock`
+   - Scan queue: `pnpm wrangler queues create drydock-scans`
+   - Scan dead-letter queue: `pnpm wrangler queues create drydock-scans-dlq`
    - Compare cache KV namespace: `pnpm wrangler kv namespace create COMPARE_CACHE`
    - Keep the Queue consumer `max_retries` / `dead_letter_queue` settings in `wrangler.jsonc` aligned with `MAX_SCAN_JOB_ATTEMPTS` in `server/lib/scan-job.ts`.
 4. Set the real D1 `database_id`, KV namespace `id`, and production `BETTER_AUTH_URL`, then apply migrations.

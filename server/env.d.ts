@@ -10,6 +10,10 @@ declare global {
       SCAN_ARTIFACT_READS_DISABLED?: string;
       COMPARE_CACHE?: KVNamespace;
       SCAN_QUEUE?: Queue<import("./lib/scan-job").QueueMessage>;
+      APP_NAME?: string;
+      APP_TAGLINE?: string;
+      BRAND_WORDMARK?: string;
+      CONTACT_EMAIL?: string;
       NPM_REGISTRY: string;
       ALLOW_INSECURE_LOCAL_REGISTRY?: string;
       NPM_CONNECTIONS_ENCRYPTION_KEY?: string;

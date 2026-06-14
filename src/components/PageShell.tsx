@@ -3,12 +3,15 @@ import { cn } from "./cn";
 import { BrandMark } from "./BrandMark";
 import { LinkButton } from "./Button";
 import { AikidoFootnote, AikidoMark } from "./AikidoPartner";
+import { BRAND_NAME, CONTACT_EMAIL, TAGLINE } from "../brand";
 
-const FEEDBACK_MAILTO =
-  "mailto:drydock@drydock.org?subject=Drydock%20feedback&body=Tell%20us%20what%27s%20broken%2C%20confusing%2C%20or%20missing%3A%0A%0A";
+const FEEDBACK_MAILTO = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(
+  `${BRAND_NAME} feedback`,
+)}&body=${encodeURIComponent("Tell us what's broken, confusing, or missing:\n\n")}`;
 
-const SECURITY_MAILTO =
-  "mailto:drydock@drydock.org?subject=Drydock%20security%20report&body=Describe%20the%20issue%20and%20how%20to%20reproduce%20it%3A%0A%0A";
+const SECURITY_MAILTO = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(
+  `${BRAND_NAME} security report`,
+)}&body=${encodeURIComponent("Describe the issue and how to reproduce it:\n\n")}`;
 
 const AIKIDO_URL = "https://www.aikido.dev";
 
@@ -60,7 +63,7 @@ export function PageShell({
                 href={FEEDBACK_MAILTO}
                 variant="ghost"
                 size="sm"
-                title="Email drydock@drydock.org with any issues"
+                title={`Email ${CONTACT_EMAIL} with any issues`}
               >
                 Feedback
               </LinkButton>
@@ -94,7 +97,7 @@ function SiteFooter({ maxWidth }: { maxWidth: string }) {
         <div class="flex flex-col gap-1">
           <BrandMark href="/" size="sm" />
           <p class="m-0 font-mono text-[11px] text-ink-subtle">
-            Pre-publish review for npm and PyPI · © 2026 Drydock
+            {TAGLINE} · © 2026 {BRAND_NAME}
           </p>
         </div>
         <nav class="flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px]" aria-label="Footer">

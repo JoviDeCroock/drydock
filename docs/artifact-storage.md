@@ -7,10 +7,10 @@ Drydock keeps D1 as the authoritative metadata/index store and uses R2 for large
 Wrangler binds the artifact bucket as `ARTIFACTS`:
 
 ```sh
-wrangler r2 bucket create staged-publish-review-artifacts
+wrangler r2 bucket create drydock-artifacts
 ```
 
-Local Worker tests bind `staged-publish-review-test-artifacts` through `wrangler.test.jsonc`. Production deploys should confirm the bucket exists before applying the migration that adds the artifact metadata columns.
+Local Worker tests bind `drydock-test-artifacts` through `wrangler.test.jsonc`. Production deploys should confirm the bucket exists before applying the migration that adds the artifact metadata columns.
 
 ## D1 Metadata
 
@@ -91,7 +91,7 @@ pnpm run scan-artifacts:backfill -- \
   --limit 50
 ```
 
-The script defaults to the production `staged-publish-review` D1 database and `staged-publish-review-artifacts` R2 bucket through remote Wrangler operations. Use `--database`, `--bucket`, `--config`, `--env`, `--local`, or `--persist-to` when targeting a different Wrangler setup. The script prints one progress line per batch and exits nonzero if any row-level `failed` count remains. Use `--cursor <scan_id>` to resume a single-organization run from the last printed `nextCursor`; `--cursor` is intentionally not accepted with `--all-organizations` because cursors are organization-scoped. `digestMismatch` rows are reported but do not fail the script because they remain safely D1-backed.
+The script defaults to the production `drydock` D1 database and `drydock-artifacts` R2 bucket through remote Wrangler operations. Use `--database`, `--bucket`, `--config`, `--env`, `--local`, or `--persist-to` when targeting a different Wrangler setup. The script prints one progress line per batch and exits nonzero if any row-level `failed` count remains. Use `--cursor <scan_id>` to resume a single-organization run from the last printed `nextCursor`; `--cursor` is intentionally not accepted with `--all-organizations` because cursors are organization-scoped. `digestMismatch` rows are reported but do not fail the script because they remain safely D1-backed.
 
 ## Rollback
 

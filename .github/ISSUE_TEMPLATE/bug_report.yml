@@ -1,0 +1,65 @@
+name: Bug report
+description: Report a reproducible problem in Drydock
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report vulnerabilities here. Use SECURITY.md for private disclosure.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction
+      description: Steps, commands, package fixture, or request sequence that reproduces the issue.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - UI
+        - Worker route
+        - Sandbox/archive parsing
+        - npm staged publishing
+        - GitHub workflow gate
+        - Auth/organization scoping
+        - Notifications
+        - Docs/self-hosting
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version
+      placeholder: main@abcdef0
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      render: text

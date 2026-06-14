@@ -1,3 +1,4 @@
+import { appDisplayName } from "./brand";
 import { errorMessage } from "./errors";
 
 export interface SendEmailInput {
@@ -16,9 +17,6 @@ export interface EmailSendResult {
   reason?: string;
 }
 
-const DEFAULT_FROM_ADDRESS = "drydock@drydock.org";
-const DEFAULT_FROM_NAME = "Drydock";
-
 export async function sendNotificationEmail(
   env: Cloudflare.Env,
   input: SendEmailInput,
@@ -29,8 +27,9 @@ export async function sendNotificationEmail(
   const recipient = sanitizeAddress(input.to);
   if (!recipient) return { ok: false, reason: "invalid recipient" };
 
-  const fromAddress = sanitizeAddress(env.EMAIL_FROM_ADDRESS) ?? DEFAULT_FROM_ADDRESS;
-  const fromName = (env.EMAIL_FROM_NAME ?? DEFAULT_FROM_NAME).replace(/[\r\n]/g, "").slice(0, 80);
+  const fromAddress = sanitizeAddress(env.EMAIL_FROM_ADDRESS);
+  if (!fromAddress) return { ok: false, reason: "EMAIL_FROM_ADDRESS is not configured" };
+  const fromName = (env.EMAIL_FROM_NAME ?? appDisplayName(env)).replace(/[\r\n]/g, "").slice(0, 80);
 
   try {
     const { EmailMessage } = (await import("cloudflare:email")) as {
@@ -62,7 +61,7 @@ interface BuildMimeMessageInput {
 }
 
 export function buildMimeMessage(input: BuildMimeMessageInput): string {
-  const boundary = `=_drydock_${randomBoundary()}`;
+  const boundary = `=_spr_${randomBoundary()}`;
   const headers: string[] = [
     `From: ${formatAddress(input.fromName, input.fromAddress)}`,
     `To: ${input.to}`,

@@ -29,7 +29,7 @@ run("pnpm", [
   "d1",
   "migrations",
   "apply",
-  "staged-publish-review-e2e",
+  "drydock-e2e",
   "--local",
   "--persist-to",
   persistRoot,
@@ -85,7 +85,7 @@ function shutdown(resolve) {
 async function writeWranglerConfig() {
   const config = {
     $schema: "../../node_modules/wrangler/config-schema.json",
-    name: "staged-publish-review-e2e",
+    name: "drydock-e2e",
     main: "../../server/index.ts",
     compatibility_date: "2026-05-20",
     compatibility_flags: ["nodejs_compat"],
@@ -97,7 +97,7 @@ async function writeWranglerConfig() {
     d1_databases: [
       {
         binding: "DB",
-        database_name: "staged-publish-review-e2e",
+        database_name: "drydock-e2e",
         database_id: "00000000-0000-0000-0000-0000000000e2",
         migrations_dir: "../../drizzle",
       },
@@ -115,7 +115,7 @@ async function writeWranglerConfig() {
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
       NPM_REGISTRY: registryUrl,
       ALLOW_INSECURE_LOCAL_REGISTRY: "true",
-      AI_CACHE_AFFINITY: "staged-publish-review-e2e",
+      AI_CACHE_AFFINITY: "drydock-e2e",
     },
   };
   await writeFile(wranglerConfigPath, `${JSON.stringify(config, null, 2)}\n`);

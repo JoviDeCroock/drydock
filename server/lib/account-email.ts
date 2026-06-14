@@ -1,3 +1,4 @@
+import { appDisplayName } from "./brand";
 import { sendNotificationEmail, type EmailSendResult } from "./email";
 
 export interface AccountVerificationEmailContent {
@@ -13,28 +14,32 @@ export interface AccountVerificationEmailContent {
  * can never break out of the attribute. The token only ever travels inside the
  * link — never log this body.
  */
-export function buildAccountVerificationEmail(url: string): AccountVerificationEmailContent {
+export function buildAccountVerificationEmail(
+  url: string,
+  appName = "drydock",
+): AccountVerificationEmailContent {
   const safeHref = escapeHtmlAttribute(url);
   const safeText = escapeHtml(url);
+  const safeAppName = escapeHtml(appName);
   return {
-    subject: "Verify your email for Drydock",
+    subject: `Verify your email for ${appName}`,
     text: [
-      "Welcome to Drydock,",
+      `Welcome to ${appName},`,
       "",
       "Confirm your email address to activate your account:",
       url,
       "",
-      "This link expires in 24 hours. If you didn't create a Drydock account, you can ignore this email.",
+      `This link expires in 24 hours. If you didn't create a ${appName} account, you can ignore this email.`,
       "",
-      "— Drydock",
+      `-- ${appName}`,
     ].join("\n"),
     html: [
-      "<p>Welcome to Drydock,</p>",
+      `<p>Welcome to ${safeAppName},</p>`,
       "<p>Confirm your email address to activate your account:</p>",
       `<p><a href="${safeHref}">Verify email address</a></p>`,
       `<p>Or paste this link into your browser:<br>${safeText}</p>`,
-      "<p>This link expires in 24 hours. If you didn't create a Drydock account, you can ignore this email.</p>",
-      "<p>— Drydock</p>",
+      `<p>This link expires in 24 hours. If you didn't create a ${safeAppName} account, you can ignore this email.</p>`,
+      `<p>${escapeHtml(`-- ${appName}`)}</p>`,
     ].join("\n"),
   };
 }
@@ -48,7 +53,7 @@ export async function sendAccountVerificationEmail(
   env: Cloudflare.Env,
   input: AccountVerificationEmailInput,
 ): Promise<EmailSendResult> {
-  const content = buildAccountVerificationEmail(input.url);
+  const content = buildAccountVerificationEmail(input.url, appDisplayName(env));
   return sendNotificationEmail(env, {
     to: input.email,
     subject: content.subject,

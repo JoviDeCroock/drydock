@@ -51,7 +51,7 @@ describe("NpmStageGateway runtime credential injection", () => {
     expect(res.status).toBe(200);
     expect(captured).toHaveLength(1);
     expect(captured[0].authorization).toBe("Bearer npm_secret_token_123");
-    expect(captured[0].userAgent).toBe("staged-publish-review/0.3");
+    expect(captured[0].userAgent).toBe("drydock/0.3");
   });
 
   test("blocks published .tgz tarballs without forwarding the npm token", async () => {
@@ -107,7 +107,7 @@ describe("NpmStageGateway runtime credential injection", () => {
     expect(res.status).toBe(200);
     expect(captured).toHaveLength(1);
     expect(captured[0].authorization).toBeNull();
-    expect(captured[0].userAgent).toBe("staged-publish-review/0.3");
+    expect(captured[0].userAgent).toBe("drydock/0.3");
   });
 
   test("allows exact public artifact URLs without forwarding npm credentials", async () => {

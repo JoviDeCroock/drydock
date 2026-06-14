@@ -1,6 +1,26 @@
 {
-  "name": "staged-publish-review",
-  "private": true,
+  "name": "drydock",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Pre-publish review for npm and PyPI releases — diff each release candidate against the last published version and pin risk findings to the lines that introduced them.",
+  "keywords": [
+    "cloudflare-workers",
+    "npm",
+    "package-review",
+    "pypi",
+    "security",
+    "supply-chain"
+  ],
+  "homepage": "https://github.com/JoviDeCroock/drydock#readme",
+  "bugs": {
+    "url": "https://github.com/JoviDeCroock/drydock/issues"
+  },
+  "license": "MIT",
+  "author": "Jovi De Croock",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JoviDeCroock/drydock.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -14,11 +34,11 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "db:generate": "drizzle-kit generate",
-    "db:migrate:local": "wrangler d1 migrations apply staged-publish-review --local",
-    "db:migrate:remote": "wrangler d1 migrations apply staged-publish-review --remote",
+    "db:migrate:local": "wrangler d1 migrations apply drydock --local",
+    "db:migrate:remote": "wrangler d1 migrations apply drydock --remote",
     "scan-artifacts:backfill": "node scripts/backfill-scan-artifacts.mjs",
-    "db:backfill:scan-list-summaries:local": "wrangler d1 execute staged-publish-review --local --file scripts/backfill-scan-list-summaries.sql",
-    "db:backfill:scan-list-summaries:remote": "wrangler d1 execute staged-publish-review --remote --file scripts/backfill-scan-list-summaries.sql",
+    "db:backfill:scan-list-summaries:local": "wrangler d1 execute drydock --local --file scripts/backfill-scan-list-summaries.sql",
+    "db:backfill:scan-list-summaries:remote": "wrangler d1 execute drydock --remote --file scripts/backfill-scan-list-summaries.sql",
     "test": "vitest run",
     "test:node": "vitest run --project node",
     "test:workers": "vitest run --project workers",

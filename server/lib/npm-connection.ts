@@ -305,7 +305,7 @@ function npmAuthHeaders(token: string, accept: string) {
   return {
     accept,
     authorization: `Bearer ${token}`,
-    "user-agent": "staged-publish-review/credential-validation",
+    "user-agent": "drydock/credential-validation",
   };
 }
 

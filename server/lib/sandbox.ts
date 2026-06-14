@@ -103,7 +103,7 @@ export class NpmStageGateway extends WorkerEntrypoint<Cloudflare.Env, NpmStageGa
     const token = this.ctx.props.npmToken;
     const forwarded = new Request(request);
     if (token && policy.credentialed) forwarded.headers.set("authorization", `Bearer ${token}`);
-    forwarded.headers.set("user-agent", "staged-publish-review/0.3");
+    forwarded.headers.set("user-agent", "drydock/0.3");
 
     return fetch(forwarded);
   }

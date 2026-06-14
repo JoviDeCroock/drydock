@@ -6,6 +6,7 @@ import {
   resolveNotificationEmails,
   type AppDb,
 } from "../db";
+import { appDisplayName, emailSignature } from "./brand";
 import { sendNotificationEmail } from "./email";
 import type { RiskLevel } from "./review";
 import type { OrganizationRole } from "./roles";
@@ -37,6 +38,7 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
   ]);
 
   const scan = detail?.scan;
+  const signature = emailSignature(env);
   const packageLabel = formatPackageLabel(scan?.packageName, scan?.stagedVersion);
   const dashboardUrl = scanUrl(env, scanId);
   const subject =
@@ -53,7 +55,7 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
           scan?.risk ? `Overall risk: ${scan.risk}.` : null,
           dashboardUrl ? `Review the report: ${dashboardUrl}` : null,
           "",
-          "— Drydock",
+          signature,
         ]
       : [
           "Hi there,",
@@ -62,7 +64,7 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
           error?.message ? `Reason: ${error.message}` : null,
           dashboardUrl ? `Review the scan: ${dashboardUrl}` : null,
           "",
-          "— Drydock",
+          signature,
         ];
   const text = lines.filter((line): line is string => line !== null).join("\n");
 
@@ -161,11 +163,12 @@ export async function notifyNpmConnectionExpired(
   }
 
   const settingsLink = settingsUrl(env);
+  const appName = appDisplayName(env);
   const subject = "Your npm token can no longer reach the staging registry";
   const lines = [
     "Hi there,",
     "",
-    "Drydock can no longer reach the npm staging registry with your saved token, so staged-release reviews are paused for your organization.",
+    `${appName} can no longer reach the npm staging registry with your saved token, so staged-release reviews are paused for your organization.`,
     "",
     `Registry: ${registryUrl}`,
     "",
@@ -173,7 +176,7 @@ export async function notifyNpmConnectionExpired(
       ? `Re-add a working token on Settings to resume reviews: ${settingsLink}`
       : "Re-add a working token on the Settings page to resume reviews.",
     "",
-    "— Drydock",
+    emailSignature(env),
   ];
   const text = lines.filter((line): line is string => line !== null).join("\n");
 
@@ -244,6 +247,7 @@ export async function notifyWorkflowGateReview(
   const recipients = await resolveNotificationEmails(db, organizationId, ownerUserId);
 
   const packageLabel = formatPackageLabel(packageName, version);
+  const signature = emailSignature(env);
   const dashboardUrl = scanUrl(env, scanId);
   const otherPackages = packageCount && packageCount > 1 ? packageCount - 1 : 0;
   // A monorepo release fans out into several per-package scans behind one gate;
@@ -269,7 +273,7 @@ export async function notifyWorkflowGateReview(
     "",
     "The held GitHub deployment stays blocked until someone approves or rejects it.",
     "",
-    "— Drydock",
+    signature,
   ];
   const text = lines.filter((line): line is string => line !== null).join("\n");
 
@@ -382,12 +386,13 @@ export async function notifyWorkflowGateTimeout(
   }
 
   const packageLabel = formatPackageLabel(packageName, version);
+  const appName = appDisplayName(env);
   const dashboardUrl = scanUrl(env, scanId);
   const subject = `GitHub gate for ${packageLabel} timed out before scan completed`;
   const lines = [
     "Hi there,",
     "",
-    `The GitHub release gate for ${packageLabel} in ${repositoryFullName} timed out before Drydock finished scanning it.`,
+    `The GitHub release gate for ${packageLabel} in ${repositoryFullName} timed out before ${appName} finished scanning it.`,
     "GitHub may have already blocked the release because the review did not return inside its decision window.",
     "",
     `Repository: ${repositoryFullName}`,
@@ -397,7 +402,7 @@ export async function notifyWorkflowGateTimeout(
     "",
     "Re-run the workflow to request a fresh review.",
     "",
-    "— Drydock",
+    emailSignature(env),
   ];
   const text = lines.filter((line): line is string => line !== null).join("\n");
 
@@ -532,23 +537,24 @@ export async function notifyOrganizationInvite(
 ): Promise<void> {
   const { env, db, organizationId, organizationName, email, role, token, invitedByUserId } = input;
   const inviteUrl = inviteAcceptUrl(env, token);
+  const appName = appDisplayName(env);
 
   const result = inviteUrl
     ? await sendNotificationEmail(env, {
         to: email,
-        subject: `You're invited to ${organizationName} on Drydock`,
+        subject: `You're invited to ${organizationName} on ${appName}`,
         text: [
           "Hi there,",
           "",
-          `${input.invitedByName ? input.invitedByName : "An organization owner"} invited you to join ${organizationName} on Drydock as a ${role}.`,
+          `${input.invitedByName ? input.invitedByName : "An organization owner"} invited you to join ${organizationName} on ${appName} as a ${role}.`,
           "",
           `Accept the invitation: ${inviteUrl}`,
           "",
-          "If you don't have a Drydock account yet, create one with this email address and the link will add you to the organization.",
+          `If you don't have a ${appName} account yet, create one with this email address and the link will add you to the organization.`,
           "",
           "This invitation expires in 7 days.",
           "",
-          "— Drydock",
+          emailSignature(env),
         ].join("\n"),
       })
     : { ok: false, reason: "BETTER_AUTH_URL is not configured" };

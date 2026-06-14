@@ -169,7 +169,7 @@ function npmStageHeaders(token: string, userAgentSuffix: string) {
   return {
     accept: "application/json",
     authorization: `Bearer ${token}`,
-    "user-agent": `staged-publish-review/${userAgentSuffix}`,
+    "user-agent": `drydock/${userAgentSuffix}`,
   };
 }
 

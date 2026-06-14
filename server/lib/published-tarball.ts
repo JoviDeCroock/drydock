@@ -64,7 +64,7 @@ export async function fetchPublishedTarballBytes(
 
   const headers = new Headers({
     accept: "application/octet-stream",
-    "user-agent": "staged-publish-review/0.3",
+    "user-agent": "drydock/0.3",
   });
   if (options.npmToken) headers.set("authorization", `Bearer ${options.npmToken}`);
 

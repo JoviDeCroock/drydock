@@ -221,7 +221,7 @@ app.get("/api/health", (c) =>
 
 app.get("/api", (c) =>
   c.json({
-    name: "staged-publish-review",
+    name: "drydock",
     endpoints: {
       createScan: "POST /api/v1/scans { stageId }",
       scans: "GET /api/v1/scans",

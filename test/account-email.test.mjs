@@ -6,8 +6,9 @@ describe("buildAccountVerificationEmail", () => {
   const url = "https://drydock.org/api/auth/verify-email?token=abc123&callbackURL=%2Fverify-email";
 
   test("composes a verification subject and embeds the link in both parts", () => {
-    const content = buildAccountVerificationEmail(url);
+    const content = buildAccountVerificationEmail(url, "Example Review");
     expect(content.subject).toMatch(/verify/i);
+    expect(content.subject).toContain("Example Review");
     expect(content.text).toContain(url);
     // The href is attribute-escaped, so assert on the escaped form.
     expect(content.html).toContain(
@@ -19,7 +20,7 @@ describe("buildAccountVerificationEmail", () => {
 
   test("escapes HTML metacharacters so a crafted link can't break out of the href", () => {
     const hostile = 'https://evil.test/"></a><script>alert(1)</script>?x=1&y=2';
-    const content = buildAccountVerificationEmail(hostile);
+    const content = buildAccountVerificationEmail(hostile, "Example Review");
     expect(content.html).not.toContain("<script>");
     expect(content.html).not.toContain('"></a>');
     expect(content.html).toContain("&quot;&gt;&lt;/a&gt;&lt;script&gt;");

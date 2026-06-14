@@ -1,12 +1,15 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "staged-publish-review-test",
+  "name": "drydock-test",
   "compatibility_date": "2026-05-20",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
+    "APP_NAME": "Drydock Test",
     "BETTER_AUTH_SECRET": "test-secret-that-is-long-enough-for-better-auth",
     "BETTER_AUTH_URL": "http://example.com",
-    "AI_CACHE_AFFINITY": "staged-publish-review-test",
+    "AI_CACHE_AFFINITY": "drydock-test",
+    "EMAIL_FROM_ADDRESS": "drydock-test@example.com",
+    "EMAIL_FROM_NAME": "Drydock Test",
     "NPM_REGISTRY": "https://registry.npmjs.org",
     "NPM_CONNECTIONS_ENCRYPTION_KEY": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     "SLACK_CLIENT_ID": "test-slack-client-id",
@@ -15,7 +18,7 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "staged-publish-review-test",
+      "database_name": "drydock-test",
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "drizzle",
     },
@@ -23,7 +26,7 @@
   "r2_buckets": [
     {
       "binding": "ARTIFACTS",
-      "bucket_name": "staged-publish-review-test-artifacts",
+      "bucket_name": "drydock-test-artifacts",
     },
   ],
 }
