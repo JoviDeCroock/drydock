@@ -39,11 +39,11 @@ Create resources in the target Cloudflare account, then copy the resulting IDs
 or names into `wrangler.jsonc`.
 
 ```bash
-wrangler d1 create drydock
+wrangler d1 create staged-publish-review
 wrangler kv namespace create COMPARE_CACHE
-wrangler r2 bucket create drydock-artifacts
-wrangler queues create drydock-scans
-wrangler queues create drydock-scans-dlq
+wrangler r2 bucket create staged-publish-review-artifacts
+wrangler queues create staged-publish-review-scans
+wrangler queues create staged-publish-review-scans-dlq
 ```
 
 Update these sections in `wrangler.jsonc`:

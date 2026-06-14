@@ -28,5 +28,5 @@ or take other reasonable action when behavior is harmful to the project or its
 community.
 
 If you need to report a conduct issue, contact the maintainers privately at
-`drydock@drydock.org`. Security vulnerabilities should use the separate
+`jovi@resynapse.dev`. Security vulnerabilities should use the separate
 process in [`SECURITY.md`](SECURITY.md).

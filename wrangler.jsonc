@@ -1,6 +1,6 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "drydock",
+	"name": "staged-publish-review",
 	"main": "./server/index.ts",
 	"compatibility_date": "2026-05-20",
 	"compatibility_flags": [
@@ -35,7 +35,7 @@
 	"d1_databases": [
 		{
 			"binding": "DB",
-			"database_name": "drydock",
+			"database_name": "staged-publish-review",
 			"database_id": "9c856c2f-51be-4309-a932-103e6a835430",
 			"migrations_dir": "drizzle"
 		}
@@ -49,24 +49,24 @@
 	"r2_buckets": [
 		{
 			"binding": "ARTIFACTS",
-			"bucket_name": "drydock-artifacts"
+			"bucket_name": "staged-publish-review-artifacts"
 		}
 	],
 	"queues": {
 		"producers": [
 			{
 				"binding": "SCAN_QUEUE",
-				"queue": "drydock-scans"
+				"queue": "staged-publish-review-scans"
 			}
 		],
 		"consumers": [
 			{
-				"queue": "drydock-scans",
+				"queue": "staged-publish-review-scans",
 				"max_batch_size": 1,
 				"max_batch_timeout": 5,
 				"max_concurrency": 10,
 				"max_retries": 3,
-				"dead_letter_queue": "drydock-scans-dlq"
+				"dead_letter_queue": "staged-publish-review-scans-dlq"
 			}
 		]
 	},

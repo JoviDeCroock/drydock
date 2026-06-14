@@ -201,7 +201,7 @@ pnpm db:generate
 Create D1 database and apply migrations:
 
 ```sh
-pnpm wrangler d1 create drydock
+pnpm wrangler d1 create staged-publish-review
 # copy the real database_id into wrangler.jsonc
 pnpm db:migrate:remote
 ```
@@ -220,9 +220,9 @@ Never write SQL migrations by hand; update `server/db/schema.ts` and generate mi
    ```
 
 3. Create production resources and replace placeholder IDs in `wrangler.jsonc`:
-   - D1 database: `pnpm wrangler d1 create drydock`
-   - Scan queue: `pnpm wrangler queues create drydock-scans`
-   - Scan dead-letter queue: `pnpm wrangler queues create drydock-scans-dlq`
+   - D1 database: `pnpm wrangler d1 create staged-publish-review`
+   - Scan queue: `pnpm wrangler queues create staged-publish-review-scans`
+   - Scan dead-letter queue: `pnpm wrangler queues create staged-publish-review-scans-dlq`
    - Compare cache KV namespace: `pnpm wrangler kv namespace create COMPARE_CACHE`
    - Keep the Queue consumer `max_retries` / `dead_letter_queue` settings in `wrangler.jsonc` aligned with `MAX_SCAN_JOB_ATTEMPTS` in `server/lib/scan-job.ts`.
 4. Set the real D1 `database_id`, KV namespace `id`, and production `BETTER_AUTH_URL`, then apply migrations.
