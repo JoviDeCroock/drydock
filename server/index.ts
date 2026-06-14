@@ -45,14 +45,28 @@ export { NpmStageGateway } from "./lib/sandbox";
 export { NpmAdapterBroker } from "./lib/adapters/npm";
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+const CANONICAL_HOSTNAME = "drydock.org";
+const LEGACY_HOSTNAME = "drydock.resynapse.dev";
+const SERVER_OWNED_PATH_PREFIXES = ["/api", "/webhooks"];
+
+function canonicalDomainRedirect(request: Request): Response | null {
+  const url = new URL(request.url);
+  if (url.hostname !== LEGACY_HOSTNAME) return null;
+  url.hostname = CANONICAL_HOSTNAME;
+  return Response.redirect(url.toString(), 308);
+}
+
+function isServerOwnedPath(path: string): boolean {
+  return SERVER_OWNED_PATH_PREFIXES.some(
+    (prefix) => path === prefix || path.startsWith(`${prefix}/`),
+  );
+}
 
 function applySecurityHeaders(c: { res: Response; req: { path: string } }) {
   const headers = new Headers(c.res.headers);
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
-  // Static assets (the HTML document, JS, CSS) are served by Cloudflare's edge
-  // before the Worker runs, so only run_worker_first paths reach here; those are
-  // all JSON API/webhook responses and take the locked-down policy. The static
-  // document CSP lives in public/_headers — see server/lib/security-headers.ts.
+  // Worker-owned routes carry the locked-down API policy; static asset responses
+  // fetched through the ASSETS binding keep the document policy.
   headers.set("Content-Security-Policy", c.req.path.startsWith("/api/") ? API_CSP : DOCUMENT_CSP);
 
   c.res = new Response(c.res.body, {
@@ -67,6 +81,8 @@ app.use("*", async (c, next) => {
   if (c.res.status < 200 || c.res.status > 599) return;
   applySecurityHeaders(c);
 });
+
+app.use("*", async (c, next) => canonicalDomainRedirect(c.req.raw) ?? next());
 
 // GitHub App webhooks are signed by GitHub itself, not Better Auth, and arrive
 // without an Origin/Referer header. They must be mounted before the auth and
@@ -218,7 +234,12 @@ app.route("/api/v1/scans", scansRoutes);
 app.route("/api/v1/slack", slackRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
 
-app.notFound((c) => c.json({ error: "not found" }, 404));
+app.notFound((c) => {
+  if (!isServerOwnedPath(c.req.path) && c.env.ASSETS) {
+    return c.env.ASSETS.fetch(c.req.raw);
+  }
+  return c.json({ error: "not found" }, 404);
+});
 
 app.onError((err, c) => {
   emitOperationalEvent("error", "request.unhandled_error", {

@@ -15,14 +15,8 @@
 	},
 	"assets": {
 		"not_found_handling": "single-page-application",
-		// Keep server-owned paths out of the SPA fallback. Without this, OAuth
-		// callbacks such as /api/v1/slack/callback can render the client 404
-		// before the Hono route sees the request.
-		"run_worker_first": [
-			"/api",
-			"/api/*",
-			"/webhooks/*"
-		]
+		"binding": "ASSETS",
+		"run_worker_first": true
 	},
 	"ai": {
 		"binding": "AI"
