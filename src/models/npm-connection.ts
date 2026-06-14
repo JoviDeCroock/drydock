@@ -31,6 +31,7 @@ export interface NpmCredentialValidation {
     stagedTarballStatus?: number;
     detail?: string;
     stagedTarballDetail?: string;
+    readOnlyMetadataAvailable?: boolean;
     readOnlyDetail?: string;
   };
 }

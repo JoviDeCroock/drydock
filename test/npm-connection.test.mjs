@@ -59,6 +59,7 @@ describe("npm connection validation", () => {
       registryAuth: true,
       stagedListAccess: true,
       readOnly: true,
+      readOnlyMetadataAvailable: true,
       whoami: "maintainer",
       registryUrl: "https://registry.npmjs.org",
     });
@@ -97,6 +98,7 @@ describe("npm connection validation", () => {
       stagedViewAccess: true,
       stagedTarballAccess: true,
       readOnly: true,
+      readOnlyMetadataAvailable: true,
       stageId: "stage-123",
       stagedTarballStatus: 206,
     });
@@ -149,10 +151,11 @@ describe("npm connection validation", () => {
     expect(validation.ok).toBe(false);
     expect(validation.status).toBe("invalid");
     expect(validation.capabilities.readOnly).toBe(false);
+    expect(validation.capabilities.readOnlyMetadataAvailable).toBe(true);
     expect(validation.capabilities.readOnlyDetail).toMatch(/write permissions/);
   });
 
-  test("rejects token when tokens endpoint returns non-200 (fail closed)", async () => {
+  test("keeps baseline validation when tokens endpoint is unavailable", async () => {
     globalThis.fetch = vi.fn(async (url) => {
       if (String(url).endsWith("/-/whoami")) return Response.json({ username: "maintainer" });
       if (String(url).endsWith("/-/stage?perPage=1")) return Response.json({ items: [] });
@@ -166,12 +169,13 @@ describe("npm connection validation", () => {
       "npm_secret_token",
     );
 
-    expect(validation.ok).toBe(false);
-    expect(validation.capabilities.readOnly).toBe(false);
+    expect(validation.ok).toBe(true);
+    expect(validation.capabilities.readOnly).toBeUndefined();
+    expect(validation.capabilities.readOnlyMetadataAvailable).toBe(false);
     expect(validation.capabilities.readOnlyDetail).toMatch(/returned 401/);
   });
 
-  test("rejects token when it cannot be matched in the listing (fail closed)", async () => {
+  test("keeps baseline validation when token cannot be matched in the listing", async () => {
     globalThis.fetch = vi.fn(async (url) => {
       if (String(url).endsWith("/-/whoami")) return Response.json({ username: "maintainer" });
       if (String(url).endsWith("/-/stage?perPage=1")) return Response.json({ items: [] });
@@ -187,8 +191,9 @@ describe("npm connection validation", () => {
       "npm_secret_token",
     );
 
-    expect(validation.ok).toBe(false);
-    expect(validation.capabilities.readOnly).toBe(false);
+    expect(validation.ok).toBe(true);
+    expect(validation.capabilities.readOnly).toBeUndefined();
+    expect(validation.capabilities.readOnlyMetadataAvailable).toBe(false);
     expect(validation.capabilities.readOnlyDetail).toMatch(/could not match token/);
   });
 

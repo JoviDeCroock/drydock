@@ -49,6 +49,7 @@ export interface NpmCredentialValidation {
     stagedViewStatus?: number;
     stagedTarballStatus?: number;
     detail?: string;
+    readOnlyMetadataAvailable?: boolean;
     stagedListDetail?: string;
     stagedViewDetail?: string;
     stagedTarballDetail?: string;
@@ -196,13 +197,17 @@ export async function validateNpmCredential(
     (stagedView ? stagedView.stagedViewAccess : true) &&
     (stagedTarball ? stagedTarball.stagedTarballAccess : true);
   const npmjsRegistry = isNpmjsRegistry(registry);
-  const readOnlyCheck: { readOnly?: boolean; readOnlyDetail?: string } = baselineOk
+  const readOnlyCheck: {
+    readOnly?: boolean;
+    readOnlyMetadataAvailable?: boolean;
+    readOnlyDetail?: string;
+  } = baselineOk
     ? npmjsRegistry
       ? await validateTokenReadOnly(registry, token)
       : { readOnly: true }
     : {};
 
-  const ok = baselineOk && (npmjsRegistry ? readOnlyCheck.readOnly === true : true);
+  const ok = baselineOk && readOnlyCheck.readOnly !== false;
 
   return {
     ok,
@@ -232,23 +237,27 @@ function isNpmjsRegistry(registry: string): boolean {
  * list on npmjs.org (`GET /-/npm/v1/tokens`). Drydock only needs read access
  * to staged artifacts; a write-capable token is an unnecessary blast radius.
  *
- * The `/tokens` endpoint only accepts session tokens as of the npm API docs,
- * but granular access tokens may still return results. If the endpoint is
- * inaccessible or the token cannot be matched, the check fails closed:
- * the token is rejected.
+ * The `/tokens` endpoint only accepts session tokens as of the npm API docs.
+ * If npm does not expose metadata for the submitted token, Drydock preserves
+ * the existing staged-access validation result and only rejects when metadata
+ * proves the token is write-capable.
  */
 async function validateTokenReadOnly(
   registry: string,
   token: string,
-): Promise<{ readOnly: boolean; readOnlyDetail?: string }> {
+): Promise<{
+  readOnly?: boolean;
+  readOnlyMetadataAvailable: boolean;
+  readOnlyDetail?: string;
+}> {
   try {
     const response = await fetch(`${registry}/-/npm/v1/tokens?perPage=100`, {
       headers: npmAuthHeaders(token, "application/json"),
     });
     if (!response.ok) {
       return {
-        readOnly: false,
-        readOnlyDetail: `token metadata endpoint returned ${response.status}; cannot verify read-only — use a read-only token`,
+        readOnlyMetadataAvailable: false,
+        readOnlyDetail: `token metadata endpoint returned ${response.status}; could not verify read-only`,
       };
     }
     const data = (await response.json().catch(() => null)) as {
@@ -257,9 +266,8 @@ async function validateTokenReadOnly(
     const objects = Array.isArray(data?.objects) ? data.objects : [];
     if (objects.length === 0) {
       return {
-        readOnly: false,
-        readOnlyDetail:
-          "token metadata returned no tokens; cannot verify read-only — use a read-only token",
+        readOnlyMetadataAvailable: false,
+        readOnlyDetail: "token metadata returned no tokens; could not verify read-only",
       };
     }
 
@@ -268,21 +276,23 @@ async function validateTokenReadOnly(
 
     if (!matched) {
       return {
-        readOnly: false,
-        readOnlyDetail:
-          "could not match token in metadata listing; cannot verify read-only — use a read-only token",
+        readOnlyMetadataAvailable: false,
+        readOnlyDetail: "could not match token in metadata listing; could not verify read-only",
       };
     }
 
-    if (matched.readonly === true && !hasWritePermission(matched)) return { readOnly: true };
+    if (matched.readonly === true && !hasWritePermission(matched)) {
+      return { readOnly: true, readOnlyMetadataAvailable: true };
+    }
 
     return {
       readOnly: false,
+      readOnlyMetadataAvailable: true,
       readOnlyDetail: "npm token has write permissions; Drydock requires a read-only token",
     };
   } catch (err) {
     return {
-      readOnly: false,
+      readOnlyMetadataAvailable: false,
       readOnlyDetail: `token read-only check failed: ${errorMessage(err)}`,
     };
   }
