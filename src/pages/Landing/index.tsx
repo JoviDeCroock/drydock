@@ -4,6 +4,7 @@ import { useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { sessionModel } from "../../models/auth";
 import {
+  AikidoPartnerStrip,
   Badge,
   Card,
   Eyebrow,
@@ -73,6 +74,8 @@ export default function LandingPage() {
           </Show>
         </div>
       </section>
+
+      <AikidoPartnerStrip />
 
       <ScanPreview />
 
