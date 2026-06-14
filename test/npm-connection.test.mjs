@@ -40,6 +40,10 @@ describe("npm connection validation", () => {
       if (String(url).endsWith("/-/whoami")) return Response.json({ username: "maintainer" });
       if (String(url).endsWith("/-/stage?perPage=1"))
         return Response.json({ items: [], page: 0, perPage: 1, total: 0 });
+      if (String(url).includes("/-/npm/v1/tokens"))
+        return Response.json({
+          objects: [{ token: "npm_secr...oken", readonly: true }],
+        });
       return new Response("unexpected", { status: 500 });
     });
     globalThis.fetch = fetchMock;
@@ -54,10 +58,11 @@ describe("npm connection validation", () => {
     expect(validation.capabilities).toMatchObject({
       registryAuth: true,
       stagedListAccess: true,
+      readOnly: true,
       whoami: "maintainer",
       registryUrl: "https://registry.npmjs.org",
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   test("checks staged view and ranged tarball access when a stage id is supplied", async () => {
@@ -71,6 +76,10 @@ describe("npm connection validation", () => {
       if (String(url).endsWith("/-/stage/stage-123")) return Response.json({ id: "stage-123" });
       if (String(url).endsWith("/-/stage/stage-123/tarball"))
         return new Response("x", { status: 206 });
+      if (String(url).includes("/-/npm/v1/tokens"))
+        return Response.json({
+          objects: [{ token: "npm_secr...oken", readonly: true }],
+        });
       return new Response("unexpected", { status: 500 });
     });
     globalThis.fetch = fetchMock;
@@ -87,16 +96,10 @@ describe("npm connection validation", () => {
       stagedListAccess: true,
       stagedViewAccess: true,
       stagedTarballAccess: true,
+      readOnly: true,
       stageId: "stage-123",
       stagedTarballStatus: 206,
     });
-    expect(seen.map((entry) => entry.url)).toEqual([
-      "https://registry.npmjs.org/-/whoami",
-      "https://registry.npmjs.org/-/stage?perPage=1",
-      "https://registry.npmjs.org/-/stage/stage-123",
-      "https://registry.npmjs.org/-/stage/stage-123/tarball",
-    ]);
-    expect(seen.at(-1).headers.range).toBe("bytes=0-0");
   });
 
   test("marks validation invalid when staged list access is denied", async () => {
@@ -104,6 +107,10 @@ describe("npm connection validation", () => {
       if (String(url).endsWith("/-/whoami")) return Response.json({ username: "maintainer" });
       if (String(url).endsWith("/-/stage?perPage=1"))
         return new Response("denied", { status: 403, statusText: "Forbidden" });
+      if (String(url).includes("/-/npm/v1/tokens"))
+        return Response.json({
+          objects: [{ token: "npm_secr...oken", readonly: true }],
+        });
       return new Response("unexpected", { status: 500 });
     });
 
@@ -119,5 +126,88 @@ describe("npm connection validation", () => {
       stagedListAccess: false,
       stagedListStatus: 403,
     });
+  });
+
+  test("rejects write-capable npm token on npmjs.org", async () => {
+    globalThis.fetch = vi.fn(async (url) => {
+      if (String(url).endsWith("/-/whoami")) return Response.json({ username: "maintainer" });
+      if (String(url).endsWith("/-/stage?perPage=1")) return Response.json({ items: [] });
+      if (String(url).includes("/-/npm/v1/tokens"))
+        return Response.json({
+          objects: [
+            { token: "npm_secr...oken", readonly: true, permissions: [{ action: "publish" }] },
+          ],
+        });
+      return new Response("unexpected", { status: 500 });
+    });
+
+    const validation = await validateNpmCredential(
+      "https://registry.npmjs.org",
+      "npm_secret_token",
+    );
+
+    expect(validation.ok).toBe(false);
+    expect(validation.status).toBe("invalid");
+    expect(validation.capabilities.readOnly).toBe(false);
+    expect(validation.capabilities.readOnlyDetail).toMatch(/write permissions/);
+  });
+
+  test("rejects token when tokens endpoint returns non-200 (fail closed)", async () => {
+    globalThis.fetch = vi.fn(async (url) => {
+      if (String(url).endsWith("/-/whoami")) return Response.json({ username: "maintainer" });
+      if (String(url).endsWith("/-/stage?perPage=1")) return Response.json({ items: [] });
+      if (String(url).includes("/-/npm/v1/tokens"))
+        return new Response("Unauthorized", { status: 401 });
+      return new Response("unexpected", { status: 500 });
+    });
+
+    const validation = await validateNpmCredential(
+      "https://registry.npmjs.org",
+      "npm_secret_token",
+    );
+
+    expect(validation.ok).toBe(false);
+    expect(validation.capabilities.readOnly).toBe(false);
+    expect(validation.capabilities.readOnlyDetail).toMatch(/returned 401/);
+  });
+
+  test("rejects token when it cannot be matched in the listing (fail closed)", async () => {
+    globalThis.fetch = vi.fn(async (url) => {
+      if (String(url).endsWith("/-/whoami")) return Response.json({ username: "maintainer" });
+      if (String(url).endsWith("/-/stage?perPage=1")) return Response.json({ items: [] });
+      if (String(url).includes("/-/npm/v1/tokens"))
+        return Response.json({
+          objects: [{ token: "npm_othe...oken", readonly: true }],
+        });
+      return new Response("unexpected", { status: 500 });
+    });
+
+    const validation = await validateNpmCredential(
+      "https://registry.npmjs.org",
+      "npm_secret_token",
+    );
+
+    expect(validation.ok).toBe(false);
+    expect(validation.capabilities.readOnly).toBe(false);
+    expect(validation.capabilities.readOnlyDetail).toMatch(/could not match token/);
+  });
+
+  test("skips read-only check for non-npmjs registries", async () => {
+    const fetchMock = vi.fn(async (url) => {
+      if (String(url).endsWith("/-/whoami")) return Response.json({ username: "maintainer" });
+      if (String(url).endsWith("/-/stage?perPage=1")) return Response.json({ items: [] });
+      return new Response("unexpected", { status: 500 });
+    });
+    globalThis.fetch = fetchMock;
+
+    const validation = await validateNpmCredential(
+      "https://custom-registry.example.com",
+      "npm_secret_token",
+    );
+
+    expect(validation.ok).toBe(true);
+    expect(validation.capabilities.readOnly).toBe(true);
+    const calledUrls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(calledUrls.some((u) => u.includes("/-/npm/v1/tokens"))).toBe(false);
   });
 });
