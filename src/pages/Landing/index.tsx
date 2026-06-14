@@ -47,7 +47,7 @@ export default function LandingPage() {
         </>
       }
     >
-      <section class="py-8 md:py-12 border-y border-border flex flex-col gap-5">
+      <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
         <Eyebrow tone="accent">Pre-publish review for npm and PyPI packages</Eyebrow>
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
           See exactly what your next publish ships.
