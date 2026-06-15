@@ -46,7 +46,8 @@ function slackEvents() {
     .filter((event) => event.metadata.channel === "slack");
 }
 
-const { notifyScanCompletion, notifyWorkflowGateReview } = await import("../server/lib/notify.ts");
+const { notifyNpmConnectionExpired, notifyScanCompletion, notifyWorkflowGateReview } =
+  await import("../server/lib/notify.ts");
 
 function gateInput(overrides = {}) {
   return {
@@ -73,6 +74,17 @@ function scanInput(overrides = {}) {
     organizationId: "org_1",
     ownerUserId: "user_1",
     outcome: "complete",
+    ...overrides,
+  };
+}
+
+function npmConnectionExpiredInput(overrides = {}) {
+  return {
+    env: { BETTER_AUTH_URL: "https://drydock.test" },
+    db: {},
+    organizationId: "org_1",
+    ownerUserId: "user_1",
+    registryUrl: "https://registry.npmjs.org",
     ...overrides,
   };
 }
@@ -202,6 +214,31 @@ describe("notifyWorkflowGateReview", () => {
     const [, event] = dbMock.recordScanEvent.mock.calls[0];
     expect(event.type).toBe("github_workflow_gate.notification_failed");
     expect(event.metadata).toMatchObject({ gateId: "gate_1", reason: "no_recipients" });
+  });
+});
+
+describe("notifyNpmConnectionExpired", () => {
+  test("emails the integrations tab link for replacing the npm token", async () => {
+    await notifyNpmConnectionExpired(npmConnectionExpiredInput());
+
+    expect(emailMock.sendNotificationEmail).toHaveBeenCalledTimes(1);
+    const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
+    expect(message.subject).toBe("Your npm token can no longer reach the staging registry");
+    expect(message.text).toContain("https://drydock.test/dashboard/settings?tab=integrations");
+    expect(message.text).toContain("Registry: https://registry.npmjs.org");
+
+    expect(dbMock.recordScanEvent).toHaveBeenCalledTimes(1);
+    const [, event] = dbMock.recordScanEvent.mock.calls[0];
+    expect(event).toMatchObject({
+      organizationId: "org_1",
+      actorUserId: "user_1",
+      type: "npm_connection.notification_sent",
+      metadata: {
+        channel: "email",
+        trigger: "token_expired",
+        recipient: "owner@example.com",
+      },
+    });
   });
 });
 
