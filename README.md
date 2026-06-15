@@ -101,16 +101,16 @@ Current implementation secrets:
 
 Worker non-secret vars and bindings:
 
-| Name                                                         | Where                                           | Purpose                                                                                                                      |
-| ------------------------------------------------------------ | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `BETTER_AUTH_URL`                                            | `.dev.vars` locally; Wrangler var in production | Canonical app origin for Better Auth, for example `http://localhost:5173` locally or your deployed Worker URL. Not a secret. |
-| `APP_NAME`, `APP_TAGLINE`, `BRAND_WORDMARK`, `CONTACT_EMAIL` | `wrangler.jsonc` `vars`                         | Public display strings used by the static UI and HTML metadata at build time.                                                |
-| `EMAIL_FROM_ADDRESS`, `EMAIL_FROM_NAME`                      | `wrangler.jsonc` `vars`                         | Sender identity for Cloudflare Email notifications. The address must be configured for your sending domain.                  |
-| `NPM_REGISTRY`                                               | `wrangler.jsonc` `vars`                         | npm registry base URL. Defaults to `https://registry.npmjs.org`.                                                             |
-| `AI_CACHE_AFFINITY`                                          | `wrangler.jsonc` `vars`                         | Stable `x-session-affinity` value for Cloudflare Workers AI prefix caching.                                                  |
-| `AI`, `LOADER`, `DB`                                         | `wrangler.jsonc` bindings                       | Cloudflare Workers AI, Dynamic Worker loader, and required D1 database binding.                                              |
-| `SCAN_QUEUE`                                                 | `wrangler.jsonc` Queue binding                  | Optional in local dev; production async scan queue. Configure retry/DLQ policy before private beta.                          |
-| `COMPARE_CACHE`                                              | `wrangler.jsonc` KV binding                     | Cache for parsed published package versions used by alternate-version compare views.                                         |
+| Name                                                         | Where                                           | Purpose                                                                                                                                                            |
+| ------------------------------------------------------------ | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `BETTER_AUTH_URL`                                            | `.dev.vars` locally; Wrangler var in production | Canonical app origin for Better Auth and generated canonical metadata URLs, for example `http://localhost:5173` locally or your deployed Worker URL. Not a secret. |
+| `APP_NAME`, `APP_TAGLINE`, `BRAND_WORDMARK`, `CONTACT_EMAIL` | `wrangler.jsonc` `vars`                         | Public display strings used by the static UI and HTML metadata at build time.                                                                                      |
+| `EMAIL_FROM_ADDRESS`, `EMAIL_FROM_NAME`                      | `wrangler.jsonc` `vars`                         | Sender identity for Cloudflare Email notifications. The address must be configured for your sending domain.                                                        |
+| `NPM_REGISTRY`                                               | `wrangler.jsonc` `vars`                         | npm registry base URL. Defaults to `https://registry.npmjs.org`.                                                                                                   |
+| `AI_CACHE_AFFINITY`                                          | `wrangler.jsonc` `vars`                         | Stable `x-session-affinity` value for Cloudflare Workers AI prefix caching.                                                                                        |
+| `AI`, `LOADER`, `DB`                                         | `wrangler.jsonc` bindings                       | Cloudflare Workers AI, Dynamic Worker loader, and required D1 database binding.                                                                                    |
+| `SCAN_QUEUE`                                                 | `wrangler.jsonc` Queue binding                  | Optional in local dev; production async scan queue. Configure retry/DLQ policy before private beta.                                                                |
+| `COMPARE_CACHE`                                              | `wrangler.jsonc` KV binding                     | Cache for parsed published package versions used by alternate-version compare views.                                                                               |
 
 Generate the Better Auth secret with either command:
 

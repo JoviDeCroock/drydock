@@ -65,8 +65,9 @@ Update these sections in `wrangler.jsonc`:
 
 `APP_NAME`, `APP_TAGLINE`, `BRAND_WORDMARK`, and `CONTACT_EMAIL` are public
 display settings. Vite reads them from `wrangler.jsonc` at build time for the
-static UI and HTML metadata. `EMAIL_FROM_ADDRESS` / `EMAIL_FROM_NAME` are the
-server-side sender settings for Cloudflare Email.
+static UI and HTML metadata, and uses `BETTER_AUTH_URL` for canonical metadata
+URLs. `EMAIL_FROM_ADDRESS` / `EMAIL_FROM_NAME` are the server-side sender
+settings for Cloudflare Email.
 
 If you use Cloudflare Flagship for AI review, replace the `flagship.app_id` with
 your own app id. The `ai-review` flag must stay default-off unless you are

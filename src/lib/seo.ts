@@ -1,7 +1,5 @@
 import { toStatic, useHead, useLink, type MetaOptions } from "hoofd/preact";
-
-const SITE_NAME = "Drydock";
-const SITE_URL = "https://drydock.org";
+import { BRAND_NAME, SITE_URL } from "../brand";
 
 export interface PageSeoMetadata {
   title: string;
@@ -21,16 +19,14 @@ export interface PrerenderHead {
 }
 
 export const homePageSeo: PageSeoMetadata = {
-  title: "Drydock: pre-publish package review",
-  description:
-    "Drydock lets npm and PyPI maintainers review the exact package artifact before a staged publish or gated release goes live.",
+  title: `${BRAND_NAME}: pre-publish package review`,
+  description: `${BRAND_NAME} lets npm and PyPI maintainers review the exact package artifact before a staged publish or gated release goes live.`,
   path: "/",
 };
 
 export const docsPageSeo: PageSeoMetadata = {
-  title: "Drydock docs: staged publishing and workflow gates",
-  description:
-    "Set up npm staged publishing or GitHub workflow gates so Drydock can review release artifacts before publication.",
+  title: `${BRAND_NAME} docs: staged publishing and workflow gates`,
+  description: `Set up npm staged publishing or GitHub workflow gates so ${BRAND_NAME} can review release artifacts before publication.`,
   path: "/docs",
 };
 
@@ -51,7 +47,7 @@ export function PageSeo({ metadata }: { metadata: PageSeoMetadata }) {
     metas: [
       { name: "description", content: metadata.description },
       { name: "robots", content: "index,follow" },
-      { property: "og:site_name", content: SITE_NAME },
+      { property: "og:site_name", content: BRAND_NAME },
       { property: "og:type", content: "website" },
       { property: "og:title", content: metadata.title },
       { property: "og:description", content: metadata.description },

@@ -12,6 +12,7 @@ declare const process: {
     VITE_APP_TAGLINE?: string;
     VITE_BRAND_WORDMARK?: string;
     VITE_CONTACT_EMAIL?: string;
+    VITE_SITE_URL?: string;
   };
 };
 
@@ -27,6 +28,7 @@ const publicConfig = {
   wordmark: envOrVar("VITE_BRAND_WORDMARK", "BRAND_WORDMARK"),
   contactEmail:
     envOrVar("VITE_CONTACT_EMAIL", "CONTACT_EMAIL") ?? wranglerVars.EMAIL_FROM_ADDRESS ?? "",
+  siteUrl: normalizeSiteUrl(envOrVar("VITE_SITE_URL", "BETTER_AUTH_URL") ?? "https://drydock.org"),
 };
 
 export default defineConfig(({ mode }) => {
@@ -47,6 +49,7 @@ export default defineConfig(({ mode }) => {
         publicConfig.wordmark ?? publicConfig.appName.toLowerCase(),
       ),
       "import.meta.env.VITE_CONTACT_EMAIL": JSON.stringify(publicConfig.contactEmail),
+      "import.meta.env.VITE_SITE_URL": JSON.stringify(publicConfig.siteUrl),
     },
     plugins: [
       publicHtmlConfigPlugin(),
@@ -73,6 +76,10 @@ export default defineConfig(({ mode }) => {
 
 function envOrVar(envName: keyof typeof process.env, varName: string): string | undefined {
   return process.env[envName] || wranglerVars[varName];
+}
+
+function normalizeSiteUrl(value: string): string {
+  return value.replace(/\/+$/, "");
 }
 
 function readWranglerVars(): Record<string, string> {
