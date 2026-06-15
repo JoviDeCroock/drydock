@@ -50,7 +50,7 @@ export default function LandingPage() {
     >
       <PageSeo metadata={homePageSeo} />
       <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
-        <Eyebrow tone="accent">Pre-publish review for npm and PyPI packages</Eyebrow>
+        <Eyebrow tone="accent">Pre-publish review for npm and PyPI maintainers</Eyebrow>
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
           See exactly what your next publish ships.
         </h1>
