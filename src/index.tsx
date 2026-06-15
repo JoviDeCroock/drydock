@@ -1,6 +1,7 @@
 import { hydrate, render } from "preact";
 import { ErrorBoundary, LocationProvider, Route, Router, lazy, prerender as ssr } from "preact-iso";
 import { Toaster } from "./components";
+import { extractPrerenderHead, getPageSeoMetadata } from "./lib/seo";
 import "./style.css";
 
 const LandingPage = lazy(() => import("./pages/Landing"));
@@ -65,6 +66,10 @@ if (typeof window !== "undefined") {
 
 export async function prerender(data: Record<string, unknown>) {
   const result = await ssr(<App {...data} />);
+  const extractedHead = extractPrerenderHead();
+  const prerenderUrl = typeof data.url === "string" ? data.url : location.pathname;
+  const shouldEmitHead = getPageSeoMetadata(new URL(prerenderUrl, "http://localhost").pathname);
+  const head = shouldEmitHead ? extractedHead : undefined;
 
   // The prerender crawler follows every rendered <a href> as a route to prerender.
   // Keep it to the statically prerendered set so conditional links (e.g. the docs
@@ -76,5 +81,5 @@ export async function prerender(data: Record<string, unknown>) {
     }
   }
 
-  return { ...result, links };
+  return head ? { ...result, links, head } : { ...result, links };
 }
