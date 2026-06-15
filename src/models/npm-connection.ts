@@ -23,7 +23,6 @@ export interface NpmCredentialValidation {
   capabilities: {
     registryAuth: boolean;
     stagedTarballAccess?: boolean;
-    readOnly?: boolean;
     whoami?: string | null;
     registryUrl: string;
     stageId?: string;
@@ -31,8 +30,6 @@ export interface NpmCredentialValidation {
     stagedTarballStatus?: number;
     detail?: string;
     stagedTarballDetail?: string;
-    readOnlyMetadataAvailable?: boolean;
-    readOnlyDetail?: string;
   };
 }
 
@@ -112,7 +109,7 @@ export const NpmConnectionModel = createModel(() => {
           const validation = await validateNpmConnection();
           this.applyConnection(validation.connection);
           if (!validation.validation.ok) {
-            this.error.value = describeValidationError(validation.validation);
+            this.error.value = "Saved token, but npm validation reported invalid access.";
           }
         }
       } catch (err) {
@@ -131,7 +128,7 @@ export const NpmConnectionModel = createModel(() => {
         const data = await validateNpmConnection(stageId);
         this.applyConnection(data.connection);
         if (!data.validation.ok) {
-          this.error.value = describeValidationError(data.validation);
+          this.error.value = "Npm validation reported invalid access.";
         }
       } catch (err) {
         this.error.value = errorMessage(err);
@@ -156,13 +153,6 @@ export const NpmConnectionModel = createModel(() => {
     },
   };
 });
-
-function describeValidationError(validation: NpmCredentialValidation): string {
-  if (validation.capabilities.readOnly === false && validation.capabilities.readOnlyDetail) {
-    return validation.capabilities.readOnlyDetail;
-  }
-  return "npm validation reported invalid access.";
-}
 
 function saveNpmConnection(input: {
   token: string;

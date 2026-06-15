@@ -40,7 +40,6 @@ export interface NpmCredentialValidation {
     stagedListAccess: boolean;
     stagedTarballAccess?: boolean;
     stagedViewAccess?: boolean;
-    readOnly?: boolean;
     whoami?: string | null;
     registryUrl: string;
     stageId?: string;
@@ -49,11 +48,9 @@ export interface NpmCredentialValidation {
     stagedViewStatus?: number;
     stagedTarballStatus?: number;
     detail?: string;
-    readOnlyMetadataAvailable?: boolean;
     stagedListDetail?: string;
     stagedViewDetail?: string;
     stagedTarballDetail?: string;
-    readOnlyDetail?: string;
   };
 }
 
@@ -190,24 +187,11 @@ export async function validateNpmCredential(
       ? validateStagedTarballAccess(registry, token, options.stageId)
       : Promise.resolve(null),
   ]);
-
-  const baselineOk =
+  const ok =
     auth.registryAuth &&
     stagedList.stagedListAccess &&
     (stagedView ? stagedView.stagedViewAccess : true) &&
     (stagedTarball ? stagedTarball.stagedTarballAccess : true);
-  const npmjsRegistry = isNpmjsRegistry(registry);
-  const readOnlyCheck: {
-    readOnly?: boolean;
-    readOnlyMetadataAvailable?: boolean;
-    readOnlyDetail?: string;
-  } = baselineOk
-    ? npmjsRegistry
-      ? await validateTokenReadOnly(registry, token)
-      : { readOnly: true }
-    : {};
-
-  const ok = baselineOk && readOnlyCheck.readOnly !== false;
 
   return {
     ok,
@@ -217,127 +201,9 @@ export async function validateNpmCredential(
       ...stagedList,
       ...stagedView,
       ...stagedTarball,
-      ...readOnlyCheck,
       registryUrl: registry,
     },
   };
-}
-
-function isNpmjsRegistry(registry: string): boolean {
-  try {
-    const url = new URL(registry);
-    return url.hostname === "registry.npmjs.org";
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Checks whether the token is read-only by inspecting the caller's token
- * list on npmjs.org (`GET /-/npm/v1/tokens`). Drydock only needs read access
- * to staged artifacts; a write-capable token is an unnecessary blast radius.
- *
- * The `/tokens` endpoint only accepts session tokens as of the npm API docs.
- * If npm does not expose metadata for the submitted token, Drydock preserves
- * the existing staged-access validation result and only rejects when metadata
- * proves the token is write-capable.
- */
-async function validateTokenReadOnly(
-  registry: string,
-  token: string,
-): Promise<{
-  readOnly?: boolean;
-  readOnlyMetadataAvailable: boolean;
-  readOnlyDetail?: string;
-}> {
-  try {
-    const response = await fetch(`${registry}/-/npm/v1/tokens?perPage=100`, {
-      headers: npmAuthHeaders(token, "application/json"),
-    });
-    if (!response.ok) {
-      return {
-        readOnlyMetadataAvailable: false,
-        readOnlyDetail: `token metadata endpoint returned ${response.status}; could not verify read-only`,
-      };
-    }
-    const data = (await response.json().catch(() => null)) as {
-      objects?: unknown[];
-    } | null;
-    const objects = Array.isArray(data?.objects) ? data.objects : [];
-    if (objects.length === 0) {
-      return {
-        readOnlyMetadataAvailable: false,
-        readOnlyDetail: "token metadata returned no tokens; could not verify read-only",
-      };
-    }
-
-    const redacted = redactTokenForMatching(token);
-    const matched = objects.map(parseNpmTokenMetadata).find((entry) => entry?.token === redacted);
-
-    if (!matched) {
-      return {
-        readOnlyMetadataAvailable: false,
-        readOnlyDetail: "could not match token in metadata listing; could not verify read-only",
-      };
-    }
-
-    if (matched.readonly === true && !hasWritePermission(matched)) {
-      return { readOnly: true, readOnlyMetadataAvailable: true };
-    }
-
-    return {
-      readOnly: false,
-      readOnlyMetadataAvailable: true,
-      readOnlyDetail: "npm token has write permissions; Drydock requires a read-only token",
-    };
-  } catch (err) {
-    return {
-      readOnlyMetadataAvailable: false,
-      readOnlyDetail: `token read-only check failed: ${errorMessage(err)}`,
-    };
-  }
-}
-
-interface NpmTokenMetadata {
-  token?: string;
-  readonly?: boolean;
-  permissions: Array<{ action: string }>;
-}
-
-function parseNpmTokenMetadata(value: unknown): NpmTokenMetadata | null {
-  if (!value || typeof value !== "object") return null;
-  const entry = value as { token?: unknown; readonly?: unknown; permissions?: unknown };
-  return {
-    token: typeof entry.token === "string" ? entry.token : undefined,
-    readonly: typeof entry.readonly === "boolean" ? entry.readonly : undefined,
-    permissions: parseNpmTokenPermissions(entry.permissions),
-  };
-}
-
-function parseNpmTokenPermissions(value: unknown): Array<{ action: string }> {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((permission) => {
-    if (!permission || typeof permission !== "object") return [];
-    const entry = permission as { action?: unknown };
-    return typeof entry.action === "string" ? [{ action: entry.action }] : [];
-  });
-}
-
-function hasWritePermission(metadata: NpmTokenMetadata): boolean {
-  return metadata.permissions.some((permission) => {
-    const action = permission.action.toLowerCase();
-    return action.includes("write") || action.includes("publish");
-  });
-}
-
-/**
- * npm redacts listed tokens to `npm_aBcD...7890` (first 8 chars + "..." +
- * last 4 chars). Reproduce this format from the raw token for matching.
- */
-function redactTokenForMatching(token: string): string {
-  const trimmed = token.trim();
-  if (trimmed.length <= 12) return trimmed;
-  return `${trimmed.slice(0, 8)}...${trimmed.slice(-4)}`;
 }
 
 async function validateRegistryAuth(registry: string, token: string) {

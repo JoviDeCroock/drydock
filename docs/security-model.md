@@ -55,7 +55,7 @@ Implementation requirements:
 
 - Store token material encrypted at rest.
 - Show only a label/fingerprint/last-used timestamp after storage.
-- Validate credentials before use, including rejecting npmjs.org tokens whose available metadata shows write capability.
+- Validate credentials before use for registry auth and staged-release access.
 - Record audit events for add, validate, use, rotate, and remove.
 - Never return token material from an API.
 - Redact credential metadata fields from scan lifecycle events before returning them to the UI.
