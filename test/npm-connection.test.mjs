@@ -58,6 +58,9 @@ describe("npm connection validation", () => {
       registryUrl: "https://registry.npmjs.org",
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain(
+      "https://registry.npmjs.org/-/npm/v1/tokens?perPage=100",
+    );
   });
 
   test("checks staged view and ranged tarball access when a stage id is supplied", async () => {
@@ -119,5 +122,23 @@ describe("npm connection validation", () => {
       stagedListAccess: false,
       stagedListStatus: 403,
     });
+  });
+
+  test("does not inspect token metadata for custom registries", async () => {
+    const fetchMock = vi.fn(async (url) => {
+      if (String(url).endsWith("/-/whoami")) return Response.json({ username: "maintainer" });
+      if (String(url).endsWith("/-/stage?perPage=1")) return Response.json({ items: [] });
+      return new Response("unexpected", { status: 500 });
+    });
+    globalThis.fetch = fetchMock;
+
+    const validation = await validateNpmCredential(
+      "https://custom-registry.example.com",
+      "npm_secret_token",
+    );
+
+    expect(validation.ok).toBe(true);
+    const calledUrls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(calledUrls.some((u) => u.includes("/-/npm/v1/tokens"))).toBe(false);
   });
 });

@@ -44,10 +44,10 @@ Production SaaS should use per-organization npm connections.
 
 Recommended customer guidance:
 
-- Use a granular npm access token.
+- Use a read-only granular npm access token.
 - Scope it to the smallest package/scope set npm allows.
 - Prefer short expiration and planned rotation.
-- Do not grant broad organization management access unless npm proves it is needed.
+- Do not grant write, publish, or broad organization management access unless npm proves it is needed.
 - Avoid 2FA bypass unless npm proves a specific staged-review download endpoint requires it.
 - Continue using npm's 2FA-protected approval flow manually.
 
@@ -55,7 +55,7 @@ Implementation requirements:
 
 - Store token material encrypted at rest.
 - Show only a label/fingerprint/last-used timestamp after storage.
-- Validate credentials before use.
+- Validate credentials before use for registry auth and staged-release access.
 - Record audit events for add, validate, use, rotate, and remove.
 - Never return token material from an API.
 - Redact credential metadata fields from scan lifecycle events before returning them to the UI.

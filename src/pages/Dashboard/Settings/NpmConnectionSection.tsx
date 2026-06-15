@@ -44,8 +44,8 @@ export function NpmConnectionSection({
     >
       <div class="p-5 flex flex-col gap-5">
         <Muted class="text-[13px] m-0 max-w-[760px]">
-          Add an organization npm token so reviews can fetch staged packages securely. We encrypt
-          it, hide it after save, and use it only to retrieve release evidence.
+          Add a read-only organization npm token so reviews can fetch staged packages securely. We
+          encrypt it, hide it after save, and use it only to retrieve release evidence.
         </Muted>
 
         {connection && connection.validationStatus === "invalid" ? (
@@ -98,7 +98,9 @@ export function NpmConnectionSection({
               id="npmToken"
               type="password"
               value={token}
-              placeholder={connection ? "Paste a new token to rotate" : "npm_..."}
+              placeholder={
+                connection ? "Paste a new read-only token to rotate" : "npm_... (read-only)"
+              }
               onInput={(e) => (npm.token.value = (e.target as HTMLInputElement).value)}
               disabled={busy}
               autoComplete="off"
