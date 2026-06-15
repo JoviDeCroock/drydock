@@ -156,6 +156,9 @@ describe("staged publishes discovery cron", () => {
       expect(url).toContain("/-/stage");
       const auth = authHeader(input, init);
       if (auth === `Bearer ${orgA.token}`) {
+        if (url.endsWith(`/-/stage/${STAGE_ID}/tarball`)) {
+          return new Response("", { status: 206 });
+        }
         return Response.json({
           items: [{ id: STAGE_ID, name: "demo-package", version: "1.0.0" }],
           total: 1,
@@ -183,8 +186,9 @@ describe("staged publishes discovery cron", () => {
     );
     await waitOnExecutionContext(ctx);
 
-    // (c) excluded entirely: only (a) and (b) are swept, so only two fetches.
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // (c) excluded entirely: only (a) and (b) are swept. Org A lists and probes
+    // the staged tarball; org B fails on the staged-list auth check.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
 
     // (a) only: exactly one scan enqueued, scoped to org A.
     expect(queue.send).toHaveBeenCalledTimes(1);
