@@ -26,6 +26,12 @@ export interface StagedPublishesPage {
   page: number | null;
 }
 
+export interface StagedPublishAccessResult {
+  allowed: boolean;
+  status: number | null;
+  detail: string | null;
+}
+
 export interface StartedStagedPublishScan {
   id: string;
   stageId: string;
@@ -95,6 +101,33 @@ export async function fetchStagedPublishDetails(
   const parsed = parseStagedPublishDetails(data, stageId);
   if (!parsed) throw new StagedPublishesFetchError(response.status, "invalid staged details");
   return parsed;
+}
+
+export async function checkStagedPublishAccess(
+  registryUrl: string,
+  token: string,
+  stageId: string,
+  options: NormalizeRegistryUrlOptions = {},
+): Promise<StagedPublishAccessResult> {
+  if (!isValidStageId(stageId)) throw new Error("invalid stageId");
+  const registry = normalizeRegistryUrl(registryUrl, options);
+  const response = await fetch(`${registry}/-/stage/${encodeURIComponent(stageId)}/tarball`, {
+    headers: npmStageTarballHeaders(token),
+  });
+  if (response.ok || response.status === 206) {
+    await response.body?.cancel();
+    return { allowed: true, status: response.status, detail: null };
+  }
+  if (response.status === 401 || response.status === 403 || response.status === 404) {
+    await response.body?.cancel();
+    return {
+      allowed: false,
+      status: response.status,
+      detail: response.statusText || null,
+    };
+  }
+  const detail = await response.text().catch(() => "");
+  throw new StagedPublishesFetchError(response.status, detail.slice(0, 200));
 }
 
 export class StagedPublishesFetchError extends Error {
@@ -170,6 +203,15 @@ function npmStageHeaders(token: string, userAgentSuffix: string) {
     accept: "application/json",
     authorization: `Bearer ${token}`,
     "user-agent": `staged-publish-review/${userAgentSuffix}`,
+  };
+}
+
+function npmStageTarballHeaders(token: string) {
+  return {
+    accept: "application/octet-stream",
+    authorization: `Bearer ${token}`,
+    range: "bytes=0-0",
+    "user-agent": "staged-publish-review/staged-tarball-access",
   };
 }
 

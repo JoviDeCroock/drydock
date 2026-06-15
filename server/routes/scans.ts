@@ -25,7 +25,11 @@ import { backfillScanArtifactsBatch } from "../lib/scan-artifact-backfill";
 import { scanArtifactReadBucket } from "../lib/scan-artifacts";
 import { loadCompare, stripTextSamples } from "../lib/compare-cache";
 import { rateLimitResponse } from "../lib/http";
-import { allowInsecureLocalRegistry, getOrganizationNpmToken } from "../lib/npm-connection";
+import {
+  allowInsecureLocalRegistry,
+  decryptNpmToken,
+  getOrganizationNpmToken,
+} from "../lib/npm-connection";
 import { isPublishedTarballUrlAllowed } from "../lib/published-tarball";
 import { compareSemver, fetchPackageMetadata, pickPreviousVersion } from "../lib/registry";
 import { annotateFindingsWithDiffStatus, createPackageDiff, type FileRecord } from "../lib/review";
@@ -34,6 +38,7 @@ import { parseScanInput } from "../lib/scan-input";
 import { reportExportFilename, serializeReportExport } from "../lib/report-export";
 import { executeScanJob, type ScanQueueMessage } from "../lib/scan-job";
 import { roleCanManageIntegrations } from "../lib/roles";
+import { checkStagedPublishAccess, StagedPublishesFetchError } from "../lib/staged-publishes";
 import type { Bindings, ScanInput, Variables } from "../types";
 
 export const scansRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -65,6 +70,19 @@ scansRoutes.post("/", async (c) => {
       return c.json(
         { error: "Validate the organization npm token before scanning staged publishes." },
         400,
+      );
+    }
+    const token = await decryptNpmToken(c.env, npmConnection);
+    const access = await checkStagedPublishAccess(npmConnection.registryUrl, token, input.stageId, {
+      allowInsecureLocalhost: allowInsecureLocalRegistry(c.env),
+    });
+    if (!access.allowed) {
+      return c.json(
+        {
+          error: "This organization's npm token cannot access that staged publish.",
+          status: access.status,
+        },
+        403,
       );
     }
 
@@ -103,6 +121,16 @@ scansRoutes.post("/", async (c) => {
   } catch (err) {
     if (err instanceof RateLimitError) {
       return rateLimitResponse(c, "scan rate limit exceeded", err);
+    }
+    if (err instanceof StagedPublishesFetchError) {
+      return c.json(
+        {
+          error: "npm registry rejected the staged publish access check",
+          status: err.status,
+          detail: err.detail,
+        },
+        502,
+      );
     }
     throw err;
   }

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  checkStagedPublishAccess,
   fetchStagedPublishDetails,
   listStagedPublishes,
   parseStagedPublishDetails,
@@ -165,5 +166,38 @@ describe("staged publish metadata", () => {
         page: 2,
       }),
     ).resolves.toMatchObject({ items: [], total: 0, perPage: 50, page: 2 });
+  });
+
+  test("probes staged tarball access with a ranged credentialed request", async () => {
+    const fetchMock = vi.fn(async (url, init) => {
+      expect(String(url)).toBe("https://registry.npmjs.org/-/stage/stage-access-123/tarball");
+      expect(init.headers.authorization).toBe("Bearer npm_secret_token");
+      expect(init.headers.range).toBe("bytes=0-0");
+      expect(init.headers["user-agent"]).toBe("staged-publish-review/staged-tarball-access");
+      return new Response("", { status: 206 });
+    });
+    globalThis.fetch = fetchMock;
+
+    await expect(
+      checkStagedPublishAccess(
+        "https://registry.npmjs.org",
+        "npm_secret_token",
+        "stage-access-123",
+      ),
+    ).resolves.toEqual({ allowed: true, status: 206, detail: null });
+  });
+
+  test("treats per-stage auth failures as unauthorized candidates", async () => {
+    globalThis.fetch = vi.fn(
+      async () => new Response("forbidden", { status: 403, statusText: "Forbidden" }),
+    );
+
+    await expect(
+      checkStagedPublishAccess(
+        "https://registry.npmjs.org",
+        "npm_secret_token",
+        "stage-denied-123",
+      ),
+    ).resolves.toEqual({ allowed: false, status: 403, detail: "Forbidden" });
   });
 });

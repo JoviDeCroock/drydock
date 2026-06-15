@@ -16,6 +16,7 @@ import {
 import { notifyNpmConnectionExpired } from "./notify";
 import { executeScanJob, type ScanQueueMessage } from "./scan-job";
 import {
+  checkStagedPublishAccess,
   listStagedPublishes,
   StagedPublishesFetchError,
   type StagedPublishItem,
@@ -221,6 +222,15 @@ export async function discoverAndQueueStagedPublishes(
   for (const item of stagedItems) {
     const stageId = item.id;
     if (existingStageIds.has(stageId)) continue;
+    const access = await checkStagedPublishAccess(
+      connection.registryUrl,
+      connection.token,
+      stageId,
+      {
+        allowInsecureLocalhost,
+      },
+    );
+    if (!access.allowed) continue;
     const scanId = crypto.randomUUID();
     const detail = await createScanJob(db, {
       id: scanId,
