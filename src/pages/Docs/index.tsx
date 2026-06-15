@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { Badge, Card, Eyebrow, LinkButton, PageShell, SectionLabel } from "../../components";
+import { docsPageSeo, PageSeo } from "../../lib/seo";
 
 export default function DocsPage() {
   return (
@@ -11,6 +12,7 @@ export default function DocsPage() {
         </LinkButton>
       }
     >
+      <PageSeo metadata={docsPageSeo} />
       <div class="flex flex-col gap-14">
         <header class="border-t border-border pt-8 flex flex-col gap-5">
           <Eyebrow tone="accent">Documentation</Eyebrow>
