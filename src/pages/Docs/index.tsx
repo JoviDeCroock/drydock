@@ -154,13 +154,14 @@ export default function DocsPage() {
                   to GitHub to pick the account and grant access to the repo, then back to Drydock.
                 </>,
                 <>
-                  In the repository, create a GitHub Environment (for example <Code>pypi</Code>) and
-                  configure it as a PyPI Trusted Publisher. Drydock attaches its protection rule to
-                  that same environment.
+                  In the repository, create a GitHub Environment (for example <Code>pypi</Code>),
+                  configure it as a PyPI Trusted Publisher, and enable Drydock as a custom
+                  deployment protection rule on that same environment.
                 </>,
                 <>
-                  On the same settings page, map the repository, environment, and package so Drydock
-                  knows which organization a held publish belongs to.
+                  On the same settings page, map the repository and environment so Drydock knows
+                  which organization a held publish belongs to. Packages and ecosystems are derived
+                  from the uploaded artifacts.
                 </>,
                 <>
                   Add the build and publish workflow below. The build job uploads the wheels and
@@ -181,18 +182,19 @@ export default function DocsPage() {
             <Prose>
               There is no manifest to write. CI builds and uploads <Code>dist/*</Code>, and Drydock
               treats every <Code>.whl</Code>, <Code>.tar.gz</Code>, and <Code>.tgz</Code> it finds
-              in the upload as part of the release. The settings form can narrow this down to one
-              artifact name, but left blank Drydock inspects every upload from the held run.
+              in the upload as part of the release. Drydock inspects every non-expired artifact from
+              the held run and fails closed if an archive is ambiguous.
             </Prose>
             <Prose>
-              Drydock reads each package's name and version out of the files themselves and verifies
-              every checksum on its own servers. The publish job only downloads the reviewed bundle
-              and never rebuilds, so the bytes that were reviewed are the bytes that get published.
+              Drydock reads each package's name and version out of the files themselves and
+              recomputes SHA-256 digests from the bytes it fetched. The publish job only downloads
+              the reviewed bundle and never rebuilds, so the bytes that were reviewed are the bytes
+              that get published.
             </Prose>
             <Prose>
-              You never declare which ecosystem you're publishing. Drydock tells an npm tarball from
-              a PyPI sdist by looking inside it, so the same gate reviews either, or both at once
-              for a mixed monorepo.
+              You normally never declare which ecosystem you're publishing. Drydock tells an npm
+              tarball from a PyPI sdist by looking inside it, so the same gate reviews either, or
+              both at once for a mixed monorepo.
             </Prose>
           </Subsection>
 
@@ -238,7 +240,7 @@ export default function DocsPage() {
             <Prose>
               No manifest or checksum step is required. CI just builds and uploads{" "}
               <Code>dist/*</Code>. The <Code>environment: pypi</Code> line is the gate: configure
-              that same environment as a PyPI Trusted Publisher and attach Drydock as a deployment
+              that same environment as a PyPI Trusted Publisher and enable Drydock as a deployment
               protection rule on it. The publish job stays blocked until the review is approved in
               Drydock, then publishes the downloaded bundle with whatever tool you prefer.
             </Prose>
@@ -292,13 +294,14 @@ export default function DocsPage() {
                   deliveries that don't match anything you configured are ignored.
                 </>,
                 <>
-                  Drydock fetches the uploaded bundle, verifies the checksums, and reviews each
+                  Drydock fetches the uploaded bundle, recomputes artifact digests, and reviews each
                   package against its own earlier version. The review records a recommendation and
                   leaves the decision to a human.
                 </>,
                 <>
                   A maintainer opens the review on the dashboard and approves or rejects each
-                  package. The held job is released once every package is approved and blocked the
+                  package. If their Drydock account has 2FA enabled, this asks for a fresh TOTP
+                  code. The held job is released once every package is approved and blocked the
                   moment any one is rejected. A bundle Drydock can't verify is rejected
                   automatically.
                 </>,

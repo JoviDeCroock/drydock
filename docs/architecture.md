@@ -28,7 +28,7 @@ Dynamic Worker sandbox
 
 Scan orchestration lives in `server/lib/scan-pipeline.ts` and is shared by the HTTP and Queue entrypoints. Scans run only through the queued/background lifecycle: `POST /api/v1/scans` creates a scan, a Queue consumer or local `waitUntil()` job runs the pipeline, and the UI reads status/report data from `GET /api/v1/scans/:id`.
 
-The pipeline is **ecosystem-agnostic**: it accepts a `PackageAdapter` (`server/lib/adapters/types.ts`) and delegates ecosystem-specific behavior — input parsing, artifact acquisition, baseline selection, deterministic findings, package projection, staged-details summarization — to it. The npm adapter (`server/lib/adapters/npm/`) backs staged publishes today, and the backend PyPI adapter (`server/lib/adapters/pypi/`) backs workflow-gate release-candidate reviews.
+The pipeline is **ecosystem-agnostic**: it accepts a `PackageAdapter` (`server/lib/adapters/types.ts`) and delegates ecosystem-specific behavior — input parsing, artifact acquisition, baseline selection, deterministic findings, package projection, staged-details summarization — to it. The npm adapter (`server/lib/adapters/npm/`) backs staged publishes and npm workflow gates, and the PyPI adapter (`server/lib/adapters/pypi/`) backs PyPI workflow-gate release-candidate reviews.
 
 Baseline selection should be tag-aware rather than simply highest-semver. See [`diff-baseline.md`](./diff-baseline.md) for the staged metadata constraints and the recommended default comparison strategy.
 
@@ -311,11 +311,11 @@ Implemented pieces:
 - GitHub App install/callback, installation listing, repository/environment proxy reads, and ecosystem-neutral release-target CRUD in `server/routes/github-app.ts`;
 - `deployment_protection_rule` webhook handling in `server/routes/github-webhooks.ts`, backed by `github_workflow_gates`;
 - queue-driven gate review in `server/lib/workflow-gate-job.ts`, including fail-closed rejection for unverifiable artifact bundles and human approve/reject delivery back to GitHub;
-- release-candidate derivation from the held workflow run's uploaded GitHub Actions artifacts: every wheel/sdist SHA-256 is recomputed from upload bytes, package identity is derived from wheel `METADATA` / sdist `PKG-INFO`, and no maintainer-declared manifest is required;
-- PyPI wheel/sdist artifact normalization and metadata extraction;
+- release-candidate derivation from the held workflow run's uploaded GitHub Actions artifacts: every reviewable artifact SHA-256 is recomputed from upload bytes, package identity is derived from artifact metadata (`package.json`, wheel `METADATA`, or sdist `PKG-INFO`), and no maintainer-declared manifest is required;
+- npm tarball and PyPI wheel/sdist artifact normalization and metadata extraction;
 - safe ZIP parsing for `.whl` archives in the sandbox parser;
 - PyPI-specific deterministic findings for manifest/metadata mismatches, missing wheel `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, unusual dependencies, and `.pyd` native extensions;
 - PyPI project JSON metadata helpers for baseline release selection and wheel/sdist download metadata;
 - settings UI for GitHub App installation/release-target mapping and workbench controls for pending gate decisions.
 
-The target gate is a GitHub custom deployment protection rule on the same GitHub Environment configured in PyPI Trusted Publishers. CI must build artifacts before the gate and the publish job must download the reviewed artifact bundle rather than rebuilding. There is no publish-side digest manifest check in the current contract, so byte continuity rests on GitHub artifact immutability plus workflow discipline. Remaining work is to persist the reviewed artifact digests in the report payload for audit/provenance. See [`workflow-gates.md`](./workflow-gates.md).
+The target gate is a GitHub custom deployment protection rule on the same GitHub Environment the publish job uses (for PyPI, usually the Trusted Publisher environment). CI must build artifacts before the gate and the publish job must download the reviewed artifact bundle rather than rebuilding. There is no publish-side digest manifest check in the current contract, so byte continuity rests on GitHub artifact immutability plus workflow discipline. Remaining provenance work is to surface reviewed artifact digests in the dashboard/export views. See [`workflow-gates.md`](./workflow-gates.md).
