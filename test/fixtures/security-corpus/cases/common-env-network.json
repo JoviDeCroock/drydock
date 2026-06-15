@@ -1,0 +1,49 @@
+{
+  "id": "common-env-network",
+  "title": "Added runtime code gates network telemetry on common environment flags",
+  "category": "benign-env-read",
+  "intent": "Common runtime flags such as NODE_ENV, CI, and import.meta.env.DEV are not credential sources. The added network path remains contextual evidence, but the package must not be classified as a credential exfiltration chain.",
+  "previousPackageJson": {
+    "name": "common-env-network",
+    "version": "1.0.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "common-env-network",
+    "version": "1.0.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 70,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"common-env-network\",\"version\":\"1.0.0\",\"main\":\"index.js\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 70,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"common-env-network\",\"version\":\"1.0.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 200,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "const mode = process.env.NODE_ENV;\nconst ci = process.env['CI'];\nif (import.meta.env.DEV || ci || mode !== 'production') {\n  fetch('https://example.invalid/ping');\n}\n"
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "index.js"
+    }
+  ]
+}

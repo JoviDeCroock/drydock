@@ -12,6 +12,38 @@ const GYP_PACKAGE_JAVASCRIPT_COMMAND_PATTERNS = [
   /<!@?\([^)\n]*\bnode\b(?:\s+--[^\s'")]+)*\s+["']?(?:\.\/)?[\w@./-]+\.(?:cjs|mjs|js)["']?/i,
   /<!@?\([^)\n]*\bbun\b(?:\s+run)?\s+["']?(?:\.\/)?[\w@./-]+\.(?:cjs|mjs|js|ts)["']?/i,
 ];
+const COMMON_JS_ENV_NAMES = [
+  "BASE_URL",
+  "BABEL_ENV",
+  "CI",
+  "DEBUG",
+  "DEV",
+  "LANG",
+  "LC_ALL",
+  "MODE",
+  "NODE_DEBUG",
+  "NODE_ENV",
+  "PROD",
+  "SSR",
+  "TZ",
+];
+const COMMON_JS_ENV_NAME_PATTERN = COMMON_JS_ENV_NAMES.map(escapeRegex).join("|");
+const COMMON_PROCESS_ENV_DOT_ACCESS = new RegExp(
+  `\\bprocess\\.env\\s*\\.\\s*(?:${COMMON_JS_ENV_NAME_PATTERN})\\b`,
+  "g",
+);
+const COMMON_PROCESS_ENV_BRACKET_ACCESS = new RegExp(
+  `\\bprocess\\.env\\s*\\[\\s*(['"\`])(?:${COMMON_JS_ENV_NAME_PATTERN})\\1\\s*\\]`,
+  "g",
+);
+const COMMON_IMPORT_META_ENV_DOT_ACCESS = new RegExp(
+  `\\bimport\\s*\\.\\s*meta\\s*\\.\\s*env\\s*\\.\\s*(?:${COMMON_JS_ENV_NAME_PATTERN})\\b`,
+  "g",
+);
+const COMMON_IMPORT_META_ENV_BRACKET_ACCESS = new RegExp(
+  `\\bimport\\s*\\.\\s*meta\\s*\\.\\s*env\\s*\\[\\s*(['"\`])(?:${COMMON_JS_ENV_NAME_PATTERN})\\1\\s*\\]`,
+  "g",
+);
 
 // Install lifecycle hooks and in-file code-execution capability: the scripts and
 // code paths that run on, or are pulled in by, a consumer install.
@@ -86,7 +118,15 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     const processExecution = matchCategory(ctx.patterns.processExecution, sample, normalized);
     const networkAccess = matchCategory(ctx.patterns.networkAccess, sample, normalized);
     const dynamicEvaluation = matchCategory(ctx.patterns.dynamicEvaluation, sample, normalized);
-    const credentialAccess = matchCategory(ctx.patterns.credentialAccess, sample, normalized);
+    const credentialSample =
+      ctx.codePatternSet === "python" ? sample : omitCommonEnvironmentAccesses(sample);
+    const credentialNormalized =
+      ctx.codePatternSet === "python" ? normalized : omitCommonEnvironmentAccesses(normalized);
+    const credentialAccess = matchCategory(
+      ctx.patterns.credentialAccess,
+      credentialSample,
+      credentialNormalized,
+    );
     const adjacentExecutionRisk =
       processExecution.matched || dynamicEvaluation.matched || credentialAccess.matched;
 
@@ -216,6 +256,18 @@ function matchCategory(
       return { matched: true, line: normalizedLine, obfuscated: true };
   }
   return { matched: false, line: undefined, obfuscated: false };
+}
+
+function omitCommonEnvironmentAccesses(source: string): string {
+  return source
+    .replace(COMMON_PROCESS_ENV_DOT_ACCESS, "")
+    .replace(COMMON_PROCESS_ENV_BRACKET_ACCESS, "")
+    .replace(COMMON_IMPORT_META_ENV_DOT_ACCESS, "")
+    .replace(COMMON_IMPORT_META_ENV_BRACKET_ACCESS, "");
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function networkAccessSeverity(
