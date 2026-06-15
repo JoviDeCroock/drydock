@@ -23,14 +23,14 @@ export interface PrerenderHead {
 export const homePageSeo: PageSeoMetadata = {
   title: "Drydock — pre-publish security review for npm and PyPI",
   description:
-    "Drydock reviews npm and PyPI release candidates before they go public, diffs the exact package artifact against the last published version, and pins supply-chain risk findings to the lines that introduced them.",
+    "Drydock pauses npm staged publishes and GitHub-gated PyPI or npm releases, reviews the exact package artifact, and pins supply-chain findings to changed lines.",
   path: "/",
 };
 
 export const docsPageSeo: PageSeoMetadata = {
   title: "Drydock docs — staged publishing and workflow gates",
   description:
-    "Learn how Drydock guards npm staged publishes and PyPI or npm workflow-gated releases by reviewing built artifacts before maintainers approve publication.",
+    "Learn when to use npm staged publishing or GitHub workflow gates to have Drydock review release artifacts before publication.",
   path: "/docs",
 };
 

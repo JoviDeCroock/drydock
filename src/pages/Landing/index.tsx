@@ -50,15 +50,15 @@ export default function LandingPage() {
     >
       <PageSeo metadata={homePageSeo} />
       <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
-        <Eyebrow tone="accent">Pre-publish review for npm and PyPI packages</Eyebrow>
+        <Eyebrow tone="accent">Pre-publish security review for npm and PyPI</Eyebrow>
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
-          See exactly what your next publish ships.
+          Review the exact package before it ships.
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-          The package that lands on the registry is built, packed output, not the pull request you
-          reviewed. Drydock holds each release before it goes public, diffs it against the last
-          published version, and pins risk findings to the lines that introduced them. You make the
-          final call.
+          Code review sees source. Registries get built artifacts. Drydock pauses npm staged
+          publishes and GitHub-gated PyPI or npm releases, diffs the exact bytes against the last
+          published version, and pins supply-chain findings to changed lines. You make the final
+          call.
         </p>
         <div class="flex gap-3 mt-2">
           <Show
@@ -84,22 +84,20 @@ export default function LandingPage() {
       <section aria-label="Why review a publish" class="flex flex-col gap-4">
         <SectionLabel>Why review a publish</SectionLabel>
         <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-          Code review stops at the repository. Attacks don't.
+          Your repo review is not the release review.
         </h2>
         <div class="flex flex-col gap-3 max-w-[680px]">
           <p class="m-0 text-[14px] text-ink-muted leading-[1.65]">
-            Between a reviewed pull request and a published package sit build scripts, bundlers, and
-            a CI pipeline holding a publish credential. Install hooks, minified bundles, and files
-            that never existed in the repo all ship in the artifact, and a stolen maintainer account
-            or compromised CI runner can publish a malicious version without touching git history.
-            The major npm supply-chain attacks went out exactly this way: in the published bytes,
-            invisible in the repo.
+            Between a reviewed pull request and a published package sit build scripts, bundlers,
+            generated files, and CI credentials. Install hooks, minified bundles, and files that
+            never lived in git can ship in the artifact. A stolen maintainer account or compromised
+            runner can publish a malicious version without touching repository history.
           </p>
           <p class="m-0 text-[14px] text-ink-muted leading-[1.65]">
-            Once a version is live it is immutable and being installed within minutes. The one
-            moment left to look is after the release is built and before it is public, and that is
-            where Drydock sits. It reads the exact bytes that would ship, never executes them, and
-            nothing publishes until a maintainer says so.
+            After a version is public, it is immutable and can be installed within minutes. The last
+            useful checkpoint is after the release is built and before it ships. Drydock reviews
+            those exact bytes, never executes package contents, and keeps the publish blocked until
+            a maintainer decides.
           </p>
         </div>
       </section>
@@ -109,33 +107,33 @@ export default function LandingPage() {
         <HowSteps
           items={[
             {
-              title: "The release is held before it goes public",
+              title: "Hold the release candidate",
               body: (
                 <>
-                  A maintainer stages the npm publish on the registry, or CI uploads the built
-                  artifacts and a GitHub environment gate holds the publish job. Either way the
-                  candidate is parked where Drydock can read it and no one can install it.
+                  A maintainer stages an npm publish, or a GitHub Environment gate pauses the
+                  publish job after CI uploads built artifacts. The candidate stays private while
+                  Drydock can inspect it.
                 </>
               ),
             },
             {
-              title: "Drydock reviews the exact bytes",
+              title: "Review the bytes, not the branch",
               body: (
                 <>
-                  It diffs the candidate against the last published version and checks what changed:
-                  new install scripts, process execution, network and credential access, added
-                  binaries. Every finding is pinned to the line that introduced it, and nothing in
-                  the package is executed.
+                  Drydock compares the candidate to the last published version, flags risky deltas
+                  like install scripts, process execution, network access, credential reads, and new
+                  binaries, then anchors each finding to the diff. Package contents are never
+                  executed.
                 </>
               ),
             },
             {
-              title: "A maintainer makes the call",
+              title: "Let a maintainer decide",
               body: (
                 <>
-                  Approve the npm publish yourself with 2FA, or approve or reject the gated job from
-                  the review workbench. Drydock never publishes and never holds your publish
-                  credential.
+                  Approve the npm publish yourself with 2FA, or approve or reject the gated GitHub
+                  job from the workbench. Drydock recommends, but it never publishes and never holds
+                  your publish credential.
                 </>
               ),
             },
@@ -149,14 +147,13 @@ export default function LandingPage() {
           <RegistryCard title="Staged publishing — npm">
             A maintainer runs{" "}
             <code class="font-mono text-[12px] text-ink">npm publish --stage</code> and the registry
-            parks the candidate. Drydock reviews that tarball and pins risk signals to the diff
-            before the 2FA confirmation runs.
+            parks a private candidate. Drydock reviews that tarball and pins risk signals to the
+            diff before the maintainer completes npm's 2FA confirmation.
           </RegistryCard>
           <RegistryCard title="Workflow gating — PyPI & npm" badge="Preview">
-            When there is no staged version to review, for PyPI or an npm publish that skips
-            staging, a GitHub Environment holds the publish job instead. Drydock reviews the upload,
-            a maintainer approves or rejects from the workbench, and the job publishes on its own
-            credential.
+            For PyPI, or npm workflows that do not stage, a GitHub Environment pauses the publish
+            job after CI uploads the release artifact. Drydock reviews the upload, the maintainer
+            approves or rejects, and, if approved, the job continues with its own credential.
           </RegistryCard>
         </div>
         <LinkButton href="/docs" variant="ghost" size="sm" class="self-start">
@@ -168,15 +165,15 @@ export default function LandingPage() {
         <SectionLabel>Safeguards</SectionLabel>
         <StatusStrip>
           <StatusStripItem label="credentials" status="scoped" tone="ok">
-            Tokens are only used to fetch release evidence, and Drydock never holds your publish
-            credential.
+            Scoped tokens only fetch release evidence. Publish credentials stay in npm or GitHub
+            Actions, not in Drydock.
           </StatusStripItem>
           <StatusStripItem label="retention" status="redacted" tone="ok">
             Reports keep redacted review evidence, not raw release archives.
           </StatusStripItem>
           <StatusStripItem label="approval" status="human" tone="neutral">
-            Maintainers approve the publish themselves, with npm 2FA or the CI gate. We never
-            publish on their behalf.
+            Maintainers make the release decision: npm 2FA for staged publishes or the CI gate for
+            workflow releases.
           </StatusStripItem>
         </StatusStrip>
       </section>
