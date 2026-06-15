@@ -1,6 +1,16 @@
 import { hydrate, render } from "preact";
-import { ErrorBoundary, LocationProvider, Route, Router, lazy, prerender as ssr } from "preact-iso";
+import {
+  ErrorBoundary,
+  LocationProvider,
+  Route,
+  Router,
+  lazy,
+  prerender as ssr,
+  useLocation,
+} from "preact-iso";
+import { useEffect } from "preact/hooks";
 import { Toaster } from "./components";
+import { trackPageView } from "./lib/analytics";
 import { extractPrerenderHead, getPageSeoMetadata } from "./lib/seo";
 import "./style.css";
 
@@ -20,6 +30,7 @@ const NotFoundPage = lazy(() => import("./pages/NotFound"));
 export function App() {
   return (
     <LocationProvider>
+      <AnalyticsRouteTracker />
       <ErrorBoundary onError={(error) => console.error(error)}>
         <Router>
           <Route path="/" component={LandingPage} />
@@ -39,6 +50,14 @@ export function App() {
       <Toaster />
     </LocationProvider>
   );
+}
+
+function AnalyticsRouteTracker() {
+  const location = useLocation();
+  useEffect(() => {
+    trackPageView(window.location.href);
+  }, [location.url]);
+  return null;
 }
 
 export function isPrerenderedRoute(pathname: string) {

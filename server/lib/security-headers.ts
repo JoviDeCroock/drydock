@@ -34,12 +34,14 @@ export const API_CSP = ["default-src 'none'", "frame-ancestors 'none'", "base-ur
   "; ",
 );
 
+const POSTHOG_EU_HOST = "https://eu.i.posthog.com";
+
 // The HTML UI loads same-origin scripts/styles/images plus the Geist webfont
 // from Google Fonts: the stylesheet from fonts.googleapis.com (style-src) pulls
 // font files from fonts.gstatic.com (font-src). 'unsafe-inline' on style-src
 // covers Tailwind's injected styles and the prerendered critical CSS; img-src
-// data: covers inline data-URI images. connect-src stays 'self' — the UI only
-// calls the same-origin /api surface.
+// data: covers inline data-URI images. connect-src allows same-origin /api calls
+// and the EU PostHog ingestion host for product analytics.
 export const DOCUMENT_CSP = [
   "default-src 'self'",
   "base-uri 'self'",
@@ -50,5 +52,5 @@ export const DOCUMENT_CSP = [
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com",
   "img-src 'self' data:",
-  "connect-src 'self'",
+  `connect-src 'self' ${POSTHOG_EU_HOST}`,
 ].join("; ");

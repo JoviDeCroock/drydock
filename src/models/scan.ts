@@ -5,6 +5,7 @@ import type {
   FindingDiffStatus,
   PackageJsonSummary,
 } from "../../server/lib/review";
+import { trackProductEvent } from "../lib/analytics";
 import { apiFetch, apiJson, errorMessage } from "./api";
 import {
   decideWorkflowGate,
@@ -432,6 +433,7 @@ export const ScanDetailModel = createModel((id: string) => {
 
     selectVersion(version: string | null) {
       this.selectedVersion.value = version;
+      trackProductEvent("scan_comparison_version_selected", { default_version: version === null });
     },
 
     async setDecision(decision: ScanDecision, reason: string | null): Promise<void> {
@@ -442,6 +444,11 @@ export const ScanDetailModel = createModel((id: string) => {
         const updated = await setScanDecision(id, decision, reason);
         this.detail.value = updated;
         this.decisionStatus.value = "idle";
+        trackProductEvent("scan_decision_saved", {
+          decision,
+          source: updated.scan.source ?? "manual",
+          risk: updated.scan.risk,
+        });
       } catch (err) {
         this.decisionError.value = errorMessage(err);
         this.decisionStatus.value = "error";
@@ -489,6 +496,11 @@ export const ScanDetailModel = createModel((id: string) => {
         );
         this.gate.value = updated;
         this.gateDecisionStatus.value = "idle";
+        trackProductEvent("workflow_gate_decision_saved", {
+          decision,
+          package_count: updated.packages.length,
+          status: updated.status,
+        });
         // The decision also writes the scan's publish/no_publish decision and an
         // audit event server-side; refresh so the workbench reflects both.
         await this.load();

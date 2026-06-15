@@ -1,4 +1,5 @@
 import { computed, createModel, signal } from "@preact/signals";
+import { trackProductEvent } from "../lib/analytics";
 import { apiFetch, apiJson, errorMessage } from "./api";
 
 export interface PublicNpmConnection {
@@ -108,6 +109,10 @@ export const NpmConnectionModel = createModel(() => {
           this.status.value = "validating";
           const validation = await validateNpmConnection();
           this.applyConnection(validation.connection);
+          trackProductEvent("npm_connection_saved", {
+            validation_ok: validation.validation.ok,
+            registry: validation.validation.capabilities.registryUrl,
+          });
           if (!validation.validation.ok) {
             this.error.value = "Saved token, but npm validation reported invalid access.";
           }
@@ -127,6 +132,10 @@ export const NpmConnectionModel = createModel(() => {
         const stageId = this.validationStageId.value.trim() || undefined;
         const data = await validateNpmConnection(stageId);
         this.applyConnection(data.connection);
+        trackProductEvent("npm_connection_validated", {
+          validation_ok: data.validation.ok,
+          with_stage_id: Boolean(stageId),
+        });
         if (!data.validation.ok) {
           this.error.value = "Npm validation reported invalid access.";
         }
@@ -145,6 +154,7 @@ export const NpmConnectionModel = createModel(() => {
         await apiFetch<{ ok: boolean }>("/api/v1/npm-connection", { method: "DELETE" });
         this.connection.value = null;
         this.token.value = "";
+        trackProductEvent("npm_connection_removed");
       } catch (err) {
         this.error.value = errorMessage(err);
       } finally {

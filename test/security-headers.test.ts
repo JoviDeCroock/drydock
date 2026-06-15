@@ -45,6 +45,10 @@ describe("public/_headers static-asset security headers", () => {
     expect(catchAll?.["Content-Security-Policy"]).toBe(DOCUMENT_CSP);
   });
 
+  test("allows PostHog EU product analytics ingestion", () => {
+    expect(DOCUMENT_CSP).toContain("connect-src 'self' https://eu.i.posthog.com");
+  });
+
   test("carries the same non-CSP security headers as the Worker", () => {
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
       expect(catchAll?.[name]).toBe(value);

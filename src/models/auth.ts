@@ -1,4 +1,5 @@
 import { computed, createModel, signal } from "@preact/signals";
+import { identifyAnalyticsUser, resetAnalytics, trackProductEvent } from "../lib/analytics";
 import { errorMessage } from "./api";
 
 export interface SessionUser {
@@ -52,6 +53,7 @@ export const SessionModel = createModel(() => {
       try {
         const data = await fetchSession();
         this.session.value = data;
+        if (data?.user.id) identifyAnalyticsUser(data.user.id);
         this.error.value = null;
         return data;
       } catch (err) {
@@ -79,9 +81,11 @@ export const SessionModel = createModel(() => {
         typeof data === "object" &&
         (data as { twoFactorRedirect?: unknown }).twoFactorRedirect
       ) {
+        trackProductEvent("auth_two_factor_requested", { method: "email_password" });
         return { twoFactorRequired: true };
       }
       await this.load();
+      trackProductEvent("auth_sign_in_completed", { method: "email_password" });
       return { twoFactorRequired: false };
     },
 
@@ -91,6 +95,9 @@ export const SessionModel = createModel(() => {
         : "/api/auth/two-factor/verify-totp";
       await authPost(path, { code });
       await this.load();
+      trackProductEvent("auth_two_factor_completed", {
+        method: options.backup ? "backup" : "totp",
+      });
     },
 
     async signUp(name: string, email: string, password: string, returnTo?: string): Promise<void> {
@@ -100,6 +107,7 @@ export const SessionModel = createModel(() => {
         password,
         callbackURL: verificationCallbackPath(returnTo),
       });
+      trackProductEvent("auth_sign_up_submitted", { method: "email_password" });
     },
 
     async resendVerification(email: string, returnTo?: string): Promise<void> {
@@ -112,6 +120,7 @@ export const SessionModel = createModel(() => {
     async signOut(): Promise<void> {
       await authPost("/api/auth/sign-out", {});
       this.session.value = null;
+      resetAnalytics();
     },
 
     // Permanently delete the signed-in account. The password is re-verified

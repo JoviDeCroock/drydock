@@ -6,6 +6,7 @@ import {
   rememberDashboardReturnUrl,
   useQuerySignal,
 } from "../../../lib/query-state";
+import { trackProductEvent } from "../../../lib/analytics";
 import { sessionModel } from "../../../models/auth";
 import { NpmConnectionModel } from "../../../models/npm-connection";
 import { NotificationRecipientsModel } from "../../../models/notification-recipients";
@@ -45,6 +46,7 @@ export default function SettingsPage() {
   const slack = useModel(SlackConnectionModel);
   const sessionChecked = useSignal(false);
   const activeTab = useSignal<SettingsTab>("general");
+  const trackedSettingsLoad = useSignal(false);
 
   useQuerySignal(activeTab, {
     name: "tab",
@@ -104,6 +106,7 @@ export default function SettingsPage() {
   const onSwitchOrganization = async (organizationId: string) => {
     if (organizations.activate(organizationId)) {
       await reloadActiveOrgScopedData();
+      trackProductEvent("organization_switched", { surface: "settings" });
     }
   };
 
@@ -111,6 +114,7 @@ export default function SettingsPage() {
     const created = await organizations.create(name);
     if (created) {
       await reloadActiveOrgScopedData();
+      trackProductEvent("organization_created", { surface: "settings" });
     }
   };
 
@@ -118,6 +122,21 @@ export default function SettingsPage() {
     await sessionModel.signOut();
     location.route("/", true);
   };
+
+  const user = sessionModel.user.value;
+  const githubAppLoaded = githubApp.loaded.value;
+  const npmLoaded = npm.loaded.value;
+  const workspaceLoaded = githubAppLoaded && npmLoaded;
+  const tab = activeTab.value;
+
+  useEffect(() => {
+    if (!workspaceLoaded || trackedSettingsLoad.value) return;
+    trackedSettingsLoad.value = true;
+    trackProductEvent("settings_loaded", {
+      has_npm_connection: Boolean(npm.connection.value),
+      tab,
+    });
+  }, [workspaceLoaded, tab]);
 
   if (!sessionChecked.value) {
     return (
@@ -127,12 +146,6 @@ export default function SettingsPage() {
       </PageShell>
     );
   }
-
-  const user = sessionModel.user.value;
-  const githubAppLoaded = githubApp.loaded.value;
-  const npmLoaded = npm.loaded.value;
-  const workspaceLoaded = githubAppLoaded && npmLoaded;
-  const tab = activeTab.value;
 
   return (
     <PageShell

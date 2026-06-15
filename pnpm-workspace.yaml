@@ -13,6 +13,7 @@ allowBuilds:
   "0": esbuild
   "1": sharp
   "2": workerd
+  core-js: false
   esbuild: true
   sharp: true
   workerd: true

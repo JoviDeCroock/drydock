@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import { useSignal, useModel, useSignalEffect } from "@preact/signals";
 import { useLocation } from "preact-iso";
+import { trackProductEvent } from "../../lib/analytics";
 import { rememberDashboardReturnUrl, useQuerySignal } from "../../lib/query-state";
 import { pluralize } from "../../lib/format";
 import { sessionModel } from "../../models/auth";
@@ -33,6 +34,7 @@ export default function DashboardPage() {
   const organizations = useModel(OrganizationModel);
   const stagedPublishes = useModel(StagedPublishesModel);
   const sessionChecked = useSignal(false);
+  const trackedDashboardLoad = useSignal(false);
 
   // Two-way bind the decision filter to ?filter=. The model re-fetches
   // whenever the filter signal changes, so URL → filter → refresh comes
@@ -67,6 +69,7 @@ export default function DashboardPage() {
   const onSwitchOrganization = async (organizationId: string) => {
     if (organizations.activate(organizationId)) {
       await Promise.all([scans.refresh(), npm.load()]);
+      trackProductEvent("organization_switched", { surface: "dashboard" });
     }
   };
 
@@ -74,6 +77,7 @@ export default function DashboardPage() {
     const created = await organizations.create(name);
     if (created) {
       await Promise.all([scans.refresh(), npm.load()]);
+      trackProductEvent("organization_created", { surface: "dashboard" });
     }
   };
 
@@ -89,6 +93,21 @@ export default function DashboardPage() {
     location.route("/", true);
   };
 
+  const user = sessionModel.user.value;
+  const scansLoaded = scans.loaded.value;
+  const npmLoaded = npm.loaded.value;
+  const workspaceLoaded = scansLoaded && npmLoaded;
+
+  useEffect(() => {
+    if (!workspaceLoaded || trackedDashboardLoad.value) return;
+    trackedDashboardLoad.value = true;
+    trackProductEvent("dashboard_loaded", {
+      scan_count: scans.scans.value.length,
+      has_npm_connection: Boolean(npm.connection.value),
+      filter: scans.filter.value,
+    });
+  }, [workspaceLoaded]);
+
   if (!sessionChecked.value) {
     return (
       <PageShell>
@@ -100,11 +119,6 @@ export default function DashboardPage() {
       </PageShell>
     );
   }
-
-  const user = sessionModel.user.value;
-  const scansLoaded = scans.loaded.value;
-  const npmLoaded = npm.loaded.value;
-  const workspaceLoaded = scansLoaded && npmLoaded;
 
   return (
     <PageShell

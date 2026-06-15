@@ -37,6 +37,7 @@
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.25",
     "hoofd": "^1.7.3",
+    "posthog-js": "^1.386.6",
     "preact": "^10.29.2",
     "preact-iso": "^2.12.0",
     "qrcode": "^1.5.4",
