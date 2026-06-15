@@ -366,6 +366,21 @@ describe("buildReportProvenance", () => {
       }),
     ]);
   });
+
+  test("uses review limitations saved with the report", () => {
+    const provenance = buildReportProvenance({
+      scan: {
+        id: "scan-1",
+        summaryJson: {
+          provenance: {
+            reviewLimitations: ["saved limitation text"],
+          },
+        },
+      },
+    });
+
+    expect(provenance.review.limitations).toEqual(["saved limitation text"]);
+  });
 });
 
 describe("recordCompletion", () => {

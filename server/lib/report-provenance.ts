@@ -107,9 +107,15 @@ export function buildReportProvenance(detail: { scan: ProvenanceScanLike }): Rep
       model: stringOrNull(ai?.model),
     },
     review: {
-      limitations: REPORT_PROVENANCE_LIMITATIONS,
+      limitations: coerceReviewLimitations(summaryProvenance?.reviewLimitations),
     },
   };
+}
+
+function coerceReviewLimitations(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) return REPORT_PROVENANCE_LIMITATIONS;
+  const limitations = value.filter((item): item is string => typeof item === "string" && !!item);
+  return limitations.length ? limitations : REPORT_PROVENANCE_LIMITATIONS;
 }
 
 function coerceArtifactDigests(value: unknown): ReportArtifactDigest[] | null {
