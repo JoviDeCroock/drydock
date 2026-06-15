@@ -27,14 +27,14 @@ describe("sanitizeAddress", () => {
 describe("buildMimeMessage", () => {
   test("builds a plain-text MIME body with required headers", () => {
     const raw = buildMimeMessage({
-      fromAddress: "drydock@resynapse.dev",
+      fromAddress: "drydock@drydock.org",
       fromName: "Drydock",
       to: "user@example.com",
       subject: "Scan complete",
       text: "Hello world",
     });
 
-    expect(raw).toMatch(/^From: "Drydock" <drydock@resynapse\.dev>\r\n/);
+    expect(raw).toMatch(/^From: "Drydock" <drydock@drydock\.org>\r\n/);
     expect(raw).toContain("To: user@example.com\r\n");
     expect(raw).toContain("Subject: Scan complete\r\n");
     expect(raw).toContain('Content-Type: text/plain; charset="utf-8"');
@@ -44,7 +44,7 @@ describe("buildMimeMessage", () => {
 
   test("encodes non-ascii subjects using MIME word encoding", () => {
     const raw = buildMimeMessage({
-      fromAddress: "drydock@resynapse.dev",
+      fromAddress: "drydock@drydock.org",
       fromName: "Drydock",
       to: "user@example.com",
       subject: "Scan — done ✓",
@@ -55,7 +55,7 @@ describe("buildMimeMessage", () => {
 
   test("emits multipart/alternative when html is provided", () => {
     const raw = buildMimeMessage({
-      fromAddress: "drydock@resynapse.dev",
+      fromAddress: "drydock@drydock.org",
       fromName: "Drydock",
       to: "user@example.com",
       subject: "Scan",

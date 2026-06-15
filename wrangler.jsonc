@@ -99,7 +99,7 @@
 		"AI_CACHE_AFFINITY": "staged-publish-review-release-reviewer-v1",
 		"NPM_REGISTRY": "https://registry.npmjs.org",
 		"PNPM_VERSION": "11.1.1",
-		"EMAIL_FROM_ADDRESS": "drydock@resynapse.dev",
+		"EMAIL_FROM_ADDRESS": "drydock@drydock.org",
 		"EMAIL_FROM_NAME": "Drydock",
 		"GITHUB_APP_ID": "3896399",
 		"GITHUB_APP_SLUG": "drydock-review",

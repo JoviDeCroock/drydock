@@ -3,8 +3,7 @@ import { describe, expect, test } from "vitest";
 const { buildAccountVerificationEmail } = await import("../server/lib/account-email.ts");
 
 describe("buildAccountVerificationEmail", () => {
-  const url =
-    "https://drydock.resynapse.dev/api/auth/verify-email?token=abc123&callbackURL=%2Fverify-email";
+  const url = "https://drydock.org/api/auth/verify-email?token=abc123&callbackURL=%2Fverify-email";
 
   test("composes a verification subject and embeds the link in both parts", () => {
     const content = buildAccountVerificationEmail(url);
@@ -12,7 +11,7 @@ describe("buildAccountVerificationEmail", () => {
     expect(content.text).toContain(url);
     // The href is attribute-escaped, so assert on the escaped form.
     expect(content.html).toContain(
-      'href="https://drydock.resynapse.dev/api/auth/verify-email?token=abc123&amp;callbackURL=%2Fverify-email"',
+      'href="https://drydock.org/api/auth/verify-email?token=abc123&amp;callbackURL=%2Fverify-email"',
     );
     expect(content.text).toMatch(/24 hours/);
     expect(content.html).toMatch(/24 hours/);
