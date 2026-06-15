@@ -97,9 +97,11 @@ export function buildReportProvenance(detail: { scan: ProvenanceScanLike }): Rep
       stagedTag: stringOrNull(packageSummary?.stagedTag),
     },
     baseline: summary?.baseline ?? null,
-    artifacts:
+    artifacts: normalizeArtifactSources(
       coerceArtifactDigests(summaryProvenance?.artifactDigests) ??
-      extractArtifactDigests(stagedPublish),
+        extractArtifactDigests(stagedPublish),
+      scan.source,
+    ),
     ai: {
       status: stringOrNull(ai?.status),
       model: stringOrNull(ai?.model),
@@ -196,6 +198,16 @@ function dedupeDigests(items: ReportArtifactDigest[]): ReportArtifactDigest[] {
     seen.add(key);
     return true;
   });
+}
+
+function normalizeArtifactSources(
+  items: ReportArtifactDigest[],
+  scanSource: string | null | undefined,
+): ReportArtifactDigest[] {
+  if (scanSource !== "workflow_gate") return items;
+  return items.map((item) =>
+    item.source === "workflow_gate" ? item : { ...item, source: "workflow_gate" },
+  );
 }
 
 function firstArtifactPath(artifacts: unknown[]): string | null {

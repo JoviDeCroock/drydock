@@ -67,6 +67,7 @@ export const pypiAdapter: PackageAdapter<PyPiAdapterInput, PyPiBroker> = {
   summarizeDetails(details) {
     const d = details as PyPiAdapterDetails;
     return {
+      mode: "workflow_gate",
       manifest: d.manifest,
       artifacts: d.artifacts,
     };

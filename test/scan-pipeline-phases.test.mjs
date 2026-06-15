@@ -15,6 +15,7 @@ const {
   persistResults,
   recordCompletion,
 } = await import("../server/lib/scan-pipeline-phases.ts");
+const { buildReportProvenance } = await import("../server/lib/report-provenance.ts");
 
 const NPM_TOKEN = "npm_abcdefghijklmnopqrstuvwxyz0123";
 
@@ -331,6 +332,39 @@ describe("persistResults", () => {
     });
 
     expect(persisted).toBe(false);
+  });
+});
+
+describe("buildReportProvenance", () => {
+  test("labels saved PyPI workflow-gate artifact digests as workflow gate sources", () => {
+    const provenance = buildReportProvenance({
+      scan: {
+        id: "scan-1",
+        source: "workflow_gate",
+        summaryJson: {
+          stagedPublish: {
+            manifest: {
+              ecosystem: "pypi",
+              artifacts: [
+                {
+                  path: "dist/demo-1.0.1-py3-none-any.whl",
+                  kind: "wheel",
+                  sha256: "b".repeat(64),
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    expect(provenance.artifacts).toEqual([
+      expect.objectContaining({
+        path: "dist/demo-1.0.1-py3-none-any.whl",
+        digest: "b".repeat(64),
+        source: "workflow_gate",
+      }),
+    ]);
   });
 });
 
