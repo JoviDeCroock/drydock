@@ -373,9 +373,22 @@ describe("scan artifact backfill route", () => {
     const detail = (await detailRes.json()) as {
       files: Array<{ path: string; textSample: string | null }>;
     };
-    expect(detail.files.find((file) => file.path === "index.js")?.textSample).toContain(
-      "npm_config_user_agent",
-    );
+    expect(detail.files.find((file) => file.path === "index.js")?.textSample).toBeNull();
+
+    const statusRes = await fetchJsonWithSession(app, `/api/v1/scans/${scanId}/status`, {
+      method: "GET",
+    });
+    expect(statusRes.status).toBe(200);
+    await expect(statusRes.json()).resolves.toMatchObject({
+      scan: { id: scanId, status: "complete" },
+    });
+
+    const fileRes = await fetchJsonWithSession(app, `/api/v1/scans/${scanId}/file?path=index.js`, {
+      method: "GET",
+    });
+    expect(fileRes.status).toBe(200);
+    const fileDetail = (await fileRes.json()) as { file: { textSample: string | null } };
+    expect(fileDetail.file.textSample).toContain("npm_config_user_agent");
   });
 
   test("backfills legacy scan artifacts and detail reads survive D1 sample compaction", async () => {
@@ -422,9 +435,14 @@ describe("scan artifact backfill route", () => {
     const detail = (await detailRes.json()) as {
       files: Array<{ path: string; textSample: string | null }>;
     };
-    expect(detail.files.find((file) => file.path === "index.js")?.textSample).toContain(
-      "npm_config_user_agent",
-    );
+    expect(detail.files.find((file) => file.path === "index.js")?.textSample).toBeNull();
+
+    const fileRes = await fetchJsonWithSession(app, `/api/v1/scans/${scanId}/file?path=index.js`, {
+      method: "GET",
+    });
+    expect(fileRes.status).toBe(200);
+    const fileDetail = (await fileRes.json()) as { file: { textSample: string | null } };
+    expect(fileDetail.file.textSample).toContain("npm_config_user_agent");
 
     const second = await fetchJsonWithSession(app, "/api/v1/scans/artifacts/backfill", {
       method: "POST",

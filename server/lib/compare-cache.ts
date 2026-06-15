@@ -1,4 +1,5 @@
 import { downloadPublishedTarball } from "./published-tarball";
+import type { RegistryMetadata } from "./registry";
 import { redactFileRecords, redactJson, type FileRecord, type PackageJsonSummary } from "./review";
 
 export interface CachedCompare {
@@ -10,6 +11,8 @@ export interface CachedCompare {
 
 const CACHE_PREFIX = "compare:v3:";
 const CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
+const METADATA_CACHE_PREFIX = "compare-metadata:v1:";
+const METADATA_CACHE_TTL_SECONDS = 5 * 60;
 
 export async function computeCompareCacheKey(
   registryUrl: string,
@@ -32,6 +35,44 @@ export async function readCompareCache(
   } catch {
     return null;
   }
+}
+
+export async function computeCompareMetadataCacheKey(input: {
+  registryUrl: string;
+  packageName: string;
+  cacheScope: string;
+}): Promise<string> {
+  const data = new TextEncoder().encode(
+    `${input.cacheScope}|${input.registryUrl}|${input.packageName}`,
+  );
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `${METADATA_CACHE_PREFIX}${hex}`;
+}
+
+export async function readCompareMetadataCache(
+  env: Cloudflare.Env,
+  key: string,
+): Promise<RegistryMetadata | null> {
+  if (!env.COMPARE_CACHE) return null;
+  try {
+    return await env.COMPARE_CACHE.get<RegistryMetadata>(key, "json");
+  } catch {
+    return null;
+  }
+}
+
+export async function writeCompareMetadataCache(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  key: string,
+  payload: RegistryMetadata,
+) {
+  if (!env.COMPARE_CACHE) return;
+  const write = env.COMPARE_CACHE.put(key, JSON.stringify(payload), {
+    expirationTtl: METADATA_CACHE_TTL_SECONDS,
+  }).catch(() => undefined);
+  ctx.waitUntil(write);
 }
 
 async function writeCompareCache(

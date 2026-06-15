@@ -11,6 +11,7 @@ import { selectDiffWorkbenchState } from "./diff-helpers";
 
 export function DiffWorkbench({
   entry,
+  stagedMeta,
   staged,
   previousMeta,
   previousContent,
@@ -21,6 +22,7 @@ export function DiffWorkbench({
   findings,
 }: {
   entry: DiffEntry | null;
+  stagedMeta: PersistedScanDetail["files"][number] | null;
   staged: PersistedScanDetail["files"][number] | null;
   previousMeta: FileRecord | null;
   previousContent: FileRecord | null;
@@ -37,7 +39,9 @@ export function DiffWorkbench({
   const state = selectDiffWorkbenchState({
     hasEntry: true,
     entryStatus: entry.status,
-    hasStaged: Boolean(staged),
+    hasStagedMeta: Boolean(stagedMeta),
+    hasStagedContent: Boolean(staged),
+    stagedIsBinary: isPersistedBinary(stagedMeta),
     hasPreviousMeta: Boolean(previousMeta),
     hasPreviousContent: Boolean(previousContent),
     previousIsBinary: Boolean(previousMeta?.flags?.includes("binary")),
@@ -70,6 +74,10 @@ export function DiffWorkbench({
       findings={findings}
     />
   );
+}
+
+function isPersistedBinary(file: PersistedScanDetail["files"][number] | null): boolean {
+  return Array.isArray(file?.flagsJson) && (file.flagsJson as unknown[]).includes("binary");
 }
 
 // A centered processing block that fills the diff panel so the "still working"

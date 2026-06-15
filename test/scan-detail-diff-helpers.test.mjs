@@ -96,7 +96,9 @@ describe("selectDiffWorkbenchState", () => {
   const base = {
     hasEntry: true,
     entryStatus: "modified",
-    hasStaged: true,
+    hasStagedMeta: true,
+    hasStagedContent: true,
+    stagedIsBinary: false,
     hasPreviousMeta: true,
     hasPreviousContent: true,
     previousIsBinary: false,
@@ -132,6 +134,12 @@ describe("selectDiffWorkbenchState", () => {
     expect(state.title).toBe("Loading file diff");
   });
 
+  test("shows processing while staged file content is loading", () => {
+    const state = selectDiffWorkbenchState({ ...base, hasStagedContent: false });
+    expect(state.kind).toBe("processing");
+    expect(state.title).toBe("Loading file diff");
+  });
+
   test("renders the diff for an added file without waiting on a previous version", () => {
     const state = selectDiffWorkbenchState({
       ...base,
@@ -139,6 +147,15 @@ describe("selectDiffWorkbenchState", () => {
       compareReady: false,
       hasPreviousMeta: false,
       hasPreviousContent: false,
+    });
+    expect(state).toEqual({ kind: "diff" });
+  });
+
+  test("renders the diff for a binary staged file instead of waiting on its body", () => {
+    const state = selectDiffWorkbenchState({
+      ...base,
+      hasStagedContent: false,
+      stagedIsBinary: true,
     });
     expect(state).toEqual({ kind: "diff" });
   });
@@ -167,7 +184,8 @@ describe("selectDiffWorkbenchState", () => {
     const state = selectDiffWorkbenchState({
       ...base,
       entryStatus: "unchanged",
-      hasStaged: false,
+      hasStagedMeta: false,
+      hasStagedContent: false,
       hasPreviousMeta: false,
       hasPreviousContent: false,
     });

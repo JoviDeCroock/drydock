@@ -13,6 +13,7 @@ import {
 } from "../lib/review";
 import { normalizeScanRiskBreakdown, type ScanRiskBreakdown } from "../lib/risk";
 import {
+  loadScanArtifactFile,
   loadScanArtifacts,
   scanFileRowsForArtifacts,
   type ScanArtifactFileRow,
@@ -663,6 +664,7 @@ export async function getScan(
   id: string,
   organizationId: string,
   artifactBucket?: R2Bucket,
+  options: { includeFileSamples?: boolean } = {},
 ) {
   const [scanRows, files, findings, events] = await Promise.all([
     db
@@ -682,13 +684,15 @@ export async function getScan(
   if (!scan) return null;
   const artifactDetail = await loadScanArtifacts(artifactBucket, scan);
   const detailFiles = artifactDetail ? mergeArtifactFiles(files, artifactDetail.files, id) : files;
+  const responseFiles =
+    (options.includeFileSamples ?? true) ? detailFiles : detailFiles.map(stripFileSampleForList);
   const diff = artifactDetail?.diff ?? diffForFindingAnnotations(scan.summaryJson, detailFiles);
   const annotatedFindings = annotateFindingsWithDiffStatus(findings, diff, {
     persistedAnnotations: readFindingAnnotations(scan.summaryJson),
   });
   return {
     scan,
-    files: detailFiles,
+    files: responseFiles,
     findings: annotatedFindings,
     riskSummary:
       scan.status === "complete"
@@ -700,6 +704,63 @@ export async function getScan(
         : null,
     events: events.map(redactScanEventForClient),
   };
+}
+
+export async function getScanFile(
+  db: AppDb,
+  id: string,
+  organizationId: string,
+  path: string,
+  artifactBucket?: R2Bucket,
+) {
+  const [scanRows, fileRows] = await Promise.all([
+    db
+      .select()
+      .from(scans)
+      .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
+      .limit(1),
+    db
+      .select()
+      .from(scanFiles)
+      .where(and(eq(scanFiles.scanId, id), eq(scanFiles.path, path)))
+      .limit(1),
+  ]);
+  const scan = scanRows[0];
+  if (!scan) return null;
+
+  const file = fileRows[0] ?? null;
+  const artifactFile = await loadScanArtifactFile(artifactBucket, scan, path);
+  if (!file && !artifactFile) return null;
+  if (!artifactFile) return file;
+  return mergeArtifactFiles(file ? [file] : [], [artifactFile], id)[0] ?? null;
+}
+
+export async function getScanStatus(db: AppDb, id: string, organizationId: string) {
+  const [scan] = await db
+    .select()
+    .from(scans)
+    .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
+    .limit(1);
+  return scan ?? null;
+}
+
+export async function getScanCompareData(db: AppDb, id: string, organizationId: string) {
+  const [scanRows, files, findings] = await Promise.all([
+    db
+      .select()
+      .from(scans)
+      .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
+      .limit(1),
+    db.select().from(scanFiles).where(eq(scanFiles.scanId, id)),
+    db.select().from(scanFindings).where(eq(scanFindings.scanId, id)),
+  ]);
+  const scan = scanRows[0];
+  if (!scan) return null;
+  return { scan, files: files.map(stripFileSampleForList), findings };
+}
+
+function stripFileSampleForList<T extends { textSample: string | null }>(file: T): T {
+  return file.textSample === null ? file : { ...file, textSample: null };
 }
 
 function mergeArtifactFiles(

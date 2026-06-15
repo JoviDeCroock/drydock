@@ -27,7 +27,7 @@ The repo now has a backend-only PyPI foundation in `server/lib/adapters/pypi/ind
 - parses wheel `METADATA`, `WHEEL`, and `RECORD` evidence from ZIP archives;
 - strips the common root directory from sdists before reading `PKG-INFO`;
 - compares flattened candidate artifact files against the previous PyPI release using stable wheel/sdist namespaces instead of versioned artifact filenames (callers may inject explicit `previousArtifacts`, otherwise the adapter resolves and downloads the baseline itself);
-- groups the bundle's artifacts by normalized (PEP 503) package name into one reviewable release per distinct package (a monorepo publishes several), requiring artifacts that share a name to agree on the version before forming that package's release;
+- parses uploaded artifacts with bounded concurrency, then groups the bundle by normalized (PEP 503) package name into one reviewable release per distinct package (a monorepo publishes several), requiring artifacts that share a name to agree on the version before forming that package's release;
 - adds PyPI-specific deterministic findings for metadata mismatches, missing wheel `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, and `.pyd` native extensions;
 - fetches PyPI project metadata from `GET /pypi/<project>/json`;
 - selects a default PyPI baseline release from `info.version`, falling back to newest non-yanked upload time;

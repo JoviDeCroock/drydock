@@ -47,14 +47,19 @@ User-initiated report downloads serve the same canonical `report.json` bytes wit
 
 New completed scans try to write `report.json`, `files.json`, `diff.json`, and `manifest.json` to R2 before `persistScan` marks the D1 row artifact-backed. Each object is read back and verified against its expected size and SHA-256 digest before D1 metadata is saved. Transient write or verification failures are retried; exhausted failures log `scan.artifacts.write_failed` and fail closed so the scan can retry instead of persisting new file samples into D1. When the R2 write succeeds, D1 stores compact file metadata only and leaves `scan_files.text_sample` null.
 
-`GET /api/v1/scans/:id` shadow-reads R2 when all artifact metadata exists. The read path verifies:
+`GET /api/v1/scans/:id` returns D1-backed scan metadata, findings, events, and file metadata without loading staged file bodies. The dashboard fetches a selected staged body through:
+
+```http
+GET /api/v1/scans/:id/file?path=package.json
+```
+
+The file-body route shadow-reads R2 when all artifact metadata exists. The artifact read path verifies:
 
 - manifest key, size, and digest;
 - manifest scan/org identity and object-key references;
-- report object digest against `scans.report_digest`;
 - file/diff payload shape.
 
-Any mismatch, missing object, invalid payload, or R2 read failure logs `scan.artifacts.fallback_read` and returns the existing D1-backed detail instead. For artifact-backed scans created after this rollout, that fallback keeps file metadata and findings readable but does not include redacted file text samples because new samples are not duplicated into D1.
+Any mismatch, missing object, invalid payload, or R2 read failure logs `scan.artifacts.fallback_read` and returns the existing D1-backed metadata instead. For artifact-backed scans created after this rollout, that fallback keeps file metadata and findings readable but does not include redacted file text samples because new samples are not duplicated into D1.
 
 ## Backfill
 

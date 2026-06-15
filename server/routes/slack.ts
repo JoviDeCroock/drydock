@@ -30,11 +30,15 @@ import {
   renderSlackTestMessage,
   signSlackState,
   slackRedirectUri,
+  type SlackChannel,
   verifySlackState,
 } from "../lib/slack";
 import type { Bindings, Variables } from "../types";
 
 export const slackRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+const SLACK_CHANNEL_CACHE_TTL_MS = 60_000;
+const slackChannelCache = new Map<string, { channels: SlackChannel[]; expiresAt: number }>();
 
 const MAX_CHANNEL_ID_LENGTH = 64;
 const MAX_CHANNEL_NAME_LENGTH = 80;
@@ -167,11 +171,23 @@ slackRoutes.get("/channels", async (c) => {
     ciphertext: secret.botTokenCiphertext,
     nonce: secret.botTokenNonce,
   });
+  const cacheKey = `${organizationId}:${secret.teamId}`;
+  const cached = slackChannelCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return c.json({ channels: cached.channels }, 200, {
+      "cache-control": "private, max-age=60",
+    });
+  }
   const result = await listSlackPublicChannels(botToken);
   if (!result.ok) {
     return c.json({ error: "could not list Slack channels", reason: result.error }, 502);
   }
-  return c.json({ channels: result.channels ?? [] });
+  const channels = result.channels ?? [];
+  slackChannelCache.set(cacheKey, {
+    channels,
+    expiresAt: Date.now() + SLACK_CHANNEL_CACHE_TTL_MS,
+  });
+  return c.json({ channels }, 200, { "cache-control": "private, max-age=60" });
 });
 
 slackRoutes.put("/channel", async (c) => {

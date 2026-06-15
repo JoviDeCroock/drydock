@@ -166,14 +166,7 @@ export default function ScanDetailPage() {
   // that feeds the inline annotations and the risk-signals index.
   const findingCounts = useComputed(() => findingCountsByPath(findingsWithDiffStatus.value));
 
-  const stagedFile = useComputed(() => {
-    const path = model.selectedPath.value;
-    const detail = model.detail.value;
-    if (!path) return null;
-    return detail?.files.find((file) => file.path === path) ?? null;
-  });
-
-  const { previousFileMeta, previousFile } = useScanFileContent(
+  const { stagedFileMeta, stagedFile, previousFileMeta, previousFile } = useScanFileContent(
     model,
     model.selectedPath,
     model.selectedVersion,
@@ -354,6 +347,7 @@ export default function ScanDetailPage() {
                 <SectionLabel>File diff</SectionLabel>
                 <DiffWorkbench
                   entry={selectedEntry.value}
+                  stagedMeta={stagedFileMeta.value}
                   staged={stagedFile.value}
                   previousMeta={previousFileMeta.value}
                   previousContent={previousFile.value}

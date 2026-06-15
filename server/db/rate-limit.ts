@@ -2,6 +2,9 @@ import { eq, lt, sql } from "drizzle-orm";
 import type { AppDb } from "./client";
 import { rateLimits } from "./schema";
 
+const RATE_LIMIT_CLEANUP_INTERVAL_MS = 5 * 60_000;
+let nextRateLimitCleanupAtMs = 0;
+
 export interface RateLimitInput {
   key: string;
   limit: number;
@@ -39,7 +42,8 @@ export async function enforceRateLimit(db: AppDb, input: RateLimitInput) {
     });
 
   const [entry] = await db.select().from(rateLimits).where(eq(rateLimits.key, key)).limit(1);
-  if (Math.random() < 0.01) {
+  if (nowMs >= nextRateLimitCleanupAtMs) {
+    nextRateLimitCleanupAtMs = nowMs + RATE_LIMIT_CLEANUP_INTERVAL_MS;
     await db.delete(rateLimits).where(lt(rateLimits.expiresAt, new Date(nowMs - input.windowMs)));
   }
   if ((entry?.count ?? 0) > input.limit) {

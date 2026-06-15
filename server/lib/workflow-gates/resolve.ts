@@ -3,6 +3,8 @@ import { downloadInSandboxInline } from "../sandbox";
 import { AMBIGUOUS_ARCHIVE_ECOSYSTEM, detectArchiveEcosystems } from "./registry";
 import type { ParsedGateArtifact } from "./types";
 
+const GATE_ARTIFACT_PARSE_CONCURRENCY = 4;
+
 /**
  * Parse every verified bundle artifact once in the credentials-free sandbox and
  * resolve each one's ecosystem.
@@ -24,8 +26,7 @@ export async function resolveBundleArtifacts(
   ctx: ExecutionContext,
   bundle: ResolvedReleaseBundle,
 ): Promise<ParsedGateArtifact[]> {
-  const resolved: ParsedGateArtifact[] = [];
-  for (const file of bundle.artifacts) {
+  return mapWithConcurrency(bundle.artifacts, GATE_ARTIFACT_PARSE_CONCURRENCY, async (file) => {
     const format = file.path.toLowerCase().endsWith(".whl") ? "zip" : "tgz";
     const parsed = await downloadInSandboxInline(env, ctx, { bytes: file.bytes, format });
     const contents = { files: parsed.files, packageJson: parsed.packageJson ?? null };
@@ -55,7 +56,7 @@ export async function resolveBundleArtifacts(
       kind = claims[0].kind;
     }
 
-    resolved.push({
+    return {
       path: file.path,
       sha256: file.sha256,
       ecosystem,
@@ -63,7 +64,25 @@ export async function resolveBundleArtifacts(
       files: parsed.files,
       packageJson: parsed.packageJson ?? null,
       ...(parsed.suspiciousEntries ? { suspiciousEntries: parsed.suspiciousEntries } : {}),
-    });
-  }
-  return resolved;
+    };
+  });
+}
+
+async function mapWithConcurrency<T, U>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<U>,
+): Promise<U[]> {
+  const results = new Map<number, U>();
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    for (;;) {
+      const index = next;
+      next += 1;
+      if (index >= items.length) return;
+      results.set(index, await worker(items[index]));
+    }
+  });
+  await Promise.all(workers);
+  return items.map((_, index) => results.get(index)!);
 }
