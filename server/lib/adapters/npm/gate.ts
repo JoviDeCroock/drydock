@@ -28,7 +28,6 @@ export interface NpmGateAdapterInput {
   manifest: NpmReleaseManifest;
   artifact: NpmGateArtifactInput;
   maxFiles?: number;
-  maxBytesPerFile?: number;
 }
 
 /** Persisted, opaque snapshot of the reviewed artifact for the report/UI. */
@@ -62,7 +61,6 @@ export const npmGateAdapter: PackageAdapter<NpmGateAdapterInput, NpmBroker> = {
       manifest,
       artifact,
       ...(typeof raw.maxFiles === "number" ? { maxFiles: raw.maxFiles } : {}),
-      ...(typeof raw.maxBytesPerFile === "number" ? { maxBytesPerFile: raw.maxBytesPerFile } : {}),
     };
   },
 
@@ -95,12 +93,7 @@ export const npmGateAdapter: PackageAdapter<NpmGateAdapterInput, NpmBroker> = {
 
   async acquireBaseline(ctx, input, broker, staged) {
     try {
-      return await acquireBaselineNpm(
-        ctx,
-        { maxFiles: input.maxFiles, maxBytesPerFile: input.maxBytesPerFile },
-        broker,
-        staged,
-      );
+      return await acquireBaselineNpm(ctx, { maxFiles: input.maxFiles }, broker, staged);
     } catch {
       // The baseline is a best-effort diff aid, not a security control. Unlike a
       // staged publish, a workflow gate does not require an org npm token, so a

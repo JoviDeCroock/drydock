@@ -22,7 +22,8 @@ Dynamic Worker sandbox
   ├─ receives no npm token
   ├─ fetches only through NpmStageGateway
   ├─ gunzips/parses tarball
-  └─ returns bounded file metadata + text samples
+  └─ returns file metadata + whole-file text samples
+     (bounded by the expanded-archive cap, not a per-file window)
 ```
 
 Scan orchestration lives in `server/lib/scan-pipeline.ts` and is shared by the HTTP and Queue entrypoints. Scans run only through the queued/background lifecycle: `POST /api/v1/scans` creates a scan, a Queue consumer or local `waitUntil()` job runs the pipeline, and the UI reads status/report data from `GET /api/v1/scans/:id`.
@@ -56,7 +57,8 @@ The Dynamic Worker handles untrusted package bytes. It:
 - receives only scan options and registry URLs;
 - never receives npm credentials;
 - cannot directly reach the Internet except through `globalOutbound`;
-- parses archive bytes into bounded file summaries;
+- parses archive bytes into file summaries with whole-file text (bounded by the
+  expanded-archive cap, so detection in the parent sees the full file — issue #191);
 - returns metadata and text samples, not executable behavior.
 
 The sandbox must stay small and boring. Do not add package execution, dependency installation, build steps, import resolution, or rendering.

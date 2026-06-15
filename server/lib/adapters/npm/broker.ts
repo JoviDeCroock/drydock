@@ -16,7 +16,6 @@ export interface NpmBroker extends AdapterBroker {
 
 export interface NpmBrokerDownloadOptions {
   maxFiles?: number;
-  maxBytesPerFile?: number;
 }
 
 export interface NpmBrokerProps {
@@ -57,7 +56,6 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
       downloadInSandbox(this.env, this.ctx, {
         stageId,
         maxFiles: opts.maxFiles,
-        maxBytesPerFile: opts.maxBytesPerFile,
         npmToken: creds.token,
         npmRegistry: creds.registry,
       }),
@@ -75,7 +73,6 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
         npmToken: creds.token,
         allowInsecureLocalhost: allowInsecureLocalRegistry(this.env),
         maxFiles: opts.maxFiles,
-        maxBytesPerFile: opts.maxBytesPerFile,
       }),
     );
   }
@@ -148,7 +145,6 @@ class LocalNpmBroker implements NpmBroker {
     return downloadInSandbox(this.ctx.env, this.ctx.executionCtx, {
       stageId,
       maxFiles: opts.maxFiles,
-      maxBytesPerFile: opts.maxBytesPerFile,
       npmToken: creds.token,
       npmRegistry: creds.registry,
     });
@@ -164,7 +160,6 @@ class LocalNpmBroker implements NpmBroker {
       npmToken: creds.token,
       allowInsecureLocalhost: allowInsecureLocalRegistry(this.ctx.env),
       maxFiles: opts.maxFiles,
-      maxBytesPerFile: opts.maxBytesPerFile,
     });
   }
 

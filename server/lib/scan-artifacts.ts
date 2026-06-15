@@ -6,6 +6,13 @@ export const SCAN_ARTIFACT_STORAGE_VERSION = 1;
 export const SCAN_ARTIFACT_WRITE_ATTEMPTS = 3;
 const ARTIFACT_CONTENT_TYPE = "application/json; charset=utf-8";
 
+// Per-file display sample bound. Deterministic detection runs over the WHOLE
+// file in the parent worker (the sandbox no longer clips the scanned text; see
+// issue #191), so this cap is purely about what we persist for the diff/file
+// viewer — it never narrows the review window. A finding past this bound is
+// surfaced in the UI's out-of-sample banner rather than pinned to a hunk.
+export const SCAN_FILE_SAMPLE_LIMIT = 128 * 1024;
+
 export interface ScanArtifactMetadata {
   artifactStorageVersion: number;
   artifactManifestKey: string;
@@ -88,15 +95,30 @@ export function scanFileRowsForArtifacts(
   const diffByPath = new Map(diff.map((entry) => [entry.path, entry]));
   return files.map((file) => {
     const entry = diffByPath.get(file.path);
+    const { textSample, flags } = clipDisplaySample(file.textSample, file.flags);
     return {
       path: file.path,
       status: entry?.status || "unknown",
       size: file.size,
       sha256: file.sha256,
-      flagsJson: file.flags,
-      textSample: file.textSample || null,
+      flagsJson: flags,
+      textSample,
     };
   });
+}
+
+// Bound the persisted/display sample without touching the scanned text. The
+// `truncated` flag is added here (not in the sandbox) because truncation is now
+// a display concern: the full file was already scanned. Detection/AI consume the
+// in-memory FileRecord, so this never strips a flag they rely on.
+function clipDisplaySample(
+  textSample: string | undefined,
+  flags: string[],
+): { textSample: string | null; flags: string[] } {
+  if (!textSample) return { textSample: textSample ?? null, flags };
+  if (textSample.length <= SCAN_FILE_SAMPLE_LIMIT) return { textSample, flags };
+  const clippedFlags = flags.includes("truncated") ? flags : [...flags, "truncated"];
+  return { textSample: textSample.slice(0, SCAN_FILE_SAMPLE_LIMIT), flags: clippedFlags };
 }
 
 export async function maybeWriteScanArtifacts(

@@ -4,7 +4,6 @@ import type { PyPiArtifactKind, PyPiProjectMetadata } from "./types";
 
 export interface PyPiBrokerDownloadOptions {
   maxFiles?: number;
-  maxBytesPerFile?: number;
 }
 
 export interface PyPiPublicArtifactRef {
@@ -65,7 +64,6 @@ export function createPyPiBroker(ctx: AdapterContext, _ref: AdapterConnectionRef
         archiveFormat: artifact.kind === "wheel" ? "zip" : "tgz",
         publicArtifactUrls: [artifact.url],
         maxFiles: opts?.maxFiles,
-        maxBytesPerFile: opts?.maxBytesPerFile,
       });
     },
 

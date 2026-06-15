@@ -115,7 +115,6 @@ export async function executeScanJob(
       scanId: message.scanId,
       stageId: message.stageId,
       maxFiles: message.maxFiles,
-      maxBytesPerFile: message.maxBytesPerFile,
       organizationId: message.organizationId,
     });
     emitOperationalEvent("info", "scan.job.completed", {

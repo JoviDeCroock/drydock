@@ -4,7 +4,7 @@ vi.mock("cloudflare:workers", () => ({
   WorkerEntrypoint: class {},
 }));
 
-const { SANDBOX_MAX_BYTES_PER_FILE, SANDBOX_MAX_FILES, evaluateNpmStageGatewayRequest } =
+const { SANDBOX_MAX_FILES, evaluateNpmStageGatewayRequest } =
   await import("../server/lib/sandbox.ts");
 
 describe("npm stage gateway policy", () => {
@@ -95,8 +95,7 @@ describe("npm stage gateway policy", () => {
 });
 
 describe("sandbox archive limits", () => {
-  test("defaults allow 2,500 files and 128 KiB text samples", () => {
+  test("defaults allow 2,500 files", () => {
     expect(SANDBOX_MAX_FILES).toBe(2_500);
-    expect(SANDBOX_MAX_BYTES_PER_FILE).toBe(128 * 1024);
   });
 });

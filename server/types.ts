@@ -22,7 +22,6 @@ export type Variables = {
 export interface ScanInput {
   stageId: string;
   maxFiles?: number;
-  maxBytesPerFile?: number;
 }
 
 export interface ScanResult {
