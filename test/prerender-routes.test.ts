@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isPrerenderedRoute } from "../src";
+import { isGeneratedIndexRoute, isPrerenderedRoute, prerender } from "../src";
 import { docsPageSeo, getPageSeoMetadata, homePageSeo } from "../src/lib/seo";
 
 describe("isPrerenderedRoute", () => {
@@ -13,9 +13,25 @@ describe("isPrerenderedRoute", () => {
     expect(isPrerenderedRoute("/docs/")).toBe(true);
   });
 
-  it("does not hydrate pages that are not prerendered by the build", () => {
+  it("matches generated dashboard shell pages with or without canonical trailing slashes", () => {
+    expect(isGeneratedIndexRoute("/dashboard")).toBe(true);
+    expect(isGeneratedIndexRoute("/dashboard/")).toBe(true);
+    expect(isGeneratedIndexRoute("/dashboard/account")).toBe(true);
+    expect(isGeneratedIndexRoute("/dashboard/invite")).toBe(true);
+    expect(isGeneratedIndexRoute("/dashboard/settings")).toBe(true);
+    expect(isGeneratedIndexRoute("/dashboard/settings/github-app/callback")).toBe(true);
+  });
+
+  it("hydrates only pages with prerendered app markup", () => {
     expect(isPrerenderedRoute("/dashboard")).toBe(false);
+    expect(isPrerenderedRoute("/dashboard/settings")).toBe(false);
     expect(isPrerenderedRoute("/docs/intro")).toBe(false);
+  });
+
+  it("emits an empty app shell for dashboard route indexes", async () => {
+    const result = await prerender({ url: "/dashboard/settings" });
+
+    expect(result).toEqual({ html: "", links: new Set() });
   });
 });
 

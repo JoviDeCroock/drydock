@@ -2,6 +2,11 @@ import { hydrate, render } from "preact";
 import { ErrorBoundary, LocationProvider, Route, Router, lazy, prerender as ssr } from "preact-iso";
 import { Toaster } from "./components";
 import { extractPrerenderHead, getPageSeoMetadata } from "./lib/seo";
+import {
+  isDashboardShellRoute,
+  isGeneratedIndexRoute,
+  isHydratedPrerenderRoute,
+} from "./lib/prerender-routes";
 import "./style.css";
 
 const LandingPage = lazy(() => import("./pages/Landing"));
@@ -42,15 +47,13 @@ export function App() {
 }
 
 export function isPrerenderedRoute(pathname: string) {
-  const canonicalPathname =
-    pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+  return isHydratedPrerenderRoute(pathname);
+}
 
-  return (
-    canonicalPathname === "/" ||
-    canonicalPathname === "/login" ||
-    canonicalPathname === "/register" ||
-    canonicalPathname === "/docs"
-  );
+export { isGeneratedIndexRoute };
+
+function emptyAppShell() {
+  return { html: "", links: new Set<string>() };
 }
 
 if (typeof window !== "undefined") {
@@ -65,10 +68,13 @@ if (typeof window !== "undefined") {
 }
 
 export async function prerender(data: Record<string, unknown>) {
+  const prerenderUrl = typeof data.url === "string" ? data.url : location.pathname;
+  const pathname = new URL(prerenderUrl, "http://localhost").pathname;
+  if (isDashboardShellRoute(pathname)) return emptyAppShell();
+
   const result = await ssr(<App {...data} />);
   const extractedHead = extractPrerenderHead();
-  const prerenderUrl = typeof data.url === "string" ? data.url : location.pathname;
-  const shouldEmitHead = getPageSeoMetadata(new URL(prerenderUrl, "http://localhost").pathname);
+  const shouldEmitHead = getPageSeoMetadata(pathname);
   const head = shouldEmitHead ? extractedHead : undefined;
 
   // The prerender crawler follows every rendered <a href> as a route to prerender.
@@ -76,7 +82,7 @@ export async function prerender(data: Record<string, unknown>) {
   // page's authenticated "Open settings" link) don't generate stray HTML.
   const links = new Set<string>();
   for (const href of result.links ?? []) {
-    if (isPrerenderedRoute(new URL(href, "http://localhost").pathname)) {
+    if (isGeneratedIndexRoute(new URL(href, "http://localhost").pathname)) {
       links.add(href);
     }
   }
