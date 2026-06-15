@@ -48,6 +48,18 @@ const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 const CANONICAL_HOSTNAME = "drydock.org";
 const LEGACY_HOSTNAME = "drydock.resynapse.dev";
 const SERVER_OWNED_PATH_PREFIXES = ["/api", "/webhooks"];
+const DASHBOARD_STATIC_ASSET_PATHS = new Set([
+  "/dashboard",
+  "/dashboard/",
+  "/dashboard/account",
+  "/dashboard/account/",
+  "/dashboard/invite",
+  "/dashboard/invite/",
+  "/dashboard/settings",
+  "/dashboard/settings/",
+  "/dashboard/settings/github-app/callback",
+  "/dashboard/settings/github-app/callback/",
+]);
 
 function canonicalDomainRedirect(request: Request): Response | null {
   const url = new URL(request.url);
@@ -60,6 +72,19 @@ function isServerOwnedPath(path: string): boolean {
   return SERVER_OWNED_PATH_PREFIXES.some(
     (prefix) => path === prefix || path.startsWith(`${prefix}/`),
   );
+}
+
+function assetFallbackRequest(request: Request): Request {
+  const url = new URL(request.url);
+  if (
+    (url.pathname === "/dashboard" || url.pathname.startsWith("/dashboard/")) &&
+    !DASHBOARD_STATIC_ASSET_PATHS.has(url.pathname)
+  ) {
+    url.pathname = "/dashboard/index.html";
+    url.search = "";
+    return new Request(url, request);
+  }
+  return request;
 }
 
 function applySecurityHeaders(c: { res: Response; req: { path: string } }) {
@@ -236,7 +261,7 @@ app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
 
 app.notFound((c) => {
   if (!isServerOwnedPath(c.req.path) && c.env.ASSETS) {
-    return c.env.ASSETS.fetch(c.req.raw);
+    return c.env.ASSETS.fetch(assetFallbackRequest(c.req.raw));
   }
   return c.json({ error: "not found" }, 404);
 });
