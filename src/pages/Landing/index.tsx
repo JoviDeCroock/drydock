@@ -50,15 +50,15 @@ export default function LandingPage() {
     >
       <PageSeo metadata={homePageSeo} />
       <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
-        <Eyebrow tone="accent">Pre-publish security review for npm and PyPI</Eyebrow>
+        <Eyebrow tone="accent">Pre-publish security review for npm and PyPI maintainers</Eyebrow>
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
           Review the exact package before it ships.
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-          Code review sees source. Registries get built artifacts. Drydock pauses npm staged
-          publishes and GitHub-gated PyPI or npm releases, diffs the exact bytes against the last
-          published version, and pins supply-chain findings to changed lines. You make the final
-          call.
+          The package that lands on the registry is not the pull request you reviewed. It is built
+          output shaped by scripts, bundlers, and CI. Drydock pauses npm staged publishes and
+          GitHub-gated PyPI or npm releases, diffs the exact bytes against the last published
+          version, and pins supply-chain findings to changed lines. You make the final call.
         </p>
         <div class="flex gap-3 mt-2">
           <Show

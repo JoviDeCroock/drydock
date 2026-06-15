@@ -21,9 +21,9 @@ export interface PrerenderHead {
 }
 
 export const homePageSeo: PageSeoMetadata = {
-  title: "Drydock — pre-publish security review for npm and PyPI",
+  title: "Drydock — pre-publish security review for package maintainers",
   description:
-    "Drydock pauses npm staged publishes and GitHub-gated PyPI or npm releases, reviews the exact package artifact, and pins supply-chain findings to changed lines.",
+    "Drydock helps npm and PyPI maintainers pause staged publishes and GitHub-gated releases, review the exact package artifact, and pin supply-chain findings to changed lines.",
   path: "/",
 };
 

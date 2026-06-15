@@ -19,10 +19,11 @@ export default function DocsPage() {
             Choose where Drydock holds your release.
           </h1>
           <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-            Drydock reviews the package artifact before it reaches a registry. It pauses npm staged
-            publishes or GitHub-gated PyPI and npm jobs, diffs the candidate against the last
-            published version, and pins findings to changed lines. Maintainers decide; Drydock never
-            publishes, never stores publish credentials, and never executes package contents.
+            The package that reaches a registry is not the pull request a maintainer reviewed. It is
+            built output shaped by scripts, bundlers, and CI. Drydock pauses npm staged publishes or
+            GitHub-gated PyPI and npm jobs, diffs the candidate against the last published version,
+            and pins findings to changed lines. Maintainers decide; Drydock never publishes, never
+            stores publish credentials, and never executes package contents.
           </p>
           <p class="m-0 max-w-[680px] text-[14px] text-ink-muted leading-[1.65]">
             Use registry staging when npm can hold the candidate. Use workflow gating when GitHub
