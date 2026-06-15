@@ -5,10 +5,10 @@ import { LinkButton } from "./Button";
 import { AikidoFootnote, AikidoMark } from "./AikidoPartner";
 
 const FEEDBACK_MAILTO =
-  "mailto:drydock@resynapse.dev?subject=Drydock%20feedback&body=Tell%20us%20what%27s%20broken%2C%20confusing%2C%20or%20missing%3A%0A%0A";
+  "mailto:drydock@drydock.org?subject=Drydock%20feedback&body=Tell%20us%20what%27s%20broken%2C%20confusing%2C%20or%20missing%3A%0A%0A";
 
 const SECURITY_MAILTO =
-  "mailto:drydock@resynapse.dev?subject=Drydock%20security%20report&body=Describe%20the%20issue%20and%20how%20to%20reproduce%20it%3A%0A%0A";
+  "mailto:drydock@drydock.org?subject=Drydock%20security%20report&body=Describe%20the%20issue%20and%20how%20to%20reproduce%20it%3A%0A%0A";
 
 const AIKIDO_URL = "https://www.aikido.dev";
 
@@ -60,7 +60,7 @@ export function PageShell({
                 href={FEEDBACK_MAILTO}
                 variant="ghost"
                 size="sm"
-                title="Email drydock@resynapse.dev with any issues"
+                title="Email drydock@drydock.org with any issues"
               >
                 Feedback
               </LinkButton>

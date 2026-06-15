@@ -16,7 +16,7 @@ export interface EmailSendResult {
   reason?: string;
 }
 
-const DEFAULT_FROM_ADDRESS = "drydock@resynapse.dev";
+const DEFAULT_FROM_ADDRESS = "drydock@drydock.org";
 const DEFAULT_FROM_NAME = "Drydock";
 
 export async function sendNotificationEmail(
@@ -68,7 +68,7 @@ export function buildMimeMessage(input: BuildMimeMessageInput): string {
     `To: ${input.to}`,
     `Subject: ${encodeHeader(input.subject)}`,
     `Date: ${new Date().toUTCString()}`,
-    `Message-ID: <${crypto.randomUUID()}@${input.fromAddress.split("@")[1] ?? "resynapse.dev"}>`,
+    `Message-ID: <${crypto.randomUUID()}@${input.fromAddress.split("@")[1] ?? "drydock.org"}>`,
     "MIME-Version: 1.0",
   ];
 
