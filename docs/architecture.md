@@ -224,7 +224,7 @@ Deletion, audit-log UI, billing, and quotas remain deferred as team/commercial-r
 
 ## Account email verification
 
-Email/password signup is gated on email verification, but only when the Worker can actually send mail. `createAuth` flips `emailAndPassword.requireEmailVerification` on `Boolean(env.SEND_EMAIL)`: production has the Email binding bound, so a fresh signup gets no session and must click a verification link first; local dev and the e2e harness have no binding, so signup auto-signs-in and the verification flow is inert. This keeps the gate from locking users out during an email outage and keeps the existing e2e auth flow unchanged.
+Email/password signup is gated on email verification, but only when the Worker can actually send mail and is not running against a local Better Auth origin. `createAuth` flips `emailAndPassword.requireEmailVerification` on `Boolean(env.SEND_EMAIL) && !isLocalAuthUrl(env.BETTER_AUTH_URL)`: production has the Email binding bound and `BETTER_AUTH_URL=https://drydock.org`, so a fresh signup gets no session and must click a verification link first; local dev uses `.dev.vars` with `BETTER_AUTH_URL=http://localhost:5173`, so signup auto-signs-in even though the shared Wrangler config also declares `SEND_EMAIL`. This keeps the gate from locking users out during local development or an email outage while preserving production verification.
 
 Better Auth's `emailVerification` block wires the link delivery and post-verify behavior:
 
