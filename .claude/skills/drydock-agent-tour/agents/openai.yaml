@@ -1,0 +1,4 @@
+interface:
+  display_name: "Drydock Agent Tour"
+  short_description: "Run and inspect the local Drydock walkthrough."
+  default_prompt: "Run the Drydock agent tour and summarize the generated report, screenshots, and any product issues you observe."

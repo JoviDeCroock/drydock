@@ -81,11 +81,12 @@ cp .dev.vars.example .dev.vars
 pnpm test         # Vitest logic suite
 pnpm dev          # vite + cloudflare plugin, http://localhost:5173
 pnpm test:e2e     # Playwright + local fake npm staging registry
+pnpm run agent:tour # local product walkthrough with screenshots/traces/report
 ```
 
 The Vite dev server runs the Worker locally and serves the UI at the same origin, so authenticated `fetch("/api/v1/scans")` works without CORS.
 
-For deterministic browser testing without real npm staged publishes, use the local E2E harness in [`docs/e2e-test-environment.md`](docs/e2e-test-environment.md). It packs fixture packages, runs a fake npm staging registry, starts the Worker locally, and writes inspectable screenshots/traces/journals under `.context/`.
+For deterministic browser testing without real npm staged publishes, use the local E2E harness in [`docs/e2e-test-environment.md`](docs/e2e-test-environment.md). It packs fixture packages, runs a fake npm staging registry, starts the Worker locally, and writes inspectable screenshots/traces/journals to local artifact directories. For an agent-readable product walkthrough with screenshots, traces, an exported report, and a narrative Markdown summary, use [`docs/agent-tour.md`](docs/agent-tour.md).
 
 ## Configuration and secrets
 

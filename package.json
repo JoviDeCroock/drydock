@@ -26,6 +26,7 @@
     "e2e:fixtures": "node test/e2e/build-fixtures.mjs",
     "e2e:registry": "node test/e2e/fake-registry.mjs",
     "e2e:dev": "node test/e2e/dev-server.mjs",
+    "agent:tour": "node scripts/agent-tour.mjs",
     "test:e2e": "playwright test",
     "verify": "node scripts/verify.mjs"
   },

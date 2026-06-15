@@ -23,6 +23,7 @@ fixture scenario and journal assertion in this harness. See
 pnpm run e2e:fixtures
 pnpm run e2e:dev
 pnpm run test:e2e
+pnpm run agent:tour
 ```
 
 `pnpm run e2e:dev` prints the app URL, fake registry URL, request journal, artifact directory, and Worker state directory. By default it uses:
@@ -37,6 +38,11 @@ E2E_APP_PORT=5200 E2E_REGISTRY_PORT=5201 pnpm run test:e2e
 ```
 
 Playwright artifacts are written under `.context/e2e-artifacts/`, including traces on failure and `implicit-node-gyp-report.png` on a successful smoke run.
+
+`pnpm run agent:tour` is the portable product walkthrough for agents and manual
+inspection. It uses the same fake registry and Worker harness, but writes a
+narrative report, screenshots, exported JSON, trace, and video under the tour
+output directory. See [`agent-tour.md`](./agent-tour.md).
 
 Vite ignores `.context/**` in its file watcher. The E2E runner writes registry state, Worker state, traces, screenshots, and reports there while the app is open; watching those files can cause hot-reload loops that interrupt browser interactions in CI.
 
