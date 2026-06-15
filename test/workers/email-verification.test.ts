@@ -6,6 +6,7 @@ import { createDb } from "../../server/db";
 import * as schema from "../../server/db/schema";
 
 const ORIGIN = "http://example.com";
+const LOCAL_ORIGIN = "http://localhost:5173";
 const PASSWORD = "correct horse battery staple";
 const WORKER_AUTH_TIMEOUT_MS = 15_000;
 
@@ -13,12 +14,12 @@ function uniqueEmail() {
   return `verify-${crypto.randomUUID()}@example.test`;
 }
 
-async function authPost(path: string, body: unknown) {
+async function authPost(path: string, body: unknown, origin = ORIGIN) {
   const ctx = createExecutionContext();
   const res = await worker.fetch(
-    new Request(`${ORIGIN}${path}`, {
+    new Request(`${origin}${path}`, {
       method: "POST",
-      headers: { "content-type": "application/json", origin: ORIGIN },
+      headers: { "content-type": "application/json", origin },
       body: JSON.stringify(body),
     }),
     env,
@@ -38,11 +39,43 @@ function clearEmailBinding() {
   delete (env as { SEND_EMAIL?: unknown }).SEND_EMAIL;
 }
 
+function setAuthUrl(url: string) {
+  (env as { BETTER_AUTH_URL?: string }).BETTER_AUTH_URL = url;
+}
+
 afterEach(() => {
   clearEmailBinding();
+  setAuthUrl(ORIGIN);
 });
 
 describe("email verification gating", () => {
+  test(
+    "with email configured, local sign-up still signs the user in immediately",
+    async () => {
+      const { send } = withEmailBinding();
+      setAuthUrl(LOCAL_ORIGIN);
+      const email = uniqueEmail();
+
+      const res = await authPost(
+        "/api/auth/sign-up/email",
+        {
+          name: "Verify Tester",
+          email,
+          password: PASSWORD,
+          callbackURL: "/verify-email",
+        },
+        LOCAL_ORIGIN,
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { token: string | null };
+      expect(typeof body.token).toBe("string");
+      expect(res.headers.get("set-cookie") ?? "").toContain("session_token");
+      expect(send).not.toHaveBeenCalled();
+    },
+    WORKER_AUTH_TIMEOUT_MS,
+  );
+
   test(
     "with email configured, sign-up sends a verification email and withholds the session",
     async () => {

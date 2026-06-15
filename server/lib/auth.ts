@@ -76,17 +76,23 @@ const nativeScryptAvailable = (() => {
   }
 })();
 
+function isLocalAuthUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const hostname = new URL(url).hostname;
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  } catch {
+    return false;
+  }
+}
+
 export function createAuth(env: Cloudflare.Env) {
   if (!env.DB) throw new Error("DB binding is required for Better Auth");
   if (!env.BETTER_AUTH_SECRET) throw new Error("BETTER_AUTH_SECRET is required");
 
   const db = createDb(env.DB);
   const trustedOrigins = env.BETTER_AUTH_URL ? [env.BETTER_AUTH_URL] : [];
-  // Only enforce email verification when an email transport is actually wired
-  // up. Without SEND_EMAIL (local dev, e2e harness) we can't deliver the link,
-  // so requiring it would lock every new account out of sign-in. Production
-  // always binds SEND_EMAIL, so verification is always enforced there.
-  const emailVerificationEnabled = Boolean(env.SEND_EMAIL);
+  const emailVerificationEnabled = Boolean(env.SEND_EMAIL) && !isLocalAuthUrl(env.BETTER_AUTH_URL);
   return betterAuth({
     appName: "Drydock",
     secret: env.BETTER_AUTH_SECRET,
