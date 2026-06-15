@@ -13,6 +13,9 @@ import {
   getNpmConnection,
   getOrganizationRole,
   getScan,
+  getScanCompareData,
+  getScanFile,
+  getScanStatus,
   listScans,
   recordScanDecision,
   recordScanEvent,
@@ -23,11 +26,22 @@ import {
 } from "../lib/active-organization";
 import { backfillScanArtifactsBatch } from "../lib/scan-artifact-backfill";
 import { scanArtifactReadBucket } from "../lib/scan-artifacts";
-import { loadCompare, stripTextSamples } from "../lib/compare-cache";
+import {
+  computeCompareMetadataCacheKey,
+  loadCompare,
+  readCompareMetadataCache,
+  stripTextSamples,
+  writeCompareMetadataCache,
+} from "../lib/compare-cache";
 import { rateLimitResponse } from "../lib/http";
 import { allowInsecureLocalRegistry, getOrganizationNpmToken } from "../lib/npm-connection";
 import { isPublishedTarballUrlAllowed } from "../lib/published-tarball";
-import { compareSemver, fetchPackageMetadata, pickPreviousVersion } from "../lib/registry";
+import {
+  compareSemver,
+  fetchPackageMetadata,
+  pickPreviousVersion,
+  type RegistryMetadata,
+} from "../lib/registry";
 import { annotateFindingsWithDiffStatus, createPackageDiff, type FileRecord } from "../lib/review";
 import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
 import { parseScanInput } from "../lib/scan-input";
@@ -236,7 +250,9 @@ scansRoutes.get("/:id", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
-  const scan = await getScan(db, c.req.param("id"), organizationId, scanArtifactReadBucket(c.env));
+  const scan = await getScan(db, c.req.param("id"), organizationId, scanArtifactReadBucket(c.env), {
+    includeFileSamples: false,
+  });
   if (!scan) return c.json({ error: "not found" }, 404);
   if (c.req.query("poll") !== "1") {
     await recordScanEvent(db, {
@@ -248,6 +264,30 @@ scansRoutes.get("/:id", async (c) => {
     });
   }
   return c.json(scan);
+});
+
+scansRoutes.get("/:id/status", async (c) => {
+  const db = createDb(c.env.DB);
+  const organizationId = await requireActiveOrganization(c, db);
+  const scan = await getScanStatus(db, c.req.param("id"), organizationId);
+  if (!scan) return c.json({ error: "not found" }, 404);
+  return c.json({ scan });
+});
+
+scansRoutes.get("/:id/file", async (c) => {
+  const path = c.req.query("path") || "";
+  if (!path) return c.json({ error: "path is required" }, 400);
+  const db = createDb(c.env.DB);
+  const organizationId = await requireActiveOrganization(c, db);
+  const file = await getScanFile(
+    db,
+    c.req.param("id"),
+    organizationId,
+    path,
+    scanArtifactReadBucket(c.env),
+  );
+  if (!file) return c.json({ error: "file not found in scan" }, 404);
+  return c.json({ file }, 200, { "cache-control": "private, max-age=300" });
 });
 
 scansRoutes.get("/:id/report.json", async (c) => {
@@ -286,14 +326,13 @@ scansRoutes.get("/:id/versions", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
-  // Metadata-only read (package name/versions) — skip the R2 artifact load.
-  const scan = await getScan(db, c.req.param("id"), organizationId);
+  const scan = await getScanStatus(db, c.req.param("id"), organizationId);
   if (!scan) return c.json({ error: "not found" }, 404);
-  if (!scan.scan.packageName) {
+  if (!scan.packageName) {
     return c.json({
       packageName: null,
-      stagedVersion: scan.scan.stagedVersion ?? null,
-      defaultPreviousVersion: scan.scan.previousVersion ?? null,
+      stagedVersion: scan.stagedVersion ?? null,
+      defaultPreviousVersion: scan.previousVersion ?? null,
       versions: [],
     });
   }
@@ -321,21 +360,24 @@ scansRoutes.get("/:id/versions", async (c) => {
     throw err;
   }
 
-  const metadata = await fetchPackageMetadata(c.env, scan.scan.packageName, {
+  const registryUrl = connection?.registryUrl || c.env.NPM_REGISTRY || "https://registry.npmjs.org";
+  const metadata = await fetchPackageMetadataCached(c, {
+    packageName: scan.packageName,
+    registryUrl,
+    cacheScope: `org:${organizationId}`,
     npmToken: connection?.token,
-    npmRegistry: connection?.registryUrl,
   }).catch((err) => {
     emitOperationalEvent("warn", "registry.metadata_fetch_failed", {
-      packageName: scan.scan.packageName,
+      packageName: scan.packageName,
       error: describeOperationalError(err),
     });
     return null;
   });
   if (!metadata) {
     return c.json({
-      packageName: scan.scan.packageName,
-      stagedVersion: scan.scan.stagedVersion ?? null,
-      defaultPreviousVersion: scan.scan.previousVersion ?? null,
+      packageName: scan.packageName,
+      stagedVersion: scan.stagedVersion ?? null,
+      defaultPreviousVersion: scan.previousVersion ?? null,
       versions: [],
     });
   }
@@ -348,7 +390,7 @@ scansRoutes.get("/:id/versions", async (c) => {
     tagsByVersion.set(version, list);
   }
   const times = metadata.time ?? {};
-  const stagedVersion = scan.scan.stagedVersion ?? null;
+  const stagedVersion = scan.stagedVersion ?? null;
   const versions = Object.keys(metadata.versions ?? {})
     .filter((version) => version !== stagedVersion)
     .sort((a, b) => compareSemver(b, a))
@@ -359,11 +401,10 @@ scansRoutes.get("/:id/versions", async (c) => {
     }));
 
   return c.json({
-    packageName: scan.scan.packageName,
+    packageName: scan.packageName,
     stagedVersion,
     defaultPreviousVersion:
-      scan.scan.previousVersion ??
-      (stagedVersion ? pickPreviousVersion(metadata, stagedVersion) : null),
+      scan.previousVersion ?? (stagedVersion ? pickPreviousVersion(metadata, stagedVersion) : null),
     versions,
   });
 });
@@ -384,7 +425,7 @@ async function resolveCompareContext(
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
-  const scan = await getScan(db, scanId, organizationId, scanArtifactReadBucket(c.env));
+  const scan = await getScanCompareData(db, scanId, organizationId);
   if (!scan) return { error: c.json({ error: "not found" }, 404) } as const;
   if (!scan.scan.packageName)
     return { error: c.json({ error: "scan has no package name" }, 400) } as const;
@@ -457,9 +498,12 @@ async function loadCompareArchive(
     throw err;
   }
 
-  const metadata = await fetchPackageMetadata(c.env, ctx.packageName, {
+  const registryUrl = connection?.registryUrl || c.env.NPM_REGISTRY || "https://registry.npmjs.org";
+  const metadata = await fetchPackageMetadataCached(c, {
+    packageName: ctx.packageName,
+    registryUrl,
+    cacheScope: `org:${ctx.organizationId}`,
     npmToken: connection?.token,
-    npmRegistry: connection?.registryUrl,
   }).catch((err) => {
     emitOperationalEvent("warn", "registry.metadata_fetch_failed", {
       packageName: ctx.packageName,
@@ -470,7 +514,6 @@ async function loadCompareArchive(
   const tarballUrl = metadata?.versions?.[ctx.version]?.dist?.tarball;
   if (!tarballUrl) return { error: c.json({ error: "unknown version" }, 404) } as const;
 
-  const registryUrl = connection?.registryUrl || c.env.NPM_REGISTRY || "https://registry.npmjs.org";
   const allowInsecureLocalhost = allowInsecureLocalRegistry(c.env);
   if (!isPublishedTarballUrlAllowed(tarballUrl, registryUrl, allowInsecureLocalhost)) {
     return {
@@ -489,8 +532,29 @@ async function loadCompareArchive(
   return { cached } as const;
 }
 
+async function fetchPackageMetadataCached(
+  c: import("hono").Context<{ Bindings: Bindings; Variables: Variables }>,
+  input: {
+    packageName: string;
+    registryUrl: string;
+    cacheScope: string;
+    npmToken?: string;
+  },
+): Promise<RegistryMetadata> {
+  const key = await computeCompareMetadataCacheKey(input);
+  const cached = await readCompareMetadataCache(c.env, key);
+  if (cached) return cached;
+
+  const metadata = await fetchPackageMetadata(c.env, input.packageName, {
+    npmToken: input.npmToken,
+    npmRegistry: input.registryUrl,
+  });
+  await writeCompareMetadataCache(c.env, c.executionCtx, key, metadata);
+  return metadata;
+}
+
 function buildCompareFindingAnnotations(
-  scan: NonNullable<Awaited<ReturnType<typeof getScan>>>,
+  scan: NonNullable<Awaited<ReturnType<typeof getScanCompareData>>>,
   previousFiles: FileRecord[],
 ) {
   const stagedFiles = scanFilesToFileRecords(scan.files);

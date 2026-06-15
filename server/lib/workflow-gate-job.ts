@@ -404,6 +404,8 @@ interface ReviewedPackage {
   releaseRisk: RiskLevel;
 }
 
+const GATE_PACKAGE_SCAN_CONCURRENCY = 3;
+
 /**
  * Run one scan per discovered package, each against its own baseline, and link
  * every scan back to the gate via `scans.gate_id`. A monorepo release bundle
@@ -419,9 +421,8 @@ async function reviewGatePackages(
   const { env, executionCtx, db } = ctx;
   const { gate, ownerUserId, packages } = args;
   const organizationId = gate.organizationId;
-  const reviewed: ReviewedPackage[] = [];
 
-  for (const pkg of packages) {
+  return mapWithConcurrency(packages, GATE_PACKAGE_SCAN_CONCURRENCY, async (pkg) => {
     const { candidate, packageAdapter } = pkg;
     const scanId = crypto.randomUUID();
     const stageId = `workflow-gate:${gate.id}:${candidate.ecosystem}:${candidate.package.name}`;
@@ -440,22 +441,39 @@ async function reviewGatePackages(
         packageAdapter,
         { scanId, stageId, organizationId, ...candidate.pipelineInput },
       );
-      reviewed.push({
+      return {
         scanId,
         packageName: result.package.name,
         version: result.package.stagedVersion,
         releaseRisk: result.riskSummary.releaseRisk,
-      });
+      };
     } catch (err) {
       await markScanFailed(db, scanId, organizationId, classifyScanError(err));
       throw err;
     }
-  }
-
-  return reviewed;
+  });
 }
 
 // ── Internals ────────────────────────────────────────────────────────────────
+
+async function mapWithConcurrency<T, U>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<U>,
+): Promise<U[]> {
+  const results = new Map<number, U>();
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    for (;;) {
+      const index = next;
+      next += 1;
+      if (index >= items.length) return;
+      results.set(index, await worker(items[index]));
+    }
+  });
+  await Promise.all(workers);
+  return items.map((_, index) => results.get(index)!);
+}
 
 async function rejectGateForArtifactError(
   env: Cloudflare.Env,

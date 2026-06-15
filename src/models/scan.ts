@@ -34,6 +34,14 @@ export interface ScanCompareFileResponse {
   file: FileRecord;
 }
 
+export interface ScanStatusResponse {
+  scan: PersistedScanDetail["scan"];
+}
+
+export interface ScanFileResponse {
+  file: PersistedScanDetail["files"][number];
+}
+
 export type ScanDecision = "publish" | "no_publish";
 export type ScanDecisionFilter = "undecided" | "publish" | "no_publish" | "all";
 
@@ -155,6 +163,15 @@ export function getScan(
   return apiFetch<PersistedScanDetail>(`/api/v1/scans/${encodeURIComponent(id)}${suffix}`);
 }
 
+export function getScanStatus(id: string): Promise<ScanStatusResponse> {
+  return apiFetch<ScanStatusResponse>(`/api/v1/scans/${encodeURIComponent(id)}/status`);
+}
+
+export function getScanFile(id: string, path: string): Promise<ScanFileResponse> {
+  const query = `?path=${encodeURIComponent(path)}`;
+  return apiFetch<ScanFileResponse>(`/api/v1/scans/${encodeURIComponent(id)}/file${query}`);
+}
+
 export function getScanVersions(id: string): Promise<ScanVersionsResponse> {
   return apiFetch<ScanVersionsResponse>(`/api/v1/scans/${encodeURIComponent(id)}/versions`);
 }
@@ -257,6 +274,7 @@ export const ScanDetailModel = createModel((id: string) => {
   const versions = signal<ScanVersionsResponse | null>(null);
   const selectedVersion = signal<string | null>(null);
   const compareCache = signal<Record<string, ScanCompareResponse>>({});
+  const stagedFileContentCache = signal<Record<string, PersistedScanDetail["files"][number]>>({});
   const fileContentCache = signal<Record<string, FileRecord>>({});
   const compareLoading = signal(false);
   const fileLoading = signal(false);
@@ -334,11 +352,27 @@ export const ScanDetailModel = createModel((id: string) => {
   async function pollDetail(): Promise<boolean> {
     const id = scanId.peek();
     try {
-      const data = await getScan(id, { poll: true });
-      detail.value = data;
+      const data = await getScanStatus(id);
+      const current = detail.peek();
+      if (data.scan.status === "pending" || data.scan.status === "running") {
+        detail.value = current
+          ? {
+              ...current,
+              scan: data.scan,
+            }
+          : {
+              scan: data.scan,
+              files: [],
+              findings: [],
+              events: [],
+            };
+      } else {
+        detail.value = await getScan(id, { poll: true });
+      }
       error.value = null;
-      if (selectedPath.peek() === null) {
-        selectedPath.value = pickInitialPath(data);
+      const updated = detail.peek();
+      if (updated && selectedPath.peek() === null) {
+        selectedPath.value = pickInitialPath(updated);
       }
       return true;
     } catch (err) {
@@ -371,6 +405,7 @@ export const ScanDetailModel = createModel((id: string) => {
     selectedVersion,
     compareCache,
     fileContentCache,
+    stagedFileContentCache,
     compareLoading,
     fileLoading,
     compareError,
@@ -522,6 +557,23 @@ export const ScanDetailModel = createModel((id: string) => {
       try {
         const data = await getScanCompareFile(id, version, path);
         this.fileContentCache.value = { ...this.fileContentCache.peek(), [key]: data.file };
+      } catch (err) {
+        this.compareError.value = errorMessage(err);
+      } finally {
+        this.fileLoading.value = false;
+      }
+    },
+
+    async loadStagedFile(path: string): Promise<void> {
+      if (this.stagedFileContentCache.peek()[path]) return;
+      const id = this.scanId.peek();
+      this.fileLoading.value = true;
+      try {
+        const data = await getScanFile(id, path);
+        this.stagedFileContentCache.value = {
+          ...this.stagedFileContentCache.peek(),
+          [path]: data.file,
+        };
       } catch (err) {
         this.compareError.value = errorMessage(err);
       } finally {

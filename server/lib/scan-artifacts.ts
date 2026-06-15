@@ -50,6 +50,10 @@ export interface ScanArtifactsDetail {
   diff: DiffEntry[];
 }
 
+export interface ScanArtifactsManifestDetail {
+  manifest: ScanArtifactsManifest;
+}
+
 export function scanArtifactReadBucket(
   env: Pick<Cloudflare.Env, "ARTIFACTS" | "SCAN_ARTIFACT_READS_DISABLED">,
 ): R2Bucket | undefined {
@@ -232,6 +236,66 @@ export async function loadScanArtifacts(
   bucket: R2Bucket | undefined,
   scan: ScanArtifactScanRow,
 ): Promise<ScanArtifactsDetail | null> {
+  const manifestDetail = await loadScanArtifactsManifest(bucket, scan);
+  if (!manifestDetail) return null;
+
+  try {
+    const [filesText, diffText] = await Promise.all([
+      readVerifiedJsonText(bucket as R2Bucket, {
+        ...manifestDetail.manifest.artifacts.files,
+        scanId: scan.id,
+        kind: "files",
+      }),
+      readVerifiedJsonText(bucket as R2Bucket, {
+        ...manifestDetail.manifest.artifacts.diff,
+        scanId: scan.id,
+        kind: "diff",
+      }),
+    ]);
+
+    const files = parseFilesArtifact(filesText, scan.id);
+    const diff = parseDiffArtifact(diffText, scan.id);
+    if (!files || !diff) {
+      emitArtifactFallback("artifact_payload_invalid", scan);
+      return null;
+    }
+    return { files, diff };
+  } catch (err) {
+    emitArtifactFallback("read_failed", scan, { error: describeOperationalError(err) });
+    return null;
+  }
+}
+
+export async function loadScanArtifactFile(
+  bucket: R2Bucket | undefined,
+  scan: ScanArtifactScanRow,
+  path: string,
+): Promise<ScanArtifactFileRow | null> {
+  const manifestDetail = await loadScanArtifactsManifest(bucket, scan);
+  if (!manifestDetail) return null;
+
+  try {
+    const filesText = await readVerifiedJsonText(bucket as R2Bucket, {
+      ...manifestDetail.manifest.artifacts.files,
+      scanId: scan.id,
+      kind: "files",
+    });
+    const files = parseFilesArtifact(filesText, scan.id);
+    if (!files) {
+      emitArtifactFallback("artifact_payload_invalid", scan);
+      return null;
+    }
+    return files.find((file) => file.path === path) ?? null;
+  } catch (err) {
+    emitArtifactFallback("read_failed", scan, { error: describeOperationalError(err) });
+    return null;
+  }
+}
+
+async function loadScanArtifactsManifest(
+  bucket: R2Bucket | undefined,
+  scan: ScanArtifactScanRow,
+): Promise<ScanArtifactsManifestDetail | null> {
   if (!bucket || !hasArtifactMetadata(scan)) return null;
 
   try {
@@ -255,41 +319,7 @@ export async function loadScanArtifacts(
       emitArtifactFallback("manifest_invalid", scan);
       return null;
     }
-
-    const reportText = await readVerifiedJsonText(bucket, {
-      ...manifest.artifacts.report,
-      scanId: scan.id,
-      kind: "report",
-    });
-    const reportDigest = await sha256Hex(reportText);
-    if (reportDigest !== scan.reportDigest) {
-      emitArtifactFallback("report_digest_mismatch", scan, {
-        expectedDigest: scan.reportDigest,
-        actualDigest: reportDigest,
-      });
-      return null;
-    }
-
-    const [filesText, diffText] = await Promise.all([
-      readVerifiedJsonText(bucket, {
-        ...manifest.artifacts.files,
-        scanId: scan.id,
-        kind: "files",
-      }),
-      readVerifiedJsonText(bucket, {
-        ...manifest.artifacts.diff,
-        scanId: scan.id,
-        kind: "diff",
-      }),
-    ]);
-
-    const files = parseFilesArtifact(filesText, scan.id);
-    const diff = parseDiffArtifact(diffText, scan.id);
-    if (!files || !diff) {
-      emitArtifactFallback("artifact_payload_invalid", scan);
-      return null;
-    }
-    return { files, diff };
+    return { manifest };
   } catch (err) {
     emitArtifactFallback("read_failed", scan, { error: describeOperationalError(err) });
     return null;

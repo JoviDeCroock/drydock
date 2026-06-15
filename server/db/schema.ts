@@ -177,6 +177,11 @@ export const scans = sqliteTable(
       table.decision,
       table.createdAt,
     ),
+    orgCreatedIdx: index("scans_org_created_idx").on(
+      table.organizationId,
+      table.createdAt,
+      table.id,
+    ),
   }),
 );
 

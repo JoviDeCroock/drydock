@@ -54,7 +54,9 @@ export type DiffWorkbenchState =
 export function selectDiffWorkbenchState(input: {
   hasEntry: boolean;
   entryStatus: DiffEntry["status"] | null;
-  hasStaged: boolean;
+  hasStagedMeta: boolean;
+  hasStagedContent: boolean;
+  stagedIsBinary: boolean;
   hasPreviousMeta: boolean;
   hasPreviousContent: boolean;
   previousIsBinary: boolean;
@@ -66,6 +68,7 @@ export function selectDiffWorkbenchState(input: {
   }
 
   const needsPrevious = input.entryStatus !== "added";
+  const needsStaged = input.entryStatus !== "removed";
 
   // Previous version still being fetched via the sandbox. Keyed off
   // compareLoading too (not just compareReady) so a stale cache entry from a
@@ -96,7 +99,15 @@ export function selectDiffWorkbenchState(input: {
     };
   }
 
-  if (!input.hasStaged && !input.hasPreviousContent && !input.hasPreviousMeta) {
+  if (needsStaged && input.hasStagedMeta && !input.stagedIsBinary && !input.hasStagedContent) {
+    return {
+      kind: "processing",
+      title: "Loading file diff",
+      detail: "fetching file contents",
+    };
+  }
+
+  if (!input.hasStagedMeta && !input.hasPreviousContent && !input.hasPreviousMeta) {
     return { kind: "empty", message: "No file content available." };
   }
 

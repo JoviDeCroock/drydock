@@ -1,0 +1,1 @@
+CREATE INDEX `scans_org_created_idx` ON `scans` (`organization_id`,`created_at`,`id`);

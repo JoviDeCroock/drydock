@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import { and, eq } from "drizzle-orm";
 import type { AppDb } from "../db";
-import { ensurePersonalOrganization, getOrganizationRole } from "../db";
+import { ensurePersonalOrganization } from "../db";
 import { organizationMembers } from "../db/schema";
 import { personalOrganizationId } from "./ownership";
 import type { OrganizationRole } from "./roles";
@@ -37,16 +37,35 @@ export interface ActiveOrganizationContext {
   role: OrganizationRole;
 }
 
-// Resolve the active organization and the caller's role within it. Because
-// requireActiveOrganization only returns an org the caller is a member of (or
-// their own personal org), a membership row always exists, so role defaults to
-// "member" only defensively.
+// Resolve the active organization and role in one membership read; falling back
+// to the caller's personal organization lazily creates its owner membership.
 export async function requireActiveOrganizationContext(
   c: Context<{ Bindings: Bindings; Variables: Variables }>,
   db: AppDb,
 ): Promise<ActiveOrganizationContext> {
-  const organizationId = await requireActiveOrganization(c, db);
   const session = c.get("authSession");
-  const role = (await getOrganizationRole(db, organizationId, session.userId)) ?? "member";
-  return { organizationId, role };
+  const requested = c.req.header(ACTIVE_ORG_HEADER)?.trim() || null;
+  if (requested) {
+    const [membership] = await db
+      .select({
+        organizationId: organizationMembers.organizationId,
+        role: organizationMembers.role,
+      })
+      .from(organizationMembers)
+      .where(
+        and(
+          eq(organizationMembers.organizationId, requested),
+          eq(organizationMembers.userId, session.userId),
+        ),
+      )
+      .limit(1);
+    if (membership) {
+      return {
+        organizationId: membership.organizationId,
+        role: membership.role as OrganizationRole,
+      };
+    }
+  }
+  const organizationId = await ensurePersonalOrganization(db, session);
+  return { organizationId, role: "owner" };
 }

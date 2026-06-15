@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { personalOrganizationId } from "../lib/ownership";
 import type { AppDb, WorkspaceSession } from "./client";
 import {
@@ -21,6 +21,18 @@ import {
 
 export async function ensurePersonalOrganization(db: AppDb, session: WorkspaceSession) {
   const organizationId = personalOrganizationId(session.userId);
+  const [existing] = await db
+    .select({ organizationId: organizationMembers.organizationId })
+    .from(organizationMembers)
+    .where(
+      and(
+        eq(organizationMembers.organizationId, organizationId),
+        eq(organizationMembers.userId, session.userId),
+      ),
+    )
+    .limit(1);
+  if (existing) return organizationId;
+
   const now = new Date();
   const name = session.name || session.email || "Personal workspace";
 
@@ -101,11 +113,14 @@ export async function listUserOrganizations(
       role: organizationMembers.role,
       createdAt: organizations.createdAt,
       updatedAt: organizations.updatedAt,
-      npmConnectionId: npmConnections.id,
+      npmConnectionConfigured: sql<boolean>`exists (
+        select 1
+        from ${npmConnections}
+        where ${npmConnections.organizationId} = ${organizations.id}
+      )`,
     })
     .from(organizationMembers)
     .innerJoin(organizations, eq(organizations.id, organizationMembers.organizationId))
-    .leftJoin(npmConnections, eq(npmConnections.organizationId, organizations.id))
     .where(eq(organizationMembers.userId, userId));
 
   return rows
@@ -115,7 +130,7 @@ export async function listUserOrganizations(
       ownerUserId: row.ownerUserId,
       role: row.role,
       isPersonal: row.id === personalId,
-      npmConnectionConfigured: Boolean(row.npmConnectionId),
+      npmConnectionConfigured: Boolean(row.npmConnectionConfigured),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     }))
