@@ -55,10 +55,10 @@ export default function LandingPage() {
           See exactly what your next publish ships.
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-          The package that lands on the registry is built, packed output, not the pull request you
-          reviewed. Drydock holds each release before it goes public, diffs it against the last
-          published version, and pins risk findings to the lines that introduced them. You make the
-          final call.
+          The package that lands on the registry is not the pull request you reviewed. It is built,
+          packed output shaped by scripts, bundlers, and CI. Drydock holds each release before it
+          goes public, diffs it against the last published version, and pins risk findings to the
+          lines that introduced them. You make the final call about what goes live.
         </p>
         <div class="flex gap-3 mt-2">
           <Show

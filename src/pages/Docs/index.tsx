@@ -20,11 +20,12 @@ export default function DocsPage() {
             How Drydock guards a publish.
           </h1>
           <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-            The package that reaches a registry is built, packed output that code review never sees.
-            Drydock holds a release before it goes public, diffs it against the last published
-            version, and pins risk findings to the lines that introduced them. A maintainer makes
-            the final call. Drydock never publishes, never holds a publish credential, and never
-            executes package contents.
+            The package that reaches a registry is not the pull request a maintainer reviewed. It is
+            built, packed output shaped by scripts, bundlers, and CI. Drydock holds a release before
+            it goes public, diffs it against the last published version, and pins risk findings to
+            the lines that introduced them. A maintainer makes the final call about what goes live.
+            Drydock never publishes, never holds a publish credential, and never executes package
+            contents.
           </p>
           <p class="m-0 max-w-[680px] text-[14px] text-ink-muted leading-[1.65]">
             How the release is held depends on how you publish. npm can stage a publish on the
