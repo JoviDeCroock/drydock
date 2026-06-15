@@ -132,7 +132,7 @@ Don't naively invert. Surfaces darken (true neutrals, no warm tint), accent + se
 ## Layout
 
 - **Approach:** Grid-disciplined for app surfaces. Marketing pages get more whitespace and a deliberate single-column hero column.
-- **Grid:** 12-column, 24px gutters. App content max-width `1160px`. Report bodies sit comfortably inside `~880px`. Marketing hero copy capped at `760px` so headings remain typographically scaled.
+- **Grid:** 12-column, 24px gutters. App content max-width `1160px`. Public landing/docs pages share that outer shell so header/footer alignment stays stable; docs article bodies sit comfortably inside `~880px`. Marketing hero copy capped at `760px` so headings remain typographically scaled.
 - **Border radius:**
   - `0` — Severity badges and document-style elements (squarish, terminal-adjacent — not pills).
   - `3–4px` — Small chrome (inline mono pills, file-path tags).
