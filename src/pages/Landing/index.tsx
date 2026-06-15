@@ -50,15 +50,15 @@ export default function LandingPage() {
     >
       <PageSeo metadata={homePageSeo} />
       <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
-        <Eyebrow tone="accent">Pre-publish review for npm and PyPI packages</Eyebrow>
+        <Eyebrow tone="accent">Pre-publish review for maintainers of npm and PyPI packages</Eyebrow>
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
           See exactly what your next publish ships.
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-          The package that lands on the registry is built, packed output, not the pull request you
-          reviewed. Drydock holds each release before it goes public, diffs it against the last
-          published version, and pins risk findings to the lines that introduced them. You make the
-          final call.
+          The package that lands on the registry is not the pull request you reviewed. It is built,
+          packed output shaped by scripts, bundlers, and CI. Drydock holds each release before it
+          goes public, diffs it against the last published version, and pins risk findings to the
+          lines that introduced them. You make the final call about what goes live.
         </p>
         <div class="flex gap-3 mt-2">
           <Show
