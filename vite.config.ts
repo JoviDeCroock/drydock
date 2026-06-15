@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import { cloudflare } from "@cloudflare/vite-plugin";
 import preact from "@preact/preset-vite";
 import tailwindcss from "@tailwindcss/vite";
+import { ADDITIONAL_PRERENDER_ROUTES } from "./src/lib/prerender-routes";
 
 declare const process: {
   env: {
@@ -25,7 +26,7 @@ export default defineConfig(({ mode }) => {
         prerender: {
           enabled: true,
           renderTarget: "#app",
-          additionalPrerenderRoutes: ["/login", "/register", "/docs"],
+          additionalPrerenderRoutes: Array.from(ADDITIONAL_PRERENDER_ROUTES),
           previewMiddlewareEnabled: true,
           previewMiddlewareFallback: "/404",
         },
