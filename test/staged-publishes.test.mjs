@@ -200,4 +200,12 @@ describe("staged publish metadata", () => {
       ),
     ).resolves.toEqual({ allowed: false, status: 403, detail: "Forbidden" });
   });
+
+  test("allows non-auth tarball failures to be handled by scan execution", async () => {
+    globalThis.fetch = vi.fn(async () => new Response("registry failure", { status: 503 }));
+
+    await expect(
+      checkStagedPublishAccess("https://registry.npmjs.org", "npm_secret_token", "stage-retry-123"),
+    ).resolves.toEqual({ allowed: true, status: 503, detail: null });
+  });
 });

@@ -38,7 +38,7 @@ import { parseScanInput } from "../lib/scan-input";
 import { reportExportFilename, serializeReportExport } from "../lib/report-export";
 import { executeScanJob, type ScanQueueMessage } from "../lib/scan-job";
 import { roleCanManageIntegrations } from "../lib/roles";
-import { checkStagedPublishAccess, StagedPublishesFetchError } from "../lib/staged-publishes";
+import { checkStagedPublishAccess } from "../lib/staged-publishes";
 import type { Bindings, ScanInput, Variables } from "../types";
 
 export const scansRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -121,16 +121,6 @@ scansRoutes.post("/", async (c) => {
   } catch (err) {
     if (err instanceof RateLimitError) {
       return rateLimitResponse(c, "scan rate limit exceeded", err);
-    }
-    if (err instanceof StagedPublishesFetchError) {
-      return c.json(
-        {
-          error: "npm registry rejected the staged publish access check",
-          status: err.status,
-          detail: err.detail,
-        },
-        502,
-      );
     }
     throw err;
   }

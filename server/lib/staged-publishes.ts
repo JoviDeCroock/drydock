@@ -113,7 +113,8 @@ export async function checkStagedPublishAccess(
   const registry = normalizeRegistryUrl(registryUrl, options);
   const response = await fetch(`${registry}/-/stage/${encodeURIComponent(stageId)}/tarball`, {
     headers: npmStageTarballHeaders(token),
-  });
+  }).catch(() => null);
+  if (!response) return { allowed: true, status: null, detail: null };
   if (response.ok || response.status === 206) {
     await response.body?.cancel();
     return { allowed: true, status: response.status, detail: null };
@@ -126,8 +127,8 @@ export async function checkStagedPublishAccess(
       detail: response.statusText || null,
     };
   }
-  const detail = await response.text().catch(() => "");
-  throw new StagedPublishesFetchError(response.status, detail.slice(0, 200));
+  await response.body?.cancel();
+  return { allowed: true, status: response.status, detail: null };
 }
 
 export class StagedPublishesFetchError extends Error {
