@@ -5,7 +5,6 @@ import { docsPageSeo, PageSeo } from "../../lib/seo";
 export default function DocsPage() {
   return (
     <PageShell
-      width="doc"
       headerActions={
         <LinkButton href="/" variant="ghost" size="sm">
           Home
@@ -13,7 +12,7 @@ export default function DocsPage() {
       }
     >
       <PageSeo metadata={docsPageSeo} />
-      <div class="flex flex-col gap-14">
+      <div class="flex max-w-[880px] flex-col gap-14">
         <header class="border-t border-border pt-8 flex flex-col gap-5">
           <Eyebrow tone="accent">Documentation</Eyebrow>
           <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
