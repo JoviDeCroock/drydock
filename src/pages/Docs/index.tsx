@@ -76,7 +76,7 @@ export default function DocsPage() {
               ]}
             />
             <div class="flex flex-wrap gap-2 pt-1">
-              <LinkButton href="/dashboard/settings" size="sm">
+              <LinkButton href="/dashboard/settings?tab=integrations" size="sm">
                 Open Organization settings
               </LinkButton>
             </div>
@@ -171,7 +171,7 @@ export default function DocsPage() {
               ]}
             />
             <div class="flex flex-wrap gap-2 pt-1">
-              <LinkButton href="/dashboard/settings" size="sm">
+              <LinkButton href="/dashboard/settings?tab=integrations" size="sm">
                 Open Organization settings
               </LinkButton>
             </div>
