@@ -121,6 +121,10 @@ export function SlackConnectionSection({
 }
 
 type SlackModel = ReturnType<typeof useModel<typeof SlackConnectionModel.prototype>>;
+const slackFieldGridClass =
+  "grid grid-cols-[76px_minmax(0,360px)_auto] items-center gap-x-3 gap-y-2";
+const slackFieldLabelClass = "font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle";
+const slackFieldControlClass = "min-w-0";
 
 function ConnectedSlackState({
   slack,
@@ -211,14 +215,11 @@ function ConnectedSlackState({
         when={showChannelPicker}
         fallback={<ReadOnlyChannelSelection channelLabel={selectedChannelLabel} />}
       >
-        <div class="flex flex-wrap items-center gap-3">
-          <label
-            for="slackChannel"
-            class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle shrink-0"
-          >
+        <div class={slackFieldGridClass}>
+          <label for="slackChannel" class={slackFieldLabelClass}>
             Channel
           </label>
-          <div class="flex-1 min-w-[200px] max-w-[360px]">
+          <div class={slackFieldControlClass}>
             <Select
               id="slackChannel"
               value={channelPickerValue}
@@ -244,14 +245,11 @@ function ConnectedSlackState({
       </Show>
 
       <Show when={canManage}>
-        <form class="flex flex-wrap items-center gap-3" onSubmit={onSaveManualChannel}>
-          <label
-            for="slackChannelId"
-            class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle shrink-0"
-          >
+        <form class={slackFieldGridClass} onSubmit={onSaveManualChannel}>
+          <label for="slackChannelId" class={slackFieldLabelClass}>
             Channel ID
           </label>
-          <div class="flex-1 min-w-[200px] max-w-[360px]">
+          <div class={slackFieldControlClass}>
             <Input
               id="slackChannelId"
               type="text"
@@ -262,10 +260,15 @@ function ConnectedSlackState({
               spellcheck={false}
             />
           </div>
-          <Button type="submit" variant="secondary" disabled={manualChannelDisabled}>
+          <Button
+            type="submit"
+            variant="secondary"
+            disabled={manualChannelDisabled}
+            class="self-stretch"
+          >
             Save
           </Button>
-          <Muted class="basis-full text-[12px] m-0">
+          <Muted class="col-start-2 col-span-2 text-[12px] m-0">
             Paste a channel ID when the channel is not listed or list permission is unavailable.
           </Muted>
         </form>
