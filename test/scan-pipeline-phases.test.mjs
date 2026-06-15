@@ -361,7 +361,55 @@ describe("buildReportProvenance", () => {
     expect(provenance.artifacts).toEqual([
       expect.objectContaining({
         path: "dist/demo-1.0.1-py3-none-any.whl",
+        kind: "wheel",
         digest: "b".repeat(64),
+        source: "workflow_gate",
+      }),
+    ]);
+  });
+
+  test("preserves npm staged-publish tag from staged metadata", () => {
+    const provenance = buildReportProvenance({
+      scan: {
+        id: "scan-1",
+        summaryJson: {
+          stagedPublish: {
+            tag: "beta",
+          },
+        },
+      },
+    });
+
+    expect(provenance.package.stagedTag).toBe("beta");
+  });
+
+  test("labels npm workflow-gate tar.gz artifacts as tarballs", () => {
+    const provenance = buildReportProvenance({
+      scan: {
+        id: "scan-1",
+        source: "workflow_gate",
+        summaryJson: {
+          stagedPublish: {
+            mode: "workflow_gate",
+            manifest: {
+              ecosystem: "npm",
+              artifacts: [
+                {
+                  path: "dist/demo-1.0.1.tar.gz",
+                  sha256: "c".repeat(64),
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    expect(provenance.artifacts).toEqual([
+      expect.objectContaining({
+        path: "dist/demo-1.0.1.tar.gz",
+        kind: "tarball",
+        digest: "c".repeat(64),
         source: "workflow_gate",
       }),
     ]);

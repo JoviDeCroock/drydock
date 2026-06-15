@@ -70,6 +70,7 @@ export function buildReportProvenance(detail: { scan: ProvenanceScanLike }): Rep
   const report = asRecord(summary?.report);
   const summaryProvenance = asRecord(summary?.provenance);
   const stagedPublish = summary?.stagedPublish;
+  const stagedPublishSummary = asRecord(stagedPublish);
   const packageSummary = asRecord(summary?.package);
   const ai = asRecord(scan.aiJson);
 
@@ -94,7 +95,7 @@ export function buildReportProvenance(detail: { scan: ProvenanceScanLike }): Rep
       name: scan.packageName ?? null,
       stagedVersion: scan.stagedVersion ?? null,
       previousVersion: scan.previousVersion ?? null,
-      stagedTag: stringOrNull(packageSummary?.stagedTag),
+      stagedTag: stringOrNull(packageSummary?.stagedTag) ?? stringOrNull(stagedPublishSummary?.tag),
     },
     baseline: summary?.baseline ?? null,
     artifacts: normalizeArtifactSources(
@@ -154,6 +155,7 @@ export function extractArtifactDigests(stagedPublish: unknown): ReportArtifactDi
   const source = details.mode === "workflow_gate" ? "workflow_gate" : "staged_publish";
   const out: ReportArtifactDigest[] = [];
   const manifest = asRecord(details.manifest);
+  const ecosystem = stringOrNull(manifest?.ecosystem);
   const artifacts = Array.isArray(manifest?.artifacts) ? manifest.artifacts : [];
 
   for (const raw of artifacts) {
@@ -163,7 +165,7 @@ export function extractArtifactDigests(stagedPublish: unknown): ReportArtifactDi
     const path = stringOrNull(artifact?.path) ?? "release artifact";
     out.push({
       path,
-      kind: stringOrNull(artifact?.kind) ?? inferArtifactKind(path),
+      kind: stringOrNull(artifact?.kind) ?? inferArtifactKind(path, ecosystem),
       digestAlgorithm: "sha256",
       digest: digest.toLowerCase(),
       source,
@@ -175,7 +177,7 @@ export function extractArtifactDigests(stagedPublish: unknown): ReportArtifactDi
     const path = firstArtifactPath(artifacts) ?? "release artifact";
     out.push({
       path,
-      kind: inferArtifactKind(path),
+      kind: inferArtifactKind(path, ecosystem),
       digestAlgorithm: "sha256",
       digest: reviewedDigest.toLowerCase(),
       source,
@@ -224,10 +226,10 @@ function firstArtifactPath(artifacts: unknown[]): string | null {
   return null;
 }
 
-function inferArtifactKind(path: string): string | null {
+function inferArtifactKind(path: string, ecosystem?: string | null): string | null {
   const lower = path.toLowerCase();
   if (lower.endsWith(".whl")) return "wheel";
-  if (lower.endsWith(".tar.gz")) return "sdist";
+  if (lower.endsWith(".tar.gz")) return ecosystem === "npm" ? "tarball" : "sdist";
   if (lower.endsWith(".tgz")) return "tarball";
   return null;
 }
