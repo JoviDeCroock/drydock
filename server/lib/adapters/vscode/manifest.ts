@@ -43,6 +43,7 @@ export function parseVscodeExtensionManifest(files: FileRecord[]): {
   file: FileRecord;
   manifest: VscodeExtensionManifest;
 } {
+  assertUniqueVscodePaths(files);
   const file = findVscodeManifestFile(files);
   if (!file?.textSample) throw new Error("VSIX artifact must include extension/package.json");
   const raw = safeJson(file.textSample);
@@ -82,6 +83,16 @@ export function parseVscodeExtensionManifest(files: FileRecord[]): {
       files: normalizeOptionalStringList(raw.files),
     },
   };
+}
+
+function assertUniqueVscodePaths(files: FileRecord[]): void {
+  const seen = new Set<string>();
+  for (const file of files) {
+    if (seen.has(file.path)) {
+      throw new Error(`VSIX artifact contains duplicate path ${file.path}`);
+    }
+    seen.add(file.path);
+  }
 }
 
 export function packageJsonSummaryForVscode(manifest: VscodeExtensionManifest): PackageJsonSummary {

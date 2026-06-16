@@ -88,6 +88,28 @@ describe("VS Code extension review adapter", () => {
     );
   });
 
+  test("rejects duplicate normalized VSIX paths before trusting package.json", () => {
+    const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
+      { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
+    ]);
+
+    expect(() =>
+      createVscodeExtensionReview({
+        manifest,
+        artifact: artifact([
+          file(
+            "extension/package.json",
+            extensionPackageJson({
+              activationEvents: ["onCommand:remoteTextFetcher.run"],
+            }),
+          ),
+          file("extension/package.json", extensionPackageJson()),
+          file("extension/out/extension.js", "exports.activate = () => {};"),
+        ]),
+      }),
+    ).toThrow(/duplicate path package\.json/);
+  });
+
   test("detects startup remote command loader behavior in a VSIX", () => {
     const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
       { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
