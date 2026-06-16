@@ -55,6 +55,7 @@ jobs:
         with:
           name: detection-eval-report
           path: .context/eval/detection-eval.*
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
 
