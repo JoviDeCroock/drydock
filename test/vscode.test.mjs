@@ -17,6 +17,15 @@ function file(path, textSample) {
   };
 }
 
+function binary(path, size) {
+  return {
+    path,
+    size,
+    sha256: "00",
+    flags: ["binary"],
+  };
+}
+
 function artifact(files) {
   return {
     path: "dist/remote-text-fetcher-1.0.0.vsix",
@@ -90,6 +99,39 @@ describe("VS Code extension review adapter", () => {
     );
     expect(review.risk).toBe("critical");
     expect(review.package).toEqual({ name: "example.remote-text-fetcher", version: "1.0.0" });
+  });
+
+  test("detects startup WebAssembly loaders in a VSIX", () => {
+    const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
+      { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
+    ]);
+    const review = createVscodeExtensionReview({
+      manifest,
+      artifact: artifact([
+        file("extension/package.json", extensionPackageJson()),
+        file(
+          "extension/out/extension.js",
+          [
+            "const go = new Go();",
+            "async function activate() {",
+            "  const source = await WebAssembly.instantiateStreaming(fetch('./payload.wasm'), go.importObject);",
+            "  go.run(source.instance);",
+            "}",
+          ].join("\n"),
+        ),
+        binary("extension/out/payload.wasm", 824552),
+      ]),
+    });
+
+    expect(review.ruleFindings.map((finding) => finding.ruleId)).toEqual(
+      expect.arrayContaining([
+        VSCODE_RULE_IDS.broadActivation,
+        VSCODE_RULE_IDS.startupWasmLoader,
+        "code.dynamic-evaluation",
+        "file.native-artifact",
+      ]),
+    );
+    expect(review.risk).toBe("critical");
   });
 
   test("allows declared configuration reads and narrow activation", () => {

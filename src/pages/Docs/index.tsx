@@ -203,6 +203,10 @@ export default function DocsPage() {
               tarballs, PyPI sdists/wheels, and VSIX files apart by their names and parsed metadata,
               so the same gate can review one ecosystem or a mixed monorepo at once.
             </Prose>
+            <Prose>
+              VSIX reviews also flag broad startup activation, transitive extension installs, and
+              startup loaders that execute remote commands or bundled WebAssembly payloads.
+            </Prose>
           </Subsection>
 
           <Subsection title="Monorepo releases">

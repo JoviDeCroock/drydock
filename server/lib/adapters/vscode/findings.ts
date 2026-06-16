@@ -48,6 +48,13 @@ const COMMON_VSCODE_CONFIGURATION_NAMESPACES = new Set([
   "workbench",
 ]);
 
+const WASM_LOADER_PATTERNS = [
+  /\bWebAssembly\.(?:compile|compileStreaming|instantiate|instantiateStreaming)\s*\(/,
+  /\bnew\s+Go\s*\(/,
+  /\bgo\.run\s*\(/,
+  /\bwasm_exec(?:\.js)?\b/,
+];
+
 export function buildVscodeFindings(args: {
   staged: AcquiredArtifact;
   details: VscodeAdapterDetails;
@@ -114,6 +121,9 @@ function vscodeManifestFindings(
 
   const remoteCommandFinding = startupRemoteCommandFinding(manifest, files, broadActivation);
   if (remoteCommandFinding) findings.push(remoteCommandFinding);
+
+  const wasmLoaderFinding = startupWasmLoaderFinding(files, broadActivation);
+  if (wasmLoaderFinding) findings.push(wasmLoaderFinding);
 
   findings.push(...undeclaredConfigurationReadFindings(manifest, files));
 
@@ -196,6 +206,39 @@ function undeclaredConfigurationReadFindings(
     }
   }
   return findings;
+}
+
+function startupWasmLoaderFinding(
+  files: AcquiredArtifact["files"],
+  broadActivation: string | null,
+): Finding | null {
+  if (!broadActivation || !hasWasmArtifact(files)) return null;
+  const loader = files.find((file) => isJavaScriptFile(file.path) && isWasmLoader(file.textSample));
+  if (!loader?.textSample) return null;
+  return vscodeTag("startupWasmLoader", {
+    severity: "critical",
+    file: loader.path,
+    line: firstMatchingLine(loader.textSample, WASM_LOADER_PATTERNS),
+    evidence: `startup activation ${broadActivation} loads a bundled WebAssembly payload`,
+    reason:
+      "startup-loaded VS Code WebAssembly payloads can hide network and process behavior inside an opaque module",
+  });
+}
+
+function hasWasmArtifact(files: AcquiredArtifact["files"]): boolean {
+  return files.some((file) => /\.wasm$/i.test(file.path));
+}
+
+function isJavaScriptFile(path: string): boolean {
+  return /\.[cm]?jsx?$/.test(path);
+}
+
+function isWasmLoader(sample: string | undefined): boolean {
+  if (!sample) return false;
+  return WASM_LOADER_PATTERNS.some((pattern) => {
+    pattern.lastIndex = 0;
+    return pattern.test(sample);
+  });
 }
 
 function readConfigurationKeys(sample: string): string[] {

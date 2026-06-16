@@ -7,6 +7,7 @@ export const VSCODE_RULE_IDS = {
   metadataMismatch: "vscode.metadata-mismatch",
   broadActivation: "vscode.broad-activation",
   startupRemoteCommand: "vscode.startup-remote-command",
+  startupWasmLoader: "vscode.startup-wasm-loader",
   undeclaredConfigurationRead: "vscode.undeclared-configuration-read",
   extensionDependency: "vscode.extension-dependency",
 } as const;
