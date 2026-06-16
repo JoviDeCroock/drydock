@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { useEffect, useRef } from "preact/hooks";
+import { useEffect, useId, useRef } from "preact/hooks";
 import { cn } from "./cn";
 
 interface DialogProps {
@@ -22,6 +22,8 @@ export function Dialog({
   class: className,
 }: DialogProps) {
   const ref = useRef<HTMLDialogElement | null>(null);
+  const titleId = useId();
+  const descriptionId = useId();
 
   useEffect(() => {
     const node = ref.current;
@@ -45,6 +47,8 @@ export function Dialog({
   return (
     <dialog
       ref={ref}
+      aria-labelledby={titleId}
+      aria-describedby={description ? descriptionId : undefined}
       onClose={onClose}
       onCancel={onCancel}
       onClick={onBackdropClick}
@@ -65,9 +69,13 @@ export function Dialog({
           ✕
         </button>
         <header class="flex flex-col gap-1 pr-7">
-          <h2 class="text-[18px] font-medium tracking-[-0.01em] leading-[1.35] m-0">{title}</h2>
+          <h2 id={titleId} class="text-[18px] font-medium tracking-[-0.01em] leading-[1.35] m-0">
+            {title}
+          </h2>
           {description ? (
-            <p class="text-[13px] leading-[1.55] text-ink-muted m-0">{description}</p>
+            <p id={descriptionId} class="text-[13px] leading-[1.55] text-ink-muted m-0">
+              {description}
+            </p>
           ) : null}
         </header>
         <div class="flex flex-col gap-3">{children}</div>
