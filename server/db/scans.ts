@@ -175,6 +175,9 @@ export async function discardGateScans(db: AppDb, gateId: string, organizationId
 export async function persistScan(db: AppDb, input: PersistedScanInput) {
   const now = new Date();
   const artifactFileRows = scanFileRowsForArtifacts(input.files, input.diff);
+  // These rows are only persisted on the degraded path (no R2 artifacts), so
+  // they carry the full redacted sample — R2-backed scans skip the insert
+  // entirely below and serve samples from files.json instead.
   const fileRows = artifactFileRows.map((file) => {
     return {
       id: crypto.randomUUID(),
@@ -184,7 +187,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
       size: file.size,
       sha256: file.sha256,
       flagsJson: file.flagsJson,
-      textSample: input.artifacts ? null : file.textSample,
+      textSample: file.textSample,
     };
   });
   const findingRows = input.findings.map((finding) => ({
@@ -294,19 +297,29 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     await db.insert(scans).values(scanValues).onConflictDoNothing({ target: scans.id });
   }
 
+  // Always clear prior detail rows first so a retry — including one that flips a
+  // scan from D1-backed to R2-backed — never leaves stale rows behind.
   await Promise.all([
     db.delete(scanFiles).where(eq(scanFiles.scanId, input.id)),
     db.delete(scanFindings).where(eq(scanFindings.scanId, input.id)),
   ]);
 
-  // D1 caps bound parameters at 100 per query, so insert in chunks sized to
-  // each row's column count. Without this, packages with more than ~12 files
-  // silently drop their scan_files rows and the scan-detail view renders as
-  // "No file content available." for every entry.
-  await Promise.all([
-    ...chunkForD1(fileRows, 8).map((chunk) => db.insert(scanFiles).values(chunk)),
-    ...chunkForD1(findingRows, 10).map((chunk) => db.insert(scanFindings).values(chunk)),
-  ]);
+  // When the scan is R2-artifact-backed, its redacted file samples, file
+  // metadata, diff, and findings already live in R2 (files.json / diff.json /
+  // report.json) and are read back from there, so persisting the same rows into
+  // D1 would be a pure duplicate. Only the degraded path — the R2 write was
+  // skipped (no bucket) and `artifacts` is null — falls back to storing the
+  // detail in D1 so the scan stays readable.
+  if (!input.artifacts) {
+    // D1 caps bound parameters at 100 per query, so insert in chunks sized to
+    // each row's column count. Without this, packages with more than ~12 files
+    // silently drop their scan_files rows and the scan-detail view renders as
+    // "No file content available." for every entry.
+    await Promise.all([
+      ...chunkForD1(fileRows, 8).map((chunk) => db.insert(scanFiles).values(chunk)),
+      ...chunkForD1(findingRows, 10).map((chunk) => db.insert(scanFindings).values(chunk)),
+    ]);
+  }
 
   return { persisted: true as const };
 }
@@ -687,8 +700,15 @@ export async function getScan(
   const responseFiles =
     (options.includeFileSamples ?? true) ? detailFiles : detailFiles.map(stripFileSampleForList);
   const diff = artifactDetail?.diff ?? diffForFindingAnnotations(scan.summaryJson, detailFiles);
-  const annotatedFindings = annotateFindingsWithDiffStatus(findings, diff, {
-    persistedAnnotations: readFindingAnnotations(scan.summaryJson),
+  // Artifact-backed scans no longer duplicate their findings into `scan_findings`
+  // (see persistScan); read them, with annotations, from the digest-verified
+  // report.json. The D1 rows + summary-embedded annotations stay the source for
+  // legacy/degraded scans that were never R2-backed.
+  const findingRows = artifactDetail ? artifactDetail.findings : findings;
+  const annotatedFindings = annotateFindingsWithDiffStatus(findingRows, diff, {
+    persistedAnnotations: artifactDetail
+      ? artifactDetail.findingAnnotations
+      : readFindingAnnotations(scan.summaryJson),
   });
   return {
     scan,
@@ -744,7 +764,12 @@ export async function getScanStatus(db: AppDb, id: string, organizationId: strin
   return scan ?? null;
 }
 
-export async function getScanCompareData(db: AppDb, id: string, organizationId: string) {
+export async function getScanCompareData(
+  db: AppDb,
+  id: string,
+  organizationId: string,
+  artifactBucket?: R2Bucket,
+) {
   const [scanRows, files, findings] = await Promise.all([
     db
       .select()
@@ -756,7 +781,13 @@ export async function getScanCompareData(db: AppDb, id: string, organizationId: 
   ]);
   const scan = scanRows[0];
   if (!scan) return null;
-  return { scan, files: files.map(stripFileSampleForList), findings };
+  // Compare annotations need this scan's file metadata + findings. For
+  // artifact-backed scans those no longer live in D1, so source them from R2
+  // (samples are stripped either way — compare diffs at file granularity).
+  const artifactDetail = await loadScanArtifacts(artifactBucket, scan);
+  const detailFiles = artifactDetail ? mergeArtifactFiles(files, artifactDetail.files, id) : files;
+  const findingRows = artifactDetail ? artifactDetail.findings : findings;
+  return { scan, files: detailFiles.map(stripFileSampleForList), findings: findingRows };
 }
 
 function stripFileSampleForList<T extends { textSample: string | null }>(file: T): T {

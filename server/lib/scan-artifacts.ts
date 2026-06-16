@@ -1,4 +1,10 @@
-import type { DiffEntry, FileRecord } from "./review";
+import {
+  normalizeFindingDiffStatus,
+  type DiffEntry,
+  type FileRecord,
+  type Finding,
+  type FindingDiffAnnotation,
+} from "./review";
 import { describeOperationalError, emitOperationalEvent } from "./observability";
 import { sha256Hex, stableJson, utf8Size } from "./stable-json";
 
@@ -32,6 +38,23 @@ export interface ScanArtifactFileRow {
   textSample: string | null;
 }
 
+// Mirrors `scan_findings.$inferSelect` so an R2-sourced finding is a drop-in
+// replacement for a D1 row on the read path. The id is derived from the finding
+// index (`artifactFindingId`) rather than a persisted UUID, so it stays stable
+// across reads without a per-finding D1 row.
+export interface ScanArtifactFindingRow {
+  id: string;
+  scanId: string;
+  severity: string;
+  file: string;
+  evidence: string;
+  reason: string;
+  line: number | null;
+  source: string;
+  ruleId: string | null;
+  ruleVersion: string | null;
+}
+
 export interface ScanArtifactScanRow {
   id: string;
   organizationId: string | null;
@@ -48,6 +71,11 @@ export interface ScanArtifactScanRow {
 export interface ScanArtifactsDetail {
   files: ScanArtifactFileRow[];
   diff: DiffEntry[];
+  // Deterministic findings + their diff annotations, parsed from the canonical
+  // report.json. These let the detail read source findings from R2 once the
+  // duplicate `scan_findings` rows are no longer written to D1.
+  findings: ScanArtifactFindingRow[];
+  findingAnnotations: Map<string, FindingDiffAnnotation>;
 }
 
 export interface ScanArtifactsManifestDetail {
@@ -238,28 +266,52 @@ export async function loadScanArtifacts(
 ): Promise<ScanArtifactsDetail | null> {
   const manifestDetail = await loadScanArtifactsManifest(bucket, scan);
   if (!manifestDetail) return null;
+  const { manifest } = manifestDetail;
+
+  // The detail read also sources findings from report.json (they are no longer
+  // duplicated into D1), so the verified manifest's report descriptor must match
+  // the digest D1 recorded for the scan. readVerifiedJsonText then ties the
+  // report bytes to that digest, making the parsed findings authoritative.
+  if (manifest.artifacts.report.digest !== scan.reportDigest) {
+    emitArtifactFallback("report_digest_mismatch", scan, {
+      expectedDigest: scan.reportDigest,
+      actualDigest: manifest.artifacts.report.digest,
+    });
+    return null;
+  }
 
   try {
-    const [filesText, diffText] = await Promise.all([
+    const [reportText, filesText, diffText] = await Promise.all([
       readVerifiedJsonText(bucket as R2Bucket, {
-        ...manifestDetail.manifest.artifacts.files,
+        ...manifest.artifacts.report,
+        scanId: scan.id,
+        kind: "report",
+      }),
+      readVerifiedJsonText(bucket as R2Bucket, {
+        ...manifest.artifacts.files,
         scanId: scan.id,
         kind: "files",
       }),
       readVerifiedJsonText(bucket as R2Bucket, {
-        ...manifestDetail.manifest.artifacts.diff,
+        ...manifest.artifacts.diff,
         scanId: scan.id,
         kind: "diff",
       }),
     ]);
 
+    const reportFindings = parseReportFindings(reportText, scan.id);
     const files = parseFilesArtifact(filesText, scan.id);
     const diff = parseDiffArtifact(diffText, scan.id);
-    if (!files || !diff) {
+    if (!files || !diff || !reportFindings) {
       emitArtifactFallback("artifact_payload_invalid", scan);
       return null;
     }
-    return { files, diff };
+    return {
+      files,
+      diff,
+      findings: reportFindings.findings,
+      findingAnnotations: reportFindings.annotations,
+    };
   } catch (err) {
     emitArtifactFallback("read_failed", scan, { error: describeOperationalError(err) });
     return null;
@@ -515,6 +567,72 @@ function parseDiffArtifact(text: string, scanId: string): DiffEntry[] | null {
     });
   }
   return diff;
+}
+
+// Stable, content-free id for an R2-sourced finding. The detail read and the
+// compare endpoint both key findings by id (React keys + annotation joins), so
+// the same scan/index must always yield the same id without a persisted UUID.
+function artifactFindingId(scanId: string, index: number): string {
+  return `${scanId}:finding:${index}`;
+}
+
+// Rebuild the deterministic findings and their diff annotations from the
+// digest-verified report.json. `ruleFindings` is the ordered finding list and
+// `findingAnnotations` references each by `findingIndex`; we re-key both by the
+// derived finding id so the annotation join matches the rows we hand back.
+// Returns null only when the findings array is structurally invalid — an empty
+// array (a clean scan) is valid and yields no findings.
+function parseReportFindings(
+  text: string,
+  scanId: string,
+): { findings: ScanArtifactFindingRow[]; annotations: Map<string, FindingDiffAnnotation> } | null {
+  const parsed = parseJsonObject(text);
+  const rawFindings = parsed?.ruleFindings;
+  if (!Array.isArray(rawFindings)) return null;
+
+  const findings: ScanArtifactFindingRow[] = [];
+  for (let index = 0; index < rawFindings.length; index += 1) {
+    const entry = rawFindings[index];
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const item = entry as Partial<Finding>;
+    if (
+      typeof item.severity !== "string" ||
+      typeof item.file !== "string" ||
+      typeof item.evidence !== "string" ||
+      typeof item.reason !== "string"
+    ) {
+      return null;
+    }
+    findings.push({
+      id: artifactFindingId(scanId, index),
+      scanId,
+      severity: item.severity,
+      file: item.file,
+      evidence: item.evidence,
+      reason: item.reason,
+      line: typeof item.line === "number" ? item.line : null,
+      source: "rule",
+      ruleId: typeof item.ruleId === "string" ? item.ruleId : null,
+      ruleVersion: typeof item.ruleVersion === "string" ? item.ruleVersion : null,
+    });
+  }
+
+  const annotations = new Map<string, FindingDiffAnnotation>();
+  const rawAnnotations = parsed?.findingAnnotations;
+  if (Array.isArray(rawAnnotations)) {
+    for (const entry of rawAnnotations) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+      const index = (entry as { findingIndex?: unknown }).findingIndex;
+      if (typeof index !== "number" || !Number.isInteger(index)) continue;
+      if (index < 0 || index >= findings.length) continue;
+      annotations.set(artifactFindingId(scanId, index), {
+        diffStatus: normalizeFindingDiffStatus((entry as { diffStatus?: unknown }).diffStatus),
+        releaseDelta: Boolean((entry as { releaseDelta?: unknown }).releaseDelta),
+      });
+    }
+  }
+
+  return { findings, annotations };
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
