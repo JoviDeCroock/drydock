@@ -84,7 +84,7 @@ Optional integrations:
 
 - Email: `SEND_EMAIL` binding plus `EMAIL_FROM_ADDRESS` and `EMAIL_FROM_NAME`
 - GitHub App: `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`,
-  `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`
+  `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET`
 - Slack: `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`
 
 Do not commit `.dev.vars`, private keys, tokens, or generated credential
