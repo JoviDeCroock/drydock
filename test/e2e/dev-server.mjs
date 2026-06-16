@@ -92,11 +92,15 @@ function resolveOptionalRepoPath(value) {
   return path.resolve(repoRoot, value);
 }
 
+function configRelativePath(...segments) {
+  return path.relative(outputConfigDir, path.join(repoRoot, ...segments));
+}
+
 async function writeWranglerConfig() {
   const config = {
-    $schema: "../../node_modules/wrangler/config-schema.json",
+    $schema: configRelativePath("node_modules/wrangler/config-schema.json"),
     name: "staged-publish-review-e2e",
-    main: "../../server/index.ts",
+    main: configRelativePath("server/index.ts"),
     compatibility_date: "2026-05-20",
     compatibility_flags: ["nodejs_compat"],
     assets: {
@@ -109,7 +113,7 @@ async function writeWranglerConfig() {
         binding: "DB",
         database_name: "staged-publish-review-e2e",
         database_id: "00000000-0000-0000-0000-0000000000e2",
-        migrations_dir: "../../drizzle",
+        migrations_dir: configRelativePath("drizzle"),
       },
     ],
     kv_namespaces: [
