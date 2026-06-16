@@ -149,7 +149,7 @@ function DashboardHeader() {
   return (
     <header class="flex flex-col gap-2 max-w-[640px]">
       <Eyebrow>Review workspace</Eyebrow>
-      <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Ready when the release is</h1>
+      <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Ready for the next release</h1>
       <Muted class="text-[14px] leading-[1.55] m-0">
         Review held npm and PyPI candidates before maintainers let them go live.
       </Muted>
