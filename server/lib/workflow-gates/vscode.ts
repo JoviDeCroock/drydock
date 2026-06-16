@@ -26,13 +26,11 @@ export const vscodeWorkflowGateAdapter: WorkflowGateAdapter = {
   },
 
   detectArtifact(contents: ArchiveContents): WorkflowArtifactKind | null {
-    const files = normalizeVsixFiles(contents.files);
-    try {
-      parseVscodeExtensionManifest(files);
-      return "vsix";
-    } catch {
-      return null;
-    }
+    void contents;
+    // VSIX has an unambiguous `.vsix` extension. Content detection only runs
+    // for extension-ambiguous tar archives, so claiming here would let npm/PyPI
+    // tarballs that happen to contain `extension/package.json` masquerade as VSIX.
+    return null;
   },
 
   prepareReleaseCandidates(artifacts: ParsedGateArtifact[]): PreparedReleaseCandidate[] {

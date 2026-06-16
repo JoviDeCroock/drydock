@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import { validateReleaseTargetShape } from "../../server/lib/github-app/validation";
 import {
   classifyBundleArtifact,
+  detectArchiveEcosystems,
   getWorkflowGateAdapter,
   supportedWorkflowGateEcosystems,
 } from "../../server/lib/workflow-gates/registry";
@@ -25,6 +26,28 @@ describe("VS Code workflow-gate adapter", () => {
       ecosystem: "vscode",
       kind: "vsix",
     });
+  });
+
+  test("does not claim generic tar archives during auto-detect", () => {
+    const claims = detectArchiveEcosystems({
+      packageJson: { name: "npm-package", version: "1.0.0" },
+      files: [
+        {
+          path: "extension/package.json",
+          size: 120,
+          sha256: "00",
+          flags: [],
+          textSample: JSON.stringify({
+            name: "remote-text-fetcher",
+            publisher: "example",
+            version: "1.0.0",
+            engines: { vscode: "^1.80.0" },
+          }),
+        },
+      ],
+    });
+
+    expect(claims).toEqual([{ ecosystem: "npm", kind: "tarball" }]);
   });
 
   test("accepts vscode release targets", () => {

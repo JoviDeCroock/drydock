@@ -161,26 +161,28 @@ function startupRemoteCommandFinding(
   broadActivation: string | null,
 ): Finding | null {
   if (!broadActivation) return null;
-  const entrypoint = entrypointFile(manifest, files);
-  if (!entrypoint?.textSample) return null;
-  const sample = entrypoint.textSample;
-  const normalized = normalizeCodeForScanning(sample);
-  const processExecution = matches(JS_PATTERN_SET.processExecution, sample, normalized);
-  const networkAccess = matches(JS_PATTERN_SET.networkAccess, sample, normalized);
-  const dynamicEvaluation = matches(JS_PATTERN_SET.dynamicEvaluation, sample, normalized);
-  if (!processExecution || !networkAccess || !dynamicEvaluation) return null;
-  return vscodeTag("startupRemoteCommand", {
-    severity: "critical",
-    file: entrypoint.path,
-    line: firstMatchingLine(sample, [
-      ...JS_PATTERN_SET.processExecution,
-      ...JS_PATTERN_SET.networkAccess,
-      ...JS_PATTERN_SET.dynamicEvaluation,
-    ]),
-    evidence: `startup activation ${broadActivation} reaches network + decode/eval + process execution`,
-    reason:
-      "remote-command VS Code malware commonly activates on startup, fetches or decodes operator-controlled payloads, and executes shell commands",
-  });
+  for (const entrypoint of entrypointFiles(manifest, files)) {
+    if (!entrypoint.textSample) continue;
+    const sample = entrypoint.textSample;
+    const normalized = normalizeCodeForScanning(sample);
+    const processExecution = matches(JS_PATTERN_SET.processExecution, sample, normalized);
+    const networkAccess = matches(JS_PATTERN_SET.networkAccess, sample, normalized);
+    const dynamicEvaluation = matches(JS_PATTERN_SET.dynamicEvaluation, sample, normalized);
+    if (!processExecution || !networkAccess || !dynamicEvaluation) continue;
+    return vscodeTag("startupRemoteCommand", {
+      severity: "critical",
+      file: entrypoint.path,
+      line: firstMatchingLine(sample, [
+        ...JS_PATTERN_SET.processExecution,
+        ...JS_PATTERN_SET.networkAccess,
+        ...JS_PATTERN_SET.dynamicEvaluation,
+      ]),
+      evidence: `startup activation ${broadActivation} reaches network + decode/eval + process execution`,
+      reason:
+        "remote-command VS Code malware commonly activates on startup, fetches or decodes operator-controlled payloads, and executes shell commands",
+    });
+  }
+  return null;
 }
 
 function undeclaredConfigurationReadFindings(
@@ -271,13 +273,6 @@ function isDeclaredConfigurationKey(key: string, declared: Set<string>): boolean
 function isCommonConfigurationKey(key: string): boolean {
   const namespace = key.split(".")[0];
   return COMMON_VSCODE_CONFIGURATION_NAMESPACES.has(namespace);
-}
-
-function entrypointFile(
-  manifest: Pick<VscodeExtensionManifest, "main" | "browser">,
-  files: AcquiredArtifact["files"],
-) {
-  return entrypointFiles(manifest, files)[0] ?? null;
 }
 
 function entrypointFiles(
