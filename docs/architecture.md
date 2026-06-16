@@ -13,7 +13,7 @@ Hono Worker
   ├─ D1 persistence and R2 report/artifact storage
   ├─ Queue-backed scan/gate orchestration
   ├─ Dynamic Worker loader for untrusted archive parsing
-  ├─ npm / PyPI adapters and workflow-gate adapters
+  ├─ npm / PyPI / VS Code adapters and workflow-gate adapters
   └─ constrained brokers/gateways for registry/artifact downloads
         │
         ▼
@@ -22,7 +22,7 @@ Hono Worker
 Dynamic Worker sandbox
   ├─ receives scan options and artifact URLs, not npm credentials
   ├─ fetches only through `globalOutbound` brokers/gateways
-  ├─ parses tarballs and wheels safely
+  ├─ parses tarballs, wheels, and VSIX artifacts safely
   └─ returns bounded file metadata, text evidence, and suspicious-entry flags
 ```
 
@@ -34,7 +34,7 @@ The Worker is the trusted control plane; the sandbox treats package bytes as hos
 - **Parent Worker** — authenticates users, resolves the organization, checks ownership, decrypts credentials only at the moment of registry use, invokes the sandbox, computes findings/risk, persists reports, and emits redacted audit events.
 - **Dynamic Worker sandbox** — parses untrusted archive bytes. It must not execute code, install dependencies, resolve imports, run build steps, or receive token material.
 - **NpmStageGateway** — the only place npm authorization is attached. Allowed npm egress is staged tarball fetch, package metadata JSON, and previous-version `.tgz` downloads needed for diffing.
-- **PyPiBroker / GitHub artifact broker** — credential-free PyPI artifact downloads are restricted to `https://files.pythonhosted.org`; GitHub artifact access is scoped to the workflow-gate installation/run being reviewed.
+- **PyPiBroker / VscodeBroker / GitHub artifact broker** — credential-free PyPI artifact downloads are restricted to `https://files.pythonhosted.org`; VSIX baseline downloads are restricted to allowed Marketplace/CDN hosts; GitHub artifact access is scoped to the workflow-gate installation/run being reviewed.
 
 ## Sandbox parser
 

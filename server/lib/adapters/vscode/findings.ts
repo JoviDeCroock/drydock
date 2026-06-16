@@ -122,7 +122,7 @@ function vscodeManifestFindings(
   const remoteCommandFinding = startupRemoteCommandFinding(manifest, files, broadActivation);
   if (remoteCommandFinding) findings.push(remoteCommandFinding);
 
-  const wasmLoaderFinding = startupWasmLoaderFinding(files, broadActivation);
+  const wasmLoaderFinding = startupWasmLoaderFinding(manifest, files, broadActivation);
   if (wasmLoaderFinding) findings.push(wasmLoaderFinding);
 
   findings.push(...undeclaredConfigurationReadFindings(manifest, files));
@@ -209,11 +209,14 @@ function undeclaredConfigurationReadFindings(
 }
 
 function startupWasmLoaderFinding(
+  manifest: VscodeExtensionManifest,
   files: AcquiredArtifact["files"],
   broadActivation: string | null,
 ): Finding | null {
   if (!broadActivation || !hasWasmArtifact(files)) return null;
-  const loader = files.find((file) => isJavaScriptFile(file.path) && isWasmLoader(file.textSample));
+  const loader = entrypointFiles(manifest, files).find(
+    (file) => isJavaScriptFile(file.path) && isWasmLoader(file.textSample),
+  );
   if (!loader?.textSample) return null;
   return vscodeTag("startupWasmLoader", {
     severity: "critical",
@@ -274,11 +277,25 @@ function entrypointFile(
   manifest: Pick<VscodeExtensionManifest, "main" | "browser">,
   files: AcquiredArtifact["files"],
 ) {
+  return entrypointFiles(manifest, files)[0] ?? null;
+}
+
+function entrypointFiles(
+  manifest: Pick<VscodeExtensionManifest, "main" | "browser">,
+  files: AcquiredArtifact["files"],
+) {
   const candidates = [
     ...entrypointCandidates(manifest.main),
     ...entrypointCandidates(manifest.browser),
   ];
-  return candidates.map((path) => files.find((file) => file.path === path)).find(Boolean) ?? null;
+  const seen = new Set<string>();
+  return candidates
+    .map((path) => files.find((file) => file.path === path))
+    .filter((file): file is AcquiredArtifact["files"][number] => {
+      if (!file || seen.has(file.path)) return false;
+      seen.add(file.path);
+      return true;
+    });
 }
 
 function entrypointCandidates(path: string | null): string[] {

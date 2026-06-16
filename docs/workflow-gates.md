@@ -32,6 +32,8 @@ Required bindings/secrets include the GitHub App id/private key/client credentia
 
 A release set is the boundary between CI and Drydock. Drydock never trusts a maintainer-declared manifest as authority over reviewed bytes; it recomputes identity and digest evidence from the uploaded artifacts themselves.
 
+Package identity and version come from each artifact's own metadata: wheel `METADATA`, sdist `PKG-INFO`, npm `package.json`, or VSIX `extension/package.json` (`publisher.name` + `version`). Every artifact must expose a package identity and version; files are grouped by normalized package name where the ecosystem has one, and artifacts that share a name must agree on the version. Distinct package names are separate releases, which is the expected monorepo shape.
+
 For every candidate artifact set, adapters must provide:
 
 - package/project/extension identity and version;

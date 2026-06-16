@@ -134,6 +134,34 @@ describe("VS Code extension review adapter", () => {
     expect(review.risk).toBe("critical");
   });
 
+  test("does not treat unreachable WebAssembly loaders as startup-loaded", () => {
+    const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
+      { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
+    ]);
+    const review = createVscodeExtensionReview({
+      manifest,
+      artifact: artifact([
+        file("extension/package.json", extensionPackageJson()),
+        file("extension/out/extension.js", "exports.activate = () => {};"),
+        file(
+          "extension/test/wasm.test.js",
+          [
+            "const go = new Go();",
+            "async function loadFixture() {",
+            "  const source = await WebAssembly.instantiateStreaming(fetch('./payload.wasm'), go.importObject);",
+            "  go.run(source.instance);",
+            "}",
+          ].join("\n"),
+        ),
+        binary("extension/test/payload.wasm", 824552),
+      ]),
+    });
+
+    expect(review.ruleFindings.map((finding) => finding.ruleId)).not.toEqual(
+      expect.arrayContaining([VSCODE_RULE_IDS.startupWasmLoader]),
+    );
+  });
+
   test("allows declared configuration reads and narrow activation", () => {
     const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
       { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
