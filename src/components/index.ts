@@ -11,8 +11,17 @@ export type { AlertTone } from "./Alert";
 export { Toaster, pushToast, dismissToast } from "./Toast";
 export type { ToastTone } from "./Toast";
 export { Dialog } from "./Dialog";
-export { Card, CollapsibleCard, SummaryCard } from "./Card";
-export type { SummaryCardTone, SummaryCardValue } from "./Card";
+export {
+  Card,
+  CollapsibleCard,
+  SettingsCard,
+  SettingsCardBody,
+  SettingsCardForm,
+  SettingsCardHeader,
+  SettingsCardListItem,
+  SummaryCard,
+} from "./Card";
+export type { CardPadding, SummaryCardTone, SummaryCardValue } from "./Card";
 export { PageShell } from "./PageShell";
 export { BrandMark } from "./BrandMark";
 export { AikidoMark, AikidoFootnote, AikidoPartnerStrip } from "./AikidoPartner";

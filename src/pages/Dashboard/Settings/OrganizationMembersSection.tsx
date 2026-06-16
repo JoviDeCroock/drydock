@@ -15,8 +15,10 @@ import {
   Input,
   MonoDetail,
   Muted,
-  SectionLabel,
   Select,
+  SettingsCardBody,
+  SettingsCardHeader,
+  SettingsCardListItem,
   type BadgeTone,
 } from "../../../components";
 
@@ -59,7 +61,7 @@ export function OrganizationMembersSection({
         </span>
       }
     >
-      <div class="p-5 flex flex-col gap-5">
+      <SettingsCardBody>
         <Muted class="text-[13px] m-0 max-w-[760px]">
           Invite teammates to collaborate on this organization's release targets, integrations, and
           gate reviews. Owners and admins manage membership; members get read access to org-scoped
@@ -105,7 +107,7 @@ export function OrganizationMembersSection({
             </Button>
           </form>
         ) : null}
-      </div>
+      </SettingsCardBody>
 
       <div>
         <MemberList
@@ -119,12 +121,14 @@ export function OrganizationMembersSection({
 
       {canManage ? (
         <div>
-          <div class="px-5 py-4 flex items-center justify-between gap-3">
-            <SectionLabel class="flex-1">Pending invites</SectionLabel>
-            <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle shrink-0">
-              {invitations.length} pending
-            </span>
-          </div>
+          <SettingsCardHeader
+            title="Pending invites"
+            aside={
+              <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+                {invitations.length} pending
+              </span>
+            }
+          />
           {invitations.length ? (
             <InvitationList
               invitations={invitations}
@@ -132,9 +136,9 @@ export function OrganizationMembersSection({
               onRevoke={(id) => void members.revokeInvitation(id)}
             />
           ) : (
-            <div class="px-5 pb-5">
+            <SettingsCardBody inset="belowHeader" gap="none">
               <Muted class="text-[13px] m-0">No pending invitations.</Muted>
-            </div>
+            </SettingsCardBody>
           )}
         </div>
       ) : null}
@@ -160,10 +164,7 @@ function MemberList({
       {members.map((member) => {
         const removable = canManage && !member.isOwner && member.userId !== currentUserId;
         return (
-          <li
-            key={member.userId}
-            class="border-b border-border last:border-b-0 px-5 py-4 flex flex-wrap items-center justify-between gap-3"
-          >
+          <SettingsCardListItem key={member.userId}>
             <div class="flex flex-col gap-1.5 min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="text-[14px] font-medium text-ink truncate">
@@ -189,7 +190,7 @@ function MemberList({
                 Remove
               </Button>
             ) : null}
-          </li>
+          </SettingsCardListItem>
         );
       })}
     </ul>
@@ -208,10 +209,7 @@ function InvitationList({
   return (
     <ul class="m-0 p-0 list-none">
       {invitations.map((invitation) => (
-        <li
-          key={invitation.id}
-          class="border-b border-border last:border-b-0 px-5 py-4 flex flex-wrap items-center justify-between gap-3"
-        >
+        <SettingsCardListItem key={invitation.id}>
           <div class="flex flex-col gap-1.5 min-w-0">
             <div class="flex items-center gap-2 flex-wrap">
               <span class="text-[14px] font-medium text-ink truncate">{invitation.email}</span>
@@ -237,7 +235,7 @@ function InvitationList({
           >
             Revoke
           </Button>
-        </li>
+        </SettingsCardListItem>
       ))}
     </ul>
   );

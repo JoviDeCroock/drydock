@@ -12,6 +12,7 @@ import {
   Input,
   LoadingLine,
   Muted,
+  SettingsCardBody,
 } from "../../../components";
 
 export function NotificationRecipientsSection({
@@ -45,7 +46,7 @@ export function NotificationRecipientsSection({
       defaultOpen={defaultOpen}
       aside={<Badge tone="info">{list.length} configured</Badge>}
     >
-      <div class="p-5 flex flex-col gap-5">
+      <SettingsCardBody>
         <Muted class="text-[13px] m-0 max-w-[760px]">
           Choose who gets emailed when an auto-discovered scan finishes or a release gate needs a
           review decision. Add a shared inbox or teammates. When this list is empty, Drydock emails
@@ -112,7 +113,7 @@ export function NotificationRecipientsSection({
         ) : null}
 
         {error ? <Alert tone="critical">{error}</Alert> : null}
-      </div>
+      </SettingsCardBody>
     </CollapsibleCard>
   );
 }

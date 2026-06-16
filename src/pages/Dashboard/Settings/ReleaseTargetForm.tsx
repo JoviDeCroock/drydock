@@ -1,7 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { useModel } from "@preact/signals";
 import { GithubAppModel, type PublicGithubAppInstallation } from "../../../models/github-app";
-import { Alert, Button, Field, Muted, Select } from "../../../components";
+import { Alert, Button, Field, Muted, Select, SettingsCardForm } from "../../../components";
 
 type GithubApp = ReturnType<typeof useModel<typeof GithubAppModel.prototype>>;
 
@@ -33,7 +33,7 @@ export function ReleaseTargetForm({
   };
 
   return (
-    <form class="px-5 pb-5 flex flex-col gap-4" onSubmit={onSubmit}>
+    <SettingsCardForm onSubmit={onSubmit}>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <RepositorySelector githubApp={githubApp} />
         <EnvironmentSelector githubApp={githubApp} />
@@ -46,7 +46,7 @@ export function ReleaseTargetForm({
           {submitting ? "Mapping…" : "Map release target"}
         </Button>
       </div>
-    </form>
+    </SettingsCardForm>
   );
 }
 

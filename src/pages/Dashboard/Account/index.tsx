@@ -11,8 +11,8 @@ import {
   Muted,
   PageShell,
   SectionLabel,
+  SettingsCard,
   UserMenu,
-  Card,
 } from "../../../components";
 import { TwoFactorSection } from "./TwoFactorSection";
 import { DeleteAccountSection } from "./DeleteAccountSection";
@@ -72,11 +72,11 @@ export default function AccountPage() {
       <AccountHeader />
 
       <div class="flex flex-col gap-6">
-        <Card class="flex flex-col gap-1.5">
+        <SettingsCard class="flex flex-col gap-1.5">
           <SectionLabel>Profile</SectionLabel>
           {user?.name ? <span class="text-[14px] font-medium text-ink">{user.name}</span> : null}
           <MonoDetail parts={[user?.email ? <span key="email">{user.email}</span> : null]} />
-        </Card>
+        </SettingsCard>
 
         <TwoFactorSection />
 

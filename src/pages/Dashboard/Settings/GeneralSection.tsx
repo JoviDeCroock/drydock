@@ -5,13 +5,13 @@ import {
   Alert,
   Badge,
   Button,
-  Card,
   Dialog,
   Field,
   Input,
   MonoDetail,
   Muted,
   SectionLabel,
+  SettingsCard,
 } from "../../../components";
 
 export function GeneralSection({
@@ -56,7 +56,7 @@ export function GeneralSection({
   };
 
   return (
-    <Card class="flex flex-col gap-5">
+    <SettingsCard class="flex flex-col gap-5">
       <SectionLabel>General</SectionLabel>
 
       {active ? (
@@ -138,6 +138,6 @@ export function GeneralSection({
           </form>
         </Dialog>
       ) : null}
-    </Card>
+    </SettingsCard>
   );
 }
