@@ -28,7 +28,10 @@
 - `useState`/`useReducer` are banned (oxlint `no-restricted-imports`). Component-local state goes through `useSignal`/`useComputed` or `createModel`/`useModel`. See `docs/tooling.md` and the `.claude/skills/preact-signals-*` skills.
 - Comments explain _why_ — rationale, trust boundaries, concurrency/fail-closed behavior, edge cases, units, magic numbers. Don't restate what the code already says, narrate obvious control flow, or label a self-evident symbol; never leave commented-out code or stale TODOs. The codebase keeps a deliberately high signal-to-noise ratio.
 - Never hand-write SQL migrations — run `pnpm db:generate` against `server/db/schema.ts`.
-- Read `docs/` before starting work; update `docs/` when you finish.
+- Read `docs/` before starting work. Before finishing any behavior, API, UI,
+  security, or workflow change, explicitly check whether `docs/` or the public
+  `/docs` page need updates. If no docs change is needed, note "docs checked, no
+  update needed" in the PR summary or testing notes.
 
 ## Testing
 
