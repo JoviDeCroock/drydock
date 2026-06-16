@@ -8,12 +8,12 @@ Approval stays outside Drydock: maintainers approve with `npm stage approve <sta
 
 This repository is moving from prototype to product. The current code already proves the core sandbox and review flow; the product direction is:
 
-- **SaaS, organization-scoped.** Scans belong to an organization boundary. RBAC is intentionally deferred for the first production slice, but the data model should keep organization ownership explicit.
-- **Per-organization npm credentials.** Production SaaS should not use a deployment-wide npm token. Each organization will connect its own npm credential, scoped as narrowly as npm permits, and the credential will only be used by the gateway that talks to npm.
+- **Organization-scoped.** Scans belong to an organization boundary. RBAC is intentionally deferred for the first production slice, but the data model should keep organization ownership explicit.
+- **Per-organization npm credentials.** A deployment should not rely on a single deployment-wide npm token. Each organization connects its own npm credential, scoped as narrowly as npm permits, and the credential is only used by the gateway that talks to npm.
 - **Manual publish approval.** Drydock reviews and explains a staged publish. It does not run `npm stage approve`, bypass npm 2FA, or become the final publisher.
 - **Two operating modes.** npm uses registry-stage mode: Drydock reviews npm-staged bytes before the maintainer approves in npm. Ecosystems without a staged artifact use workflow-gate mode: a GitHub Environment deployment-protection rule blocks the publish job while Drydock reviews the built release artifacts. PyPI is the first workflow-gate ecosystem with wheel and sdist artifacts. The gate plumbing is shared across ecosystems. See [`docs/workflow-gates.md`](docs/workflow-gates.md).
 - **AI review default-off.** Cloudflare Workers AI review is wired into the pipeline, but it is gated by the per-organization Flagship `ai-review` flag and defaults to unavailable. Deterministic findings are the review authority unless a complete, schema-valid AI review is enabled; AI remains advisory and cannot downgrade deterministic findings.
-- **Safe artifact defaults.** Do not retain raw tarballs by default in SaaS. Persist redacted summaries, manifests, diffs, findings, and report metadata. Raw artifact retention may become an explicit short-TTL organization setting later.
+- **Safe artifact defaults.** Do not retain raw tarballs by default. Persist redacted summaries, manifests, diffs, findings, and report metadata. Raw artifact retention may become an explicit short-TTL organization setting later.
 - **Signed reports later.** Prepare report data to be canonical and signable, but do not launch public signed report generation yet.
 
 Use the docs by layer:
@@ -245,7 +245,7 @@ Defended today:
 - Cross-user scan reads through personal-organization scoping.
 - Basic D1-backed rate limits for scan creation and npm credential save/validation.
 
-Product requirements before SaaS launch:
+Hardening roadmap:
 
 - Production verification of async scan retry and dead-letter behavior.
 - Durable report rendering from persisted data.
@@ -261,4 +261,4 @@ Not defended/implemented yet:
 - Public signed reports.
 - Perfect malware detection. This is triage, not a proof of safety.
 - Deep binary/native analysis. Large/binary/native files are flagged for manual review.
-- Raw tarball evidence retention. This is intentionally not a default SaaS behavior.
+- Raw tarball evidence retention. This is intentionally not a default behavior.

@@ -18,7 +18,7 @@
 
 ## Conventions
 
-- **Trust boundary:** package bytes are untrusted evidence; deterministic findings are authoritative. The AI reviewer is gated off-by-default behind the per-organization `ai-review` Flagship flag (planned paid-tier feature). When enabled it only sees changed files, treats contents as hostile, and cannot downgrade deterministic findings. Don't change the default-off gating without a feature decision.
+- **Trust boundary:** package bytes are untrusted evidence; deterministic findings are authoritative. The AI reviewer is gated off-by-default behind the per-organization `ai-review` Flagship flag (optional, off by default). When enabled it only sees changed files, treats contents as hostile, and cannot downgrade deterministic findings. Don't change the default-off gating without a feature decision.
 - **Egress:** the Dynamic Worker's `globalOutbound` is `NpmStageGateway` — the only path that attaches the npm token, and only for the staged tarball endpoint. It must remain the only credentialed egress.
 - Shared types live in `server/` (`server/types.ts`, `server/lib/review.ts`); the UI imports them by relative path so request/response shapes are shared at compile time.
 - D1 / Better Auth are required for every non-auth `/api/*` endpoint.
