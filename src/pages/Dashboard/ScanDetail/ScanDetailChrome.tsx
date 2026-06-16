@@ -111,7 +111,7 @@ export function VersionPickerSkeleton({ stagedVersion }: { stagedVersion: string
 // can validate fine and still 403 on a specific package's tarball.
 const FAILURE_GUIDANCE: Record<string, { hint: string; action: string }> = {
   staged_tarball_unavailable: {
-    hint: "This usually means the npm token has expired or its granular scope does not cover this package.",
+    hint: "The npm token may have expired, or its scope may not cover this package.",
     action: "Validate or rotate the token under Settings → npm access.",
   },
 };

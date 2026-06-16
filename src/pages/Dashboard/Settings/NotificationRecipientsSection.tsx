@@ -77,7 +77,7 @@ export function NotificationRecipientsSection({
           </ul>
         ) : (
           <Muted class="text-[13px] m-0">
-            No recipients configured — notifications go to{" "}
+            No recipients configured. Notifications go to{" "}
             {fallbackEmail ?? "the organization owner"}.
           </Muted>
         )}

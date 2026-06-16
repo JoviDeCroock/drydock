@@ -81,7 +81,7 @@ export function selectDiffWorkbenchState(input: {
     return {
       kind: "processing",
       title: "Loading comparison",
-      detail: "fetching previous version via sandbox · this can take a minute",
+      detail: "fetching the previous version in the sandbox",
     };
   }
 

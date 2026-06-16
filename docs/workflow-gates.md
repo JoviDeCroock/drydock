@@ -1,13 +1,13 @@
 # Workflow Gates
 
-Workflow gates are a Drydock **product mode distinct from npm staged publishing**.
+Workflow gates are Drydock's path for releases the registry cannot stage.
 
-- **npm staged publishing** works because npm owns a pending staged tarball: Drydock fetches `/-/stage/<stage-id>/tarball`, reviews it, and leaves final approval in npm.
+- **npm staged publishing** works because npm owns a pending staged tarball. Drydock fetches `/-/stage/<stage-id>/tarball`, reviews it, and leaves final approval in npm.
 - **Workflow gates** cover ecosystems with no registry-staged artifact. CI builds the release artifacts first, uploads them as GitHub Actions artifacts, and a GitHub Environment custom deployment-protection rule holds the publish job until the reviewed release is approved or rejected.
 
-The gate pipeline is **ecosystem-neutral**: everything GitHub-shaped (App installation, webhook verification, artifact fetch, digest recomputation, decision callback, persistence, audit) is shared, and only an ecosystem's artifact semantics are pluggable behind a `WorkflowGateAdapter`. See [Multi-ecosystem workflow gates](#multi-ecosystem-workflow-gates) and [Adding a new ecosystem](#adding-a-new-ecosystem).
+The gate pipeline is shared across ecosystems: GitHub App installation, webhook verification, artifact fetch, digest recomputation, decision callback, persistence, and audit all use the same path. Only the artifact-specific rules live behind a `WorkflowGateAdapter`. See [Multi-ecosystem workflow gates](#multi-ecosystem-workflow-gates) and [Adding a new ecosystem](#adding-a-new-ecosystem).
 
-**PyPI and npm are the supported workflow-gate ecosystems.** The rest of this document uses PyPI as the reference ecosystem: the GitHub plumbing it describes is shared by every ecosystem (npm, VSIX, …), and only the artifact-specific parts live in each adapter. For PyPI there is no `drydock-manifest.json` to write — the release set is whatever wheels/sdists the workflow uploads, and package identity is derived from the artifacts themselves. npm workflow-gate specifics are documented separately in [`npm-workflow-gate.md`](./npm-workflow-gate.md).
+**PyPI and npm are the supported workflow-gate ecosystems.** The rest of this document uses PyPI as the reference ecosystem. The GitHub plumbing it describes is shared by every ecosystem (npm, VSIX, …), and only the artifact-specific parts live in each adapter. For PyPI there is no `drydock-manifest.json` to write. The release set is whatever wheels and sdists the workflow uploads, and package identity comes from the artifacts themselves. npm workflow-gate specifics are documented separately in [`npm-workflow-gate.md`](./npm-workflow-gate.md).
 
 Official references:
 

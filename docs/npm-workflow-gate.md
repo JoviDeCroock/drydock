@@ -1,7 +1,7 @@
 # npm workflow-gate mode
 
 This document covers npm review through a **GitHub deployment-protection workflow
-gate** — the alternative to npm staged-publish review for repositories that
+gate**. Use it instead of npm staged-publish review for repositories that
 publish npm packages without staged publishing.
 
 It only describes what is npm-specific. The webhook ingestion, gate persistence,
@@ -12,7 +12,7 @@ Read that first for the end-to-end gate lifecycle.
 
 ## When to use it
 
-Two ways an npm package reaches Drydock review:
+An npm package reaches Drydock review in one of two ways:
 
 | Mode                           | Boundary                                                                                         | Doc                                    |
 | ------------------------------ | ------------------------------------------------------------------------------------------------ | -------------------------------------- |
@@ -20,9 +20,9 @@ Two ways an npm package reaches Drydock review:
 | **Workflow gate** (this doc)   | the publish job is held on a GitHub Environment; Drydock reviews the uploaded `npm pack` tarball | here                                   |
 
 Workflow-gate mode is **not** a replacement for staged-publish review. Use
-staged publishing when the registry supports it; reach for a workflow gate when a
-repository publishes npm packages without staging them, and wants the same
-review-before-publish guarantee.
+staged publishing when the registry supports it. Use a workflow gate when a
+repository publishes npm packages without staging them but still needs a
+review-before-publish checkpoint.
 
 ## The release candidate
 

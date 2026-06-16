@@ -20,7 +20,7 @@ Deletion is irreversible, so it is gated on the account password. The client
 (`sessionModel.deleteAccount` in `src/models/auth.ts`) posts `{ password }` to
 `POST /api/auth/delete-user`; Better Auth verifies it against the credential account before
 running `beforeDelete`. A wrong password returns `400 INVALID_PASSWORD` and nothing is touched.
-The UI (`src/pages/Dashboard/Account/DeleteAccountSection.tsx`) additionally requires the user to
+The UI (`src/pages/Dashboard/Account/DeleteAccountSection.tsx`) also requires the user to
 type their own email, so the action can't fire from a stray click or an autofilled password.
 
 ## What gets deleted

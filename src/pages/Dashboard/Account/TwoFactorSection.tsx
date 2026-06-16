@@ -165,7 +165,7 @@ export function TwoFactorSection() {
   } else if (dialog.value === "enroll" && enrollStep.value === "backup") {
     dialogTitle = "Save your backup codes";
     dialogDescription =
-      "Each code works once. Store them somewhere safe — you won't see them again.";
+      "Each code works once. Store them somewhere safe; you won't see them again.";
     dialogBody = (
       <div class="flex flex-col gap-4">
         {codes ? <BackupCodes codes={codes} /> : null}

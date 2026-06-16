@@ -195,7 +195,7 @@ function DiffBody({
   const afterTokens = useLineTokens(afterSample, lang);
 
   if (binary) {
-    return <DiffMessage findings={findings}>Binary file — no text diff available.</DiffMessage>;
+    return <DiffMessage findings={findings}>Binary file. No text diff available.</DiffMessage>;
   }
 
   if (status === "added") {

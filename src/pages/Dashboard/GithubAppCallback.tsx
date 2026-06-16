@@ -220,7 +220,7 @@ function parseCallbackQuery(
   if (!installationId)
     return "GitHub did not return an installation id. Restart the install from settings.";
   if (!code) {
-    return "GitHub did not return a user authorization code. Make sure the GitHub App has 'Request user authorization (OAuth) during installation' enabled.";
+    return "GitHub did not return a user authorization code. Check that the GitHub App has 'Request user authorization (OAuth) during installation' enabled.";
   }
   if (setupAction === "request") {
     return "Your install is pending an organization owner's approval. Once approved, GitHub will redirect you back here automatically.";

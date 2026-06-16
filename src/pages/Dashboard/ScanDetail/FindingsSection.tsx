@@ -44,8 +44,8 @@ export function RiskSignalsSection({
       </div>
       <Muted class="m-0 text-[13px] leading-[1.55] max-w-[760px]">
         Deterministic rules scan the full staged artifact. Changed-file signals are pinned to their
-        line in the diff above — open a file to read them in context; unchanged signals are retained
-        here as package context.
+        line in the diff above. Open a file to read them in context; unchanged signals stay here as
+        package context.
       </Muted>
 
       {changedFindings.length ? (

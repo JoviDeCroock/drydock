@@ -93,10 +93,7 @@ export default function DashboardPage() {
     return (
       <PageShell>
         <DashboardHeader />
-        <LoadingState
-          title="Opening workspace"
-          detail="confirming session · fetching recent reviews"
-        />
+        <LoadingState title="Opening workspace" detail="checking session · loading reviews" />
       </PageShell>
     );
   }
@@ -140,7 +137,7 @@ export default function DashboardPage() {
               ? "fetching recent reviews"
               : scansLoaded
                 ? "checking npm connection"
-                : "fetching recent reviews · checking npm connection"
+                : "loading reviews · checking npm connection"
           }
         />
       )}
@@ -154,7 +151,7 @@ function DashboardHeader() {
       <Eyebrow>Review workspace</Eyebrow>
       <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Ready for the next release</h1>
       <Muted class="text-[14px] leading-[1.55] m-0">
-        Review held npm and PyPI release candidates before maintainers approve or release them.
+        Review held npm and PyPI candidates before maintainers let them go live.
       </Muted>
     </header>
   );
@@ -199,7 +196,7 @@ function RecentReviewsSection({
             size="sm"
             onClick={() => void onDiscover()}
             disabled={discoveryRefreshing || !ready}
-            title="Discover new staged publishes on npm and start reviews"
+            title="Find staged npm publishes and start reviews"
           >
             {discoveryRefreshing ? "Checking npm…" : "Check npm"}
           </Button>
@@ -312,13 +309,13 @@ function ScanFilterChips({
 function emptyStateMessage(filter: ScanDecisionFilter): string {
   switch (filter) {
     case "undecided":
-      return "Nothing waiting on a decision. Switch to All to see decided reviews.";
+      return "Nothing waiting on you. Switch to All to see earlier reviews.";
     case "publish":
-      return "No reviews approved for publish yet.";
+      return "No approved reviews yet.";
     case "no_publish":
-      return "No reviews blocked from publish yet.";
+      return "No blocked reviews yet.";
     default:
-      return "No reviews yet. Check npm or wait for auto-discovery to surface staged releases.";
+      return "No reviews yet. Check npm or wait for auto-discovery to find a staged release.";
   }
 }
 
