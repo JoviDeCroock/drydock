@@ -25,13 +25,7 @@ const report = readFileSync(reportPath, "utf8").trim();
 const body = trimComment(`${marker}\n${report}\n\n_Updated by CI for this PR._`);
 
 try {
-  const comments = await github(
-    "GET",
-    `/repos/${owner}/${repo}/issues/${pullNumber}/comments?per_page=100`,
-  );
-  const existing = comments.find(
-    (comment) => typeof comment.body === "string" && comment.body.includes(marker),
-  );
+  const existing = await findExistingComment();
 
   if (existing) {
     await github("PATCH", `/repos/${owner}/${repo}/issues/comments/${existing.id}`, { body });
@@ -53,6 +47,19 @@ function trimComment(value) {
   const suffix =
     "\n\n_Report truncated for GitHub comment size; download the CI artifact for full JSON._";
   return `${value.slice(0, maxBodyChars - suffix.length)}${suffix}`;
+}
+
+async function findExistingComment() {
+  for (let page = 1; ; page += 1) {
+    const comments = await github(
+      "GET",
+      `/repos/${owner}/${repo}/issues/${pullNumber}/comments?per_page=100&page=${page}`,
+    );
+    const existing = comments.find(
+      (comment) => typeof comment.body === "string" && comment.body.includes(marker),
+    );
+    if (existing || comments.length < 100) return existing;
+  }
 }
 
 async function github(method, path, body) {

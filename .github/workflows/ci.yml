@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -59,12 +58,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Comment detection eval report
-        if: ${{ always() && github.event_name == 'pull_request' }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/comment-detection-eval.mjs
-
   e2e:
     name: e2e
     runs-on: ubuntu-latest
@@ -115,3 +108,27 @@ jobs:
             .context/e2e-registry/requests.jsonl
           if-no-files-found: ignore
           retention-days: 7
+
+  detection-eval-comment:
+    name: detection eval PR comment
+    runs-on: ubuntu-latest
+    needs: check
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Download detection eval report
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: detection-eval-report
+          path: .context/eval
+
+      - name: Comment detection eval report
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/comment-detection-eval.mjs
