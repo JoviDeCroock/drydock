@@ -66,7 +66,7 @@ Cron-triggered npm discovery finds staged publishes for organizations with valid
 
 The `*/15` discovery cron writes scans and audit events steadily, and D1 has a hard 10 GB ceiling. A second cron, `30 3 * * *` in `wrangler.jsonc`, prunes aged rows. The scheduled handler dispatches on `event.cron`: the retention cron runs `runRetentionPruneCron`, and other scheduled invocations run discovery.
 
-`pruneRetentionData` (`server/db/retention.ts`) deletes `scans` older than `SCAN_RETENTION_DAYS = 180` and `scan_events` older than `SCAN_EVENT_RETENTION_DAYS = 90`. D1 does not enforce foreign keys, so references to pruned scans are cleared manually inside one `db.batch`: child `scan_files` / `scan_findings` rows, `scan_events` tied to the scan, and the `github_workflow_gates.scan_id` representative pointer are cleared before the scan rows are deleted. Each run emits a redacted `retention.prune.swept` operational event; failures emit `retention.prune.failed` and leave the next daily tick to retry.
+`pruneRetentionData` (`server/db/retention.ts`) deletes `scans` older than `SCAN_RETENTION_DAYS = 180` and `scan_events` older than `SCAN_EVENT_RETENTION_DAYS = 90`. D1 does not enforce foreign keys, so references to pruned scans are cleared manually inside one `db.batch`: child `scan_files` / `scan_findings` rows, `scan_events` tied to the scan, and the `github_workflow_gates.scan_id` representative pointer are cleared before the scan rows are deleted. The scan and event sweeps are backed by created-at indexes, and the gate pointer cleanup is backed by `github_workflow_gates_scan_idx`. Each run emits a redacted `retention.prune.swept` operational event; failures emit `retention.prune.failed` and leave the next daily tick to retry.
 
 ## Data stores
 

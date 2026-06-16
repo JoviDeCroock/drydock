@@ -442,6 +442,7 @@ export const githubWorkflowGates = sqliteTable(
       table.status,
     ),
     releaseTargetIdx: index("github_workflow_gates_release_target_idx").on(table.releaseTargetId),
+    scanIdx: index("github_workflow_gates_scan_idx").on(table.scanId),
   }),
 );
 
