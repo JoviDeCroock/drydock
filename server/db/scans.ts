@@ -414,8 +414,10 @@ export async function listScans(
   // mismatch demands attention and stays in the queue.
   if (decisionFilter === "undecided") {
     conditions.push(
-      isNull(scans.decision),
-      or(isNull(scans.releaseStatus), eq(scans.releaseStatus, "released_mismatch"))!,
+      or(
+        eq(scans.releaseStatus, "released_mismatch"),
+        and(isNull(scans.decision), isNull(scans.releaseStatus)),
+      )!,
     );
   } else if (decisionFilter === "publish") conditions.push(eq(scans.decision, "publish"));
   else if (decisionFilter === "no_publish") conditions.push(eq(scans.decision, "no_publish"));
@@ -590,7 +592,9 @@ function readPersistedListRiskSummary(summaryJson: unknown): ScanRiskBreakdown |
 export interface ReconcilableScan {
   id: string;
   stageId: string;
+  /** npm stage-list identity, not the package-controlled tarball manifest. */
   packageName: string | null;
+  /** npm stage-list version, not the package-controlled tarball manifest. */
   stagedVersion: string | null;
   stagedShasum: string | null;
   stageMissingSince: Date | null;
@@ -606,12 +610,11 @@ export async function listScansAwaitingRelease(
   db: AppDb,
   organizationId: string,
 ): Promise<ReconcilableScan[]> {
-  return db
+  const rows = await db
     .select({
       id: scans.id,
       stageId: scans.stageId,
-      packageName: scans.packageName,
-      stagedVersion: scans.stagedVersion,
+      summaryJson: scans.summaryJson,
       stagedShasum: scans.stagedShasum,
       stageMissingSince: scans.stageMissingSince,
     })
@@ -625,6 +628,38 @@ export async function listScansAwaitingRelease(
         inArray(scans.source, ["manual", "auto_discovery"]),
       ),
     );
+
+  return rows.map((row) => {
+    const stageIdentity = readPersistedStageIdentity(row.summaryJson);
+    return {
+      id: row.id,
+      stageId: row.stageId,
+      packageName: stageIdentity.packageName,
+      stagedVersion: stageIdentity.version,
+      stagedShasum: row.stagedShasum,
+      stageMissingSince: row.stageMissingSince,
+    };
+  });
+}
+
+function readPersistedStageIdentity(summaryJson: unknown): {
+  packageName: string | null;
+  version: string | null;
+} {
+  const summary = isRecord(summaryJson) ? summaryJson : null;
+  const stagedPublish = isRecord(summary?.stagedPublish) ? summary.stagedPublish : null;
+  return {
+    packageName: readNonEmptyString(stagedPublish?.packageName),
+    version: readNonEmptyString(stagedPublish?.version),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
 }
 
 export async function markScanStageMissing(

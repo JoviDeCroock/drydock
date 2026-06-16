@@ -354,6 +354,13 @@ export async function reconcileDisappearedStages(input: {
 
   for (const scan of missing) {
     let metadata: RegistryMetadata | null = null;
+    if (!scan.packageName || !scan.stagedVersion) {
+      emitOperationalEvent("warn", "release_reconciliation.stage_identity_missing", {
+        organizationId,
+        scanId: scan.id,
+      });
+      continue;
+    }
     if (scan.packageName) {
       if (metadataByPackage.has(scan.packageName)) {
         metadata = metadataByPackage.get(scan.packageName) ?? null;

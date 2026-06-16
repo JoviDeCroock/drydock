@@ -56,6 +56,8 @@ async function seedCompletedScan(input: {
   organizationId: string;
   ownerUserId: string;
   packageName: string;
+  stagePackageName?: string;
+  stageVersion?: string;
   stagedShasum?: string | null;
   stageMissingSince?: Date | null;
   decision?: string | null;
@@ -64,19 +66,27 @@ async function seedCompletedScan(input: {
   const now = new Date();
   const id = `scan_${crypto.randomUUID()}`;
   const stageId = `stage-${input.packageName}-000001`;
+  const stagePackageName = input.stagePackageName ?? input.packageName;
+  const stageVersion = input.stageVersion ?? "1.2.3";
   await db.insert(schema.scans).values({
     id,
     stageId,
     organizationId: input.organizationId,
     ownerUserId: input.ownerUserId,
     packageName: input.packageName,
-    stagedVersion: "1.2.3",
+    stagedVersion: input.stageVersion ?? "1.2.3",
     stagedShasum: input.stagedShasum === undefined ? STAGED_SHASUM : input.stagedShasum,
     stageMissingSince: input.stageMissingSince ?? null,
     decision: input.decision ?? null,
     risk: "low",
     status: "complete",
     source: "auto_discovery",
+    summaryJson: {
+      stagedPublish: {
+        packageName: stagePackageName,
+        version: stageVersion,
+      },
+    },
     createdAt: now,
     updatedAt: now,
   });
@@ -157,6 +167,12 @@ describe("release reconciliation during the discovery cron", () => {
       ownerUserId: org.userId,
       packageName: "pkg-mismatch",
     });
+    const decidedMismatch = await seedCompletedScan({
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      packageName: "pkg-decided-mismatch",
+      decision: "no_publish",
+    });
     const firstMiss = await seedCompletedScan({
       organizationId: org.organizationId,
       ownerUserId: org.userId,
@@ -201,6 +217,13 @@ describe("release reconciliation during the discovery cron", () => {
           publishedAt,
         });
       }
+      if (url.endsWith("/pkg-decided-mismatch")) {
+        return packumentResponse({
+          packageName: "pkg-decided-mismatch",
+          shasum: "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222",
+          publishedAt,
+        });
+      }
       // Neither pkg-first-miss nor pkg-withdrawn ever published.
       return new Response("not found", { status: 404 });
     });
@@ -230,6 +253,7 @@ describe("release reconciliation during the discovery cron", () => {
       stagedShasum: STAGED_SHASUM,
       publishedShasum: "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222",
     });
+    expect((await scanRow(decidedMismatch.id)).releaseStatus).toBe("released_mismatch");
 
     // First miss starts the withdrawal clock instead of concluding anything.
     const firstMissRow = await scanRow(firstMiss.id);
@@ -254,6 +278,7 @@ describe("release reconciliation during the discovery cron", () => {
     });
     const undecidedIds = undecided.scans.map((scan) => scan.id);
     expect(undecidedIds).toContain(mismatch.id);
+    expect(undecidedIds).toContain(decidedMismatch.id);
     expect(undecidedIds).toContain(firstMiss.id);
     expect(undecidedIds).toContain(stillLive.id);
     expect(undecidedIds).not.toContain(released.id);
@@ -313,5 +338,50 @@ describe("release reconciliation during the discovery cron", () => {
     expect(row.releaseStatus).toBe("released");
     expect(row.decision).toBe("no_publish");
     expect((await eventsForScan(scan.id)).map((e) => e.type)).toContain("scan.release_detected");
+  });
+
+  test("uses the npm stage identity instead of the package manifest identity", async () => {
+    const org = await seedOrg();
+    const scan = await seedCompletedScan({
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      packageName: "pkg-manifest-name",
+      stagePackageName: "pkg-stage-name",
+    });
+
+    const fetchMock = vi.fn(async (input: Request | string | URL) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes("/-/stage")) {
+        return Response.json({ items: [], total: 0, perPage: 50, page: 0 });
+      }
+      if (url.endsWith("/pkg-stage-name")) {
+        return packumentResponse({
+          packageName: "pkg-stage-name",
+          shasum: STAGED_SHASUM,
+          publishedAt: "2026-06-12T11:00:00.000Z",
+        });
+      }
+      if (url.endsWith("/pkg-manifest-name")) {
+        throw new Error("reconciliation used package-controlled manifest name");
+      }
+      return new Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runScheduledSweep();
+
+    const row = await scanRow(scan.id);
+    expect(row.releaseStatus).toBe("released");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://registry.npmjs.org/pkg-stage-name",
+      expect.anything(),
+    );
+    expect(
+      fetchMock.mock.calls.some((call) => String(call[0]).endsWith("/pkg-manifest-name")),
+    ).toBe(false);
+    const event = (await eventsForScan(scan.id)).find((e) => e.type === "scan.release_detected");
+    expect(event?.metadata).toMatchObject({
+      packageName: "pkg-stage-name",
+    });
   });
 });
