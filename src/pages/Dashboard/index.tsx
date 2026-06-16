@@ -336,7 +336,7 @@ function NpmSetupCallout() {
           Connect npm in settings so Drydock can fetch staged tarballs and run reviews.
         </Muted>
       </div>
-      <LinkButton variant="primary" size="sm" href="/dashboard/settings">
+      <LinkButton variant="primary" size="sm" href="/dashboard/settings?tab=integrations">
         Open settings
       </LinkButton>
     </Card>

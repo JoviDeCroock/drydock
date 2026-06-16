@@ -601,7 +601,9 @@ function settingsUrl(env: Cloudflare.Env): string | null {
   const base = env.BETTER_AUTH_URL;
   if (typeof base !== "string" || !base) return null;
   try {
-    return new URL("/dashboard/settings", base).toString();
+    const url = new URL("/dashboard/settings", base);
+    url.searchParams.set("tab", "integrations");
+    return url.toString();
   } catch {
     return null;
   }

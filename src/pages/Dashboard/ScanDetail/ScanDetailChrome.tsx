@@ -128,7 +128,7 @@ export function ScanFailureAlert({ errorJson }: { errorJson: unknown }) {
         <strong>{typeof error?.message === "string" ? error.message : "Review failed."}</strong>
         {guidance ? (
           <span>
-            {guidance.hint} <a href="/dashboard/settings">{guidance.action}</a>
+            {guidance.hint} <a href="/dashboard/settings?tab=integrations">{guidance.action}</a>
           </span>
         ) : null}
         {typeof error?.code === "string" ? (

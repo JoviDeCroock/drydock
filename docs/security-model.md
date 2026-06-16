@@ -126,15 +126,15 @@ The gateway compares URL origins against the configured npm registry and attache
 
 ## PyPI workflow-gate posture
 
-PyPI support is a workflow-gate mode, not an approval bot and not a registry credential path. PyPI Trusted Publishers use OIDC from GitHub Actions, and PyPI strongly encourages binding the publisher to a GitHub Environment. Drydock's GitHub App reviews the built wheel/sdist artifacts while that environment is pending, records an advisory recommendation, and leaves the gate waiting for a human approve/reject decision. Artifact-resolution failures reject the gate fail-closed.
+Workflow-gate support is not an approval bot and not a registry credential path. PyPI Trusted Publishers use OIDC from GitHub Actions, and PyPI strongly encourages binding the publisher to a GitHub Environment; npm workflow gates likewise publish from the workflow after the gate releases. Drydock's GitHub App reviews the built release artifacts while that environment is pending, records an advisory recommendation, and leaves the gate waiting for a human approve/reject decision. Artifact-resolution failures reject the gate fail-closed.
 
-Additional boundaries for PyPI:
+Additional boundaries for workflow gates:
 
-- Do not mint PyPI OIDC tokens or upload to PyPI.
+- Do not mint PyPI OIDC tokens, hold npm publish tokens, or upload to registries.
 - Do not rebuild artifacts after review; the publish job must download the reviewed GitHub Actions artifact bundle and publish those bytes.
-- Treat the held workflow run's uploaded GitHub Actions artifacts as the release set, optionally narrowed by a configured artifact name. Recompute each wheel/sdist SHA-256 from upload bytes, derive package name/version from wheel `METADATA` and sdist `PKG-INFO`, and reject missing identity, cross-artifact identity/version mismatch, or release-target mismatch.
+- Treat the held workflow run's uploaded GitHub Actions artifacts as the release set, optionally narrowed by a configured artifact name. Recompute each artifact's SHA-256 from upload bytes, derive package name/version from artifact metadata (`package.json`, wheel `METADATA`, or sdist `PKG-INFO`), and reject missing identity, cross-artifact identity/version mismatch, or release-target mismatch.
 - There is no maintainer-declared manifest or publish-side digest-match contract today. Byte continuity rests on GitHub artifact immutability plus workflow discipline that forbids rebuilding after the gate.
-- Treat wheel ZIP and sdist tar contents as hostile evidence, with the same no-execution and bounded-sample rules as npm tarballs.
+- Treat wheel ZIP, sdist tar, and npm tarball contents as hostile evidence, with the same no-execution and bounded-sample rules.
 - Keep GitHub Actions artifact credentials in the trusted parent/GitHub integration path; do not pass them into the sandbox.
 
 ## AI prompt-injection posture

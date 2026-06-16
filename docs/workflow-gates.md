@@ -18,7 +18,9 @@ Official references:
 
 ## Implemented foundation
 
-The repo now has a backend-only PyPI foundation in `server/lib/adapters/pypi/index.ts`:
+The repo now has a shared workflow-gate foundation in `server/lib/workflow-gates/`
+with PyPI and npm adapters behind it. The PyPI adapter
+(`server/lib/adapters/pypi/index.ts`):
 
 - derives a `drydock.release-artifacts.v1` release set from the uploaded artifacts (identity from wheel `METADATA` / sdist `PKG-INFO`, digests recomputed from the bytes) — there is no maintainer-declared manifest;
 - exposes a `PackageAdapter` implementation compatible with the pluggable scan pipeline introduced for npm;
@@ -104,8 +106,8 @@ jobs:
 
 No manifest-writing or checksum step is required — CI just builds and uploads
 `dist/*`. PyPI strongly encourages configuring a GitHub Environment for Trusted
-Publishers. Drydock attaches to that same environment as a GitHub custom
-deployment protection rule.
+Publishers; enable Drydock as a GitHub custom deployment protection rule on that
+same environment.
 
 ## GitHub App mapping
 
@@ -397,14 +399,16 @@ the install:
    linked for the org; repository and environment are dropdowns populated from
    the proxy endpoints. A target left unpinned (no ecosystem) auto-detects each
    package's ecosystem from the uploaded artifacts, so a single target gates every
-   package a monorepo publishes from that environment. The server still
-   revalidates installation ownership, repo access, and environment names on
-   `POST /release-targets`, so the UI cannot bypass the rules. Empty states link
-   to GitHub App settings (no repos) and GitHub Actions environments docs (no
-   environments).
-6. Above the release-targets form, a "gate setup" guide walks through installing
-   the App, adding a GitHub Environment custom deployment protection rule, and
-   matching the PyPI Trusted Publisher environment. It states plainly that
+   package a monorepo publishes from that environment. The API still accepts
+   `ecosystem` / `artifactName` for operator-created targets, but the current
+   product UI intentionally uses the monorepo-friendly auto-detect/all-artifacts
+   path. The server still revalidates installation ownership, repo access, and
+   environment names on `POST /release-targets`, so the UI cannot bypass the
+   rules. Empty states link to GitHub App settings (no repos) and GitHub Actions
+   environments docs (no environments).
+6. The public `/docs` page and the Settings card copy walk through installing the
+   App, adding a GitHub Environment custom deployment protection rule, and
+   matching the PyPI Trusted Publisher environment. They state plainly that
    approval releases or blocks the held GitHub job and that publishing happens
    through the workflow's Trusted Publishing OIDC exchange — Drydock never holds
    or sees PyPI credentials.
@@ -435,10 +439,10 @@ diff-first workbench scoped to that package's baseline.
 ### Resolving artifacts for a pending gate
 
 `server/lib/github-app/artifacts.ts` turns a pending gate into a release bundle
-of recomputed-SHA-256 wheel/sdist bytes on the trusted control-plane side, then
-the PyPI `WorkflowGateAdapter` (`server/lib/workflow-gates/pypi.ts`) hands each
-wheel/sdist to the credentials-free `downloadInSandboxInline` sandbox path so the
-same untrusted-archive parser the npm pipeline uses produces bounded
+of recomputed-SHA-256 artifact bytes on the trusted control-plane side, then the
+selected `WorkflowGateAdapter` (`server/lib/workflow-gates/{pypi,npm}.ts`) hands
+each artifact to the credentials-free `downloadInSandboxInline` sandbox path so
+the same untrusted-archive parser the npm pipeline uses produces bounded
 `FileRecord[]` evidence, and derives the release identity from that parsed
 metadata. The ecosystem-neutral plumbing around it (gate/installation/release-
 target loading, adapter selection, bundle fetch) lives in
@@ -819,10 +823,12 @@ distinguish it.
 
 ## Remaining work
 
-- Record the reviewed artifact SHA-256 digests in the persisted report
-  payload (the resolver returns them; the persister doesn't store them yet).
+- Surface reviewed artifact SHA-256 digests in the dashboard/export views. The
+  gate adapters already recompute digests from the bytes and carry them in the
+  persisted scan details; the workbench does not yet render them as first-class
+  provenance fields.
 
 The end-to-end path now works: a maintainer can configure a gate from settings,
 the webhook holds the publish job, the review surfaces in the workbench, and the
-approve/reject decision releases or blocks the job. The digest-persistence item
+approve/reject decision releases or blocks the job. The digest-surfacing item
 above is an audit-trail enrichment, not a gap in the gate.
