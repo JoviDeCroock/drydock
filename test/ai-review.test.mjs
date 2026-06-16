@@ -1,6 +1,12 @@
 import { describe, expect, test } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
-import { AI_MODEL, analyzeWithAi, displayedAiResult } from "../server/lib/ai-review.ts";
+import {
+  AI_FALLBACK_MODEL,
+  AI_MODEL,
+  AI_MODEL_CANDIDATES,
+  analyzeWithAi,
+  displayedAiResult,
+} from "../server/lib/ai-review.ts";
 import {
   buildReviewerSystemPrompt,
   MAX_AGENT_STEPS,
@@ -111,8 +117,10 @@ describe("AI review prompt selection", () => {
 });
 
 describe("ai review orchestration", () => {
-  test("pins the single Kimi reviewer model id", () => {
+  test("pins the reviewer model order", () => {
     expect(AI_MODEL).toBe("@cf/moonshotai/kimi-k2.5");
+    expect(AI_FALLBACK_MODEL).toBe("@cf/qwen/qwen3-30b-a3b-fp8");
+    expect(AI_MODEL_CANDIDATES).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
   });
 
   test("a submit_review tool call produces a complete review and records the model", async () => {
@@ -323,6 +331,40 @@ describe("ai review orchestration", () => {
     expect(ai.status).toBe("unavailable");
     expect(ai.summary).toContain("Capacity temporarily exceeded");
     expect(computeScanRisk([], ai)).toBe("medium");
+  });
+
+  test("a persistent capacity error falls back to the secondary reviewer", async () => {
+    const calls = new Map();
+    const modelFactory = (model) =>
+      mockModel(async () => {
+        calls.set(model, (calls.get(model) ?? 0) + 1);
+        if (model === "primary-reviewer") {
+          throw new Error("3040: Capacity temporarily exceeded, please try again.");
+        }
+        return generateResult(
+          [
+            {
+              type: "tool-call",
+              toolCallId: "submit-1",
+              toolName: "submit_review",
+              input: JSON.stringify(VALID_REVIEW),
+            },
+          ],
+          "tool-calls",
+        );
+      });
+
+    const { review: ai } = await analyzeWithAi(
+      {},
+      ["primary-reviewer", "fallback-reviewer"],
+      BASE_OPTIONS,
+      modelFactory,
+    );
+
+    expect(calls.get("primary-reviewer")).toBe(3);
+    expect(calls.get("fallback-reviewer")).toBe(1);
+    expect(ai.status).toBe("complete");
+    expect(ai.model).toBe("fallback-reviewer");
   });
 
   test("a complete submission slightly over the summary bound is clamped, not discarded", async () => {
