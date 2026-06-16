@@ -9,6 +9,7 @@ import { NpmConnectionModel } from "../../models/npm-connection";
 import { OrganizationModel } from "../../models/organization";
 import { ScanListModel, type ScanDecisionFilter, type ScanListItem } from "../../models/scan";
 import { StagedPublishesModel } from "../../models/staged-publishes";
+import { decisionBadgePresentation } from "./decision-badge";
 import {
   Alert,
   Badge,
@@ -417,12 +418,8 @@ function DecisionBadge({
   decision?: string | null;
   releaseStatus?: string | null;
 }) {
-  if (decision === "publish") return <Badge tone="ok">approved</Badge>;
-  if (decision === "no_publish") return <Badge tone="critical">blocked</Badge>;
-  if (releaseStatus === "released") return <Badge tone="ok">released</Badge>;
-  if (releaseStatus === "released_mismatch") return <Badge tone="critical">release mismatch</Badge>;
-  if (releaseStatus === "withdrawn") return <Badge tone="neutral">withdrawn</Badge>;
-  return <Badge tone="neutral">undecided</Badge>;
+  const badge = decisionBadgePresentation({ decision, releaseStatus });
+  return <Badge tone={badge.tone}>{badge.label}</Badge>;
 }
 
 // Status and Decision are both state columns, so both render as Badges (Status
