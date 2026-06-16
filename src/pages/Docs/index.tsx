@@ -42,8 +42,8 @@ export default function DocsPage() {
         </nav>
       </header>
 
-      <div class="flex max-w-[880px] flex-col gap-14">
-        <section id="staged-publishing" class="flex flex-col gap-8 scroll-mt-6">
+      <div class="flex flex-col gap-14">
+        <section id="staged-publishing" class="flex max-w-[880px] flex-col gap-8 scroll-mt-6">
           <div class="flex flex-col gap-3">
             <SectionLabel>Staged publishing: npm</SectionLabel>
             <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
@@ -112,7 +112,7 @@ export default function DocsPage() {
           </Subsection>
         </section>
 
-        <section id="workflow-gating" class="flex flex-col gap-8 scroll-mt-6">
+        <section id="workflow-gating" class="flex max-w-[880px] flex-col gap-8 scroll-mt-6">
           <div class="flex flex-col gap-3">
             <SectionLabel>
               Workflow gating: PyPI &amp; npm on GitHub Actions <Badge tone="info">Preview</Badge>
@@ -314,7 +314,7 @@ export default function DocsPage() {
           </Subsection>
         </section>
 
-        <section class="flex flex-col gap-4 border-t border-border pt-10">
+        <section class="flex max-w-[880px] flex-col gap-4 border-t border-border pt-10">
           <SectionLabel>Start reviewing releases</SectionLabel>
           <div class="flex flex-wrap gap-3">
             <LinkButton href="/register">Create account</LinkButton>
