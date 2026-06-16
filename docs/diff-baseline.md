@@ -40,7 +40,7 @@ Completed scans persist:
 
 The pipeline cross-checks staged detail package name/version against the staged tarball's `package.json`. A mismatch produces a critical deterministic finding (`stage.metadata-mismatch`) and suppresses tag-based baseline selection for that scan. The staged API also exposes a shasum, but the current sandbox does not hash the compressed tarball bytes, so shasum verification is recorded as future hardening rather than implemented.
 
-## AI token impact
+## AI evidence budget impact
 
 AI review is Flagship-gated and off by default, but when enabled for an organization it should remain diff-first:
 

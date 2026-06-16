@@ -32,7 +32,8 @@ observability coverage by change type.
 ## Worker-suite performance
 
 The `workers` Vitest project runs every test file in its own Miniflare isolate,
-so anything paid per file is paid ~24×. Two deliberate choices keep it fast:
+so every per-file startup cost is multiplied across the suite. Two deliberate
+choices keep it fast:
 
 - **`wrangler.test.jsonc` has no `main`.** The worker tests don't use `SELF` —
   they `import worker from "../../server/index"` and call `worker.fetch(req, env, ctx)`
