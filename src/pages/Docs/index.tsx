@@ -16,30 +16,28 @@ export default function DocsPage() {
         <header class="border-t border-border pt-8 flex flex-col gap-5">
           <Eyebrow tone="accent">Documentation</Eyebrow>
           <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
-            How Drydock guards a publish.
+            Choose where Drydock holds your release.
           </h1>
           <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
             The package that reaches a registry is not the pull request a maintainer reviewed. It is
-            built, packed output shaped by scripts, bundlers, and CI. Drydock holds a release before
-            it goes public, diffs it against the last published version, and pins risk findings to
-            the lines that introduced them. A maintainer makes the final call about what goes live.
-            Drydock never publishes, never holds a publish credential, and never executes package
-            contents.
+            built output shaped by scripts, bundlers, and CI. Drydock pauses npm staged publishes or
+            GitHub-gated PyPI and npm jobs, diffs the candidate against the last published version,
+            and pins findings to changed lines. Maintainers decide; Drydock never publishes, never
+            stores publish credentials, and never executes package contents.
           </p>
           <p class="m-0 max-w-[680px] text-[14px] text-ink-muted leading-[1.65]">
-            How the release is held depends on how you publish. npm can stage a publish on the
-            registry itself. PyPI has no staging step, and some npm setups skip it, so a GitHub
-            Actions environment gate holds the publish job instead. Both paths end in the same
-            review. Pick the one that matches your setup:
+            Use registry staging when npm can hold the candidate. Use workflow gating when GitHub
+            Actions builds the release and a GitHub Environment can pause the publish job. Both
+            paths produce the same review report:
           </p>
           <nav class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-1" aria-label="Integration modes">
             <ModeCard href="#staged-publishing" title="Staged publishing — npm">
-              You publish with <Code>npm publish --stage</Code>. The registry holds the new version,
-              Drydock reviews it, and you confirm the publish in npm with your own 2FA.
+              Run <Code>npm publish --stage</Code>. npm holds a private candidate, Drydock reviews
+              it, and you complete the publish in npm with your own 2FA.
             </ModeCard>
             <ModeCard href="#workflow-gating" title="Workflow gating — PyPI & npm" badge="Preview">
-              You publish from GitHub Actions, with PyPI Trusted Publishing or npm without staging.
-              An environment gate holds the publish job until a maintainer approves the review.
+              GitHub Actions builds and uploads the release artifact. A GitHub Environment pauses
+              publishing until a maintainer approves or rejects the Drydock review.
             </ModeCard>
           </nav>
         </header>
@@ -48,12 +46,12 @@ export default function DocsPage() {
           <div class="flex flex-col gap-3">
             <SectionLabel>Staged publishing — npm</SectionLabel>
             <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-              The registry holds the candidate; the maintainer holds the keys.
+              npm holds the candidate; you keep the approval.
             </h2>
             <Prose>
-              npm lets a maintainer stage a publish: run <Code>npm publish --stage</Code> and the
-              registry holds the new version until you confirm it with 2FA. Drydock reviews what is
-              inside that staged version before you confirm.
+              npm staged publishing gives Drydock a private release candidate to inspect. Run{" "}
+              <Code>npm publish --stage</Code>; npm holds the new version until you confirm with
+              2FA; Drydock reviews the staged tarball before that confirmation.
             </Prose>
           </div>
 
@@ -103,8 +101,8 @@ export default function DocsPage() {
                   the package is executed.
                 </>,
                 <>
-                  Drydock picks the right earlier version to compare against, diffs the two
-                  packages, runs its checks on what changed, and saves the report.
+                  Drydock selects the right earlier version to compare against, diffs the two
+                  packages, checks what changed, and saves the report.
                 </>,
                 <>
                   You read the report on the dashboard and approve the publish in npm with your
@@ -121,21 +119,20 @@ export default function DocsPage() {
               Workflow gating — PyPI &amp; npm on GitHub Actions <Badge tone="info">Preview</Badge>
             </SectionLabel>
             <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-              When the registry can't hold the candidate, the workflow does.
+              When the registry can't pause, the workflow can.
             </h2>
             <Prose>
-              PyPI has no staging step, and not every npm publish uses one. For those releases the
-              publish job itself becomes the checkpoint. CI builds the release files (wheels and
-              sdists for PyPI, packed tarballs for npm) and uploads them, and a GitHub Environment
-              with Drydock's protection rule holds the publish job. Drydock reviews the upload and
-              records a recommendation, but a maintainer makes the decision from the review
-              workbench, and only then is the held job released or blocked. The publish runs on the
-              workflow's own credential, so Drydock never holds it.
+              PyPI has no staging step, and some npm workflows publish directly from CI. In those
+              releases, the publish job becomes the checkpoint: CI builds wheels, sdists, or
+              tarballs, uploads them as a workflow artifact, and enters a GitHub Environment
+              protected by Drydock. Drydock reviews the upload and records a recommendation; a
+              maintainer approves or rejects in the workbench; if approved, the job continues using
+              its own credential.
             </Prose>
             <Prose>
-              PyPI and npm sit behind the same gate, and Drydock works out each package's ecosystem
-              from the uploaded files on its own. This walkthrough uses PyPI as the example. For
-              npm, a workflow gate is the alternative to{" "}
+              PyPI and npm use the same gate. Drydock detects each package's ecosystem from the
+              uploaded files, so this walkthrough uses PyPI as the example. For npm, a workflow gate
+              is the alternative to{" "}
               <a class="underline" href="#staged-publishing">
                 staged-publish review
               </a>{" "}
@@ -183,8 +180,9 @@ export default function DocsPage() {
             <Prose>
               There is no manifest to write. CI builds and uploads <Code>dist/*</Code>, and Drydock
               treats every <Code>.whl</Code>, <Code>.tar.gz</Code>, and <Code>.tgz</Code> it finds
-              in the upload as part of the release. Drydock inspects every non-expired artifact from
-              the held run and fails closed if an archive is ambiguous.
+              in the upload as part of the release. The settings form can narrow this down to one
+              artifact name; when left blank, Drydock inspects every non-expired artifact from the
+              held run and fails closed if an archive is ambiguous.
             </Prose>
             <Prose>
               Drydock reads each package's name and version out of the files themselves and
@@ -320,7 +318,7 @@ export default function DocsPage() {
         </section>
 
         <section class="flex flex-col gap-4 border-t border-border pt-10">
-          <SectionLabel>Set up an organization</SectionLabel>
+          <SectionLabel>Start reviewing releases</SectionLabel>
           <div class="flex flex-wrap gap-3">
             <LinkButton href="/register">Create account</LinkButton>
             <LinkButton href="/login" variant="secondary">
