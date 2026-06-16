@@ -17,6 +17,7 @@ const npmConnectionMock = vi.hoisted(() => ({
   validateNpmCredential: vi.fn(),
 }));
 const stagedPublishesMock = vi.hoisted(() => ({
+  checkStagedPublishAccess: vi.fn(),
   listStagedPublishes: vi.fn(),
   StagedPublishesFetchError: class StagedPublishesFetchError extends Error {},
 }));
@@ -39,6 +40,11 @@ const ctx = { waitUntil: vi.fn() };
 const db = {};
 
 beforeEach(() => {
+  stagedPublishesMock.checkStagedPublishAccess.mockResolvedValue({
+    allowed: true,
+    status: 206,
+    detail: null,
+  });
   npmConnectionMock.decryptNpmToken.mockResolvedValue("npm_secret_token");
   npmConnectionMock.validateNpmCredential.mockResolvedValue({
     ok: true,
@@ -286,6 +292,47 @@ describe("discoverAndQueueStagedPublishes", () => {
       expect.objectContaining({ source: "auto_discovery", stageId: "stage-new-1" }),
     );
     expect(dbMock.markNpmConnectionUsed).toHaveBeenCalledWith(db, "org_a");
+  });
+
+  test("filters stage ids the organization token cannot access before creating scans", async () => {
+    stagedPublishesMock.listStagedPublishes.mockResolvedValue({
+      items: [
+        { id: "stage-allowed", packageName: "@org/allowed", version: "1.0.0" },
+        { id: "stage-denied", packageName: "@other/denied", version: "1.0.0" },
+      ],
+    });
+    stagedPublishesMock.checkStagedPublishAccess
+      .mockResolvedValueOnce({ allowed: true, status: 206, detail: null })
+      .mockResolvedValueOnce({ allowed: false, status: 403, detail: "Forbidden" });
+    dbMock.listExistingScanStageIds.mockResolvedValue(new Set());
+    dbMock.createScanJob.mockResolvedValue({ id: "scan-allowed" });
+
+    const result = await discoverAndQueueStagedPublishes(
+      {
+        db,
+        env,
+        executionCtx: ctx,
+        organizationId: "org_a",
+        actorUserId: "user_a",
+        source: "auto_discovery",
+        eventSource: "staged_publishes.cron",
+      },
+      { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({ found: 2, created: 1, skipped: 1, queued: true }),
+    );
+    expect(stagedPublishesMock.checkStagedPublishAccess).toHaveBeenCalledTimes(2);
+    expect(dbMock.createScanJob).toHaveBeenCalledTimes(1);
+    expect(dbMock.createScanJob).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ stageId: "stage-allowed" }),
+    );
+    expect(env.SCAN_QUEUE.send).toHaveBeenCalledTimes(1);
+    expect(env.SCAN_QUEUE.send).toHaveBeenCalledWith(
+      expect.objectContaining({ stageId: "stage-allowed" }),
+    );
   });
 
   test("fetches additional staged publish pages before deduping", async () => {

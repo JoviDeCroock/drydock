@@ -1,7 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   createDb,
   ensurePersonalOrganization,
@@ -62,6 +62,10 @@ async function connectValidNpmToken(owner: SeededUser, token: string) {
 }
 
 describe("scans route queue behavior", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   test("POST /scans enqueues a token-free scan message and records the queue event", async () => {
     const owner = await seedUser();
     const token = "npm_route_queue_secret_0123456789";
@@ -69,6 +73,17 @@ describe("scans route queue behavior", () => {
     const queue = { send: vi.fn(async () => undefined) };
     const app = buildTestApp(owner);
     const ctx = createExecutionContext();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        expect(String(url)).toBe(
+          "https://registry.npmjs.org/-/stage/stage-route-queue-000001/tarball",
+        );
+        expect((init?.headers as Record<string, string>)?.authorization).toBe(`Bearer ${token}`);
+        expect((init?.headers as Record<string, string>)?.range).toBe("bytes=0-0");
+        return new Response("", { status: 206 });
+      }),
+    );
 
     const res = await app.fetch(
       new Request("http://test.local/api/v1/scans", {
@@ -104,6 +119,38 @@ describe("scans route queue behavior", () => {
       .from(schema.scanEvents)
       .where(eq(schema.scanEvents.scanId, body.scan.id));
     expect(events.map((event) => event.type)).toContain("scan.queued");
+  });
+
+  test("POST /scans rejects stage ids the organization token cannot access before persisting", async () => {
+    const owner = await seedUser();
+    await connectValidNpmToken(owner, "npm_route_denied_secret_0123456789");
+    const queue = { send: vi.fn(async () => undefined) };
+    const app = buildTestApp(owner);
+    const ctx = createExecutionContext();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("forbidden", { status: 403 })),
+    );
+
+    const res = await app.fetch(
+      new Request("http://test.local/api/v1/scans", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ stageId: "stage-route-denied-000001" }),
+      }),
+      { ...env, SCAN_QUEUE: queue } as unknown as Bindings,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(403);
+    expect(queue.send).not.toHaveBeenCalled();
+    const db = createDb(env.DB);
+    const scans = await db
+      .select()
+      .from(schema.scans)
+      .where(eq(schema.scans.organizationId, owner.organizationId));
+    expect(scans).toHaveLength(0);
   });
 
   test("POST /scans rejects client-controlled scan limits before queueing", async () => {

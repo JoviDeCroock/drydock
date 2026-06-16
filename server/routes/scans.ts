@@ -34,7 +34,11 @@ import {
   writeCompareMetadataCache,
 } from "../lib/compare-cache";
 import { rateLimitResponse } from "../lib/http";
-import { allowInsecureLocalRegistry, getOrganizationNpmToken } from "../lib/npm-connection";
+import {
+  allowInsecureLocalRegistry,
+  decryptNpmToken,
+  getOrganizationNpmToken,
+} from "../lib/npm-connection";
 import { isPublishedTarballUrlAllowed } from "../lib/published-tarball";
 import {
   compareSemver,
@@ -48,6 +52,7 @@ import { parseScanInput } from "../lib/scan-input";
 import { reportExportFilename, serializeReportExport } from "../lib/report-export";
 import { executeScanJob, type ScanQueueMessage } from "../lib/scan-job";
 import { roleCanManageIntegrations } from "../lib/roles";
+import { checkStagedPublishAccess } from "../lib/staged-publishes";
 import type { Bindings, ScanInput, Variables } from "../types";
 
 export const scansRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -79,6 +84,19 @@ scansRoutes.post("/", async (c) => {
       return c.json(
         { error: "Validate the organization npm token before scanning staged publishes." },
         400,
+      );
+    }
+    const token = await decryptNpmToken(c.env, npmConnection);
+    const access = await checkStagedPublishAccess(npmConnection.registryUrl, token, input.stageId, {
+      allowInsecureLocalhost: allowInsecureLocalRegistry(c.env),
+    });
+    if (!access.allowed) {
+      return c.json(
+        {
+          error: "This organization's npm token cannot access that staged publish.",
+          status: access.status,
+        },
+        403,
       );
     }
 

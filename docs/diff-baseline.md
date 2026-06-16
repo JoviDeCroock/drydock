@@ -30,6 +30,8 @@ The CLI docs also state that the staged tag follows normal publish tag behavior,
 
 The API gives us the staged tag. It does not document an explicit "previous version", nor a snapshot of the tag target at stage creation time. Because npm allows normal publishes while staged packages are pending, the tag target can theoretically move between stage creation and our scan. Therefore, tag-following baseline selection should be treated as an inference from current registry metadata, not as a registry-provided historical fact.
 
+Discovery treats `GET /-/stage` as an account-wide candidate list, not as proof that the organization token is authorized for each publish. Before creating a review, Drydock probes the staged tarball endpoint with that organization token and only persists/queues scans for stage IDs that the token can actually access. Per-stage 401/403/404 responses are filtered out instead of becoming failed reviews.
+
 ## Baseline data stored on reports
 
 Completed scans persist:

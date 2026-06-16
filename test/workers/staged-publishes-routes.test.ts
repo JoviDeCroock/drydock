@@ -76,6 +76,9 @@ describe("staged publishes route", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string | URL | Request) => {
+        if (String(url) === "https://registry.npmjs.org/-/stage/stage-new-123/tarball") {
+          return new Response("", { status: 206 });
+        }
         expect(String(url)).toBe("https://registry.npmjs.org/-/stage?perPage=50");
         return Response.json({
           items: [

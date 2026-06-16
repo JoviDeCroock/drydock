@@ -14,6 +14,13 @@ const activeOrgMock = vi.hoisted(() => ({
 const scanJobMock = vi.hoisted(() => ({
   executeScanJob: vi.fn(),
 }));
+const npmConnectionMock = vi.hoisted(() => ({
+  decryptNpmToken: vi.fn(),
+}));
+const stagedPublishesMock = vi.hoisted(() => ({
+  checkStagedPublishAccess: vi.fn(),
+  StagedPublishesFetchError: class StagedPublishesFetchError extends Error {},
+}));
 
 vi.mock("cloudflare:workers", () => ({
   WorkerEntrypoint: class {},
@@ -24,6 +31,14 @@ vi.mock("../server/db/index.ts", async (importOriginal) => {
 });
 vi.mock("../server/lib/active-organization.ts", () => activeOrgMock);
 vi.mock("../server/lib/scan-job.ts", () => scanJobMock);
+vi.mock("../server/lib/npm-connection.ts", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, ...npmConnectionMock };
+});
+vi.mock("../server/lib/staged-publishes.ts", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, ...stagedPublishesMock };
+});
 
 const { scansRoutes } = await import("../server/routes/scans.ts");
 
@@ -42,6 +57,8 @@ afterEach(() => {
     ...Object.values(dbMock),
     activeOrgMock.requireActiveOrganization,
     scanJobMock.executeScanJob,
+    npmConnectionMock.decryptNpmToken,
+    stagedPublishesMock.checkStagedPublishAccess,
   ]) {
     fn.mockReset();
   }
@@ -50,9 +67,18 @@ afterEach(() => {
 describe("scans route background fallback", () => {
   test("runs the waitUntil fallback as a final attempt because no queue retry will occur", async () => {
     activeOrgMock.requireActiveOrganization.mockResolvedValue("org_route");
-    dbMock.getNpmConnection.mockResolvedValue({ validationStatus: "valid" });
+    dbMock.getNpmConnection.mockResolvedValue({
+      validationStatus: "valid",
+      registryUrl: "https://registry.npmjs.org",
+    });
     dbMock.createScanJob.mockResolvedValue({
       scan: { id: "scan_route", stageId: "stage-route-bg-000001" },
+    });
+    npmConnectionMock.decryptNpmToken.mockResolvedValue("npm_secret_token");
+    stagedPublishesMock.checkStagedPublishAccess.mockResolvedValue({
+      allowed: true,
+      status: 206,
+      detail: null,
     });
     scanJobMock.executeScanJob.mockResolvedValue({ id: "scan_route" });
     const backgrounded = [];
