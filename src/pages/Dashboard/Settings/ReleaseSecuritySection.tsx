@@ -114,12 +114,6 @@ export function ReleaseSecuritySection({
               >
                 {saving ? "Saving…" : "Require two-factor for releases"}
               </Button>
-              {active.isPersonal ? (
-                <Muted class="text-[12px] m-0">
-                  This is your personal workspace, so the policy only affects you. It matters most
-                  for organizations with multiple members.
-                </Muted>
-              ) : null}
             </div>
           )
         ) : (
