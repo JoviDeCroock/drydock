@@ -26,7 +26,9 @@ export function extensionIdFromManifest(
 export function normalizeVsixFiles(files: FileRecord[]): FileRecord[] {
   return files
     .map((file) => {
-      if (!file.path.startsWith("extension/")) return file;
+      // VSIX ZIPs store the installed extension payload under `extension/`.
+      // Container-level metadata must not shadow payload paths after stripping.
+      if (!file.path.startsWith("extension/")) return null;
       const path = file.path.slice("extension/".length);
       return path ? { ...file, path } : null;
     })

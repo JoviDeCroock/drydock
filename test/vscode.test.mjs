@@ -60,6 +60,34 @@ function extensionPackageJson(overrides = {}) {
 }
 
 describe("VS Code extension review adapter", () => {
+  test("uses extension/package.json instead of a top-level decoy manifest", () => {
+    const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
+      { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
+    ]);
+    const review = createVscodeExtensionReview({
+      manifest,
+      artifact: artifact([
+        file(
+          "package.json",
+          JSON.stringify({
+            name: "benign-decoy",
+            publisher: "example",
+            version: "1.0.0",
+            engines: { vscode: "^1.80.0" },
+            activationEvents: ["onCommand:benign.run"],
+          }),
+        ),
+        file("extension/package.json", extensionPackageJson()),
+        file("extension/out/extension.js", "exports.activate = () => {};"),
+      ]),
+    });
+
+    expect(review.package).toEqual({ name: "example.remote-text-fetcher", version: "1.0.0" });
+    expect(review.ruleFindings.map((finding) => finding.ruleId)).toEqual(
+      expect.arrayContaining([VSCODE_RULE_IDS.broadActivation]),
+    );
+  });
+
   test("detects startup remote command loader behavior in a VSIX", () => {
     const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
       { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
