@@ -55,6 +55,18 @@ pnpm exec wrangler kv namespace create COMPARE_CACHE
 pnpm exec wrangler r2 bucket create staged-publish-review-artifacts
 ```
 
+The checked-in `wrangler.jsonc` is the Drydock deployment config. Before
+deploying from another Cloudflare account, replace account-owned values:
+
+- `d1_databases[].database_id` and `kv_namespaces[].id`;
+- custom `routes` for `drydock.org` / `drydock.resynapse.dev`, or remove
+  `routes` and use `workers_dev` / your own routes instead;
+- the `flagship` app id if you use Cloudflare Flagship for AI review, or remove
+  the `flagship` block to keep AI review disabled;
+- public integration vars such as `BETTER_AUTH_URL`, `EMAIL_FROM_ADDRESS`,
+  `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`, and
+  `SLACK_CLIENT_ID`.
+
 Keep the queue consumer `max_retries` and `dead_letter_queue` settings aligned
 with `MAX_SCAN_JOB_ATTEMPTS` in `server/lib/scan-job.ts`.
 
