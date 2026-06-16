@@ -208,13 +208,10 @@ function Strong({ children }: { children: ComponentChildren }) {
 
 function List({ items }: { items: ComponentChildren[] }) {
   return (
-    <ul class="list-none p-0 m-0 flex flex-col gap-2.5 max-w-[680px]">
+    <ul class="list-disc pl-5 m-0 flex flex-col gap-2.5 max-w-[680px]">
       {items.map((item, index) => (
-        <li key={index} class="grid grid-cols-[0.75rem_minmax(0,1fr)] gap-x-2.5">
-          <span class="font-mono text-[13px] text-ink-subtle leading-[1.65]" aria-hidden>
-            ·
-          </span>
-          <span class="text-[14px] text-ink-muted leading-[1.65]">{item}</span>
+        <li key={index} class="text-[14px] text-ink-muted leading-[1.65] marker:text-ink-subtle">
+          {item}
         </li>
       ))}
     </ul>
