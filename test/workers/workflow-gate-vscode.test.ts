@@ -8,7 +8,10 @@ import {
 } from "../../server/lib/workflow-gates/registry";
 import { resolveBundleArtifacts } from "../../server/lib/workflow-gates/resolve";
 import { vscodeWorkflowGateAdapter } from "../../server/lib/workflow-gates/vscode";
-import type { ResolvedReleaseBundle } from "../../server/lib/github-app/artifacts";
+import {
+  type ResolvedReleaseBundle,
+  WorkflowArtifactError,
+} from "../../server/lib/github-app/artifacts";
 
 const SHA = "cd".repeat(32);
 
@@ -98,6 +101,29 @@ describe("VS Code workflow-gate adapter", () => {
       package: "example.remote-text-fetcher",
       version: "1.0.0",
     });
+  });
+
+  test("fails closed when a VSIX artifact has no extension manifest", () => {
+    expect(() =>
+      vscodeWorkflowGateAdapter.prepareReleaseCandidates([
+        {
+          path: "dist/malformed.vsix",
+          sha256: SHA,
+          ecosystem: "vscode",
+          kind: "vsix",
+          files: [
+            {
+              path: "extension/out/extension.js",
+              size: 26,
+              sha256: "00",
+              flags: [],
+              textSample: "exports.activate = () => {};",
+            },
+          ],
+          packageJson: null,
+        },
+      ]),
+    ).toThrow(WorkflowArtifactError);
   });
 });
 

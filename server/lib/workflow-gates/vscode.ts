@@ -45,7 +45,7 @@ function deriveVscodeReleaseCandidates(
 ): PreparedReleaseCandidate[] {
   return artifacts.map((artifact) => {
     const files = normalizeVsixFiles(artifact.files);
-    const { manifest: extensionManifest } = parseVscodeExtensionManifest(files);
+    const { manifest: extensionManifest } = parseExtensionManifest(artifact, files);
     const extensionId = extensionIdFromManifest(extensionManifest);
     const manifest = buildManifest(extensionId, extensionManifest.version, artifact);
     return {
@@ -61,6 +61,19 @@ function deriveVscodeReleaseCandidates(
       package: { name: manifest.package, version: manifest.version },
     };
   });
+}
+
+function parseExtensionManifest(artifact: ParsedGateArtifact, files: ParsedGateArtifact["files"]) {
+  try {
+    return parseVscodeExtensionManifest(files);
+  } catch (err) {
+    throw new WorkflowArtifactError(
+      "artifact_identity_missing",
+      err instanceof Error
+        ? `${artifact.path}: ${err.message}`
+        : `${artifact.path}: VSIX extension identity is not valid`,
+    );
+  }
 }
 
 function buildManifest(extensionId: string, version: string, artifact: ParsedGateArtifact) {
