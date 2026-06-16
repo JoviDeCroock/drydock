@@ -1,0 +1,1 @@
+ALTER TABLE `organizations` ADD `require_two_factor_for_release_decisions` integer DEFAULT false NOT NULL;

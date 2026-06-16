@@ -148,6 +148,13 @@
       "when": 1781543124536,
       "tag": "0020_gifted_leo",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1781546985955,
+      "tag": "0021_magical_exiles",
+      "breakpoints": true
     }
   ]
 }

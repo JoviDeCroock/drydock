@@ -4,6 +4,7 @@ import {
   createDb,
   enforceRateLimit,
   getScan,
+  organizationRequiresTwoFactorForReleaseDecisions,
   recordGatePackageDecision,
   recordScanEvent,
 } from "../db";
@@ -405,7 +406,11 @@ githubAppRoutes.get("/workflow-gates/by-scan/:scanId", async (c) => {
   const gate = await getGateByScanId(db, organizationId, scanId);
   if (!gate) return c.json({ error: "not found" }, 404);
   const packages = await listGatePackageScans(db, organizationId, gate.id);
-  return c.json({ gate: publicWorkflowGate(gate, packages) });
+  const orgRequiresTwoFactor = await organizationRequiresTwoFactorForReleaseDecisions(
+    db,
+    organizationId,
+  );
+  return c.json({ gate: publicWorkflowGate(gate, packages, orgRequiresTwoFactor) });
 });
 
 // Record a maintainer's decision on one package of a gate and, once the whole
@@ -458,6 +463,14 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     throw err;
   }
 
+  // Org-wide policy: when on, the step-up below is mandatory for every member
+  // and an unenrolled member cannot decide at all. Looked up once so every gate
+  // returned from this handler carries a consistent flag for the dialog.
+  const orgRequiresTwoFactor = await organizationRequiresTwoFactorForReleaseDecisions(
+    db,
+    organizationId,
+  );
+
   const gateId = c.req.param("gateId");
   const existing = await getGateForOrganization(db, organizationId, gateId);
   if (!existing) return c.json({ error: "not found" }, 404);
@@ -486,7 +499,7 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     const packages = await listGatePackageScans(db, organizationId, gateId);
     return c.json(
       {
-        gate: publicWorkflowGate(existing, packages),
+        gate: publicWorkflowGate(existing, packages, orgRequiresTwoFactor),
         error: "approval requires a completed workflow-gate review batch",
       },
       409,
@@ -497,13 +510,28 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   // — approval immediately releases the GitHub job and publishing proceeds via
   // Trusted Publishing/OIDC, which can't be reversed. So a maintainer who has
   // enrolled in two-factor auth must prove a *fresh* second factor here; an
-  // existing session is not enough. Members without 2FA decide as before. This
-  // runs only after the decision is confirmed actionable above, so an enrolled
-  // maintainer is never prompted for a code on a decision that would 409 anyway.
-  // (The staged-publish decision in scans.ts is an audit record only — it never
-  // publishes or cancels anything — and deliberately never requires this.)
+  // existing session is not enough. On top of that, an org can require 2FA for
+  // every release decision: then an unenrolled member is blocked outright (must
+  // enroll first) and enrolled members still step up. With the policy off, only
+  // enrolled members step up and others decide as before. This runs only after
+  // the decision is confirmed actionable above, so a maintainer is never
+  // prompted for a code (or blocked for enrollment) on a decision that would 409
+  // anyway. (The staged-publish decision in scans.ts is an audit record only —
+  // it never publishes or cancels anything — and deliberately never requires
+  // this.)
   let twoFactorVerified = false;
-  if (await userHasTwoFactor(db, session.userId)) {
+  const userEnrolledInTwoFactor = await userHasTwoFactor(db, session.userId);
+  if (orgRequiresTwoFactor && !userEnrolledInTwoFactor) {
+    return c.json(
+      {
+        error:
+          "your organization requires two-factor authentication to decide release gates — enable it in Settings, then try again",
+        code: "two_factor_enrollment_required",
+      },
+      403,
+    );
+  }
+  if (orgRequiresTwoFactor || userEnrolledInTwoFactor) {
     try {
       await enforceRateLimit(db, {
         key: `github-app:gate-decision-2fa:${session.userId}`,
@@ -550,7 +578,7 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     const currentPackages = await listGatePackageScans(db, organizationId, gateId);
     return c.json(
       {
-        gate: current ? publicWorkflowGate(current, currentPackages) : null,
+        gate: current ? publicWorkflowGate(current, currentPackages, orgRequiresTwoFactor) : null,
         error:
           current?.status === "pending"
             ? "package has already been decided"
@@ -567,12 +595,12 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   const allApproved = packages.length > 0 && packages.every((pkg) => pkg.decision === "publish");
   if (!anyRejected && !allApproved) {
     // Other packages still need a decision; keep the deployment held.
-    return c.json({ gate: publicWorkflowGate(existing, packages) });
+    return c.json({ gate: publicWorkflowGate(existing, packages, orgRequiresTwoFactor) });
   }
   if (allApproved && !existing.scanId) {
     return c.json(
       {
-        gate: publicWorkflowGate(existing, packages),
+        gate: publicWorkflowGate(existing, packages, orgRequiresTwoFactor),
         error: "approval requires a completed workflow-gate review batch",
       },
       409,
@@ -593,7 +621,7 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     const current = await getGateForOrganization(db, organizationId, gateId);
     return c.json(
       {
-        gate: current ? publicWorkflowGate(current, packages) : null,
+        gate: current ? publicWorkflowGate(current, packages, orgRequiresTwoFactor) : null,
         error: "gate has already been decided",
       },
       409,
@@ -622,6 +650,7 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
         packageCount: packages.length,
         twoFactor: twoFactorVerified,
         twoFactorMethod: twoFactorVerified ? "totp" : null,
+        twoFactorRequiredByOrg: orgRequiresTwoFactor,
       },
     });
   } catch (err) {
@@ -633,7 +662,7 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     });
   }
 
-  return c.json({ gate: publicWorkflowGate(decided, packages) });
+  return c.json({ gate: publicWorkflowGate(decided, packages, orgRequiresTwoFactor) });
 });
 
 // Re-run a failed workflow-gate review batch. The retry is intentionally scoped
@@ -665,10 +694,14 @@ githubAppRoutes.post("/workflow-gates/:gateId/retry", async (c) => {
 
   const reset = await resetGateReviewForRetry(db, { gateId, organizationId });
   const packages = await listGatePackageScans(db, organizationId, gateId);
+  const orgRequiresTwoFactor = await organizationRequiresTwoFactorForReleaseDecisions(
+    db,
+    organizationId,
+  );
   if (!reset) {
     return c.json(
       {
-        gate: publicWorkflowGate(existing, packages),
+        gate: publicWorkflowGate(existing, packages, orgRequiresTwoFactor),
         error: "gate review is not retryable",
       },
       409,
@@ -688,7 +721,10 @@ githubAppRoutes.post("/workflow-gates/:gateId/retry", async (c) => {
 
   const gate = await getGateForOrganization(db, organizationId, gateId);
   return c.json(
-    { gate: publicWorkflowGate(gate ?? existing, packages), queued: Boolean(c.env.SCAN_QUEUE) },
+    {
+      gate: publicWorkflowGate(gate ?? existing, packages, orgRequiresTwoFactor),
+      queued: Boolean(c.env.SCAN_QUEUE),
+    },
     202,
   );
 });
@@ -775,7 +811,14 @@ function publicReleaseTarget(record: ReleaseTargetRecord) {
 // so the credentialed egress target is never exposed to the browser. `packages`
 // is one entry per distinct package the release publishes (a monorepo fans out
 // into several); the gate releases only once every package is approved.
-function publicWorkflowGate(record: WorkflowGateRecord, packages: GatePackageScan[] = []) {
+// `organizationRequiresTwoFactor` surfaces the org policy so the decision dialog
+// can prompt for a code (or block an unenrolled member) before submitting,
+// matching what the route enforces server-side.
+function publicWorkflowGate(
+  record: WorkflowGateRecord,
+  packages: GatePackageScan[] = [],
+  organizationRequiresTwoFactor = false,
+) {
   return {
     id: record.id,
     organizationId: record.organizationId,
@@ -789,6 +832,7 @@ function publicWorkflowGate(record: WorkflowGateRecord, packages: GatePackageSca
     reportUrl: record.reportUrl,
     scanId: record.scanId,
     failureReason: record.failureReason,
+    organizationRequiresTwoFactor,
     packages: packages.map((pkg) => ({
       scanId: pkg.scanId,
       packageName: pkg.packageName,

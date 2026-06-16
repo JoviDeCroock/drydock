@@ -1,6 +1,6 @@
 import { computed, createModel, signal } from "@preact/signals";
 import { activeOrganizationId, setActiveOrganizationId } from "./active-organization";
-import { apiFetch, apiJson, errorMessage } from "./api";
+import { ApiError, apiFetch, apiJson, errorMessage } from "./api";
 
 export interface Organization {
   id: string;
@@ -9,6 +9,7 @@ export interface Organization {
   role: string;
   isPersonal: boolean;
   npmConnectionConfigured: boolean;
+  requireTwoFactorForReleaseDecisions: boolean;
   createdAt: string | number | Date;
   updatedAt: string | number | Date;
 }
@@ -17,7 +18,31 @@ interface ListResponse {
   organizations: Organization[];
 }
 
-export type OrganizationStatus = "idle" | "loading" | "creating" | "renaming" | "deleting";
+export type OrganizationStatus =
+  | "idle"
+  | "loading"
+  | "creating"
+  | "renaming"
+  | "deleting"
+  | "updating";
+
+// The release-two-factor route answers with stable codes; map them to copy that
+// matches what the owner must do. `apiFetch` rewrites the generic 401 message but
+// preserves `code`, so we key off the code rather than the message text.
+function releaseTwoFactorErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.code === "two_factor_enrollment_required") {
+      return "Enable two-factor authentication on your own account first, then change this policy.";
+    }
+    if (err.code === "two_factor_required") {
+      return "Enter the code from your authenticator app to stop requiring two-factor.";
+    }
+    if (err.code === "two_factor_invalid") {
+      return "That authentication code is invalid or expired — enter the current code.";
+    }
+  }
+  return errorMessage(err);
+}
 
 export const OrganizationModel = createModel(() => {
   const organizations = signal<Organization[]>([]);
@@ -137,6 +162,34 @@ export const OrganizationModel = createModel(() => {
         return true;
       } catch (err) {
         this.error.value = errorMessage(err);
+        return false;
+      } finally {
+        this.status.value = "idle";
+      }
+    },
+
+    // Changing the policy is 2FA-guarded server-side: enabling requires the owner
+    // be enrolled, and disabling requires a fresh `totpCode` (passed only on the
+    // relax path). Codes are surfaced as friendly copy below.
+    async setReleaseTwoFactor(
+      organizationId: string,
+      enabled: boolean,
+      totpCode?: string | null,
+    ): Promise<boolean> {
+      this.status.value = "updating";
+      this.error.value = null;
+      try {
+        await apiJson<{ requireTwoFactorForReleaseDecisions: boolean }>(
+          `/api/v1/organizations/${encodeURIComponent(organizationId)}/release-two-factor`,
+          { enabled, totpCode: totpCode?.trim() || undefined },
+          { method: "PUT" },
+        );
+        // Reload so `active.requireTwoFactorForReleaseDecisions` reflects the new
+        // policy everywhere that reads the org list.
+        await this.load();
+        return true;
+      } catch (err) {
+        this.error.value = releaseTwoFactorErrorMessage(err);
         return false;
       } finally {
         this.status.value = "idle";

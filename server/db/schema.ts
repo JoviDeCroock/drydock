@@ -26,6 +26,15 @@ export const organizations = sqliteTable(
     ownerUserId: text("owner_user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    // When true, every member must prove a fresh second factor before deciding a
+    // release gate — and a member who has not enrolled in 2FA cannot decide one
+    // at all. Off by default so existing orgs keep today's per-user step-up
+    // behavior (enrolled members step up; others decide without a code).
+    requireTwoFactorForReleaseDecisions: integer("require_two_factor_for_release_decisions", {
+      mode: "boolean",
+    })
+      .notNull()
+      .default(false),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },

@@ -3,7 +3,13 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import * as OTPAuth from "otpauth";
 import worker from "../../server/index";
-import { createDb, createScanJob, ensurePersonalOrganization, persistScan } from "../../server/db";
+import {
+  createDb,
+  createScanJob,
+  ensurePersonalOrganization,
+  persistScan,
+  setRequireTwoFactorForReleaseDecisions,
+} from "../../server/db";
 import * as schema from "../../server/db/schema";
 import {
   createReleaseTarget,
@@ -388,4 +394,101 @@ describe("workflow-gate decision 2FA step-up", () => {
     expect(res.json).toMatchObject({ gate: { status: "approved", decision: "approved" } });
     expect(decisionCalls).toHaveLength(1);
   });
+});
+
+// When the org turns on `requireTwoFactorForReleaseDecisions`, the per-user
+// step-up becomes a hard requirement for *every* member: an unenrolled member is
+// blocked outright (must enroll first) and enrolled members must still present a
+// fresh code. This is the org-level policy on top of the per-user check above.
+describe("workflow-gate decision org-enforced 2FA", () => {
+  test(
+    "an unenrolled member is blocked when the org requires 2FA",
+    { timeout: 30_000 },
+    async () => {
+      const jar: Jar = new Map();
+      const userId = await signUp(jar);
+      const organizationId = personalOrganizationId(userId);
+      await ensurePersonalOrganization(createDb(env.DB), { userId });
+      await setRequireTwoFactorForReleaseDecisions(createDb(env.DB), organizationId, true);
+      const { gateId, scanId } = await seedDecidableGate(organizationId, userId);
+
+      const decisionCalls: { state: string }[] = [];
+      mockGithubDecisionFetch(decisionCalls);
+
+      const res = await call("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
+        body: { decision: "approved", scanId },
+        jar,
+        env: await githubEnv(),
+      });
+
+      expect(res.res.status).toBe(403);
+      expect(res.json).toMatchObject({ code: "two_factor_enrollment_required" });
+      // No enrollment, no code, no release: the gate stays held and GitHub is
+      // never told to release the job.
+      const stored = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
+      expect(stored?.status).toBe("pending");
+      expect(decisionCalls).toHaveLength(0);
+    },
+  );
+
+  test(
+    "an enrolled member still needs a fresh code when the org requires 2FA",
+    { timeout: 30_000 },
+    async () => {
+      const jar: Jar = new Map();
+      const userId = await signUp(jar);
+      await enrollTwoFactor(jar);
+      const organizationId = personalOrganizationId(userId);
+      await ensurePersonalOrganization(createDb(env.DB), { userId });
+      await setRequireTwoFactorForReleaseDecisions(createDb(env.DB), organizationId, true);
+      const { gateId, scanId } = await seedDecidableGate(organizationId, userId);
+
+      const decisionCalls: { state: string }[] = [];
+      mockGithubDecisionFetch(decisionCalls);
+
+      const res = await call("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
+        body: { decision: "approved", scanId },
+        jar,
+        env: await githubEnv(),
+      });
+
+      expect(res.res.status).toBe(401);
+      expect(res.json).toMatchObject({ code: "two_factor_required" });
+      const stored = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
+      expect(stored?.status).toBe("pending");
+      expect(decisionCalls).toHaveLength(0);
+    },
+  );
+
+  test(
+    "an enrolled member with a fresh code decides under the org policy",
+    { timeout: 30_000 },
+    async () => {
+      const jar: Jar = new Map();
+      const userId = await signUp(jar);
+      const totpURI = await enrollTwoFactor(jar);
+      const organizationId = personalOrganizationId(userId);
+      await ensurePersonalOrganization(createDb(env.DB), { userId });
+      await setRequireTwoFactorForReleaseDecisions(createDb(env.DB), organizationId, true);
+      const { gateId, scanId } = await seedDecidableGate(organizationId, userId);
+
+      const decisionCalls: { state: string }[] = [];
+      mockGithubDecisionFetch(decisionCalls);
+
+      const res = await call("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
+        body: { decision: "approved", totpCode: totpFor(totpURI), scanId },
+        jar,
+        env: await githubEnv(),
+      });
+
+      expect(res.res.status).toBe(200);
+      expect(res.json).toMatchObject({
+        gate: { status: "approved", decision: "approved", organizationRequiresTwoFactor: true },
+      });
+      const stored = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
+      expect(stored?.status).toBe("approved");
+      expect(decisionCalls).toHaveLength(1);
+      expect(decisionCalls[0].state).toBe("approved");
+    },
+  );
 });
