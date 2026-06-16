@@ -48,7 +48,7 @@ export function DecisionDialog({
       open={open}
       onClose={handleClose}
       title="Publish decision"
-      description="Record whether this staged publish is approved to go live. The decision is part of the audit trail. It doesn't publish or cancel the release on npm — that still requires you to confirm or cancel with 2FA there."
+      description="Record whether this staged publish is safe to approve. This adds to the audit trail, but it does not publish or cancel anything on npm. You still confirm or cancel with 2FA there."
     >
       {decision ? (
         <div class="flex flex-col gap-2 border border-border rounded-md p-3">

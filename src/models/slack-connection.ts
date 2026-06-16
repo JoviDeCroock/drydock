@@ -234,7 +234,7 @@ export const SlackConnectionModel = createModel(() => {
           message: result.ok
             ? "Test message sent."
             : result.rateLimited
-              ? "Slack is rate-limiting test messages — try again shortly."
+              ? "Slack is rate-limiting test messages. Try again shortly."
               : `Slack rejected the test${result.reason ? `: ${result.reason}` : "."}`,
         };
       } catch (err) {

@@ -82,7 +82,7 @@ export default function VerifyEmailPage() {
         <Card class="flex flex-col gap-4">
           <Eyebrow>Email verified</Eyebrow>
           <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">You're all set</h1>
-          <Alert tone="ok">Your email is verified — you can sign in now.</Alert>
+          <Alert tone="ok">Your email is verified. You can sign in now.</Alert>
           <Button onClick={() => location.route("/login", true)}>Go to sign in</Button>
         </Card>
       </PageShell>

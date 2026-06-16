@@ -1,17 +1,17 @@
 # Staged Publish Review
 
-Cloudflare-first SaaS for reviewing package release artifacts before a maintainer approves publication. The npm path downloads a staged npm tarball through a sandboxed boundary, selects a tag-aware published baseline, runs deterministic supply-chain checks, optionally asks Cloudflare Workers AI for constrained triage behind a per-organization Flagship gate, and persists a human-readable review report.
+Drydock reviews package artifacts before a maintainer approves publication. For npm, it downloads the staged tarball through a sandbox, compares it with a tag-aware published baseline, runs deterministic supply-chain checks, and, when enabled, sends changed-file evidence to Cloudflare Workers AI. It saves the result as a readable review report.
 
-The approval step remains outside this product: maintainers approve with `npm stage approve <stage-id>` or npmjs.com, including npm's required 2FA challenge.
+Approval stays outside Drydock: maintainers approve with `npm stage approve <stage-id>` or npmjs.com, including npm's required 2FA challenge.
 
 ## Product direction
 
-This repository is moving from prototype to real product. The current implementation already proves the core sandbox/review flow; the product direction is:
+This repository is moving from prototype to product. The current code already proves the core sandbox and review flow; the product direction is:
 
 - **SaaS, organization-scoped.** Scans belong to an organization boundary. RBAC is intentionally deferred for the first production slice, but the data model should keep organization ownership explicit.
 - **Per-organization npm credentials.** Production SaaS should not use a deployment-wide npm token. Each organization will connect its own npm credential, scoped as narrowly as npm permits, and the credential will only be used by the gateway that talks to npm.
-- **Manual publish approval.** The product reviews and explains a staged publish. It does not run `npm stage approve`, does not bypass npm 2FA, and does not become the final publisher.
-- **Two operating modes.** npm uses registry-stage mode: Drydock reviews npm-staged bytes before the maintainer approves in npm. Ecosystems without a staged artifact use workflow-gate mode: a GitHub Environment deployment-protection rule blocks the publish job while Drydock reviews the built release artifacts. PyPI is the first workflow-gate ecosystem (built wheel/sdist artifacts); the gate plumbing is ecosystem-neutral. See [`docs/workflow-gates.md`](docs/workflow-gates.md).
+- **Manual publish approval.** Drydock reviews and explains a staged publish. It does not run `npm stage approve`, bypass npm 2FA, or become the final publisher.
+- **Two operating modes.** npm uses registry-stage mode: Drydock reviews npm-staged bytes before the maintainer approves in npm. Ecosystems without a staged artifact use workflow-gate mode: a GitHub Environment deployment-protection rule blocks the publish job while Drydock reviews the built release artifacts. PyPI is the first workflow-gate ecosystem with wheel and sdist artifacts. The gate plumbing is shared across ecosystems. See [`docs/workflow-gates.md`](docs/workflow-gates.md).
 - **AI review default-off.** Cloudflare Workers AI review is wired into the pipeline, but it is gated by the per-organization Flagship `ai-review` flag and defaults to unavailable. Deterministic findings are the review authority unless a complete, schema-valid AI review is enabled; AI remains advisory and cannot downgrade deterministic findings.
 - **Safe artifact defaults.** Do not retain raw tarballs by default in SaaS. Persist redacted summaries, manifests, diffs, findings, and report metadata. Raw artifact retention may become an explicit short-TTL organization setting later.
 - **Signed reports later.** Prepare report data to be canonical and signable, but do not launch public signed report generation yet.
@@ -20,13 +20,13 @@ Use the docs by layer:
 
 - [`docs/architecture.md`](docs/architecture.md) — runtime shape, trust boundaries, adapters, APIs.
 - [`docs/security-model.md`](docs/security-model.md) — non-negotiable security posture and known gaps.
-- [`docs/workflow-gates.md`](docs/workflow-gates.md) — workflow-gate product mode: ecosystem-neutral GitHub Environment gate contract, with PyPI as the first ecosystem.
+- [`docs/workflow-gates.md`](docs/workflow-gates.md) — workflow-gate product mode: the shared GitHub Environment gate contract, with PyPI as the first ecosystem.
 - [`docs/release-safety.md`](docs/release-safety.md), [`docs/security-detection-corpus.md`](docs/security-detection-corpus.md), [`docs/detection-eval.md`](docs/detection-eval.md), and [`docs/e2e-test-environment.md`](docs/e2e-test-environment.md) — change safety, detection quality, and local verification.
 
 ## Current capabilities
 
 - Every non-auth `/api/*` endpoint requires a Better Auth session backed by Drizzle + Cloudflare D1.
-- The Worker exposes authenticated scan APIs and spins up a fresh Dynamic Worker for risky package-download/parsing work.
+- The Worker exposes authenticated scan APIs and starts a fresh Dynamic Worker for risky package-download/parsing work.
 - The Dynamic Worker fetches staged tarballs through a locked-down gateway; it never receives the npm token.
 - Direct sandbox egress is intercepted. Only expected npm registry endpoints are allowed:
   - staged tarball: `https://registry.npmjs.org/-/stage/<stage-id>/tarball`

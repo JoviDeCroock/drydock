@@ -1,6 +1,6 @@
 # Architecture
 
-Drydock is a Cloudflare-first SaaS for reviewing package releases before human approval. The npm path is intentionally centered on one question: **what changed in this staged publish, and should a maintainer pause before approving it?**
+Drydock reviews package releases before a human approves them. The npm path stays centered on one question: **what changed in this staged publish, and should a maintainer pause before approving it?**
 
 ## Runtime components
 
@@ -28,7 +28,7 @@ Dynamic Worker sandbox
 
 Scan orchestration lives in `server/lib/scan-pipeline.ts` and is shared by the HTTP and Queue entrypoints. Scans run only through the queued/background lifecycle: `POST /api/v1/scans` creates a scan, a Queue consumer or local `waitUntil()` job runs the pipeline, and the UI reads status/report data from `GET /api/v1/scans/:id`.
 
-The pipeline is **ecosystem-agnostic**: it accepts a `PackageAdapter` (`server/lib/adapters/types.ts`) and delegates ecosystem-specific behavior — input parsing, artifact acquisition, baseline selection, deterministic findings, package projection, staged-details summarization — to it. The npm adapter (`server/lib/adapters/npm/`) backs staged publishes and npm workflow gates, and the PyPI adapter (`server/lib/adapters/pypi/`) backs PyPI workflow-gate release-candidate reviews.
+The pipeline is **ecosystem-agnostic**: it accepts a `PackageAdapter` (`server/lib/adapters/types.ts`) and delegates ecosystem-specific behavior to it. That includes input parsing, artifact acquisition, baseline selection, deterministic findings, package projection, and staged-detail summaries. The npm adapter (`server/lib/adapters/npm/`) backs staged publishes and npm workflow gates, and the PyPI adapter (`server/lib/adapters/pypi/`) backs PyPI workflow-gate release-candidate reviews.
 
 Baseline selection should be tag-aware rather than simply highest-semver. See [`diff-baseline.md`](./diff-baseline.md) for the staged metadata constraints and the recommended default comparison strategy.
 
@@ -206,19 +206,19 @@ When AI review is enabled it must continue to:
 
 The product target is SaaS with organization-scoped resources.
 
-Every user gets a deterministic "Personal" organization on first signup (id derived from `personalOrganizationId(userId)`). Users can additionally create and switch between any number of organizations they own.
+Every user gets a deterministic "Personal" organization on first signup (id derived from `personalOrganizationId(userId)`). Users can also create and switch between any number of organizations they own.
 
-Active-organization selection is **client-owned and per-device**: the browser stores the chosen org id in `localStorage` and sends it as the `x-organization-id` header on every API request. The server resolver `requireActiveOrganization(c, db)` in `server/lib/active-organization.ts` reads that header, verifies the caller is a member via `organization_members`, and falls back to the personal org when the header is absent or points at an org the caller does not belong to. There is no server-side "active org" column — switching devices means each device tracks its own active org, which matches how maintainers tend to use separate machines for separate clients.
+Active-organization selection is **client-owned and per-device**: the browser stores the chosen org id in `localStorage` and sends it as the `x-organization-id` header on every API request. The server resolver `requireActiveOrganization(c, db)` in `server/lib/active-organization.ts` reads that header, verifies the caller is a member via `organization_members`, and falls back to the personal org when the header is absent or points at an org the caller does not belong to. There is no server-side "active org" column. Each device tracks its own active org, which matches how maintainers tend to use separate machines for separate clients.
 
 Organization-owned resources scope by the active org:
 
 - scans;
 - audit events;
-- npm connections (one per organization — `UNIQUE(organization_id)` on `npm_connections`);
+- npm connections (one per organization, enforced by `UNIQUE(organization_id)` on `npm_connections`);
 - future report signatures;
 - future artifact retention settings.
 
-Team membership, invitations, and RBAC ship today — see [`organization-members.md`](./organization-members.md). Each membership row carries one of three roles (`owner`, `admin`, `member`) defined in `server/lib/roles.ts`. Owners and admins manage members, invitations, npm connections, and GitHub release targets; members get read access to org-scoped resources and can act on releases. The owner is the `organizations.ownerUserId` and cannot be removed or demoted through the API. Route guards still verify membership through `organization_members` via `requireActiveOrganization`; sensitive mutations additionally resolve the caller's role with `requireActiveOrganizationContext` and gate on `roleCanManageMembers` / `roleCanManageIntegrations` rather than trusting client-supplied org ids.
+Team membership, invitations, and RBAC ship today. See [`organization-members.md`](./organization-members.md). Each membership row carries one of three roles (`owner`, `admin`, `member`) defined in `server/lib/roles.ts`. Owners and admins manage members, invitations, npm connections, and GitHub release targets; members get read access to org-scoped resources and can act on releases. The owner is the `organizations.ownerUserId` and cannot be removed or demoted through the API. Route guards still verify membership through `organization_members` via `requireActiveOrganization`; sensitive mutations also resolve the caller's role with `requireActiveOrganizationContext` and gate on `roleCanManageMembers` / `roleCanManageIntegrations` rather than trusting client-supplied org ids.
 
 Deletion, audit-log UI, billing, and quotas remain deferred as team/commercial-readiness work.
 

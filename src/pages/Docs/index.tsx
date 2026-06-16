@@ -16,12 +16,12 @@ export default function DocsPage() {
         <header class="border-t border-border pt-8 flex flex-col gap-5">
           <Eyebrow tone="accent">Documentation</Eyebrow>
           <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
-            Choose where Drydock holds your release.
+            Pick where Drydock pauses your release.
           </h1>
           <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
             The package that reaches a registry is not the pull request a maintainer reviewed. It is
-            built output shaped by scripts, bundlers, and CI. Drydock pauses npm staged publishes or
-            GitHub-gated PyPI and npm jobs, diffs the candidate against the last published version,
+            the built output from scripts, bundlers, and CI. Drydock pauses npm staged publishes or
+            GitHub-gated PyPI and npm jobs, compares the candidate with the last published version,
             and pins findings to changed lines. Maintainers decide; Drydock never publishes, never
             stores publish credentials, and never executes package contents.
           </p>
@@ -31,11 +31,11 @@ export default function DocsPage() {
             paths produce the same review report:
           </p>
           <nav class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-1" aria-label="Integration modes">
-            <ModeCard href="#staged-publishing" title="Staged publishing — npm">
+            <ModeCard href="#staged-publishing" title="Staged publishing: npm">
               Run <Code>npm publish --stage</Code>. npm holds a private candidate, Drydock reviews
               it, and you complete the publish in npm with your own 2FA.
             </ModeCard>
-            <ModeCard href="#workflow-gating" title="Workflow gating — PyPI & npm" badge="Preview">
+            <ModeCard href="#workflow-gating" title="Workflow gating: PyPI & npm" badge="Preview">
               GitHub Actions builds and uploads the release artifact. A GitHub Environment pauses
               publishing until a maintainer approves or rejects the Drydock review.
             </ModeCard>
@@ -44,7 +44,7 @@ export default function DocsPage() {
 
         <section id="staged-publishing" class="flex flex-col gap-8 scroll-mt-6">
           <div class="flex flex-col gap-3">
-            <SectionLabel>Staged publishing — npm</SectionLabel>
+            <SectionLabel>Staged publishing: npm</SectionLabel>
             <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
               npm holds the candidate; you keep the approval.
             </h2>
@@ -58,9 +58,7 @@ export default function DocsPage() {
           <Subsection title="Set it up">
             <Steps
               items={[
-                <>
-                  Sign in and switch the org picker to the organization that publishes the package.
-                </>,
+                <>Sign in and choose the organization that publishes the package.</>,
                 <>
                   Open <Code>Organization settings → npm access</Code> and paste an automation or
                   granular npm token that can read the org's packages and list staged publishes.
@@ -69,8 +67,8 @@ export default function DocsPage() {
                   Save. Drydock encrypts the token and checks it against the registry right away.
                 </>,
                 <>
-                  That's it. Drydock picks up new staged publishes automatically, and the{" "}
-                  <Code>Check npm</Code> button on the dashboard runs a check on demand.
+                  That's it. Drydock picks up new staged publishes automatically, and{" "}
+                  <Code>Check npm</Code> on the dashboard runs a check on demand.
                 </>,
               ]}
             />
@@ -85,7 +83,7 @@ export default function DocsPage() {
             <Steps
               items={[
                 <>
-                  Drydock finds a new staged publish, either automatically or because you hit{" "}
+                  Drydock finds a new staged publish, either automatically or when you hit{" "}
                   <Code>Check npm</Code>, and queues a scan for it.
                 </>,
                 <>
@@ -116,13 +114,13 @@ export default function DocsPage() {
         <section id="workflow-gating" class="flex flex-col gap-8 scroll-mt-6">
           <div class="flex flex-col gap-3">
             <SectionLabel>
-              Workflow gating — PyPI &amp; npm on GitHub Actions <Badge tone="info">Preview</Badge>
+              Workflow gating: PyPI &amp; npm on GitHub Actions <Badge tone="info">Preview</Badge>
             </SectionLabel>
             <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
               When the registry can't pause, the workflow can.
             </h2>
             <Prose>
-              PyPI has no staging step, and some npm workflows publish directly from CI. In those
+              PyPI has no staging step, and some npm workflows publish directly from CI. For those
               releases, the publish job becomes the checkpoint: CI builds wheels, sdists, or
               tarballs, uploads them as a workflow artifact, and enters a GitHub Environment
               protected by Drydock. Drydock reviews the upload and records a recommendation; a
@@ -143,9 +141,7 @@ export default function DocsPage() {
           <Subsection title="Set it up">
             <Steps
               items={[
-                <>
-                  Sign in and switch the org picker to the organization that owns the PyPI project.
-                </>,
+                <>Sign in and choose the organization that owns the PyPI project.</>,
                 <>
                   Open <Code>Organization settings → GitHub App</Code> and install the Drydock
                   GitHub App on the GitHub account that hosts your repository. You'll be redirected
@@ -178,7 +174,7 @@ export default function DocsPage() {
 
           <Subsection title="Release-candidate bundle">
             <Prose>
-              There is no manifest to write. CI builds and uploads <Code>dist/*</Code>, and Drydock
+              You do not write a manifest. CI builds and uploads <Code>dist/*</Code>, and Drydock
               treats every <Code>.whl</Code>, <Code>.tar.gz</Code>, and <Code>.tgz</Code> it finds
               in the upload as part of the release. The settings form can narrow this down to one
               artifact name; when left blank, Drydock inspects every non-expired artifact from the
@@ -191,9 +187,9 @@ export default function DocsPage() {
               that get published.
             </Prose>
             <Prose>
-              You normally never declare which ecosystem you're publishing. Drydock tells an npm
-              tarball from a PyPI sdist by looking inside it, so the same gate reviews either, or
-              both at once for a mixed monorepo.
+              You usually do not declare which ecosystem you're publishing. Drydock tells an npm
+              tarball from a PyPI sdist by looking inside it, so the same gate can review either one
+              or both at once in a mixed monorepo.
             </Prose>
           </Subsection>
 
@@ -237,11 +233,11 @@ export default function DocsPage() {
       # publish the downloaded dist/* to PyPI via Trusted Publishing (OIDC)`}
             </CodeBlock>
             <Prose>
-              No manifest or checksum step is required. CI just builds and uploads{" "}
-              <Code>dist/*</Code>. The <Code>environment: pypi</Code> line is the gate: configure
-              that same environment as a PyPI Trusted Publisher and enable Drydock as a deployment
-              protection rule on it. The publish job stays blocked until the review is approved in
-              Drydock, then publishes the downloaded bundle with whatever tool you prefer.
+              No manifest or checksum step is required. CI builds and uploads <Code>dist/*</Code>.
+              The <Code>environment: pypi</Code> line is the gate: configure that same environment
+              as a PyPI Trusted Publisher and enable Drydock as a deployment protection rule on it.
+              The publish job stays blocked until the review is approved in Drydock, then publishes
+              the downloaded bundle with whatever tool you prefer.
             </Prose>
             <Prose>
               npm looks the same. <Code>npm pack</Code> the workspaces, upload{" "}
@@ -354,7 +350,7 @@ function ModeCard({
         </div>
         <p class="m-0 text-[13px] text-ink-muted leading-[1.55]">{children}</p>
         <span class="mt-auto pt-1 font-mono text-[11px] uppercase tracking-[0.1em] text-accent group-hover:text-accent-hover">
-          → jump to setup
+          Go to setup
         </span>
       </Card>
     </a>

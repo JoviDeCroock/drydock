@@ -36,7 +36,7 @@ The Dynamic Worker sandbox must never receive npm token material. Only `NpmStage
 
 ### AI is advisory (and Flagship-gated)
 
-Workers AI review is wired into the pipeline through `maybeRunAiReview`, but the per-organization Flagship `ai-review` flag is off by default for the planned paid-tier feature. When the flag is not enabled, the scan records AI review as unavailable and deterministic findings are the only review signal. When enabled, Workers AI reviews evidence but does not decide approval — deterministic findings remain authoritative and cannot be downgraded by AI output.
+Workers AI review is wired into the pipeline through `maybeRunAiReview`, but the per-organization Flagship `ai-review` flag is off by default for the planned paid-tier feature. When the flag is disabled, the scan records AI review as unavailable and deterministic findings are the only review signal. When enabled, Workers AI reviews evidence but does not decide approval. Deterministic findings remain authoritative and cannot be downgraded by AI output.
 
 ## npm credential posture
 
@@ -61,7 +61,7 @@ Implementation requirements:
 - Redact credential metadata fields from scan lifecycle events before returning them to the UI.
 - Never include token material in scan errors, AI inputs, logs, or persisted reports.
 
-Current code has encrypted per-organization npm connections only. SaaS production must configure `NPM_CONNECTIONS_ENCRYPTION_KEY`; scans require an organization-owned npm token.
+Current code only supports encrypted per-organization npm connections. SaaS production must configure `NPM_CONNECTIONS_ENCRYPTION_KEY`; scans require an organization-owned npm token.
 
 Scans and staged-publish discovery require the organization npm connection to be validated first. The settings page automatically runs the baseline npm auth/list validation after token save, and scheduled staged-publish discovery validates unvalidated connections during sweeps before using them. Stage-specific access is proved by discovery and scan workers when they fetch staged release evidence. Queued scan workers re-check validation immediately before decrypting and using the current token, so token rotation cannot bypass the validation gate. Custom npm registries are supported for organization npm connections and should be paired with explicit abuse controls in production operations.
 

@@ -22,8 +22,8 @@ export function getReleaseRecommendation(
       label: "block manual approval",
       tone: releaseRisk === "critical" ? "critical" : "high",
       copy: isGate
-        ? "Do not approve until the highlighted release evidence has been reviewed and resolved."
-        : "Do not approve this staged publish until the highlighted release evidence has been reviewed and resolved outside this tool.",
+        ? "Do not approve until you have reviewed and resolved the highlighted release evidence."
+        : "Do not approve this staged publish until you have reviewed and resolved the highlighted release evidence outside Drydock.",
     };
   }
   if (releaseRisk === "medium") {
@@ -31,8 +31,8 @@ export function getReleaseRecommendation(
       label: "review carefully",
       tone: "medium",
       copy: isGate
-        ? "Pause before releasing the job and inspect the highest-impact findings, manifest changes, and changed files below."
-        : "Pause before approving and inspect the highest-impact findings, manifest changes, and changed files below.",
+        ? "Before releasing the job, inspect the most important findings, manifest changes, and changed files below."
+        : "Before approving, inspect the most important findings, manifest changes, and changed files below.",
     };
   }
   if (
@@ -42,14 +42,14 @@ export function getReleaseRecommendation(
     return {
       label: "package context only",
       tone: "neutral",
-      copy: "The release delta has no deterministic risk signals; existing package context remains visible below.",
+      copy: "The changed files have no deterministic risk signals. Existing package context is still shown below.",
     };
   }
   return {
     label: "likely safe",
     tone: "ok",
     copy: isGate
-      ? "No blocking deterministic signals were found; your decision releases or blocks the held GitHub job."
-      : "No blocking deterministic signals were found; approval still remains a maintainer action in npm.",
+      ? "No blocking deterministic signals were found. Your decision releases or blocks the held GitHub job."
+      : "No blocking deterministic signals were found. A maintainer still approves the publish in npm.",
   };
 }

@@ -200,8 +200,8 @@ export function GateContextPanel({
       )}
       {gate?.failureReason ? (
         <Alert tone="critical">
-          Drydock blocked this release automatically — the published artifacts could not be verified
-          against the reviewed manifest ({gate.failureReason}).
+          Drydock blocked this release automatically because the published artifacts could not be
+          verified against the reviewed manifest ({gate.failureReason}).
         </Alert>
       ) : null}
       {canRetry && onRetry ? (
@@ -286,8 +286,8 @@ export function GateDecisionDialog({
       title={multi ? "Package decision" : "Release decision"}
       description={
         multi
-          ? "Decide this package. The held GitHub Actions job releases only once every package in the release is approved; rejecting any one blocks the whole release. Publishing then proceeds through your release workflow's own publish step (e.g. Trusted Publishing / OIDC) — Drydock never holds your registry credentials."
-          : "Approve to release the held GitHub Actions job — publishing then proceeds through your release workflow's own publish step (e.g. Trusted Publishing / OIDC). Reject to block the job. Drydock never holds your registry credentials or uploads the package."
+          ? "Decide this package. The held GitHub Actions job releases only after every package is approved; rejecting any one blocks the whole release. Publishing still runs through your workflow's own publish step, such as Trusted Publishing or OIDC. Drydock never holds your registry credentials."
+          : "Approve to release the held GitHub Actions job. Reject to block it. Publishing still runs through your workflow's own publish step, such as Trusted Publishing or OIDC. Drydock never holds your registry credentials or uploads the package."
       }
     >
       <div class="flex flex-col gap-2 border border-border rounded-md p-3">
@@ -322,7 +322,7 @@ export function GateDecisionDialog({
         </Alert>
       ) : null}
 
-      <Field label="Comment (optional · shown in the GitHub run log)" for="gateComment">
+      <Field label="Comment (optional, shown in the GitHub run log)" for="gateComment">
         <Input
           id="gateComment"
           type="text"
@@ -358,7 +358,7 @@ export function GateDecisionDialog({
 
       {gateDecided ? (
         <Muted class="m-0 text-[13px]">
-          This gate has already been decided. The decision is final — GitHub has been notified.
+          This gate has already been decided. The decision is final, and GitHub has been notified.
         </Muted>
       ) : packageAlreadyDecided ? (
         <Muted class="m-0 text-[13px]">

@@ -1,5 +1,6 @@
 import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { normalizeAuthReturnTo } from "../../lib/auth-return";
 import { sessionModel } from "../../models/auth";
@@ -85,11 +86,15 @@ export default function RegisterPage() {
             The link expires in 24 hours. Check your spam folder if it doesn't arrive.
           </Muted>
 
-          {error.value ? <Alert tone="critical">{error.value}</Alert> : null}
-          {resent.value ? <Alert tone="ok">We sent another verification link.</Alert> : null}
+          <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
+          <Show when={resent}>
+            <Alert tone="ok">We sent another verification link.</Alert>
+          </Show>
 
-          <Button variant="secondary" disabled={resending.value} onClick={onResend}>
-            {resending.value ? "Resending…" : "Resend verification email"}
+          <Button variant="secondary" disabled={resending} onClick={onResend}>
+            <Show when={resending} fallback="Resend verification email">
+              Resending…
+            </Show>
           </Button>
 
           <p class="text-[13px] text-ink-muted m-0">
@@ -106,7 +111,8 @@ export default function RegisterPage() {
         <Eyebrow>Get started</Eyebrow>
         <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Create account</h1>
         <Muted class="text-[13px] m-0">
-          Create your workspace, connect npm or a GitHub gate, and start reviewing held releases.
+          Create a workspace, connect npm or a GitHub gate, and review held releases before they go
+          live.
         </Muted>
 
         <form class="flex flex-col gap-4 mt-2" onSubmit={onSubmit}>
@@ -142,10 +148,12 @@ export default function RegisterPage() {
             />
           </Field>
 
-          {error.value ? <Alert tone="critical">{error.value}</Alert> : null}
+          <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
 
-          <Button type="submit" disabled={loading.value}>
-            {loading.value ? "Creating…" : "Create account"}
+          <Button type="submit" disabled={loading}>
+            <Show when={loading} fallback="Create account">
+              Creating…
+            </Show>
           </Button>
         </form>
 
