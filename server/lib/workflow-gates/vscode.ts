@@ -43,11 +43,34 @@ export const vscodeWorkflowGateAdapter: WorkflowGateAdapter = {
 function deriveVscodeReleaseCandidates(
   artifacts: ParsedGateArtifact[],
 ): PreparedReleaseCandidate[] {
-  return artifacts.map((artifact) => {
+  const groups = new Map<
+    string,
+    { extensionId: string; version: string; artifact: ParsedGateArtifact }
+  >();
+  for (const artifact of artifacts) {
     const files = normalizeVsixFiles(artifact.files);
     const { manifest: extensionManifest } = parseExtensionManifest(artifact, files);
     const extensionId = extensionIdFromManifest(extensionManifest);
-    const manifest = buildManifest(extensionId, extensionManifest.version, artifact);
+    const group = groups.get(extensionId);
+    if (!group) {
+      groups.set(extensionId, { extensionId, version: extensionManifest.version, artifact });
+      continue;
+    }
+    if (extensionManifest.version !== group.version) {
+      throw new WorkflowArtifactError(
+        "artifact_identity_inconsistent",
+        `${artifact.path} version ${extensionManifest.version} disagrees with ${group.version} for ${extensionId}`,
+      );
+    }
+    throw new WorkflowArtifactError(
+      "artifact_identity_inconsistent",
+      `extension ${extensionId} has more than one VSIX artifact in this release`,
+    );
+  }
+
+  return [...groups.values()].map((group) => {
+    const { artifact, extensionId, version } = group;
+    const manifest = buildManifest(extensionId, version, artifact);
     return {
       ecosystem: "vscode",
       pipelineInput: {

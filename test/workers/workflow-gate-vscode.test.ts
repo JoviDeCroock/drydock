@@ -125,6 +125,22 @@ describe("VS Code workflow-gate adapter", () => {
       ]),
     ).toThrow(WorkflowArtifactError);
   });
+
+  test("fails closed when a release contains duplicate VSIX identities", () => {
+    expect(() =>
+      vscodeWorkflowGateAdapter.prepareReleaseCandidates([
+        vsixArtifact("dist/remote-text-fetcher-1.0.0.vsix", "remote-text-fetcher", "1.0.0"),
+        vsixArtifact("dist/remote-text-fetcher-copy-1.0.0.vsix", "remote-text-fetcher", "1.0.0"),
+      ]),
+    ).toThrow(/more than one VSIX artifact/);
+
+    expect(() =>
+      vscodeWorkflowGateAdapter.prepareReleaseCandidates([
+        vsixArtifact("dist/remote-text-fetcher-1.0.0.vsix", "remote-text-fetcher", "1.0.0"),
+        vsixArtifact("dist/remote-text-fetcher-1.0.1.vsix", "remote-text-fetcher", "1.0.1"),
+      ]),
+    ).toThrow(/version 1.0.1 disagrees with 1.0.0/);
+  });
 });
 
 interface SandboxResult {
@@ -155,4 +171,28 @@ function buildCtxWithGateway() {
   };
   ctx.exports = { NpmStageGateway: vi.fn(() => ({ fetch: vi.fn() }) as unknown as Fetcher) };
   return ctx;
+}
+
+function vsixArtifact(path: string, name: string, version: string) {
+  return {
+    path,
+    sha256: SHA,
+    ecosystem: "vscode",
+    kind: "vsix",
+    files: [
+      {
+        path: "extension/package.json",
+        size: 120,
+        sha256: "00",
+        flags: [],
+        textSample: JSON.stringify({
+          name,
+          publisher: "example",
+          version,
+          engines: { vscode: "^1.80.0" },
+        }),
+      },
+    ],
+    packageJson: null,
+  };
 }
