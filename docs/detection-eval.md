@@ -29,6 +29,14 @@ The report is written to `.context/eval/detection-eval.md` (and `.json`), which
 is gitignored. `pnpm test` also runs the gated thresholds, since the harness is
 a normal Vitest file (`test/eval/detection-eval.test.mjs`).
 
+## CI visibility
+
+GitHub Actions uploads `.context/eval/detection-eval.*` as the
+`detection-eval-report` artifact from the main check job. Pull requests also get
+a sticky detection-eval comment that is updated on every run, so reviewers see
+the gated regression numbers, reported frontier misses, benign hard-negative
+false positives, and evasion robustness without digging through logs.
+
 ## Corpus layout
 
 ```

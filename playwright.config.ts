@@ -23,7 +23,23 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
+      testMatch: ["**/local-registry.spec.ts", "**/two-factor.spec.ts"],
       use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "desktop-smoke",
+      testMatch: "**/smoke.spec.ts",
+      use: { ...devices["Desktop Chrome"], colorScheme: "light" },
+    },
+    {
+      name: "mobile-smoke",
+      testMatch: "**/smoke.spec.ts",
+      use: { ...devices["Pixel 7"], colorScheme: "light" },
+    },
+    {
+      name: "dark-smoke",
+      testMatch: "**/smoke.spec.ts",
+      use: { ...devices["Desktop Chrome"], colorScheme: "dark" },
     },
   ],
   webServer: {
