@@ -11,6 +11,7 @@ import "./style.css";
 
 const LandingPage = lazy(() => import("./pages/Landing"));
 const DocsPage = lazy(() => import("./pages/Docs"));
+const PrivacyPage = lazy(() => import("./pages/Privacy"));
 const LoginPage = lazy(() => import("./pages/Auth/Login"));
 const RegisterPage = lazy(() => import("./pages/Auth/Register"));
 const VerifyEmailPage = lazy(() => import("./pages/Auth/VerifyEmail"));
@@ -29,6 +30,7 @@ export function App() {
         <Router>
           <Route path="/" component={LandingPage} />
           <Route path="/docs" component={DocsPage} />
+          <Route path="/privacy" component={PrivacyPage} />
           <Route path="/login" component={LoginPage} />
           <Route path="/register" component={RegisterPage} />
           <Route path="/verify-email" component={VerifyEmailPage} />

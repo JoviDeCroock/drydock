@@ -101,6 +101,9 @@ function SiteFooter({ maxWidth }: { maxWidth: string }) {
           <a href="/docs" class={linkClass}>
             Docs
           </a>
+          <a href="/privacy" class={linkClass}>
+            Privacy
+          </a>
           <a href={FEEDBACK_MAILTO} class={linkClass}>
             Feedback
           </a>
