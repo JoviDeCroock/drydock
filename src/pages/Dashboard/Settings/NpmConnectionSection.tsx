@@ -1,7 +1,16 @@
 import { useModel } from "@preact/signals";
 import { formatTimestamp } from "../../../lib/format";
 import { NpmConnectionModel } from "../../../models/npm-connection";
-import { Alert, Badge, Button, CollapsibleCard, Field, Input, Muted } from "../../../components";
+import {
+  Alert,
+  Badge,
+  Button,
+  CollapsibleCard,
+  Field,
+  Input,
+  Muted,
+  SettingsCardBody,
+} from "../../../components";
 
 export function NpmConnectionSection({
   npm,
@@ -42,7 +51,7 @@ export function NpmConnectionSection({
         )
       }
     >
-      <div class="p-5 flex flex-col gap-5">
+      <SettingsCardBody>
         <Muted class="text-[13px] m-0 max-w-[760px]">
           Add a read-only organization npm token so reviews can fetch staged packages securely. We
           encrypt it, hide it after save, and use it only to retrieve release evidence.
@@ -132,7 +141,7 @@ export function NpmConnectionSection({
             </Button>
           </div>
         ) : null}
-      </div>
+      </SettingsCardBody>
     </CollapsibleCard>
   );
 }

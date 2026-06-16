@@ -16,6 +16,7 @@ import {
   Muted,
   pushToast,
   Select,
+  SettingsCardBody,
 } from "../../../components";
 
 export function SlackConnectionSection({
@@ -69,7 +70,7 @@ export function SlackConnectionSection({
 
   return (
     <CollapsibleCard title="slack" defaultOpen={defaultOpen} aside={aside}>
-      <div class="p-5 flex flex-col gap-5">
+      <SettingsCardBody>
         <Muted class="text-[13px] m-0 max-w-[760px]">
           Connect a Slack workspace and choose one public channel for Drydock to post scan
           completions and release-gate reviews. The bot token is encrypted at rest and only ever
@@ -115,7 +116,7 @@ export function SlackConnectionSection({
         <Show<string | null> when={slack.error}>
           {(message) => <Alert tone="critical">{message}</Alert>}
         </Show>
-      </div>
+      </SettingsCardBody>
     </CollapsibleCard>
   );
 }

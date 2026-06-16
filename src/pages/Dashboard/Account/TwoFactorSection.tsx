@@ -5,7 +5,6 @@ import {
   Alert,
   Badge,
   Button,
-  Card,
   Dialog,
   Field,
   Input,
@@ -13,6 +12,7 @@ import {
   MonoDetail,
   Muted,
   SectionLabel,
+  SettingsCard,
 } from "../../../components";
 
 type DialogMode = "none" | "enroll" | "regenerate" | "disable";
@@ -236,7 +236,7 @@ export function TwoFactorSection() {
   }
 
   return (
-    <Card as="section" class="flex flex-col gap-5">
+    <SettingsCard as="section" class="flex flex-col gap-5">
       <div class="flex flex-col gap-1.5">
         <div class="flex items-center gap-3">
           <SectionLabel class="flex-1">Two-factor authentication</SectionLabel>
@@ -279,6 +279,6 @@ export function TwoFactorSection() {
       >
         {dialogBody}
       </Dialog>
-    </Card>
+    </SettingsCard>
   );
 }

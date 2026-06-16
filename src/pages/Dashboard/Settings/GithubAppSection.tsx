@@ -13,7 +13,9 @@ import {
   CollapsibleCard,
   MonoDetail,
   Muted,
-  SectionLabel,
+  SettingsCardBody,
+  SettingsCardHeader,
+  SettingsCardListItem,
   type BadgeTone,
 } from "../../../components";
 import { ReleaseTargetForm } from "./ReleaseTargetForm";
@@ -49,7 +51,7 @@ export function GithubAppSection({
         configured ? <Badge tone="ok">configured</Badge> : <Badge tone="info">not configured</Badge>
       }
     >
-      <div class="p-5 flex flex-col gap-5">
+      <SettingsCardBody>
         {/* Pair the install action with the intro copy and anchor it to the card's
             right edge — same axis as the header badge and section counts — so it
             reads as this section's primary action instead of a stranded button. */}
@@ -96,45 +98,49 @@ export function GithubAppSection({
             <code class="font-mono text-[12px]">{lastLinked.installationId}</code>.
           </Alert>
         ) : null}
-      </div>
+      </SettingsCardBody>
 
       <div>
-        <div class="px-5 py-4 flex items-center justify-between gap-3">
-          <SectionLabel class="flex-1">Linked installations</SectionLabel>
-          <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle shrink-0">
-            {installations.length} linked
-          </span>
-        </div>
+        <SettingsCardHeader
+          title="Linked installations"
+          aside={
+            <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+              {installations.length} linked
+            </span>
+          }
+        />
         {installations.length ? (
           <InstallationList installations={installations} />
         ) : (
-          <div class="px-5 pb-5">
+          <SettingsCardBody inset="belowHeader" gap="none">
             <Muted class="text-[13px] m-0">No installations linked to this organization yet.</Muted>
-          </div>
+          </SettingsCardBody>
         )}
       </div>
 
       <div>
-        <div class="px-5 py-4 flex items-center justify-between gap-3">
-          <SectionLabel class="flex-1">Release targets</SectionLabel>
-          <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle shrink-0">
-            {releaseTargets.length} mapped
-          </span>
-        </div>
+        <SettingsCardHeader
+          title="Release targets"
+          aside={
+            <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+              {releaseTargets.length} mapped
+            </span>
+          }
+        />
         {activeInstallations.length ? (
           <ReleaseTargetForm githubApp={githubApp} activeInstallations={activeInstallations} />
         ) : (
-          <div class="px-5 pb-5">
+          <SettingsCardBody inset="belowHeader" gap="none">
             <Muted class="text-[13px] m-0">
               Install the GitHub App on an organization with the repo you want to gate before
               mapping a release target.
             </Muted>
-          </div>
+          </SettingsCardBody>
         )}
         {releaseTargetsError ? (
-          <div class="px-5 pb-5">
+          <SettingsCardBody inset="belowHeader" gap="none">
             <Alert tone="critical">{releaseTargetsError}</Alert>
-          </div>
+          </SettingsCardBody>
         ) : null}
         {releaseTargets.length ? (
           <ReleaseTargetList
@@ -162,10 +168,7 @@ function ReleaseTargetList({
       {releaseTargets.map((target) => {
         const installation = installations.find((row) => row.id === target.installationRowId);
         return (
-          <li
-            key={target.id}
-            class="border-b border-border last:border-b-0 px-5 py-4 flex flex-wrap items-center justify-between gap-3"
-          >
+          <SettingsCardListItem key={target.id}>
             <div class="flex flex-col gap-1.5 min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="font-mono text-[14px] font-medium">{target.repositoryFullName}</span>
@@ -187,7 +190,7 @@ function ReleaseTargetList({
             <Button variant="danger" size="sm" onClick={() => onDelete(target.id)} class="shrink-0">
               Remove
             </Button>
-          </li>
+          </SettingsCardListItem>
         );
       })}
     </ul>
@@ -198,10 +201,7 @@ function InstallationList({ installations }: { installations: PublicGithubAppIns
   return (
     <ul class="m-0 p-0 list-none">
       {installations.map((installation) => (
-        <li
-          key={installation.id}
-          class="border-b border-border last:border-b-0 px-5 py-4 flex flex-wrap items-center justify-between gap-3"
-        >
+        <SettingsCardListItem key={installation.id}>
           <div class="flex flex-col gap-1.5 min-w-0">
             <div class="flex items-center gap-2 flex-wrap">
               <span class="font-mono text-[14px] font-medium">{installation.accountLogin}</span>
@@ -225,7 +225,7 @@ function InstallationList({ installations }: { installations: PublicGithubAppIns
                 : "removed on github · re-install to reconnect"}
             </span>
           ) : null}
-        </li>
+        </SettingsCardListItem>
       ))}
     </ul>
   );

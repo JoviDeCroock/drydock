@@ -4,12 +4,12 @@ import { errorMessage } from "../../../models/api";
 import {
   Alert,
   Button,
-  Card,
   Dialog,
   Field,
   Input,
   Muted,
   SectionLabel,
+  SettingsCard,
 } from "../../../components";
 
 export function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
@@ -53,7 +53,7 @@ export function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
   };
 
   return (
-    <Card class="flex flex-col gap-3">
+    <SettingsCard class="flex flex-col gap-3">
       <SectionLabel>Danger zone</SectionLabel>
       <Muted class="text-[13px] m-0 max-w-[760px]">
         Deleting your account permanently removes your personal workspace, every organization you
@@ -114,6 +114,6 @@ export function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
           {error.value ? <Alert tone="critical">{error.value}</Alert> : null}
         </form>
       </Dialog>
-    </Card>
+    </SettingsCard>
   );
 }
