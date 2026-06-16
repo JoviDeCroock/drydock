@@ -27,10 +27,7 @@ export default function DocsPage() {
           Actions builds the release and a GitHub Environment can pause the publish job. Both paths
           produce the same review report:
         </p>
-        <nav
-          class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-1 max-w-[880px]"
-          aria-label="Integration modes"
-        >
+        <nav class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-1" aria-label="Integration modes">
           <ModeCard href="#staged-publishing" title="Staged publishing: npm">
             Run <Code>npm publish --stage</Code>. npm holds a private candidate, Drydock reviews it,
             and you complete the publish in npm with your own 2FA.
@@ -43,7 +40,7 @@ export default function DocsPage() {
       </header>
 
       <div class="flex flex-col gap-14">
-        <section id="staged-publishing" class="flex max-w-[880px] flex-col gap-8 scroll-mt-6">
+        <section id="staged-publishing" class="flex flex-col gap-8 scroll-mt-6">
           <div class="flex flex-col gap-3">
             <SectionLabel>Staged publishing: npm</SectionLabel>
             <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
@@ -112,7 +109,7 @@ export default function DocsPage() {
           </Subsection>
         </section>
 
-        <section id="workflow-gating" class="flex max-w-[880px] flex-col gap-8 scroll-mt-6">
+        <section id="workflow-gating" class="flex flex-col gap-8 scroll-mt-6">
           <div class="flex flex-col gap-3">
             <SectionLabel>
               Workflow gating: PyPI &amp; npm on GitHub Actions <Badge tone="info">Preview</Badge>
@@ -314,7 +311,7 @@ export default function DocsPage() {
           </Subsection>
         </section>
 
-        <section class="flex max-w-[880px] flex-col gap-4 border-t border-border pt-10">
+        <section class="flex flex-col gap-4 border-t border-border pt-10">
           <SectionLabel>Start reviewing releases</SectionLabel>
           <div class="flex flex-wrap gap-3">
             <LinkButton href="/register">Create account</LinkButton>
