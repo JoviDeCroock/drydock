@@ -1,47 +1,45 @@
 import type { ComponentChildren } from "preact";
 import { Badge, Card, Eyebrow, LinkButton, PageShell, SectionLabel } from "../../components";
 import { docsPageSeo, PageSeo } from "../../lib/seo";
+import { MarketingHeaderActions } from "../MarketingHeaderActions";
+import { useAuthedSession } from "../useAuthedSession";
 
 export default function DocsPage() {
-  return (
-    <PageShell
-      headerActions={
-        <LinkButton href="/" variant="ghost" size="sm">
-          Home
-        </LinkButton>
-      }
-    >
-      <PageSeo metadata={docsPageSeo} />
-      <div class="flex max-w-[880px] flex-col gap-14">
-        <header class="border-t border-border pt-8 flex flex-col gap-5">
-          <Eyebrow tone="accent">Documentation</Eyebrow>
-          <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
-            Pick where Drydock pauses your release.
-          </h1>
-          <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-            The package that reaches a registry is not the pull request a maintainer reviewed. It is
-            the built output from scripts, bundlers, and CI. Drydock pauses npm staged publishes or
-            GitHub-gated PyPI and npm jobs, compares the candidate with the last published version,
-            and pins findings to changed lines. Maintainers decide; Drydock never publishes, never
-            stores publish credentials, and never executes package contents.
-          </p>
-          <p class="m-0 max-w-[680px] text-[14px] text-ink-muted leading-[1.65]">
-            Use registry staging when npm can hold the candidate. Use workflow gating when GitHub
-            Actions builds the release and a GitHub Environment can pause the publish job. Both
-            paths produce the same review report:
-          </p>
-          <nav class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-1" aria-label="Integration modes">
-            <ModeCard href="#staged-publishing" title="Staged publishing: npm">
-              Run <Code>npm publish --stage</Code>. npm holds a private candidate, Drydock reviews
-              it, and you complete the publish in npm with your own 2FA.
-            </ModeCard>
-            <ModeCard href="#workflow-gating" title="Workflow gating: PyPI & npm" badge="Preview">
-              GitHub Actions builds and uploads the release artifact. A GitHub Environment pauses
-              publishing until a maintainer approves or rejects the Drydock review.
-            </ModeCard>
-          </nav>
-        </header>
+  const authed = useAuthedSession();
 
+  return (
+    <PageShell class="gap-12" headerActions={<MarketingHeaderActions authed={authed} />}>
+      <PageSeo metadata={docsPageSeo} />
+      <header class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
+        <Eyebrow tone="accent">Documentation</Eyebrow>
+        <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
+          Pick where Drydock pauses your release.
+        </h1>
+        <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
+          The package that reaches a registry is not the pull request a maintainer reviewed. It is
+          the built output from scripts, bundlers, and CI. Drydock pauses npm staged publishes or
+          GitHub-gated PyPI and npm jobs, compares the candidate with the last published version,
+          and pins findings to changed lines. Maintainers decide; Drydock never publishes, never
+          stores publish credentials, and never executes package contents.
+        </p>
+        <p class="m-0 max-w-[680px] text-[14px] text-ink-muted leading-[1.65]">
+          Use registry staging when npm can hold the candidate. Use workflow gating when GitHub
+          Actions builds the release and a GitHub Environment can pause the publish job. Both paths
+          produce the same review report:
+        </p>
+        <nav class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-1" aria-label="Integration modes">
+          <ModeCard href="#staged-publishing" title="Staged publishing: npm">
+            Run <Code>npm publish --stage</Code>. npm holds a private candidate, Drydock reviews it,
+            and you complete the publish in npm with your own 2FA.
+          </ModeCard>
+          <ModeCard href="#workflow-gating" title="Workflow gating: PyPI & npm" badge="Preview">
+            GitHub Actions builds and uploads the release artifact. A GitHub Environment pauses
+            publishing until a maintainer approves or rejects the Drydock review.
+          </ModeCard>
+        </nav>
+      </header>
+
+      <div class="flex flex-col gap-14">
         <section id="staged-publishing" class="flex flex-col gap-8 scroll-mt-6">
           <div class="flex flex-col gap-3">
             <SectionLabel>Staged publishing: npm</SectionLabel>
