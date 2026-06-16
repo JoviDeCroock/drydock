@@ -1,16 +1,14 @@
 import type { ComponentChildren } from "preact";
 import { Badge, Card, Eyebrow, LinkButton, PageShell, SectionLabel } from "../../components";
 import { docsPageSeo, PageSeo } from "../../lib/seo";
+import { MarketingHeaderActions } from "../MarketingHeaderActions";
+import { useAuthedSession } from "../useAuthedSession";
 
 export default function DocsPage() {
+  const authed = useAuthedSession();
+
   return (
-    <PageShell
-      headerActions={
-        <LinkButton href="/" variant="ghost" size="sm">
-          Home
-        </LinkButton>
-      }
-    >
+    <PageShell headerActions={<MarketingHeaderActions authed={authed} />}>
       <PageSeo metadata={docsPageSeo} />
       <div class="flex max-w-[880px] flex-col gap-14">
         <header class="border-t border-border pt-8 flex flex-col gap-5">

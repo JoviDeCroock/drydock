@@ -1,9 +1,6 @@
 import type { ComponentChildren } from "preact";
-import { useEffect } from "preact/hooks";
-import { useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { homePageSeo, PageSeo } from "../../lib/seo";
-import { sessionModel } from "../../models/auth";
 import {
   AikidoPartnerStrip,
   Badge,
@@ -17,37 +14,14 @@ import {
   StatusStrip,
   StatusStripItem,
 } from "../../components";
+import { MarketingHeaderActions } from "../MarketingHeaderActions";
+import { useAuthedSession } from "../useAuthedSession";
 
 export default function LandingPage() {
-  const authed = useSignal(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    void sessionModel.load().then((session) => {
-      if (cancelled) return;
-      authed.value = Boolean(session?.user);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const authed = useAuthedSession();
 
   return (
-    <PageShell
-      class="gap-12"
-      headerActions={
-        <>
-          <Show when={authed}>
-            <LinkButton href="/dashboard" variant="ghost" size="sm">
-              Dashboard
-            </LinkButton>
-          </Show>
-          <LinkButton href="/docs" variant="ghost" size="sm">
-            Docs
-          </LinkButton>
-        </>
-      }
-    >
+    <PageShell class="gap-12" headerActions={<MarketingHeaderActions authed={authed} />}>
       <PageSeo metadata={homePageSeo} />
       <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
         <Eyebrow tone="accent">Package review before npm or PyPI publish</Eyebrow>
