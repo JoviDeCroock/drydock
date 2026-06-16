@@ -7,4 +7,5 @@ packages/experiments/build/
 .dev.vars
 .gstack/
 .context/
+agent-tour-output/
 .claude/scheduled_tasks.lock

@@ -20,6 +20,7 @@
 | `pnpm run e2e:fixtures` | Pack local E2E fixture packages and generate `.context/e2e-registry/registry.json`.                                                                                                                               |
 | `pnpm run e2e:dev`      | Start the fake npm staging registry plus the Vite/Worker dev server for browser testing.                                                                                                                          |
 | `pnpm run test:e2e`     | Run Playwright against the local fake-registry harness.                                                                                                                                                           |
+| `pnpm run agent:tour`   | Run the portable local product walkthrough and write `agent-tour-output/report.md`, screenshots, traces, video, and an exported report JSON.                                                                      |
 | `pnpm run verify`       | Run lint + format check + typecheck + tests **in parallel** (`scripts/verify.mjs`); the cheap checks finish while the worker pool runs. All four always run to completion and every failure is reported together. |
 
 `pnpm lint` (the shorthand without `run`) can collide with workspace forwarding or shell wrappers — always use `pnpm run lint`.

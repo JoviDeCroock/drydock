@@ -13,12 +13,15 @@ const registryUrl = `http://127.0.0.1:${registryPort}`;
 const stateDir = path.join(repoRoot, ".context/e2e-registry");
 const artifactsDir = path.join(repoRoot, ".context/e2e-artifacts");
 const configDir = path.join(repoRoot, ".context/e2e");
-const persistRoot = path.join(configDir, "state");
-const wranglerConfigPath = path.join(configDir, "wrangler.jsonc");
+const outputStateDir = resolveOptionalRepoPath(process.env.E2E_REGISTRY_STATE_DIR) ?? stateDir;
+const outputArtifactsDir = resolveOptionalRepoPath(process.env.E2E_ARTIFACTS_DIR) ?? artifactsDir;
+const outputConfigDir = resolveOptionalRepoPath(process.env.E2E_CONFIG_DIR) ?? configDir;
+const persistRoot = path.join(outputConfigDir, "state");
+const wranglerConfigPath = path.join(outputConfigDir, "wrangler.jsonc");
 let shuttingDown = false;
 
-await mkdir(configDir, { recursive: true });
-await mkdir(artifactsDir, { recursive: true });
+await mkdir(outputConfigDir, { recursive: true });
+await mkdir(outputArtifactsDir, { recursive: true });
 await rm(persistRoot, { recursive: true, force: true });
 await mkdir(persistRoot, { recursive: true });
 await writeWranglerConfig();
@@ -39,7 +42,7 @@ run("pnpm", [
 
 const children = [];
 const registry = start("node", ["test/e2e/fake-registry.mjs", "--port", String(registryPort)], {
-  E2E_REGISTRY_STATE_DIR: stateDir,
+  E2E_REGISTRY_STATE_DIR: outputStateDir,
 });
 children.push(registry);
 await waitForUrl(`${registryUrl}/__health`);
@@ -59,8 +62,10 @@ await waitForUrl(appUrl);
 
 console.log(`E2E app: ${appUrl}`);
 console.log(`Fake npm registry: ${registryUrl}`);
-console.log(`Registry journal: ${path.relative(repoRoot, path.join(stateDir, "requests.jsonl"))}`);
-console.log(`Artifacts: ${path.relative(repoRoot, artifactsDir)}`);
+console.log(
+  `Registry journal: ${path.relative(repoRoot, path.join(outputStateDir, "requests.jsonl"))}`,
+);
+console.log(`Artifacts: ${path.relative(repoRoot, outputArtifactsDir)}`);
 console.log(`Worker state: ${path.relative(repoRoot, persistRoot)}`);
 
 await new Promise((resolve, reject) => {
@@ -82,11 +87,20 @@ function shutdown(resolve) {
   setTimeout(resolve, 250);
 }
 
+function resolveOptionalRepoPath(value) {
+  if (!value) return null;
+  return path.resolve(repoRoot, value);
+}
+
+function configRelativePath(...segments) {
+  return path.relative(outputConfigDir, path.join(repoRoot, ...segments));
+}
+
 async function writeWranglerConfig() {
   const config = {
-    $schema: "../../node_modules/wrangler/config-schema.json",
+    $schema: configRelativePath("node_modules/wrangler/config-schema.json"),
     name: "staged-publish-review-e2e",
-    main: "../../server/index.ts",
+    main: configRelativePath("server/index.ts"),
     compatibility_date: "2026-05-20",
     compatibility_flags: ["nodejs_compat"],
     assets: {
@@ -99,7 +113,7 @@ async function writeWranglerConfig() {
         binding: "DB",
         database_name: "staged-publish-review-e2e",
         database_id: "00000000-0000-0000-0000-0000000000e2",
-        migrations_dir: "../../drizzle",
+        migrations_dir: configRelativePath("drizzle"),
       },
     ],
     kv_namespaces: [
