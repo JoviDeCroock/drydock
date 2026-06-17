@@ -280,4 +280,35 @@ describe("VS Code extension review adapter", () => {
       ]),
     );
   });
+
+  test("detects undeclared configuration reads through unscoped getConfiguration", () => {
+    const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
+      { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
+    ]);
+    const review = createVscodeExtensionReview({
+      manifest,
+      artifact: artifact([
+        file(
+          "extension/package.json",
+          extensionPackageJson({
+            activationEvents: ["onCommand:remoteTextFetcher.run"],
+          }),
+        ),
+        file(
+          "extension/out/extension.js",
+          "const vscode = require('vscode'); vscode.workspace.getConfiguration().get('agentService.url');",
+        ),
+      ]),
+    });
+
+    expect(review.ruleFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: VSCODE_RULE_IDS.undeclaredConfigurationRead,
+          file: "out/extension.js",
+          evidence: "reads undeclared VS Code configuration agentService.url",
+        }),
+      ]),
+    );
+  });
 });

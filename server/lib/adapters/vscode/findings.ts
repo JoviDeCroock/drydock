@@ -250,9 +250,12 @@ function readConfigurationKeys(sample: string): string[] {
   const keys = new Set<string>();
   const chained =
     /(?:vscode\.)?workspace\.getConfiguration\s*\(\s*["']([^"']+)["']\s*\)\s*\.get\s*\(\s*["']([^"']+)["']/g;
+  const unscoped =
+    /(?:vscode\.)?workspace\.getConfiguration\s*\(\s*\)\s*\.get\s*\(\s*["']([^"']+\.[^"']+)["']/g;
   const direct = /(?:vscode\.)?workspace\.getConfiguration\s*\(\s*["']([^"']+\.[^"']+)["']\s*\)/g;
   let match: RegExpExecArray | null;
   while ((match = chained.exec(sample))) keys.add(`${match[1]}.${match[2]}`);
+  while ((match = unscoped.exec(sample))) keys.add(match[1]);
   while ((match = direct.exec(sample))) keys.add(match[1]);
   return [...keys].sort();
 }
@@ -260,9 +263,9 @@ function readConfigurationKeys(sample: string): string[] {
 function configurationKeyLinePattern(key: string): RegExp {
   const [namespace, leaf] = key.split(/\.(.*)/s);
   return new RegExp(
-    `workspace\\.getConfiguration\\s*\\(\\s*["']${escapeRegExp(namespace)}(?:\\.${escapeRegExp(
+    `workspace\\.getConfiguration\\s*\\(\\s*(?:["']${escapeRegExp(namespace)}(?:\\.${escapeRegExp(
       leaf ?? "",
-    )})?["']`,
+    )})?["']|\\)\\s*\\.get\\s*\\(\\s*["']${escapeRegExp(key)}["'])`,
   );
 }
 
