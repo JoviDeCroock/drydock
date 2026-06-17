@@ -6,7 +6,7 @@ const SITE_URL = "https://drydock.org";
 export interface PageSeoMetadata {
   title: string;
   description: string;
-  path: "/" | "/docs";
+  path: "/" | "/docs" | "/privacy";
 }
 
 export interface PrerenderHeadElement {
@@ -34,12 +34,20 @@ export const docsPageSeo: PageSeoMetadata = {
   path: "/docs",
 };
 
+export const privacyPageSeo: PageSeoMetadata = {
+  title: "Drydock privacy policy",
+  description:
+    "How Drydock collects, uses, retains, and protects your account, organization, and release data.",
+  path: "/privacy",
+};
+
 export function getPageSeoMetadata(pathname: string): PageSeoMetadata | undefined {
   const canonicalPathname =
     pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
 
   if (canonicalPathname === "/") return homePageSeo;
   if (canonicalPathname === "/docs") return docsPageSeo;
+  if (canonicalPathname === "/privacy") return privacyPageSeo;
   return undefined;
 }
 
