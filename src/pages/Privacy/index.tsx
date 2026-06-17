@@ -2,15 +2,10 @@ import type { ComponentChildren } from "preact";
 import { Eyebrow, LinkButton, PageShell, SectionLabel } from "../../components";
 import { privacyPageSeo, PageSeo } from "../../lib/seo";
 
-// Generic, document-shaped privacy policy. Wording is deliberately conservative
-// and aligned with the product's trust boundary: publish credentials are stored
-// encrypted and only decrypted to reach the registry, and package contents are
-// never executed (see AGENTS.md "trust boundary"). Update the effective date
-// below when the substantive terms change.
 const EFFECTIVE_DATE = "2026-06-16";
 
 const PRIVACY_MAILTO =
-  "mailto:drydock@drydock.org?subject=Drydock%20privacy%20request&body=Tell%20us%20what%20you%27d%20like%20us%20to%20do%20with%20your%20data%3A%0A%0A";
+  "mailto:privacy@drydock.org?subject=Drydock%20privacy%20request&body=Tell%20us%20what%20you%27d%20like%20us%20to%20do%20with%20your%20data%3A%0A%0A";
 
 export default function PrivacyPage() {
   return (
@@ -165,7 +160,7 @@ export default function PrivacyPage() {
             Questions about this policy or a request about your data? Email us and we will respond.
           </Prose>
           <div class="flex flex-wrap gap-3">
-            <LinkButton href={PRIVACY_MAILTO}>Email drydock@drydock.org</LinkButton>
+            <LinkButton href={PRIVACY_MAILTO}>Email privacy@drydock.org</LinkButton>
           </div>
         </section>
       </div>
