@@ -221,6 +221,11 @@ describe("npmGateAdapter", () => {
       ecosystem: "npm",
       digest: "cd".repeat(32),
       manifest: input.manifest,
+      provenance: {
+        ecosystem: "npm",
+        mode: "workflow_gate",
+        artifacts: [{ path: "dist/pkg-1.2.3.tgz", kind: "tarball", sha256: "cd".repeat(32) }],
+      },
     });
   });
 

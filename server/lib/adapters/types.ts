@@ -36,6 +36,28 @@ export interface AcquiredArtifact {
 // Opaque to the pipeline — the adapter is the only thing that interprets it.
 export type StagedDetails = unknown;
 
+export type ReleaseProvenanceArtifactKind = "tarball" | "wheel" | "sdist";
+
+// One reviewed release artifact bound to the SHA-256 the control plane
+// recomputed from its immutable bytes.
+export interface ReleaseProvenanceArtifact {
+  path: string;
+  kind: ReleaseProvenanceArtifactKind;
+  sha256: string;
+}
+
+// Byte-continuity record for a workflow-gate review: the exact artifacts Drydock
+// reviewed and the digests it recomputed from the immutable GitHub Actions
+// bytes. The publish job re-derives the same digests from the same artifact
+// before upload, so the bytes reviewed are the bytes published. Rendered
+// uniformly across ecosystems in the report "Provenance" section and surfaced in
+// the report export so a maintainer's CI can verify against it.
+export interface ReleaseProvenance {
+  ecosystem: "npm" | "pypi";
+  mode: "workflow_gate";
+  artifacts: ReleaseProvenanceArtifact[];
+}
+
 export type BaselineSelectionSource =
   | "dist-tag"
   | "semver-predecessor"

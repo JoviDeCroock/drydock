@@ -191,6 +191,45 @@ describe("PyPI artifact summaries and review", () => {
     );
   });
 
+  test("summarizeDetails surfaces reviewed wheel/sdist digests as a provenance block", async () => {
+    const input = pypiAdapter.parseInput({
+      manifest: {
+        schema: "drydock.release-artifacts.v1",
+        ecosystem: "pypi",
+        package: "demo-package",
+        version: "1.2.0",
+        artifacts: [
+          { path: "dist/demo_package-1.2.0-py3-none-any.whl", sha256: "a".repeat(64) },
+          { path: "dist/demo_package-1.2.0.tar.gz", sha256: "b".repeat(64) },
+        ],
+      },
+      artifacts: [
+        { path: "dist/demo_package-1.2.0-py3-none-any.whl", files: wheelArtifactFiles("1.2.0") },
+        {
+          path: "dist/demo_package-1.2.0.tar.gz",
+          files: [
+            file(
+              "demo_package-1.2.0/PKG-INFO",
+              "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
+            ),
+          ],
+        },
+      ],
+    });
+    const staged = await pypiAdapter.acquireStaged(adapterCtx, input, stubBroker().broker);
+    // Provenance binds the report to the digests the gate recomputed from the
+    // immutable bytes, mirroring the npm gate. The kind is content-derived so the
+    // publish job can verify each wheel/sdist independently.
+    expect(pypiAdapter.summarizeDetails(staged.details).provenance).toEqual({
+      ecosystem: "pypi",
+      mode: "workflow_gate",
+      artifacts: [
+        { path: "dist/demo_package-1.2.0-py3-none-any.whl", kind: "wheel", sha256: "a".repeat(64) },
+        { path: "dist/demo_package-1.2.0.tar.gz", kind: "sdist", sha256: "b".repeat(64) },
+      ],
+    });
+  });
+
   test("marks manifest and artifact metadata mismatches as critical", () => {
     const manifest = parsePyPiReleaseManifest({
       schema: "drydock.release-artifacts.v1",

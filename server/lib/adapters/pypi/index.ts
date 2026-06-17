@@ -5,7 +5,7 @@ import {
   redactFindings,
   summarizePackageJsonDiff,
 } from "../../review";
-import type { PackageAdapter } from "../types";
+import type { PackageAdapter, ReleaseProvenance } from "../types";
 import {
   acquireBaselinePyPi,
   acquireStagedPyPi,
@@ -69,6 +69,18 @@ export const pypiAdapter: PackageAdapter<PyPiAdapterInput, PyPiBroker> = {
     return {
       manifest: d.manifest,
       artifacts: d.artifacts,
+      provenance: {
+        // PyPI artifacts only reach review through the workflow gate; the
+        // manifest carries each wheel/sdist digest recomputed from the immutable
+        // bundle bytes, which the publish job re-verifies before upload.
+        ecosystem: "pypi",
+        mode: "workflow_gate",
+        artifacts: d.manifest.artifacts.map((artifact) => ({
+          path: artifact.path,
+          kind: artifact.kind,
+          sha256: artifact.sha256,
+        })),
+      } satisfies ReleaseProvenance,
     };
   },
 };

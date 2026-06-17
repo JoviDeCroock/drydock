@@ -490,7 +490,21 @@ async function rejectGateForArtifactError(
     reportUrl: null,
   });
   if (!decided) return;
-  await deliverGateDecision(config, db, decided);
+  try {
+    await deliverGateDecision(config, db, decided);
+  } catch (err) {
+    // First-delivery POST of the auto-block decision failed: GitHub still holds
+    // the job, so alert an operator. Redeliveries are observed separately in
+    // `redeliverGateDecision`; the throw lets the queue retry.
+    emitOperationalEvent("error", "github_workflow_gate.decision_callback_failed", {
+      organizationId: gate.organizationId,
+      gateId: gate.id,
+      decision: "rejected",
+      reason: error.code,
+      error: describeOperationalError(err),
+    });
+    throw err;
+  }
   await recordScanEvent(db, {
     organizationId: gate.organizationId,
     type: "github_workflow_gate.rejected",

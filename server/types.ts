@@ -1,5 +1,11 @@
 import type { Auth, AuthSession } from "./lib/auth";
 import type { BaselineInfo } from "./lib/adapters/types";
+
+export type {
+  ReleaseProvenance,
+  ReleaseProvenanceArtifact,
+  ReleaseProvenanceArtifactKind,
+} from "./lib/adapters/types";
 import type { AiReview } from "./lib/ai-review";
 import type { ScanRiskBreakdown } from "./lib/risk";
 import type {

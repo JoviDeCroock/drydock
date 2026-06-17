@@ -1,6 +1,12 @@
 import type { FileRecord, PackageJsonSummary } from "../../review";
 import type { TarSuspiciousEntry } from "../../tar-parser.js";
-import type { AcquiredArtifact, AdapterContext, PackageAdapter, StagedDetails } from "../types";
+import type {
+  AcquiredArtifact,
+  AdapterContext,
+  PackageAdapter,
+  ReleaseProvenance,
+  StagedDetails,
+} from "../types";
 import { acquireBaselineNpm } from "./acquire";
 import { createNpmBroker, type NpmBroker } from "./broker";
 import { buildNpmFindings } from "./findings";
@@ -142,6 +148,17 @@ export const npmGateAdapter: PackageAdapter<NpmGateAdapterInput, NpmBroker> = {
       ecosystem: "npm",
       digest: d.digest,
       manifest: d.manifest,
+      provenance: {
+        ecosystem: "npm",
+        mode: d.mode,
+        // An npm release version is exactly one tarball; the recomputed digest
+        // is the bytes the publish job downloads and runs `npm publish` on.
+        artifacts: d.manifest.artifacts.map((artifact) => ({
+          path: artifact.path,
+          kind: "tarball" as const,
+          sha256: artifact.sha256,
+        })),
+      } satisfies ReleaseProvenance,
     };
   },
 };

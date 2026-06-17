@@ -272,6 +272,9 @@ interface DecisionCall {
 
 interface ScenarioOpts {
   digestMatches: boolean;
+  // HTTP status the mocked GitHub deployment-protection callback returns; a
+  // non-2xx makes the decision POST throw so the failure path can be exercised.
+  decisionStatus?: number;
 }
 
 async function buildScenario(runId: number, opts: ScenarioOpts) {
@@ -310,7 +313,7 @@ async function buildScenario(runId: number, opts: ScenarioOpts) {
     const request = input instanceof Request ? input : new Request(input, init);
     if (request.url.endsWith("/deployment_protection_rule")) {
       decisionCalls.push((await request.json()) as DecisionCall);
-      return new Response(null, { status: 204 });
+      return new Response(null, { status: opts.decisionStatus ?? 204 });
     }
     if (request.url.includes("/access_tokens")) {
       return Response.json({
@@ -343,7 +346,9 @@ async function buildScenario(runId: number, opts: ScenarioOpts) {
     throw new Error(`unexpected fetch in test: ${request.url}`);
   });
   vi.stubGlobal("fetch", fetchSpy);
-  return { fetchSpy, decisionCalls, wheelPath };
+  // `declaredSha` is the SHA-256 of the wheel bytes for a digestMatches run, so
+  // it is exactly what the gate recomputes from the immutable bundle.
+  return { fetchSpy, decisionCalls, wheelPath, declaredSha };
 }
 
 function buildEnv(bindings: Record<string, string>, loaderBinding: unknown): Cloudflare.Env {
@@ -555,6 +560,40 @@ describe("executeWorkflowGateJob", () => {
     expect(types).toContain("github_workflow_gate.rejected");
   });
 
+  test("alerts an operator when the first artifact-reject callback POST fails", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9212",
+      repositoryId: 72013,
+      runId: 16262,
+    });
+    const scenario = await buildScenario(16262, { digestMatches: false, decisionStatus: 500 });
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const sandboxEnv = buildEnv(bindings, loaderMock.binding);
+    const db = createDb(env.DB);
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // GitHub still holds the job when this POST fails, so the failure must page
+      // an operator instead of being swallowed. The throw lets the queue retry.
+      await executeWorkflowGateJob(
+        sandboxEnv,
+        ctx,
+        { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+        db,
+      ).catch(() => {});
+
+      expect(scenario.decisionCalls).toHaveLength(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        "github_workflow_gate.decision_callback_failed",
+        expect.objectContaining({ gateId: seeded.gateId, decision: "rejected" }),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   test("leaves a high-risk candidate pending with a reject recommendation", async () => {
     const seeded = await seedGateForTest({
       installationExternalId: "9206",
@@ -600,6 +639,43 @@ describe("executeWorkflowGateJob", () => {
     expect(persisted?.findings).toContainEqual(
       expect.objectContaining({ ruleId: "pypi.record-mismatch", severity: "high" }),
     );
+  });
+
+  test("persists the recomputed digest as report provenance for the publish job to verify", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9215",
+      repositoryId: 72015,
+      runId: 16165,
+    });
+    const scenario = await buildScenario(16165, { digestMatches: true });
+    const loaderMock = buildLoaderMock();
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const sandboxEnv = buildEnv(bindings, loaderMock.binding);
+    const db = createDb(env.DB);
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.scanId).toBeTruthy();
+
+    const persisted = await getScan(db, gate!.scanId!, seeded.organizationId, env.ARTIFACTS);
+    const summary = persisted?.scan.summaryJson as {
+      stagedPublish?: { provenance?: unknown };
+    } | null;
+    // The surfaced digest is the one the gate recomputed from the immutable
+    // bundle bytes — not a maintainer claim — so a publish-time
+    // `sha256sum --check` against it fails closed on any drift.
+    expect(summary?.stagedPublish?.provenance).toEqual({
+      ecosystem: "pypi",
+      mode: "workflow_gate",
+      artifacts: [{ path: scenario.wheelPath, kind: "wheel", sha256: scenario.declaredSha }],
+    });
   });
 
   test("leaves the deployment pending and visible when the review errors", async () => {

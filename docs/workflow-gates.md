@@ -44,6 +44,15 @@ For every candidate artifact set, adapters must provide:
 
 If a workflow uploads artifacts for several packages, Drydock fans out into separate gate reviews. Accepting one package must not approve another package's release.
 
+Dropping maintainer-declared manifests removes the explicit "ship exactly these
+N files, at these digests" declaration. Byte integrity between review and publish
+rests on GitHub artifact immutability plus the publish job never rebuilding. For
+ecosystems that can record publish-side checksums, the recommended workflow
+records a checksum file during build and verifies it immediately before upload.
+Those digests match the ones Drydock recomputes and surfaces in the report
+Provenance section and `report.json` (`provenance.artifacts[]`), so the build,
+review, and publish all hash the same bytes.
+
 ## PyPI workflow-gate notes
 
 PyPI has no `drydock-manifest.json`. The release set is whatever wheels and sdists the workflow uploads, with identity parsed from wheel `METADATA` or sdist `PKG-INFO`.
@@ -87,6 +96,10 @@ jobs:
 
 Drydock should be the deployment-protection rule for the `production` environment. The publish job must consume the exact uploaded artifact reviewed by Drydock; rebuilding after approval breaks the review boundary.
 
+See [`pypi-workflow-gate.md`](./pypi-workflow-gate.md) for the PyPI-specific
+workflow shape, including build-time `SHA256SUMS` generation and publish-time
+verification.
+
 ## Trust and failure behavior
 
 - The GitHub webhook signature is mandatory.
@@ -110,8 +123,18 @@ The gate review workbench shows the release target, package identity/version, ar
 6. Add Worker-route tests for webhook/gate lifecycle and adapter tests for archive/metadata/baseline behavior.
 7. Add fake-registry or fake-artifact e2e coverage when the publish workflow or browser-visible review flow changes.
 
+## Provenance surfacing
+
+Each gate adapter's `summarizeDetails` emits a `provenance` block — `{ ecosystem,
+mode, artifacts: [{ path, kind, sha256 }] }` — built from the digests the control
+plane recomputed from the immutable bundle bytes. It is persisted in
+`summary.stagedPublish`, rendered as the report **Provenance** section in the
+scan workbench, and re-validated into the `report.json` export as a top-level
+`provenance` field. A maintainer's CI can compare those digests against the
+checksum file it built and the bytes it is about to publish, closing the
+byte-continuity loop without trusting any single step.
+
 ## Remaining work
 
-- Continue surfacing artifact digests and callback metadata in completed reports.
 - Expand gate-specific e2e coverage as more ecosystems are added.
 - Keep GitHub/PyPI/npm validation failures user-actionable without leaking credentials or private package bytes.

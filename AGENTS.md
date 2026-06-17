@@ -4,7 +4,7 @@
 
 - `server/` — Hono Worker. `index.ts` mounts routes under `/api/*`. The Worker is the deploy target (`main` in `wrangler.jsonc`).
   - `routes/scans.ts` — `POST /api/v1/scans { stageId }`, `GET /api/v1/scans`, `GET /api/v1/scans/:id`.
-  - `routes/github-webhooks.ts` — public signed GitHub App webhook endpoint. Persists `deployment_protection_rule` deliveries into `github_workflow_gates`; see `docs/workflow-gates.md`.
+  - `routes/github-webhooks.ts` — public signed GitHub App webhook endpoint. Persists `deployment_protection_rule` deliveries into `github_workflow_gates`; see `docs/workflow-gates.md`, `docs/npm-workflow-gate.md`, and `docs/pypi-workflow-gate.md`.
   - `lib/sandbox.ts` — Dynamic Worker that downloads/parses package artifacts. `NpmStageGateway` is the only npm-token egress.
   - `lib/review.ts` — deterministic findings, package/package.json diffing, risk computation, and shared UI types.
   - `lib/ai-review.ts` — Workers AI reviewer, wired via `scan-pipeline.ts` and default-off behind the `ai-review` Flagship flag.

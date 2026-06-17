@@ -190,9 +190,10 @@ export default function DocsPage() {
             </Prose>
             <Prose>
               Drydock reads each package's name and version out of the files themselves and
-              recomputes SHA-256 digests from the bytes it fetched. The publish job only downloads
-              the reviewed bundle and never rebuilds, so the bytes that were reviewed are the bytes
-              that get published.
+              recomputes SHA-256 digests from the bytes it fetched. Those digests show up in the
+              review's Provenance section and the report export, and the publish job re-verifies the
+              downloaded bytes against them before upload — so the bytes that were reviewed are
+              provably the bytes that get published, with no rebuild in between.
             </Prose>
             <Prose>
               You usually do not declare which ecosystem you're publishing. Drydock tells an npm
@@ -223,10 +224,15 @@ export default function DocsPage() {
     steps:
       - uses: actions/checkout@v4
       - run: python -m build
+      # Record the digests Drydock reviews and the publish job re-checks.
+      - run: cd dist && sha256sum *.whl *.tar.gz > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: pypi-release-candidate
-          path: dist/*
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS
 
   publish:
     needs: build-release-artifacts
@@ -236,16 +242,19 @@ export default function DocsPage() {
       contents: read
     steps:
       - uses: actions/download-artifact@v4
-        with:
-          name: pypi-release-candidate
+        with: { name: pypi-release-candidate, path: dist }
+      # Fail closed if the bytes drifted from what was reviewed.
+      - run: cd dist && sha256sum --check --strict SHA256SUMS
+      - run: rm dist/SHA256SUMS
       # publish the downloaded dist/* to PyPI via Trusted Publishing (OIDC)`}
             </CodeBlock>
             <Prose>
-              No manifest or checksum step is required. CI builds and uploads <Code>dist/*</Code>.
-              The <Code>environment: pypi</Code> line is the gate: configure that same environment
-              as a PyPI Trusted Publisher and enable Drydock as a deployment protection rule on it.
-              The publish job stays blocked until the review is approved in Drydock, then publishes
-              the downloaded bundle with whatever tool you prefer.
+              No manifest is required. CI builds <Code>dist/*</Code>, records a{" "}
+              <Code>SHA256SUMS</Code> line for the digests Drydock reviews, and re-checks it before
+              upload. The <Code>environment: pypi</Code> line is the gate: configure that same
+              environment as a PyPI Trusted Publisher and enable Drydock as a deployment protection
+              rule on it. The publish job stays blocked until the review is approved in Drydock,
+              then publishes the verified bundle with whatever tool you prefer.
             </Prose>
             <Prose>
               npm looks the same. <Code>npm pack</Code> the workspaces, upload{" "}

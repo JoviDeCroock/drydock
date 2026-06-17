@@ -1,5 +1,5 @@
 import type { DiffEntry, FindingDiffStatus } from "../../../../server/lib/review";
-import type { PackageJsonDiff } from "../../../../server/types";
+import type { PackageJsonDiff, ReleaseProvenance } from "../../../../server/types";
 import type { PersistedScanDetail } from "../../../models/scan";
 
 export interface PersistedSummary {
@@ -12,6 +12,11 @@ export interface PersistedSummary {
   };
   packageJsonDiff?: PackageJsonDiff;
   diff?: DiffEntry[];
+  // Adapter-shaped staged details persisted by summarizeDetails. The UI only
+  // reads the byte-continuity provenance block; the rest stays opaque.
+  stagedPublish?: {
+    provenance?: ReleaseProvenance;
+  };
 }
 
 export type PersistedFinding = PersistedScanDetail["findings"][number];
