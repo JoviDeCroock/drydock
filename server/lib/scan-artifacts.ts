@@ -344,6 +344,38 @@ export async function loadScanArtifactFile(
   }
 }
 
+// R2 lifecycle cleanup: drop derived artifacts when the D1 rows that point at
+// them are deleted, so redacted evidence never outlives its metadata. Both take
+// the raw ARTIFACTS bucket — not scanArtifactReadBucket — because deletion is a
+// teardown concern, and SCAN_ARTIFACT_READS_DISABLED (a read kill-switch) must
+// not strand objects. Both are fail-soft: a delete error is logged, never
+// thrown, so it can't abort the surrounding D1 teardown (account/org deletion
+// must still complete). A leaked object is recoverable by re-running the sweep.
+
+export async function deleteOrganizationArtifacts(
+  bucket: R2Bucket | undefined,
+  organizationId: string,
+): Promise<void> {
+  if (!bucket) return;
+  await deleteArtifactsByPrefix(bucket, organizationArtifactPrefix(organizationId), {
+    organizationId,
+    scope: "organization",
+  });
+}
+
+export async function deleteScanArtifacts(
+  bucket: R2Bucket | undefined,
+  organizationId: string,
+  scanId: string,
+): Promise<void> {
+  if (!bucket) return;
+  await deleteArtifactsByPrefix(bucket, scanArtifactPrefix(organizationId, scanId), {
+    organizationId,
+    scanId,
+    scope: "scan",
+  });
+}
+
 async function loadScanArtifactsManifest(
   bucket: R2Bucket | undefined,
   scan: ScanArtifactScanRow,
@@ -468,6 +500,53 @@ function artifactKeys(organizationId: string, scanId: string) {
 
 function safeSegment(value: string): string {
   return encodeURIComponent(value).replace(/%/g, "~");
+}
+
+// Deletion prefixes intentionally stop *before* the `v{N}` segment so a cleanup
+// removes every storage version of the scan/org, not just the current one. They
+// must match the `artifactKeys` layout exactly or a sweep would miss objects.
+function organizationArtifactPrefix(organizationId: string): string {
+  return `orgs/${safeSegment(organizationId)}/`;
+}
+
+function scanArtifactPrefix(organizationId: string, scanId: string): string {
+  return `orgs/${safeSegment(organizationId)}/scans/${safeSegment(scanId)}/`;
+}
+
+// R2 caps list() and delete() at 1000 keys per call, so we page until the prefix
+// is drained. Caller-supplied logFields identify the scope (org vs scan) for the
+// emitted event.
+const ARTIFACT_LIST_PAGE = 1000;
+
+async function deleteArtifactsByPrefix(
+  bucket: R2Bucket,
+  prefix: string,
+  logFields: Record<string, unknown>,
+): Promise<void> {
+  try {
+    let deleted = 0;
+    let cursor: string | undefined;
+    do {
+      const listed = await bucket.list({ prefix, limit: ARTIFACT_LIST_PAGE, cursor });
+      const keys = listed.objects.map((object) => object.key);
+      if (keys.length > 0) {
+        await bucket.delete(keys);
+        deleted += keys.length;
+      }
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor);
+    if (deleted > 0) {
+      emitOperationalEvent("info", "scan.artifacts.deleted", {
+        ...logFields,
+        objectsDeleted: deleted,
+      });
+    }
+  } catch (err) {
+    emitOperationalEvent("error", "scan.artifacts.delete_failed", {
+      ...logFields,
+      error: describeOperationalError(err),
+    });
+  }
 }
 
 function parseManifest(text: string): ScanArtifactsManifest | null {

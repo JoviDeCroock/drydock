@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { personalOrganizationId } from "../lib/ownership";
+import { deleteOrganizationArtifacts } from "../lib/scan-artifacts";
 import type { AppDb, WorkspaceSession } from "./client";
 import {
   githubAppInstallations,
@@ -227,9 +228,16 @@ export async function setRequireTwoFactorForReleaseDecisions(
  * `ON DELETE CASCADE`, because D1 does not enforce foreign keys by default and a
  * silent orphan here would leak one org's scans/credentials past its deletion.
  * scan_files / scan_findings hang off scan_id, so they're cleared via a subquery
- * over the org's scans before the scans themselves go.
+ * over the org's scans before the scans themselves go. The org's derived R2
+ * artifacts are removed after the D1 teardown so redacted evidence doesn't
+ * outlive the org; pass the ARTIFACTS bucket (the deletion is a no-op without
+ * it, e.g. in environments with no bucket bound).
  */
-export async function deleteOrganization(db: AppDb, organizationId: string): Promise<void> {
+export async function deleteOrganization(
+  db: AppDb,
+  organizationId: string,
+  artifactBucket?: R2Bucket,
+): Promise<void> {
   const orgScans = db
     .select({ id: scans.id })
     .from(scans)
@@ -258,6 +266,8 @@ export async function deleteOrganization(db: AppDb, organizationId: string): Pro
     db.delete(organizationMembers).where(eq(organizationMembers.organizationId, organizationId)),
     db.delete(organizations).where(eq(organizations.id, organizationId)),
   ]);
+
+  await deleteOrganizationArtifacts(artifactBucket, organizationId);
 }
 
 export interface CoOwnedOrganization {
@@ -313,7 +323,11 @@ export async function findCoOwnedOrganizations(
  * findCoOwnedOrganizations before this runs; if one reaches here it is left
  * intact rather than destroying another member's data.
  */
-export async function deleteUserAccount(db: AppDb, userId: string): Promise<void> {
+export async function deleteUserAccount(
+  db: AppDb,
+  userId: string,
+  artifactBucket?: R2Bucket,
+): Promise<void> {
   const personalId = personalOrganizationId(userId);
   const owned = await db
     .select({ id: organizations.id })
@@ -330,7 +344,7 @@ export async function deleteUserAccount(db: AppDb, userId: string): Promise<void
       ).filter((member) => member.userId !== userId).length;
       if (others > 0) continue; // co-owned: rejected upstream, never wiped here
     }
-    await deleteOrganization(db, org.id);
+    await deleteOrganization(db, org.id, artifactBucket);
   }
 
   await db.batch([

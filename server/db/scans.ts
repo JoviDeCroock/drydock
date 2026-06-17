@@ -13,6 +13,7 @@ import {
 } from "../lib/review";
 import { normalizeScanRiskBreakdown, type ScanRiskBreakdown } from "../lib/risk";
 import {
+  deleteScanArtifacts,
   loadScanArtifactFile,
   loadScanArtifacts,
   scanFileRowsForArtifacts,
@@ -164,12 +165,24 @@ export async function discardScanAttempt(db: AppDb, scanId: string, organization
  * review batch before it is re-run, so a retry does not leave orphaned
  * per-package scans behind (cascades to scan_files / scan_findings). Safe only
  * once the caller holds the gate's review claim and no representative scan is
- * attached.
+ * attached. A prior attempt may have completed some packages and written their
+ * R2 artifacts, so pass the ARTIFACTS bucket to tear those down too — the scan
+ * ids are read before the D1 delete so the per-scan artifact prefixes are known.
  */
-export async function discardGateScans(db: AppDb, gateId: string, organizationId: string) {
-  await db
-    .delete(scans)
-    .where(and(eq(scans.gateId, gateId), eq(scans.organizationId, organizationId)));
+export async function discardGateScans(
+  db: AppDb,
+  gateId: string,
+  organizationId: string,
+  artifactBucket?: R2Bucket,
+) {
+  const condition = and(eq(scans.gateId, gateId), eq(scans.organizationId, organizationId));
+  const discarded = artifactBucket
+    ? await db.select({ id: scans.id }).from(scans).where(condition)
+    : [];
+  await db.delete(scans).where(condition);
+  for (const { id } of discarded) {
+    await deleteScanArtifacts(artifactBucket, organizationId, id);
+  }
 }
 
 export async function persistScan(db: AppDb, input: PersistedScanInput) {

@@ -143,7 +143,7 @@ export function createAuth(env: Cloudflare.Env) {
               } before deleting your account: ${names}`,
             });
           }
-          await deleteUserAccount(db, deletedUser.id);
+          await deleteUserAccount(db, deletedUser.id, env.ARTIFACTS);
         },
       },
     },

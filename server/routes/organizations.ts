@@ -203,8 +203,9 @@ organizationsRoutes.delete("/:id", async (c) => {
   }
 
   // No scan_event is recorded: the org and its scan_events are removed together,
-  // so the audit row would be deleted in the same breath.
-  await deleteOrganization(db, organizationId);
+  // so the audit row would be deleted in the same breath. ARTIFACTS is passed so
+  // the org's R2 artifacts are torn down alongside its D1 rows.
+  await deleteOrganization(db, organizationId, c.env.ARTIFACTS);
   return c.json({ ok: true });
 });
 
