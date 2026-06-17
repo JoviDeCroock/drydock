@@ -34,12 +34,13 @@ export const API_CSP = ["default-src 'none'", "frame-ancestors 'none'", "base-ur
   "; ",
 );
 
-// The HTML UI loads same-origin scripts/styles/images plus the Geist webfont
-// from Google Fonts: the stylesheet from fonts.googleapis.com (style-src) pulls
-// font files from fonts.gstatic.com (font-src). Inline style attributes are
-// blocked; dynamic visuals use classes or SVG geometry attributes instead.
-// img-src data: covers inline data-URI images. connect-src stays 'self' — the
-// UI only calls the same-origin /api surface.
+// The HTML UI loads only same-origin subresources. The Geist webfont is
+// self-hosted (Fontsource, bundled into our assets), so style-src and font-src
+// stay 'self' with no third-party origins — no visitor IP leaks to a font CDN.
+// No 'unsafe-inline' on style-src, and style-src-attr 'none' blocks inline
+// style attributes outright; dynamic visuals use classes or SVG geometry
+// attributes instead. img-src data: covers inline data-URI images. connect-src
+// stays 'self' — the UI only calls the same-origin /api surface.
 export const DOCUMENT_CSP = [
   "default-src 'self'",
   "base-uri 'self'",
@@ -47,9 +48,9 @@ export const DOCUMENT_CSP = [
   "frame-ancestors 'none'",
   "form-action 'self'",
   "script-src 'self'",
-  "style-src 'self' https://fonts.googleapis.com",
+  "style-src 'self'",
   "style-src-attr 'none'",
-  "font-src 'self' https://fonts.gstatic.com",
+  "font-src 'self'",
   "img-src 'self' data:",
   "connect-src 'self'",
 ].join("; ");
