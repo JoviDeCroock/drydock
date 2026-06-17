@@ -5,7 +5,7 @@ description: Run, inspect, and summarize the portable Drydock local product walk
 
 # Drydock Agent Tour
 
-## Devin Secrets Needed
+## Secrets Needed
 
 None for the default local fake-registry tour. The tour registers a local test user, uses a fake npm registry token, and runs against local D1/Worker state.
 
