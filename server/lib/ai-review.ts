@@ -202,12 +202,13 @@ export async function analyzeWithAi(
   };
 }
 
-// Workers AI capacity/overload/rate-limit rejections are transient and worth a
-// retry; anything else (bad request, code bug) is not. Matched on message text
-// because the binding throws plain Errors, not classified APICallErrors — `3040`
-// is Workers AI's "Capacity temporarily exceeded" code.
+// Workers AI capacity/overload/rate-limit/time-out rejections are transient and
+// worth a retry; anything else (bad request, code bug) is not. Matched on
+// message text because the binding throws plain Errors, not classified
+// APICallErrors — `3040` is "Capacity temporarily exceeded" and `3046` is
+// "Request timeout".
 const RETRYABLE_AI_ERROR_PATTERN =
-  /\b(?:3040|429|502|503)\b|capacity .*exceeded|temporarily unavailable|overloaded|rate.?limit|too many requests/i;
+  /\b(?:3040|3046|408|429|502|503)\b|capacity .*exceeded|request timeout|temporarily unavailable|overloaded|rate.?limit|too many requests/i;
 
 function isRetryableAiError(err: unknown): boolean {
   return RETRYABLE_AI_ERROR_PATTERN.test(errorMessage(err));
