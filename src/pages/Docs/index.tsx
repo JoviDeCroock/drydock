@@ -225,7 +225,9 @@ export default function DocsPage() {
       - uses: actions/checkout@v4
       - run: python -m build
       # Record the digests Drydock reviews and the publish job re-checks.
-      - run: cd dist && sha256sum *.whl *.tar.gz > SHA256SUMS
+      - run: |
+          shopt -s nullglob
+          cd dist && sha256sum *.whl *.tar.gz > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: pypi-release-candidate

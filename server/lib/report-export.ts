@@ -128,15 +128,17 @@ function extractProvenance(stagedPublish: unknown): ReleaseProvenance | null {
   const { ecosystem, mode, artifacts } = provenance;
   if ((ecosystem !== "npm" && ecosystem !== "pypi") || mode !== "workflow_gate") return null;
   if (!Array.isArray(artifacts)) return null;
-  const mapped = artifacts.flatMap((artifact): ReleaseProvenanceArtifact[] => {
-    if (!isRecord(artifact)) return [];
+  const mapped: ReleaseProvenanceArtifact[] = [];
+  for (const artifact of artifacts) {
+    if (!isRecord(artifact)) return null;
     const { path, kind, sha256 } = artifact;
-    if (typeof path !== "string" || typeof sha256 !== "string") return [];
+    if (typeof path !== "string" || typeof sha256 !== "string") return null;
     if (kind === "tarball" || kind === "wheel" || kind === "sdist") {
-      return [{ path, kind, sha256 }];
+      mapped.push({ path, kind, sha256 });
+      continue;
     }
-    return [];
-  });
+    return null;
+  }
   if (!mapped.length) return null;
   return { ecosystem, mode, artifacts: mapped };
 }
