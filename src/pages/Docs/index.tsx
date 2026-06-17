@@ -227,13 +227,14 @@ export default function DocsPage() {
       # Record the digests Drydock reviews and the publish job re-checks.
       - run: |
           shopt -s nullglob
-          cd dist && sha256sum *.whl *.tar.gz > SHA256SUMS
+          cd dist && sha256sum *.whl *.tar.gz *.tgz > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: pypi-release-candidate
           path: |
             dist/*.whl
             dist/*.tar.gz
+            dist/*.tgz
             dist/SHA256SUMS
 
   publish:

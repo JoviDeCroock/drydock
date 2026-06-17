@@ -13,13 +13,13 @@ gate lifecycle.
 
 ## The release candidate
 
-There is **no manifest file and no checksum file** to write. The boundary is the
-workflow run's uploaded artifacts: CI runs `python -m build` and uploads
-`dist/*` (one or more `.whl` plus the `.tar.gz` sdist) as a GitHub Actions
-artifact. Drydock treats every `.whl` / `.tar.gz` / `.tgz` it finds as the
-release set; identity (`package` / `version`) is read from each wheel's
-`METADATA` and the sdist's `PKG-INFO` after the bytes are parsed in the
-credentials-free sandbox.
+There is **no Drydock manifest file** to write. The boundary is the workflow
+run's uploaded artifacts: CI runs `python -m build`, records `dist/SHA256SUMS`
+for publish-time verification, and uploads `dist/*` (one or more `.whl` plus the
+sdist) as a GitHub Actions artifact. Drydock treats every `.whl` / `.tar.gz` /
+`.tgz` it finds as the release set; identity (`package` / `version`) is read
+from each wheel's `METADATA` and the sdist's `PKG-INFO` after the bytes are
+parsed in the credentials-free sandbox.
 
 Integrity rests on **GitHub artifact immutability**, exactly like the npm gate:
 
@@ -135,13 +135,14 @@ jobs:
       # they match the digests shown in the Drydock report Provenance section.
       - run: |
           shopt -s nullglob
-          cd dist && sha256sum *.whl *.tar.gz > SHA256SUMS
+          cd dist && sha256sum *.whl *.tar.gz *.tgz > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: pypi-release-candidate # or leave blank to auto-detect
           path: |
             dist/*.whl
             dist/*.tar.gz
+            dist/*.tgz
             dist/SHA256SUMS
           if-no-files-found: error
 
