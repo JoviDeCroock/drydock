@@ -1,8 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { Eyebrow, LinkButton, PageShell, SectionLabel } from "../../components";
 import { privacyPageSeo, PageSeo } from "../../lib/seo";
-import { MarketingHeaderActions } from "../MarketingHeaderActions";
-import { useAuthedSession } from "../useAuthedSession";
 
 // Generic, document-shaped privacy policy. Wording is deliberately conservative
 // and aligned with the product's trust boundary: publish credentials are stored
@@ -15,14 +13,8 @@ const PRIVACY_MAILTO =
   "mailto:drydock@drydock.org?subject=Drydock%20privacy%20request&body=Tell%20us%20what%20you%27d%20like%20us%20to%20do%20with%20your%20data%3A%0A%0A";
 
 export default function PrivacyPage() {
-  const authed = useAuthedSession();
-
   return (
-    <PageShell
-      width="doc"
-      class="gap-12"
-      headerActions={<MarketingHeaderActions authed={authed} />}
-    >
+    <PageShell width="doc" class="gap-12">
       <PageSeo metadata={privacyPageSeo} />
       <header class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
         <Eyebrow tone="accent">Legal</Eyebrow>
