@@ -54,6 +54,22 @@ const WASM_LOADER_PATTERNS = [
   /\bgo\.run\s*\(/,
   /\bwasm_exec(?:\.js)?\b/,
 ];
+const RELATIVE_SPECIFIER_PATTERNS = [
+  /\brequire\s*\(\s*["'](\.\.?\/[^"'\n]+)["']\s*\)/g,
+  /\bimport\s*\(\s*["'](\.\.?\/[^"'\n]+)["']\s*\)/g,
+  /\b(?:import|export)\s+[^"'\n]*?from\s+["'](\.\.?\/[^"'\n]+)["']/g,
+  /\b(?:import|export)\s+["'](\.\.?\/[^"'\n]+)["']/g,
+];
+const MODULE_RESOLUTION_SUFFIXES = [
+  "",
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".json",
+  "/index.js",
+  "/index.mjs",
+  "/index.cjs",
+];
 
 export function buildVscodeFindings(args: {
   staged: AcquiredArtifact;
@@ -161,9 +177,9 @@ function startupRemoteCommandFinding(
   broadActivation: string | null,
 ): Finding | null {
   if (!broadActivation) return null;
-  for (const entrypoint of entrypointFiles(manifest, files)) {
-    if (!entrypoint.textSample) continue;
-    const sample = entrypoint.textSample;
+  for (const reachable of startupReachableFiles(manifest, files)) {
+    if (!reachable.textSample) continue;
+    const sample = reachable.textSample;
     const normalized = normalizeCodeForScanning(sample);
     const processExecution = matches(JS_PATTERN_SET.processExecution, sample, normalized);
     const networkAccess = matches(JS_PATTERN_SET.networkAccess, sample, normalized);
@@ -171,7 +187,7 @@ function startupRemoteCommandFinding(
     if (!processExecution || !networkAccess || !dynamicEvaluation) continue;
     return vscodeTag("startupRemoteCommand", {
       severity: "critical",
-      file: entrypoint.path,
+      file: reachable.path,
       line: firstMatchingLine(sample, [
         ...JS_PATTERN_SET.processExecution,
         ...JS_PATTERN_SET.networkAccess,
@@ -216,7 +232,7 @@ function startupWasmLoaderFinding(
   broadActivation: string | null,
 ): Finding | null {
   if (!broadActivation || !hasWasmArtifact(files)) return null;
-  const loader = entrypointFiles(manifest, files).find(
+  const loader = startupReachableFiles(manifest, files).find(
     (file) => isJavaScriptFile(file.path) && isWasmLoader(file.textSample),
   );
   if (!loader?.textSample) return null;
@@ -278,22 +294,36 @@ function isCommonConfigurationKey(key: string): boolean {
   return COMMON_VSCODE_CONFIGURATION_NAMESPACES.has(namespace);
 }
 
-function entrypointFiles(
+function startupReachableFiles(
   manifest: Pick<VscodeExtensionManifest, "main" | "browser">,
   files: AcquiredArtifact["files"],
 ) {
-  const candidates = [
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  const queue = [
     ...entrypointCandidates(manifest.main),
     ...entrypointCandidates(manifest.browser),
-  ];
+  ].flatMap((path) => {
+    const resolved = resolveModulePath(path, byPath);
+    return resolved ? [resolved] : [];
+  });
+  const reachable: AcquiredArtifact["files"] = [];
   const seen = new Set<string>();
-  return candidates
-    .map((path) => files.find((file) => file.path === path))
-    .filter((file): file is AcquiredArtifact["files"][number] => {
-      if (!file || seen.has(file.path)) return false;
-      seen.add(file.path);
-      return true;
-    });
+
+  while (queue.length) {
+    const path = queue.shift();
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    const file = byPath.get(path);
+    if (!file) continue;
+    reachable.push(file);
+    if (!file.textSample) continue;
+    for (const specifier of relativeSpecifiers(file.textSample)) {
+      const resolved = resolveModulePath(joinRelative(path, specifier), byPath);
+      if (resolved && !seen.has(resolved)) queue.push(resolved);
+    }
+  }
+
+  return reachable;
 }
 
 function entrypointCandidates(path: string | null): string[] {
@@ -303,6 +333,47 @@ function entrypointCandidates(path: string | null): string[] {
   if (!/\.[cm]?js$/i.test(normalized))
     out.push(`${normalized}.js`, `${normalized}.cjs`, `${normalized}.mjs`);
   return out;
+}
+
+function relativeSpecifiers(text: string): string[] {
+  const specifiers: string[] = [];
+  for (const pattern of RELATIVE_SPECIFIER_PATTERNS) {
+    pattern.lastIndex = 0;
+    for (const match of text.matchAll(pattern)) specifiers.push(match[1]);
+  }
+  return specifiers;
+}
+
+function resolveModulePath(
+  candidate: string,
+  byPath: Map<string, AcquiredArtifact["files"][number]>,
+): string | null {
+  const base = normalizePathSegments(candidate.replace(/^\.\//, ""));
+  if (!base) return null;
+  for (const suffix of MODULE_RESOLUTION_SUFFIXES) {
+    const resolved = base + suffix;
+    if (byPath.has(resolved)) return resolved;
+  }
+  return null;
+}
+
+function joinRelative(fromPath: string, specifier: string): string {
+  const directory = fromPath.split("/").slice(0, -1).join("/");
+  return directory ? `${directory}/${specifier}` : specifier;
+}
+
+function normalizePathSegments(path: string): string | null {
+  const out: string[] = [];
+  for (const segment of path.split("/")) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") {
+      if (!out.length) return null;
+      out.pop();
+      continue;
+    }
+    out.push(segment);
+  }
+  return out.join("/");
 }
 
 function broadActivationEvent(events: string[]): string | null {

