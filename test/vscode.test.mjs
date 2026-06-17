@@ -1,7 +1,11 @@
 import { describe, expect, test } from "vitest";
+import { createPackageDiff } from "../server/lib/review";
 import {
   buildVscodeReleaseManifest,
   createVscodeExtensionReview,
+  isAllowedVscodeArtifactUrl,
+  pickVscodeBaselineVersion,
+  vscodeAdapter,
   VSCODE_RULE_IDS,
 } from "../server/lib/adapters/vscode/index";
 
@@ -349,6 +353,124 @@ describe("VS Code extension review adapter", () => {
     );
   });
 
+  test("uses a marketplace baseline artifact when no previousArtifact is supplied", async () => {
+    const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
+      { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
+    ]);
+    const adapterInput = vscodeAdapter.parseInput({
+      manifest,
+      artifact: artifact([
+        file(
+          "extension/package.json",
+          extensionPackageJson({
+            activationEvents: ["onCommand:remoteTextFetcher.run"],
+          }),
+        ),
+        {
+          ...file("extension/out/extension.js", "exports.activate = () => 'new';"),
+          sha256: "11",
+        },
+      ]),
+    });
+    const staged = await vscodeAdapter.acquireStaged({}, adapterInput, fakeVscodeBroker({}));
+    const baselineUrl =
+      "https://example.gallerycdn.vsassets.io/extensions/example/remote-text-fetcher/0.9.0/123/Microsoft.VisualStudio.Services.VSIXPackage";
+    const broker = fakeVscodeBroker({
+      versions: [
+        {
+          version: "1.0.0",
+          lastUpdated: "2026-06-01T00:00:00Z",
+          files: [
+            { assetType: "Microsoft.VisualStudio.Services.VSIXPackage", source: baselineUrl },
+          ],
+        },
+        {
+          version: "0.9.0",
+          lastUpdated: "2026-05-01T00:00:00Z",
+          files: [
+            { assetType: "Microsoft.VisualStudio.Services.VSIXPackage", source: baselineUrl },
+          ],
+        },
+      ],
+      downloadedFiles: [
+        file(
+          "extension/package.json",
+          extensionPackageJson({
+            version: "0.9.0",
+            activationEvents: ["onCommand:remoteTextFetcher.run"],
+          }),
+        ),
+        {
+          ...file("extension/out/extension.js", "exports.activate = () => 'old';"),
+          sha256: "22",
+        },
+      ],
+    });
+
+    const baseline = await vscodeAdapter.acquireBaseline({}, adapterInput, broker, staged);
+    expect(broker.downloads).toEqual([baselineUrl]);
+    expect(baseline.baseline).toMatchObject({
+      version: "0.9.0",
+      source: "latest-published",
+      reason: "newest-marketplace-version",
+    });
+    expect(baseline.artifact?.manifest?.version).toBe("0.9.0");
+    expect(createPackageDiff(baseline.artifact?.files ?? [], staged.artifact.files)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "out/extension.js", status: "modified" }),
+      ]),
+    );
+  });
+
+  test("selects the newest allowed marketplace VSIX older than the candidate", () => {
+    const oldUrl =
+      "https://old.gallerycdn.vsassets.io/extensions/example/remote-text-fetcher/0.8.0/123/Microsoft.VisualStudio.Services.VSIXPackage";
+    const newestUrl =
+      "https://new.gallerycdn.vsassets.io/extensions/example/remote-text-fetcher/0.9.0/123/Microsoft.VisualStudio.Services.VSIXPackage";
+    expect(isAllowedVscodeArtifactUrl(newestUrl)).toBe(true);
+    expect(isAllowedVscodeArtifactUrl("https://example.invalid/payload.vsix")).toBe(false);
+    expect(
+      pickVscodeBaselineVersion(
+        [
+          {
+            version: "1.0.0",
+            lastUpdated: "2026-06-01T00:00:00Z",
+            files: [
+              { assetType: "Microsoft.VisualStudio.Services.VSIXPackage", source: newestUrl },
+            ],
+          },
+          {
+            version: "0.8.0",
+            lastUpdated: "2026-04-01T00:00:00Z",
+            files: [{ assetType: "Microsoft.VisualStudio.Services.VSIXPackage", source: oldUrl }],
+          },
+          {
+            version: "0.9.0",
+            lastUpdated: "2026-05-01T00:00:00Z",
+            files: [
+              { assetType: "Microsoft.VisualStudio.Services.VSIXPackage", source: newestUrl },
+            ],
+          },
+          {
+            version: "0.95.0",
+            lastUpdated: "2026-05-15T00:00:00Z",
+            files: [
+              {
+                assetType: "Microsoft.VisualStudio.Services.VSIXPackage",
+                source: "https://example.invalid/payload.vsix",
+              },
+            ],
+          },
+        ],
+        "1.0.0",
+      ),
+    ).toEqual({
+      version: "0.9.0",
+      url: newestUrl,
+      reason: "newest-marketplace-version",
+    });
+  });
+
   test("detects undeclared configuration reads through unscoped getConfiguration", () => {
     const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
       { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
@@ -380,3 +502,17 @@ describe("VS Code extension review adapter", () => {
     );
   });
 });
+
+function fakeVscodeBroker({ versions = [], downloadedFiles = [] }) {
+  return {
+    downloads: [],
+    async fetchExtensionVersions() {
+      return versions;
+    },
+    async downloadPublicArtifact({ url }) {
+      this.downloads.push(url);
+      return { files: downloadedFiles };
+    },
+    dispose() {},
+  };
+}

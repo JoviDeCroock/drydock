@@ -5,6 +5,7 @@ import {
   summarizePackageJsonDiff,
 } from "../../review";
 import type { AcquiredArtifact, BaselineInfo, PackageAdapter } from "../types";
+import { createVscodeBroker, pickVscodeBaselineVersion, type VscodeBroker } from "./broker";
 import { buildVscodeFindings } from "./findings";
 import {
   extensionIdFromManifest,
@@ -20,13 +21,7 @@ import type {
   VscodeReleaseCandidateReview,
 } from "./types";
 
-interface VscodeBroker {
-  dispose(): void;
-}
-
-const vscodeBroker: VscodeBroker = {
-  dispose() {},
-};
+const UNKNOWN_BASELINE_SHA256 = "00".repeat(32);
 
 export const vscodeAdapter: PackageAdapter<VscodeAdapterInput, VscodeBroker> = {
   id: "vscode",
@@ -36,23 +31,62 @@ export const vscodeAdapter: PackageAdapter<VscodeAdapterInput, VscodeBroker> = {
     return parseVscodeAdapterInput(raw);
   },
 
-  createBroker() {
-    return vscodeBroker;
+  createBroker(ctx, ref) {
+    return createVscodeBroker(ctx, ref);
   },
 
   acquireStaged(_ctx, input) {
     return Promise.resolve(acquireVscodeArtifact(input.manifest, input.artifact));
   },
 
-  acquireBaseline(_ctx, input) {
+  async acquireBaseline(_ctx, input, broker) {
     if (!input.previousArtifact) {
-      return Promise.resolve({
-        artifact: null,
-        baseline: emptyBaseline("baseline-unavailable"),
-      });
+      const selected = pickVscodeBaselineVersion(
+        await broker.fetchExtensionVersions(input.manifest.package),
+        input.manifest.version,
+      );
+      if (!selected) {
+        return {
+          artifact: null,
+          baseline: emptyBaseline("no-published-baseline"),
+        };
+      }
+
+      try {
+        const downloaded = await broker.downloadPublicArtifact({ url: selected.url });
+        const acquired = acquireVscodeArtifact(input.manifest, {
+          path: `${input.manifest.package}-${selected.version}.vsix`,
+          sha256: UNKNOWN_BASELINE_SHA256,
+          files: downloaded.files,
+        });
+        if (
+          acquired.artifact.manifest?.name !== input.manifest.package ||
+          acquired.artifact.manifest?.version !== selected.version
+        ) {
+          return {
+            artifact: null,
+            baseline: unavailableBaseline("baseline-identity-mismatch", selected.version),
+          };
+        }
+        return {
+          artifact: acquired.artifact,
+          baseline: {
+            version: selected.version,
+            tag: null,
+            source: "latest-published",
+            distTagVersion: null,
+            reason: selected.reason,
+          } satisfies BaselineInfo,
+        };
+      } catch {
+        return {
+          artifact: null,
+          baseline: unavailableBaseline("baseline-unavailable", selected.version),
+        };
+      }
     }
     const acquired = acquireVscodeArtifact(input.manifest, input.previousArtifact);
-    return Promise.resolve({
+    return {
       artifact: acquired.artifact,
       baseline: {
         version: acquired.artifact.manifest?.version ?? null,
@@ -61,7 +95,7 @@ export const vscodeAdapter: PackageAdapter<VscodeAdapterInput, VscodeBroker> = {
         distTagVersion: null,
         reason: "provided-previous-artifact",
       } satisfies BaselineInfo,
-    });
+    };
   },
 
   runFindings(args) {
@@ -134,6 +168,16 @@ function emptyBaseline(reason: string): BaselineInfo {
   };
 }
 
+function unavailableBaseline(reason: string, version: string): BaselineInfo {
+  return {
+    version,
+    tag: null,
+    source: "latest-published",
+    distTagVersion: null,
+    reason,
+  };
+}
+
 export function createVscodeExtensionReview(input: {
   manifest: VscodeAdapterInput["manifest"];
   artifact: VscodeArtifactInput;
@@ -190,3 +234,14 @@ export {
   parseVscodeExtensionManifest,
   parseVscodeReleaseManifest,
 } from "./manifest";
+export {
+  isAllowedVscodeArtifactUrl,
+  pickVscodeBaselineVersion,
+  vscodeVsixAssetUrl,
+} from "./broker";
+export type {
+  VscodeBroker,
+  VscodeMarketplaceFile,
+  VscodeMarketplaceVersion,
+  VscodePublicArtifactRef,
+} from "./broker";

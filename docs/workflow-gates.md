@@ -118,7 +118,8 @@ The VS Code adapter (`server/lib/adapters/vscode/`):
 - strips the VSIX `extension/` payload prefix before deterministic review;
 - requires a constrained `engines.vscode` value and safe extension identity fields;
 - groups by extension id and requires a single VSIX per extension release;
-- resolves a best-effort baseline from the public VS Code Marketplace and downloads only allowed Marketplace or `*.gallerycdn.vsassets.io` VSIX assets without credentials;
+- resolves a best-effort baseline from the public VS Code Marketplace, then downloads only allowed Marketplace or `*.gallerycdn.vsassets.io` VSIX assets without credentials;
+- treats Marketplace baseline lookup as a diff aid only: metadata, download, parse, or identity failures degrade to a no-baseline review;
 - reports metadata mismatches, broad startup activation, startup remote-command loaders, startup WebAssembly loaders, undeclared configuration reads, and transitive extension installs.
 
 Recommended workflow shape:
