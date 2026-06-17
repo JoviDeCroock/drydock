@@ -121,7 +121,7 @@ Start implementation only when at least one trigger is true:
   quarter.
 - D1 p95/p99 query latency materially affects dashboard, scan detail, webhook,
   or queue processing paths.
-- D1 migration, backup, or compaction operations become a recurring launch risk.
+- D1 migration, backup, or compaction operations become a recurring operational risk.
 - Scan or workflow-gate growth requires SQL capabilities D1 cannot provide
   safely.
 

@@ -4,20 +4,22 @@ Drydock reviews package artifacts before a maintainer approves publication. For 
 
 Approval stays outside Drydock: maintainers approve with `npm stage approve <stage-id>` or npmjs.com, including npm's required 2FA challenge.
 
-## Product direction
+## Project direction
 
-This repository is moving from prototype to product. The current code already proves the core sandbox and review flow; the product direction is:
+This repository is moving from prototype to open-source, self-hostable software. The current code already proves the core sandbox and review flow; the project direction is:
 
-- **SaaS, organization-scoped.** Scans belong to an organization boundary. RBAC is intentionally deferred for the first production slice, but the data model should keep organization ownership explicit.
-- **Per-organization npm credentials.** Production SaaS should not use a deployment-wide npm token. Each organization will connect its own npm credential, scoped as narrowly as npm permits, and the credential will only be used by the gateway that talks to npm.
+- **Organization-scoped by default.** Scans belong to an organization boundary. RBAC is intentionally incremental, but resource ownership must stay explicit.
+- **Per-organization npm credentials.** Self-hosted instances should not use a deployment-wide npm token. Each organization connects its own npm credential, scoped as narrowly as npm permits, and the credential is only used by the gateway that talks to npm.
 - **Manual publish approval.** Drydock reviews and explains a staged publish. It does not run `npm stage approve`, bypass npm 2FA, or become the final publisher.
 - **Two operating modes.** npm uses registry-stage mode: Drydock reviews npm-staged bytes before the maintainer approves in npm. Ecosystems without a staged artifact use workflow-gate mode: a GitHub Environment deployment-protection rule blocks the publish job while Drydock reviews the built release artifacts. PyPI is the first workflow-gate ecosystem with wheel and sdist artifacts. The gate plumbing is shared across ecosystems. See [`docs/workflow-gates.md`](docs/workflow-gates.md).
 - **AI review default-off.** Cloudflare Workers AI review is wired into the pipeline, but it is gated by the per-organization Flagship `ai-review` flag and defaults to unavailable. Deterministic findings are the review authority unless a complete, schema-valid AI review is enabled; AI remains advisory and cannot downgrade deterministic findings.
-- **Safe artifact defaults.** Do not retain raw tarballs by default in SaaS. Persist redacted summaries, manifests, diffs, findings, and report metadata. Raw artifact retention may become an explicit short-TTL organization setting later.
-- **Signed reports later.** Prepare report data to be canonical and signable, but do not launch public signed report generation yet.
+- **Safe artifact defaults.** Do not retain raw tarballs by default. Persist redacted summaries, manifests, diffs, findings, and report metadata. Raw artifact retention may become an explicit short-TTL organization setting later.
+- **Signed reports later.** Prepare report data to be canonical and signable, but do not expose public signed report generation yet.
 
 Use the docs by layer:
 
+- [`CONTRIBUTING.md`](CONTRIBUTING.md), [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md), and [`SECURITY.md`](SECURITY.md) — project participation, community standards, and private vulnerability reporting.
+- [`docs/self-hosting.md`](docs/self-hosting.md) — local setup, Cloudflare resources, deployment, and operator notes.
 - [`docs/architecture.md`](docs/architecture.md) — runtime shape, trust boundaries, adapters, APIs.
 - [`docs/security-model.md`](docs/security-model.md) — non-negotiable security posture and known gaps.
 - [`docs/workflow-gates.md`](docs/workflow-gates.md) — workflow-gate product mode: the shared GitHub Environment gate contract, with PyPI as the first ecosystem.
@@ -32,7 +34,7 @@ Use the docs by layer:
   - staged tarball: `https://registry.npmjs.org/-/stage/<stage-id>/tarball`
   - package metadata JSON
   - published `.tgz` tarballs for previous-version diffing
-- The sandbox parser can also parse ZIP wheel artifacts for the PyPI workflow-gate path. GitHub App install/callback, deployment-protection webhooks, release-target mapping, queue-driven gate review, and workbench approve/reject controls are implemented; hosted GitHub/PyPI validation and report-level artifact digest persistence remain before broad use.
+- The sandbox parser can also parse ZIP wheel artifacts for the PyPI workflow-gate path. GitHub App install/callback, deployment-protection webhooks, release-target mapping, queue-driven gate review, and workbench approve/reject controls are implemented; GitHub/PyPI validation and report-level artifact digest surfacing remain before broad use.
 - The sandbox gunzips/parses tarballs, returns bounded file metadata and text samples, and the parent Worker runs deterministic checks.
 - AI triage (Workers AI JSON-mode review of targeted changed-file evidence) is wired but default-off behind the per-organization Flagship `ai-review` flag. When disabled, scans record AI review as unavailable and rely on deterministic findings.
 - The service diffs the staged tarball against a tag-aware baseline when package metadata is available. See [`docs/diff-baseline.md`](docs/diff-baseline.md) for the registry metadata constraints and comparison strategy.
@@ -107,7 +109,7 @@ Worker non-secret vars and bindings:
 | `NPM_REGISTRY`       | `wrangler.jsonc` `vars`                         | npm registry base URL. Defaults to `https://registry.npmjs.org`.                                                             |
 | `AI_CACHE_AFFINITY`  | `wrangler.jsonc` `vars`                         | Stable `x-session-affinity` value for Cloudflare Workers AI prefix caching.                                                  |
 | `AI`, `LOADER`, `DB` | `wrangler.jsonc` bindings                       | Cloudflare Workers AI, Dynamic Worker loader, and required D1 database binding.                                              |
-| `SCAN_QUEUE`         | `wrangler.jsonc` Queue binding                  | Optional in local dev; production async scan queue. Configure retry/DLQ policy before private beta.                          |
+| `SCAN_QUEUE`         | `wrangler.jsonc` Queue binding                  | Optional in local dev; deployed async scan queue. Configure retry/DLQ policy before accepting real release traffic.          |
 | `COMPARE_CACHE`      | `wrangler.jsonc` KV binding                     | Cache for parsed published package versions used by alternate-version compare views.                                         |
 
 Generate the Better Auth secret with either command:
@@ -231,6 +233,8 @@ Never write SQL migrations by hand; update `server/db/schema.ts` and generate mi
    pnpm deploy
    ```
 
+See [`docs/self-hosting.md`](docs/self-hosting.md) for the full self-hosting guide, including optional GitHub App and Slack setup.
+
 ## Security posture summary
 
 Defended today:
@@ -243,7 +247,7 @@ Defended today:
 - Cross-user scan reads through personal-organization scoping.
 - Basic D1-backed rate limits for scan creation and npm credential save/validation.
 
-Product requirements before SaaS launch:
+Operator readiness work before broad use:
 
 - Production verification of async scan retry and dead-letter behavior.
 - Durable report rendering from persisted data.
@@ -259,4 +263,4 @@ Not defended/implemented yet:
 - Public signed reports.
 - Perfect malware detection. This is triage, not a proof of safety.
 - Deep binary/native analysis. Large/binary/native files are flagged for manual review.
-- Raw tarball evidence retention. This is intentionally not a default SaaS behavior.
+- Raw tarball evidence retention. This is intentionally not default behavior.

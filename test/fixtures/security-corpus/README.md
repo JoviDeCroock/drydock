@@ -36,4 +36,4 @@ Current groups: `benign-version-bump` (clean bump raises nothing on both),
 `credential-file-added` (a `.env`/`.npmrc` appears between versions), and
 `code-sink-exfil` (process + network + credential sinks chained in module code).
 
-Do not vendor live malicious packages, encrypted malware archives, real credentials, or raw customer package bytes here. Use synthetic `example.invalid` endpoints and obviously fake secrets only.
+Do not vendor live malicious packages, encrypted malware archives, real credentials, or raw private package bytes here. Use synthetic `example.invalid` endpoints and obviously fake secrets only.

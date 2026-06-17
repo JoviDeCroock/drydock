@@ -179,11 +179,11 @@ R2 stores durable derived artifacts for completed scans:
 
 `ARTIFACTS` is the Worker binding for this bucket. New completed scans write and verify a versioned manifest plus report/files/diff objects before D1 is marked artifact-backed. Scan detail reads prefer R2 when artifact metadata exists, verify the manifest and report digest, and fall back to D1 on any mismatch or read failure. See [`artifact-storage.md`](./artifact-storage.md) for object keys, backfill, and rollback.
 
-Raw tarballs should not be retained by default in SaaS. If needed later, make raw retention an explicit organization setting with a short TTL, access logging, and clear warnings.
+Raw tarballs should not be retained by default. If needed later, make raw retention an explicit organization setting with a short TTL, access logging, and clear warnings.
 
 ### Workers AI (Flagship-gated)
 
-Workers AI review is wired into the scan pipeline through `maybeRunAiReview`, but it is **gated by the per-organization Cloudflare Flagship `ai-review` flag and off by default**. The reviewer module - `server/lib/ai-review.ts`, its model policy, the prompt-injection-resistant system prompt, the AI SDK evidence-tool loop, and the test suite - stays in the active contract for the planned paid-tier feature. The code currently declares `AI_MODEL = "@cf/moonshotai/kimi-k2.5"`; Cloudflare aliases that model to Kimi K2.6 (effective May 30, 2026), so treat K2.6 as the effective model and pricing target unless the constant is migrated. Qwen is configured as a secondary route after transient Kimi capacity/overload/rate-limit failures exhaust bounded retries.
+Workers AI review is wired into the scan pipeline through `maybeRunAiReview`, but it is **gated by the per-organization Cloudflare Flagship `ai-review` flag and off by default**. The reviewer module - `server/lib/ai-review.ts`, its model policy, the prompt-injection-resistant system prompt, the AI SDK evidence-tool loop, and the test suite - stays in the active contract for optional operator-controlled AI review. The code currently declares `AI_MODEL = "@cf/moonshotai/kimi-k2.5"`; Cloudflare aliases that model to Kimi K2.6 (effective May 30, 2026), so treat K2.6 as the effective model unless the constant is migrated. Qwen is configured as a secondary route after transient Kimi capacity/overload/rate-limit failures exhaust bounded retries.
 
 When Flagship does not return `true` for the scanning organization, the pipeline records an `unavailable` AI review with `model: null`; that disabled-review fallback stays neutral and deterministic findings drive risk. If enabled AI review fails, the pipeline emits `scan.ai_review.failed`, records AI review as unavailable with the attempted reviewer model, still persists the deterministic report, and raises the scan to manual-review risk. A complete, schema-valid AI review can add higher risk through findings or an explicit manual-review flag, but it cannot downgrade deterministic findings.
 
@@ -204,7 +204,7 @@ When AI review is enabled it must continue to:
 
 ## Organization model
 
-The product target is SaaS with organization-scoped resources.
+The product target is self-hostable software with organization-scoped resources.
 
 Every user gets a deterministic "Personal" organization on first signup (id derived from `personalOrganizationId(userId)`). Users can also create and switch between any number of organizations they own.
 
@@ -220,7 +220,7 @@ Organization-owned resources scope by the active org:
 
 Team membership, invitations, and RBAC ship today. See [`organization-members.md`](./organization-members.md). Each membership row carries one of three roles (`owner`, `admin`, `member`) defined in `server/lib/roles.ts`. Owners and admins manage members, invitations, npm connections, and GitHub release targets; members get read access to org-scoped resources and can act on releases. The owner is the `organizations.ownerUserId` and cannot be removed or demoted through the API. Route guards still verify membership through `organization_members` via `requireActiveOrganization`; sensitive mutations also resolve the caller's role with `requireActiveOrganizationContext` and gate on `roleCanManageMembers` / `roleCanManageIntegrations` rather than trusting client-supplied org ids.
 
-Deletion, audit-log UI, billing, and quotas remain deferred as team/commercial-readiness work.
+Deletion, audit-log UI, and quotas remain deferred as team-operations work.
 
 ## Account email verification
 
@@ -238,7 +238,7 @@ The email composer HTML-escapes the verification URL (attribute-escaping the `hr
 
 ## npm connection model
 
-Production SaaS uses per-organization npm credentials instead of a global Worker secret.
+Deployed instances use per-organization npm credentials instead of a global Worker secret.
 
 Implemented `npm_connections` responsibilities:
 
@@ -254,7 +254,7 @@ Credential validation is empirical where possible: it checks registry auth throu
 
 ## Report model and future signing
 
-Reports should become canonical data objects even before public signing launches.
+Reports should become canonical data objects before public signing is exposed.
 
 Implemented foundation:
 

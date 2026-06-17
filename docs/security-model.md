@@ -36,13 +36,13 @@ The Dynamic Worker sandbox must never receive npm token material. Only `NpmStage
 
 ### AI is advisory (and Flagship-gated)
 
-Workers AI review is wired into the pipeline through `maybeRunAiReview`, but the per-organization Flagship `ai-review` flag is off by default for the planned paid-tier feature. When the flag is disabled, the scan records AI review as unavailable and deterministic findings are the only review signal. When enabled, Workers AI reviews evidence but does not decide approval. Deterministic findings remain authoritative and cannot be downgraded by AI output.
+Workers AI review is wired into the pipeline through `maybeRunAiReview`, but the per-organization Flagship `ai-review` flag is off by default. When the flag is disabled, the scan records AI review as unavailable and deterministic findings are the only review signal. When enabled, Workers AI reviews evidence but does not decide approval. Deterministic findings remain authoritative and cannot be downgraded by AI output.
 
 ## npm credential posture
 
-Production SaaS should use per-organization npm connections.
+Deployed instances should use per-organization npm connections.
 
-Recommended customer guidance:
+Recommended operator guidance:
 
 - Use a read-only granular npm access token.
 - Scope it to the smallest package/scope set npm allows.
@@ -61,7 +61,7 @@ Implementation requirements:
 - Redact credential metadata fields from scan lifecycle events before returning them to the UI.
 - Never include token material in scan errors, AI inputs, logs, or persisted reports.
 
-Current code only supports encrypted per-organization npm connections. SaaS production must configure `NPM_CONNECTIONS_ENCRYPTION_KEY`; scans require an organization-owned npm token.
+Current code only supports encrypted per-organization npm connections. Deployed instances must configure `NPM_CONNECTIONS_ENCRYPTION_KEY`; scans require an organization-owned npm token.
 
 Scans and staged-publish discovery require the organization npm connection to be validated first. The settings page automatically runs the baseline npm auth/list validation after token save, and scheduled staged-publish discovery validates unvalidated connections during sweeps before using them. Stage-specific access is proved by discovery and scan workers when they fetch staged release evidence. Queued scan workers re-check validation immediately before decrypting and using the current token, so token rotation cannot bypass the validation gate. Custom npm registries are supported for organization npm connections and should be paired with explicit abuse controls in production operations.
 
@@ -92,7 +92,7 @@ Avoid by default:
 - binary payload contents;
 - package-provided rendered assets.
 
-Rationale: staged packages may contain secrets, proprietary code, or malicious content. Raw retention increases SaaS liability and incident impact. If raw retention is added later, it should be opt-in per organization, short-TTL, clearly labeled, and audited.
+Rationale: staged packages may contain secrets, proprietary code, or malicious content. Raw retention increases operator liability and incident impact. If raw retention is added later, it should be opt-in per organization, short-TTL, clearly labeled, and audited.
 
 ### Redaction
 
@@ -122,7 +122,7 @@ Blocked:
 - install-time network calls;
 - any request where npm auth would be forwarded to a non-registry origin.
 
-The gateway compares URL origins against the configured npm registry and attaches credentials only for the minimal endpoint set requiring auth. For the PyPI foundation, it can also allow exact public artifact URLs without credentials; those URLs must be explicitly listed and are intended for `files.pythonhosted.org` release artifacts. Previous-version compare cache entries are scoped by organization so cached private-package evidence is not shared across tenants.
+The gateway compares URL origins against the configured npm registry and attaches credentials only for the minimal endpoint set requiring auth. For the PyPI foundation, it can also allow exact public artifact URLs without credentials; those URLs must be explicitly listed and are intended for `files.pythonhosted.org` release artifacts. Previous-version compare cache entries are scoped by organization so cached private-package evidence is not shared across organizations.
 
 ## PyPI workflow-gate posture
 
@@ -196,16 +196,16 @@ Current guardrail:
 - every non-auth `/api/*` route requires a Better Auth session;
 - scans are filtered by organization ID;
 - personal organizations are stable per user;
-- public sign-up is enabled for launch.
+- public sign-up is enabled when the instance allows it.
 
-Before SaaS launch:
+Before broad use:
 
 - keep organization ownership checks on every scan/report/token route;
 - add tests for cross-organization access denial;
 - add route-level permission helpers even before full RBAC;
 - make future RBAC additive rather than rewriting ownership checks.
 
-RBAC is not required for the first launch slice, but the schema and route boundaries should not assume resources are global or user-only.
+RBAC can remain incremental, but the schema and route boundaries should not assume resources are global or user-only.
 
 ## Browser response headers
 
@@ -213,7 +213,7 @@ Security response headers reach the browser by two delivery paths that must carr
 
 ## Signed reports later
 
-Signed reports are not launching yet. Prepare by making report payloads canonical and digestible.
+Signed reports are not exposed yet. Prepare by making report payloads canonical and digestible.
 
 Current foundation:
 
@@ -234,7 +234,7 @@ Do not expose signed report URLs until access controls, report canonicalization,
 - Per-organization encrypted npm connections exist. `validateNpmCredential` checks registry auth (`/-/whoami`), staged-list access (`validateStagedListAccess`), and — when supplied a real stage ID — staged-view (`validateStagedViewAccess`) and staged-tarball (`validateStagedTarballAccess`) access. A read-only granular token reaches all of these endpoints, so the previous list/view capability gap is resolved.
 - Queue-backed scan retry/dead-letter behavior exists in code and Wrangler config, and scan/queue paths now emit structured secret-redacted operational events. Production queue resources, DLQ visibility, metrics dashboards, and alerts still need deployment validation.
 - Persisted detail UI now renders recommendations, package diffs, manifest changes, reviewer notes, and release/context risk signals; report provenance/digest display and lifecycle timelines still need polish.
-- Tar/ZIP parsing now rejects traversal paths, skips symlinks/hardlinks, handles long-name/PAX paths, caps expanded size, keeps at most 2,500 file records, and captures the **whole** text of each eligible file for detection — bounded by the 25 MiB expanded-archive cap rather than a per-file window, so an attacker can no longer bury a payload past a fixed sample limit (issue #191); the persisted/display sample is separately clipped to 128 KiB in `scanFileRowsForArtifacts`. It skips text samples for low-value generated artifacts such as source maps and minified bundles while preserving their metadata/hashes (TypeScript declaration files keep their samples so their public API surface stays diffable), and fails closed when the safe file-count limit is exceeded, but it still needs deeper archive-bomb fuzzing before broad public launch.
+- Tar/ZIP parsing now rejects traversal paths, skips symlinks/hardlinks, handles long-name/PAX paths, caps expanded size, keeps at most 2,500 file records, and captures the **whole** text of each eligible file for detection — bounded by the 25 MiB expanded-archive cap rather than a per-file window, so an attacker can no longer bury a payload past a fixed sample limit (issue #191); the persisted/display sample is separately clipped to 128 KiB in `scanFileRowsForArtifacts`. It skips text samples for low-value generated artifacts such as source maps and minified bundles while preserving their metadata/hashes (TypeScript declaration files keep their samples so their public API surface stays diffable), and fails closed when the safe file-count limit is exceeded, but it still needs deeper archive-bomb fuzzing before broad use.
 - Basic D1-backed rate limits exist for scans and credential operations; production should add metrics, alerts, and edge/IP-based abuse controls.
 - Team RBAC is deferred.
 - Public signed reports are deferred.

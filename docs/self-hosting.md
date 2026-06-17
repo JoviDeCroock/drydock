@@ -1,0 +1,164 @@
+# Self-hosting
+
+This guide covers running Drydock on your own Cloudflare account. The default
+deployment target is a Cloudflare Worker with static assets, D1, R2, KV, Queues,
+Workers AI, a Dynamic Worker loader, and optional email, Slack, and GitHub App
+integrations.
+
+## Requirements
+
+- Node `22.14.0+`
+- pnpm `11.1.1`
+- A Cloudflare account with Workers, D1, R2, KV, Queues, Workers AI, and Worker
+  Loaders available
+- An npm access token for each organization that will review staged npm
+  publishes
+- Optional: a GitHub App for workflow gates
+- Optional: a Slack app for notifications
+
+## Local development
+
+```sh
+pnpm install
+cp .dev.vars.example .dev.vars
+pnpm run test
+pnpm run dev
+```
+
+Generate local secrets:
+
+```sh
+node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
+openssl rand -base64 32
+```
+
+Set these in `.dev.vars`:
+
+- `BETTER_AUTH_SECRET`
+- `BETTER_AUTH_URL=http://localhost:5173`
+- `NPM_CONNECTIONS_ENCRYPTION_KEY`
+
+The local Worker serves the UI and API at `http://localhost:5173`. After signing
+in, create or select an organization and add an npm connection from Settings
+before scanning staged publishes.
+
+## Cloudflare resources
+
+Create the required resources and copy their IDs into `wrangler.jsonc` or your
+environment-specific Wrangler config:
+
+```sh
+pnpm exec wrangler d1 create staged-publish-review
+pnpm exec wrangler queues create staged-publish-review-scans
+pnpm exec wrangler queues create staged-publish-review-scans-dlq
+pnpm exec wrangler kv namespace create COMPARE_CACHE
+pnpm exec wrangler r2 bucket create staged-publish-review-artifacts
+```
+
+The checked-in `wrangler.jsonc` is the Drydock deployment config. Before
+deploying from another Cloudflare account, replace account-owned values:
+
+- `d1_databases[].database_id` and `kv_namespaces[].id`;
+- custom `routes` for `drydock.org` / `drydock.resynapse.dev`, or remove
+  `routes` and use `workers_dev` / your own routes instead;
+- the `flagship` app id if you use Cloudflare Flagship for AI review, or remove
+  the `flagship` block to keep AI review disabled;
+- public integration vars such as `BETTER_AUTH_URL`, `EMAIL_FROM_ADDRESS`,
+  `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`, and
+  `SLACK_CLIENT_ID`.
+
+Keep the queue consumer `max_retries` and `dead_letter_queue` settings aligned
+with `MAX_SCAN_JOB_ATTEMPTS` in `server/lib/scan-job.ts`.
+
+Apply migrations after the D1 database ID is configured:
+
+```sh
+pnpm run db:migrate:remote
+```
+
+## Secrets and vars
+
+Set required secrets with Wrangler:
+
+```sh
+pnpm exec wrangler secret put BETTER_AUTH_SECRET
+pnpm exec wrangler secret put NPM_CONNECTIONS_ENCRYPTION_KEY
+```
+
+Required non-secret vars:
+
+- `BETTER_AUTH_URL` — canonical deployed origin
+- `NPM_REGISTRY` — defaults to `https://registry.npmjs.org`
+- `AI_CACHE_AFFINITY` — stable prefix-cache affinity string for Workers AI
+- `PNPM_VERSION` — used by the runtime where npm tooling parity matters
+
+Optional integrations:
+
+- Email: `SEND_EMAIL` binding plus `EMAIL_FROM_ADDRESS` and `EMAIL_FROM_NAME`
+- GitHub App: `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`,
+  `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET`
+- Slack: `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`
+
+Do not commit `.dev.vars`, private keys, tokens, or generated credential
+material.
+
+## Deploy
+
+```sh
+pnpm run build
+pnpm run deploy
+```
+
+After deploying:
+
+1. Confirm `BETTER_AUTH_URL` matches the deployed origin.
+2. Confirm D1 migrations are applied.
+3. Sign in and create an organization.
+4. Add and validate an npm connection.
+5. Run a test staged-publish review.
+6. Check Worker logs for structured events without raw package contents or
+   secrets.
+
+## GitHub workflow gates
+
+Workflow gates require a GitHub App with deployment-protection webhooks. Configure
+the App, set its secrets and vars, then map repositories and environments from
+Settings. The target publish workflow must build artifacts before the gate and
+publish the reviewed artifact bundle after approval. See
+[`workflow-gates.md`](workflow-gates.md) and
+[`npm-workflow-gate.md`](npm-workflow-gate.md).
+
+## Slack notifications
+
+Slack notifications require a Slack OAuth app. Register the redirect URL:
+
+```text
+https://YOUR_ORIGIN/api/v1/slack/callback
+```
+
+Then set `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`. See
+[`slack-notifications.md`](slack-notifications.md).
+
+## Artifact storage and backfill
+
+R2 stores canonical report JSON, redacted file samples, generated diffs, and
+manifests for completed scans. New scans write artifacts when the `ARTIFACTS`
+binding is present. Legacy scans can be backfilled:
+
+```sh
+pnpm run scan-artifacts:backfill -- --all-organizations --limit 50
+```
+
+See [`artifact-storage.md`](artifact-storage.md) for object layout, rollback, and
+compaction behavior.
+
+## Operational notes
+
+- Do not retain raw tarballs by default.
+- Keep organization-scoped npm tokens narrowly scoped and rotated.
+- Treat all package contents as sensitive, even after redaction.
+- Run `pnpm run verify` before deploying changes.
+- Run `pnpm run test:e2e` for registry, staged-publish, credential-forwarding,
+  and scan-workflow changes.
+- Review [`security-model.md`](security-model.md) before changing trust
+  boundaries.
