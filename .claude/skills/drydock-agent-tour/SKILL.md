@@ -5,14 +5,20 @@ description: Run, inspect, and summarize the portable Drydock local product walk
 
 # Drydock Agent Tour
 
+## Secrets Needed
+
+None for the default local fake-registry tour. The tour registers a local test user, uses a fake npm registry token, and runs against local D1/Worker state.
+
 ## Workflow
 
 1. From the repository root, run `pnpm run agent:tour`.
-2. If a browser needs to stay visible, run `pnpm run agent:tour -- --headed`.
-3. If an existing local server should be reused without deleting prior tour artifacts, run `pnpm run agent:tour -- --no-clean`.
-4. Read `agent-tour-output/report.md`, unless `AGENT_TOUR_DIR` points elsewhere.
-5. Inspect screenshots in `agent-tour-output/screenshots/` and the Playwright trace/video in `agent-tour-output/test-results/`.
-6. Summarize both correctness and product feel: confusing UI states, missing cues, slow waits, awkward copy, layout issues, unexpected console/network errors, and any security-boundary concerns.
+2. If Playwright reports a missing Chromium/headless-shell executable, run `pnpm exec playwright install chromium` once, then rerun the tour.
+3. If a browser needs to stay visible, run `pnpm run agent:tour -- --headed`.
+4. If an existing local server should be reused without deleting prior tour artifacts, run `pnpm run agent:tour -- --no-clean`.
+5. Read `agent-tour-output/report.md`, unless `AGENT_TOUR_DIR` points elsewhere.
+6. Inspect screenshots in `agent-tour-output/screenshots/` and the Playwright trace/video in `agent-tour-output/test-results/`.
+7. Check the report's `Browser Events` section even when `Status: passed`; console/page errors can indicate product issues that did not fail the walkthrough.
+8. Summarize both correctness and product feel: confusing UI states, missing cues, slow waits, awkward copy, layout issues, unexpected console/network errors, and any security-boundary concerns.
 
 ## What The Tour Exercises
 
