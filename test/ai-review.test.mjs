@@ -317,6 +317,33 @@ describe("ai review orchestration", () => {
     expect(ai.summary).toBe("No unusual changes.");
   });
 
+  test("a transient request timeout is retried and the review completes", async () => {
+    let calls = 0;
+    const flakyModel = mockModel(async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw new Error("AiError: AiError: Request timeout (ca4ebee2)");
+      }
+      return generateResult(
+        [
+          {
+            type: "tool-call",
+            toolCallId: "submit-1",
+            toolName: "submit_review",
+            input: JSON.stringify(VALID_REVIEW),
+          },
+        ],
+        "tool-calls",
+      );
+    });
+
+    const { review: ai } = await analyzeWithAi({}, "mock-reviewer", BASE_OPTIONS, flakyModel);
+
+    expect(calls).toBe(2);
+    expect(ai.status).toBe("complete");
+    expect(ai.summary).toBe("No unusual changes.");
+  });
+
   test("a persistent capacity error exhausts retries and fails safe to unavailable", async () => {
     let calls = 0;
     const downModel = mockModel(async () => {
@@ -340,6 +367,40 @@ describe("ai review orchestration", () => {
         calls.set(model, (calls.get(model) ?? 0) + 1);
         if (model === "primary-reviewer") {
           throw new Error("3040: Capacity temporarily exceeded, please try again.");
+        }
+        return generateResult(
+          [
+            {
+              type: "tool-call",
+              toolCallId: "submit-1",
+              toolName: "submit_review",
+              input: JSON.stringify(VALID_REVIEW),
+            },
+          ],
+          "tool-calls",
+        );
+      });
+
+    const { review: ai } = await analyzeWithAi(
+      {},
+      ["primary-reviewer", "fallback-reviewer"],
+      BASE_OPTIONS,
+      modelFactory,
+    );
+
+    expect(calls.get("primary-reviewer")).toBe(3);
+    expect(calls.get("fallback-reviewer")).toBe(1);
+    expect(ai.status).toBe("complete");
+    expect(ai.model).toBe("fallback-reviewer");
+  });
+
+  test("a persistent request timeout falls back to the secondary reviewer", async () => {
+    const calls = new Map();
+    const modelFactory = (model) =>
+      mockModel(async () => {
+        calls.set(model, (calls.get(model) ?? 0) + 1);
+        if (model === "primary-reviewer") {
+          throw new Error("3046: Request timeout");
         }
         return generateResult(
           [
