@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { describe, expect, test } from "vitest";
 import * as tarParser from "../server/lib/tar-parser.js";
+import { buildTar, encoder } from "./helpers/archive-fixtures.mjs";
 
 const {
   canonicalizePath,
@@ -14,71 +15,6 @@ const {
   parsePax,
   readTar,
 } = tarParser;
-
-// Minimal POSIX/ustar tar writer for fixture archives.
-//
-// Each header is exactly 512 bytes; entry bodies are zero-padded to a
-// multiple of 512. The archive is terminated with two zero blocks.
-const BLOCK = 512;
-const encoder = new TextEncoder();
-
-function pad(bytes, length) {
-  if (bytes.length > length) throw new Error("field overflow: " + bytes.length + " > " + length);
-  const out = new Uint8Array(length);
-  out.set(bytes, 0);
-  return out;
-}
-
-function octal(value, length) {
-  const text = value.toString(8).padStart(length - 1, "0");
-  return pad(encoder.encode(text + "\0"), length);
-}
-
-function header({ name = "", size = 0, type = "0", prefix = "" }) {
-  const buf = new Uint8Array(BLOCK);
-  buf.set(pad(encoder.encode(name), 100), 0);
-  buf.set(pad(encoder.encode("0000644"), 8), 100); // mode
-  buf.set(pad(encoder.encode("0000000"), 8), 108); // uid
-  buf.set(pad(encoder.encode("0000000"), 8), 116); // gid
-  buf.set(octal(size, 12), 124);
-  buf.set(pad(encoder.encode("00000000000"), 12), 136); // mtime
-  // checksum placeholder (8 spaces) — readTar doesn't validate it
-  buf.set(pad(encoder.encode("        "), 8), 148);
-  buf[156] = type.charCodeAt(0);
-  buf.set(pad(encoder.encode(""), 100), 157); // linkname
-  buf.set(pad(encoder.encode("ustar"), 6), 257);
-  buf.set(pad(encoder.encode("00"), 2), 263);
-  buf.set(pad(encoder.encode(prefix), 155), 345);
-  return buf;
-}
-
-function body(content) {
-  const bytes = content instanceof Uint8Array ? content : encoder.encode(content);
-  const padded = Math.ceil(bytes.length / BLOCK) * BLOCK;
-  const out = new Uint8Array(padded);
-  out.set(bytes, 0);
-  return out;
-}
-
-function buildTar(entries) {
-  const parts = [];
-  for (const entry of entries) {
-    const data = entry.body ?? "";
-    const bytes = data instanceof Uint8Array ? data : encoder.encode(data);
-    parts.push(header({ ...entry, size: bytes.length }));
-    parts.push(body(bytes));
-  }
-  parts.push(new Uint8Array(BLOCK * 2)); // end-of-archive
-  let total = 0;
-  for (const p of parts) total += p.length;
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const p of parts) {
-    out.set(p, offset);
-    offset += p.length;
-  }
-  return out;
-}
 
 const PARSE_LIMITS = {
   maxFiles: 2_500,
@@ -116,6 +52,16 @@ describe("normalizeTarPath", () => {
   test("rejects Windows drive letters", () => {
     expect(normalizeTarPath("C:foo")).toBeNull();
     expect(normalizeTarPath("Z:bar/baz")).toBeNull();
+  });
+
+  test("rejects a drive letter re-exposed by stripping the package/ prefix", () => {
+    // `package//C:` → strip `package/` → `/C:` (leading slash dodges the early
+    // drive-letter test) → collapse the empty segment → `C:`. The canonical
+    // form must still be rejected. Regression for the fuzz-found escape (#311).
+    expect(normalizeTarPath("package//C:")).toBeNull();
+    expect(normalizeTarPath("package//Z:evil")).toBeNull();
+    // A drive-letter-looking segment that is not the leading one is harmless.
+    expect(normalizeTarPath("package/lib/C:notdrive")).toBe("lib/C:notdrive");
   });
 
   test("rejects paths longer than 512 chars", () => {
