@@ -87,6 +87,9 @@ export function pickVscodeBaselineVersion(
   versions: VscodeMarketplaceVersion[] | null | undefined,
   candidateVersion: string,
 ): { version: string; url: string; reason: string } | null {
+  const candidateLastUpdatedMs = parseTimestamp(
+    (versions ?? []).find((version) => version.version === candidateVersion)?.lastUpdated ?? null,
+  );
   const candidates = (versions ?? [])
     .filter((version) => version.version && version.version !== candidateVersion)
     .map((version, index) => ({
@@ -95,6 +98,10 @@ export function pickVscodeBaselineVersion(
       lastUpdatedMs: parseTimestamp(version.lastUpdated),
       index,
     }))
+    .filter((version) => {
+      if (candidateLastUpdatedMs <= 0) return true;
+      return version.lastUpdatedMs > 0 && version.lastUpdatedMs < candidateLastUpdatedMs;
+    })
     .filter((version): version is typeof version & { url: string } => Boolean(version.url));
   if (!candidates.length) return null;
 

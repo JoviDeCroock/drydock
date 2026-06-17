@@ -427,6 +427,8 @@ describe("VS Code extension review adapter", () => {
       "https://old.gallerycdn.vsassets.io/extensions/example/remote-text-fetcher/0.8.0/123/Microsoft.VisualStudio.Services.VSIXPackage";
     const newestUrl =
       "https://new.gallerycdn.vsassets.io/extensions/example/remote-text-fetcher/0.9.0/123/Microsoft.VisualStudio.Services.VSIXPackage";
+    const futureUrl =
+      "https://future.gallerycdn.vsassets.io/extensions/example/remote-text-fetcher/1.1.0/123/Microsoft.VisualStudio.Services.VSIXPackage";
     expect(isAllowedVscodeArtifactUrl(newestUrl)).toBe(true);
     expect(isAllowedVscodeArtifactUrl("https://example.invalid/payload.vsix")).toBe(false);
     expect(
@@ -437,6 +439,13 @@ describe("VS Code extension review adapter", () => {
             lastUpdated: "2026-06-01T00:00:00Z",
             files: [
               { assetType: "Microsoft.VisualStudio.Services.VSIXPackage", source: newestUrl },
+            ],
+          },
+          {
+            version: "1.1.0",
+            lastUpdated: "2026-06-15T00:00:00Z",
+            files: [
+              { assetType: "Microsoft.VisualStudio.Services.VSIXPackage", source: futureUrl },
             ],
           },
           {
