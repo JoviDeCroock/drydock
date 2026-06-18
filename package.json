@@ -31,9 +31,9 @@
     "verify": "node scripts/verify.mjs"
   },
   "dependencies": {
-    "@preact/signals": "^2.9.1",
-    "ai": "^6.0.197",
-    "better-auth": "^1.6.14",
+    "@preact/signals": "^2.9.2",
+    "ai": "^6.0.207",
+    "better-auth": "^1.6.19",
     "diff": "^9.0.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.25",
@@ -42,27 +42,27 @@
     "preact-iso": "^2.12.0",
     "qrcode": "^1.5.4",
     "shiki": "^4.2.0",
-    "workers-ai-provider": "^3.1.14",
+    "workers-ai-provider": "^3.2.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.40.0",
-    "@cloudflare/vitest-pool-workers": "^0.16.13",
-    "@cloudflare/workers-types": "^4.20260607.1",
-    "@playwright/test": "^1.60.0",
-    "@preact/eslint-plugin-signals": "^0.2.0",
+    "@cloudflare/vite-plugin": "^1.41.0",
+    "@cloudflare/vitest-pool-workers": "^0.16.16",
+    "@cloudflare/workers-types": "^4.20260617.1",
+    "@playwright/test": "^1.61.0",
+    "@preact/eslint-plugin-signals": "^0.3.0",
     "@preact/preset-vite": "^2.10.5",
-    "@tailwindcss/vite": "^4.3.0",
+    "@tailwindcss/vite": "^4.3.1",
     "@types/qrcode": "^1.5.6",
     "drizzle-kit": "^0.31.10",
     "otpauth": "^9.5.1",
-    "oxfmt": "^0.53.0",
-    "oxlint": "^1.68.0",
-    "tailwindcss": "^4.3.0",
+    "oxfmt": "^0.55.0",
+    "oxlint": "^1.70.0",
+    "tailwindcss": "^4.3.1",
     "typescript": "^6.0.3",
     "vite": "^8.0.16",
-    "vitest": "^4.1.8",
-    "wrangler": "^4.98.0"
+    "vitest": "^4.1.9",
+    "wrangler": "^4.101.0"
   },
   "packageManager": "pnpm@11.1.1+sha512.d1fdf5f73c617b64fa1a56a81c3c8dfe0e966e33a6010aa256b517ae77be21d93e05affc0de1a83b0e4f29d569f68b446ae8f068cd7247c0bb3df0fb4d7bdf9a"
 }
