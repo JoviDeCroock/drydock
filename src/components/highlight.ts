@@ -3,6 +3,7 @@ import type { HighlighterCore } from "shiki/core";
 
 export interface Token {
   content: string;
+  color?: string;
   className?: string;
 }
 
@@ -97,6 +98,7 @@ export function tokenizeLines(text: string, lang: string): TokenLine[] | null {
     return tokens.map((line) =>
       line.map((token) => ({
         content: token.content,
+        color: token.color,
         className: tokenClassName(token.color),
       })),
     );
