@@ -3,7 +3,7 @@ import type { HighlighterCore } from "shiki/core";
 
 export interface Token {
   content: string;
-  color?: string;
+  className?: string;
 }
 
 export type TokenLine = Token[];
@@ -38,6 +38,25 @@ let loading: Promise<void> | null = null;
 // Flips to true once the highlighter finishes loading. Reading it inside a
 // component subscribes that component to re-render and re-tokenize.
 export const highlighterReady = signal(false);
+
+const tokenClassByCssVariable: Record<string, string> = {
+  "--sh-foreground": "sh-token-foreground",
+  "--sh-token-keyword": "sh-token-keyword",
+  "--sh-token-constant": "sh-token-constant",
+  "--sh-token-number": "sh-token-number",
+  "--sh-token-function": "sh-token-function",
+  "--sh-token-parameter": "sh-token-parameter",
+  "--sh-token-punctuation": "sh-token-punctuation",
+  "--sh-token-comment": "sh-token-comment",
+  "--sh-token-string": "sh-token-string",
+  "--sh-token-string-expression": "sh-token-string-expression",
+  "--sh-token-link": "sh-token-link",
+};
+
+function tokenClassName(color: string | undefined): string | undefined {
+  const variableName = color?.match(/^var\((--sh-[a-z-]+)\)$/)?.[1];
+  return variableName ? tokenClassByCssVariable[variableName] : undefined;
+}
 
 export function ensureHighlighter(): void {
   if (highlighter || loading) return;
@@ -76,7 +95,10 @@ export function tokenizeLines(text: string, lang: string): TokenLine[] | null {
   try {
     const { tokens } = highlighter.codeToTokens(text, { lang, theme: "css-variables" });
     return tokens.map((line) =>
-      line.map((token) => ({ content: token.content, color: token.color })),
+      line.map((token) => ({
+        content: token.content,
+        className: tokenClassName(token.color),
+      })),
     );
   } catch {
     return null;

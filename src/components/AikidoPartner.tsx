@@ -5,21 +5,19 @@ import { SectionLabel } from "./Typography";
 
 const AIKIDO_URL = "https://www.aikido.dev";
 
-const HEIGHTS = {
-  xs: 14,
-  sm: 18,
-  md: 24,
-  lg: 32,
+const markSizeClass = {
+  xs: "h-[14px]",
+  sm: "h-[18px]",
+  md: "h-6",
+  lg: "h-8",
 } as const;
 
-type MarkSize = keyof typeof HEIGHTS;
+type MarkSize = keyof typeof markSizeClass;
 
 export function AikidoMark({ size = "sm", class: className }: { size?: MarkSize; class?: string }) {
-  const height = HEIGHTS[size];
+  const imageClass = cn("w-auto", markSizeClass[size]);
   const imgProps = {
     alt: "Aikido Security",
-    height,
-    style: { height: `${height}px`, width: "auto" },
     loading: "lazy",
     decoding: "async",
   } as const;
@@ -28,8 +26,8 @@ export function AikidoMark({ size = "sm", class: className }: { size?: MarkSize;
     // use (Tailwind `dark:`), so the mark can never disagree with the page
     // theme — <picture> source selection is evaluated separately from CSS.
     <span class={cn("inline-flex items-center leading-none", className)}>
-      <img src={aikidoLight} class="dark:hidden" {...imgProps} />
-      <img src={aikidoDark} class="hidden dark:inline-block" {...imgProps} />
+      <img src={aikidoLight} {...imgProps} class={cn(imageClass, "dark:hidden")} />
+      <img src={aikidoDark} {...imgProps} class={cn(imageClass, "hidden dark:inline-block")} />
     </span>
   );
 }

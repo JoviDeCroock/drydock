@@ -7,7 +7,8 @@ export type SeverityCounts = Partial<Record<SeverityKey, number>>;
 interface Segment {
   key: SeverityKey;
   count: number;
-  width: string;
+  x: number;
+  width: number;
   className: string;
   swatchClass: string;
   label: string;
@@ -16,12 +17,12 @@ interface Segment {
 const ORDER: SeverityKey[] = ["critical", "high", "medium", "low", "info", "ok"];
 
 const segmentClass: Record<SeverityKey, string> = {
-  critical: "bg-danger",
-  high: "bg-danger opacity-[0.78]",
-  medium: "bg-warn",
-  low: "bg-info",
-  info: "bg-info opacity-50",
-  ok: "bg-ok",
+  critical: "text-danger",
+  high: "text-danger opacity-[0.78]",
+  medium: "text-warn",
+  low: "text-info",
+  info: "text-info opacity-50",
+  ok: "text-ok",
 };
 
 const swatchClass: Record<SeverityKey, string> = {
@@ -60,15 +61,24 @@ export function SeverityBar({
     );
   }
 
+  let x = 0;
+  const lastKey = segmentsLastKey(counts);
   const segments: Segment[] = ORDER.filter((key) => (counts[key] ?? 0) > 0).map((key) => {
     const count = counts[key] ?? 0;
-    return {
+    const width = (count / total) * 100;
+    const segment = {
       key,
       count,
-      width: `${(count / total) * 100}%`,
+      x,
+      width,
       className: segmentClass[key],
       swatchClass: swatchClass[key],
       label: key,
+    };
+    x += width;
+    return {
+      ...segment,
+      width: key === lastKey ? 100 - segment.x : segment.width,
     };
   });
 
@@ -80,20 +90,25 @@ export function SeverityBar({
         </span>
         <span class="font-mono text-[11px] text-ink-subtle">{total} total</span>
       </div>
-      <div
-        class="h-2 rounded overflow-hidden bg-surface-2 flex"
+      <svg
+        class="h-2 w-full rounded overflow-hidden bg-surface-2 block"
+        viewBox="0 0 100 4"
+        preserveAspectRatio="none"
         role="img"
         aria-label={`${total} findings: ${segments.map((s) => `${s.count} ${s.label}`).join(", ")}`}
       >
         {segments.map((segment) => (
-          <span
+          <rect
             key={segment.key}
-            class={cn("h-full block", segment.className)}
-            style={{ width: segment.width }}
+            x={segment.x}
+            y="0"
+            width={segment.width}
+            height="4"
+            class={cn("severity-bar-segment", segment.className)}
             aria-hidden
           />
         ))}
-      </div>
+      </svg>
       <ul class="list-none p-0 m-0 flex flex-wrap gap-x-4 gap-y-1.5">
         {segments.map((segment) => (
           <li
@@ -109,4 +124,12 @@ export function SeverityBar({
       </ul>
     </div>
   );
+}
+
+function segmentsLastKey(counts: SeverityCounts): SeverityKey | null {
+  for (let index = ORDER.length - 1; index >= 0; index -= 1) {
+    const key = ORDER[index];
+    if ((counts[key] ?? 0) > 0) return key;
+  }
+  return null;
 }
