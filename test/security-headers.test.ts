@@ -33,6 +33,15 @@ function parseHeaders(source: string): Map<string, Record<string, string>> {
   return rules;
 }
 
+function parseCsp(policy: string): Map<string, string> {
+  const directives = new Map<string, string>();
+  for (const directive of policy.split(";")) {
+    const [name, ...value] = directive.trim().split(/\s+/);
+    if (name) directives.set(name, value.join(" "));
+  }
+  return directives;
+}
+
 describe("public/_headers static-asset security headers", () => {
   const rules = parseHeaders(headersFile);
   const catchAll = rules.get("/*");
@@ -69,5 +78,24 @@ describe("public/_headers static-asset security headers", () => {
   // block its own scripts, styles and webfont and white-screen the app.
   test("does not ship the locked-down API CSP to the document", () => {
     expect(catchAll?.["Content-Security-Policy"]).not.toBe(API_CSP);
+  });
+
+  test("ships a deny-all CSP fallback with explicit document directives", () => {
+    const directives = parseCsp(DOCUMENT_CSP);
+    expect(directives.get("default-src")).toBe("'none'");
+    expect(directives.get("base-uri")).toBe("'self'");
+    expect(directives.get("object-src")).toBe("'none'");
+    expect(directives.get("frame-ancestors")).toBe("'none'");
+    expect(directives.get("form-action")).toBe("'self'");
+    expect(directives.get("script-src")).toBe("'self'");
+    expect(directives.get("style-src")).toContain("'self'");
+    expect(directives.get("font-src")).toBe("'self'");
+    expect(directives.get("img-src")).toContain("data:");
+    expect(directives.get("connect-src")).toBe("'self'");
+    expect(directives.get("frame-src")).toBe("'none'");
+    expect(directives.get("child-src")).toBe("'none'");
+    expect(directives.get("worker-src")).toBe("'none'");
+    expect(directives.get("manifest-src")).toBe("'self'");
+    expect(directives.get("media-src")).toBe("'self'");
   });
 });

@@ -30,27 +30,40 @@ export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
 // API/webhook responses are JSON and never load any subresource, so the policy
 // denies everything. frame-ancestors/base-uri are still pinned in case a
 // response is ever rendered directly in a browser tab.
-export const API_CSP = ["default-src 'none'", "frame-ancestors 'none'", "base-uri 'none'"].join(
-  "; ",
-);
+export const API_CSP = [
+  "default-src 'none'",
+  "base-uri 'none'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'none'",
+].join("; ");
 
-// The HTML UI loads only same-origin subresources. The Geist webfont is
-// self-hosted (Fontsource, bundled into our assets), so style-src and font-src
-// stay 'self' with no third-party origins — no visitor IP leaks to a font CDN.
-// No 'unsafe-inline' on style-src, and style-src-attr 'none' blocks inline
-// style attributes outright; dynamic visuals use classes or SVG geometry
-// attributes instead. img-src data: covers inline data-URI images. connect-src
-// stays 'self' — the UI only calls the same-origin /api surface.
+// The HTML UI starts from a deny-all fallback, then opens only the same-origin
+// fetch surfaces the app actually uses. The Geist webfont is self-hosted
+// (Fontsource, bundled into our assets), so style-src and font-src stay 'self'
+// with no third-party origins. No 'unsafe-inline' on style-src, and
+// style-src-attr 'none' blocks inline style attributes outright; dynamic visuals
+// use classes or SVG geometry attributes instead. img-src data: covers inline
+// data-URI images. connect-src stays 'self' — the UI only calls the same-origin
+// /api surface.
 export const DOCUMENT_CSP = [
-  "default-src 'self'",
+  "default-src 'none'",
   "base-uri 'self'",
   "object-src 'none'",
   "frame-ancestors 'none'",
   "form-action 'self'",
   "script-src 'self'",
+  "script-src-elem 'self'",
+  "script-src-attr 'none'",
   "style-src 'self'",
+  "style-src-elem 'self'",
   "style-src-attr 'none'",
   "font-src 'self'",
   "img-src 'self' data:",
   "connect-src 'self'",
+  "frame-src 'none'",
+  "child-src 'none'",
+  "worker-src 'none'",
+  "manifest-src 'self'",
+  "media-src 'self'",
 ].join("; ");
