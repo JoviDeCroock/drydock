@@ -1,7 +1,14 @@
 import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
-import { useSignal, useModel, useSignalEffect } from "@preact/signals";
-import { Show } from "@preact/signals/utils";
+import {
+  useComputed,
+  useSignal,
+  useModel,
+  useSignalEffect,
+  type ReadonlySignal,
+  type Signal,
+} from "@preact/signals";
+import { For, Show, useLiveSignal } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { rememberDashboardReturnUrl, useQuerySignal } from "../../lib/query-state";
 import { npmStagedPackagesUrlFor } from "../../lib/npm-staged-url";
@@ -42,6 +49,17 @@ export default function DashboardPage() {
   const organizations = useModel(OrganizationModel);
   const stagedPublishes = useModel(StagedPublishesModel);
   const sessionChecked = useSignal(false);
+  const workspaceLoaded = useComputed(() => scans.loaded.value && npm.loaded.value);
+  const workspaceLoadingDetail = useComputed(() => {
+    const scansLoaded = scans.loaded.value;
+    const npmLoaded = npm.loaded.value;
+    return npmLoaded
+      ? "fetching recent reviews"
+      : scansLoaded
+        ? "checking npm connection"
+        : "loading reviews · checking npm connection";
+  });
+  const needsNpmSetup = useComputed(() => !npm.connection.value);
 
   // Two-way bind the decision filter to ?filter=. The model re-fetches
   // whenever the filter signal changes, so URL → filter → refresh comes
@@ -108,10 +126,6 @@ export default function DashboardPage() {
   }
 
   const user = sessionModel.user.value;
-  const scansLoaded = scans.loaded.value;
-  const npmLoaded = npm.loaded.value;
-  const workspaceLoaded = scansLoaded && npmLoaded;
-
   return (
     <PageShell
       headerActions={
@@ -133,25 +147,23 @@ export default function DashboardPage() {
     >
       <DashboardHeader />
 
-      {workspaceLoaded ? (
+      <Show
+        when={workspaceLoaded}
+        fallback={<WorkspaceLoadingState detail={workspaceLoadingDetail} />}
+      >
         <>
-          {!npm.connection.value ? <NpmSetupCallout /> : null}
+          <Show when={needsNpmSetup}>
+            <NpmSetupCallout />
+          </Show>
           <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
         </>
-      ) : (
-        <LoadingState
-          title="Loading workspace"
-          detail={
-            npmLoaded
-              ? "fetching recent reviews"
-              : scansLoaded
-                ? "checking npm connection"
-                : "loading reviews · checking npm connection"
-          }
-        />
-      )}
+      </Show>
     </PageShell>
   );
+}
+
+function WorkspaceLoadingState({ detail }: { detail: ReadonlySignal<string> }) {
+  return <LoadingState title="Loading workspace" detail={detail.value} />;
 }
 
 function DashboardHeader() {
@@ -183,12 +195,41 @@ function RecentReviewsSection({
   stagedPublishes: ReturnType<typeof useModel<typeof StagedPublishesModel.prototype>>;
   npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
 }) {
-  const ready = npm.validated.value;
-  const discovery = stagedPublishes.lastResult.value;
-  const discoveryError = stagedPublishes.error.value;
-  const discoveryRefreshing = stagedPublishes.refreshing.value;
   const quickDecisionScan = useSignal<ScanListItem | null>(null);
-  const startedLabels = discovery?.scans.map(formatStartedScanLabel).filter(Boolean) ?? [];
+  const discoverDisabled = useComputed(
+    () => stagedPublishes.refreshing.value || !npm.validated.value,
+  );
+  const freshnessAt = useComputed(() => {
+    const discoveredAt = stagedPublishes.lastDiscoveryAt.value;
+    const discoveryError = stagedPublishes.error.value;
+    const discoveryRefreshing = stagedPublishes.refreshing.value;
+    return discoveredAt !== null && !discoveryError && !discoveryRefreshing ? discoveredAt : null;
+  });
+  const discoveryStartedMessage = useComputed(() => {
+    const discovery = stagedPublishes.lastResult.value;
+    const discoveryError = stagedPublishes.error.value;
+    if (!discovery || discoveryError || !discovery.created) return null;
+    const startedLabels = discovery.scans.map(formatStartedScanLabel).filter(Boolean);
+    return `Started ${discovery.created} new review${discovery.created === 1 ? "" : "s"} from npm${
+      startedLabels.length ? `: ${startedLabels.slice(0, 3).join(", ")}` : ""
+    }${startedLabels.length > 3 ? `, +${startedLabels.length - 3} more` : ""}.`;
+  });
+  const noOpenPublishes = useComputed(() => {
+    const discovery = stagedPublishes.lastResult.value;
+    const discoveryError = stagedPublishes.error.value;
+    return Boolean(discovery && !discoveryError && !discovery.created && !discovery.found);
+  });
+  const showDiscoveryFeedback = useComputed(
+    () =>
+      Boolean(stagedPublishes.error.value) ||
+      freshnessAt.value !== null ||
+      Boolean(discoveryStartedMessage.value) ||
+      noOpenPublishes.value,
+  );
+  const hasScans = useComputed(() => scans.scans.value.length > 0);
+  const emptyMessage = useComputed(() => emptyStateMessage(scans.filter.value));
+  const quickDecisionScanId = useComputed(() => quickDecisionScan.value?.id ?? null);
+  const decisionSaving = useComputed(() => scans.decisionStatus.value === "saving");
   const onDiscover = async () => {
     await discoverStagedPublishes(stagedPublishes, scans);
   };
@@ -203,107 +244,125 @@ function RecentReviewsSection({
     return saved;
   };
 
-  const discoveredAt = stagedPublishes.lastDiscoveryAt.value;
-  const showFreshness = discoveredAt !== null && !discoveryError && !discoveryRefreshing;
-  const showStartedMessage = Boolean(discovery && !discoveryError && discovery.created);
-  const showNoOpenMessage = Boolean(
-    discovery && !discoveryError && !discovery.created && !discovery.found,
-  );
-  const showDiscoveryFeedback = Boolean(
-    discoveryError || showFreshness || showStartedMessage || showNoOpenMessage,
-  );
-
   return (
     <Card as="section" padding="none" class="overflow-hidden">
       <div class="px-5 py-4 flex flex-col gap-3 md:flex-row md:items-center">
         <SectionLabel class="flex-1 min-w-0 after:hidden">Recent reviews</SectionLabel>
         <div class="flex flex-wrap items-center gap-2 shrink-0">
           <ScanStateSelect
-            value={scans.filter.value}
-            disabled={scans.refreshing.value}
+            value={scans.filter}
+            disabled={scans.refreshing}
             onChange={(filter) => (scans.filter.value = filter)}
           />
           <Button
             variant="secondary"
             size="sm"
             onClick={() => void onDiscover()}
-            disabled={discoveryRefreshing || !ready}
+            disabled={discoverDisabled}
             title="Find staged npm publishes and start reviews"
           >
-            {discoveryRefreshing ? "Checking npm…" : "Check npm"}
+            <Show when={stagedPublishes.refreshing} fallback="Check npm">
+              Checking npm…
+            </Show>
           </Button>
           <Button
             variant="ghost"
             size="sm"
             onClick={() => void scans.refresh()}
-            disabled={scans.refreshing.value}
+            disabled={scans.refreshing}
             title="Reload the reviews list"
           >
-            {scans.refreshing.value ? "Refreshing…" : "Refresh"}
+            <Show when={scans.refreshing} fallback="Refresh">
+              Refreshing…
+            </Show>
           </Button>
         </div>
       </div>
-      {showDiscoveryFeedback ? (
+      <Show when={showDiscoveryFeedback}>
         <div class="px-5 pb-4 flex flex-col gap-2">
-          {discoveryError ? <Alert tone="critical">{discoveryError}</Alert> : null}
-          {showFreshness ? <ScanFreshnessIndicator at={discoveredAt} /> : null}
-          {showStartedMessage && discovery ? (
-            <Muted class="text-[13px] m-0">
-              {`Started ${discovery.created} new review${discovery.created === 1 ? "" : "s"} from npm${
-                startedLabels.length ? `: ${startedLabels.slice(0, 3).join(", ")}` : ""
-              }${startedLabels.length > 3 ? `, +${startedLabels.length - 3} more` : ""}.`}
-            </Muted>
-          ) : null}
-          {showNoOpenMessage ? (
+          <Show<string | null> when={stagedPublishes.error}>
+            {(message) => <Alert tone="critical">{message}</Alert>}
+          </Show>
+          <Show when={freshnessAt}>{(at) => <ScanFreshnessIndicator at={at} />}</Show>
+          <Show<string | null> when={discoveryStartedMessage}>
+            {(message) => <Muted class="text-[13px] m-0">{message}</Muted>}
+          </Show>
+          <Show when={noOpenPublishes}>
             <Muted class="text-[13px] m-0">No open staged publishes found.</Muted>
-          ) : null}
+          </Show>
         </div>
-      ) : null}
+      </Show>
       <div class="border-t border-border">
-        {scans.scans.value.length ? (
+        <Show
+          when={hasScans}
+          fallback={
+            <div class="p-5">
+              <EmptyLine>{emptyMessage}</EmptyLine>
+            </div>
+          }
+        >
           <ScanTable
-            scans={scans.scans.value}
-            quickDecisionScanId={quickDecisionScan.value?.id ?? null}
-            decisionSaving={scans.decisionStatus.value === "saving"}
+            scans={scans.scans}
+            quickDecisionScanId={quickDecisionScanId}
+            decisionSaving={decisionSaving}
             onQuickDecide={(scan) => {
               scans.decisionError.value = null;
               quickDecisionScan.value = scan;
             }}
           />
-        ) : (
-          <div class="p-5">
-            <EmptyLine>{emptyStateMessage(scans.filter.value)}</EmptyLine>
-          </div>
-        )}
+        </Show>
       </div>
-      {scans.nextCursor.value ? (
+      <Show when={scans.nextCursor}>
         <div class="border-t border-border px-5 py-4 flex justify-center">
           <Button
             variant="secondary"
             size="sm"
             onClick={() => void scans.loadMore()}
-            disabled={scans.loadingMore.value}
+            disabled={scans.loadingMore}
           >
-            {scans.loadingMore.value ? "Loading…" : "Load more"}
+            <Show when={scans.loadingMore} fallback="Load more">
+              Loading…
+            </Show>
           </Button>
         </div>
-      ) : null}
+      </Show>
       <Show<ScanListItem | null> when={quickDecisionScan}>
         {(scan) => (
-          <DecisionDialog
-            open={true}
-            onClose={() => (quickDecisionScan.value = null)}
-            decision={scan.decision}
-            decisionReason={scan.decisionReason}
-            decidedAt={scan.decidedAt}
-            status={scans.decisionStatus.value}
-            error={scans.decisionError.value}
-            npmStagedPackagesUrl={npmStagedPackagesUrlFor(scan)}
+          <QuickDecisionDialog
+            scan={scan}
+            scans={scans}
+            quickDecisionScan={quickDecisionScan}
             onSubmit={onQuickDecisionSubmit}
           />
         )}
       </Show>
     </Card>
+  );
+}
+
+function QuickDecisionDialog({
+  scan,
+  scans,
+  quickDecisionScan,
+  onSubmit,
+}: {
+  scan: ScanListItem;
+  scans: ReturnType<typeof useModel<typeof ScanListModel.prototype>>;
+  quickDecisionScan: Signal<ScanListItem | null>;
+  onSubmit: (decision: ScanDecision, reason: string | null) => boolean | Promise<boolean>;
+}) {
+  return (
+    <DecisionDialog
+      open={true}
+      onClose={() => (quickDecisionScan.value = null)}
+      decision={scan.decision}
+      decisionReason={scan.decisionReason}
+      decidedAt={scan.decidedAt}
+      status={scans.decisionStatus.value}
+      error={scans.decisionError.value}
+      npmStagedPackagesUrl={npmStagedPackagesUrlFor(scan)}
+      onSubmit={onSubmit}
+    />
   );
 }
 
@@ -329,8 +388,8 @@ function ScanStateSelect({
   disabled,
   onChange,
 }: {
-  value: ScanDecisionFilter;
-  disabled: boolean;
+  value: Signal<ScanDecisionFilter>;
+  disabled: ReadonlySignal<boolean>;
   onChange: (filter: ScanDecisionFilter) => void;
 }) {
   return (
@@ -397,9 +456,9 @@ function ScanTable({
   decisionSaving,
   onQuickDecide,
 }: {
-  scans: ScanListItem[];
-  quickDecisionScanId: string | null;
-  decisionSaving: boolean;
+  scans: ReadonlySignal<ScanListItem[]>;
+  quickDecisionScanId: ReadonlySignal<string | null>;
+  decisionSaving: ReadonlySignal<boolean>;
   onQuickDecide: (scan: ScanListItem) => void;
 }) {
   return (
@@ -416,53 +475,77 @@ function ScanTable({
           </tr>
         </thead>
         <tbody>
-          {scans.map((scan) => (
-            <tr key={scan.id} class="border-b border-border last:border-b-0 hover:bg-surface-2">
-              <Td>
-                <span class="flex items-center gap-2 min-w-[180px]">
-                  <a href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}>
-                    {scan.packageName || scan.stageId}
-                  </a>
-                  {scan.source === "workflow_gate" ? <Badge tone="neutral">gate</Badge> : null}
-                </span>
-              </Td>
-              <Td class="font-mono text-xs text-ink-muted whitespace-nowrap">
-                {scan.previousVersion || "—"} → {scan.stagedVersion || "—"}
-              </Td>
-              <Td>
-                <ScanRiskCell scan={scan} />
-              </Td>
-              <Td>
-                <ScanChangedCell scan={scan} />
-              </Td>
-              <Td>
-                <ScanStatusBadge status={scan.status} />
-              </Td>
-              <Td>
-                <div class="flex flex-wrap items-center gap-2">
-                  <DecisionBadge decision={scan.decision} />
-                  {canQuickDecide(scan) ? (
-                    <Button
-                      variant={scan.decision ? "secondary" : "primary"}
-                      size="sm"
-                      onClick={() => onQuickDecide(scan)}
-                      disabled={decisionSaving}
-                      title="Record a decision without leaving the dashboard"
-                    >
-                      {decisionSaving && quickDecisionScanId === scan.id
-                        ? "Saving…"
-                        : scan.decision
-                          ? "Update"
-                          : "Decide"}
-                    </Button>
-                  ) : null}
-                </div>
-              </Td>
-            </tr>
-          ))}
+          <For each={scans}>
+            {(scan) => (
+              <tr key={scan.id} class="border-b border-border last:border-b-0 hover:bg-surface-2">
+                <Td>
+                  <span class="flex items-center gap-2 min-w-[180px]">
+                    <a href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}>
+                      {scan.packageName || scan.stageId}
+                    </a>
+                    {scan.source === "workflow_gate" ? <Badge tone="neutral">gate</Badge> : null}
+                  </span>
+                </Td>
+                <Td class="font-mono text-xs text-ink-muted whitespace-nowrap">
+                  {scan.previousVersion || "—"} → {scan.stagedVersion || "—"}
+                </Td>
+                <Td>
+                  <ScanRiskCell scan={scan} />
+                </Td>
+                <Td>
+                  <ScanChangedCell scan={scan} />
+                </Td>
+                <Td>
+                  <ScanStatusBadge status={scan.status} />
+                </Td>
+                <Td>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <DecisionBadge decision={scan.decision} />
+                    <Show when={() => canQuickDecide(scan)}>
+                      <QuickDecisionButton
+                        scan={scan}
+                        quickDecisionScanId={quickDecisionScanId}
+                        decisionSaving={decisionSaving}
+                        onQuickDecide={onQuickDecide}
+                      />
+                    </Show>
+                  </div>
+                </Td>
+              </tr>
+            )}
+          </For>
         </tbody>
       </table>
     </div>
+  );
+}
+
+function QuickDecisionButton({
+  scan,
+  quickDecisionScanId,
+  decisionSaving,
+  onQuickDecide,
+}: {
+  scan: ScanListItem;
+  quickDecisionScanId: ReadonlySignal<string | null>;
+  decisionSaving: ReadonlySignal<boolean>;
+  onQuickDecide: (scan: ScanListItem) => void;
+}) {
+  const variant = scan.decision ? "secondary" : "primary";
+  const label = useComputed(() => {
+    if (decisionSaving.value && quickDecisionScanId.value === scan.id) return "Saving…";
+    return scan.decision ? "Update" : "Decide";
+  });
+  return (
+    <Button
+      variant={variant}
+      size="sm"
+      onClick={() => onQuickDecide(scan)}
+      disabled={decisionSaving}
+      title="Record a decision without leaving the dashboard"
+    >
+      {label}
+    </Button>
   );
 }
 
@@ -520,7 +603,9 @@ function Td({ children, class: className }: { children: ComponentChildren; class
 // than a bare ✓ — the check read as a pass/fail state it doesn't represent, and
 // its meaning was hidden in a tooltip.
 function ScanFreshnessIndicator({ at }: { at: number }) {
+  const liveAt = useLiveSignal(at);
   const now = useSignal(Date.now());
+  const label = useComputed(() => `checked ${formatRelativeTime(liveAt.value, now.value)}`);
   useEffect(() => {
     const id = window.setInterval(() => {
       now.value = Date.now();
@@ -528,9 +613,7 @@ function ScanFreshnessIndicator({ at }: { at: number }) {
     return () => window.clearInterval(id);
   }, []);
   return (
-    <span class="font-mono text-[11px] text-ink-subtle whitespace-nowrap select-none">
-      checked {formatRelativeTime(at, now.value)}
-    </span>
+    <span class="font-mono text-[11px] text-ink-subtle whitespace-nowrap select-none">{label}</span>
   );
 }
 

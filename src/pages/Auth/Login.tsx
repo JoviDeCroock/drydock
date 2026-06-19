@@ -1,5 +1,6 @@
 import { useEffect } from "preact/hooks";
-import { useSignal } from "@preact/signals";
+import { useComputed, useSignal } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { normalizeAuthReturnTo } from "../../lib/auth-return";
 import { AuthError, sessionModel } from "../../models/auth";
@@ -21,6 +22,19 @@ export default function LoginPage() {
   const returnTo = normalizeAuthReturnTo(location.query.returnTo);
   const registerHref =
     returnTo === "/dashboard" ? "/register" : `/register?returnTo=${encodeURIComponent(returnTo)}`;
+  const twoFactorStep = useComputed(() => step.value === "twoFactor");
+  const twoFactorHelp = useComputed(() =>
+    useBackup.value
+      ? "Enter one of your saved backup recovery codes."
+      : "Enter the 6-digit code from your authenticator app.",
+  );
+  const twoFactorLabel = useComputed(() =>
+    useBackup.value ? "Backup code" : "Authentication code",
+  );
+  const twoFactorInputMode = useComputed(() => (useBackup.value ? "text" : "numeric"));
+  const twoFactorToggleLabel = useComputed(() =>
+    useBackup.value ? "Use an authenticator code instead" : "Use a backup code instead",
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -96,132 +110,132 @@ export default function LoginPage() {
     }
   };
 
-  if (needsVerificationFor.value) {
-    return (
-      <PageShell width="narrow">
-        <Card class="flex flex-col gap-4">
-          <Eyebrow>Verify your email</Eyebrow>
-          <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">One more step</h1>
-          <Alert tone="info">
-            Your email isn't verified yet. We sent a verification link to{" "}
-            {needsVerificationFor.value}.
-          </Alert>
-          <Muted class="text-[13px] m-0">
-            Open the link to finish signing in. It expires in 24 hours.
-          </Muted>
-
-          {error.value ? <Alert tone="critical">{error.value}</Alert> : null}
-          {resent.value ? <Alert tone="ok">We sent another verification link.</Alert> : null}
-
-          <Button variant="secondary" disabled={resending.value} onClick={onResend}>
-            {resending.value ? "Resending…" : "Resend verification email"}
-          </Button>
-
-          <p class="text-[13px] text-ink-muted m-0">
-            <a href="/login" onClick={() => (needsVerificationFor.value = null)}>
-              Back to sign in
-            </a>
-          </p>
-        </Card>
-      </PageShell>
-    );
-  }
-
-  if (step.value === "twoFactor") {
-    return (
-      <PageShell width="narrow">
-        <Card class="flex flex-col gap-4">
-          <Eyebrow>Two-factor authentication</Eyebrow>
-          <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Verify it's you</h1>
-          <Muted class="text-[13px] m-0">
-            {useBackup.value
-              ? "Enter one of your saved backup recovery codes."
-              : "Enter the 6-digit code from your authenticator app."}
-          </Muted>
-
-          <form class="flex flex-col gap-4 mt-2" onSubmit={onVerify}>
-            <Field
-              label={useBackup.value ? "Backup code" : "Authentication code"}
-              for="twofactor-code"
-            >
-              <Input
-                id="twofactor-code"
-                type="text"
-                value={code}
-                inputmode={useBackup.value ? "text" : "numeric"}
-                autocomplete="one-time-code"
-                autoFocus
-                required
-                onInput={(e) => (code.value = (e.target as HTMLInputElement).value)}
-              />
-            </Field>
-
-            {error.value ? <Alert tone="critical">{error.value}</Alert> : null}
-
-            <Button type="submit" disabled={loading.value}>
-              {loading.value ? "Verifying…" : "Verify"}
-            </Button>
-          </form>
-
-          <Button
-            variant="ghost"
-            size="sm"
-            class="self-start"
-            onClick={() => {
-              useBackup.value = !useBackup.value;
-              code.value = "";
-              error.value = null;
-            }}
-          >
-            {useBackup.value ? "Use an authenticator code instead" : "Use a backup code instead"}
-          </Button>
-        </Card>
-      </PageShell>
-    );
-  }
-
   return (
     <PageShell width="narrow">
-      <Card class="flex flex-col gap-4">
-        <Eyebrow>Welcome back</Eyebrow>
-        <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Sign in</h1>
-        <Muted class="text-[13px] m-0">
-          Sign in to review held releases and revisit saved reports.
-        </Muted>
+      <Show
+        when={needsVerificationFor}
+        fallback={
+          <Show
+            when={twoFactorStep}
+            fallback={
+              <Card class="flex flex-col gap-4">
+                <Eyebrow>Welcome back</Eyebrow>
+                <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Sign in</h1>
+                <Muted class="text-[13px] m-0">
+                  Sign in to review held releases and revisit saved reports.
+                </Muted>
 
-        <form class="flex flex-col gap-4 mt-2" onSubmit={onSubmit}>
-          <Field label="Email" for="login-email">
-            <Input
-              id="login-email"
-              type="email"
-              value={email}
-              autocomplete="email"
-              required
-              onInput={(e) => (email.value = (e.target as HTMLInputElement).value)}
-            />
-          </Field>
-          <Field label="Password" for="login-password">
-            <Input
-              id="login-password"
-              type="password"
-              value={password}
-              autocomplete="current-password"
-              required
-              onInput={(e) => (password.value = (e.target as HTMLInputElement).value)}
-            />
-          </Field>
+                <form class="flex flex-col gap-4 mt-2" onSubmit={onSubmit}>
+                  <Field label="Email" for="login-email">
+                    <Input
+                      id="login-email"
+                      type="email"
+                      value={email}
+                      autocomplete="email"
+                      required
+                      onInput={(e) => (email.value = (e.target as HTMLInputElement).value)}
+                    />
+                  </Field>
+                  <Field label="Password" for="login-password">
+                    <Input
+                      id="login-password"
+                      type="password"
+                      value={password}
+                      autocomplete="current-password"
+                      required
+                      onInput={(e) => (password.value = (e.target as HTMLInputElement).value)}
+                    />
+                  </Field>
 
-          {error.value ? <Alert tone="critical">{error.value}</Alert> : null}
+                  <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
 
-          <Button type="submit" disabled={loading.value}>
-            {loading.value ? "Signing in…" : "Sign in"}
-          </Button>
-        </form>
+                  <Button type="submit" disabled={loading}>
+                    <Show when={loading} fallback="Sign in">
+                      Signing in…
+                    </Show>
+                  </Button>
+                </form>
 
-        <p class="text-[13px] text-ink-muted m-0">
-          New here? <a href={registerHref}>Create an account</a>
-        </p>
-      </Card>
+                <p class="text-[13px] text-ink-muted m-0">
+                  New here? <a href={registerHref}>Create an account</a>
+                </p>
+              </Card>
+            }
+          >
+            <Card class="flex flex-col gap-4">
+              <Eyebrow>Two-factor authentication</Eyebrow>
+              <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Verify it's you</h1>
+              <Muted class="text-[13px] m-0">{twoFactorHelp}</Muted>
+
+              <form class="flex flex-col gap-4 mt-2" onSubmit={onVerify}>
+                <Field label={twoFactorLabel} for="twofactor-code">
+                  <Input
+                    id="twofactor-code"
+                    type="text"
+                    value={code}
+                    inputmode={twoFactorInputMode}
+                    autocomplete="one-time-code"
+                    autoFocus
+                    required
+                    onInput={(e) => (code.value = (e.target as HTMLInputElement).value)}
+                  />
+                </Field>
+
+                <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
+
+                <Button type="submit" disabled={loading}>
+                  <Show when={loading} fallback="Verify">
+                    Verifying…
+                  </Show>
+                </Button>
+              </form>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                class="self-start"
+                onClick={() => {
+                  useBackup.value = !useBackup.value;
+                  code.value = "";
+                  error.value = null;
+                }}
+              >
+                {twoFactorToggleLabel}
+              </Button>
+            </Card>
+          </Show>
+        }
+      >
+        {(target) => (
+          <Card class="flex flex-col gap-4">
+            <Eyebrow>Verify your email</Eyebrow>
+            <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">One more step</h1>
+            <Alert tone="info">
+              Your email isn't verified yet. We sent a verification link to {target}.
+            </Alert>
+            <Muted class="text-[13px] m-0">
+              Open the link to finish signing in. It expires in 24 hours.
+            </Muted>
+
+            <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
+            <Show when={resent}>
+              <Alert tone="ok">We sent another verification link.</Alert>
+            </Show>
+
+            <Button variant="secondary" disabled={resending} onClick={onResend}>
+              <Show when={resending} fallback="Resend verification email">
+                Resending…
+              </Show>
+            </Button>
+
+            <p class="text-[13px] text-ink-muted m-0">
+              <a href="/login" onClick={() => (needsVerificationFor.value = null)}>
+                Back to sign in
+              </a>
+            </p>
+          </Card>
+        )}
+      </Show>
     </PageShell>
   );
 }

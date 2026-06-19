@@ -72,95 +72,95 @@ export default function RegisterPage() {
     }
   };
 
-  if (verificationSentTo.value) {
-    return (
-      <PageShell width="narrow">
-        <Card class="flex flex-col gap-4">
-          <Eyebrow>Almost there</Eyebrow>
-          <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Check your email</h1>
-          <Alert tone="info">
-            We sent a verification link to {verificationSentTo.value}. Open it to activate your
-            account.
-          </Alert>
-          <Muted class="text-[13px] m-0">
-            The link expires in 24 hours. Check your spam folder if it doesn't arrive.
-          </Muted>
-
-          <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
-          <Show when={resent}>
-            <Alert tone="ok">We sent another verification link.</Alert>
-          </Show>
-
-          <Button variant="secondary" disabled={resending} onClick={onResend}>
-            <Show when={resending} fallback="Resend verification email">
-              Resending…
-            </Show>
-          </Button>
-
-          <p class="text-[13px] text-ink-muted m-0">
-            Already verified? <a href={signInHref}>Sign in</a>
-          </p>
-        </Card>
-      </PageShell>
-    );
-  }
-
   return (
     <PageShell width="narrow">
-      <Card class="flex flex-col gap-4">
-        <Eyebrow>Get started</Eyebrow>
-        <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Create account</h1>
-        <Muted class="text-[13px] m-0">
-          Create a workspace, connect npm or a GitHub gate, and review held releases before they go
-          live.
-        </Muted>
+      <Show
+        when={verificationSentTo}
+        fallback={
+          <Card class="flex flex-col gap-4">
+            <Eyebrow>Get started</Eyebrow>
+            <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Create account</h1>
+            <Muted class="text-[13px] m-0">
+              Create a workspace, connect npm or a GitHub gate, and review held releases before they
+              go live.
+            </Muted>
 
-        <form class="flex flex-col gap-4 mt-2" onSubmit={onSubmit}>
-          <Field label="Name" for="register-name">
-            <Input
-              id="register-name"
-              type="text"
-              value={name}
-              autocomplete="name"
-              required
-              onInput={(e) => (name.value = (e.target as HTMLInputElement).value)}
-            />
-          </Field>
-          <Field label="Email" for="register-email">
-            <Input
-              id="register-email"
-              type="email"
-              value={email}
-              autocomplete="email"
-              required
-              onInput={(e) => (email.value = (e.target as HTMLInputElement).value)}
-            />
-          </Field>
-          <Field label="Password" for="register-password">
-            <Input
-              id="register-password"
-              type="password"
-              value={password}
-              autocomplete="new-password"
-              minlength={12}
-              required
-              onInput={(e) => (password.value = (e.target as HTMLInputElement).value)}
-            />
-          </Field>
+            <form class="flex flex-col gap-4 mt-2" onSubmit={onSubmit}>
+              <Field label="Name" for="register-name">
+                <Input
+                  id="register-name"
+                  type="text"
+                  value={name}
+                  autocomplete="name"
+                  required
+                  onInput={(e) => (name.value = (e.target as HTMLInputElement).value)}
+                />
+              </Field>
+              <Field label="Email" for="register-email">
+                <Input
+                  id="register-email"
+                  type="email"
+                  value={email}
+                  autocomplete="email"
+                  required
+                  onInput={(e) => (email.value = (e.target as HTMLInputElement).value)}
+                />
+              </Field>
+              <Field label="Password" for="register-password">
+                <Input
+                  id="register-password"
+                  type="password"
+                  value={password}
+                  autocomplete="new-password"
+                  minlength={12}
+                  required
+                  onInput={(e) => (password.value = (e.target as HTMLInputElement).value)}
+                />
+              </Field>
 
-          <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
+              <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
 
-          <Button type="submit" disabled={loading}>
-            <Show when={loading} fallback="Create account">
-              Creating…
+              <Button type="submit" disabled={loading}>
+                <Show when={loading} fallback="Create account">
+                  Creating…
+                </Show>
+              </Button>
+            </form>
+
+            <p class="text-[13px] text-ink-muted m-0">
+              Already have an account? <a href={signInHref}>Sign in</a>
+            </p>
+          </Card>
+        }
+      >
+        {(target) => (
+          <Card class="flex flex-col gap-4">
+            <Eyebrow>Almost there</Eyebrow>
+            <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Check your email</h1>
+            <Alert tone="info">
+              We sent a verification link to {target}. Open it to activate your account.
+            </Alert>
+            <Muted class="text-[13px] m-0">
+              The link expires in 24 hours. Check your spam folder if it doesn't arrive.
+            </Muted>
+
+            <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
+            <Show when={resent}>
+              <Alert tone="ok">We sent another verification link.</Alert>
             </Show>
-          </Button>
-        </form>
 
-        <p class="text-[13px] text-ink-muted m-0">
-          Already have an account? <a href={signInHref}>Sign in</a>
-        </p>
-      </Card>
+            <Button variant="secondary" disabled={resending} onClick={onResend}>
+              <Show when={resending} fallback="Resend verification email">
+                Resending…
+              </Show>
+            </Button>
+
+            <p class="text-[13px] text-ink-muted m-0">
+              Already verified? <a href={signInHref}>Sign in</a>
+            </p>
+          </Card>
+        )}
+      </Show>
     </PageShell>
   );
 }

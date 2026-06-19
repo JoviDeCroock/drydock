@@ -29,7 +29,7 @@ export function Field({
   children,
   class: className,
 }: {
-  label: string;
+  label: ComponentChildren;
   for?: string;
   children: ComponentChildren;
   class?: string;

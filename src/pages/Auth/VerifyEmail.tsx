@@ -1,5 +1,6 @@
 import { useEffect } from "preact/hooks";
-import { useSignal } from "@preact/signals";
+import { useComputed, useSignal } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { normalizeAuthReturnTo } from "../../lib/auth-return";
 import { sessionModel } from "../../models/auth";
@@ -33,6 +34,8 @@ export default function VerifyEmailPage() {
   const error = useSignal<string | null>(null);
   const resending = useSignal(false);
   const resent = useSignal(false);
+  const verifying = useComputed(() => state.value === "verifying");
+  const verified = useComputed(() => state.value === "verified");
 
   useEffect(() => {
     if (errorCode) return;
@@ -68,63 +71,67 @@ export default function VerifyEmailPage() {
     }
   };
 
-  if (state.value === "verifying") {
-    return (
-      <PageShell width="narrow">
-        <LoadingState title="Verifying your email" detail="confirming link" />
-      </PageShell>
-    );
-  }
-
-  if (state.value === "verified") {
-    return (
-      <PageShell width="narrow">
-        <Card class="flex flex-col gap-4">
-          <Eyebrow>Email verified</Eyebrow>
-          <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">You're all set</h1>
-          <Alert tone="ok">Your email is verified. You can sign in now.</Alert>
-          <Button onClick={() => location.route("/login", true)}>Go to sign in</Button>
-        </Card>
-      </PageShell>
-    );
-  }
-
   return (
     <PageShell width="narrow">
-      <Card class="flex flex-col gap-4">
-        <Eyebrow>Verify your email</Eyebrow>
-        <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Link didn't work</h1>
-        <Alert tone="critical">{ERROR_COPY[errorCode] ?? "We couldn't verify your email."}</Alert>
-        <Muted class="text-[13px] m-0">
-          Enter your email and we'll send a fresh verification link.
-        </Muted>
+      <Show
+        when={verifying}
+        fallback={
+          <Show
+            when={verified}
+            fallback={
+              <Card class="flex flex-col gap-4">
+                <Eyebrow>Verify your email</Eyebrow>
+                <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Link didn't work</h1>
+                <Alert tone="critical">
+                  {ERROR_COPY[errorCode] ?? "We couldn't verify your email."}
+                </Alert>
+                <Muted class="text-[13px] m-0">
+                  Enter your email and we'll send a fresh verification link.
+                </Muted>
 
-        <form class="flex flex-col gap-4 mt-2" onSubmit={onResend}>
-          <Field label="Email" for="verify-email">
-            <Input
-              id="verify-email"
-              type="email"
-              value={email}
-              autocomplete="email"
-              required
-              onInput={(e) => (email.value = (e.target as HTMLInputElement).value)}
-            />
-          </Field>
+                <form class="flex flex-col gap-4 mt-2" onSubmit={onResend}>
+                  <Field label="Email" for="verify-email">
+                    <Input
+                      id="verify-email"
+                      type="email"
+                      value={email}
+                      autocomplete="email"
+                      required
+                      onInput={(e) => (email.value = (e.target as HTMLInputElement).value)}
+                    />
+                  </Field>
 
-          {error.value ? <Alert tone="critical">{error.value}</Alert> : null}
-          {resent.value ? (
-            <Alert tone="ok">If that account needs verifying, a new link is on its way.</Alert>
-          ) : null}
+                  <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
+                  <Show when={resent}>
+                    <Alert tone="ok">
+                      If that account needs verifying, a new link is on its way.
+                    </Alert>
+                  </Show>
 
-          <Button type="submit" disabled={resending.value}>
-            {resending.value ? "Sending…" : "Send new link"}
-          </Button>
-        </form>
+                  <Button type="submit" disabled={resending}>
+                    <Show when={resending} fallback="Send new link">
+                      Sending…
+                    </Show>
+                  </Button>
+                </form>
 
-        <p class="text-[13px] text-ink-muted m-0">
-          <a href="/login">Back to sign in</a>
-        </p>
-      </Card>
+                <p class="text-[13px] text-ink-muted m-0">
+                  <a href="/login">Back to sign in</a>
+                </p>
+              </Card>
+            }
+          >
+            <Card class="flex flex-col gap-4">
+              <Eyebrow>Email verified</Eyebrow>
+              <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">You're all set</h1>
+              <Alert tone="ok">Your email is verified. You can sign in now.</Alert>
+              <Button onClick={() => location.route("/login", true)}>Go to sign in</Button>
+            </Card>
+          </Show>
+        }
+      >
+        <LoadingState title="Verifying your email" detail="confirming link" />
+      </Show>
     </PageShell>
   );
 }

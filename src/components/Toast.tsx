@@ -1,4 +1,5 @@
 import { signal } from "@preact/signals";
+import { For } from "@preact/signals/utils";
 import { cn } from "./cn";
 
 export type ToastTone = "ok" | "critical" | "info";
@@ -43,27 +44,29 @@ export function Toaster() {
       class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 w-[min(92vw,360px)] pointer-events-none"
       aria-live="polite"
     >
-      {items.value.map((item) => (
-        <div
-          key={item.id}
-          class="pointer-events-auto flex items-start gap-2.5 bg-surface border border-border rounded-lg shadow-md px-3.5 py-3"
-          role="status"
-        >
-          <span
-            class={cn("w-4 h-4 rounded-full shrink-0 mt-0.5 opacity-90", toneDisc[item.tone])}
-            aria-hidden
-          />
-          <span class="text-[13px] leading-[1.5] text-ink flex-1">{item.message}</span>
-          <button
-            type="button"
-            onClick={() => dismissToast(item.id)}
-            aria-label="Dismiss"
-            class="shrink-0 -mr-1 -mt-0.5 leading-none text-[13px] text-ink-subtle hover:text-ink"
+      <For each={items}>
+        {(item) => (
+          <div
+            key={item.id}
+            class="pointer-events-auto flex items-start gap-2.5 bg-surface border border-border rounded-lg shadow-md px-3.5 py-3"
+            role="status"
           >
-            ✕
-          </button>
-        </div>
-      ))}
+            <span
+              class={cn("w-4 h-4 rounded-full shrink-0 mt-0.5 opacity-90", toneDisc[item.tone])}
+              aria-hidden
+            />
+            <span class="text-[13px] leading-[1.5] text-ink flex-1">{item.message}</span>
+            <button
+              type="button"
+              onClick={() => dismissToast(item.id)}
+              aria-label="Dismiss"
+              class="shrink-0 -mr-1 -mt-0.5 leading-none text-[13px] text-ink-subtle hover:text-ink"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+      </For>
     </div>
   );
 }
