@@ -1,4 +1,5 @@
 import { readStreamBounded } from "../tar-parser.js";
+import { reliableFetch } from "../reliable-fetch";
 import { getInstallationAccessToken } from "./api";
 import type { GithubAppConfig } from "./config";
 import { githubInstallationHeaders, nextLink } from "./http";
@@ -243,7 +244,7 @@ async function listRunArtifacts(
     `/actions/runs/${runId}/artifacts?per_page=100`;
   const found: RunArtifactRef[] = [];
   for (let page = 0; page < MAX_LIST_PAGES && url; page += 1) {
-    const response = await fetch(url, { headers: githubInstallationHeaders(token) });
+    const response = await reliableFetch(url, { headers: githubInstallationHeaders(token) });
     if (response.status === 404) {
       throw new WorkflowArtifactError(
         "bundle_unavailable",
@@ -329,7 +330,11 @@ async function downloadArtifactZip(
       headers.Accept = "application/vnd.github+json";
       headers["X-GitHub-Api-Version"] = "2022-11-28";
     }
-    const hopResponse = await fetch(target, { headers, redirect: "manual" });
+    const hopResponse = await reliableFetch(target, {
+      headers,
+      redirect: "manual",
+      timeoutMs: 60_000,
+    });
     if (hopResponse.status < 300 || hopResponse.status >= 400) {
       response = hopResponse;
       break;

@@ -2,6 +2,7 @@ import type { AppDb } from "../db";
 import { getNpmConnection, markNpmConnectionUsed } from "../db";
 import { base64UrlDecode, base64UrlEncode } from "./crypto-utils";
 import { errorMessage } from "./errors";
+import { reliableFetch } from "./reliable-fetch";
 
 const DEFAULT_REGISTRY = "https://registry.npmjs.org";
 
@@ -208,7 +209,7 @@ export async function validateNpmCredential(
 
 async function validateRegistryAuth(registry: string, token: string) {
   try {
-    const response = await fetch(`${registry}/-/whoami`, {
+    const response = await reliableFetch(`${registry}/-/whoami`, {
       headers: npmAuthHeaders(token, "application/json"),
     });
     const data = (await response.json().catch(() => null)) as {
@@ -237,7 +238,7 @@ async function validateRegistryAuth(registry: string, token: string) {
 
 async function validateStagedListAccess(registry: string, token: string) {
   try {
-    const response = await fetch(`${registry}/-/stage?perPage=1`, {
+    const response = await reliableFetch(`${registry}/-/stage?perPage=1`, {
       headers: npmAuthHeaders(token, "application/json"),
     });
     await response.body?.cancel();
@@ -257,7 +258,7 @@ async function validateStagedListAccess(registry: string, token: string) {
 async function validateStagedViewAccess(registry: string, token: string, stageId: string) {
   const url = `${registry}/-/stage/${encodeURIComponent(stageId)}`;
   try {
-    const response = await fetch(url, {
+    const response = await reliableFetch(url, {
       headers: npmAuthHeaders(token, "application/json"),
     });
     await response.body?.cancel();
@@ -279,7 +280,7 @@ async function validateStagedViewAccess(registry: string, token: string, stageId
 async function validateStagedTarballAccess(registry: string, token: string, stageId: string) {
   const url = `${registry}/-/stage/${encodeURIComponent(stageId)}/tarball`;
   try {
-    const ranged = await fetch(url, {
+    const ranged = await reliableFetch(url, {
       headers: {
         ...npmAuthHeaders(token, "application/octet-stream"),
         range: "bytes=0-0",

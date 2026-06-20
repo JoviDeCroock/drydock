@@ -1,4 +1,5 @@
 import { base64UrlDecode, base64UrlEncode, hmacSha256, timingSafeEqual } from "../crypto-utils";
+import { reliableFetch } from "../reliable-fetch";
 import { GithubAppValidationError, type GithubAppConfig } from "./config";
 import { githubUserHeaders, nextLink } from "./http";
 
@@ -70,7 +71,7 @@ export async function exchangeGithubUserCode(
   config: GithubAppConfig,
   code: string,
 ): Promise<string> {
-  const response = await fetch("https://github.com/login/oauth/access_token", {
+  const response = await reliableFetch("https://github.com/login/oauth/access_token", {
     method: "POST",
     headers: {
       Accept: "application/json",
@@ -118,7 +119,7 @@ export async function listUserAccessibleInstallations(
   let url = "https://api.github.com/user/installations?per_page=100";
 
   for (let page = 0; page < 10 && url; page += 1) {
-    const response = await fetch(url, {
+    const response = await reliableFetch(url, {
       headers: githubUserHeaders(userAccessToken),
     });
     if (!response.ok) {

@@ -2,6 +2,7 @@ import { hexDecode, hmacSha256, timingSafeEqual } from "../crypto-utils";
 import type { AppDb } from "../../db";
 import { getInstallationAccessToken } from "./api";
 import type { GithubAppConfig } from "./config";
+import { reliableFetch } from "../reliable-fetch";
 import { markInstallationStatus, resolveDeploymentProtectionTarget } from "./persistence";
 import { recordGateRequest, type WorkflowGateRecord } from "./webhook-gates";
 
@@ -286,7 +287,7 @@ export async function postDeploymentProtectionDecision(
   }
   const token = await getInstallationAccessToken(input.config, input.installationExternalId);
   const comment = input.comment.slice(0, 140);
-  const response = await fetch(input.callbackUrl, {
+  const response = await reliableFetch(input.callbackUrl, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -300,6 +301,7 @@ export async function postDeploymentProtectionDecision(
       environment_name: input.environment,
       comment,
     }),
+    retryMethods: ["POST"],
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");

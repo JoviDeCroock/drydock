@@ -1,4 +1,6 @@
+import { errorMessage } from "./errors";
 import { normalizeRegistryUrl, type NormalizeRegistryUrlOptions } from "./npm-connection";
+import { reliableFetch } from "./reliable-fetch";
 import { normalizeStringRecord } from "./tar-parser.js";
 import type { PackageJsonSummary } from "./review";
 import { isValidStageId } from "./stage-id";
@@ -71,9 +73,14 @@ export async function listStagedPublishes(
     params.set("page", String(Math.max(0, Math.floor(options.page))));
   }
   if (options.packageName) params.set("package", options.packageName);
-  const response = await fetch(`${registry}/-/stage?${params.toString()}`, {
-    headers: npmStageHeaders(token, "staged-list"),
-  });
+  let response: Response;
+  try {
+    response = await reliableFetch(`${registry}/-/stage?${params.toString()}`, {
+      headers: npmStageHeaders(token, "staged-list"),
+    });
+  } catch (err) {
+    throw new StagedPublishesFetchError(0, errorMessage(err));
+  }
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     throw new StagedPublishesFetchError(response.status, detail.slice(0, 200));
@@ -90,9 +97,14 @@ export async function fetchStagedPublishDetails(
 ): Promise<StagedPublishDetails> {
   if (!isValidStageId(stageId)) throw new Error("invalid stageId");
   const registry = normalizeRegistryUrl(registryUrl, options);
-  const response = await fetch(`${registry}/-/stage/${encodeURIComponent(stageId)}`, {
-    headers: npmStageHeaders(token, "staged-view"),
-  });
+  let response: Response;
+  try {
+    response = await reliableFetch(`${registry}/-/stage/${encodeURIComponent(stageId)}`, {
+      headers: npmStageHeaders(token, "staged-view"),
+    });
+  } catch (err) {
+    throw new StagedPublishesFetchError(0, errorMessage(err));
+  }
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     throw new StagedPublishesFetchError(response.status, detail.slice(0, 200));
@@ -111,9 +123,12 @@ export async function checkStagedPublishAccess(
 ): Promise<StagedPublishAccessResult> {
   if (!isValidStageId(stageId)) throw new Error("invalid stageId");
   const registry = normalizeRegistryUrl(registryUrl, options);
-  const response = await fetch(`${registry}/-/stage/${encodeURIComponent(stageId)}/tarball`, {
-    headers: npmStageTarballHeaders(token),
-  }).catch(() => null);
+  const response = await reliableFetch(
+    `${registry}/-/stage/${encodeURIComponent(stageId)}/tarball`,
+    {
+      headers: npmStageTarballHeaders(token),
+    },
+  ).catch(() => null);
   if (!response) return { allowed: true, status: null, detail: null };
   if (response.ok || response.status === 206) {
     await response.body?.cancel();

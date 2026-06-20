@@ -2,6 +2,7 @@ import { GithubAppValidationError, type GithubAppConfig } from "./config";
 import { githubAppHeaders, githubInstallationHeaders, nextLink } from "./http";
 import { generateGithubAppJwt } from "./jwt";
 import { parseRepositoryFullName } from "./validation";
+import { reliableFetch } from "../reliable-fetch";
 
 export interface GithubInstallationMetadata {
   installationId: string;
@@ -16,9 +17,12 @@ export async function fetchInstallationMetadata(
   installationId: string,
 ): Promise<GithubInstallationMetadata> {
   const jwt = await generateGithubAppJwt(config);
-  const response = await fetch(`https://api.github.com/app/installations/${installationId}`, {
-    headers: githubAppHeaders(jwt),
-  });
+  const response = await reliableFetch(
+    `https://api.github.com/app/installations/${installationId}`,
+    {
+      headers: githubAppHeaders(jwt),
+    },
+  );
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new GithubAppValidationError(
@@ -55,11 +59,12 @@ export async function getInstallationAccessToken(
   installationId: string,
 ): Promise<string> {
   const jwt = await generateGithubAppJwt(config);
-  const response = await fetch(
+  const response = await reliableFetch(
     `https://api.github.com/app/installations/${installationId}/access_tokens`,
     {
       method: "POST",
       headers: githubAppHeaders(jwt),
+      retryMethods: ["POST"],
     },
   );
   if (!response.ok) {
@@ -99,7 +104,7 @@ export async function fetchRepository(
   }
   const token = await getInstallationAccessToken(config, installationId);
   const repositoryPath = `${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}`;
-  const response = await fetch(`https://api.github.com/repos/${repositoryPath}`, {
+  const response = await reliableFetch(`https://api.github.com/repos/${repositoryPath}`, {
     headers: githubInstallationHeaders(token),
   });
   if (response.status === 404) {
@@ -146,7 +151,7 @@ export async function listInstallationRepositories(
       );
     }
     seenUrls.add(url);
-    const response = await fetch(url, { headers: githubInstallationHeaders(token) });
+    const response = await reliableFetch(url, { headers: githubInstallationHeaders(token) });
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       throw new GithubAppValidationError(
@@ -198,7 +203,7 @@ export async function listRepositoryEnvironments(
   let url = `https://api.github.com/repos/${repositoryPath}/environments?per_page=100`;
 
   for (let page = 0; page < 10 && url; page += 1) {
-    const response = await fetch(url, { headers: githubInstallationHeaders(token) });
+    const response = await reliableFetch(url, { headers: githubInstallationHeaders(token) });
     if (response.status === 404) {
       throw new GithubAppValidationError(
         "repository_not_accessible",
