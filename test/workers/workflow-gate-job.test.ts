@@ -827,8 +827,15 @@ describe("executeWorkflowGateJob", () => {
       "GitHub deployment protection decision failed (503)",
     );
 
+    const redeliveryUrls = redeliveryFetch.mock.calls.map(([input, init]) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      return request.url;
+    });
     expect(loaderMock.calls.length).toBe(loaderCallsAfterFirst);
-    expect(redeliveryFetch).toHaveBeenCalledTimes(2);
+    expect(redeliveryFetch).toHaveBeenCalledTimes(4);
+    expect(
+      redeliveryUrls.filter((url) => url.endsWith("/deployment_protection_rule")),
+    ).toHaveLength(3);
   });
 
   test("throws final workflow-gate queue callback failure so the message can reach the DLQ", async () => {
