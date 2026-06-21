@@ -1,13 +1,19 @@
 import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import { useSignal, useModel, useSignalEffect } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { rememberDashboardReturnUrl, useQuerySignal } from "../../lib/query-state";
 import { pluralize } from "../../lib/format";
 import { sessionModel } from "../../models/auth";
 import { NpmConnectionModel } from "../../models/npm-connection";
 import { OrganizationModel } from "../../models/organization";
-import { ScanListModel, type ScanDecisionFilter, type ScanListItem } from "../../models/scan";
+import {
+  ScanListModel,
+  type ScanDecision,
+  type ScanDecisionFilter,
+  type ScanListItem,
+} from "../../models/scan";
 import { StagedPublishesModel } from "../../models/staged-publishes";
 import {
   Alert,
@@ -26,6 +32,7 @@ import {
   UserMenu,
   severityTone,
 } from "../../components";
+import { DecisionDialog } from "./ScanDetail/DecisionDialog";
 
 export default function DashboardPage() {
   const location = useLocation();
@@ -179,9 +186,18 @@ function RecentReviewsSection({
   const discovery = stagedPublishes.lastResult.value;
   const discoveryError = stagedPublishes.error.value;
   const discoveryRefreshing = stagedPublishes.refreshing.value;
+  const quickDecisionScan = useSignal<ScanListItem | null>(null);
   const startedLabels = discovery?.scans.map(formatStartedScanLabel).filter(Boolean) ?? [];
   const onDiscover = async () => {
     await discoverStagedPublishes(stagedPublishes, scans);
+  };
+  const onQuickDecisionSubmit = async (decision: ScanDecision, reason: string | null) => {
+    const scan = quickDecisionScan.peek();
+    if (!scan) return;
+    await scans.setDecision(scan.id, decision, reason);
+    if (scans.decisionStatus.peek() === "idle") {
+      quickDecisionScan.value = null;
+    }
   };
 
   const discoveredAt = stagedPublishes.lastDiscoveryAt.value;
@@ -242,7 +258,15 @@ function RecentReviewsSection({
       ) : null}
       <div class="border-t border-border">
         {scans.scans.value.length ? (
-          <ScanTable scans={scans.scans.value} />
+          <ScanTable
+            scans={scans.scans.value}
+            quickDecisionScanId={quickDecisionScan.value?.id ?? null}
+            decisionSaving={scans.decisionStatus.value === "saving"}
+            onQuickDecide={(scan) => {
+              scans.decisionError.value = null;
+              quickDecisionScan.value = scan;
+            }}
+          />
         ) : (
           <div class="p-5">
             <EmptyLine>{emptyStateMessage(scans.filter.value)}</EmptyLine>
@@ -261,6 +285,20 @@ function RecentReviewsSection({
           </Button>
         </div>
       ) : null}
+      <Show<ScanListItem | null> when={quickDecisionScan}>
+        {(scan) => (
+          <DecisionDialog
+            open={true}
+            onClose={() => (quickDecisionScan.value = null)}
+            decision={scan.decision}
+            decisionReason={scan.decisionReason}
+            decidedAt={scan.decidedAt}
+            status={scans.decisionStatus.value}
+            error={scans.decisionError.value}
+            onSubmit={onQuickDecisionSubmit}
+          />
+        )}
+      </Show>
     </Card>
   );
 }
@@ -349,7 +387,17 @@ function NpmSetupCallout() {
   );
 }
 
-function ScanTable({ scans }: { scans: ScanListItem[] }) {
+function ScanTable({
+  scans,
+  quickDecisionScanId,
+  decisionSaving,
+  onQuickDecide,
+}: {
+  scans: ScanListItem[];
+  quickDecisionScanId: string | null;
+  decisionSaving: boolean;
+  onQuickDecide: (scan: ScanListItem) => void;
+}) {
   return (
     <div class="overflow-x-auto">
       <table class="w-full border-collapse text-[13px]">
@@ -387,7 +435,24 @@ function ScanTable({ scans }: { scans: ScanListItem[] }) {
                 <ScanStatusBadge status={scan.status} />
               </Td>
               <Td>
-                <DecisionBadge decision={scan.decision} />
+                <div class="flex flex-wrap items-center gap-2">
+                  <DecisionBadge decision={scan.decision} />
+                  {canQuickDecide(scan) ? (
+                    <Button
+                      variant={scan.decision ? "secondary" : "primary"}
+                      size="sm"
+                      onClick={() => onQuickDecide(scan)}
+                      disabled={decisionSaving}
+                      title="Record a decision without leaving the dashboard"
+                    >
+                      {decisionSaving && quickDecisionScanId === scan.id
+                        ? "Saving…"
+                        : scan.decision
+                          ? "Update"
+                          : "Decide"}
+                    </Button>
+                  ) : null}
+                </div>
               </Td>
             </tr>
           ))}
@@ -395,6 +460,10 @@ function ScanTable({ scans }: { scans: ScanListItem[] }) {
       </table>
     </div>
   );
+}
+
+function canQuickDecide(scan: ScanListItem): boolean {
+  return scan.status === "complete" && scan.source !== "workflow_gate";
 }
 
 function ScanRiskCell({ scan }: { scan: ScanListItem }) {

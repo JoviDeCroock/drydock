@@ -192,6 +192,17 @@ export function getScanCompareFile(
   );
 }
 
+export type DecisionStatus = "idle" | "saving" | "error";
+
+export function scanMatchesDecisionFilter(
+  scan: Pick<ScanListItem, "decision">,
+  filter: ScanDecisionFilter,
+): boolean {
+  if (filter === "all") return true;
+  if (filter === "undecided") return !scan.decision;
+  return scan.decision === filter;
+}
+
 export const ScanListModel = createModel(() => {
   const scans = signal<ScanListItem[]>([]);
   const loaded = signal(false);
@@ -200,6 +211,8 @@ export const ScanListModel = createModel(() => {
   const filter = signal<ScanDecisionFilter>("undecided");
   const nextCursor = signal<string | null>(null);
   const error = signal<string | null>(null);
+  const decisionStatus = signal<DecisionStatus>("idle");
+  const decisionError = signal<string | null>(null);
 
   async function refresh(): Promise<void> {
     const currentFilter = filter.peek();
@@ -234,6 +247,8 @@ export const ScanListModel = createModel(() => {
     filter,
     nextCursor,
     error,
+    decisionStatus,
+    decisionError,
     refresh,
 
     async loadMore(): Promise<void> {
@@ -251,10 +266,32 @@ export const ScanListModel = createModel(() => {
         this.loadingMore.value = false;
       }
     },
+
+    async setDecision(id: string, decision: ScanDecision, reason: string | null): Promise<void> {
+      this.decisionStatus.value = "saving";
+      this.decisionError.value = null;
+      try {
+        const updated = await setScanDecision(id, decision, reason);
+        const activeFilter = this.filter.peek();
+        this.scans.value = this.scans.value
+          .map((scan) =>
+            scan.id === id
+              ? {
+                  ...scan,
+                  ...updated.scan,
+                  riskSummary: updated.riskSummary ?? updated.scan.riskSummary ?? scan.riskSummary,
+                }
+              : scan,
+          )
+          .filter((scan) => scanMatchesDecisionFilter(scan, activeFilter));
+        this.decisionStatus.value = "idle";
+      } catch (err) {
+        this.decisionError.value = errorMessage(err);
+        this.decisionStatus.value = "error";
+      }
+    },
   };
 });
-
-export type DecisionStatus = "idle" | "saving" | "error";
 
 // Polling cadence for scans still in pending/running. The base delay doubles
 // per consecutive poll failure (so an unreachable API isn't hammered at a
