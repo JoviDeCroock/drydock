@@ -22,6 +22,7 @@ import {
   OrgSwitcher,
   PageShell,
   SectionLabel,
+  Select,
   UserMenu,
   severityTone,
 } from "../../components";
@@ -185,12 +186,24 @@ function RecentReviewsSection({
 
   const discoveredAt = stagedPublishes.lastDiscoveryAt.value;
   const showFreshness = discoveredAt !== null && !discoveryError && !discoveryRefreshing;
+  const showStartedMessage = Boolean(discovery && !discoveryError && discovery.created);
+  const showNoOpenMessage = Boolean(
+    discovery && !discoveryError && !discovery.created && !discovery.found,
+  );
+  const showDiscoveryFeedback = Boolean(
+    discoveryError || showFreshness || showStartedMessage || showNoOpenMessage,
+  );
 
   return (
-    <section class="flex flex-col gap-3">
-      <div class="flex items-center gap-3">
+    <Card as="section" padding="none" class="overflow-hidden">
+      <div class="px-5 py-4 flex flex-col gap-3 md:flex-row md:items-center">
         <SectionLabel class="flex-1 min-w-0">Recent reviews</SectionLabel>
-        <div class="flex items-center gap-2 shrink-0">
+        <div class="flex flex-wrap items-center gap-2 shrink-0">
+          <ScanStateSelect
+            value={scans.filter.value}
+            disabled={scans.refreshing.value}
+            onChange={(filter) => (scans.filter.value = filter)}
+          />
           <Button
             variant="secondary"
             size="sm"
@@ -200,36 +213,34 @@ function RecentReviewsSection({
           >
             {discoveryRefreshing ? "Checking npm…" : "Check npm"}
           </Button>
-          {showFreshness ? <ScanFreshnessIndicator at={discoveredAt} /> : null}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void scans.refresh()}
+            disabled={scans.refreshing.value}
+            title="Reload the reviews list"
+          >
+            {scans.refreshing.value ? "Refreshing…" : "Refresh"}
+          </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => void scans.refresh()}
-          class="shrink-0"
-          disabled={scans.refreshing.value}
-          title="Reload the reviews list"
-        >
-          {scans.refreshing.value ? "Refreshing…" : "Refresh"}
-        </Button>
       </div>
-      {discoveryError ? <Alert tone="critical">{discoveryError}</Alert> : null}
-      {discovery && !discoveryError && discovery.created ? (
-        <Muted class="text-[13px] m-0">
-          {`Started ${discovery.created} new review${discovery.created === 1 ? "" : "s"} from npm${
-            startedLabels.length ? `: ${startedLabels.slice(0, 3).join(", ")}` : ""
-          }${startedLabels.length > 3 ? `, +${startedLabels.length - 3} more` : ""}.`}
-        </Muted>
+      {showDiscoveryFeedback ? (
+        <div class="px-5 pb-4 flex flex-col gap-2">
+          {discoveryError ? <Alert tone="critical">{discoveryError}</Alert> : null}
+          {showFreshness ? <ScanFreshnessIndicator at={discoveredAt} /> : null}
+          {showStartedMessage && discovery ? (
+            <Muted class="text-[13px] m-0">
+              {`Started ${discovery.created} new review${discovery.created === 1 ? "" : "s"} from npm${
+                startedLabels.length ? `: ${startedLabels.slice(0, 3).join(", ")}` : ""
+              }${startedLabels.length > 3 ? `, +${startedLabels.length - 3} more` : ""}.`}
+            </Muted>
+          ) : null}
+          {showNoOpenMessage ? (
+            <Muted class="text-[13px] m-0">No open staged publishes found.</Muted>
+          ) : null}
+        </div>
       ) : null}
-      {discovery && !discoveryError && !discovery.created && !discovery.found ? (
-        <Muted class="text-[13px] m-0">No open staged publishes found.</Muted>
-      ) : null}
-      <ScanFilterChips
-        active={scans.filter.value}
-        disabled={scans.refreshing.value}
-        onChange={(filter) => (scans.filter.value = filter)}
-      />
-      <Card class="p-0 overflow-hidden">
+      <div class="border-t border-border">
         {scans.scans.value.length ? (
           <ScanTable scans={scans.scans.value} />
         ) : (
@@ -237,9 +248,9 @@ function RecentReviewsSection({
             <EmptyLine>{emptyStateMessage(scans.filter.value)}</EmptyLine>
           </div>
         )}
-      </Card>
+      </div>
       {scans.nextCursor.value ? (
-        <div class="flex justify-center pt-1">
+        <div class="border-t border-border px-5 py-4 flex justify-center">
           <Button
             variant="secondary"
             size="sm"
@@ -250,7 +261,7 @@ function RecentReviewsSection({
           </Button>
         </div>
       ) : null}
-    </section>
+    </Card>
   );
 }
 
@@ -271,38 +282,36 @@ function parseDecisionFilter(raw: string | undefined): ScanDecisionFilter {
     : "undecided";
 }
 
-function ScanFilterChips({
-  active,
+function ScanStateSelect({
+  value,
   disabled,
   onChange,
 }: {
-  active: ScanDecisionFilter;
+  value: ScanDecisionFilter;
   disabled: boolean;
   onChange: (filter: ScanDecisionFilter) => void;
 }) {
   return (
-    <div class="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter reviews by decision">
-      {FILTER_OPTIONS.map((option) => {
-        const isActive = option.value === active;
-        return (
-          <button
-            key={option.value}
-            type="button"
-            role="tab"
-            aria-selected={isActive}
-            disabled={disabled}
-            onClick={() => onChange(option.value)}
-            class={`font-mono text-[11px] uppercase tracking-[0.08em] px-2.5 py-1.5 rounded-md border transition-colors duration-150 ease-out cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 ${
-              isActive
-                ? "bg-accent-soft text-accent border-accent"
-                : "bg-surface-2 text-ink-muted border-border hover:border-border-strong"
-            }`}
-          >
-            {option.label}
-          </button>
-        );
-      })}
-    </div>
+    <label class="flex items-center gap-2">
+      <span class="sr-only">Review state</span>
+      <span aria-hidden class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+        State
+      </span>
+      <span class="w-[160px]">
+        <Select
+          id="scan-state-filter"
+          value={value}
+          disabled={disabled}
+          onChange={(next) => onChange(parseDecisionFilter(next))}
+        >
+          {FILTER_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </Select>
+      </span>
+    </label>
   );
 }
 
