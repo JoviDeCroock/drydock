@@ -108,6 +108,12 @@ export function normalizeTarPath(rawPath) {
   const parts = path.split("/").filter(Boolean);
   if (!parts.length || parts.some((part) => part === "." || part === "..")) return null;
   path = parts.join("/");
+  // Re-check the drive-letter guard on the canonical form. Stripping the
+  // `package/` prefix can re-expose one the early check missed: `package//C:`
+  // reduces to `/C:` (leading slash dodges the early test), then collapsing the
+  // empty segment joins it to `C:` — a Windows drive-relative path the parser
+  // is meant to reject. Found by the archive-parser fuzz suite (issue #311).
+  if (/^[A-Za-z]:/.test(path)) return null;
   if (path.length > 512) return null;
   return path;
 }
