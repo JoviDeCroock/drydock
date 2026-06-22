@@ -45,6 +45,12 @@ describe("public/_headers static-asset security headers", () => {
     expect(catchAll?.["Content-Security-Policy"]).toBe(DOCUMENT_CSP);
   });
 
+  test("document CSP rejects inline CSS", () => {
+    expect(DOCUMENT_CSP).toContain("style-src 'self' https://fonts.googleapis.com");
+    expect(DOCUMENT_CSP).toContain("style-src-attr 'none'");
+    expect(DOCUMENT_CSP).not.toContain("'unsafe-inline'");
+  });
+
   test("carries the same non-CSP security headers as the Worker", () => {
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
       expect(catchAll?.[name]).toBe(value);

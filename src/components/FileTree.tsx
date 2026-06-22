@@ -22,11 +22,15 @@ function statusToText(status: FolderStatus): string {
   return "text-ink-muted";
 }
 
-const INDENT_BASE = 8;
-const INDENT_PER_DEPTH = 20;
-
-function rowPaddingLeft(depth: number): string {
-  return `${INDENT_BASE + depth * INDENT_PER_DEPTH}px`;
+function TreeIndent({ depth }: { depth: number }) {
+  if (depth <= 0) return null;
+  return (
+    <>
+      {Array.from({ length: depth }, (_, index) => (
+        <span key={index} class="w-5 shrink-0" aria-hidden />
+      ))}
+    </>
+  );
 }
 
 function FindingCountBadge({ count, severity }: { count: number; severity: string | null }) {
@@ -91,11 +95,11 @@ function TreeNode({
         <details open={initiallyOpen} class="group">
           <summary
             class={cn(
-              "list-none cursor-pointer flex items-center gap-2 py-1 pr-2 rounded hover:bg-surface-2",
+              "list-none cursor-pointer flex items-center gap-2 py-1 pr-2 pl-2 rounded hover:bg-surface-2",
               "text-[13px] font-mono",
             )}
-            style={{ paddingLeft: rowPaddingLeft(depth) }}
           >
+            <TreeIndent depth={depth} />
             <span
               aria-hidden
               class="text-ink-subtle text-[10px] inline-block transition-transform duration-150 ease-out group-open:rotate-90"
@@ -131,12 +135,12 @@ function TreeNode({
         type="button"
         onClick={() => onSelect(node.path)}
         class={cn(
-          "w-full flex items-center gap-2 py-1 pr-2 rounded text-left transition-colors",
+          "w-full flex items-center gap-2 py-1 pr-2 pl-2 rounded text-left transition-colors",
           "text-[13px] font-mono",
           isSelected ? "bg-surface-2 text-ink" : "text-ink-muted hover:bg-surface-2 hover:text-ink",
         )}
-        style={{ paddingLeft: rowPaddingLeft(depth) }}
       >
+        <TreeIndent depth={depth} />
         <span class={cn("flex-1 truncate", isSelected ? "text-ink" : statusToText(node.status))}>
           {node.name}
         </span>

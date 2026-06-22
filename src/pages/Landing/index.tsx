@@ -315,11 +315,13 @@ function TreeRow({
             : "text-ink-muted";
   return (
     <li
-      class={`flex items-center gap-2 py-0.5 pr-1.5 rounded ${
+      class={`flex items-center gap-2 py-0.5 pr-1.5 pl-1 rounded ${
         selected ? "bg-surface-2 text-ink" : toneClass
       }`}
-      style={{ paddingLeft: `${4 + depth * 16}px` }}
     >
+      {Array.from({ length: depth }, (_, index) => (
+        <span key={index} class="w-4 shrink-0" aria-hidden />
+      ))}
       {folder ? (
         <span aria-hidden class="text-[10px] text-ink-subtle">
           {open ? "▾" : "▸"}

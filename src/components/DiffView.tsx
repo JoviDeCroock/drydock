@@ -113,7 +113,7 @@ function LineContent({ text, tokens }: { text: string; tokens: TokenLine | null 
   return (
     <>
       {tokens.map((token, index) => (
-        <span key={index} style={{ color: token.color }}>
+        <span key={index} class={token.className}>
           {token.content}
         </span>
       ))}

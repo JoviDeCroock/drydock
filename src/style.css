@@ -118,6 +118,54 @@
     --sh-token-link: #0f766e;
   }
 
+  .sh-token-foreground {
+    color: var(--sh-foreground);
+  }
+
+  .sh-token-keyword {
+    color: var(--sh-token-keyword);
+  }
+
+  .sh-token-constant {
+    color: var(--sh-token-constant);
+  }
+
+  .sh-token-number {
+    color: var(--sh-token-number);
+  }
+
+  .sh-token-function {
+    color: var(--sh-token-function);
+  }
+
+  .sh-token-parameter {
+    color: var(--sh-token-parameter);
+  }
+
+  .sh-token-punctuation {
+    color: var(--sh-token-punctuation);
+  }
+
+  .sh-token-comment {
+    color: var(--sh-token-comment);
+  }
+
+  .sh-token-string {
+    color: var(--sh-token-string);
+  }
+
+  .sh-token-string-expression {
+    color: var(--sh-token-string-expression);
+  }
+
+  .sh-token-link {
+    color: var(--sh-token-link);
+  }
+
+  .severity-bar-segment {
+    fill: currentColor;
+  }
+
   html,
   body {
     margin: 0;
