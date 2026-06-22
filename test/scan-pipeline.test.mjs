@@ -276,6 +276,12 @@ describe("scan pipeline baseline selection", () => {
       findings: [],
       model: "@cf/moonshotai/kimi-k2.5",
     });
+    expect(aiReviewMock.runSelectiveAiReview.mock.calls[0]?.[1]).toMatchObject({
+      scanId: "scan_ai_failure",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+      ecosystem: "npm",
+    });
     expect(result.risk).toBe("medium");
     expect(dbMock.persistScan).toHaveBeenCalled();
   });

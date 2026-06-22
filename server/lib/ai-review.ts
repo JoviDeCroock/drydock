@@ -90,6 +90,7 @@ export async function analyzeWithAi(
           })(candidateModel, {
             extraHeaders: {
               "x-session-affinity": scanScopedCacheAffinity(env, options.scanId),
+              "cf-aig-metadata": aiGatewayMetadataHeader(options, candidateModel, attempt),
             },
           });
         const tools = createAiReviewTools(
@@ -216,6 +217,27 @@ function isRetryableAiError(err: unknown): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function aiGatewayMetadataHeader(
+  options: SelectiveAiReviewOptions,
+  model: string,
+  attempt: number,
+): string {
+  const metadata: Record<string, string | number> = {
+    scanId: options.scanId || "unknown",
+    organizationId: options.organizationId || "unknown",
+    ecosystem: options.ecosystem || "unknown",
+    model,
+    attempt,
+  };
+
+  if (options.stageId) {
+    metadata.stageId = options.stageId;
+    delete metadata.model;
+  }
+
+  return JSON.stringify(metadata);
 }
 
 function resolveLanguageModelOverride(

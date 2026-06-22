@@ -5,6 +5,7 @@ import {
   AI_MODEL,
   AI_MODEL_CANDIDATES,
   analyzeWithAi,
+  aiGatewayMetadataHeader,
   displayedAiResult,
 } from "../server/lib/ai-review.ts";
 import {
@@ -121,6 +122,29 @@ describe("ai review orchestration", () => {
     expect(AI_MODEL).toBe("@cf/moonshotai/kimi-k2.5");
     expect(AI_FALLBACK_MODEL).toBe("@cf/qwen/qwen3-30b-a3b-fp8");
     expect(AI_MODEL_CANDIDATES).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
+  });
+
+  test("keeps AI Gateway metadata within the five-field log limit", () => {
+    expect(
+      JSON.parse(
+        aiGatewayMetadataHeader(
+          {
+            ...BASE_OPTIONS,
+            scanId: "scan_123",
+            stageId: "stage_123",
+            organizationId: "org_123",
+          },
+          AI_MODEL,
+          2,
+        ),
+      ),
+    ).toEqual({
+      scanId: "scan_123",
+      organizationId: "org_123",
+      ecosystem: "npm",
+      attempt: 2,
+      stageId: "stage_123",
+    });
   });
 
   test("a submit_review tool call produces a complete review and records the model", async () => {
