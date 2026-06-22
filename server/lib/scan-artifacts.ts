@@ -318,6 +318,31 @@ export async function loadScanArtifacts(
   }
 }
 
+export async function loadScanArtifactMetadata(
+  bucket: R2Bucket | undefined,
+  scan: ScanArtifactScanRow,
+): Promise<ScanArtifactsDetail | null> {
+  if (!bucket || !hasReportArtifactMetadata(scan)) return null;
+
+  try {
+    const reportText = await readDigestVerifiedJsonText(bucket, {
+      key: scan.reportArtifactKey,
+      digest: scan.reportDigest,
+      scanId: scan.id,
+      kind: "report",
+    });
+    const detail = parseReportArtifactMetadata(reportText, scan.id);
+    if (!detail) {
+      emitArtifactFallback("artifact_payload_invalid", scan);
+      return null;
+    }
+    return detail;
+  } catch (err) {
+    emitArtifactFallback("read_failed", scan, { error: describeOperationalError(err) });
+    return null;
+  }
+}
+
 export async function loadScanArtifactFile(
   bucket: R2Bucket | undefined,
   scan: ScanArtifactScanRow,
@@ -434,6 +459,18 @@ function hasArtifactMetadata(scan: ScanArtifactScanRow): scan is ScanArtifactSca
   );
 }
 
+function hasReportArtifactMetadata(scan: ScanArtifactScanRow): scan is ScanArtifactScanRow & {
+  reportDigest: string;
+  artifactStorageVersion: number;
+  reportArtifactKey: string;
+} {
+  return (
+    scan.reportDigest !== null &&
+    scan.artifactStorageVersion === SCAN_ARTIFACT_STORAGE_VERSION &&
+    typeof scan.reportArtifactKey === "string"
+  );
+}
+
 async function putVerifiedJson(
   bucket: R2Bucket,
   key: string,
@@ -458,6 +495,27 @@ async function putVerifiedJson(
     kind: customMetadata.artifactKind,
   });
   return { key, digest, size, contentType: ARTIFACT_CONTENT_TYPE };
+}
+
+async function readDigestVerifiedJsonText(
+  bucket: R2Bucket,
+  descriptor: {
+    key: string;
+    digest: string;
+    scanId: string;
+    kind: string;
+  },
+): Promise<string> {
+  const object = await bucket.get(descriptor.key);
+  if (!object) {
+    throw new Error(`missing ${descriptor.kind} artifact`);
+  }
+  const bytes = await object.arrayBuffer();
+  const actualDigest = await sha256Hex(bytes);
+  if (actualDigest !== descriptor.digest) {
+    throw new Error(`${descriptor.kind} artifact digest mismatch`);
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 async function readVerifiedJsonText(
@@ -616,12 +674,46 @@ function parseFilesArtifact(text: string, scanId: string): ScanArtifactFileRow[]
   return files;
 }
 
+function parseReportArtifactMetadata(text: string, scanId: string): ScanArtifactsDetail | null {
+  const parsed = parseJsonObject(text);
+  if (!parsed) return null;
+  const reportFindings = parseReportFindingsObject(parsed, scanId);
+  const diff = parseDiffEntries(parsed.diff);
+  if (!diff || !reportFindings) return null;
+  return {
+    files: scanFileRowsForDiffMetadata(diff),
+    diff,
+    findings: reportFindings.findings,
+    findingAnnotations: reportFindings.annotations,
+  };
+}
+
+function scanFileRowsForDiffMetadata(diff: DiffEntry[]): ScanArtifactFileRow[] {
+  return diff.flatMap((entry) => {
+    if (entry.status === "removed") return [];
+    return [
+      {
+        path: entry.path,
+        status: entry.status,
+        size: entry.stagedSize ?? null,
+        sha256: entry.stagedSha256 ?? null,
+        flagsJson: entry.flags,
+        textSample: null,
+      },
+    ];
+  });
+}
+
 function parseDiffArtifact(text: string, scanId: string): DiffEntry[] | null {
   const parsed = parseJsonObject(text);
   if (parsed?.version !== SCAN_ARTIFACT_STORAGE_VERSION || parsed.scanId !== scanId) return null;
-  if (!Array.isArray(parsed.diff)) return null;
+  return parseDiffEntries(parsed.diff);
+}
+
+function parseDiffEntries(value: unknown): DiffEntry[] | null {
+  if (!Array.isArray(value)) return null;
   const diff: DiffEntry[] = [];
-  for (const entry of parsed.diff) {
+  for (const entry of value) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
     const item = entry as Partial<DiffEntry>;
     if (typeof item.path !== "string" || typeof item.status !== "string") return null;
@@ -666,6 +758,14 @@ function parseReportFindings(
   scanId: string,
 ): { findings: ScanArtifactFindingRow[]; annotations: Map<string, FindingDiffAnnotation> } | null {
   const parsed = parseJsonObject(text);
+  if (!parsed) return null;
+  return parseReportFindingsObject(parsed, scanId);
+}
+
+function parseReportFindingsObject(
+  parsed: Record<string, unknown>,
+  scanId: string,
+): { findings: ScanArtifactFindingRow[]; annotations: Map<string, FindingDiffAnnotation> } | null {
   const rawFindings = parsed?.ruleFindings;
   if (!Array.isArray(rawFindings)) return null;
 

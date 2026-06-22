@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
-import { createScanJob, getScan, persistScan } from "../../server/db/scans";
+import { createScanJob, getScan, getScanCompareData, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import {
   DETERMINISTIC_RULES_VERSION,
@@ -115,6 +115,17 @@ function createFlakyArtifactBucket(options: { failFirstPuts?: number; failAllPut
     },
   } as unknown as R2Bucket;
   return { bucket, putCalls: () => putCalls };
+}
+
+function createReadCountingBucket(delegate: R2Bucket) {
+  let getCalls = 0;
+  const bucket = {
+    async get(key: string) {
+      getCalls += 1;
+      return delegate.get(key);
+    },
+  } as unknown as R2Bucket;
+  return { bucket, getCalls: () => getCalls };
 }
 
 async function buildArtifactWriteInput(owner: SeededUser) {
@@ -344,32 +355,45 @@ describe("scan artifact backfill route", () => {
     expect(fake.putCalls()).toBe(SCAN_ARTIFACT_WRITE_ATTEMPTS);
   });
 
-  test("new artifact-backed scans skip D1 detail rows and serve files + findings from R2", async () => {
+  test("new artifact-backed scans serve metadata from report artifacts and file bodies from R2", async () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);
     const { db, scanId } = await seedDigestMatchedLegacyScan(owner, { artifactBacked: true });
 
-    // The duplicate per-row detail is no longer written to D1 once the scan is
-    // R2-backed; files.json / report.json hold it instead.
     const fileRows = await db
-      .select({ path: schema.scanFiles.path })
+      .select({ path: schema.scanFiles.path, textSample: schema.scanFiles.textSample })
       .from(schema.scanFiles)
       .where(eq(schema.scanFiles.scanId, scanId));
     const findingRows = await db
       .select({ id: schema.scanFindings.id })
       .from(schema.scanFindings)
       .where(eq(schema.scanFindings.scanId, scanId));
-    expect(fileRows.length).toBe(0);
-    expect(findingRows.length).toBe(0);
+    expect(fileRows).toHaveLength(0);
+    expect(findingRows).toHaveLength(0);
 
-    // Without the artifact bucket a compacted scan exposes no file/finding detail
-    // (graceful degradation, not a crash).
     const d1Only = await getScan(db, scanId, owner.organizationId);
-    expect(d1Only?.files.length).toBe(0);
-    expect(d1Only?.findings.length).toBe(0);
+    expect(d1Only?.files).toHaveLength(0);
+    expect(d1Only?.findings).toHaveLength(0);
 
-    // The detail route loads the bucket, so file metadata and findings come back
-    // from R2 (staged bodies are stripped here and fetched via /file).
+    const readCounter = createReadCountingBucket(env.ARTIFACTS);
+    const metadataOnly = await getScan(db, scanId, owner.organizationId, readCounter.bucket, {
+      includeFileSamples: false,
+    });
+    expect(metadataOnly?.files.find((file) => file.path === "index.js")?.textSample).toBeNull();
+    expect(metadataOnly?.findings).toHaveLength(1);
+    expect(readCounter.getCalls()).toBe(1);
+
+    const compareCounter = createReadCountingBucket(env.ARTIFACTS);
+    const compareData = await getScanCompareData(
+      db,
+      scanId,
+      owner.organizationId,
+      compareCounter.bucket,
+    );
+    expect(compareData?.files.find((file) => file.path === "index.js")?.textSample).toBeNull();
+    expect(compareData?.findings).toHaveLength(1);
+    expect(compareCounter.getCalls()).toBe(1);
+
     const detailRes = await fetchJsonWithSession(app, `/api/v1/scans/${scanId}`, {
       method: "GET",
     });
@@ -384,8 +408,6 @@ describe("scan artifact backfill route", () => {
         releaseDelta: boolean;
       }>;
     };
-    // The detail route strips staged bodies (fetched separately via /file), but
-    // findings still come from R2, annotated from the report's findingAnnotations.
     expect(detail.files.find((file) => file.path === "index.js")?.textSample).toBeNull();
     expect(detail.findings).toHaveLength(1);
     expect(detail.findings[0]).toMatchObject({
@@ -404,7 +426,7 @@ describe("scan artifact backfill route", () => {
       scan: { id: scanId, status: "complete" },
     });
 
-    // The staged body has no D1 row, so the file-body route serves it from R2.
+    // The staged body is not duplicated in D1, so /file serves it from R2.
     const fileRes = await fetchJsonWithSession(app, `/api/v1/scans/${scanId}/file?path=index.js`, {
       method: "GET",
     });
@@ -412,8 +434,8 @@ describe("scan artifact backfill route", () => {
     const fileDetail = (await fileRes.json()) as { file: { textSample: string | null } };
     expect(fileDetail.file.textSample).toContain("npm_config_user_agent");
 
-    // The report.json export is a full-detail read, so it must also pull findings
-    // from R2 for a compacted scan rather than the (now empty) D1 rows.
+    // Full-detail export should still hydrate artifact samples for report shape
+    // compatibility.
     const exportRes = await fetchJsonWithSession(app, `/api/v1/scans/${scanId}/report.json`, {
       method: "GET",
     });
