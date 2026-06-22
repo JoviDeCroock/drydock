@@ -18,9 +18,9 @@ Source of truth for visual decisions in this repo. Read this before changing fon
 
 ## Typography
 
-- **Display & Body:** Geist (weights 400, 500, 600). Loaded from Google Fonts. Modern, neutral, developer-readable, no licensing concerns.
+- **Display & Body:** Geist (weights 400, 500, 600). Self-hosted, served same-origin. Modern, neutral, developer-readable, no licensing concerns.
 - **Mono:** Geist Mono (weights 400, 500, 600). Used for file paths, severity labels, scan IDs, timestamps, code, and section labels — mono is a first-class typeface here, not just a code fallback.
-- **Loading:** `https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap`. Self-host if the marketing site needs it.
+- **Loading:** Self-hosted via the `@fontsource-variable/geist` and `@fontsource-variable/geist-mono` packages, imported in `src/style.css` (CSS families `"Geist Variable"` / `"Geist Mono Variable"`). Bundled into our own assets — no request to a third-party font CDN, so no visitor IP is sent to Google at page load (a GDPR consideration for EU visitors). Do **not** reintroduce the Google Fonts CDN `@import`.
 - **Feature settings:** `font-feature-settings: "ss01", "cv11"` for Geist (humanist alts), `"ss01", "tnum"` for Geist Mono (tabular numbers — essential for data rows).
 
 ### Scale

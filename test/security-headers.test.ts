@@ -46,9 +46,17 @@ describe("public/_headers static-asset security headers", () => {
   });
 
   test("document CSP rejects inline CSS", () => {
-    expect(DOCUMENT_CSP).toContain("style-src 'self' https://fonts.googleapis.com");
+    expect(DOCUMENT_CSP).toContain("style-src 'self'");
     expect(DOCUMENT_CSP).toContain("style-src-attr 'none'");
     expect(DOCUMENT_CSP).not.toContain("'unsafe-inline'");
+  });
+
+  // Geist is self-hosted; the policy must never reach back out to a font CDN
+  // (no third-party origin in style-src/font-src means no visitor-IP leak).
+  test("document CSP loads fonts only from same origin", () => {
+    expect(DOCUMENT_CSP).toContain("font-src 'self'");
+    expect(DOCUMENT_CSP).not.toContain("fonts.googleapis.com");
+    expect(DOCUMENT_CSP).not.toContain("fonts.gstatic.com");
   });
 
   test("carries the same non-CSP security headers as the Worker", () => {
