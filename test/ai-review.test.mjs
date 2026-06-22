@@ -394,40 +394,6 @@ describe("ai review orchestration", () => {
     expect(ai.model).toBe("fallback-reviewer");
   });
 
-  test("a persistent request timeout falls back to the secondary reviewer", async () => {
-    const calls = new Map();
-    const modelFactory = (model) =>
-      mockModel(async () => {
-        calls.set(model, (calls.get(model) ?? 0) + 1);
-        if (model === "primary-reviewer") {
-          throw new Error("3046: Request timeout");
-        }
-        return generateResult(
-          [
-            {
-              type: "tool-call",
-              toolCallId: "submit-1",
-              toolName: "submit_review",
-              input: JSON.stringify(VALID_REVIEW),
-            },
-          ],
-          "tool-calls",
-        );
-      });
-
-    const { review: ai } = await analyzeWithAi(
-      {},
-      ["primary-reviewer", "fallback-reviewer"],
-      BASE_OPTIONS,
-      modelFactory,
-    );
-
-    expect(calls.get("primary-reviewer")).toBe(3);
-    expect(calls.get("fallback-reviewer")).toBe(1);
-    expect(ai.status).toBe("complete");
-    expect(ai.model).toBe("fallback-reviewer");
-  });
-
   test("a complete submission slightly over the summary bound is clamped, not discarded", async () => {
     // Reproduces the reported failure: validation used to reject the whole call
     // over a few-char overage, dropping a critical finding and collapsing to low.

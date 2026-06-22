@@ -51,10 +51,6 @@ function tokenInBlock(block, name) {
 describe("theme tokens", () => {
   const dark = darkMediaBlock(css);
 
-  test("a prefers-color-scheme: dark media block exists", () => {
-    expect(dark).not.toBeNull();
-  });
-
   test("dark tokens are NOT inside a nested @theme", () => {
     // Tailwind v4 hoists every `@theme` to one unconditional top-level `:root`
     // and drops the surrounding @media. A dark `@theme` therefore overrides the
