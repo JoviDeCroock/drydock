@@ -244,7 +244,7 @@ export async function executeWorkflowGateJob(
     // A retried batch (a prior attempt released its claim mid-flight) discards
     // the half-finished scans first so the gate's package set is exactly this
     // batch.
-    await discardGateScans(db, gate.id, organizationId);
+    await discardGateScans(db, gate.id, organizationId, env.ARTIFACTS);
     reviewed = await reviewGatePackages(
       { env, executionCtx, db },
       { gate, ownerUserId, packages: prepared.packages },
