@@ -12,6 +12,10 @@ test("renders and decides a workflow-gate review", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "@drydock/gate-demo" })).toBeVisible({
     timeout: 30_000,
   });
+  await expect(page.getByRole("link", { name: "Drydock dashboard" })).toHaveAttribute(
+    "href",
+    "/dashboard",
+  );
   await expect(page.getByText("Deployment gate")).toBeVisible();
   await expect(page.getByText("awaiting decision").first()).toBeVisible();
   await expect(page.getByText("drydock/example").first()).toBeVisible();

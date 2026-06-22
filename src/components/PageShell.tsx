@@ -1,4 +1,6 @@
 import type { ComponentChildren } from "preact";
+import { useComputed } from "@preact/signals";
+import { sessionModel } from "../models/auth";
 import { cn } from "./cn";
 import { BrandMark } from "./BrandMark";
 import { LinkButton } from "./Button";
@@ -43,7 +45,7 @@ export function PageShell({
         {brand ? (
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="flex items-center gap-2.5">
-              <BrandMark href="/" size="sm" />
+              <HeaderBrandMark />
               <span aria-hidden class="h-3.5 w-px bg-border-strong" />
               <a
                 href={AIKIDO_URL}
@@ -78,6 +80,14 @@ export function PageShell({
       <SiteFooter maxWidth={maxWidth} />
     </div>
   );
+}
+
+function HeaderBrandMark() {
+  const href = useComputed(() => (sessionModel.authenticated.value ? "/dashboard" : "/"));
+  const ariaLabel = useComputed(() =>
+    sessionModel.authenticated.value ? "Drydock dashboard" : "Drydock home",
+  );
+  return <BrandMark href={href} size="sm" ariaLabel={ariaLabel} />;
 }
 
 function SiteFooter({ maxWidth }: { maxWidth: string }) {
