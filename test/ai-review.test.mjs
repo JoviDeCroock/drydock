@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
 import {
   AI_FALLBACK_MODEL,
@@ -55,6 +55,19 @@ function generateResult(content, finishReason) {
 
 function mockModel(doGenerate) {
   return new MockLanguageModelV3({ modelId: "mock-reviewer", doGenerate });
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+function skipRetryDelay() {
+  vi.spyOn(globalThis, "setTimeout").mockImplementation((handler, _timeout, ...args) => {
+    if (typeof handler === "function") {
+      queueMicrotask(() => handler(...args));
+    }
+    return 0;
+  });
 }
 
 // A model that immediately submits a review through the submit_review tool.
@@ -289,6 +302,7 @@ describe("ai review orchestration", () => {
   });
 
   test("a transient capacity error is retried and the review completes", async () => {
+    skipRetryDelay();
     // Reproduces the reported 3040 failure: the first call hits a capacity
     // rejection that the model itself asks us to retry; the retry succeeds.
     let calls = 0;
@@ -318,6 +332,7 @@ describe("ai review orchestration", () => {
   });
 
   test("a transient request timeout is retried and the review completes", async () => {
+    skipRetryDelay();
     let calls = 0;
     const flakyModel = mockModel(async () => {
       calls += 1;
@@ -345,6 +360,7 @@ describe("ai review orchestration", () => {
   });
 
   test("a persistent capacity error exhausts retries and fails safe to unavailable", async () => {
+    skipRetryDelay();
     let calls = 0;
     const downModel = mockModel(async () => {
       calls += 1;
@@ -361,6 +377,7 @@ describe("ai review orchestration", () => {
   });
 
   test("a persistent capacity error falls back to the secondary reviewer", async () => {
+    skipRetryDelay();
     const calls = new Map();
     const modelFactory = (model) =>
       mockModel(async () => {
