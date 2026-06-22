@@ -41,6 +41,15 @@ export interface DiscoverStagedPublishesResult {
   scans: StartedStagedPublishScan[];
 }
 
+const STAGED_PUBLISH_SCAN_START_CONCURRENCY = 5;
+
+export class MissingNpmConnectionError extends Error {
+  constructor(public organizationId: string) {
+    super(`npm connection missing for org ${organizationId}`);
+    this.name = "MissingNpmConnectionError";
+  }
+}
+
 export class InvalidNpmConnectionError extends Error {
   constructor(
     public organizationId: string,
@@ -201,63 +210,65 @@ export async function discoverAndQueueStagedPublishes(
   await markNpmConnectionUsed(db, organizationId);
   const stageIds = stagedItems.map((item) => item.id);
   const existingStageIds = await listExistingScanStageIds(db, organizationId, stageIds);
-  const startedScans: StartedStagedPublishScan[] = [];
-
-  for (const item of stagedItems) {
-    const stageId = item.id;
-    if (existingStageIds.has(stageId)) continue;
-    const access = await checkStagedPublishAccess(
-      connection.registryUrl,
-      connection.token,
-      stageId,
-      {
-        allowInsecureLocalhost,
-      },
-    );
-    if (!access.allowed) continue;
-    const scanId = crypto.randomUUID();
-    const detail = await createScanJob(db, {
-      id: scanId,
-      stageId,
-      organizationId,
-      ownerUserId: actorUserId,
-      source,
-      packageName: item.packageName,
-      stagedVersion: item.version,
-    });
-    if (!detail) continue;
-    existingStageIds.add(stageId);
-    startedScans.push({
-      id: scanId,
-      stageId,
-      packageName: item.packageName,
-      version: item.version,
-      tag: item.tag,
-      access: item.access,
-      actor: item.actor,
-      createdAt: item.createdAt,
-    });
-
-    const message: ScanQueueMessage = {
-      stageId,
-      scanId,
-      organizationId,
-      actorUserId,
-      source,
-    };
-    if (env.SCAN_QUEUE) {
-      try {
-        await env.SCAN_QUEUE.send(message);
-      } catch (err) {
-        await deletePendingScanJob(db, scanId, organizationId);
-        throw err;
-      }
-    } else {
-      executionCtx.waitUntil(
-        executeScanJob(env, executionCtx, message, db, { finalAttempt: true }),
+  const scanStarts = await mapWithConcurrency(
+    stagedItems.filter((item) => !existingStageIds.has(item.id)),
+    STAGED_PUBLISH_SCAN_START_CONCURRENCY,
+    async (item) => {
+      const stageId = item.id;
+      const access = await checkStagedPublishAccess(
+        connection.registryUrl,
+        connection.token,
+        stageId,
+        {
+          allowInsecureLocalhost,
+        },
       );
-    }
-  }
+      if (!access.allowed) return null;
+      const scanId = crypto.randomUUID();
+      const detail = await createScanJob(db, {
+        id: scanId,
+        stageId,
+        organizationId,
+        ownerUserId: actorUserId,
+        source,
+        packageName: item.packageName,
+        stagedVersion: item.version,
+      });
+      if (!detail) return null;
+      const startedScan: StartedStagedPublishScan = {
+        id: scanId,
+        stageId,
+        packageName: item.packageName,
+        version: item.version,
+        tag: item.tag,
+        access: item.access,
+        actor: item.actor,
+        createdAt: item.createdAt,
+      };
+
+      const message: ScanQueueMessage = {
+        stageId,
+        scanId,
+        organizationId,
+        actorUserId,
+        source,
+      };
+      if (env.SCAN_QUEUE) {
+        try {
+          await env.SCAN_QUEUE.send(message);
+        } catch (err) {
+          await deletePendingScanJob(db, scanId, organizationId);
+          throw err;
+        }
+      } else {
+        executionCtx.waitUntil(
+          executeScanJob(env, executionCtx, message, db, { finalAttempt: true }),
+        );
+      }
+      return startedScan;
+    },
+  );
+  const startedScans = scanStarts.filter(isStartedStagedPublishScan);
 
   return {
     found: stageIds.length,
@@ -295,3 +306,38 @@ async function listAllStagedPublishes(
 }
 
 export { StagedPublishesFetchError };
+
+function isStartedStagedPublishScan(
+  scan: StartedStagedPublishScan | null,
+): scan is StartedStagedPublishScan {
+  return scan !== null;
+}
+
+async function mapWithConcurrency<T, U>(
+  items: readonly T[],
+  concurrency: number,
+  worker: (item: T) => Promise<U>,
+): Promise<U[]> {
+  if (!items.length) return [];
+  const results = new Map<number, U>();
+  let next = 0;
+  let firstError: unknown = null;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+  const runners = Array.from({ length: workerCount }, async () => {
+    for (;;) {
+      if (firstError) return;
+      const index = next;
+      next += 1;
+      if (index >= items.length) return;
+      try {
+        results.set(index, await worker(items[index]));
+      } catch (err) {
+        firstError ??= err;
+        return;
+      }
+    }
+  });
+  await Promise.all(runners);
+  if (firstError) throw firstError;
+  return items.map((_, index) => results.get(index)!);
+}
