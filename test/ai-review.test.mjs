@@ -118,7 +118,7 @@ describe("AI review prompt selection", () => {
 
 describe("ai review orchestration", () => {
   test("pins the reviewer model order", () => {
-    expect(AI_MODEL).toBe("@cf/moonshotai/kimi-k2.5");
+    expect(AI_MODEL).toBe("@cf/moonshotai/kimi-k2.7-code");
     expect(AI_FALLBACK_MODEL).toBe("@cf/qwen/qwen3-30b-a3b-fp8");
     expect(AI_MODEL_CANDIDATES).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
   });

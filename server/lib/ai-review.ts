@@ -36,7 +36,7 @@ export type {
 export { displayedAiResult } from "./ai-review-types";
 
 // Reviewer model order. See docs/cost-model.md.
-export const AI_MODEL = "@cf/moonshotai/kimi-k2.5";
+export const AI_MODEL = "@cf/moonshotai/kimi-k2.7-code";
 export const AI_FALLBACK_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 export const AI_MODEL_CANDIDATES = [AI_MODEL, AI_FALLBACK_MODEL] as const;
 
