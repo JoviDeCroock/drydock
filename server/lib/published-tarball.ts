@@ -1,4 +1,5 @@
 import { registryProtocolAllowed } from "./npm-connection";
+import { reliableFetch } from "./reliable-fetch";
 import {
   downloadInSandboxInline,
   SandboxError,
@@ -70,7 +71,7 @@ export async function fetchPublishedTarballBytes(
 
   let response: Response;
   try {
-    response = await fetch(tarballUrl, { headers });
+    response = await reliableFetch(tarballUrl, { headers, timeoutMs: 60_000 });
   } catch {
     throw new SandboxError(JSON.stringify({ error: "download failed", status: 502 }));
   }
