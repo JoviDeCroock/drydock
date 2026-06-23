@@ -128,7 +128,7 @@ export async function executeScanJob(
       releaseRisk: result.riskSummary.releaseRisk,
       artifactRisk: result.risk,
     });
-    if (message.source === "auto_discovery") {
+    if (message.source !== "workflow_gate") {
       executionCtx.waitUntil(
         notifyScanCompletion({
           env,
@@ -190,7 +190,7 @@ export async function executeScanJob(
           durationMs: durationMsSince(startedAtMs),
           error: safe,
         });
-        if (message.source === "auto_discovery") {
+        if (message.source !== "workflow_gate") {
           executionCtx.waitUntil(
             notifyScanCompletion({
               env,
