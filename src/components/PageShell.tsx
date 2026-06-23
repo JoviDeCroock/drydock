@@ -46,16 +46,21 @@ export function PageShell({
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="flex items-center gap-2.5">
               <HeaderBrandMark />
-              <span aria-hidden class="h-3.5 w-px bg-border-strong" />
-              <a
-                href={AIKIDO_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                class="inline-flex items-center opacity-90 hover:opacity-100 transition-opacity duration-150 ease-out"
-                title="Aikido Security"
-              >
-                <AikidoMark size="xs" />
-              </a>
+              {/* eslint-disable-next-line */}
+              {false && (
+                <>
+                  <span aria-hidden class="h-3.5 w-px bg-border-strong" />
+                  <a
+                    href={AIKIDO_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="inline-flex items-center opacity-90 hover:opacity-100 transition-opacity duration-150 ease-out"
+                    title="Aikido Security"
+                  >
+                    <AikidoMark size="xs" />
+                  </a>
+                </>
+              )}
             </div>
             <div class="flex items-center gap-2">
               <LinkButton
