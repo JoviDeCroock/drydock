@@ -210,8 +210,9 @@ export async function discoverAndQueueStagedPublishes(
   await markNpmConnectionUsed(db, organizationId);
   const stageIds = stagedItems.map((item) => item.id);
   const existingStageIds = await listExistingScanStageIds(db, organizationId, stageIds);
+  const scanCandidates = filterNewStagedPublishesByStageId(stagedItems, existingStageIds);
   const scanStarts = await mapWithConcurrency(
-    stagedItems.filter((item) => !existingStageIds.has(item.id)),
+    scanCandidates,
     STAGED_PUBLISH_SCAN_START_CONCURRENCY,
     async (item) => {
       const stageId = item.id;
@@ -306,6 +307,18 @@ async function listAllStagedPublishes(
 }
 
 export { StagedPublishesFetchError };
+
+function filterNewStagedPublishesByStageId(
+  stagedItems: readonly StagedPublishItem[],
+  existingStageIds: ReadonlySet<string>,
+) {
+  const seenStageIds = new Set(existingStageIds);
+  return stagedItems.filter((item) => {
+    if (seenStageIds.has(item.id)) return false;
+    seenStageIds.add(item.id);
+    return true;
+  });
+}
 
 function isStartedStagedPublishScan(
   scan: StartedStagedPublishScan | null,

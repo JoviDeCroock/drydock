@@ -388,6 +388,12 @@ describe("discoverAndQueueStagedPublishes", () => {
     expect(result).toEqual(
       expect.objectContaining({ found: 3, created: 3, skipped: 0, queued: true }),
     );
+    expect(stagedPublishesMock.checkStagedPublishAccess).toHaveBeenCalledTimes(3);
+    expect(
+      stagedPublishesMock.checkStagedPublishAccess.mock.calls.filter(
+        (call) => call[2] === "stage-page-2",
+      ),
+    ).toHaveLength(1);
   });
 
   test("starts queued scans with bounded concurrency", async () => {
