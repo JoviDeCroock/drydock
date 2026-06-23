@@ -233,6 +233,21 @@ describe("executeScanJob idempotency", () => {
     expect(JSON.stringify(console.log.mock.calls)).not.toContain("npm_token");
   });
 
+  test("notifies after a successful manual scan", async () => {
+    dbMock.claimScanForRun.mockResolvedValue(true);
+
+    await executeScanJob(env, ctx, message, {}, { attempt: 1 });
+
+    expect(notifyMock.notifyScanCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scanId: message.scanId,
+        organizationId: message.organizationId,
+        ownerUserId: message.actorUserId,
+        outcome: "complete",
+      }),
+    );
+  });
+
   test("records scan.failed and marks the scan failed on a terminal error in the final attempt", async () => {
     dbMock.claimScanForRun.mockResolvedValue(true);
     pipelineMock.runScanPipeline.mockRejectedValue(
@@ -248,6 +263,19 @@ describe("executeScanJob idempotency", () => {
       ([, payload]) => payload?.type === "scan.failed",
     );
     expect(failed).toHaveLength(1);
+    expect(notifyMock.notifyScanCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scanId: message.scanId,
+        organizationId: message.organizationId,
+        ownerUserId: message.actorUserId,
+        outcome: "failed",
+        error: {
+          code: "staged_tarball_unavailable",
+          message: "The staged tarball could not be accessed with this organization's npm token.",
+          retryable: false,
+        },
+      }),
+    );
   });
 
   test("fails before decrypting when the queued job sees an unvalidated rotated connection", async () => {

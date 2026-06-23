@@ -58,7 +58,7 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
       : [
           "Hi there,",
           "",
-          `We could not complete the auto-discovered scan for ${packageLabel}.`,
+          `We could not complete the staged release scan for ${packageLabel}.`,
           error?.message ? `Reason: ${error.message}` : null,
           dashboardUrl ? `Review the scan: ${dashboardUrl}` : null,
           "",
