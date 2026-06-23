@@ -1,6 +1,16 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import type { AppDb } from "./client";
 import { npmConnections } from "./schema";
+
+export const DISCOVERY_ACTIVE_INTERVAL_MS = 15 * 60 * 1000;
+export const DISCOVERY_QUIET_INTERVALS_MS = [
+  60 * 60 * 1000,
+  6 * 60 * 60 * 1000,
+  24 * 60 * 60 * 1000,
+] as const;
+export const DISCOVERY_MAX_JITTER_MS = 15 * 60 * 1000;
+
+export type NpmConnectionDiscoveryOutcome = "active" | "quiet" | "retry";
 
 export interface NpmConnectionInput {
   organizationId: string;
@@ -20,6 +30,52 @@ export interface NpmConnectionValidationInput {
   validatedAt?: Date | null;
 }
 
+export interface NpmConnectionDiscoveryScheduleInput {
+  organizationId: string;
+  outcome: NpmConnectionDiscoveryOutcome;
+  currentBackoffLevel?: number | null;
+  now?: Date;
+}
+
+export interface NpmConnectionDiscoverySchedule {
+  nextDiscoveryAt: Date;
+  discoveryBackoffLevel: number;
+  delayMs: number;
+}
+
+export function computeNextNpmConnectionDiscovery(
+  input: Omit<NpmConnectionDiscoveryScheduleInput, "organizationId"> & { jitterMs?: number },
+): NpmConnectionDiscoverySchedule {
+  const now = input.now ?? new Date();
+  const currentBackoffLevel = clampBackoffLevel(input.currentBackoffLevel ?? 0);
+  const discoveryBackoffLevel =
+    input.outcome === "quiet"
+      ? Math.min(currentBackoffLevel + 1, DISCOVERY_QUIET_INTERVALS_MS.length)
+      : input.outcome === "active"
+        ? 0
+        : currentBackoffLevel;
+  const intervalMs =
+    input.outcome === "quiet"
+      ? DISCOVERY_QUIET_INTERVALS_MS[discoveryBackoffLevel - 1]!
+      : DISCOVERY_ACTIVE_INTERVAL_MS;
+  const jitterMs =
+    input.jitterMs ??
+    Math.floor(Math.random() * Math.min(intervalMs * 0.1, DISCOVERY_MAX_JITTER_MS));
+  const safeJitterMs = Math.max(0, Math.min(jitterMs, DISCOVERY_MAX_JITTER_MS));
+  const delayMs = intervalMs + safeJitterMs;
+
+  return {
+    nextDiscoveryAt: new Date(now.getTime() + delayMs),
+    discoveryBackoffLevel,
+    delayMs,
+  };
+}
+
+function clampBackoffLevel(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(Math.max(Math.floor(value), 0), DISCOVERY_QUIET_INTERVALS_MS.length);
+}
+
 export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) {
   const now = new Date();
   const values = {
@@ -35,6 +91,8 @@ export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) 
     capabilitiesJson: null,
     validatedAt: null,
     lastUsedAt: null,
+    nextDiscoveryAt: null,
+    discoveryBackoffLevel: 0,
     createdByUserId: input.createdByUserId,
     createdAt: now,
     updatedAt: now,
@@ -55,6 +113,8 @@ export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) 
         validationStatus: values.validationStatus,
         capabilitiesJson: values.capabilitiesJson,
         validatedAt: values.validatedAt,
+        nextDiscoveryAt: values.nextDiscoveryAt,
+        discoveryBackoffLevel: values.discoveryBackoffLevel,
         updatedAt: now,
       },
     });
@@ -71,11 +131,22 @@ export async function getNpmConnection(db: AppDb, organizationId: string) {
   return connection ?? null;
 }
 
-export async function listAutoDiscoveryNpmConnections(db: AppDb) {
+export async function listAutoDiscoveryNpmConnections(
+  db: AppDb,
+  input: { now?: Date; limit?: number } = {},
+) {
+  const now = input.now ?? new Date();
   return db
     .select()
     .from(npmConnections)
-    .where(inArray(npmConnections.validationStatus, ["valid", "unvalidated"]));
+    .where(
+      and(
+        inArray(npmConnections.validationStatus, ["valid", "unvalidated"]),
+        or(isNull(npmConnections.nextDiscoveryAt), lte(npmConnections.nextDiscoveryAt, now)),
+      ),
+    )
+    .orderBy(asc(npmConnections.nextDiscoveryAt), asc(npmConnections.createdAt))
+    .limit(input.limit ?? 100);
 }
 
 export async function updateNpmConnectionValidation(
@@ -88,6 +159,8 @@ export async function updateNpmConnectionValidation(
       validationStatus: input.validationStatus,
       capabilitiesJson: input.capabilities ?? null,
       validatedAt: input.validatedAt ?? null,
+      nextDiscoveryAt: null,
+      discoveryBackoffLevel: 0,
       updatedAt: new Date(),
     })
     .where(eq(npmConnections.organizationId, input.organizationId));
@@ -99,6 +172,22 @@ export async function markNpmConnectionUsed(db: AppDb, organizationId: string) {
     .update(npmConnections)
     .set({ lastUsedAt: new Date(), updatedAt: new Date() })
     .where(eq(npmConnections.organizationId, organizationId));
+}
+
+export async function scheduleNextNpmConnectionDiscovery(
+  db: AppDb,
+  input: NpmConnectionDiscoveryScheduleInput,
+) {
+  const schedule = computeNextNpmConnectionDiscovery(input);
+  await db
+    .update(npmConnections)
+    .set({
+      nextDiscoveryAt: schedule.nextDiscoveryAt,
+      discoveryBackoffLevel: schedule.discoveryBackoffLevel,
+      updatedAt: new Date(),
+    })
+    .where(eq(npmConnections.organizationId, input.organizationId));
+  return schedule;
 }
 
 export async function deleteNpmConnection(db: AppDb, organizationId: string) {

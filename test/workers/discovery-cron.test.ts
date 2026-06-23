@@ -82,9 +82,9 @@ async function seedOrg(input: {
   };
 }
 
-function scheduledController(): ScheduledController {
+function scheduledController(scheduledTime = Date.now()): ScheduledController {
   return {
-    scheduledTime: Date.now(),
+    scheduledTime,
     cron: "*/15 * * * *",
     noRetry() {},
   } as unknown as ScheduledController;
@@ -228,7 +228,78 @@ describe("staged publishes discovery cron", () => {
     // Sweep finished cleanly over the two eligible orgs.
     const sweptCall = logSpy.mock.calls.find((call) => call[0] === "staged_publishes.cron.swept");
     expect(sweptCall).toBeDefined();
-    expect(sweptCall![1]).toMatchObject({ orgsProcessed: 2 });
+    expect(sweptCall![1]).toMatchObject({
+      orgsProcessed: 2,
+      orgsSelected: 2,
+      orgsWithScans: 1,
+      orgsExpired: 1,
+      scansCreated: 1,
+      stagedPublishesFound: 1,
+      pagesFetched: 1,
+      accessProbes: 1,
+    });
+  });
+
+  test("skips valid connections whose next discovery time is still in the future", async () => {
+    const dueOrg = await seedOrg({
+      index: 0,
+      token: "npm_valid_due_aaaaaaaa",
+      validationStatus: "valid",
+    });
+    const futureOrg = await seedOrg({
+      index: 1,
+      token: "npm_valid_future_bbbbb",
+      validationStatus: "valid",
+    });
+    const now = Date.now();
+    await createDb(env.DB)
+      .update(schema.npmConnections)
+      .set({ nextDiscoveryAt: new Date(now + 60 * 60 * 1000), discoveryBackoffLevel: 1 })
+      .where(eq(schema.npmConnections.organizationId, futureOrg.organizationId));
+
+    const fetchMock = vi.fn(async (input: Request | string | URL, init?: RequestInit) => {
+      expect(authHeader(input, init)).toBe(`Bearer ${dueOrg.token}`);
+      return Response.json({ items: [], total: 0, perPage: 50, page: 0 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const ctx = createExecutionContext();
+    await worker.scheduled(scheduledController(now), env, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const sweptCall = logSpy.mock.calls.find((call) => call[0] === "staged_publishes.cron.swept");
+    expect(sweptCall).toBeDefined();
+    expect(sweptCall![1]).toMatchObject({
+      orgsSelected: 1,
+      orgsProcessed: 1,
+      orgsQuiet: 1,
+      scansCreated: 0,
+    });
+  });
+
+  test("backs off quiet orgs after an empty discovery result", async () => {
+    const org = await seedOrg({
+      index: 0,
+      token: "npm_valid_quiet_aaaaaaaa",
+      validationStatus: "valid",
+    });
+    const now = Date.now();
+    const fetchMock = vi.fn(async () =>
+      Response.json({ items: [], total: 0, perPage: 50, page: 0 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const ctx = createExecutionContext();
+    await worker.scheduled(scheduledController(now), env, ctx);
+    await waitOnExecutionContext(ctx);
+
+    const connection = await getNpmConnection(createDb(env.DB), org.organizationId);
+    expect(connection?.discoveryBackoffLevel).toBe(1);
+    expect(connection?.nextDiscoveryAt?.getTime()).toBeGreaterThanOrEqual(now + 60 * 60 * 1000);
+    expect(connection?.nextDiscoveryAt?.getTime()).toBeLessThanOrEqual(now + 75 * 60 * 1000);
   });
 
   test("logs a generic per-org failure for a non-auth registry error without alerting", async () => {

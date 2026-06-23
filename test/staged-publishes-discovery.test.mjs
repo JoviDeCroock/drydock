@@ -291,7 +291,7 @@ describe("discoverAndQueueStagedPublishes", () => {
     expect(env.SCAN_QUEUE.send).toHaveBeenCalledWith(
       expect.objectContaining({ source: "auto_discovery", stageId: "stage-new-1" }),
     );
-    expect(dbMock.markNpmConnectionUsed).toHaveBeenCalledWith(db, "org_a");
+    expect(dbMock.markNpmConnectionUsed).not.toHaveBeenCalled();
   });
 
   test("filters stage ids the organization token cannot access before creating scans", async () => {
@@ -321,7 +321,13 @@ describe("discoverAndQueueStagedPublishes", () => {
     );
 
     expect(result).toEqual(
-      expect.objectContaining({ found: 2, created: 1, skipped: 1, queued: true }),
+      expect.objectContaining({
+        found: 2,
+        created: 1,
+        skipped: 1,
+        queued: true,
+        accessProbes: 2,
+      }),
     );
     expect(stagedPublishesMock.checkStagedPublishAccess).toHaveBeenCalledTimes(2);
     expect(dbMock.createScanJob).toHaveBeenCalledTimes(1);
@@ -384,7 +390,14 @@ describe("discoverAndQueueStagedPublishes", () => {
       "stage-page-3",
     ]);
     expect(result).toEqual(
-      expect.objectContaining({ found: 3, created: 3, skipped: 0, queued: true }),
+      expect.objectContaining({
+        found: 3,
+        created: 3,
+        skipped: 0,
+        queued: true,
+        pagesFetched: 2,
+        accessProbes: 3,
+      }),
     );
   });
 
@@ -438,7 +451,9 @@ describe("discoverAndQueueStagedPublishes", () => {
       { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
     );
 
-    expect(result).toEqual(expect.objectContaining({ found: 1, created: 0, skipped: 1 }));
+    expect(result).toEqual(
+      expect.objectContaining({ found: 1, created: 0, skipped: 1, accessProbes: 0 }),
+    );
     expect(
       dbMock.recordScanEvent.mock.calls.some(
         ([, payload]) => payload?.type === "staged_publishes.scans_started",

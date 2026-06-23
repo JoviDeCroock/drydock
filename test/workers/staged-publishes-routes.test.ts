@@ -1,10 +1,12 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   createDb,
   createScanJob,
   ensurePersonalOrganization,
+  getNpmConnection,
   listScans,
   updateNpmConnectionValidation,
   upsertNpmConnection,
@@ -66,6 +68,14 @@ describe("staged publishes route", () => {
       validationStatus: "valid",
       validatedAt: new Date(),
     });
+    const now = Date.now();
+    await db
+      .update(schema.npmConnections)
+      .set({
+        nextDiscoveryAt: new Date(now + 24 * 60 * 60 * 1000),
+        discoveryBackoffLevel: 3,
+      })
+      .where(eq(schema.npmConnections.organizationId, owner.organizationId));
     await createScanJob(db, {
       id: `scan_${crypto.randomUUID()}`,
       stageId: "stage-existing-123",
@@ -130,5 +140,9 @@ describe("staged publishes route", () => {
     expect(queue.send.mock.calls[0]?.[0]).toMatchObject({ stageId: "stage-new-123" });
     const { scans } = await listScans(db, owner.organizationId);
     expect(scans.map((scan) => scan.stageId)).toContain("stage-new-123");
+    const connection = await getNpmConnection(db, owner.organizationId);
+    expect(connection?.discoveryBackoffLevel).toBe(0);
+    expect(connection?.nextDiscoveryAt?.getTime()).toBeGreaterThanOrEqual(now + 15 * 60 * 1000);
+    expect(connection?.nextDiscoveryAt?.getTime()).toBeLessThanOrEqual(now + 30 * 60 * 1000);
   });
 });

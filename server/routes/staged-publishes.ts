@@ -1,5 +1,11 @@
 import { Hono } from "hono";
-import { RateLimitError, createDb, enforceRateLimit, getNpmConnection } from "../db";
+import {
+  RateLimitError,
+  createDb,
+  enforceRateLimit,
+  getNpmConnection,
+  scheduleNextNpmConnectionDiscovery,
+} from "../db";
 import { requireActiveOrganization } from "../lib/active-organization";
 import { rateLimitResponse } from "../lib/http";
 import { allowInsecureLocalRegistry } from "../lib/npm-connection";
@@ -67,6 +73,13 @@ stagedPublishesRoutes.post("/scan", async (c) => {
       },
       usable,
     );
+    if (result.created > 0) {
+      await scheduleNextNpmConnectionDiscovery(db, {
+        organizationId,
+        outcome: "active",
+        currentBackoffLevel: savedConnection.discoveryBackoffLevel,
+      });
+    }
     return c.json(result, 202);
   } catch (err) {
     if (err instanceof InvalidNpmConnectionError) {

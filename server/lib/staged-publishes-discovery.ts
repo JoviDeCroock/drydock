@@ -2,7 +2,6 @@ import {
   createScanJob,
   deletePendingScanJob,
   listExistingScanStageIds,
-  markNpmConnectionUsed,
   recordScanEvent,
   updateNpmConnectionValidation,
   type AppDb,
@@ -39,6 +38,8 @@ export interface DiscoverStagedPublishesResult {
   created: number;
   skipped: number;
   queued: boolean;
+  pagesFetched: number;
+  accessProbes: number;
   scans: StartedStagedPublishScan[];
 }
 
@@ -210,18 +211,20 @@ export async function discoverAndQueueStagedPublishes(
     allowInsecureLocalhost,
   } = input;
 
-  const stagedItems = await listAllStagedPublishes(connection, {
+  const listed = await listAllStagedPublishes(connection, {
     perPage: 50,
     allowInsecureLocalhost,
   });
-  await markNpmConnectionUsed(db, organizationId);
+  const stagedItems = listed.items;
   const stageIds = stagedItems.map((item) => item.id);
   const existingStageIds = await listExistingScanStageIds(db, organizationId, stageIds);
   const startedScans: StartedStagedPublishScan[] = [];
+  let accessProbes = 0;
 
   for (const item of stagedItems) {
     const stageId = item.id;
     if (existingStageIds.has(stageId)) continue;
+    accessProbes++;
     const access = await checkStagedPublishAccess(
       connection.registryUrl,
       connection.token,
@@ -299,6 +302,8 @@ export async function discoverAndQueueStagedPublishes(
         found: stageIds.length,
         created: startedScans.length,
         skipped: stageIds.length - startedScans.length,
+        pagesFetched: listed.pagesFetched,
+        accessProbes,
         source: eventSource,
       },
     });
@@ -309,6 +314,8 @@ export async function discoverAndQueueStagedPublishes(
     created: startedScans.length,
     skipped: stageIds.length - startedScans.length,
     queued: Boolean(env.SCAN_QUEUE),
+    pagesFetched: listed.pagesFetched,
+    accessProbes,
     scans: startedScans,
   };
 }
@@ -316,14 +323,15 @@ export async function discoverAndQueueStagedPublishes(
 async function listAllStagedPublishes(
   connection: TokenForDiscovery,
   options: { perPage: number; allowInsecureLocalhost?: boolean },
-): Promise<StagedPublishItem[]> {
+): Promise<{ items: StagedPublishItem[]; pagesFetched: number }> {
   const byId = new Map<string, StagedPublishItem>();
+  let pagesFetched = 1;
   let page = await listStagedPublishes(connection.registryUrl, connection.token, options);
   for (const item of page.items) byId.set(item.id, item);
 
   const perPage = page.perPage ?? options.perPage;
   let nextPage = typeof page.page === "number" ? page.page + 1 : 1;
-  for (let pagesFetched = 1; pagesFetched < 100; pagesFetched++) {
+  for (let pagesChecked = 1; pagesChecked < 100; pagesChecked++) {
     if (page.total !== null && byId.size >= page.total) break;
     if (page.items.length < perPage) break;
 
@@ -331,12 +339,13 @@ async function listAllStagedPublishes(
       ...options,
       page: nextPage,
     });
+    pagesFetched++;
     if (!page.items.length) break;
     for (const item of page.items) byId.set(item.id, item);
     nextPage = typeof page.page === "number" ? page.page + 1 : nextPage + 1;
   }
 
-  return [...byId.values()];
+  return { items: [...byId.values()], pagesFetched };
 }
 
 export { StagedPublishesFetchError };

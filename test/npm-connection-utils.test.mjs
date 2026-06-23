@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
 import {
+  computeNextNpmConnectionDiscovery,
+  DISCOVERY_ACTIVE_INTERVAL_MS,
+  DISCOVERY_QUIET_INTERVALS_MS,
+} from "../server/db/npm-connections.ts";
+import {
   allowInsecureLocalRegistry,
   isLoopbackHostname,
   publicNpmConnection,
@@ -32,6 +37,57 @@ describe("isLoopbackHostname", () => {
     expect(isLoopbackHostname("192.168.1.1")).toBe(false);
     expect(isLoopbackHostname("0.0.0.0")).toBe(false);
     expect(isLoopbackHostname("example.com")).toBe(false);
+  });
+});
+
+describe("computeNextNpmConnectionDiscovery", () => {
+  const now = new Date("2026-06-23T12:00:00.000Z");
+
+  test("keeps active discoveries on the base cadence and resets quiet backoff", () => {
+    const schedule = computeNextNpmConnectionDiscovery({
+      outcome: "active",
+      currentBackoffLevel: 2,
+      now,
+      jitterMs: 0,
+    });
+
+    expect(schedule.discoveryBackoffLevel).toBe(0);
+    expect(schedule.delayMs).toBe(DISCOVERY_ACTIVE_INTERVAL_MS);
+    expect(schedule.nextDiscoveryAt.getTime()).toBe(now.getTime() + DISCOVERY_ACTIVE_INTERVAL_MS);
+  });
+
+  test("backs quiet connections off through the capped intervals", () => {
+    const firstQuiet = computeNextNpmConnectionDiscovery({
+      outcome: "quiet",
+      currentBackoffLevel: 0,
+      now,
+      jitterMs: 0,
+    });
+    const cappedQuiet = computeNextNpmConnectionDiscovery({
+      outcome: "quiet",
+      currentBackoffLevel: 99,
+      now,
+      jitterMs: 0,
+    });
+
+    expect(firstQuiet.discoveryBackoffLevel).toBe(1);
+    expect(firstQuiet.delayMs).toBe(DISCOVERY_QUIET_INTERVALS_MS[0]);
+    expect(cappedQuiet.discoveryBackoffLevel).toBe(DISCOVERY_QUIET_INTERVALS_MS.length);
+    expect(cappedQuiet.delayMs).toBe(
+      DISCOVERY_QUIET_INTERVALS_MS[DISCOVERY_QUIET_INTERVALS_MS.length - 1],
+    );
+  });
+
+  test("keeps retry discoveries on the base cadence without changing backoff", () => {
+    const schedule = computeNextNpmConnectionDiscovery({
+      outcome: "retry",
+      currentBackoffLevel: 2,
+      now,
+      jitterMs: 0,
+    });
+
+    expect(schedule.discoveryBackoffLevel).toBe(2);
+    expect(schedule.delayMs).toBe(DISCOVERY_ACTIVE_INTERVAL_MS);
   });
 });
 

@@ -60,7 +60,11 @@ Workflow gates reuse the scan pipeline when the registry cannot stage a release 
 
 ## Scheduled discovery
 
-Cron-triggered npm discovery finds staged publishes for organizations with validated npm connections and creates scans using the same pipeline. Token-expiry and validation issues should surface through settings/UI status and redacted observability events.
+Cron-triggered npm discovery finds staged publishes for organizations with validated or revalidatable npm connections and creates scans using the same pipeline. The `*/15 * * * *` handler selects at most `DISCOVERY_CRON_BATCH_SIZE` due connections, validates `unvalidated` tokens before use, skips known-invalid tokens, paginates staged-list results, deduplicates stage IDs, and removes a just-created pending scan if Queue dispatch fails.
+
+Discovery is due-time based rather than a full-table poll. Organizations that create scans stay on the base 15-minute cadence; quiet organizations back off to 1 hour, then 6 hours, then 24 hours with jitter; transient failures retry on the base cadence without resetting quiet backoff. Sweeps run with `DISCOVERY_CRON_CONCURRENCY = 5` and emit redacted `staged_publishes.cron.swept` metrics including selected/processed org counts, quiet/failed/expired counts, created scans, fetched pages, and access probes.
+
+Token-expiry and validation issues surface through settings/UI status, audit events, maintainer notification, and redacted observability events. Auth failures mark the connection `invalid`, which removes it from future discovery until the token is rotated.
 
 ## Data stores
 

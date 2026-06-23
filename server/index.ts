@@ -5,6 +5,7 @@ import {
   getOrganizationOwnerUserId,
   listAutoDiscoveryNpmConnections,
   RateLimitError,
+  scheduleNextNpmConnectionDiscovery,
 } from "./db";
 import { createAuth, getAuthSession } from "./lib/auth";
 import { rateLimitResponse } from "./lib/http";
@@ -290,6 +291,7 @@ app.onError((err, c) => {
 // flight keeps us comfortably under budget while still draining a large org
 // count within a single 15-minute cycle. Raise only after measuring CPU time.
 const DISCOVERY_CRON_CONCURRENCY = 5;
+const DISCOVERY_CRON_BATCH_SIZE = 100;
 
 async function runWithConcurrency<T>(
   items: readonly T[],
@@ -306,16 +308,32 @@ async function runWithConcurrency<T>(
   await Promise.all(runners);
 }
 
-async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: ExecutionContext) {
+async function runStagedPublishesDiscoveryCron(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  scheduledAt = new Date(),
+) {
   const startedAtMs = Date.now();
   const db = createDb(env.DB);
-  const connections = await listAutoDiscoveryNpmConnections(db);
+  const connections = await listAutoDiscoveryNpmConnections(db, {
+    now: scheduledAt,
+    limit: DISCOVERY_CRON_BATCH_SIZE,
+  });
   emitOperationalEvent("info", "staged_publishes.cron.started", {
-    organizations: connections.length,
+    organizationsSelected: connections.length,
+    batchSize: DISCOVERY_CRON_BATCH_SIZE,
   });
   const allowInsecureLocalhost = allowInsecureLocalRegistry(env);
 
   let orgsProcessed = 0;
+  let orgsWithScans = 0;
+  let orgsQuiet = 0;
+  let orgsFailed = 0;
+  let orgsExpired = 0;
+  let scansCreated = 0;
+  let stagedPublishesFound = 0;
+  let pagesFetched = 0;
+  let accessProbes = 0;
   const sweepConnection = async (connection: (typeof connections)[number]) => {
     try {
       const notificationOwnerUserId = await getOrganizationOwnerUserId(
@@ -327,6 +345,13 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
         emitOperationalEvent("error", "staged_publishes.cron.skipped", {
           organizationId: connection.organizationId,
           reason: "organization_owner_missing",
+        });
+        orgsFailed++;
+        await scheduleNextNpmConnectionDiscovery(db, {
+          organizationId: connection.organizationId,
+          outcome: "retry",
+          currentBackoffLevel: connection.discoveryBackoffLevel,
+          now: scheduledAt,
         });
         return;
       }
@@ -351,9 +376,23 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
           },
           usable,
         );
+        stagedPublishesFound += result.found;
+        scansCreated += result.created;
+        pagesFetched += result.pagesFetched;
+        accessProbes += result.accessProbes;
+        if (result.created > 0) orgsWithScans++;
+        else orgsQuiet++;
+        const schedule = await scheduleNextNpmConnectionDiscovery(db, {
+          organizationId: connection.organizationId,
+          outcome: result.created > 0 ? "active" : "quiet",
+          currentBackoffLevel: connection.discoveryBackoffLevel,
+          now: scheduledAt,
+        });
         emitOperationalEvent("info", "staged_publishes.cron.org_completed", {
           organizationId: connection.organizationId,
           ...result,
+          nextDiscoveryAt: schedule.nextDiscoveryAt.toISOString(),
+          discoveryBackoffLevel: schedule.discoveryBackoffLevel,
         });
       } catch (err) {
         if (isNpmConnectionAuthFailure(err)) {
@@ -375,6 +414,7 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
               error: describeOperationalError(alertErr),
             });
           }
+          orgsExpired++;
           return;
         }
         const detail =
@@ -384,6 +424,13 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
         emitOperationalEvent("error", "staged_publishes.cron.org_failed", {
           organizationId: connection.organizationId,
           error: detail,
+        });
+        orgsFailed++;
+        await scheduleNextNpmConnectionDiscovery(db, {
+          organizationId: connection.organizationId,
+          outcome: "retry",
+          currentBackoffLevel: connection.discoveryBackoffLevel,
+          now: scheduledAt,
         });
       }
     } finally {
@@ -395,15 +442,25 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
 
   emitOperationalEvent("info", "staged_publishes.cron.swept", {
     orgsProcessed,
+    orgsSelected: connections.length,
+    orgsWithScans,
+    orgsQuiet,
+    orgsFailed,
+    orgsExpired,
+    scansCreated,
+    stagedPublishesFound,
+    pagesFetched,
+    accessProbes,
     durationMs: durationMsSince(startedAtMs),
     concurrencyLimit: DISCOVERY_CRON_CONCURRENCY,
+    batchSize: DISCOVERY_CRON_BATCH_SIZE,
   });
 }
 
 export default {
   fetch: app.fetch,
-  async scheduled(_event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
-    await runStagedPublishesDiscoveryCron(env, ctx);
+  async scheduled(event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
+    await runStagedPublishesDiscoveryCron(env, ctx, new Date(event.scheduledTime));
   },
   async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
     for (const message of batch.messages) {

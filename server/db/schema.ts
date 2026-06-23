@@ -283,6 +283,8 @@ export const npmConnections = sqliteTable(
     capabilitiesJson: text("capabilities_json", { mode: "json" }),
     validatedAt: integer("validated_at", { mode: "timestamp_ms" }),
     lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+    nextDiscoveryAt: integer("next_discovery_at", { mode: "timestamp_ms" }),
+    discoveryBackoffLevel: integer("discovery_backoff_level").notNull().default(0),
     createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
@@ -290,6 +292,10 @@ export const npmConnections = sqliteTable(
   (table) => ({
     orgUniqueIdx: uniqueIndex("npm_connections_org_unique_idx").on(table.organizationId),
     fingerprintIdx: index("npm_connections_fingerprint_idx").on(table.tokenFingerprint),
+    discoveryDueIdx: index("npm_connections_discovery_due_idx").on(
+      table.validationStatus,
+      table.nextDiscoveryAt,
+    ),
   }),
 );
 

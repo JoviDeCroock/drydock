@@ -50,6 +50,8 @@ export interface StagedPublishesScanResponse {
   created: number;
   skipped: number;
   queued: boolean;
+  pagesFetched: number;
+  accessProbes: number;
   scans: StartedStagedPublishScan[];
 }
 
