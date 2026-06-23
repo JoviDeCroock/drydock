@@ -852,12 +852,11 @@ export async function getScan(
   const scan = scanRows[0];
   if (!scan) return null;
   const includeFileSamples = options.includeFileSamples ?? true;
-  const artifactDetail =
-    includeFileSamples
-      ? await loadScanArtifacts(artifactBucket, scan)
-      : needsArtifactMetadataFallback(scan, files, findings)
-        ? await loadScanArtifactMetadata(artifactBucket, scan)
-        : null;
+  const artifactDetail = includeFileSamples
+    ? await loadScanArtifacts(artifactBucket, scan)
+    : needsArtifactMetadataFallback(scan, files, findings)
+      ? await loadScanArtifactMetadata(artifactBucket, scan)
+      : null;
   const detailFiles = artifactDetail ? mergeArtifactFiles(files, artifactDetail.files, id) : files;
   const responseFiles = includeFileSamples ? detailFiles : detailFiles.map(stripFileSampleForList);
   const diff = artifactDetail?.diff ?? diffForFindingAnnotations(scan.summaryJson, detailFiles);
