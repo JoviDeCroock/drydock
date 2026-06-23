@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import type { BatchItem } from "drizzle-orm/batch";
 import {
   annotateFindingsWithDiffStatus,
   type CodePatternSet,
@@ -265,57 +266,68 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     updatedAt: now,
   };
 
-  const updated = await db
-    .update(scans)
-    .set({
-      packageName: scanValues.packageName,
-      stagedVersion: scanValues.stagedVersion,
-      previousVersion: scanValues.previousVersion,
-      risk: scanValues.risk,
-      status: scanValues.status,
-      summaryJson: scanValues.summaryJson,
-      aiJson: scanValues.aiJson,
-      errorJson: scanValues.errorJson,
-      changedFileCount: scanValues.changedFileCount,
-      findingCount: scanValues.findingCount,
-      riskSummaryJson: scanValues.riskSummaryJson,
-      reportVersion: scanValues.reportVersion,
-      reportDigest: scanValues.reportDigest,
-      artifactStorageVersion: scanValues.artifactStorageVersion,
-      artifactManifestKey: scanValues.artifactManifestKey,
-      artifactManifestDigest: scanValues.artifactManifestDigest,
-      artifactManifestSize: scanValues.artifactManifestSize,
-      reportArtifactKey: scanValues.reportArtifactKey,
-      fileSamplesArtifactKey: scanValues.fileSamplesArtifactKey,
-      diffArtifactKey: scanValues.diffArtifactKey,
-      completedAt: scanValues.completedAt,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(scans.id, input.id),
-        eq(scans.organizationId, input.organizationId),
-        inArray(scans.status, [...NON_TERMINAL_STATUSES]),
-      ),
-    )
-    .returning({ id: scans.id });
-
-  if (updated.length === 0) {
-    const [existing] = await db
-      .select({ id: scans.id, status: scans.status, reportDigest: scans.reportDigest })
-      .from(scans)
-      .where(and(eq(scans.id, input.id), eq(scans.organizationId, input.organizationId)))
-      .limit(1);
-    if (existing) return { persisted: false, reason: "already_terminal" as const };
-    await db.insert(scans).values(scanValues).onConflictDoNothing({ target: scans.id });
+  const claimToken = `persist:${crypto.randomUUID()}`;
+  const existing = await db
+    .select({ id: scans.id, status: scans.status, reportDigest: scans.reportDigest })
+    .from(scans)
+    .where(and(eq(scans.id, input.id), eq(scans.organizationId, input.organizationId)))
+    .limit(1);
+  if (existing[0] && !NON_TERMINAL_STATUSES.some((status) => status === existing[0]?.status)) {
+    return { persisted: false, reason: "already_terminal" as const };
   }
 
-  // Always clear prior detail rows first so a retry — including one that flips a
-  // scan from D1-backed to R2-backed — never leaves stale rows behind.
-  await Promise.all([
-    db.delete(scanFiles).where(eq(scanFiles.scanId, input.id)),
-    db.delete(scanFindings).where(eq(scanFindings.scanId, input.id)),
-  ]);
+  // D1 rejects SQL BEGIN/SAVEPOINT in Workers, so use a batch: D1 applies the
+  // statements atomically. The temporary reportDigest token gates every child
+  // mutation and is cleared by the final statement before the batch commits.
+  const claimScan = existing[0]
+    ? db
+        .update(scans)
+        .set({
+          packageName: scanValues.packageName,
+          stagedVersion: scanValues.stagedVersion,
+          previousVersion: scanValues.previousVersion,
+          risk: scanValues.risk,
+          status: scanValues.status,
+          summaryJson: scanValues.summaryJson,
+          aiJson: scanValues.aiJson,
+          errorJson: scanValues.errorJson,
+          changedFileCount: scanValues.changedFileCount,
+          findingCount: scanValues.findingCount,
+          riskSummaryJson: scanValues.riskSummaryJson,
+          reportVersion: scanValues.reportVersion,
+          artifactStorageVersion: scanValues.artifactStorageVersion,
+          artifactManifestKey: scanValues.artifactManifestKey,
+          artifactManifestDigest: scanValues.artifactManifestDigest,
+          artifactManifestSize: scanValues.artifactManifestSize,
+          reportArtifactKey: scanValues.reportArtifactKey,
+          fileSamplesArtifactKey: scanValues.fileSamplesArtifactKey,
+          diffArtifactKey: scanValues.diffArtifactKey,
+          completedAt: scanValues.completedAt,
+          reportDigest: claimToken,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(scans.id, input.id),
+            eq(scans.organizationId, input.organizationId),
+            inArray(scans.status, [...NON_TERMINAL_STATUSES]),
+          ),
+        )
+        .returning({ id: scans.id })
+    : db
+        .insert(scans)
+        .values({ ...scanValues, reportDigest: claimToken })
+        .onConflictDoNothing({ target: scans.id })
+        .returning({ id: scans.id });
+
+  const claimExists = scanPersistClaimExists(input.id, input.organizationId, claimToken);
+  const batch: [BatchItem<"sqlite">, ...BatchItem<"sqlite">[]] = [
+    claimScan,
+    // Always clear prior detail rows first so a retry — including one that flips a
+    // scan from D1-backed to R2-backed — never leaves stale rows behind.
+    db.delete(scanFiles).where(and(eq(scanFiles.scanId, input.id), claimExists)),
+    db.delete(scanFindings).where(and(eq(scanFindings.scanId, input.id), claimExists)),
+  ];
 
   // When the scan is R2-artifact-backed, its redacted file samples, file
   // metadata, diff, and findings already live in R2 (files.json / diff.json /
@@ -325,16 +337,104 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
   // detail in D1 so the scan stays readable.
   if (!input.artifacts) {
     // D1 caps bound parameters at 100 per query, so insert in chunks sized to
-    // each row's column count. Without this, packages with more than ~12 files
-    // silently drop their scan_files rows and the scan-detail view renders as
-    // "No file content available." for every entry.
-    await Promise.all([
-      ...chunkForD1(fileRows, 8).map((chunk) => db.insert(scanFiles).values(chunk)),
-      ...chunkForD1(findingRows, 10).map((chunk) => db.insert(scanFindings).values(chunk)),
-    ]);
+    // each row's columns plus the claim guard. Without this, packages with more
+    // than ~12 files silently drop their scan_files rows and the scan-detail view
+    // renders as "No file content available." for every entry.
+    for (const chunk of chunkForD1(fileRows, 11)) {
+      batch.push(insertScanFilesWhenClaimed(db, chunk, input.organizationId, claimToken));
+    }
+    for (const chunk of chunkForD1(findingRows, 13)) {
+      batch.push(insertScanFindingsWhenClaimed(db, chunk, input.organizationId, claimToken));
+    }
   }
 
+  batch.push(
+    db
+      .update(scans)
+      .set({ reportDigest: scanValues.reportDigest, updatedAt: now })
+      .where(
+        and(
+          eq(scans.id, input.id),
+          eq(scans.organizationId, input.organizationId),
+          eq(scans.reportDigest, claimToken),
+        ),
+      ),
+  );
+
+  const [claimed] = await db.batch(batch);
+  if (Array.isArray(claimed) && claimed.length === 0) {
+    return { persisted: false, reason: "already_terminal" as const };
+  }
   return { persisted: true as const };
+}
+
+type ScanFileInsertRow = typeof scanFiles.$inferInsert;
+type ScanFindingInsertRow = typeof scanFindings.$inferInsert;
+
+function scanPersistClaimExists(scanId: string, organizationId: string, claimToken: string) {
+  return sql`exists (
+    select 1
+    from ${scans}
+    where ${scans.id} = ${scanId}
+      and ${scans.organizationId} = ${organizationId}
+      and ${scans.reportDigest} = ${claimToken}
+  )`;
+}
+
+function insertScanFilesWhenClaimed(
+  db: AppDb,
+  rows: ScanFileInsertRow[],
+  organizationId: string,
+  claimToken: string,
+) {
+  return db.insert(scanFiles).select(
+    sql.join(
+      rows.map(
+        (row) => sql`
+          select
+            ${row.id},
+            ${row.scanId},
+            ${row.path},
+            ${row.status},
+            ${row.size},
+            ${row.sha256},
+            ${JSON.stringify(row.flagsJson)},
+            ${row.textSample}
+          where ${scanPersistClaimExists(row.scanId, organizationId, claimToken)}
+        `,
+      ),
+      sql.raw(" union all "),
+    ),
+  );
+}
+
+function insertScanFindingsWhenClaimed(
+  db: AppDb,
+  rows: ScanFindingInsertRow[],
+  organizationId: string,
+  claimToken: string,
+) {
+  return db.insert(scanFindings).select(
+    sql.join(
+      rows.map(
+        (row) => sql`
+          select
+            ${row.id},
+            ${row.scanId},
+            ${row.severity},
+            ${row.file},
+            ${row.evidence},
+            ${row.reason},
+            ${row.line},
+            ${row.source},
+            ${row.ruleId},
+            ${row.ruleVersion}
+          where ${scanPersistClaimExists(row.scanId, organizationId, claimToken)}
+        `,
+      ),
+      sql.raw(" union all "),
+    ),
+  );
 }
 
 function withFindingAnnotations(
