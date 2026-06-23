@@ -1,3 +1,4 @@
+import type { Signal } from "@preact/signals";
 import { cn } from "./cn";
 
 type Size = "sm" | "md" | "lg";
@@ -12,10 +13,12 @@ export function BrandMark({
   href,
   size = "sm",
   class: className,
+  ariaLabel,
 }: {
-  href?: string;
+  href?: string | Signal<string>;
   size?: Size;
   class?: string;
+  ariaLabel?: string | Signal<string>;
 }) {
   const classes = cn(
     "inline-block font-semibold text-accent select-none",
@@ -25,7 +28,7 @@ export function BrandMark({
   );
   if (href) {
     return (
-      <a href={href} class={classes} aria-label="Drydock home">
+      <a href={href} class={classes} aria-label={ariaLabel ?? "Drydock home"}>
         drydock
       </a>
     );
