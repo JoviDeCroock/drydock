@@ -31,6 +31,7 @@ export interface DiscoverStagedPublishesInput {
   source: ScanSource;
   eventSource: string;
   allowInsecureLocalhost?: boolean;
+  stageStartCoordinator?: StageStartCoordinator;
 }
 
 export interface DiscoverStagedPublishesResult {
@@ -63,6 +64,10 @@ export class InvalidNpmConnectionError extends Error {
 export interface TokenForDiscovery {
   token: string;
   registryUrl: string;
+}
+
+export interface StageStartCoordinator {
+  run<T>(stageId: string, worker: () => Promise<T>): Promise<T>;
 }
 
 /**
@@ -200,8 +205,16 @@ export async function discoverAndQueueStagedPublishes(
   input: DiscoverStagedPublishesInput,
   connection: TokenForDiscovery,
 ): Promise<DiscoverStagedPublishesResult> {
-  const { db, env, executionCtx, organizationId, actorUserId, source, allowInsecureLocalhost } =
-    input;
+  const {
+    db,
+    env,
+    executionCtx,
+    organizationId,
+    actorUserId,
+    source,
+    allowInsecureLocalhost,
+    stageStartCoordinator = createStageStartCoordinator(),
+  } = input;
 
   const stagedItems = await listAllStagedPublishes(connection, {
     perPage: 50,
@@ -214,60 +227,61 @@ export async function discoverAndQueueStagedPublishes(
   const scanStarts = await mapWithConcurrency(
     scanCandidates,
     STAGED_PUBLISH_SCAN_START_CONCURRENCY,
-    async (item) => {
-      const stageId = item.id;
-      const access = await checkStagedPublishAccess(
-        connection.registryUrl,
-        connection.token,
-        stageId,
-        {
-          allowInsecureLocalhost,
-        },
-      );
-      if (!access.allowed) return null;
-      const scanId = crypto.randomUUID();
-      const detail = await createScanJob(db, {
-        id: scanId,
-        stageId,
-        organizationId,
-        ownerUserId: actorUserId,
-        source,
-        packageName: item.packageName,
-        stagedVersion: item.version,
-      });
-      if (!detail) return null;
-      const startedScan: StartedStagedPublishScan = {
-        id: scanId,
-        stageId,
-        packageName: item.packageName,
-        version: item.version,
-        tag: item.tag,
-        access: item.access,
-        actor: item.actor,
-        createdAt: item.createdAt,
-      };
-
-      const message: ScanQueueMessage = {
-        stageId,
-        scanId,
-        organizationId,
-        actorUserId,
-        source,
-      };
-      if (env.SCAN_QUEUE) {
-        try {
-          await env.SCAN_QUEUE.send(message);
-        } catch (err) {
-          await deletePendingScanJob(db, scanId, organizationId);
-          throw err;
-        }
-      } else {
-        executionCtx.waitUntil(
-          executeScanJob(env, executionCtx, message, db, { finalAttempt: true }),
+    (item) =>
+      stageStartCoordinator.run(item.id, async () => {
+        const stageId = item.id;
+        const access = await checkStagedPublishAccess(
+          connection.registryUrl,
+          connection.token,
+          stageId,
+          {
+            allowInsecureLocalhost,
+          },
         );
-      }
-      return startedScan;
-    },
+        if (!access.allowed) return null;
+        const scanId = crypto.randomUUID();
+        const detail = await createScanJob(db, {
+          id: scanId,
+          stageId,
+          organizationId,
+          ownerUserId: actorUserId,
+          source,
+          packageName: item.packageName,
+          stagedVersion: item.version,
+        });
+        if (!detail) return null;
+        const startedScan: StartedStagedPublishScan = {
+          id: scanId,
+          stageId,
+          packageName: item.packageName,
+          version: item.version,
+          tag: item.tag,
+          access: item.access,
+          actor: item.actor,
+          createdAt: item.createdAt,
+        };
+
+        const message: ScanQueueMessage = {
+          stageId,
+          scanId,
+          organizationId,
+          actorUserId,
+          source,
+        };
+        if (env.SCAN_QUEUE) {
+          try {
+            await env.SCAN_QUEUE.send(message);
+          } catch (err) {
+            await deletePendingScanJob(db, scanId, organizationId);
+            throw err;
+          }
+        } else {
+          executionCtx.waitUntil(
+            executeScanJob(env, executionCtx, message, db, { finalAttempt: true }),
+          );
+        }
+        return startedScan;
+      }),
   );
   const startedScans = scanStarts.filter(isStartedStagedPublishScan);
 
@@ -307,6 +321,28 @@ async function listAllStagedPublishes(
 }
 
 export { StagedPublishesFetchError };
+
+export function createStageStartCoordinator(): StageStartCoordinator {
+  const tails = new Map<string, Promise<void>>();
+  return {
+    async run(stageId, worker) {
+      const previous = tails.get(stageId) ?? Promise.resolve();
+      let release: () => void;
+      const current = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const tail = previous.catch(() => undefined).then(() => current);
+      tails.set(stageId, tail);
+      await previous.catch(() => undefined);
+      try {
+        return await worker();
+      } finally {
+        release!();
+        if (tails.get(stageId) === tail) tails.delete(stageId);
+      }
+    },
+  };
+}
 
 function filterNewStagedPublishesByStageId(
   stagedItems: readonly StagedPublishItem[],

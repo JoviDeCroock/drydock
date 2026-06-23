@@ -157,20 +157,15 @@ export async function listExistingScanStageIds(
 ) {
   if (!stageIds.length) return new Set<string>();
   // Discovery passes every staged publish it saw, which is unbounded; each id
-  // is one bound parameter, so chunk below D1's cap (reserving slots for the
-  // organizationId and status parameters) or the sweep throws
-  // "too many SQL variables" once an org stages ~100 items.
+  // is one bound parameter, so chunk below D1's cap (reserving a slot for the
+  // organizationId parameter) or the sweep throws "too many SQL variables"
+  // once an org stages ~100 items.
   const known = new Set<string>();
-  for (const chunk of chunkForD1([...new Set(stageIds)], 1, 2)) {
+  for (const chunk of chunkForD1([...new Set(stageIds)], 1, 1)) {
     const rows = await db
       .select({ stageId: scans.stageId })
       .from(scans)
-      .where(
-        and(
-          inArray(scans.stageId, chunk),
-          or(eq(scans.organizationId, organizationId), eq(scans.status, "complete")),
-        ),
-      );
+      .where(and(inArray(scans.stageId, chunk), eq(scans.organizationId, organizationId)));
     for (const row of rows) known.add(row.stageId);
   }
   return known;

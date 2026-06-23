@@ -29,6 +29,7 @@ import {
 } from "./lib/scan-job";
 import { executeWorkflowGateJob } from "./lib/workflow-gate-job";
 import {
+  createStageStartCoordinator,
   discoverAndQueueStagedPublishes,
   ensureUsableNpmConnection,
   isNpmConnectionAuthFailure,
@@ -328,6 +329,7 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
   const startedAtMs = Date.now();
   const db = createDb(env.DB);
   const connections = await listAutoDiscoveryNpmConnections(db);
+  const stageStartCoordinator = createStageStartCoordinator();
   emitOperationalEvent("info", "staged_publishes.cron.started", {
     organizations: connections.length,
   });
@@ -366,6 +368,7 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
             source: "auto_discovery",
             eventSource: "staged_publishes.cron",
             allowInsecureLocalhost,
+            stageStartCoordinator,
           },
           usable,
         );
