@@ -39,12 +39,12 @@ export function AikidoFootnote({ class: className }: { class?: string }) {
       target="_blank"
       rel="noopener noreferrer"
       class={cn(
-        "inline-flex items-center opacity-80 hover:opacity-100 transition-opacity duration-150 ease-out",
+        "text-ink-muted inline-flex items-center opacity-80 hover:opacity-100 transition-opacity duration-150 ease-out",
         className,
       )}
       aria-label="Aikido Security"
     >
-      <AikidoMark size="xs" />
+      <span class="mr-2">Sponsored by</span> <AikidoMark size="xs" />
     </a>
   );
 }
