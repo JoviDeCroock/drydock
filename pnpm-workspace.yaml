@@ -8,6 +8,13 @@ packages:
 # those constants from the package root.
 overrides:
   kysely: ^0.28.17
+  # @esbuild-kit is deprecated and still pins an esbuild version with GHSA-67mh-4wv8-2f99.
+  "@esbuild-kit/core-utils>esbuild": 0.25.12
+  # Keep this plugin on the Node 22.13-compatible line while remediating transitive advisories.
+  "@cloudflare/vite-plugin>wrangler": 4.102.0
+  "@cloudflare/vite-plugin>miniflare": 4.20260617.0
+  ws: 8.21.0
+  undici: 7.28.0
 
 allowBuilds:
   "0": esbuild
