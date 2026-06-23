@@ -149,6 +149,8 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
   try {
     const { review, usage } = await runSelectiveAiReview(args.env, {
       scanId: args.identity.scanId,
+      stageId: args.identity.stageId,
+      organizationId: args.identity.organizationId,
       ecosystem: args.ecosystem,
       files: args.findings.redactedStagedFiles,
       previousFiles: args.findings.redactedPreviousFiles,

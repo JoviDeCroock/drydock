@@ -45,6 +45,8 @@ export interface AiReviewResult {
 
 export interface SelectiveAiReviewOptions {
   scanId?: string;
+  stageId?: string;
+  organizationId?: string;
   ecosystem: AiReviewEcosystem | string;
   files: FileRecord[];
   previousFiles?: FileRecord[];
