@@ -186,12 +186,17 @@
     min-height: 100vh;
   }
 
+  .font-mono,
   code,
   pre,
   kbd,
   samp {
     font-family: var(--font-mono);
-    font-feature-settings: "ss01", "tnum";
+    font-feature-settings:
+      "ss01",
+      "tnum",
+      "liga" 0,
+      "calt" 0;
     font-variant-ligatures: none;
   }
 
