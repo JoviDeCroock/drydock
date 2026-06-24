@@ -10,6 +10,11 @@ import {
   type SeverityGroup,
 } from "./diff-annotations";
 import {
+  diffOverviewMarkers,
+  type DiffOverviewMarker,
+  type DiffOverviewRow,
+} from "./diff-overview";
+import {
   ensureHighlighter,
   highlighterReady,
   langForPath,
@@ -279,20 +284,23 @@ function DiffBody({
         <span>{afterLabel}</span>
       </div>
       {unpinned.length ? <AnnotationBanner findings={unpinned} /> : null}
-      <div class="overflow-auto h-[560px]">
-        <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
-          <tbody>
-            {rows.map((row, index) => {
-              const pins = row.afterLine !== null ? pinned.get(row.afterLine) : undefined;
-              return (
-                <Fragment key={index}>
-                  <DiffRow row={row} />
-                  {pins ? <AnnotationRows findings={pins} colSpan={4} /> : null}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
+      <div class="relative h-[560px]">
+        <div class="overflow-auto h-full pr-5">
+          <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
+            <tbody>
+              {rows.map((row, index) => {
+                const pins = row.afterLine !== null ? pinned.get(row.afterLine) : undefined;
+                return (
+                  <Fragment key={index}>
+                    <DiffRow row={row} />
+                    {pins ? <AnnotationRows findings={pins} colSpan={4} /> : null}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <DiffOverview markers={diffOverviewMarkers(toOverviewRows(rows), pinned)} />
       </div>
     </div>
   );
@@ -348,30 +356,74 @@ function SingleSidedView({
         {label}
       </div>
       {unpinned.length ? <AnnotationBanner findings={unpinned} /> : null}
-      <div class="overflow-auto h-[560px]">
-        <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
-          <tbody>
-            {lines.map((line, index) => {
-              const pins = pinned.get(index + 1);
-              return (
-                <Fragment key={index}>
-                  <tr class={cn(rowBg)}>
-                    <td class="px-2 py-[2px] text-ink-subtle select-none w-[44px] text-right border-r border-border align-top">
-                      {index + 1}
-                    </td>
-                    <td class="px-2 py-[2px] whitespace-pre-wrap break-words align-top">
-                      <LineContent text={line} tokens={tokens?.[index] ?? null} />
-                    </td>
-                  </tr>
-                  {pins ? <AnnotationRows findings={pins} colSpan={2} /> : null}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
+      <div class="relative h-[560px]">
+        <div class="overflow-auto h-full pr-5">
+          <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
+            <tbody>
+              {lines.map((line, index) => {
+                const pins = pinned.get(index + 1);
+                return (
+                  <Fragment key={index}>
+                    <tr class={cn(rowBg)}>
+                      <td class="px-2 py-[2px] text-ink-subtle select-none w-[44px] text-right border-r border-border align-top">
+                        {index + 1}
+                      </td>
+                      <td class="px-2 py-[2px] whitespace-pre-wrap break-words align-top">
+                        <LineContent text={line} tokens={tokens?.[index] ?? null} />
+                      </td>
+                    </tr>
+                    {pins ? <AnnotationRows findings={pins} colSpan={2} /> : null}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <DiffOverview
+          markers={diffOverviewMarkers(
+            lines.map((_, index) => ({ tone, line: index + 1 })),
+            pinned,
+          )}
+        />
       </div>
     </div>
   );
+}
+
+function toOverviewRows(rows: readonly Row[]): DiffOverviewRow[] {
+  return rows.map((row) => ({ tone: row.tone, line: row.afterLine }));
+}
+
+function DiffOverview({ markers }: { markers: DiffOverviewMarker[] }) {
+  if (!markers.length) return null;
+  return (
+    <div
+      aria-hidden="true"
+      class="pointer-events-none absolute right-1 top-2 bottom-2 w-[6px] rounded-full border border-border bg-surface/80 shadow-sm"
+    >
+      {markers.map((marker) => (
+        <span
+          key={marker.key}
+          class={cn(
+            "absolute left-[-1px] right-[-1px] rounded-full",
+            markerClass(marker),
+            marker.kind === "finding" ? "z-10 ring-1 ring-surface" : "opacity-75",
+          )}
+          style={{
+            top: `${marker.topPercent}%`,
+            height: `${marker.heightPercent}%`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function markerClass(marker: DiffOverviewMarker): string {
+  if (marker.tone === "added" || marker.tone === "ok") return "bg-ok";
+  if (marker.tone === "removed" || marker.tone === "danger") return "bg-danger";
+  if (marker.tone === "warn") return "bg-warn";
+  return "bg-info";
 }
 
 // Severity-tinted fills and left bars for a pinned finding. The fill uses the

@@ -12,6 +12,13 @@ export type TokenLine = Token[];
 // Diff bytes are untrusted package contents. We only ever tokenize languages we
 // explicitly bundle a grammar for; anything else falls back to plain text.
 const EXT_TO_LANG: Record<string, string> = {
+  bash: "bash",
+  css: "css",
+  dockerfile: "docker",
+  htm: "html",
+  html: "html",
+  md: "markdown",
+  markdown: "markdown",
   py: "python",
   pyi: "python",
   js: "jsx",
@@ -23,11 +30,23 @@ const EXT_TO_LANG: Record<string, string> = {
   cts: "typescript",
   tsx: "tsx",
   json: "json",
+  scss: "scss",
+  sh: "bash",
+  svelte: "svelte",
   toml: "toml",
+  vue: "vue",
+  yaml: "yaml",
+  yml: "yaml",
+};
+
+const BASE_TO_LANG: Record<string, string> = {
+  Dockerfile: "docker",
 };
 
 export function langForPath(path: string): string | undefined {
   const base = path.split("/").pop() ?? path;
+  const basenameLang = BASE_TO_LANG[base];
+  if (basenameLang) return basenameLang;
   const dot = base.lastIndexOf(".");
   if (dot <= 0) return undefined;
   return EXT_TO_LANG[base.slice(dot + 1).toLowerCase()];
@@ -74,9 +93,18 @@ export function ensureHighlighter(): void {
       themes: [theme],
       langs: [
         import("shiki/langs/python.mjs"),
+        import("shiki/langs/bash.mjs"),
+        import("shiki/langs/css.mjs"),
+        import("shiki/langs/docker.mjs"),
+        import("shiki/langs/html.mjs"),
         import("shiki/langs/jsx.mjs"),
+        import("shiki/langs/markdown.mjs"),
+        import("shiki/langs/scss.mjs"),
+        import("shiki/langs/svelte.mjs"),
         import("shiki/langs/typescript.mjs"),
         import("shiki/langs/tsx.mjs"),
+        import("shiki/langs/vue.mjs"),
+        import("shiki/langs/yaml.mjs"),
         import("shiki/langs/json.mjs"),
         import("shiki/langs/toml.mjs"),
       ],

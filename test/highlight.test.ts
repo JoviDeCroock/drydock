@@ -17,6 +17,7 @@ async function whenReady(): Promise<void> {
 
 describe("langForPath", () => {
   test("maps the supported extensions", () => {
+    expect(langForPath("Dockerfile")).toBe("docker");
     expect(langForPath("pkg/script.py")).toBe("python");
     expect(langForPath("Component.jsx")).toBe("jsx");
     expect(langForPath("index.js")).toBe("jsx");
@@ -25,10 +26,13 @@ describe("langForPath", () => {
     expect(langForPath("App.tsx")).toBe("tsx");
     expect(langForPath("package.json")).toBe("json");
     expect(langForPath("pyproject.toml")).toBe("toml");
+    expect(langForPath("README.md")).toBe("markdown");
+    expect(langForPath("pnpm-lock.yaml")).toBe("yaml");
+    expect(langForPath("scripts/postinstall.sh")).toBe("bash");
+    expect(langForPath("src/App.vue")).toBe("vue");
   });
 
   test("returns undefined for unsupported, extension-less, and dotfile paths", () => {
-    expect(langForPath("README.md")).toBeUndefined();
     expect(langForPath("LICENSE")).toBeUndefined();
     expect(langForPath(".gitignore")).toBeUndefined();
   });
