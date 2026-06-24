@@ -9,7 +9,12 @@ import {
 import { createAuth, getAuthSession } from "./lib/auth";
 import { rateLimitResponse } from "./lib/http";
 import { allowInsecureLocalRegistry } from "./lib/npm-connection";
-import { API_CSP, DOCUMENT_CSP, SECURITY_HEADERS } from "./lib/security-headers";
+import {
+  API_CSP,
+  DOCUMENT_CSP,
+  SECURITY_HEADERS,
+  securityHeadersDisabled,
+} from "./lib/security-headers";
 import {
   describeOperationalError,
   durationMsSince,
@@ -104,6 +109,10 @@ function applySecurityHeaders(c: { res: Response; req: { path: string } }) {
 app.use("*", async (c, next) => {
   await next();
   if (c.res.status < 200 || c.res.status > 599) return;
+  // Local-dev escape hatch: the strict CSP breaks Vite's HMR client and HSTS
+  // would pin the loopback origin to HTTPS. Gated behind a `.dev.vars`-only flag
+  // that is absent from every deployed config, so production fails closed.
+  if (securityHeadersDisabled(c.env)) return;
   applySecurityHeaders(c);
 });
 

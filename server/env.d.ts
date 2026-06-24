@@ -12,6 +12,9 @@ declare global {
       SCAN_QUEUE?: Queue<import("./lib/scan-job").QueueMessage>;
       NPM_REGISTRY: string;
       ALLOW_INSECURE_LOCAL_REGISTRY?: string;
+      // `.dev.vars`-only escape hatch (see securityHeadersDisabled). Never set in
+      // any deployed config — production must keep the full header policy.
+      DISABLE_SECURITY_HEADERS?: string;
       NPM_CONNECTIONS_ENCRYPTION_KEY?: string;
       BETTER_AUTH_SECRET: string;
       BETTER_AUTH_URL?: string;

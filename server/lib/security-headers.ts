@@ -13,6 +13,22 @@
 // module, so the values are duplicated there by hand. The drift guard in
 // test/security-headers.test.ts fails if the two ever diverge — update both.
 
+// Local-development escape hatch. The production policy actively breaks
+// `pnpm run dev`: CSP `script-src 'self'` (no 'unsafe-inline') blocks Vite's
+// injected HMR client, and HSTS would pin the http://localhost origin to HTTPS.
+//
+// This is a string env var so it follows the same provisioning as
+// ALLOW_INSECURE_LOCAL_REGISTRY: set it in `.dev.vars` (gitignored) for local
+// dev only. It is deliberately absent from wrangler.jsonc and wrangler.test.jsonc
+// — NEVER add it there. Production fails closed: when the var is unset the full
+// header policy applies, so a deployment can't accidentally ship with headers
+// stripped.
+export function securityHeadersDisabled(
+  env: Pick<Cloudflare.Env, "DISABLE_SECURITY_HEADERS">,
+): boolean {
+  return env.DISABLE_SECURITY_HEADERS === "true";
+}
+
 // Non-CSP headers; identical for every response regardless of content type.
 export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   // Pin clients to HTTPS for a year so a stripped/downgraded request can't reach
