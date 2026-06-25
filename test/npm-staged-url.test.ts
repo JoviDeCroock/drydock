@@ -29,4 +29,26 @@ describe("npm staged packages urls", () => {
       npmStagedPackagesUrlFor({ source: "workflow_gate", packageName: "left-pad" }, connection),
     ).toBeNull();
   });
+
+  test("prefers scoped package owners and skips non-npmjs registries", () => {
+    expect(
+      npmStagedPackagesUrlFor(
+        { source: "manual", packageName: "@drydock/example" },
+        {
+          registryUrl: "https://registry.npmjs.org",
+          capabilitiesJson: { whoami: "maintainer" },
+        },
+      ),
+    ).toBe("https://www.npmjs.com/settings/drydock/staged-packages");
+
+    expect(
+      npmStagedPackagesUrlFor(
+        { source: "manual", packageName: "left-pad" },
+        {
+          registryUrl: "https://registry.example.com",
+          capabilitiesJson: { whoami: "maintainer" },
+        },
+      ),
+    ).toBeNull();
+  });
 });
