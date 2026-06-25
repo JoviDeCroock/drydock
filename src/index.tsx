@@ -35,7 +35,6 @@ export function App() {
           <Route path="/register" component={RegisterPage} />
           <Route path="/verify-email" component={VerifyEmailPage} />
           <Route path="/dashboard" component={DashboardPage} />
-          <Route path="/dashboard/scan/:id" component={ScanDetailPage} />
           <Route path="/dashboard/scans/:id" component={ScanDetailPage} />
           <Route path="/dashboard/settings" component={SettingsPage} />
           <Route path="/dashboard/account" component={AccountPage} />

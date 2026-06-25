@@ -19,9 +19,9 @@ describe("normalizeAuthReturnTo", () => {
     );
   });
 
-  test("preserves singular scan detail paths with query strings", () => {
-    expect(normalizeAuthReturnTo("/dashboard/scan/scan_1?path=src%2Findex.ts", ORIGIN)).toBe(
-      "/dashboard/scan/scan_1?path=src%2Findex.ts",
+  test("preserves scan detail paths with query strings", () => {
+    expect(normalizeAuthReturnTo("/dashboard/scans/scan_1?path=src%2Findex.ts", ORIGIN)).toBe(
+      "/dashboard/scans/scan_1?path=src%2Findex.ts",
     );
   });
 
