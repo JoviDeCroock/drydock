@@ -1,5 +1,6 @@
-import { diffLines } from "diff";
+import { diffArrays, diffLines, diffWordsWithSpace, type ChangeObject } from "diff";
 import { Fragment } from "preact";
+import { useSignal, type Signal } from "@preact/signals";
 import { useMemo } from "preact/hooks";
 import { Badge, severityTone, statusTone } from "./Badge";
 import {
@@ -52,21 +53,51 @@ interface Row {
   afterLine: number | null;
   text: string;
   tokens: TokenLine | null;
+  wordParts: WordPart[] | null;
 }
 
-function buildRows(
+interface WordPart {
+  text: string;
+  tone: "added" | "removed" | "unchanged";
+}
+
+interface RowChunk {
+  tone: Row["tone"];
+  rows: Row[];
+}
+
+interface DiffOptions {
+  wordDiff?: boolean;
+  ignoreWhitespace?: boolean;
+}
+
+export function buildRows(
   before: string,
   after: string,
   beforeTokens: TokenLine[] | null,
   afterTokens: TokenLine[] | null,
+  options: DiffOptions = {},
 ): Row[] {
+  const chunks = options.ignoreWhitespace
+    ? buildRowsIgnoringWhitespace(before, after, beforeTokens, afterTokens)
+    : buildRowsFromLineDiff(before, after, beforeTokens, afterTokens);
+  if (options.wordDiff) applyWordDiff(chunks, Boolean(options.ignoreWhitespace));
+  return chunks.flatMap((chunk) => chunk.rows);
+}
+
+function buildRowsFromLineDiff(
+  before: string,
+  after: string,
+  beforeTokens: TokenLine[] | null,
+  afterTokens: TokenLine[] | null,
+): RowChunk[] {
   const parts = diffLines(before, after);
-  const rows: Row[] = [];
+  const chunks: RowChunk[] = [];
   let beforeLine = 0;
   let afterLine = 0;
   for (const part of parts) {
-    const lines = part.value.split("\n");
-    if (lines.length && lines[lines.length - 1] === "") lines.pop();
+    const rows: Row[] = [];
+    const lines = splitLines(part.value);
     for (const line of lines) {
       if (part.added) {
         afterLine += 1;
@@ -76,6 +107,7 @@ function buildRows(
           afterLine,
           text: line,
           tokens: afterTokens?.[afterLine - 1] ?? null,
+          wordParts: null,
         });
       } else if (part.removed) {
         beforeLine += 1;
@@ -85,6 +117,7 @@ function buildRows(
           afterLine: null,
           text: line,
           tokens: beforeTokens?.[beforeLine - 1] ?? null,
+          wordParts: null,
         });
       } else {
         beforeLine += 1;
@@ -95,11 +128,133 @@ function buildRows(
           afterLine,
           text: line,
           tokens: afterTokens?.[afterLine - 1] ?? beforeTokens?.[beforeLine - 1] ?? null,
+          wordParts: null,
         });
       }
     }
+    if (rows.length) {
+      chunks.push({
+        tone: part.added ? "added" : part.removed ? "removed" : "unchanged",
+        rows,
+      });
+    }
   }
-  return rows;
+  return chunks;
+}
+
+function buildRowsIgnoringWhitespace(
+  before: string,
+  after: string,
+  beforeTokens: TokenLine[] | null,
+  afterTokens: TokenLine[] | null,
+): RowChunk[] {
+  const parts = diffArrays(splitLines(before), splitLines(after), {
+    comparator: linesEqualIgnoringWhitespace,
+  });
+  const chunks: RowChunk[] = [];
+  let beforeLine = 0;
+  let afterLine = 0;
+  for (const part of parts) {
+    const rows: Row[] = [];
+    for (const line of part.value) {
+      if (part.added) {
+        afterLine += 1;
+        rows.push({
+          tone: "added",
+          beforeLine: null,
+          afterLine,
+          text: line,
+          tokens: afterTokens?.[afterLine - 1] ?? null,
+          wordParts: null,
+        });
+      } else if (part.removed) {
+        beforeLine += 1;
+        rows.push({
+          tone: "removed",
+          beforeLine,
+          afterLine: null,
+          text: line,
+          tokens: beforeTokens?.[beforeLine - 1] ?? null,
+          wordParts: null,
+        });
+      } else {
+        beforeLine += 1;
+        afterLine += 1;
+        rows.push({
+          tone: "unchanged",
+          beforeLine,
+          afterLine,
+          text: line,
+          tokens: afterTokens?.[afterLine - 1] ?? beforeTokens?.[beforeLine - 1] ?? null,
+          wordParts: null,
+        });
+      }
+    }
+    if (rows.length) {
+      chunks.push({
+        tone: part.added ? "added" : part.removed ? "removed" : "unchanged",
+        rows,
+      });
+    }
+  }
+  return chunks;
+}
+
+function splitLines(value: string): string[] {
+  const lines = value.split("\n");
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+
+function linesEqualIgnoringWhitespace(left: string, right: string): boolean {
+  return stripWhitespace(left) === stripWhitespace(right);
+}
+
+function stripWhitespace(value: string): string {
+  return value.replace(/\s+/g, "");
+}
+
+function applyWordDiff(chunks: RowChunk[], ignoreWhitespace: boolean) {
+  for (let index = 0; index < chunks.length - 1; index += 1) {
+    const removed = chunks[index];
+    const added = chunks[index + 1];
+    if (removed.tone !== "removed" || added.tone !== "added") continue;
+    const pairedRows = Math.min(removed.rows.length, added.rows.length);
+    for (let rowIndex = 0; rowIndex < pairedRows; rowIndex += 1) {
+      const parts = buildWordParts(
+        removed.rows[rowIndex].text,
+        added.rows[rowIndex].text,
+        ignoreWhitespace,
+      );
+      removed.rows[rowIndex].wordParts = parts.before;
+      added.rows[rowIndex].wordParts = parts.after;
+    }
+  }
+}
+
+function buildWordParts(
+  before: string,
+  after: string,
+  ignoreWhitespace: boolean,
+): { before: WordPart[]; after: WordPart[] } {
+  const beforeParts: WordPart[] = [];
+  const afterParts: WordPart[] = [];
+  for (const part of diffWordsWithSpace(before, after) as ChangeObject<string>[]) {
+    const tone = whitespaceOnly(part.value) && ignoreWhitespace ? "unchanged" : partTone(part);
+    if (!part.added) beforeParts.push({ text: part.value, tone });
+    if (!part.removed) afterParts.push({ text: part.value, tone });
+  }
+  return { before: beforeParts, after: afterParts };
+}
+
+function whitespaceOnly(value: string): boolean {
+  return value.trim() === "";
+}
+
+function partTone(part: ChangeObject<string>): WordPart["tone"] {
+  if (part.added) return "added";
+  if (part.removed) return "removed";
+  return "unchanged";
 }
 
 // Tokenize an entire side once, memoized on the sample/language/ready signal.
@@ -111,7 +266,26 @@ function useLineTokens(text: string, lang: string | undefined): TokenLine[] | nu
   );
 }
 
-function LineContent({ text, tokens }: { text: string; tokens: TokenLine | null }) {
+function LineContent({
+  text,
+  tokens,
+  wordParts,
+}: {
+  text: string;
+  tokens: TokenLine | null;
+  wordParts: WordPart[] | null;
+}) {
+  if (wordParts) {
+    return (
+      <>
+        {wordParts.map((part, index) => (
+          <span key={index} class={wordPartClass(part.tone)}>
+            {part.text}
+          </span>
+        ))}
+      </>
+    );
+  }
   if (!tokens || tokens.length === 0) return <>{text}</>;
   // Token content is rendered as escaped text children (never innerHTML) so
   // untrusted package bytes can't inject markup.
@@ -124,6 +298,12 @@ function LineContent({ text, tokens }: { text: string; tokens: TokenLine | null 
       ))}
     </>
   );
+}
+
+function wordPartClass(tone: WordPart["tone"]): string | undefined {
+  if (tone === "added") return "rounded-[2px] bg-ok/25";
+  if (tone === "removed") return "rounded-[2px] bg-danger/25";
+  return undefined;
 }
 
 function hasFlag(side: DiffSide | null, flag: string): boolean {
@@ -141,17 +321,25 @@ export function DiffView({
 }: DiffViewProps) {
   const beforeSample = before?.textSample ?? "";
   const afterSample = after?.textSample ?? "";
+  const wordDiff = useSignal(false);
+  const ignoreWhitespace = useSignal(false);
 
   const binary = hasFlag(before, "binary") || hasFlag(after, "binary");
   const truncated = hasFlag(before, "truncated") || hasFlag(after, "truncated");
+  const showDiffOptions = !binary && Boolean(beforeSample && afterSample);
 
   return (
     <div class="flex flex-col gap-3 min-h-0">
-      <div class="flex flex-wrap items-center gap-2">
-        <Badge tone={statusTone(status)}>{status}</Badge>
-        <code class="font-mono text-xs text-ink-muted break-all">{path}</code>
-        {truncated ? <Badge tone="neutral">truncated</Badge> : null}
-        {binary ? <Badge tone="neutral">binary</Badge> : null}
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex flex-wrap items-center gap-2">
+          <Badge tone={statusTone(status)}>{status}</Badge>
+          <code class="font-mono text-xs text-ink-muted break-all">{path}</code>
+          {truncated ? <Badge tone="neutral">truncated</Badge> : null}
+          {binary ? <Badge tone="neutral">binary</Badge> : null}
+        </div>
+        {showDiffOptions ? (
+          <DiffControls wordDiff={wordDiff} ignoreWhitespace={ignoreWhitespace} />
+        ) : null}
       </div>
       <div class="font-mono text-[11px] text-ink-subtle flex flex-wrap gap-3">
         <span>
@@ -170,8 +358,57 @@ export function DiffView({
         beforeLabel={beforeLabel}
         afterLabel={afterLabel}
         findings={findings}
+        wordDiff={wordDiff.value}
+        ignoreWhitespace={ignoreWhitespace.value}
       />
     </div>
+  );
+}
+
+function DiffControls({
+  wordDiff,
+  ignoreWhitespace,
+}: {
+  wordDiff: Signal<boolean>;
+  ignoreWhitespace: Signal<boolean>;
+}) {
+  return (
+    <div class="flex flex-wrap items-center gap-1.5" aria-label="Diff display options">
+      <DiffOptionToggle
+        label="--word-diff"
+        description="Highlight changed words"
+        checked={wordDiff}
+      />
+      <DiffOptionToggle label="-w" description="Ignore whitespace" checked={ignoreWhitespace} />
+    </div>
+  );
+}
+
+function DiffOptionToggle({
+  label,
+  description,
+  checked,
+}: {
+  label: string;
+  description: string;
+  checked: Signal<boolean>;
+}) {
+  return (
+    <label class="cursor-pointer">
+      <input
+        type="checkbox"
+        class="sr-only peer"
+        checked={checked.value}
+        onChange={(event) => (checked.value = event.currentTarget.checked)}
+        aria-label={description}
+      />
+      <span
+        title={description}
+        class="inline-flex items-center rounded-md border border-border bg-surface px-2 py-1 font-mono text-[11px] leading-none text-ink-muted transition-colors peer-checked:border-accent peer-checked:bg-accent-soft peer-checked:text-ink peer-focus-visible:shadow-[0_0_0_3px_var(--color-accent-soft)]"
+      >
+        {label}
+      </span>
+    </label>
   );
 }
 
@@ -184,6 +421,8 @@ function DiffBody({
   beforeLabel,
   afterLabel,
   findings,
+  wordDiff,
+  ignoreWhitespace,
 }: {
   path: string;
   status: string;
@@ -193,6 +432,8 @@ function DiffBody({
   beforeLabel: string;
   afterLabel: string;
   findings: DiffFinding[];
+  wordDiff: boolean;
+  ignoreWhitespace: boolean;
 }) {
   const lang = langForPath(path);
   if (lang && !binary) ensureHighlighter();
@@ -273,7 +514,10 @@ function DiffBody({
     );
   }
 
-  const rows = buildRows(beforeSample, afterSample, beforeTokens, afterTokens);
+  const rows = buildRows(beforeSample, afterSample, beforeTokens, afterTokens, {
+    wordDiff,
+    ignoreWhitespace,
+  });
   const presentLines = new Set<number>();
   for (const row of rows) if (row.afterLine !== null) presentLines.add(row.afterLine);
   const { pinned, unpinned } = partitionFindingsByLine(findings, presentLines);
@@ -319,7 +563,7 @@ function DiffRow({ row }: { row: Row }) {
       </td>
       <td class="px-2 py-[2px] select-none w-[20px] text-ink-subtle align-top">{sign}</td>
       <td class="px-2 py-[2px] whitespace-pre-wrap break-words align-top">
-        <LineContent text={row.text} tokens={row.tokens} />
+        <LineContent text={row.text} tokens={row.tokens} wordParts={row.wordParts} />
       </td>
     </tr>
   );
@@ -369,7 +613,11 @@ function SingleSidedView({
                         {index + 1}
                       </td>
                       <td class="px-2 py-[2px] whitespace-pre-wrap break-words align-top">
-                        <LineContent text={line} tokens={tokens?.[index] ?? null} />
+                        <LineContent
+                          text={line}
+                          tokens={tokens?.[index] ?? null}
+                          wordParts={null}
+                        />
                       </td>
                     </tr>
                     {pins ? <AnnotationRows findings={pins} colSpan={2} /> : null}
