@@ -46,6 +46,14 @@ describe("canonical domain routing", () => {
     expect(res.headers.get("Content-Security-Policy")).toContain("script-src 'self'");
   });
 
+  test("serves singular scan deep links from the generated dashboard shell", async () => {
+    const res = await fetchWorker("https://drydock.org/dashboard/scan/123?tab=report", assetEnv);
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("asset:/dashboard/index.html");
+    expect(res.headers.get("Content-Security-Policy")).toContain("script-src 'self'");
+  });
+
   test("keeps server-owned misses as JSON 404s", async () => {
     const res = await fetchWorker("https://drydock.org/webhooks/not-found", assetEnv);
 

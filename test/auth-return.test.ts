@@ -19,6 +19,12 @@ describe("normalizeAuthReturnTo", () => {
     );
   });
 
+  test("preserves singular scan detail paths with query strings", () => {
+    expect(normalizeAuthReturnTo("/dashboard/scan/scan_1?path=src%2Findex.ts", ORIGIN)).toBe(
+      "/dashboard/scan/scan_1?path=src%2Findex.ts",
+    );
+  });
+
   test("falls back for non-dashboard, cross-origin, or malformed targets", () => {
     expect(normalizeAuthReturnTo("/login?returnTo=/dashboard", ORIGIN)).toBe("/dashboard");
     expect(normalizeAuthReturnTo("https://attacker.example/dashboard", ORIGIN)).toBe("/dashboard");
