@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { buildRows } from "../src/components/DiffView.tsx";
+import {
+  buildRows,
+  isDiffScrollTarget,
+  shouldSeekInitialDiffTarget,
+} from "../src/components/DiffView.tsx";
 
 describe("buildRows", () => {
   test("marks changed word spans inside paired changed lines", () => {
@@ -106,5 +110,21 @@ describe("buildRows", () => {
     ]);
     expect(rows[0].wordParts).toContainEqual({ text: "1", tone: "removed" });
     expect(rows[1].wordParts).toContainEqual({ text: "2", tone: "added" });
+  });
+});
+
+describe("initial diff scroll targeting", () => {
+  test("seeks changed files and leaves unchanged files at the top", () => {
+    expect(shouldSeekInitialDiffTarget("added")).toBe(true);
+    expect(shouldSeekInitialDiffTarget("removed")).toBe(true);
+    expect(shouldSeekInitialDiffTarget("modified")).toBe(true);
+    expect(shouldSeekInitialDiffTarget("unchanged")).toBe(false);
+  });
+
+  test("targets only changed rows inside edited files", () => {
+    expect(isDiffScrollTarget("modified", "unchanged")).toBe(false);
+    expect(isDiffScrollTarget("modified", "removed")).toBe(true);
+    expect(isDiffScrollTarget("modified", "added")).toBe(true);
+    expect(isDiffScrollTarget("unchanged", "added")).toBe(false);
   });
 });
