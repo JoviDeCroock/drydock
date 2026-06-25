@@ -42,6 +42,43 @@ describe("buildRows", () => {
     expect(rows[1].wordParts).toContainEqual({ text: "stale", tone: "added" });
   });
 
+  test("does not word-highlight inserted comments against nearby code", () => {
+    const rows = buildRows(
+      "var promise = new Promise(resolve => {\nif (!source.value) {\n  return resolve(state);\n}\n",
+      "var promise = new Promise(resolve => {\n// If there's no source, resolve without subscribing again.\n// See: https://github.com/urql-graphql/urql/issues/3722\nif (!source.value || !fetching.value && !stale.value) {\n  return resolve(state);\n}\n",
+      null,
+      null,
+      {
+        wordDiff: true,
+      },
+    );
+
+    expect(rows.find((row) => row.afterLine === 2)?.wordParts).toBeNull();
+    expect(rows.find((row) => row.afterLine === 3)?.wordParts).toBeNull();
+    expect(rows.find((row) => row.afterLine === 4)?.wordParts).toContainEqual({
+      text: "fetching",
+      tone: "added",
+    });
+  });
+
+  test("aligns changed block rows before applying word diff", () => {
+    const rows = buildRows(
+      "var hasResult = false;\nsub = wonka.subscribe(() => {\n  if (!state.fetching.value && !state.stale.value) {\n    if (sub) sub.unsubscribe();\n    hasResult = true;\n  }\n});\n",
+      "var stop = vue.watch([fetching, stale], ([isFetching, isStale]) => {\n  if (!isFetching && !isStale) {\n    stop();\n  }\n});\n",
+      null,
+      null,
+      {
+        wordDiff: true,
+      },
+    );
+
+    expect(rows.find((row) => row.beforeLine === 1)?.wordParts).toBeNull();
+    expect(rows.find((row) => row.afterLine === 1)?.wordParts).toContainEqual({
+      text: "watch",
+      tone: "added",
+    });
+  });
+
   test("treats whitespace-only line edits as unchanged with -w", () => {
     const rows = buildRows("const value=1;\n", "const value = 1;\n", null, null, {
       ignoreWhitespace: true,

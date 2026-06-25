@@ -219,13 +219,95 @@ function applyWordDiff(chunks: RowChunk[]) {
     const removed = chunks[index];
     const added = chunks[index + 1];
     if (removed.tone !== "removed" || added.tone !== "added") continue;
-    const pairedRows = Math.min(removed.rows.length, added.rows.length);
-    for (let rowIndex = 0; rowIndex < pairedRows; rowIndex += 1) {
-      const parts = buildWordParts(removed.rows[rowIndex].text, added.rows[rowIndex].text);
-      removed.rows[rowIndex].wordParts = parts.before;
-      added.rows[rowIndex].wordParts = parts.after;
+    for (const [beforeRow, afterRow] of pairChangedRows(removed.rows, added.rows)) {
+      const parts = buildWordParts(beforeRow.text, afterRow.text);
+      beforeRow.wordParts = parts.before;
+      afterRow.wordParts = parts.after;
     }
   }
+}
+
+function pairChangedRows(beforeRows: Row[], afterRows: Row[]): [Row, Row][] {
+  const scores = beforeRows.map((beforeRow) =>
+    afterRows.map((afterRow) => rowPairScore(beforeRow.text, afterRow.text)),
+  );
+  const dp = Array.from({ length: beforeRows.length + 1 }, () =>
+    Array.from({ length: afterRows.length + 1 }, () => 0),
+  );
+  const choices: ("match" | "before" | "after")[][] = Array.from(
+    { length: beforeRows.length + 1 },
+    () => Array.from({ length: afterRows.length + 1 }, () => "before"),
+  );
+
+  for (let beforeIndex = 1; beforeIndex <= beforeRows.length; beforeIndex += 1) {
+    for (let afterIndex = 1; afterIndex <= afterRows.length; afterIndex += 1) {
+      const score = scores[beforeIndex - 1][afterIndex - 1];
+      const match = score > 0 ? dp[beforeIndex - 1][afterIndex - 1] + score : -Infinity;
+      const skipBefore = dp[beforeIndex - 1][afterIndex];
+      const skipAfter = dp[beforeIndex][afterIndex - 1];
+      if (match > skipBefore && match > skipAfter) {
+        dp[beforeIndex][afterIndex] = match;
+        choices[beforeIndex][afterIndex] = "match";
+      } else if (skipBefore >= skipAfter) {
+        dp[beforeIndex][afterIndex] = skipBefore;
+        choices[beforeIndex][afterIndex] = "before";
+      } else {
+        dp[beforeIndex][afterIndex] = skipAfter;
+        choices[beforeIndex][afterIndex] = "after";
+      }
+    }
+  }
+
+  const pairs: [Row, Row][] = [];
+  let beforeIndex = beforeRows.length;
+  let afterIndex = afterRows.length;
+  while (beforeIndex > 0 && afterIndex > 0) {
+    const choice = choices[beforeIndex][afterIndex];
+    if (choice === "match") {
+      pairs.push([beforeRows[beforeIndex - 1], afterRows[afterIndex - 1]]);
+      beforeIndex -= 1;
+      afterIndex -= 1;
+    } else if (choice === "before") {
+      beforeIndex -= 1;
+    } else {
+      afterIndex -= 1;
+    }
+  }
+  return pairs.reverse();
+}
+
+const linePairScoreFloor = 0.08;
+
+function rowPairScore(before: string, after: string): number {
+  if (!compatibleLineKinds(before, after)) return 0;
+  const beforeText = before.trim();
+  const afterText = after.trim();
+  if (!beforeText || !afterText) return 0;
+
+  let unchangedLength = 0;
+  for (const part of diffWordsWithSpace(beforeText, afterText) as ChangeObject<string>[]) {
+    if (!part.added && !part.removed) unchangedLength += part.value.length;
+  }
+  const score = unchangedLength / Math.max(beforeText.length, afterText.length);
+  return score >= linePairScoreFloor ? score : 0;
+}
+
+function compatibleLineKinds(before: string, after: string): boolean {
+  return lineKind(before) === lineKind(after);
+}
+
+function lineKind(text: string): "blank" | "comment" | "code" {
+  const trimmed = text.trim();
+  if (!trimmed) return "blank";
+  if (
+    trimmed.startsWith("//") ||
+    trimmed.startsWith("/*") ||
+    trimmed.startsWith("*") ||
+    trimmed.startsWith("#")
+  ) {
+    return "comment";
+  }
+  return "code";
 }
 
 function buildWordParts(before: string, after: string): { before: WordPart[]; after: WordPart[] } {
