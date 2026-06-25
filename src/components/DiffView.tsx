@@ -375,11 +375,15 @@ function DiffControls({
   return (
     <div class="flex flex-wrap items-center gap-1.5" aria-label="Diff display options">
       <DiffOptionToggle
-        label="--word-diff"
+        label="Toggle word diff"
         description="Highlight changed words"
         checked={wordDiff}
       />
-      <DiffOptionToggle label="-w" description="Ignore whitespace" checked={ignoreWhitespace} />
+      <DiffOptionToggle
+        label="Toggle whitespace"
+        description="Ignore whitespace"
+        checked={ignoreWhitespace}
+      />
     </div>
   );
 }
