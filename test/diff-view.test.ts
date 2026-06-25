@@ -15,6 +15,33 @@ describe("buildRows", () => {
     expect(rows[1].wordParts).toContainEqual({ text: "risky", tone: "added" });
   });
 
+  test("leaves punctuation-only word diff spans unhighlighted", () => {
+    const rows = buildRows("foo();\n", "foo(), {};\n", null, null, {
+      wordDiff: true,
+    });
+
+    expect(rows[1].wordParts?.filter((part) => part.tone !== "unchanged")).toEqual([]);
+  });
+
+  test("splits punctuation out of changed word diff spans", () => {
+    const rows = buildRows(
+      "sub = wonka.subscribe(() => {\n",
+      "stop = vue.watch([fetching, stale], ([isFetching, isStale]) => {\n",
+      null,
+      null,
+      {
+        wordDiff: true,
+      },
+    );
+
+    const highlighted = rows[1].wordParts?.filter((part) => part.tone === "added") ?? [];
+
+    expect(highlighted.every((part) => /^[\p{L}\p{N}_$]+$/u.test(part.text))).toBe(true);
+    expect(rows[1].wordParts).toContainEqual({ text: "fetching", tone: "added" });
+    expect(rows[1].wordParts).toContainEqual({ text: ", ", tone: "unchanged" });
+    expect(rows[1].wordParts).toContainEqual({ text: "stale", tone: "added" });
+  });
+
   test("treats whitespace-only line edits as unchanged with -w", () => {
     const rows = buildRows("const value=1;\n", "const value = 1;\n", null, null, {
       ignoreWhitespace: true,
