@@ -42,7 +42,7 @@ describe("canonical domain routing", () => {
     const res = await fetchWorker("https://drydock.org/dashboard/scans/123?tab=report", assetEnv);
 
     expect(res.status).toBe(200);
-    expect(await res.text()).toBe("asset:/dashboard/index.html");
+    expect(await res.text()).toBe("asset:/dashboard/");
     expect(res.headers.get("Content-Security-Policy")).toContain("script-src 'self'");
   });
 

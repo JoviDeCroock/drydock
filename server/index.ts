@@ -85,7 +85,7 @@ function assetFallbackRequest(request: Request): Request {
     (url.pathname === "/dashboard" || url.pathname.startsWith("/dashboard/")) &&
     !DASHBOARD_STATIC_ASSET_PATHS.has(url.pathname)
   ) {
-    url.pathname = "/dashboard/index.html";
+    url.pathname = "/dashboard/";
     url.search = "";
     return new Request(url, request);
   }
