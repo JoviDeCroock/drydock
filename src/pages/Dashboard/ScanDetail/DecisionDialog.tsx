@@ -12,6 +12,7 @@ export function DecisionDialog({
   decidedAt,
   status,
   error,
+  npmStagedPackagesUrl,
   onSubmit,
 }: {
   open: boolean;
@@ -21,21 +22,32 @@ export function DecisionDialog({
   decidedAt?: string | number | Date | null;
   status: DecisionStatus;
   error: string | null;
-  onSubmit: (decision: ScanDecision, reason: string | null) => void | Promise<void>;
+  npmStagedPackagesUrl?: string | null;
+  onSubmit: (decision: ScanDecision, reason: string | null) => boolean | Promise<boolean>;
 }) {
   const reasonDraft = useSignal("");
+  const openNpmAfterSave = useSignal(false);
   const saving = status === "saving";
 
   useEffect(() => {
     if (open) {
       reasonDraft.value = decisionReason ?? "";
+      openNpmAfterSave.value = false;
     }
   }, [open, decisionReason]);
 
-  const submit = (next: ScanDecision) => {
+  const submit = async (next: ScanDecision) => {
     if (saving) return;
+    const shouldOpenNpm = Boolean(npmStagedPackagesUrl && openNpmAfterSave.peek());
+    const npmWindow = shouldOpenNpm ? window.open("about:blank", "_blank") : null;
+    if (npmWindow) npmWindow.opener = null;
     const trimmed = reasonDraft.value.trim();
-    void onSubmit(next, trimmed.length ? trimmed : null);
+    const saved = await onSubmit(next, trimmed.length ? trimmed : null);
+    if (saved && npmWindow && npmStagedPackagesUrl) {
+      npmWindow.location.href = npmStagedPackagesUrl;
+    } else if (!saved) {
+      npmWindow?.close();
+    }
   };
 
   const handleClose = () => {
@@ -79,6 +91,18 @@ export function DecisionDialog({
           spellcheck={false}
         />
       </Field>
+
+      {npmStagedPackagesUrl ? (
+        <label class="flex items-center gap-2 text-[13px] text-ink-muted">
+          <input
+            type="checkbox"
+            checked={openNpmAfterSave.value}
+            onChange={(e) => (openNpmAfterSave.value = (e.target as HTMLInputElement).checked)}
+            disabled={saving}
+          />
+          Open npm staged packages in a new tab after saving
+        </label>
+      ) : null}
 
       <div class="flex flex-wrap gap-2">
         <Button onClick={() => submit("publish")} disabled={saving}>
