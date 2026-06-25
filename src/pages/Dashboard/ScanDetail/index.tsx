@@ -8,9 +8,11 @@ import {
   useSignalEffect,
 } from "@preact/signals";
 import { useLocation, useRoute } from "preact-iso";
+import { npmStagedPackagesUrlFor } from "../../../lib/npm-staged-url";
 import { useQuerySignal } from "../../../lib/query-state";
 import { sortFindingsBySeverity } from "../../../lib/findings";
 import { sessionModel } from "../../../models/auth";
+import { NpmConnectionModel } from "../../../models/npm-connection";
 import { ScanDetailModel, type DecisionStatus, type ScanDecision } from "../../../models/scan";
 import type { WorkflowGateDecision } from "../../../models/github-app";
 import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review-types";
@@ -45,11 +47,17 @@ export default function ScanDetailPage() {
   const route = useRoute();
   const id = route.params.id;
   const model = useModel(() => new ScanDetailModel(id));
+  const npm = useModel(NpmConnectionModel);
   const sessionChecked = useSignal(false);
   const fileFilter = useSignal("");
   const changedFilesOnly = useSignal(true);
   const decisionDialogOpen = useSignal(false);
   const gateDialogOpen = useSignal(false);
+  const npmStagedPackagesUrlSignal = useComputed(() => {
+    const scan = model.detail.value?.scan;
+    const connection = npm.connection.value;
+    return scan ? npmStagedPackagesUrlFor(scan, connection) : null;
+  });
 
   // Two-way bind filter state to query params. The text filter is debounced
   // because it fires on every keystroke; the rest write through immediately.
@@ -85,7 +93,7 @@ export default function ScanDetailPage() {
         return;
       }
       sessionChecked.value = true;
-      await model.load();
+      await Promise.all([model.load(), npm.load()]);
     })();
     return () => {
       cancelled = true;
@@ -197,9 +205,11 @@ export default function ScanDetailPage() {
 
   const handleDecisionSubmit = async (decision: ScanDecision, reason: string | null) => {
     await model.setDecision(decision, reason);
-    if (model.decisionStatus.peek() === "idle") {
+    const saved = model.decisionStatus.peek() === "idle";
+    if (saved) {
       decisionDialogOpen.value = false;
     }
+    return saved;
   };
 
   const handleGateDecision = async (
@@ -390,6 +400,7 @@ export default function ScanDetailPage() {
           decidedAt={detail.scan.decidedAt}
           statusSignal={model.decisionStatus}
           errorSignal={model.decisionError}
+          npmStagedPackagesUrlSignal={npmStagedPackagesUrlSignal}
           onSubmit={handleDecisionSubmit}
         />
       ) : null}
@@ -430,17 +441,23 @@ function DecisionDialogHost({
   openSignal,
   statusSignal,
   errorSignal,
+  npmStagedPackagesUrlSignal,
   ...props
-}: Omit<ComponentProps<typeof DecisionDialog>, "open" | "status" | "error"> & {
+}: Omit<
+  ComponentProps<typeof DecisionDialog>,
+  "open" | "status" | "error" | "npmStagedPackagesUrl"
+> & {
   openSignal: ReadonlySignal<boolean>;
   statusSignal: ReadonlySignal<DecisionStatus>;
   errorSignal: ReadonlySignal<string | null>;
+  npmStagedPackagesUrlSignal: ReadonlySignal<string | null>;
 }) {
   return (
     <DecisionDialog
       open={openSignal.value}
       status={statusSignal.value}
       error={errorSignal.value}
+      npmStagedPackagesUrl={npmStagedPackagesUrlSignal.value}
       {...props}
     />
   );

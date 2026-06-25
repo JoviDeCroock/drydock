@@ -4,6 +4,7 @@ import { useSignal, useModel, useSignalEffect } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { rememberDashboardReturnUrl, useQuerySignal } from "../../lib/query-state";
+import { npmStagedPackagesUrlFor } from "../../lib/npm-staged-url";
 import { pluralize } from "../../lib/format";
 import { sessionModel } from "../../models/auth";
 import { NpmConnectionModel } from "../../models/npm-connection";
@@ -193,11 +194,13 @@ function RecentReviewsSection({
   };
   const onQuickDecisionSubmit = async (decision: ScanDecision, reason: string | null) => {
     const scan = quickDecisionScan.peek();
-    if (!scan) return;
+    if (!scan) return false;
     await scans.setDecision(scan.id, decision, reason);
-    if (scans.decisionStatus.peek() === "idle") {
+    const saved = scans.decisionStatus.peek() === "idle";
+    if (saved) {
       quickDecisionScan.value = null;
     }
+    return saved;
   };
 
   const discoveredAt = stagedPublishes.lastDiscoveryAt.value;
@@ -295,6 +298,7 @@ function RecentReviewsSection({
             decidedAt={scan.decidedAt}
             status={scans.decisionStatus.value}
             error={scans.decisionError.value}
+            npmStagedPackagesUrl={npmStagedPackagesUrlFor(scan, npm.connection.value)}
             onSubmit={onQuickDecisionSubmit}
           />
         )}

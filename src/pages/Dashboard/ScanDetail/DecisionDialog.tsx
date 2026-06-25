@@ -12,6 +12,7 @@ export function DecisionDialog({
   decidedAt,
   status,
   error,
+  npmStagedPackagesUrl,
   onSubmit,
 }: {
   open: boolean;
@@ -21,7 +22,8 @@ export function DecisionDialog({
   decidedAt?: string | number | Date | null;
   status: DecisionStatus;
   error: string | null;
-  onSubmit: (decision: ScanDecision, reason: string | null) => void | Promise<void>;
+  npmStagedPackagesUrl?: string | null;
+  onSubmit: (decision: ScanDecision, reason: string | null) => boolean | Promise<boolean>;
 }) {
   const reasonDraft = useSignal("");
   const saving = status === "saving";
@@ -32,10 +34,19 @@ export function DecisionDialog({
     }
   }, [open, decisionReason]);
 
-  const submit = (next: ScanDecision) => {
+  const submit = async (next: ScanDecision) => {
     if (saving) return;
+    const npmWindow = npmStagedPackagesUrl ? window.open("about:blank", "_blank") : null;
+    if (npmWindow) npmWindow.opener = null;
     const trimmed = reasonDraft.value.trim();
-    void onSubmit(next, trimmed.length ? trimmed : null);
+    const saved = await onSubmit(next, trimmed.length ? trimmed : null);
+    if (saved && npmStagedPackagesUrl && npmWindow) {
+      npmWindow.location.href = npmStagedPackagesUrl;
+    } else if (saved && npmStagedPackagesUrl) {
+      window.location.href = npmStagedPackagesUrl;
+    } else if (!saved) {
+      npmWindow?.close();
+    }
   };
 
   const handleClose = () => {
@@ -50,6 +61,12 @@ export function DecisionDialog({
       title="Publish decision"
       description="Record whether this staged publish is safe to approve. This adds to the audit trail, but it does not publish or cancel anything on npm. You still confirm or cancel with 2FA there."
     >
+      {npmStagedPackagesUrl ? (
+        <Alert tone="info">
+          After saving, Drydock opens npm staged packages so you can approve or reject with 2FA.
+        </Alert>
+      ) : null}
+
       {decision ? (
         <div class="flex flex-col gap-2 border border-border rounded-md p-3">
           <div class="flex flex-wrap items-center gap-2">
