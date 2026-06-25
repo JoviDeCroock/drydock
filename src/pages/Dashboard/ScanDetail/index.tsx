@@ -81,7 +81,7 @@ export default function ScanDetailPage() {
       const data = await sessionModel.load();
       if (cancelled) return;
       if (!data) {
-        location.route("/login", true);
+        location.route(`/login?returnTo=${encodeURIComponent(location.url)}`, true);
         return;
       }
       sessionChecked.value = true;
