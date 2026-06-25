@@ -81,7 +81,7 @@ export function buildRows(
   const chunks = options.ignoreWhitespace
     ? buildRowsIgnoringWhitespace(before, after, beforeTokens, afterTokens)
     : buildRowsFromLineDiff(before, after, beforeTokens, afterTokens);
-  if (options.wordDiff) applyWordDiff(chunks, Boolean(options.ignoreWhitespace));
+  if (options.wordDiff) applyWordDiff(chunks);
   return chunks.flatMap((chunk) => chunk.rows);
 }
 
@@ -214,41 +214,56 @@ function stripWhitespace(value: string): string {
   return value.replace(/\s+/g, "");
 }
 
-function applyWordDiff(chunks: RowChunk[], ignoreWhitespace: boolean) {
+function applyWordDiff(chunks: RowChunk[]) {
   for (let index = 0; index < chunks.length - 1; index += 1) {
     const removed = chunks[index];
     const added = chunks[index + 1];
     if (removed.tone !== "removed" || added.tone !== "added") continue;
     const pairedRows = Math.min(removed.rows.length, added.rows.length);
     for (let rowIndex = 0; rowIndex < pairedRows; rowIndex += 1) {
-      const parts = buildWordParts(
-        removed.rows[rowIndex].text,
-        added.rows[rowIndex].text,
-        ignoreWhitespace,
-      );
+      const parts = buildWordParts(removed.rows[rowIndex].text, added.rows[rowIndex].text);
       removed.rows[rowIndex].wordParts = parts.before;
       added.rows[rowIndex].wordParts = parts.after;
     }
   }
 }
 
-function buildWordParts(
-  before: string,
-  after: string,
-  ignoreWhitespace: boolean,
-): { before: WordPart[]; after: WordPart[] } {
+function buildWordParts(before: string, after: string): { before: WordPart[]; after: WordPart[] } {
   const beforeParts: WordPart[] = [];
   const afterParts: WordPart[] = [];
   for (const part of diffWordsWithSpace(before, after) as ChangeObject<string>[]) {
-    const tone = whitespaceOnly(part.value) && ignoreWhitespace ? "unchanged" : partTone(part);
-    if (!part.added) beforeParts.push({ text: part.value, tone });
-    if (!part.removed) afterParts.push({ text: part.value, tone });
+    const tone = partTone(part);
+    if (!part.added) appendWordParts(beforeParts, part.value, tone);
+    if (!part.removed) appendWordParts(afterParts, part.value, tone);
   }
   return { before: beforeParts, after: afterParts };
 }
 
-function whitespaceOnly(value: string): boolean {
-  return value.trim() === "";
+const wordDiffWordPattern = /[\p{L}\p{N}_$]+/gu;
+
+function appendWordParts(parts: WordPart[], text: string, tone: WordPart["tone"]) {
+  if (tone === "unchanged") {
+    appendWordPart(parts, text, tone);
+    return;
+  }
+  let offset = 0;
+  for (const match of text.matchAll(wordDiffWordPattern)) {
+    const index = match.index;
+    if (index > offset) appendWordPart(parts, text.slice(offset, index), "unchanged");
+    appendWordPart(parts, match[0], tone);
+    offset = index + match[0].length;
+  }
+  if (offset < text.length) appendWordPart(parts, text.slice(offset), "unchanged");
+}
+
+function appendWordPart(parts: WordPart[], text: string, tone: WordPart["tone"]) {
+  if (!text) return;
+  const previous = parts[parts.length - 1];
+  if (previous?.tone === tone) {
+    previous.text += text;
+    return;
+  }
+  parts.push({ text, tone });
 }
 
 function partTone(part: ChangeObject<string>): WordPart["tone"] {
