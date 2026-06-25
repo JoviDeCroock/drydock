@@ -108,11 +108,11 @@
     color-scheme: light dark;
 
     /* Diff syntax highlighting (shiki css-variables theme). Restrained by
-       design: code structure rides the ink scale and a single muted teal marks
-       string literals. Severity row fills stay the only saturated color so
+       design: declarations/operators sit below identifiers on the ink scale and
+       a single muted teal marks string literals. Severity row fills stay the only saturated color so
        "color = signal" holds (DESIGN.md). */
-    --sh-foreground: var(--color-ink-muted);
-    --sh-token-keyword: var(--color-ink);
+    --sh-foreground: var(--color-ink);
+    --sh-token-keyword: var(--color-ink-muted);
     --sh-token-constant: var(--color-ink-muted);
     --sh-token-number: var(--color-ink);
     --sh-token-function: var(--color-ink);
@@ -142,6 +142,7 @@
 
   .sh-token-function {
     color: var(--sh-token-function);
+    font-weight: 500;
   }
 
   .sh-token-parameter {
