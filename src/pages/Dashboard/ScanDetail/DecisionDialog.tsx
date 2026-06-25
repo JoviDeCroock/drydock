@@ -26,24 +26,25 @@ export function DecisionDialog({
   onSubmit: (decision: ScanDecision, reason: string | null) => boolean | Promise<boolean>;
 }) {
   const reasonDraft = useSignal("");
+  const openNpmAfterSave = useSignal(false);
   const saving = status === "saving";
 
   useEffect(() => {
     if (open) {
       reasonDraft.value = decisionReason ?? "";
+      openNpmAfterSave.value = false;
     }
   }, [open, decisionReason]);
 
   const submit = async (next: ScanDecision) => {
     if (saving) return;
-    const npmWindow = npmStagedPackagesUrl ? window.open("about:blank", "_blank") : null;
+    const shouldOpenNpm = Boolean(npmStagedPackagesUrl && openNpmAfterSave.peek());
+    const npmWindow = shouldOpenNpm ? window.open("about:blank", "_blank") : null;
     if (npmWindow) npmWindow.opener = null;
     const trimmed = reasonDraft.value.trim();
     const saved = await onSubmit(next, trimmed.length ? trimmed : null);
-    if (saved && npmStagedPackagesUrl && npmWindow) {
+    if (saved && npmWindow && npmStagedPackagesUrl) {
       npmWindow.location.href = npmStagedPackagesUrl;
-    } else if (saved && npmStagedPackagesUrl) {
-      window.location.href = npmStagedPackagesUrl;
     } else if (!saved) {
       npmWindow?.close();
     }
@@ -61,12 +62,6 @@ export function DecisionDialog({
       title="Publish decision"
       description="Record whether this staged publish is safe to approve. This adds to the audit trail, but it does not publish or cancel anything on npm. You still confirm or cancel with 2FA there."
     >
-      {npmStagedPackagesUrl ? (
-        <Alert tone="info">
-          After saving, Drydock opens npm staged packages so you can approve or reject with 2FA.
-        </Alert>
-      ) : null}
-
       {decision ? (
         <div class="flex flex-col gap-2 border border-border rounded-md p-3">
           <div class="flex flex-wrap items-center gap-2">
@@ -96,6 +91,18 @@ export function DecisionDialog({
           spellcheck={false}
         />
       </Field>
+
+      {npmStagedPackagesUrl ? (
+        <label class="flex items-center gap-2 text-[13px] text-ink-muted">
+          <input
+            type="checkbox"
+            checked={openNpmAfterSave.value}
+            onChange={(e) => (openNpmAfterSave.value = (e.target as HTMLInputElement).checked)}
+            disabled={saving}
+          />
+          Open npm staged packages in a new tab after saving
+        </label>
+      ) : null}
 
       <div class="flex flex-wrap gap-2">
         <Button onClick={() => submit("publish")} disabled={saving}>

@@ -76,9 +76,9 @@ the signed-in user has `twoFactorEnabled`.
 
 This is scoped to the approval gate. The **staged-publish** decision (`POST
 /api/v1/scans/:id/decision`) is an audit record only — it never publishes or cancels a
-release on npm — and intentionally does **not** require a step-up. After the audit
-decision is saved, the UI opens npm's staged-packages page for the token owner recorded
-by `/-/whoami`; the maintainer still approves or declines in npm with npm's own 2FA.
+release on npm — and intentionally does **not** require a step-up. The decision dialog can open npm's staged-packages page in a new tab with
+`filterPackage` set to the reviewed package; the maintainer still approves or declines
+in npm with npm's own 2FA.
 Maintainers without 2FA enabled decide gates without a code, as before.
 
 ### Org-enforced step-up (organization policy)

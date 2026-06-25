@@ -12,7 +12,6 @@ import { npmStagedPackagesUrlFor } from "../../../lib/npm-staged-url";
 import { useQuerySignal } from "../../../lib/query-state";
 import { sortFindingsBySeverity } from "../../../lib/findings";
 import { sessionModel } from "../../../models/auth";
-import { NpmConnectionModel } from "../../../models/npm-connection";
 import { ScanDetailModel, type DecisionStatus, type ScanDecision } from "../../../models/scan";
 import type { WorkflowGateDecision } from "../../../models/github-app";
 import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review-types";
@@ -47,7 +46,6 @@ export default function ScanDetailPage() {
   const route = useRoute();
   const id = route.params.id;
   const model = useModel(() => new ScanDetailModel(id));
-  const npm = useModel(NpmConnectionModel);
   const sessionChecked = useSignal(false);
   const fileFilter = useSignal("");
   const changedFilesOnly = useSignal(true);
@@ -55,8 +53,7 @@ export default function ScanDetailPage() {
   const gateDialogOpen = useSignal(false);
   const npmStagedPackagesUrlSignal = useComputed(() => {
     const scan = model.detail.value?.scan;
-    const connection = npm.connection.value;
-    return scan ? npmStagedPackagesUrlFor(scan, connection) : null;
+    return scan ? npmStagedPackagesUrlFor(scan) : null;
   });
 
   // Two-way bind filter state to query params. The text filter is debounced
@@ -93,7 +90,7 @@ export default function ScanDetailPage() {
         return;
       }
       sessionChecked.value = true;
-      await Promise.all([model.load(), npm.load()]);
+      await model.load();
     })();
     return () => {
       cancelled = true;

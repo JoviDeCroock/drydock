@@ -101,8 +101,8 @@ export default function DocsPage() {
                   packages, checks what changed, and saves the report.
                 </>,
                 <>
-                  You read the report on the dashboard, record your decision, and Drydock opens
-                  npm's staged-packages page for the signed-in token owner. You still approve or
+                  You read the report on the dashboard, record your decision, and can have Drydock
+                  open npm's staged-packages page filtered to that package. You still approve or
                   decline in npm with your normal 2FA; Drydock never publishes on your behalf.
                 </>,
               ]}

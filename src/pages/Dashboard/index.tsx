@@ -298,7 +298,7 @@ function RecentReviewsSection({
             decidedAt={scan.decidedAt}
             status={scans.decisionStatus.value}
             error={scans.decisionError.value}
-            npmStagedPackagesUrl={npmStagedPackagesUrlFor(scan, npm.connection.value)}
+            npmStagedPackagesUrl={npmStagedPackagesUrlFor(scan)}
             onSubmit={onQuickDecisionSubmit}
           />
         )}
