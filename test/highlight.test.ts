@@ -20,8 +20,9 @@ describe("langForPath", () => {
     expect(langForPath("Dockerfile")).toBe("docker");
     expect(langForPath("pkg/script.py")).toBe("python");
     expect(langForPath("Component.jsx")).toBe("jsx");
-    expect(langForPath("index.js")).toBe("jsx");
-    expect(langForPath("a.mjs")).toBe("jsx");
+    expect(langForPath("index.js")).toBe("javascript");
+    expect(langForPath("a.mjs")).toBe("javascript");
+    expect(langForPath("common.cjs")).toBe("javascript");
     expect(langForPath("server/index.ts")).toBe("typescript");
     expect(langForPath("App.tsx")).toBe("tsx");
     expect(langForPath("package.json")).toBe("json");
