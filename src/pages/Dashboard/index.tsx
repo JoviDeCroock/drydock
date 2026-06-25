@@ -216,7 +216,7 @@ function RecentReviewsSection({
   return (
     <Card as="section" padding="none" class="overflow-hidden">
       <div class="px-5 py-4 flex flex-col gap-3 md:flex-row md:items-center">
-        <SectionLabel class="flex-1 min-w-0">Recent reviews</SectionLabel>
+        <SectionLabel class="flex-1 min-w-0 after:hidden">Recent reviews</SectionLabel>
         <div class="flex flex-wrap items-center gap-2 shrink-0">
           <ScanStateSelect
             value={scans.filter.value}
