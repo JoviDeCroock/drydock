@@ -15,7 +15,6 @@ Start here instead of reading every Markdown file. Pick the smallest set that ma
 - [`workflow-gates.md`](./workflow-gates.md) — GitHub Environment gate flow for PyPI and npm workflow-gated releases.
 - [`diff-baseline.md`](./diff-baseline.md) — default previous-version comparison strategy.
 - [`artifact-storage.md`](./artifact-storage.md) — D1/R2 report and artifact persistence.
-- [`cost-model.md`](./cost-model.md) — AI review cost assumptions.
 
 ## Operations and setup
 
@@ -33,7 +32,6 @@ Start here instead of reading every Markdown file. Pick the smallest set that ma
 - [`two-factor-auth.md`](./two-factor-auth.md) — step-up auth and sensitive actions.
 - [`slack-notifications.md`](./slack-notifications.md) — Slack install and notification flow.
 - [`account-deletion.md`](./account-deletion.md) — account deletion lifecycle.
-- [`planetscale-migration.md`](./planetscale-migration.md) — future D1-to-PlanetScale migration plan.
 
 ## Retired or compatibility pointers
 

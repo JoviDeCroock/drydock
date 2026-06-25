@@ -152,7 +152,7 @@ export const aiReviewSubmissionSchema = z
     releaseAssessment: releaseAssessmentSchema,
     // The bound is a backstop for concern-laden reviews; the prompt's summary
     // style holds ordinary releases to a few plain-prose sentences because
-    // output tokens dominate per-review cost (see docs/cost-model.md).
+    // output tokens dominate per-review cost.
     summary: z
       .string()
       .min(1)
