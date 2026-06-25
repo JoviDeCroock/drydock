@@ -113,7 +113,7 @@
        "color = signal" holds (DESIGN.md). */
     --sh-foreground: var(--color-ink-muted);
     --sh-token-keyword: var(--color-ink);
-    --sh-token-constant: var(--color-ink);
+    --sh-token-constant: var(--color-ink-muted);
     --sh-token-number: var(--color-ink);
     --sh-token-function: var(--color-ink);
     --sh-token-parameter: var(--color-ink-muted);
