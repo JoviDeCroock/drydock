@@ -1,5 +1,5 @@
 import type { FileRecord, PackageJsonSummary } from "../review";
-import { LIFECYCLE_SCRIPTS } from "./patterns";
+import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 
 // Static require/import edges between files inside the package. The walk is a
 // conservative over-approximation built from relative specifiers only: bare
@@ -24,8 +24,8 @@ const RESOLUTION_SUFFIXES = [
   "/index.cjs",
 ];
 
-// Files a consumer install can execute: declared entrypoints (main/module/
-// browser/exports), bin targets, lifecycle script targets, and everything
+// Files a registry tarball consumer install can execute: declared entrypoints
+// (main/module/browser/exports), bin targets, lifecycle script targets, and everything
 // statically importable from them. Seeding from lifecycle scripts matters for
 // attack chains that split a payload across files an install hook pulls in
 // transitively — those files must keep full finding severity.
@@ -89,7 +89,7 @@ function exportTargets(exports: unknown): string[] {
   return [];
 }
 
-// Files a lifecycle script command names directly (`postinstall: "node
+// Files a consumer install lifecycle script command names directly (`postinstall: "node
 // test/setup.js"`). Matching reuses the same token/candidate scheme as the
 // install-script rules so the two notions of "lifecycle script file" agree.
 export function lifecycleScriptSeedPaths(
@@ -98,7 +98,7 @@ export function lifecycleScriptSeedPaths(
   implicitScripts: Record<string, string>,
 ): string[] {
   const tokens = new Set<string>();
-  for (const script of LIFECYCLE_SCRIPTS) {
+  for (const script of CONSUMER_INSTALL_LIFECYCLE_SCRIPTS) {
     const command = scripts[script];
     if (!command || implicitScripts[script] === command) continue;
     for (const token of scriptCommandTokens(command)) tokens.add(token);

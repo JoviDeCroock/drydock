@@ -1,6 +1,6 @@
 import type { CodePatternSet } from "../review";
 
-export const LIFECYCLE_SCRIPTS = ["preinstall", "install", "postinstall", "prepare"];
+export const CONSUMER_INSTALL_LIFECYCLE_SCRIPTS = ["preinstall", "install", "postinstall"];
 
 const JS_PROCESS_EXECUTION_PATTERNS = [
   /\bchild_process\b/,

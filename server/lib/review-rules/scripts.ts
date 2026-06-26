@@ -1,7 +1,7 @@
 import { hasImplicitNodeGypInstall, isRootGypPath } from "../tar-parser.js";
 import { firstMatchingLine } from "../text-utils";
 import type { Finding } from "../review";
-import { LIFECYCLE_SCRIPTS } from "./patterns";
+import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 import { firstJsonPropertyLine, tag } from "./helpers";
 import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./context";
 import { isDocumentationPath, isTypeDeclarationPath } from "./file-types";
@@ -46,7 +46,7 @@ const COMMON_IMPORT_META_ENV_BRACKET_ACCESS = new RegExp(
 );
 
 // Install lifecycle hooks and in-file code-execution capability: the scripts and
-// code paths that run on, or are pulled in by, a consumer install.
+// code paths that run on, or are pulled in by, a registry tarball install.
 export function scriptFindings(ctx: RuleContext): Finding[] {
   const findings: Finding[] = [];
 
@@ -85,7 +85,7 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     );
   }
 
-  for (const script of LIFECYCLE_SCRIPTS) {
+  for (const script of CONSUMER_INSTALL_LIFECYCLE_SCRIPTS) {
     if (!ctx.scripts[script] || ctx.implicitScripts[script] === ctx.scripts[script]) continue;
     findings.push(
       tag(script === "preinstall" ? "installScriptPreinstall" : "installScript", {
@@ -93,7 +93,7 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
         file: ctx.packageJsonFile?.path ?? "package.json",
         line: firstJsonPropertyLine(ctx.packageJsonFile?.textSample, script, ctx.scripts[script]),
         evidence: `${script}: ${ctx.scripts[script]}`,
-        reason: "install lifecycle hooks execute on consumer machines",
+        reason: "consumer install lifecycle hooks execute on consumer machines",
       }),
     );
   }
@@ -111,8 +111,8 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     const prefix = changedPrefix(ctx, file.path);
     const changed = ctx.diffByPath.get(file.path)?.status;
     const lifecycleScriptFile = isLifecycleScriptFile(ctx, file.path);
-    // Lifecycle script files keep full severity even under test/ — an install
-    // hook pointing into the test tree is itself the suspicious shape.
+    // Consumer install lifecycle script files keep full severity even under
+    // test/ — an install hook pointing into the test tree is itself suspicious.
     const testScoped = !lifecycleScriptFile && isUnreachableTestFile(ctx, file.path);
 
     const processExecution = matchCategory(ctx.patterns.processExecution, sample, normalized);
@@ -280,7 +280,7 @@ function networkAccessSeverity(
 
 function isLifecycleScriptFile(ctx: RuleContext, path: string): boolean {
   const candidates = scriptPathCandidates(path);
-  return LIFECYCLE_SCRIPTS.some((script) => {
+  return CONSUMER_INSTALL_LIFECYCLE_SCRIPTS.some((script) => {
     const command = ctx.scripts[script];
     if (!command || ctx.implicitScripts[script] === command) return false;
     return scriptCommandTokens(command).some((token) => candidates.has(token));
