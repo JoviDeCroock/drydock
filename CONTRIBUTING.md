@@ -76,10 +76,11 @@ Use [`docs/security-model.md`](docs/security-model.md) as the contract.
 
 ## Documentation
 
-Update docs in the same pull request when behavior, APIs, workflows, deployment,
-security posture, or operator requirements change. The public `/docs` page is
-implemented in `src/pages/Docs/index.tsx`; check whether it needs updates for
-public-facing documentation changes.
+Update the smallest relevant docs in the same pull request when behavior, APIs,
+workflows, deployment, security posture, or operator requirements change. Use
+[`docs/README.md`](docs/README.md) to find the right layer. The public `/docs`
+page is implemented in `src/pages/Docs/index.tsx`; check whether it needs updates
+for public-facing documentation changes.
 
 ## Reporting vulnerabilities
 

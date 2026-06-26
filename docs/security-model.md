@@ -1,240 +1,90 @@
 # Security model
 
-Drydock handles untrusted package artifacts and sensitive npm credentials. The core security posture is: **package bytes are hostile evidence; npm credentials stay outside the sandbox; approval remains a human 2FA action.**
+Drydock handles hostile package artifacts, private review evidence, and npm credentials. The core posture is: **package bytes are evidence, credentials stay outside the sandbox, and approval remains a human release action.**
 
-## Assets to protect
+## Assets
 
-- Organization npm credentials.
-- Better Auth sessions and user data.
-- Scan reports and package evidence.
-- Package contents that may be private/proprietary before approval.
-- Cloudflare account resources: D1, R2, Queues, Workers AI, and Dynamic Worker loader.
-- Maintainer trust in the final report.
+- Organization npm credentials and GitHub/Slack integration secrets.
+- Better Auth sessions, users, memberships, and organization boundaries.
+- Scan reports, package evidence, changed-file samples, and private pre-release contents.
+- Cloudflare resources: D1, R2, Queues, Workers AI, AI Gateway, and Dynamic Worker loader.
+- Maintainer trust in the review report and release decision workflow.
 
-## Adversaries and risky inputs
+## Risky inputs
 
-- Malicious package author attempting to hide malware in a staged publish.
-- Package contents attempting prompt injection against the AI reviewer.
-- Archive payloads attempting parser/resource exhaustion.
+- Malicious package artifacts attempting to hide supply-chain malware.
+- Archives attempting traversal, duplicate-path confusion, resource exhaustion, or parser edge cases.
+- Package text attempting prompt injection against the AI reviewer.
 - Package files containing accidentally leaked secrets.
-- Unauthorized users trying to read another organization's scans.
-- Credential misuse if an npm token is over-broad or leaked.
+- Unauthorized users trying to read or act on another organization's scans.
+- Over-broad or leaked registry credentials.
 
 ## Non-negotiable boundaries
 
-### No approval automation
+- **No approval automation.** Drydock must not run `npm stage approve`, collect npm 2FA codes, publish packages, or represent AI output as release approval.
+- **No package execution.** Do not execute package code, install dependencies, run lifecycle scripts, import modules, run builds, invoke shells, or render package-provided active content.
+- **No npm token in the sandbox.** The Dynamic Worker must never receive npm token material. Only `NpmStageGateway` may attach npm authorization, and only for allowlisted npm registry endpoints.
+- **AI is advisory and default-off.** Workers AI is gated by the per-organization Flagship `ai-review` flag. Deterministic findings remain authoritative and cannot be downgraded by AI output.
+- **Fail closed.** Artifact acquisition, validation, parsing, report generation, workflow-gate callback, and credential checks must block/reject on uncertainty rather than silently approving.
 
-The product must not run `npm stage approve`, must not collect npm 2FA codes, and must not represent AI output as approval. Approval remains a maintainer action in npm CLI or npmjs.com.
+## Credential posture
 
-### No package execution
-
-The product must not execute package code, install dependencies, run lifecycle scripts, import modules, run builds, invoke shell commands, or render package-provided active content.
-
-### No token in sandbox
-
-The Dynamic Worker sandbox must never receive npm token material. Only `NpmStageGateway` may attach npm authorization, and only for allowed npm registry endpoints.
-
-### AI is advisory (and Flagship-gated)
-
-Workers AI review is wired into the pipeline through `maybeRunAiReview`, but the per-organization Flagship `ai-review` flag is off by default. When the flag is disabled, the scan records AI review as unavailable and deterministic findings are the only review signal. When enabled, Workers AI reviews evidence but does not decide approval. Deterministic findings remain authoritative and cannot be downgraded by AI output.
-
-## npm credential posture
-
-Deployed instances should use per-organization npm connections.
-
-Recommended operator guidance:
-
-- Use a read-only granular npm access token.
-- Scope it to the smallest package/scope set npm allows.
-- Prefer short expiration and planned rotation.
-- Do not grant write, publish, or broad organization management access unless npm proves it is needed.
-- Avoid 2FA bypass unless npm proves a specific staged-review download endpoint requires it.
-- Continue using npm's 2FA-protected approval flow manually.
+Organizations store their own encrypted npm connection. Operators should recommend read-only, granular, minimally scoped, expiring tokens without publish/write/org-management permission unless npm proves a staged-review endpoint requires more.
 
 Implementation requirements:
 
-- Store token material encrypted at rest.
-- Show only a label/fingerprint/last-used timestamp after storage.
-- Validate credentials before use for registry auth and staged-release access.
-- Record audit events for add, validate, use, rotate, and remove.
-- Never return token material from an API.
-- Redact credential metadata fields from scan lifecycle events before returning them to the UI.
-- Never include token material in scan errors, AI inputs, logs, or persisted reports.
+- configure `NPM_CONNECTIONS_ENCRYPTION_KEY` for deployed instances;
+- encrypt token material at rest and never return it from APIs;
+- show only label/fingerprint/last-used metadata after storage;
+- validate registry auth and staged access before use;
+- re-check validation immediately before queued workers decrypt/use a token;
+- record add/validate/use/rotate/remove audit events;
+- redact credentials from lifecycle events, UI responses, logs, errors, AI inputs, and persisted reports.
 
-Current code only supports encrypted per-organization npm connections. Deployed instances must configure `NPM_CONNECTIONS_ENCRYPTION_KEY`; scans require an organization-owned npm token.
+Custom npm registries are supported for organization npm connections, but token use must still flow through constrained gateway code and production abuse controls.
 
-Scans and staged-publish discovery require the organization npm connection to be validated first. The settings page automatically runs the baseline npm auth/list validation after token save, and scheduled staged-publish discovery validates unvalidated connections during sweeps before using them. Stage-specific access is proved by discovery and scan workers when they fetch staged release evidence. Queued scan workers re-check validation immediately before decrypting and using the current token, so token rotation cannot bypass the validation gate. Custom npm registries are supported for organization npm connections and should be paired with explicit abuse controls in production operations.
+## Artifact handling and retention
 
-## Package artifact handling
+Do not retain raw tarballs by default. Persist redacted, reviewable evidence:
 
-### Default retention policy
+- package identity/version, file path/size/hash/status/flags;
+- bounded redacted text samples, package.json summaries, and diffs;
+- deterministic findings and optional AI findings;
+- release/artifact/context risk summaries;
+- safety posture and audit events;
+- canonical report JSON plus redacted file/diff artifacts in R2, with D1 holding compact metadata and historical fallback samples.
 
-Do not retain raw tarballs by default.
+Avoid storing raw staged/baseline tarballs, unredacted full source, binary payload contents, or rendered package assets unless a future explicit short-TTL org setting is added.
 
-Persist by default:
+## Sandbox and broker posture
 
-- package name/version metadata;
-- file path/size/hash/status/flags;
-- bounded redacted text samples;
-- package.json summary and diff;
-- deterministic findings;
-- AI findings (Flagship-gated and unavailable by default);
-- risk summary split into release, artifact, and context risk so `scans.risk` reflects the full artifact while unchanged hazards remain separated from the package-to-package release verdict;
-- safety posture;
-- audit events;
-- canonical report JSON plus redacted file/diff artifacts in R2, with D1 retaining compact metadata and historical fallback samples until compaction.
+The sandbox parses untrusted bytes under archive/file/expanded-size caps and returns evidence only. Direct Internet egress is intercepted. Registry/artifact fetches go through constrained brokers:
 
-Avoid by default:
+- `NpmStageGateway` for npm staged tarballs, metadata, and previous-version tarballs;
+- PyPI artifact downloads restricted to `https://files.pythonhosted.org`;
+- GitHub artifact downloads scoped to the workflow-gate installation/run being reviewed.
 
-- raw staged tarball;
-- raw previous-version tarball;
-- full unredacted source files;
-- binary payload contents;
-- package-provided rendered assets.
+The sandbox must remain small and boring. Parser bugs should fail scans, not skip evidence.
 
-Rationale: staged packages may contain secrets, proprietary code, or malicious content. Raw retention increases operator liability and incident impact. If raw retention is added later, it should be opt-in per organization, short-TTL, clearly labeled, and audited.
+## Workflow-gate posture
 
-### Redaction
-
-Redaction is a defense-in-depth feature, not a proof that data is safe. Redact known token/key patterns before persistence and AI review, but still treat all package-derived text as sensitive.
-
-### R2 artifact reads
-
-R2 artifacts are redacted derived evidence only. The scan-detail read path verifies the R2 manifest and canonical report digest before using artifact-backed file samples/diffs. Any mismatch falls back to D1 and logs a structured event without raw package contents. Operators can set `SCAN_ARTIFACT_READS_DISABLED=true` to force D1 reads while leaving R2 objects untouched. See [`artifact-storage.md`](artifact-storage.md).
-
-## Sandbox egress policy
-
-Allowed credentialed egress through `NpmStageGateway`:
-
-- `GET` staged npm tarball endpoint;
-- `GET` npm package metadata JSON endpoint.
-
-Published `.tgz` tarballs are **not** fetched through the gateway. The previous-version baseline tarball is downloaded by the trusted parent Worker (`fetchPublishedTarballBytes`), which attaches the npm token only after the URL is proven to share the configured registry origin, then hands the raw bytes to a credentials-free inline sandbox for decompression and parsing. This keeps the hostile-archive parse isolated without exposing the token to a sandbox egress path. See [diff-baseline.md](diff-baseline.md).
-
-The trusted parent Worker may also call npm's staged list/view endpoints (`/-/stage`, `/-/stage/:id`) with organization credentials for discovery, validation, tag-aware baseline selection, and shasum/mismatch checks. Current staged-view responses are metadata-only, not prepared manifests. Those responses are treated as registry metadata and are not fetched from inside the sandbox; token material still never enters the sandbox.
-
-This matches Cloudflare's [outbound Worker sandbox-auth model](https://blog.cloudflare.com/sandbox-auth/): auth injection happens in a trusted WorkerEntrypoint using parent-provided props, not inside the sandboxed workload.
-
-Blocked:
-
-- arbitrary origins;
-- package-controlled URLs;
-- install-time network calls;
-- any request where npm auth would be forwarded to a non-registry origin.
-
-The gateway compares URL origins against the configured npm registry and attaches credentials only for the minimal endpoint set requiring auth. For the PyPI foundation, it can also allow exact public artifact URLs without credentials; those URLs must be explicitly listed and are intended for `files.pythonhosted.org` release artifacts. Previous-version compare cache entries are scoped by organization so cached private-package evidence is not shared across organizations.
-
-## PyPI workflow-gate posture
-
-Workflow-gate support is not an approval bot and not a registry credential path. PyPI Trusted Publishers use OIDC from GitHub Actions, and PyPI strongly encourages binding the publisher to a GitHub Environment; npm workflow gates likewise publish from the workflow after the gate releases. Drydock's GitHub App reviews the built release artifacts while that environment is pending, records an advisory recommendation, and leaves the gate waiting for a human approve/reject decision. Artifact-resolution failures reject the gate fail-closed.
-
-Additional boundaries for workflow gates:
-
-- Do not mint PyPI OIDC tokens, hold npm publish tokens, or upload to registries.
-- Do not rebuild artifacts after review; the publish job must download the reviewed GitHub Actions artifact bundle and publish those bytes.
-- Treat the held workflow run's uploaded GitHub Actions artifacts as the release set, optionally narrowed by a configured artifact name. Recompute each artifact's SHA-256 from upload bytes, derive package name/version from artifact metadata (`package.json`, wheel `METADATA`, or sdist `PKG-INFO`), and reject missing identity, cross-artifact identity/version mismatch, or release-target mismatch.
-- There is no maintainer-declared manifest or publish-side digest-match contract today. Byte continuity rests on GitHub artifact immutability plus workflow discipline that forbids rebuilding after the gate.
-- Treat wheel ZIP, sdist tar, and npm tarball contents as hostile evidence, with the same no-execution and bounded-sample rules.
-- Keep GitHub Actions artifact credentials in the trusted parent/GitHub integration path; do not pass them into the sandbox.
+Workflow gates never publish. GitHub Environment protection holds the publish job, Drydock reviews uploaded artifacts, and Drydock only posts an accept/reject callback to GitHub. Gate state must resolve to the original installation, repository, workflow run, environment, callback URL, and organization. Artifact identity/digests are recomputed from bytes, not trusted from file names alone.
 
 ## AI prompt-injection posture
 
-AI review is Flagship-gated and off by default; the posture below documents the contract the reviewer must continue to honor when enabled for an organization.
-
-Workers AI receives an ecosystem-aware system prompt that says package contents are hostile evidence only. The prompt is built from a shared safety preamble plus a stable npm, PyPI, or generic package-release checklist. The only instruction-bearing inputs are the application-owned system prompt, top-level review task, and application-owned tool descriptions. Everything derived from a package is untrusted evidence, including filenames, manifest/metadata fields, lifecycle/build scripts, dependency names/specifiers, README text, comments, source code, diffs, deterministic finding evidence, the changed-file manifest, and every tool result.
-
-The user message should contain structured JSON with:
-
-- deterministic findings;
-- ecosystem id;
-- normalized manifest diff (`packageJsonDiff` remains the legacy field name);
-- package manifest text sample where present;
-- changed file diff metadata;
-- changed-file manifest.
-
-AI review should not bulk-load every changed file. It uses an app-owned evidence loop instead: the model may call tools to read bounded redacted file samples, read bounded text diffs when previous-version samples are available, search redacted package text literally, and list focused file subsets such as entrypoints, script-referenced files, binaries, large files, and deterministic-finding files. The controller validates paths, caps per-tool and total returned characters, limits the number of model steps, and only allows changed files, recognized manifest-referenced script/entrypoint files, deterministic-finding files, and package manifests; npm script target matching includes common extensionless Node-style references such as `node scripts/install` resolving to `scripts/install.js`. Workers AI cache affinity is suffixed with the scan ID so prompt/cache reuse cannot cross scan boundaries.
-
-Rendered diffs elide long unchanged runs to a few context lines around each change (marked `@@ N unchanged lines @@`). Besides saving tokens, this closes an evasion path: evidence is truncated from the front, so without elision a change buried deep in a large file would sit past the character budget and never reach the reviewer. The capped changed-file manifest is likewise accompanied by the total changed-file count so a release touching more files than the manifest carries cannot hide the overflow.
-
-Prompt-injection handling is explicit: if package-derived text tells the model to ignore rules, hide findings, mark the release safe, change severity, reveal prompts, or output non-JSON, the model must ignore that text as an instruction and may report it only as evidence.
-
-The prompt's npm-specific risk checklist prioritizes:
-
-- install-time lifecycle hooks such as `preinstall`, `install`, `postinstall`, `prepare`, `prepack`, `postpack`, and publish/prepublish hooks;
-- lifecycle script bodies that invoke shells, `node`, package managers, `curl`/`wget`, `powershell`, `git`, or `child_process`-style behavior;
-- added or modified dependencies, optional dependencies, peer dependencies, and bundled dependencies, because their own lifecycle scripts may run on consumer install even when they are not present in the staged tarball evidence;
-- unusual dependency specs such as git/http/tarball/file URLs, npm alias syntax, broad ranges, typo-squat-looking names, native/build tooling, or optional platform-specific packages;
-- entrypoint changes, credential/environment access, network/process execution, obfuscation/dynamic code, native binaries, unparseable package manifests, and package-shape surprises.
-
-The AI must not claim an added dependency is malicious without evidence. If dependency risk depends on unavailable dependency metadata or maintainer reputation, it should require manual review and recommend checking the dependency tarballs/metadata rather than guessing.
-
-The PyPI-specific risk checklist prioritizes:
-
-- wheel/sdist identity and metadata integrity, including METADATA, WHEEL, RECORD, and PKG-INFO agreement with the reviewed package name/version;
-- missing wheel RECORD metadata or files present in a wheel but absent from RECORD;
-- setup.py, pyproject.toml build-backend, and custom install/build behavior that can run during pip install or package build;
-- `.pth` import lines, `sitecustomize.py`, `usercustomize.py`, wheel `.data` scripts, and other interpreter-startup or command-entry hooks;
-- Requires-Dist additions or modifications, direct URL/VCS/local references, broad or surprising version ranges, extras/environment markers with platform-specific behavior, and native/build-tool dependencies;
-- credential/environment access, network/process execution, dynamic import/eval/exec/compile behavior, encoded payloads, native binaries, pyc-only distributions, and wheel/sdist package-shape surprises.
-
-The AI must not treat ordinary Python packaging files as suspicious by themselves. It should escalate when those files introduce install/build execution, startup hooks, metadata inconsistency, native payloads, credential/network/process capability, obfuscation, or an unexplained package-shape change.
-
-Do not include unbounded package contents. Do not include unchanged files except as metadata where needed, as package manifest / deterministic-finding evidence, or when recognized manifest fields newly reference them as lifecycle-script targets or entrypoints. Do not let package contents define instructions, schema, roles, tool policy, or severity rules.
-
-If AI fails or returns invalid data, the scan records AI review as unavailable/invalid and must not silently pass. The submission path is hardened so that a reviewer which actually flagged a risk cannot be discarded on a technicality:
-
-- **Tolerant submission (`clampAiReviewSubmission` + `experimental_repairToolCall`).** A complete, well-typed `submit_review` whose summary or a finding field overshoots its length bound by a few characters is deterministically clamped to the bound (`AI_REVIEW_BOUNDS`) and accepted — no extra model round-trip. Previously strict schema validation rejected the whole tool call, `execute` never ran, and a genuinely high-risk review degraded to an `invalid` fallback that read as low risk. Structurally broken submissions (unparseable/truncated JSON, bad enum, missing field) are still rejected.
-- **Stop only on a recorded review.** The agent loop stops when a review is actually recorded, not merely when a `submit_review` tool call appears. An invalid `submit_review` no longer ends the loop with nothing recorded; the model sees the tool error and retries, bounded by the step budget.
-- **Forced final-step submission.** The last step the step budget allows restricts the toolset to `submit_review` and forces the call, so a run that spends every step gathering evidence still records the model's genuine assessment instead of discarding the run. Tool responses also announce evidence-budget exhaustion so the model submits rather than issuing no-op reads. A forced submission that fails validation still falls through to the fail-safe escalation below.
-- **Bounded transient fallback.** Workers AI capacity/overload/rate-limit errors are retried on the primary reviewer before the same evidence is sent to the Qwen fallback. Non-transient failures and invalid submissions do not switch models because they are likely deterministic request/schema failures.
-- **Fail safe at the risk layer (`computeScanRisk`).** An AI review that was _attempted_ (a model id is present) but did not complete escalates the scan to manual-review risk, so a release cannot pass clean by inducing the reviewer to crash or emit an unparseable submission. A review that never ran — AI review disabled for the org, so `model` is `null` — stays neutral and preserves the deterministic-only verdict.
+Package contents are hostile instructions. AI prompts must frame package text as evidence, restrict outputs to schema-validated findings, and keep deterministic findings/risk independent. AI input should include only the minimum changed-file evidence needed for review, never credentials, sessions, raw headers, or operator secrets. Invalid, partial, or unsafe AI output is ignored/unavailable rather than treated as a clean review.
 
 ## Authorization posture
 
-Current guardrail:
-
-- every non-auth `/api/*` route requires a Better Auth session;
-- scans are filtered by organization ID;
-- personal organizations are stable per user;
-- public sign-up is enabled when the instance allows it.
-
-Before broad use:
-
-- keep organization ownership checks on every scan/report/token route;
-- add tests for cross-organization access denial;
-- add route-level permission helpers even before full RBAC;
-- make future RBAC additive rather than rewriting ownership checks.
-
-RBAC can remain incremental, but the schema and route boundaries should not assume resources are global or user-only.
+Every non-auth `/api/*` endpoint requires a Better Auth session and organization resolution. Reads and writes for scans, reports, npm connections, Slack installs, release targets, workflow gates, and settings must check organization ownership. UI state is not an authority; server routes make all access-control decisions.
 
 ## Browser response headers
 
-Security response headers reach the browser by two delivery paths that must carry the same policy: Worker-served responses (the `run_worker_first` paths — `/api`, `/api/*`, `/webhooks/*`) get them from `applySecurityHeaders()` in `server/index.ts`, while static assets and the SPA document are served by Cloudflare's edge and get them from `public/_headers`. `server/lib/security-headers.ts` is the single source of truth; `test/security-headers.test.ts` fails if the hand-copied `_headers` values drift. HSTS (`Strict-Transport-Security`) lives in both so every response — API, webhook, page, and bundled asset — pins clients to HTTPS and a stripped/downgraded request can't reach the origin in cleartext.
+Production responses should keep conservative security headers: no package-provided active content, no cross-origin credential leakage, and no relaxed CSP/CORS decisions for convenience.
 
-## Signed reports later
+## Known gaps / future work
 
-Signed reports are not exposed yet. Prepare by making report payloads canonical and digestible.
-
-Current foundation:
-
-- newly completed scans store a report version and SHA-256 digest in `summary_json.report` and denormalize them onto `scans.report_version` / `scans.report_digest`;
-- the digest is computed over stable canonical JSON containing redacted scan evidence only.
-
-Future signed report requirements:
-
-- use immutable report payload snapshots in R2 before exposing public signed reports;
-- signature records include signer user, organization, scan, digest, and timestamp;
-- revocation/withdrawal is represented without mutating the original report;
-- public access requires explicit sharing controls.
-
-Do not expose signed report URLs until access controls, report canonicalization, and audit events are complete.
-
-## Known gaps
-
-- Per-organization encrypted npm connections exist. `validateNpmCredential` checks registry auth (`/-/whoami`), staged-list access (`validateStagedListAccess`), and — when supplied a real stage ID — staged-view (`validateStagedViewAccess`) and staged-tarball (`validateStagedTarballAccess`) access. A read-only granular token reaches all of these endpoints, so the previous list/view capability gap is resolved.
-- Queue-backed scan retry/dead-letter behavior exists in code and Wrangler config, and scan/queue paths now emit structured secret-redacted operational events. Production queue resources, DLQ visibility, metrics dashboards, and alerts still need deployment validation.
-- Persisted detail UI now renders recommendations, package diffs, manifest changes, reviewer notes, and release/context risk signals; report provenance/digest display and lifecycle timelines still need polish.
-- Tar/ZIP parsing now rejects traversal paths, skips symlinks/hardlinks, handles long-name/PAX paths, caps expanded size, keeps at most 2,500 file records, and captures the **whole** text of each eligible file for detection — bounded by the 25 MiB expanded-archive cap rather than a per-file window, so an attacker can no longer bury a payload past a fixed sample limit (issue #191); the persisted/display sample is separately clipped to 128 KiB in `scanFileRowsForArtifacts`. It skips text samples for low-value generated artifacts such as source maps and minified bundles while preserving their metadata/hashes (TypeScript declaration files keep their samples so their public API surface stays diffable), and fails closed when the safe file-count limit is exceeded. Parser invariants are now guarded by property/fuzz tests (`test/archive-parser.fuzz.test.mjs`, `fast-check`): for arbitrary and byte-mutated archives every emitted path is structurally safe (no traversal/drive-letter/backslash/NUL escape), the file-count and expansion caps hold, and the parser fails closed (bounded `Error`, never a hang or unsafe path). The deep pass (`pnpm run fuzz`, `FUZZ_RUNS=20000`) is the archive-bomb/path-escape soak; it already caught a real drive-letter escape (`package//C:` → `C:`) that is now fixed and pinned as a regression.
-- Basic D1-backed rate limits exist for scans and credential operations; production should add metrics, alerts, and edge/IP-based abuse controls.
-- Team RBAC is deferred.
-- Public signed reports are deferred.
+- Public signed reports are not exposed yet; report data should remain canonical and future-signable.
+- Raw-artifact retention, if ever added, must be explicit, short-TTL, organization-scoped, and documented.
+- Additional ecosystems need adapter-specific credential, baseline, artifact, and failure-mode review before enablement.
+- Keep dependency and parser updates covered by regression/fuzz tests because archive handling is a trust boundary.

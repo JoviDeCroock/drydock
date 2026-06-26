@@ -3,52 +3,54 @@
 ## Layout
 
 - `server/` — Hono Worker. `index.ts` mounts routes under `/api/*`. The Worker is the deploy target (`main` in `wrangler.jsonc`).
-  - `routes/scans.ts` — `POST /api/v1/scans { stageId }` (create queued/background scan), `GET /api/v1/scans` (list), `GET /api/v1/scans/:id` (persisted detail).
-  - `routes/github-webhooks.ts` — `POST /webhooks/github`. Public, signed by the GitHub App webhook secret; bypasses Better Auth. Persists `deployment_protection_rule` deliveries into `github_workflow_gates` and updates installation status on lifecycle events. See `docs/workflow-gates.md` and `docs/npm-workflow-gate.md` (the gate machinery is ecosystem-neutral; npm vs PyPI is content-detected in `lib/workflow-gates/`).
-  - `lib/sandbox.ts` — Dynamic Worker that downloads + parses a tarball; `NpmStageGateway` is the only allowed egress.
-  - `lib/review.ts` — Deterministic findings, package diff, package.json diff, risk computation. Types are shared with the UI.
-  - `lib/ai-review.ts` — Workers AI reviewer, wired via `scan-pipeline.ts` (`maybeRunAiReview`) but off by default (see trust boundary below).
-  - `lib/registry.ts` — npm metadata fetch + previous-version selection.
-  - `lib/auth.ts` — Better Auth instance (D1 + Drizzle).
-  - `db/` — Drizzle schema + persistence helpers (scans, scan_files, scan_findings, better-auth tables).
-  - `env.d.ts` — `Cloudflare.Env` bindings. Regenerate with `pnpm run cf-typegen` after changing `wrangler.jsonc`.
-- `src/` — Preact UI served as static assets by the Worker. `index.tsx` mounts the `preact-iso` router and lazy-loads `pages/`; `models/` holds fetch wrappers that re-use `server/` types.
-- `drizzle/` — D1 migrations.
-- `test/` — Vitest specs. Pure logic tests under `test/`; Worker-runtime + D1 tests under `test/workers/`; Playwright + fake-registry e2e under `test/e2e/` and `test/e2e-fixtures/`.
+  - `routes/scans.ts` — `POST /api/v1/scans { stageId }`, `GET /api/v1/scans`, `GET /api/v1/scans/:id`.
+  - `routes/github-webhooks.ts` — public signed GitHub App webhook endpoint. Persists `deployment_protection_rule` deliveries into `github_workflow_gates`; see `docs/workflow-gates.md`.
+  - `lib/sandbox.ts` — Dynamic Worker that downloads/parses package artifacts. `NpmStageGateway` is the only npm-token egress.
+  - `lib/review.ts` — deterministic findings, package/package.json diffing, risk computation, and shared UI types.
+  - `lib/ai-review.ts` — Workers AI reviewer, wired via `scan-pipeline.ts` and default-off behind the `ai-review` Flagship flag.
+  - `lib/adapters/` — ecosystem-specific registry/artifact behavior for npm, PyPI, and workflow gates.
+  - `db/` — Drizzle schema and persistence helpers for scans, findings, artifacts, workflow gates, and Better Auth.
+- `src/` — Preact UI. `index.tsx` mounts `preact-iso`; `models/` re-use `server/` types.
+- `drizzle/` — D1 migrations generated from `server/db/schema.ts`.
+- `docs/` — reference docs. Start with `docs/README.md` and read only the relevant layer.
+- `test/` — Vitest logic/Worker suites plus Playwright fake-registry e2e fixtures.
 
-## Conventions
+## Non-negotiable boundaries
 
-- **Trust boundary:** package bytes are untrusted evidence; deterministic findings are authoritative. The AI reviewer is gated off-by-default behind the per-organization `ai-review` Flagship flag. When enabled it only sees changed files, treats contents as hostile, and cannot downgrade deterministic findings. Don't change the default-off gating without a feature decision.
-- **Egress:** the Dynamic Worker's `globalOutbound` is `NpmStageGateway` — the only path that attaches the npm token, and only for the staged tarball endpoint. It must remain the only credentialed egress.
-- Shared types live in `server/` (`server/types.ts`, `server/lib/review.ts`); the UI imports them by relative path so request/response shapes are shared at compile time.
-- D1 / Better Auth are required for every non-auth `/api/*` endpoint.
-- **Read [`DESIGN.md`](DESIGN.md) before any visual or UI decision.** It is the source of truth for fonts, colors, spacing, iconography (text glyphs only — no SVG icons), data viz (severity stacked bar only), state patterns, and marketing-surface rules. Its anti-patterns are prohibitions, not suggestions — don't deviate without explicit approval.
-- Styling is Tailwind CSS v4 (`@tailwindcss/vite`); tokens live in `src/style.css` under `@theme`, with light/dark via `prefers-color-scheme`. Reach for primitives in `src/components/` (`Button`, `Input`, `Field`, `Badge`, `Alert`, `Card`, `PageShell`, `Eyebrow`, …) before one-off classes. No CSS-in-JS.
-- We use `preact`, `preact-iso`, and `@preact/signals`. Never `preact/compat`.
-- `useState`/`useReducer` are banned (oxlint `no-restricted-imports`). Component-local state goes through `useSignal`/`useComputed` or `createModel`/`useModel`. See `docs/tooling.md` and the `.claude/skills/preact-signals-*` skills.
-- Comments explain _why_ — rationale, trust boundaries, concurrency/fail-closed behavior, edge cases, units, magic numbers. Don't restate what the code already says, narrate obvious control flow, or label a self-evident symbol; never leave commented-out code or stale TODOs. The codebase keeps a deliberately high signal-to-noise ratio.
-- Never hand-write SQL migrations — run `pnpm db:generate` against `server/db/schema.ts`.
-- Read `docs/` before starting work. Before finishing any behavior, API, UI,
-  security, or workflow change, explicitly check whether `docs/` or the public
-  `/docs` page need updates. If no docs change is needed, note "docs checked, no
-  update needed" in the PR summary or testing notes.
+- Package bytes are hostile evidence. Never execute package code, install dependencies, run lifecycle scripts, import modules, run builds, invoke shells, or render package-provided active content.
+- npm credentials stay outside the sandbox. Only `NpmStageGateway` may attach npm auth, only for allowed staged/metadata/tarball registry endpoints.
+- The AI reviewer is advisory and default-off behind the per-organization `ai-review` flag. It cannot downgrade deterministic findings.
+- D1/Better Auth are required for every non-auth `/api/*` endpoint; resource ownership must be organization-scoped.
+- Operational logs/events must be structured and secret-redacted. Never log raw tokens, headers, package contents, or unredacted errors.
+
+## UI and frontend conventions
+
+- Read `DESIGN.md` before visual or UI decisions. It is the source of truth for fonts, colors, spacing, iconography, data viz, state patterns, and marketing-surface rules.
+- Tailwind CSS v4 tokens live in `src/style.css`; prefer primitives in `src/components/` before one-off classes. No CSS-in-JS and no SVG icons.
+- Use `preact`, `preact-iso`, and `@preact/signals`; never `preact/compat`.
+- `useState`/`useReducer` are banned. Use `useSignal`, `useComputed`, `createModel`, and `useModel`. See `docs/tooling.md` and `.claude/skills/preact-signals-*`.
 
 ## Testing
 
-New functionality needs tests in the same change, at the narrowest useful layer; add broader coverage when behavior crosses a trust boundary:
+New functionality needs tests at the narrowest useful layer; add broader coverage when behavior crosses a trust boundary:
 
-- `server/routes/*`, auth, org scoping, rate limits, D1 persistence, queues, scan lifecycle → Worker-route tests in `test/workers/`.
-- Sandbox, archive parser, npm credential forwarding, redaction, deterministic-rule changes → invariant/regression tests. The sandbox must never receive token material; `NpmStageGateway` must stay the only credentialed egress.
-- npm registry behavior, staged-publish discovery, endpoint drift, browser-visible scan flows → fake-registry e2e in `test/e2e-fixtures/` and `test/e2e/local-registry.spec.ts`.
-- Deterministic detection changes → security-corpus fixtures with explicit rule IDs, severity, and risk. The golden corpus (`test/security-corpus*.test.mjs`) guards regressions; the eval harness (`test/eval/`, `pnpm run eval`) measures detection quality (recall, benign FP rate, evasion robustness). See `docs/detection-eval.md`.
-- Operational paths emit structured, secret-redacted events via `server/lib/observability.ts` — never log raw errors, tokens, headers, or package contents.
+- Routes, auth, org scoping, rate limits, D1 persistence, queues, scan lifecycle → `test/workers/`.
+- Sandbox/archive parsing/npm credential forwarding/redaction/deterministic rules → invariant or regression tests; the sandbox must never receive token material.
+- Registry behavior, staged-publish discovery, workflow gates, browser-visible scan flows → fake-registry e2e in `test/e2e-fixtures/` and `test/e2e/local-registry.spec.ts`.
+- Detection changes → security corpus fixtures with explicit rule IDs/severity/risk, plus eval coverage when relevant. See `docs/security-detection-corpus.md` and `docs/detection-eval.md`.
 
 ## Commands
 
-- `pnpm run verify` — lint + format check + typecheck + tests. Run before every commit (CI runs the same, plus e2e). There is no git hook; run it explicitly.
-- `pnpm run dev` — Vite dev server with the Cloudflare plugin (Worker at `http://localhost:5173`).
-- `pnpm run lint` / `lint:fix` — oxlint. `pnpm run format` / `format:check` — oxfmt.
+- `pnpm run verify` — lint + format check + typecheck + tests; run before every commit when practical.
+- `pnpm run dev` — Vite dev server with the Cloudflare plugin (`http://localhost:5173`).
+- `pnpm run lint` / `pnpm run lint:fix` — oxlint.
+- `pnpm run format` / `pnpm run format:check` — oxfmt.
+- `pnpm run typecheck` — TypeScript typecheck.
 - `pnpm run test` — Vitest logic + Worker-runtime suites.
-- `pnpm run test:e2e` — Playwright against the fake registry; required for registry, credential-forwarding, staged-publish, and scan-workflow changes. `pnpm run e2e:fixtures` / `e2e:dev` set up the harness.
-- `pnpm run eval` — detection eval harness. See `docs/detection-eval.md`.
-- `pnpm db:generate` — Drizzle migration from `server/db/schema.ts`.
+- `pnpm run test:e2e` — Playwright fake-registry e2e.
+- `pnpm run eval` — detection eval harness.
+- `pnpm db:generate` — generate Drizzle migrations; never hand-write SQL migrations.
+
+## Documentation expectations
+
+Use `docs/README.md` to select relevant docs instead of reading all of `docs/`. Before finishing behavior, API, UI, security, workflow, deployment, or operator changes, update the relevant docs or note `docs checked, no update needed` in the PR summary/testing notes.
