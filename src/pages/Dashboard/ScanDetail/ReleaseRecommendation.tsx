@@ -58,12 +58,12 @@ export function ReleaseRecommendation({
   // The recommendation is the report's verdict, so it gets the only elevated
   // (carded) section among the supplementary bare sections below it, plus a
   // headline-scale verdict in the matching severity text color. Elevation +
-  // scale make it out-rank Risk signals / Manifest / Reviewer notes, which all
+  // scale make it out-rank Risk signals / Manifest / Inspector notes, which all
   // share the flat SectionLabel altitude.
   return (
     <Card class="p-5 sm:p-6 flex flex-col gap-4">
       <div class="flex flex-col gap-2">
-        <SectionLabel>Recommendation</SectionLabel>
+        <SectionLabel>Inspection recommendation</SectionLabel>
         <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
           <h2
             class={`m-0 text-lg font-semibold tracking-[-0.01em] ${verdictColor(recommendation.tone)}`}
@@ -78,7 +78,7 @@ export function ReleaseRecommendation({
               (ai.kind === "complete" ? (
                 <>
                   <Badge tone={ai.requiresManualReview ? "medium" : "ok"}>
-                    {ai.requiresManualReview ? "manual review" : "no extra review"}
+                    {ai.requiresManualReview ? "manual inspection" : "no extra inspection"}
                   </Badge>
                   <Badge tone="neutral">{ai.releaseAssessment.replaceAll("_", " ")}</Badge>
                 </>

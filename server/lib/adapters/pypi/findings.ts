@@ -37,7 +37,7 @@ export function pyPiReleaseFindings(
           file: metadataEvidencePath,
           evidence: `${artifact.path} does not expose complete PyPI metadata`,
           reason:
-            "release gates need package name and version metadata to prove the artifact matches the reviewed manifest",
+            "release gates need package name and version metadata to prove the artifact matches the inspected manifest",
         }),
       );
     } else if (normalizePyPiProjectName(summary.name) !== manifestName) {
@@ -46,7 +46,7 @@ export function pyPiReleaseFindings(
           severity: "critical",
           file: metadataEvidencePath,
           evidence: `${artifact.path} metadata Name ${summary.name} != manifest package ${manifest.package}`,
-          reason: "the release artifact package name does not match the reviewed PyPI manifest",
+          reason: "the release artifact package name does not match the inspected PyPI manifest",
         }),
       );
     }
@@ -56,7 +56,7 @@ export function pyPiReleaseFindings(
           severity: "critical",
           file: metadataEvidencePath,
           evidence: `${artifact.path} metadata Version ${summary.version} != manifest version ${manifest.version}`,
-          reason: "the release artifact version does not match the reviewed PyPI manifest",
+          reason: "the release artifact version does not match the inspected PyPI manifest",
         }),
       );
     }
@@ -81,7 +81,7 @@ export function pyPiReleaseFindings(
           file: metadataEvidencePath,
           evidence: `direct-reference dependency: ${directReferenceDeps.join(", ")}`,
           reason:
-            "PEP 508 direct-URL/VCS dependencies bypass the PyPI registry and pull unreviewed code from an arbitrary location",
+            "PEP 508 direct-URL/VCS dependencies bypass the PyPI registry and pull uninspected code from an arbitrary location",
         }),
       );
     }

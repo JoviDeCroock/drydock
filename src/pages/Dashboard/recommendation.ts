@@ -8,7 +8,7 @@ export interface ReleaseRecommendationCopy {
 
 // `target` only shapes the trailing call-to-action copy: an npm scan ends in a
 // maintainer publishing with 2FA, while a workflow gate ends in the maintainer
-// releasing or blocking the held GitHub job (publishing then happens via PyPI
+// clearing or blocking the held GitHub job (publishing then happens via PyPI
 // Trusted Publishing). Labels and tones are identical either way.
 export function getReleaseRecommendation(
   artifactRisk: string,
@@ -19,20 +19,20 @@ export function getReleaseRecommendation(
   const isGate = target === "gate";
   if (releaseRisk === "critical" || releaseRisk === "high") {
     return {
-      label: "block manual approval",
+      label: "keep in drydock",
       tone: releaseRisk === "critical" ? "critical" : "high",
       copy: isGate
-        ? "Do not approve until you have reviewed and resolved the highlighted release evidence."
-        : "Do not approve this staged publish until you have reviewed and resolved the highlighted release evidence outside Drydock.",
+        ? "Do not clear until you have inspected and resolved the highlighted release evidence."
+        : "Do not clear this staged publish until you have inspected and resolved the highlighted release evidence outside Drydock.",
     };
   }
   if (releaseRisk === "medium") {
     return {
-      label: "review carefully",
+      label: "inspect carefully",
       tone: "medium",
       copy: isGate
         ? "Before releasing the job, inspect the most important findings, manifest changes, and changed files below."
-        : "Before approving, inspect the most important findings, manifest changes, and changed files below.",
+        : "Before clearing, inspect the most important findings, manifest changes, and changed files below.",
     };
   }
   if (
@@ -46,10 +46,10 @@ export function getReleaseRecommendation(
     };
   }
   return {
-    label: "likely safe",
+    label: "cleared for release",
     tone: "ok",
     copy: isGate
-      ? "No blocking deterministic signals were found. Your decision releases or blocks the held GitHub job."
-      : "No blocking deterministic signals were found. A maintainer still approves the publish in npm.",
+      ? "No blocking deterministic signals were found. The held GitHub job is ready for clearance."
+      : "No blocking deterministic signals were found. A maintainer still clears the publish in npm.",
   };
 }

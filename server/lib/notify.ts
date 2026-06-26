@@ -41,33 +41,36 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
   const dashboardUrl = scanUrl(env, scanId);
   const subject =
     outcome === "complete"
-      ? `Staged release scan complete — ${packageLabel}`
-      : `Staged release scan failed — ${packageLabel}`;
+      ? `New version docked and ready for inspection — ${packageLabel}`
+      : `Version could not dock for inspection — ${packageLabel}`;
 
   const lines =
     outcome === "complete"
       ? [
           "Hi there,",
           "",
-          `We finished scanning the staged release ${packageLabel}.`,
+          `New version docked and ready for inspection: ${packageLabel}.`,
           scan?.risk ? `Overall risk: ${scan.risk}.` : null,
-          dashboardUrl ? `Review the report: ${dashboardUrl}` : null,
+          dashboardUrl ? `Inspect the report: ${dashboardUrl}` : null,
           "",
           "— Drydock",
         ]
       : [
           "Hi there,",
           "",
-          `We could not complete the staged release scan for ${packageLabel}.`,
+          `We could not dock ${packageLabel} for inspection.`,
           error?.message ? `Reason: ${error.message}` : null,
-          dashboardUrl ? `Review the scan: ${dashboardUrl}` : null,
+          dashboardUrl ? `Open the inspection: ${dashboardUrl}` : null,
           "",
           "— Drydock",
         ];
   const text = lines.filter((line): line is string => line !== null).join("\n");
 
   const slackPayload: SlackNotificationPayload = {
-    title: outcome === "complete" ? "Staged release scan complete" : "Staged release scan failed",
+    title:
+      outcome === "complete"
+        ? "New version docked and ready for inspection"
+        : "Version could not dock for inspection",
     packageLabel,
     source: "npm staged publish",
     risk: scan?.risk ?? null,
@@ -165,13 +168,13 @@ export async function notifyNpmConnectionExpired(
   const lines = [
     "Hi there,",
     "",
-    "Drydock can no longer reach the npm staging registry with your saved token, so staged-release reviews are paused for your organization.",
+    "Drydock can no longer reach the npm staging registry with your saved token, so staged-release inspections are paused for your organization.",
     "",
     `Registry: ${registryUrl}`,
     "",
     settingsLink
-      ? `Re-add a working token on Settings to resume reviews: ${settingsLink}`
-      : "Re-add a working token on the Settings page to resume reviews.",
+      ? `Re-add a working token on Settings to resume inspections: ${settingsLink}`
+      : "Re-add a working token on the Settings page to resume inspections.",
     "",
     "— Drydock",
   ];
@@ -249,38 +252,38 @@ export async function notifyWorkflowGateReview(
   // A monorepo release fans out into several per-package scans behind one gate;
   // the gate carries only its headline (highest-risk) package. Surface the bundle
   // size in every channel so the headline isn't mistaken for the whole release —
-  // each package must be approved before the held deployment can publish.
+  // each package must be cleared before the held deployment can publish.
   const packageDisplay = otherPackages
-    ? `${packageLabel} (+${otherPackages} more in this release; each must be approved)`
+    ? `${packageLabel} (+${otherPackages} more in this release; each must be cleared)`
     : packageLabel;
   const packageLine = `Package: ${packageDisplay}`;
-  const subject = `Release gate needs your review — ${packageLabel}`;
+  const subject = `Release docked and waiting for inspection — ${packageLabel}`;
   const lines = [
     "Hi there,",
     "",
-    `A staged release is held in ${repositoryFullName} and is waiting for a decision before it can publish.`,
+    `A release is docked in ${repositoryFullName} and is waiting for inspection before it can publish.`,
     "",
     packageLine,
     `Release risk: ${releaseRisk}`,
     `Repository: ${repositoryFullName}`,
     `Environment: ${environment}`,
     "",
-    dashboardUrl ? `Approve or block the release: ${dashboardUrl}` : null,
+    dashboardUrl ? `Inspect and clear the release: ${dashboardUrl}` : null,
     "",
-    "The held GitHub deployment stays blocked until someone approves or rejects it.",
+    "The held GitHub deployment stays docked until someone clears or holds it.",
     "",
     "— Drydock",
   ];
   const text = lines.filter((line): line is string => line !== null).join("\n");
 
   const slackPayload: SlackNotificationPayload = {
-    title: "Release gate needs a decision",
+    title: "Release docked for inspection",
     packageLabel: packageDisplay,
     source: "GitHub workflow gate",
     risk: releaseRisk,
     repository: repositoryFullName,
     environment,
-    statusLine: `Held in ${repositoryFullName} — the deployment stays blocked until someone approves or rejects it.`,
+    statusLine: `Docked in ${repositoryFullName} — the deployment stays docked until someone clears or holds it.`,
     dashboardUrl,
   };
 
@@ -383,19 +386,19 @@ export async function notifyWorkflowGateTimeout(
 
   const packageLabel = formatPackageLabel(packageName, version);
   const dashboardUrl = scanUrl(env, scanId);
-  const subject = `GitHub gate for ${packageLabel} timed out before scan completed`;
+  const subject = `GitHub gate for ${packageLabel} timed out before inspection completed`;
   const lines = [
     "Hi there,",
     "",
-    `The GitHub release gate for ${packageLabel} in ${repositoryFullName} timed out before Drydock finished scanning it.`,
-    "GitHub may have already blocked the release because the review did not return inside its decision window.",
+    `The GitHub release gate for ${packageLabel} in ${repositoryFullName} timed out before Drydock finished inspecting it.`,
+    "GitHub may have already held the release because the inspection missed its clearance window.",
     "",
     `Repository: ${repositoryFullName}`,
     `Environment: ${environment}`,
     "",
-    dashboardUrl ? `See the completed review: ${dashboardUrl}` : null,
+    dashboardUrl ? `See the completed inspection: ${dashboardUrl}` : null,
     "",
-    "Re-run the workflow to request a fresh review.",
+    "Re-run the workflow to request a fresh inspection.",
     "",
     "— Drydock",
   ];
@@ -583,7 +586,7 @@ function formatPackageLabel(
   version: string | null | undefined,
 ) {
   if (packageName && version) return `${packageName}@${version}`;
-  return packageName ?? "a staged release";
+  return packageName ?? "a docked release";
 }
 
 function scanUrl(env: Cloudflare.Env, scanId: string): string | null {

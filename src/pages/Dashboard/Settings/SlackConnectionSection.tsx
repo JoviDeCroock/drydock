@@ -73,7 +73,7 @@ export function SlackConnectionSection({
       <SettingsCardBody>
         <Muted class="text-[13px] m-0 max-w-[760px]">
           Connect a Slack workspace and choose one public channel for Drydock to post scan
-          completions and release-gate reviews. The bot token is encrypted at rest and only ever
+          completions and release-gate inspections. The bot token is encrypted at rest and only ever
           posts to the channel you pick.
         </Muted>
 

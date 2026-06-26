@@ -102,7 +102,7 @@ export default function DashboardPage() {
     return (
       <PageShell>
         <DashboardHeader />
-        <LoadingState title="Opening workspace" detail="checking session · loading reviews" />
+        <LoadingState title="Opening workspace" detail="checking session · loading inspections" />
       </PageShell>
     );
   }
@@ -143,10 +143,10 @@ export default function DashboardPage() {
           title="Loading workspace"
           detail={
             npmLoaded
-              ? "fetching recent reviews"
+              ? "fetching recent inspections"
               : scansLoaded
                 ? "checking npm connection"
-                : "loading reviews · checking npm connection"
+                : "loading inspections · checking npm connection"
           }
         />
       )}
@@ -157,10 +157,12 @@ export default function DashboardPage() {
 function DashboardHeader() {
   return (
     <header class="flex flex-col gap-2 max-w-[640px]">
-      <Eyebrow>Review workspace</Eyebrow>
-      <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Ready for the next release</h1>
+      <Eyebrow>Inspection dock</Eyebrow>
+      <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">
+        New version docked and ready for inspection
+      </h1>
       <Muted class="text-[14px] leading-[1.55] m-0">
-        Review held npm and PyPI candidates before maintainers let them go live.
+        Dock held npm and PyPI candidates for inspection before maintainers let them go live.
       </Muted>
     </header>
   );
@@ -216,7 +218,7 @@ function RecentReviewsSection({
   return (
     <Card as="section" padding="none" class="overflow-hidden">
       <div class="px-5 py-4 flex flex-col gap-3 md:flex-row md:items-center">
-        <SectionLabel class="flex-1 min-w-0 after:hidden">Recent reviews</SectionLabel>
+        <SectionLabel class="flex-1 min-w-0 after:hidden">Recent inspections</SectionLabel>
         <div class="flex flex-wrap items-center gap-2 shrink-0">
           <ScanStateSelect
             value={scans.filter.value}
@@ -228,7 +230,7 @@ function RecentReviewsSection({
             size="sm"
             onClick={() => void onDiscover()}
             disabled={discoveryRefreshing || !ready}
-            title="Find staged npm publishes and start reviews"
+            title="Find staged npm publishes and dock them for inspection"
           >
             {discoveryRefreshing ? "Checking npm…" : "Check npm"}
           </Button>
@@ -237,7 +239,7 @@ function RecentReviewsSection({
             size="sm"
             onClick={() => void scans.refresh()}
             disabled={scans.refreshing.value}
-            title="Reload the reviews list"
+            title="Reload the inspections list"
           >
             {scans.refreshing.value ? "Refreshing…" : "Refresh"}
           </Button>
@@ -249,13 +251,13 @@ function RecentReviewsSection({
           {showFreshness ? <ScanFreshnessIndicator at={discoveredAt} /> : null}
           {showStartedMessage && discovery ? (
             <Muted class="text-[13px] m-0">
-              {`Started ${discovery.created} new review${discovery.created === 1 ? "" : "s"} from npm${
+              {`${discovery.created === 1 ? "New version docked" : `${discovery.created} new versions docked`} and ready for inspection from npm${
                 startedLabels.length ? `: ${startedLabels.slice(0, 3).join(", ")}` : ""
               }${startedLabels.length > 3 ? `, +${startedLabels.length - 3} more` : ""}.`}
             </Muted>
           ) : null}
           {showNoOpenMessage ? (
-            <Muted class="text-[13px] m-0">No open staged publishes found.</Muted>
+            <Muted class="text-[13px] m-0">No staged publishes waiting to dock.</Muted>
           ) : null}
         </div>
       ) : null}
@@ -309,8 +311,8 @@ function RecentReviewsSection({
 
 const FILTER_OPTIONS: Array<{ value: ScanDecisionFilter; label: string }> = [
   { value: "undecided", label: "Undecided" },
-  { value: "publish", label: "Approved" },
-  { value: "no_publish", label: "Blocked" },
+  { value: "publish", label: "Cleared" },
+  { value: "no_publish", label: "Held" },
   { value: "all", label: "All" },
 ];
 
@@ -335,7 +337,7 @@ function ScanStateSelect({
 }) {
   return (
     <label class="flex items-center gap-2">
-      <span class="sr-only">Review state</span>
+      <span class="sr-only">Inspection state</span>
       <span aria-hidden class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
         State
       </span>
@@ -360,13 +362,13 @@ function ScanStateSelect({
 function emptyStateMessage(filter: ScanDecisionFilter): string {
   switch (filter) {
     case "undecided":
-      return "Nothing waiting on you. Switch to All to see earlier reviews.";
+      return "Nothing waiting in the dock. Switch to All to see earlier inspections.";
     case "publish":
-      return "No approved reviews yet.";
+      return "No cleared inspections yet.";
     case "no_publish":
-      return "No blocked reviews yet.";
+      return "No held inspections yet.";
     default:
-      return "No reviews yet. Check npm or wait for auto-discovery to find a staged release.";
+      return "No versions docked yet. Check npm or wait for auto-discovery to find a staged release.";
   }
 }
 
@@ -381,7 +383,7 @@ function NpmSetupCallout() {
       <div class="flex flex-col gap-1.5 min-w-0">
         <SectionLabel>npm not connected</SectionLabel>
         <Muted class="text-[13px] m-0">
-          Connect npm in settings so Drydock can fetch staged tarballs and run reviews.
+          Connect npm in settings so Drydock can bring staged tarballs into inspection.
         </Muted>
       </div>
       <LinkButton variant="primary" size="sm" href="/dashboard/settings?tab=integrations">
@@ -412,7 +414,7 @@ function ScanTable({
             <Th>Risk</Th>
             <Th>Changed</Th>
             <Th>Status</Th>
-            <Th>Decision</Th>
+            <Th>Clearance</Th>
           </tr>
         </thead>
         <tbody>
@@ -447,13 +449,13 @@ function ScanTable({
                       size="sm"
                       onClick={() => onQuickDecide(scan)}
                       disabled={decisionSaving}
-                      title="Record a decision without leaving the dashboard"
+                      title="Record clearance without leaving the dashboard"
                     >
                       {decisionSaving && quickDecisionScanId === scan.id
                         ? "Saving…"
                         : scan.decision
                           ? "Update"
-                          : "Decide"}
+                          : "Clear"}
                     </Button>
                   ) : null}
                 </div>
@@ -491,12 +493,12 @@ function ScanChangedCell({ scan }: { scan: ScanListItem }) {
 }
 
 function DecisionBadge({ decision }: { decision?: string | null }) {
-  if (decision === "publish") return <Badge tone="ok">approved</Badge>;
-  if (decision === "no_publish") return <Badge tone="critical">blocked</Badge>;
-  return <Badge tone="neutral">undecided</Badge>;
+  if (decision === "publish") return <Badge tone="ok">cleared</Badge>;
+  if (decision === "no_publish") return <Badge tone="critical">held</Badge>;
+  return <Badge tone="neutral">awaiting inspection</Badge>;
 }
 
-// Status and Decision are both state columns, so both render as Badges (Status
+// Status and Clearance are both state columns, so both render as Badges (Status
 // was previously raw mono text). Lifecycle status is not a severity: only a
 // failed run is critical; running is info; pending/complete stay neutral.
 function ScanStatusBadge({ status }: { status: string }) {
