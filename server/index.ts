@@ -9,6 +9,7 @@ import {
 import { createAuth, getAuthSession } from "./lib/auth";
 import { rateLimitResponse } from "./lib/http";
 import { allowInsecureLocalRegistry } from "./lib/npm-connection";
+import { verificationCallbackRequest } from "./lib/auth-callback";
 import {
   API_CSP,
   DOCUMENT_CSP,
@@ -194,7 +195,9 @@ app.use("/api/auth/*", async (c, next) => {
 
 app.all("/api/auth/*", (c) => {
   const auth = c.get("auth");
-  return (auth as { handler(request: Request): Promise<Response> }).handler(c.req.raw);
+  return (auth as { handler(request: Request): Promise<Response> }).handler(
+    verificationCallbackRequest(c.req.raw),
+  );
 });
 
 function authIpLimit(path: string): { bucket: string; max: number; windowMs: number } | null {
