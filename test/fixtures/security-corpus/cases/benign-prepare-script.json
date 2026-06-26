@@ -1,6 +1,5 @@
 {
   "id": "benign-prepare-script",
-  "parityGroup": "benign-version-bump",
   "title": "Prepare script in published package metadata",
   "category": "benign-control",
   "intent": "Prepare scripts run before packing and for git installs, but not during normal consumer installs of a published registry tarball.",
