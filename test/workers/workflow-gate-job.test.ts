@@ -584,7 +584,9 @@ describe("executeWorkflowGateJob", () => {
         db,
       ).catch(() => {});
 
-      expect(scenario.decisionCalls).toHaveLength(1);
+      expect(scenario.decisionCalls).toEqual(
+        expect.arrayContaining([expect.objectContaining({ state: "rejected" })]),
+      );
       expect(errorSpy).toHaveBeenCalledWith(
         "github_workflow_gate.decision_callback_failed",
         expect.objectContaining({ gateId: seeded.gateId, decision: "rejected" }),
