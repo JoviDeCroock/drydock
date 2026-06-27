@@ -1,0 +1,37 @@
+{
+  "id": "benign-prepare-script",
+  "title": "Prepare script in published package metadata",
+  "category": "benign-control",
+  "intent": "Prepare scripts run before packing and for git installs, but not during normal consumer installs of a published registry tarball.",
+  "previousPackageJson": {
+    "name": "benign-prepare-script",
+    "version": "1.0.0"
+  },
+  "stagedPackageJson": {
+    "name": "benign-prepare-script",
+    "version": "1.0.1",
+    "scripts": {
+      "prepare": "husky && npm run test:install && run-s build"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 55,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"benign-prepare-script\",\"version\":\"1.0.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 126,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"benign-prepare-script\",\"version\":\"1.0.1\",\"scripts\":{\"prepare\":\"husky && npm run test:install && run-s build\"}}"
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": []
+}

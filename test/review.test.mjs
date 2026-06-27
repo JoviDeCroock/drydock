@@ -832,6 +832,28 @@ describe("review", () => {
     );
   });
 
+  test("does not flag prepare as a consumer install lifecycle hook", () => {
+    const staged = [
+      {
+        path: "package.json",
+        size: 120,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify({
+          name: "pkg",
+          version: "1.0.1",
+          scripts: { prepare: "husky && npm run test:install && run-s build" },
+        }),
+      },
+    ];
+
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).not.toContainEqual(
+      expect.objectContaining({ ruleId: "install-script.lifecycle" }),
+    );
+  });
+
   test("matches glob entries in package.json files allowlist", () => {
     const staged = [
       {

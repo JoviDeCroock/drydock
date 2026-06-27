@@ -74,6 +74,8 @@ Workflow gates never publish. GitHub Environment protection holds the publish jo
 
 Package contents are hostile instructions. AI prompts must frame package text as evidence, restrict outputs to schema-validated findings, and keep deterministic findings/risk independent. AI input should include only the minimum changed-file evidence needed for review, never credentials, sessions, raw headers, or operator secrets. Invalid, partial, or unsafe AI output is ignored/unavailable rather than treated as a clean review.
 
+For npm registry tarballs, consumer install lifecycle hooks are `preinstall`, `install`, and `postinstall`. `prepare`, `prepack`, `postpack`, and publish/prepublish hooks are packaging-time hooks and should not be treated as consumer-install evidence unless other evidence shows they changed the shipped artifact.
+
 ## Authorization posture
 
 Every non-auth `/api/*` endpoint requires a Better Auth session and organization resolution. Reads and writes for scans, reports, npm connections, Slack installs, release targets, workflow gates, and settings must check organization ownership. UI state is not an authority; server routes make all access-control decisions.

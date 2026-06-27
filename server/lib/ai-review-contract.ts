@@ -30,7 +30,7 @@ Workflow:
 const NPM_REVIEW_PROMPT = `Ecosystem: npm.
 
 High-priority npm risks:
-- Install-time execution: added/modified preinstall, install, postinstall, prepare, prepack, postpack, publish/prepublish hooks, or script bodies invoking node, sh/bash, curl/wget, powershell, python/perl/ruby, git, npm/yarn/pnpm, or child_process.
+- Install-time execution: added/modified preinstall, install, or postinstall hooks, or script bodies they invoke using node, sh/bash, curl/wget, powershell, python/perl/ruby, git, npm/yarn/pnpm, or child_process. Do not treat prepare/prepack/postpack/publish/prepublish as consumer-install hooks for registry tarballs unless other evidence shows their output changed the shipped artifact.
 - Supply-chain: added/modified dependencies, optionalDependencies, peerDependencies, or bundled deps run their own lifecycle scripts on install. Flag new specs with git/http/https/tarball/file URLs, npm alias syntax, broad/surprising ranges, typo-squat names, native/build tooling, or optional platform-specific packages. You can't fetch dependency metadata; if risk hinges on unknown lifecycle scripts or maintainer reputation, require manual review and recommend checking the dependency tarballs/metadata.
 - Entrypoint hijacking: changed bin, main, module, types, exports, files, browser, or package-manager fields routing consumers to new code.
 - Credential/host access: process.env, npm_config_*, NPM_TOKEN/GITHUB_TOKEN/AWS/private-key, reads of home/.npmrc/.ssh/.gitconfig, CI metadata, credential files.
