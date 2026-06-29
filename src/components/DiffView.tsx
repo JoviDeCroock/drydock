@@ -1,7 +1,7 @@
 import { diffArrays, diffLines, diffWordsWithSpace, type ChangeObject } from "diff";
-import { Fragment } from "preact";
+import { Fragment, type ComponentChildren } from "preact";
 import { useSignal, type Signal } from "@preact/signals";
-import { useMemo } from "preact/hooks";
+import { useEffect, useMemo, useRef } from "preact/hooks";
 import { Badge, severityTone, statusTone } from "./Badge";
 import {
   annotationLabel,
@@ -71,6 +71,9 @@ interface DiffOptions {
   ignoreWhitespace?: boolean;
 }
 
+const INITIAL_SCROLL_TARGET_SELECTOR = "[data-diff-scroll-target='true']";
+const INITIAL_SCROLL_PADDING = 8;
+
 export function buildRows(
   before: string,
   after: string,
@@ -83,6 +86,17 @@ export function buildRows(
     : buildRowsFromLineDiff(before, after, beforeTokens, afterTokens);
   if (options.wordDiff) applyWordDiff(chunks);
   return chunks.flatMap((chunk) => chunk.rows);
+}
+
+export function shouldSeekInitialDiffTarget(status: string): boolean {
+  return status === "added" || status === "removed" || status === "modified";
+}
+
+export function isDiffScrollTarget(
+  status: string,
+  tone: "added" | "removed" | "unchanged",
+): boolean {
+  return shouldSeekInitialDiffTarget(status) && tone !== "unchanged";
 }
 
 function buildRowsFromLineDiff(
@@ -363,6 +377,59 @@ function useLineTokens(text: string, lang: string | undefined): TokenLine[] | nu
   );
 }
 
+function initialScrollResetKey(
+  path: string,
+  status: string,
+  beforeSample: string,
+  afterSample: string,
+  findings: readonly DiffFinding[],
+): string {
+  const findingKey = findings.map((finding) => `${finding.id}:${finding.line ?? ""}`).join("|");
+  return [
+    path,
+    status,
+    beforeSample.length,
+    afterSample.length,
+    beforeSample.slice(0, 64),
+    afterSample.slice(0, 64),
+    findingKey,
+  ].join("\0");
+}
+
+function DiffScrollViewport({
+  resetKey,
+  children,
+}: {
+  resetKey: string;
+  children: ComponentChildren;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const container = ref.current;
+    if (!container) return;
+    const frame = window.requestAnimationFrame(() => resetDiffScroll(container));
+    return () => window.cancelAnimationFrame(frame);
+  }, [resetKey]);
+  return (
+    <div ref={ref} class="overflow-auto h-full pr-5">
+      {children}
+    </div>
+  );
+}
+
+function resetDiffScroll(container: HTMLElement) {
+  const target = container.querySelector<HTMLElement>(INITIAL_SCROLL_TARGET_SELECTOR);
+  if (!target) {
+    container.scrollTop = 0;
+    return;
+  }
+  const targetTop =
+    target.getBoundingClientRect().top -
+    container.getBoundingClientRect().top +
+    container.scrollTop;
+  container.scrollTop = Math.max(0, targetTop - INITIAL_SCROLL_PADDING);
+}
+
 function LineContent({
   text,
   tokens,
@@ -556,6 +623,8 @@ function DiffBody({
         text={afterSample}
         tokens={afterTokens}
         findings={findings}
+        resetKey={initialScrollResetKey(path, status, "", afterSample, findings)}
+        seekFirstChange={shouldSeekInitialDiffTarget(status)}
       />
     );
   }
@@ -572,6 +641,8 @@ function DiffBody({
         text={beforeSample}
         tokens={beforeTokens}
         findings={findings}
+        resetKey={initialScrollResetKey(path, status, beforeSample, "", findings)}
+        seekFirstChange={shouldSeekInitialDiffTarget(status)}
       />
     );
   }
@@ -586,6 +657,8 @@ function DiffBody({
         text={afterSample || beforeSample}
         tokens={afterSample ? afterTokens : beforeTokens}
         findings={findings}
+        resetKey={initialScrollResetKey(path, status, beforeSample, afterSample, findings)}
+        seekFirstChange={shouldSeekInitialDiffTarget(status)}
       />
     );
   }
@@ -600,6 +673,8 @@ function DiffBody({
         text={afterSample}
         tokens={afterTokens}
         findings={findings}
+        resetKey={initialScrollResetKey(path, status, "", afterSample, findings)}
+        seekFirstChange={shouldSeekInitialDiffTarget(status)}
       />
     );
   }
@@ -611,6 +686,8 @@ function DiffBody({
         text={beforeSample}
         tokens={beforeTokens}
         findings={findings}
+        resetKey={initialScrollResetKey(path, status, beforeSample, "", findings)}
+        seekFirstChange={shouldSeekInitialDiffTarget(status)}
       />
     );
   }
@@ -630,32 +707,43 @@ function DiffBody({
       </div>
       {unpinned.length ? <AnnotationBanner findings={unpinned} /> : null}
       <div class="relative h-[560px]">
-        <div class="overflow-auto h-full pr-5">
+        <DiffScrollViewport
+          resetKey={initialScrollResetKey(path, status, beforeSample, afterSample, findings)}
+        >
           <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
             <tbody>
               {rows.map((row, index) => {
                 const pins = row.afterLine !== null ? pinned.get(row.afterLine) : undefined;
                 return (
                   <Fragment key={index}>
-                    <DiffRow row={row} />
-                    {pins ? <AnnotationRows findings={pins} colSpan={4} /> : null}
+                    <DiffRow row={row} status={status} />
+                    {pins ? (
+                      <AnnotationRows
+                        findings={pins}
+                        colSpan={4}
+                        scrollTarget={shouldSeekInitialDiffTarget(status)}
+                      />
+                    ) : null}
                   </Fragment>
                 );
               })}
             </tbody>
           </table>
-        </div>
+        </DiffScrollViewport>
         <DiffOverview markers={diffOverviewMarkers(toOverviewRows(rows), pinned)} />
       </div>
     </div>
   );
 }
 
-function DiffRow({ row }: { row: Row }) {
+function DiffRow({ row, status }: { row: Row; status: string }) {
   const bg = row.tone === "added" ? "bg-ok-soft" : row.tone === "removed" ? "bg-danger-soft" : "";
   const sign = row.tone === "added" ? "+" : row.tone === "removed" ? "-" : " ";
   return (
-    <tr class={cn(bg)}>
+    <tr
+      class={cn(bg)}
+      data-diff-scroll-target={isDiffScrollTarget(status, row.tone) ? "true" : undefined}
+    >
       <td class="px-2 py-[2px] text-ink-subtle select-none w-[44px] text-right border-r border-border align-top">
         {row.beforeLine ?? ""}
       </td>
@@ -676,12 +764,16 @@ function SingleSidedView({
   text,
   tokens,
   findings,
+  resetKey,
+  seekFirstChange,
 }: {
   label: string;
   tone: "added" | "removed" | "unchanged";
   text: string;
   tokens: TokenLine[] | null;
   findings: DiffFinding[];
+  resetKey: string;
+  seekFirstChange: boolean;
 }) {
   const headerBg =
     tone === "added" ? "bg-ok-soft" : tone === "removed" ? "bg-danger-soft" : "bg-surface-2";
@@ -702,14 +794,17 @@ function SingleSidedView({
       </div>
       {unpinned.length ? <AnnotationBanner findings={unpinned} /> : null}
       <div class="relative h-[560px]">
-        <div class="overflow-auto h-full pr-5">
+        <DiffScrollViewport resetKey={resetKey}>
           <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
             <tbody>
               {lines.map((line, index) => {
                 const pins = pinned.get(index + 1);
                 return (
                   <Fragment key={index}>
-                    <tr class={cn(rowBg)}>
+                    <tr
+                      class={cn(rowBg)}
+                      data-diff-scroll-target={seekFirstChange ? "true" : undefined}
+                    >
                       <td class="px-2 py-[2px] text-ink-subtle select-none w-[44px] text-right border-r border-border align-top">
                         {index + 1}
                       </td>
@@ -721,13 +816,15 @@ function SingleSidedView({
                         />
                       </td>
                     </tr>
-                    {pins ? <AnnotationRows findings={pins} colSpan={2} /> : null}
+                    {pins ? (
+                      <AnnotationRows findings={pins} colSpan={2} scrollTarget={seekFirstChange} />
+                    ) : null}
                   </Fragment>
                 );
               })}
             </tbody>
           </table>
-        </div>
+        </DiffScrollViewport>
         <DiffOverview
           markers={diffOverviewMarkers(
             lines.map((_, index) => ({ tone, line: index + 1 })),
@@ -830,11 +927,19 @@ function FindingAnnotationBody({ finding }: { finding: DiffFinding }) {
 }
 
 // Findings pinned beneath their diff line, rendered as full-width table rows.
-function AnnotationRows({ findings, colSpan }: { findings: DiffFinding[]; colSpan: number }) {
+function AnnotationRows({
+  findings,
+  colSpan,
+  scrollTarget = false,
+}: {
+  findings: DiffFinding[];
+  colSpan: number;
+  scrollTarget?: boolean;
+}) {
   return (
     <>
       {findings.map((finding) => (
-        <tr key={finding.id}>
+        <tr key={finding.id} data-diff-scroll-target={scrollTarget ? "true" : undefined}>
           <td colSpan={colSpan} class="p-0">
             <FindingAnnotationBody finding={finding} />
           </td>
