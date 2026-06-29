@@ -1,13 +1,13 @@
-# Staged Publish Review
+# Staged Publish Inspection
 
-Drydock reviews package artifacts before a maintainer approves publication. It compares the candidate with a tag-aware published baseline, runs deterministic supply-chain checks, optionally sends changed-file evidence to Cloudflare Workers AI, and saves a review report.
+Drydock inspects package artifacts before a maintainer clears publication. It compares the candidate with a tag-aware published baseline, runs deterministic supply-chain checks, optionally sends changed-file evidence to Cloudflare Workers AI, and saves an inspection report.
 
-Approval stays outside Drydock: maintainers approve in npm, npmjs.com, or GitHub with their own required 2FA/review step. Drydock never publishes and never collects approval codes.
+Publication clearance stays outside Drydock: maintainers clear the release in npm, npmjs.com, or GitHub with their own required 2FA/inspection step. Drydock never publishes and never collects 2FA codes.
 
 ## Modes
 
-- **npm registry staging** — `npm publish --stage` creates a private staged tarball. Drydock downloads it through a sandbox and leaves final approval in npm.
-- **Workflow gates** — for ecosystems where the registry cannot stage a candidate, GitHub Actions uploads built artifacts and a GitHub Environment custom deployment-protection rule blocks publishing until Drydock review is accepted or rejected. PyPI and npm workflow-gate artifacts are supported by the shared gate pipeline.
+- **npm registry staging** — `npm publish --stage` creates a private staged tarball. Drydock downloads it through a sandbox and leaves final clearance in npm.
+- **Workflow gates** — for ecosystems where the registry cannot stage a candidate, GitHub Actions uploads built artifacts and a GitHub Environment custom deployment-protection rule pauses publishing until Drydock inspection is cleared or held. PyPI and npm workflow-gate artifacts are supported by the shared gate pipeline.
 
 ## Docs
 
@@ -71,7 +71,7 @@ The authenticated JSON API lives under `/api/v1`. The main resources are:
 
 - scans: create/list/read/export reports, compare published baselines, and fetch prior file samples;
 - npm connection: read public metadata, store/rotate, validate, and remove the current organization token;
-- release targets and workflow gates: map GitHub repositories/environments, review queued gate artifacts, and post accept/reject decisions;
+- release targets and workflow gates: map GitHub repositories/environments, inspect queued gate artifacts, and post clear/hold results;
 - auth/org/settings helpers for Better Auth-backed sessions and organization membership.
 
 Consult route definitions under `server/routes/` for exact request/response shapes; shared types are imported by the UI from `server/`.

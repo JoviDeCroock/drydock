@@ -4,7 +4,7 @@ import { getReleaseRecommendation } from "../src/pages/Dashboard/recommendation"
 describe("scan detail recommendation", () => {
   test("blocks when release risk is high even without deterministic release findings", () => {
     expect(getReleaseRecommendation("high", "high", 0)).toMatchObject({
-      label: "block manual approval",
+      label: "keep in drydock",
       tone: "high",
     });
   });

@@ -186,7 +186,7 @@ export default function LoginPage() {
         <Eyebrow>Welcome back</Eyebrow>
         <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Sign in</h1>
         <Muted class="text-[13px] m-0">
-          Sign in to review held releases and revisit saved reports.
+          Sign in to inspect docked versions and revisit saved reports.
         </Muted>
 
         <form class="flex flex-col gap-4 mt-2" onSubmit={onSubmit}>

@@ -28,10 +28,10 @@ export function ScanDetailHeader({
     <header class="flex flex-wrap items-start justify-between gap-4">
       <div class="flex flex-col gap-2 min-w-0">
         <a href={dashboardHref} class="text-[13px] text-ink-muted hover:text-ink no-underline">
-          ← Reviews
+          ← Inspections
         </a>
         <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">
-          {detail?.scan.packageName || "Release review"}
+          {detail?.scan.packageName || "Release inspection"}
         </h1>
         {detail ? (
           <MonoDetail
@@ -48,7 +48,7 @@ export function ScanDetailHeader({
             ]}
           />
         ) : (
-          <LoadingLine size="inline">Loading saved review</LoadingLine>
+          <LoadingLine size="inline">Loading saved inspection</LoadingLine>
         )}
       </div>
       {decision || onDecideClick || (detail && isComplete) ? (
@@ -56,7 +56,7 @@ export function ScanDetailHeader({
           {decision ? (
             <div class="flex flex-col items-end gap-1">
               <Badge tone={decision === "publish" ? "ok" : "critical"}>
-                {decision === "publish" ? "approved" : "blocked"}
+                {decision === "publish" ? "cleared" : "held"}
               </Badge>
               {decidedAt ? (
                 <span class="font-mono text-[11px] text-ink-subtle">
@@ -77,7 +77,7 @@ export function ScanDetailHeader({
           ) : null}
           {onDecideClick ? (
             <Button variant={decision ? "secondary" : "primary"} onClick={onDecideClick}>
-              {decision ? "Update decision" : "Decide"}
+              {decision ? "Update clearance" : "Clear"}
             </Button>
           ) : null}
         </div>
@@ -125,7 +125,7 @@ export function ScanFailureAlert({ errorJson }: { errorJson: unknown }) {
   return (
     <Alert tone="critical">
       <div class="flex flex-col gap-1">
-        <strong>{typeof error?.message === "string" ? error.message : "Review failed."}</strong>
+        <strong>{typeof error?.message === "string" ? error.message : "Inspection failed."}</strong>
         {guidance ? (
           <span>
             {guidance.hint} <a href="/dashboard/settings?tab=integrations">{guidance.action}</a>

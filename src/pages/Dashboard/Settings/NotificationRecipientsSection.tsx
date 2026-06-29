@@ -48,9 +48,9 @@ export function NotificationRecipientsSection({
     >
       <SettingsCardBody>
         <Muted class="text-[13px] m-0 max-w-[760px]">
-          Choose who gets emailed when an auto-discovered scan finishes or a release gate needs a
-          review decision. Add a shared inbox or teammates. When this list is empty, Drydock emails
-          the organization owner.
+          Choose who gets emailed when an auto-discovered scan finishes or a release gate needs
+          clearance. Add a shared inbox or teammates. When this list is empty, Drydock emails the
+          organization owner.
         </Muted>
 
         {!loaded ? (

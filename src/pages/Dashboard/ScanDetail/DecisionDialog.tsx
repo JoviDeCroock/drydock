@@ -59,14 +59,14 @@ export function DecisionDialog({
     <Dialog
       open={open}
       onClose={handleClose}
-      title="Publish decision"
-      description="Record whether this staged publish is safe to approve. This adds to the audit trail, but it does not publish or cancel anything on npm. You still confirm or cancel with 2FA there."
+      title="Release clearance"
+      description="Record whether this docked version is clear to release. This adds to the audit trail, but it does not publish or cancel anything on npm. You still confirm or cancel with 2FA there."
     >
       {decision ? (
         <div class="flex flex-col gap-2 border border-border rounded-md p-3">
           <div class="flex flex-wrap items-center gap-2">
             <Badge tone={decision === "publish" ? "ok" : "critical"}>
-              {decision === "publish" ? "currently approved" : "currently blocked"}
+              {decision === "publish" ? "currently cleared" : "currently held"}
             </Badge>
             {decidedAt ? (
               <span class="font-mono text-[11px] text-ink-subtle">{formatDateTime(decidedAt)}</span>
@@ -106,10 +106,10 @@ export function DecisionDialog({
 
       <div class="flex flex-wrap gap-2">
         <Button onClick={() => submit("publish")} disabled={saving}>
-          {saving ? "Saving…" : "Approve publish"}
+          {saving ? "Saving…" : "Clear publish"}
         </Button>
         <Button variant="danger" onClick={() => submit("no_publish")} disabled={saving}>
-          {saving ? "Saving…" : "Block publish"}
+          {saving ? "Saving…" : "Keep held"}
         </Button>
       </div>
       {error ? <Alert tone="critical">{error}</Alert> : null}

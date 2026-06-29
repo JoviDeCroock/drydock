@@ -26,18 +26,18 @@ export function PersistedReportSections({
         {summary.packageJsonDiff ? (
           <PackageJsonDiffView diff={summary.packageJsonDiff} />
         ) : (
-          <EmptyLine>No manifest changes were saved for this review.</EmptyLine>
+          <EmptyLine>No manifest changes were saved for this inspection.</EmptyLine>
         )}
       </ReportSection>
 
       {ai != null && ai.model != null && (
-        <ReportSection title="Reviewer notes">
+        <ReportSection title="Inspector notes">
           {ai.kind === "complete" ? (
             <>
               <div class="flex flex-wrap gap-2">
                 <Badge tone={severityTone(ai.risk)}>{ai.risk}</Badge>
                 <Badge tone={ai.requiresManualReview ? "medium" : "ok"}>
-                  {ai.requiresManualReview ? "manual review" : "no extra review"}
+                  {ai.requiresManualReview ? "manual inspection" : "no extra inspection"}
                 </Badge>
                 <Badge tone="neutral">{ai.releaseAssessment.replaceAll("_", " ")}</Badge>
               </div>
