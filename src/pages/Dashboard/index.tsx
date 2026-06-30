@@ -161,9 +161,6 @@ function DashboardHeader() {
       <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">
         New version docked and ready for inspection
       </h1>
-      <Muted class="text-[14px] leading-[1.55] m-0">
-        Dock held npm and PyPI candidates for inspection before maintainers let them go live.
-      </Muted>
     </header>
   );
 }
