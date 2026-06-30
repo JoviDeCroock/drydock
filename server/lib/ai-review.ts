@@ -5,6 +5,7 @@ import {
   buildReviewerSystemPrompt,
   clampAiReviewSubmission,
   MAX_AGENT_STEPS,
+  AI_REVIEW_TOTAL_BUDGET_MS,
   MAX_REVIEW_OUTPUT_TOKENS,
   selectReportedFindings,
   type AiReviewSubmission,
@@ -74,10 +75,28 @@ export async function analyzeWithAi(
   const index = buildEvidenceIndex(options);
   const payload = buildAiReviewPayload(options, index);
   const transientFailures: string[] = [];
+  const budgetMs = resolveAiReviewBudgetMs(env);
+  const deadline = Date.now() + budgetMs;
 
   for (const candidateModel of models) {
+    const remainingBeforeCandidate = remainingAiReviewBudgetMs(deadline);
+    if (remainingBeforeCandidate <= 0) {
+      return {
+        review: budgetExceededReview(null, budgetMs),
+        usage: null,
+      };
+    }
+
     let lastError: unknown;
     for (let attempt = 1; attempt <= AI_REVIEW_MAX_ATTEMPTS; attempt += 1) {
+      const remaining = remainingAiReviewBudgetMs(deadline);
+      if (remaining <= 0) {
+        return {
+          review: budgetExceededReview(candidateModel, budgetMs),
+          usage: null,
+        };
+      }
+
       // Declared per attempt: a retried run starts the agentic loop from scratch,
       // so a submission recorded by a prior (failed) attempt must not leak across.
       let submittedReview: AiReviewSubmission | null = null;
@@ -139,6 +158,10 @@ export async function analyzeWithAi(
           },
           temperature: 0,
           maxOutputTokens: MAX_REVIEW_OUTPUT_TOKENS,
+          // Own the retry loop here so the module's transient-error policy is the
+          // single retry authority instead of stacking on the SDK's defaults.
+          maxRetries: 0,
+          abortSignal: AbortSignal.timeout(remaining),
         });
 
         const usage = toUsage(result.totalUsage, result.steps.length);
@@ -163,6 +186,12 @@ export async function analyzeWithAi(
           usage,
         };
       } catch (err) {
+        if (isAiReviewBudgetTimeoutError(err)) {
+          return {
+            review: budgetExceededReview(candidateModel, budgetMs),
+            usage: null,
+          };
+        }
         lastError = err;
         // Only retry transient capacity/overload failures; a malformed request or a
         // code bug fails identically every time, so retrying just wastes budget.
@@ -179,18 +208,20 @@ export async function analyzeWithAi(
       continue;
     }
 
-    return {
-      review: fallbackReview(
-        candidateModel,
-        "unavailable",
-        `Assistant review didn't run: ${modelFailureSummary(
-          transientFailures,
+    if (lastError) {
+      return {
+        review: fallbackReview(
           candidateModel,
-          lastError,
-        )}`,
-      ),
-      usage: null,
-    };
+          "unavailable",
+          `Assistant review didn't run: ${modelFailureSummary(
+            transientFailures,
+            candidateModel,
+            lastError,
+          )}`,
+        ),
+        usage: null,
+      };
+    }
   }
 
   return {
@@ -263,6 +294,35 @@ function toUsage(usage: LanguageModelUsage, steps: number): AiReviewUsage {
     totalTokens: usage.totalTokens ?? null,
     steps,
   };
+}
+
+function resolveAiReviewBudgetMs(env: Cloudflare.Env): number {
+  const parsed = Number(env.AI_REVIEW_BUDGET_MS);
+  return Number.isFinite(parsed) ? parsed : AI_REVIEW_TOTAL_BUDGET_MS;
+}
+
+function remainingAiReviewBudgetMs(deadline: number): number {
+  return Math.max(0, deadline - Date.now());
+}
+
+function budgetExceededReview(model: string | null, budgetMs: number): AiReview {
+  return fallbackReview(
+    model,
+    "unavailable",
+    `AI review exceeded the ${Math.max(1, Math.ceil(budgetMs / 1000))}s time budget`,
+  );
+}
+
+function isAiReviewBudgetTimeoutError(err: unknown): boolean {
+  return (
+    (typeof DOMException !== "undefined" &&
+      err instanceof DOMException &&
+      err.name === "TimeoutError") ||
+    (typeof err === "object" &&
+      err !== null &&
+      "name" in err &&
+      (err as { name?: unknown }).name === "TimeoutError")
+  );
 }
 
 function scanScopedCacheAffinity(env: Cloudflare.Env, scanId: string | undefined): string {

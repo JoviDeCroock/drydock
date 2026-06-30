@@ -4,6 +4,7 @@ declare global {
       AI: Ai;
       ASSETS?: Fetcher;
       AI_CACHE_AFFINITY?: string;
+      AI_REVIEW_BUDGET_MS?: string;
       LOADER: WorkerLoader;
       DB: D1Database;
       ARTIFACTS?: R2Bucket;

@@ -97,12 +97,15 @@ export function buildReviewerSystemPrompt(ecosystem: string | undefined): string
   return `${BASE_REVIEWER_SYSTEM_PROMPT}\n\n${ecosystemPrompt}\n\n${SEVERITY_GUIDANCE}`;
 }
 
-export const MAX_AGENT_STEPS = 20;
+export const MAX_AGENT_STEPS = 16;
 // Per-step output-token cap, sized comfortably above a worst-case submission so
 // findings plus summary serialize without truncation. A slight overshoot is
 // clamped by clampAiReviewSubmission; only a submission truncated mid-JSON by
 // this cap is unrecoverable, and that degrades to `invalid` which the risk layer
 // escalates to manual review.
+// Overall wall-time budget for the whole AI review run. The env override keeps
+// operators able to tune it without changing code.
+export const AI_REVIEW_TOTAL_BUDGET_MS = 75_000;
 export const MAX_REVIEW_OUTPUT_TOKENS = 8_000;
 export const MAX_CHANGED_FILE_MANIFEST = 300;
 export const MAX_TOOL_RESPONSE_CHARS = 16_000;

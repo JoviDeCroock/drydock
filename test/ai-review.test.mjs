@@ -383,6 +383,38 @@ describe("ai review orchestration", () => {
     expect(ai.summary).toBe("No unusual changes.");
   });
 
+  test("an AI budget timeout fails safe to unavailable and does not thrash models", async () => {
+    const modelCalls = [];
+    const budgetModel = (model) => {
+      modelCalls.push(model);
+      return mockModel(async ({ abortSignal }) => {
+        await new Promise((_, reject) => {
+          if (!abortSignal) {
+            reject(new Error("missing abort signal"));
+            return;
+          }
+          if (abortSignal.aborted) {
+            reject(abortSignal.reason);
+            return;
+          }
+          abortSignal.addEventListener("abort", () => reject(abortSignal.reason), { once: true });
+        });
+      });
+    };
+
+    const { review: ai, usage } = await analyzeWithAi(
+      { AI_REVIEW_BUDGET_MS: "250" },
+      ["primary-reviewer", "fallback-reviewer"],
+      BASE_OPTIONS,
+      budgetModel,
+    );
+
+    expect(modelCalls).toEqual(["primary-reviewer"]);
+    expect(ai.status).toBe("unavailable");
+    expect(ai.summary).toContain("time budget");
+    expect(usage).toBeNull();
+  });
+
   test("a persistent capacity error exhausts retries and fails safe to unavailable", async () => {
     skipRetryDelay();
     let calls = 0;
