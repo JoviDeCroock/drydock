@@ -1,5 +1,7 @@
 import type { ComponentChildren } from "preact";
+import { useEffect, useMemo } from "preact/hooks";
 import { Badge, Card, Eyebrow, LinkButton, PageShell, SectionLabel } from "../../components";
+import { ensureHighlighter, highlighterReady, tokenizeLines } from "../../components/highlight";
 import { docsPageSeo, PageSeo } from "../../lib/seo";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
@@ -13,28 +15,27 @@ export default function DocsPage() {
       <header class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
         <Eyebrow tone="accent">Documentation</Eyebrow>
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
-          Pick where Drydock pauses your release.
+          Pause releases where the real risk appears.
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-          The package that reaches a registry is not the pull request a maintainer reviewed. It is
-          the built output from scripts, bundlers, and CI. Drydock pauses npm staged publishes or
-          GitHub-gated PyPI and npm jobs, compares the candidate with the last published version,
-          and pins findings to changed lines. Maintainers decide; Drydock never publishes, never
-          stores publish credentials, and never executes package contents.
+          What reaches a registry is the built artifact, not the pull request a maintainer reviewed.
+          Drydock compares that release candidate with the last published version, pinpoints
+          findings on changed lines, and leaves the final decision with the maintainer. It never
+          publishes, never stores publish credentials, and never executes package contents.
         </p>
         <p class="m-0 max-w-[680px] text-[14px] text-ink-muted leading-[1.65]">
           Use registry staging when npm can hold the candidate. Use workflow gating when GitHub
-          Actions builds the release and a GitHub Environment can pause the publish job. Both paths
+          Actions builds the release and a GitHub Environment can pause publication. Both paths
           produce the same inspection report:
         </p>
         <nav class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-1" aria-label="Integration modes">
           <ModeCard href="#staged-publishing" title="Staged publishing: npm">
             Run <Code>npm publish --stage</Code>. npm holds a private candidate, Drydock inspects
-            it, and you complete the publish in npm with your own 2FA.
+            it, and you finish the release in npm with your own 2FA.
           </ModeCard>
           <ModeCard href="#workflow-gating" title="Workflow gating: PyPI & npm" badge="Preview">
-            GitHub Actions builds and uploads the release artifact. A GitHub Environment pauses
-            publishing until a maintainer clears or blocks the Drydock inspection.
+            GitHub Actions builds and uploads the release artifact. A GitHub Environment pauses the
+            publish job until a maintainer clears or blocks the Drydock inspection.
           </ModeCard>
         </nav>
       </header>
@@ -66,7 +67,7 @@ export default function DocsPage() {
                 </>,
                 <>
                   That's it. Drydock picks up new staged publishes automatically, and{" "}
-                  <Code>Check npm</Code> on the dashboard runs a check on demand.
+                  <Code>Check npm</Code> on the dashboard runs an on-demand check.
                 </>,
               ]}
             />
@@ -82,7 +83,7 @@ export default function DocsPage() {
               items={[
                 <>
                   Drydock finds a new staged publish, either automatically or when you hit{" "}
-                  <Code>Check npm</Code>, and queues a scan for it.
+                  <Code>Check npm</Code>, and queues a scan.
                 </>,
                 <>
                   Your npm token is stored encrypted and only decrypted at the moment Drydock needs
@@ -208,7 +209,7 @@ export default function DocsPage() {
           </Subsection>
 
           <Subsection title="Workflow shape">
-            <CodeBlock name=".github/workflows/release.yml">
+            <CodeBlock name=".github/workflows/release.yml" lang="yaml">
               {`jobs:
   build-release-artifacts:
     runs-on: ubuntu-latest
@@ -245,7 +246,7 @@ export default function DocsPage() {
               job downloads the inspected tarballs and publishes them exactly as inspected, without
               re-packing.
             </Prose>
-            <CodeBlock name=".github/workflows/release.yml (npm)">
+            <CodeBlock name=".github/workflows/release.yml (npm)" lang="yaml">
               {`jobs:
   build-release-artifacts:
     runs-on: ubuntu-latest
@@ -401,7 +402,17 @@ function Code({ children }: { children: string }) {
   );
 }
 
-function CodeBlock({ name, children }: { name?: string; children: string }) {
+function CodeBlock({ name, lang, children }: { name?: string; lang?: string; children: string }) {
+  useEffect(() => {
+    if (lang) ensureHighlighter();
+  }, [lang]);
+
+  const ready = highlighterReady.value;
+  const tokens = useMemo(() => {
+    if (!lang || !ready) return null;
+    return tokenizeLines(children, lang);
+  }, [children, lang, ready]);
+
   return (
     <div class="rounded-md border border-border overflow-hidden bg-surface-2">
       {name ? (
@@ -410,7 +421,21 @@ function CodeBlock({ name, children }: { name?: string; children: string }) {
         </div>
       ) : null}
       <pre class="m-0 p-4 overflow-x-auto font-mono text-[12px] leading-[1.55] text-ink">
-        <code>{children}</code>
+        <code>
+          {tokens ? (
+            tokens.map((line, lineIndex) => (
+              <span key={lineIndex} class="block whitespace-pre">
+                {line.map((token, tokenIndex) => (
+                  <span key={tokenIndex} class={token.className}>
+                    {token.content}
+                  </span>
+                ))}
+              </span>
+            ))
+          ) : (
+            <span class="whitespace-pre">{children}</span>
+          )}
+        </code>
       </pre>
     </div>
   );
