@@ -1,5 +1,18 @@
 import type { ComponentChildren } from "preact";
 import type { Signal } from "@preact/signals";
+import { cn } from "./cn";
+
+export type SelectSize = "sm" | "md";
+
+const sizeStyles: Record<SelectSize, string> = {
+  sm: "text-xs leading-none pl-2.5 pr-8 py-1.5",
+  md: "text-[13px] pl-3 pr-9 py-2",
+};
+
+const arrowStyles: Record<SelectSize, string> = {
+  sm: "right-2.5",
+  md: "right-3",
+};
 
 export function Select({
   id,
@@ -7,12 +20,14 @@ export function Select({
   disabled,
   onChange,
   children,
+  size = "md",
 }: {
   id?: string;
   value: string | Signal<string>;
   disabled?: boolean | Signal<boolean>;
   onChange: (value: string) => void;
   children: ComponentChildren;
+  size?: SelectSize;
 }) {
   return (
     <div class="relative inline-block w-full">
@@ -21,13 +36,19 @@ export function Select({
         value={value}
         disabled={disabled}
         onChange={(event) => onChange((event.currentTarget as HTMLSelectElement).value)}
-        class="appearance-none w-full bg-bg border border-border rounded-md text-[13px] text-ink pl-3 pr-9 py-2 outline-none transition-[border-color,box-shadow] duration-150 ease-out focus:border-accent focus:shadow-[0_0_0_3px_var(--color-accent-soft)] disabled:opacity-60 disabled:cursor-not-allowed"
+        class={cn(
+          "appearance-none w-full bg-bg border border-border rounded-md text-ink outline-none transition-[border-color,box-shadow] duration-150 ease-out focus:border-accent focus:shadow-[0_0_0_3px_var(--color-accent-soft)] disabled:opacity-60 disabled:cursor-not-allowed",
+          sizeStyles[size],
+        )}
       >
         {children}
       </select>
       <span
         aria-hidden="true"
-        class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-ink-muted"
+        class={cn(
+          "pointer-events-none absolute top-1/2 -translate-y-1/2 text-[10px] text-ink-muted",
+          arrowStyles[size],
+        )}
       >
         ▾
       </span>

@@ -344,6 +344,7 @@ function ScanStateSelect({
       <span class="w-[160px]">
         <Select
           id="scan-state-filter"
+          size="sm"
           value={value}
           disabled={disabled}
           onChange={(next) => onChange(parseDecisionFilter(next))}
