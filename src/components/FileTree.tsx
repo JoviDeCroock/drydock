@@ -1,5 +1,5 @@
 import type { DiffEntry } from "../../server/lib/review";
-import { Badge, type BadgeTone, severityTone, statusTone } from "./Badge";
+import { Badge, severityTone } from "./Badge";
 import { cn } from "./cn";
 import {
   buildTree,
@@ -10,16 +10,17 @@ import {
 } from "./file-tree-model";
 import { EmptyLine } from "./Typography";
 
-function statusToTone(status: FolderStatus): BadgeTone {
-  return statusTone(status);
-}
-
 function statusToText(status: FolderStatus): string {
   if (status === "mixed") return "text-accent";
   if (status === "added") return "text-ok-text";
   if (status === "removed") return "text-danger-text";
   if (status === "modified") return "text-warn-text";
   return "text-ink-muted";
+}
+
+function StatusLabel({ status }: { status: FolderStatus }) {
+  if (status === "unchanged") return null;
+  return <span class="sr-only">{` (${status})`}</span>;
 }
 
 function TreeIndent({ depth }: { depth: number }) {
@@ -108,11 +109,9 @@ function TreeNode({
             </span>
             <span class={cn("flex-1 truncate", statusToText(node.status))} title={`${node.name}/`}>
               {node.name}/
+              <StatusLabel status={node.status} />
             </span>
             <FindingCountBadge count={node.findingCount} severity={node.findingSeverity} />
-            {node.status !== "unchanged" ? (
-              <Badge tone={statusToTone(node.status)}>{node.status}</Badge>
-            ) : null}
           </summary>
           <ul class="list-none p-0 m-0">
             {node.children.map((child) => (
@@ -148,11 +147,9 @@ function TreeNode({
           title={node.name}
         >
           {node.name}
+          <StatusLabel status={node.status} />
         </span>
         <FindingCountBadge count={node.findingCount} severity={node.findingSeverity} />
-        {node.status !== "unchanged" ? (
-          <Badge tone={statusToTone(node.status)}>{node.status}</Badge>
-        ) : null}
       </button>
     </li>
   );
