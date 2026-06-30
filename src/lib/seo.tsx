@@ -2,6 +2,8 @@ import { toStatic, useHead, useLink, type MetaOptions } from "hoofd/preact";
 
 const SITE_NAME = "Drydock";
 const SITE_URL = "https://drydock.org";
+const OG_IMAGE_URL = `${SITE_URL}/og-image.png`;
+const OG_IMAGE_ALT = "Drydock — pre-publish package review for npm and PyPI maintainers";
 
 export interface PageSeoMetadata {
   title: string;
@@ -64,14 +66,64 @@ export function PageSeo({ metadata }: { metadata: PageSeoMetadata }) {
       { property: "og:title", content: metadata.title },
       { property: "og:description", content: metadata.description },
       { property: "og:url", content: canonicalUrl },
-      { name: "twitter:card", content: "summary" },
+      { property: "og:image", content: OG_IMAGE_URL },
+      { property: "og:image:alt", content: OG_IMAGE_ALT },
+      { property: "og:image:width", content: "1200" },
+      { property: "og:image:height", content: "800" },
+      { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:title", content: metadata.title },
       { name: "twitter:description", content: metadata.description },
+      { name: "twitter:image", content: OG_IMAGE_URL },
+      { name: "twitter:image:alt", content: OG_IMAGE_ALT },
     ] satisfies MetaOptions[],
   });
   useLink({ rel: "canonical", href: canonicalUrl });
 
   return null;
+}
+
+// Schema.org JSON-LD describing the product and site. Search engines read
+// `application/ld+json` data blocks from anywhere in the document; rendering it
+// in the prerendered landing markup keeps it crawlable without client JS. The
+// `type="application/ld+json"` script is a data block, not executable script,
+// so the document CSP `script-src` does not apply to it.
+const STRUCTURED_DATA = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": `${SITE_URL}/#organization`,
+      name: SITE_NAME,
+      url: `${SITE_URL}/`,
+      logo: OG_IMAGE_URL,
+      description: homePageSeo.description,
+    },
+    {
+      "@type": "WebSite",
+      "@id": `${SITE_URL}/#website`,
+      name: SITE_NAME,
+      url: `${SITE_URL}/`,
+      publisher: { "@id": `${SITE_URL}/#organization` },
+    },
+    {
+      "@type": "SoftwareApplication",
+      name: SITE_NAME,
+      applicationCategory: "SecurityApplication",
+      operatingSystem: "Web",
+      url: `${SITE_URL}/`,
+      description: homePageSeo.description,
+      publisher: { "@id": `${SITE_URL}/#organization` },
+    },
+  ],
+};
+
+export function StructuredData() {
+  return (
+    <script
+      type="application/ld+json"
+      dangerouslySetInnerHTML={{ __html: JSON.stringify(STRUCTURED_DATA) }}
+    />
+  );
 }
 
 export function extractPrerenderHead(): PrerenderHead | undefined {

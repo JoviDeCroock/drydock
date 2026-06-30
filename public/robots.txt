@@ -1,0 +1,14 @@
+# Drydock — https://drydock.org
+# Public marketing and documentation pages are indexable. The authenticated
+# product (dashboard) and the JSON API are not useful in search results.
+User-agent: *
+Allow: /$
+Allow: /docs
+Allow: /privacy
+Disallow: /dashboard
+Disallow: /login
+Disallow: /register
+Disallow: /verify-email
+Disallow: /api/
+
+Sitemap: https://drydock.org/sitemap.xml

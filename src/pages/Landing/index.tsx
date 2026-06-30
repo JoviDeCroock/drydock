@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { Show } from "@preact/signals/utils";
-import { homePageSeo, PageSeo } from "../../lib/seo";
+import { homePageSeo, PageSeo, StructuredData } from "../../lib/seo";
 import {
   AikidoPartnerStrip,
   Badge,
@@ -23,6 +23,7 @@ export default function LandingPage() {
   return (
     <PageShell class="gap-12" headerActions={<MarketingHeaderActions authed={authed} />}>
       <PageSeo metadata={homePageSeo} />
+      <StructuredData />
       <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
         <Eyebrow tone="accent">Package review before npm or PyPI publish</Eyebrow>
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
