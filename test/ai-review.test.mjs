@@ -191,6 +191,27 @@ describe("ai review orchestration", () => {
     expect(selectModelCandidates(options)).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
   });
 
+  test("keeps the strong model first when dependencies change", () => {
+    const options = {
+      ...BASE_OPTIONS,
+      packageJsonDiff: {
+        ...EMPTY_PACKAGE_JSON_DIFF,
+        dependencies: [{ key: "left-pad", status: "added", staged: "^1.0.0" }],
+      },
+      diff: [
+        {
+          path: "src/index.js",
+          status: "added",
+          stagedSize: 10,
+          stagedSha256: "sha-1",
+          flags: [],
+        },
+      ],
+    };
+
+    expect(selectModelCandidates(options)).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
+  });
+
   test("keeps the strong model first when entrypoints change", () => {
     const options = {
       ...BASE_OPTIONS,

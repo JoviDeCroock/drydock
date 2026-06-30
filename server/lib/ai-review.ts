@@ -53,6 +53,9 @@ function isLowSignalReview(options: SelectiveAiReviewOptions): boolean {
     options.ruleFindings.length === 0 &&
     options.packageJsonDiff.entrypointsChanged === false &&
     options.packageJsonDiff.scripts.length === 0 &&
+    // A dependency add/change is a supply-chain vector even with no lifecycle
+    // script, so any manifest dependency delta keeps the strong model first.
+    options.packageJsonDiff.dependencies.length === 0 &&
     options.previousVersionAvailable === true &&
     options.diff.filter((entry) => entry.status !== "unchanged").length <=
       MAX_LOW_SIGNAL_CHANGED_FILES
