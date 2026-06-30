@@ -398,11 +398,11 @@ export function GateDecisionDialog({
                 ? "Submitting…"
                 : reviewFailed
                   ? multi
-                    ? "Clear package anyway"
-                    : "Clear anyway & release"
+                    ? "Ship package anyway"
+                    : "Ship anyway & release"
                   : multi
-                    ? "Clear package"
-                    : "Clear & release"}
+                    ? "Ship package"
+                    : "Ship & release"}
             </Button>
           ) : null}
           <Button

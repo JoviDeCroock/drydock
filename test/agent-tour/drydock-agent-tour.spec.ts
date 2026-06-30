@@ -105,7 +105,7 @@ test("agent tour: local Drydock release review walkthrough", async ({
     await download.saveAs(exportedReportPath);
     tour.note(`Exported canonical report JSON to ${relative(exportedReportPath)}.`);
 
-    await page.getByRole("button", { name: "Clear" }).click();
+    await page.getByRole("button", { name: "Ship" }).click();
     await expect(page.getByRole("heading", { name: "Release clearance" })).toBeVisible();
     await page.getByLabel("Reason (optional)").fill("Agent tour: high-risk implicit node-gyp.");
     await tour.capture(page, "decision-dialog", "Maintainer decision dialog before blocking.");

@@ -455,7 +455,7 @@ function ScanTable({
                         ? "Saving…"
                         : scan.decision
                           ? "Update"
-                          : "Clear"}
+                          : "Ship"}
                     </Button>
                   ) : null}
                 </div>
