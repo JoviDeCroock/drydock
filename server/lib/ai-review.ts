@@ -6,6 +6,7 @@ import {
   clampAiReviewSubmission,
   MAX_AGENT_STEPS,
   MAX_REVIEW_OUTPUT_TOKENS,
+  normalizeAiReviewEcosystem,
   selectReportedFindings,
   type AiReviewSubmission,
 } from "./ai-review-contract";
@@ -89,7 +90,7 @@ export async function analyzeWithAi(
             gateway: { id: "drydock-gateway" },
           })(candidateModel, {
             extraHeaders: {
-              "x-session-affinity": scanScopedCacheAffinity(env, options.scanId),
+              "x-session-affinity": reviewerCacheAffinity(env, options.ecosystem),
               "cf-aig-metadata": aiGatewayMetadataHeader(options, candidateModel, attempt),
             },
           });
@@ -265,10 +266,14 @@ function toUsage(usage: LanguageModelUsage, steps: number): AiReviewUsage {
   };
 }
 
-function scanScopedCacheAffinity(env: Cloudflare.Env, scanId: string | undefined): string {
+export function reviewerCacheAffinity(env: Cloudflare.Env, ecosystem: string | undefined): string {
   const base = env.AI_CACHE_AFFINITY || DEFAULT_CACHE_AFFINITY;
-  const suffix = scanId || crypto.randomUUID();
-  return `${base}:${suffix}`;
+  // Use a stable per-ecosystem routing key so every scan reuses the same cache
+  // affinity for the static reviewer prefix. This improves cross-scan prompt
+  // reuse while preserving within-scan reuse; concurrent same-ecosystem scans
+  // may share routing and contend slightly, but current volume keeps that risk
+  // negligible. Operators can override the base via AI_CACHE_AFFINITY.
+  return `${base}:${normalizeAiReviewEcosystem(ecosystem)}`;
 }
 
 function normalizeAiResponse(model: string, text: string): AiReview {

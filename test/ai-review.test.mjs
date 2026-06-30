@@ -7,6 +7,7 @@ import {
   analyzeWithAi,
   aiGatewayMetadataHeader,
   displayedAiResult,
+  reviewerCacheAffinity,
 } from "../server/lib/ai-review.ts";
 import {
   buildReviewerSystemPrompt,
@@ -127,6 +128,30 @@ describe("AI review prompt selection", () => {
     expect(normalizeAiReviewEcosystem("rubygems")).toBe("generic");
     expect(normalizeAiReviewEcosystem(undefined)).toBe("generic");
     expect(buildReviewerSystemPrompt("rubygems")).toContain("Ecosystem: generic package release.");
+  });
+});
+
+describe("reviewer cache affinity", () => {
+  test("anchors cache affinity on ecosystem instead of scan id", () => {
+    const base = { AI_CACHE_AFFINITY: "cache-base" };
+
+    expect(reviewerCacheAffinity(base, "npm")).toBe("cache-base:npm");
+    expect(reviewerCacheAffinity(base, "npm")).toBe(reviewerCacheAffinity(base, "npm"));
+    expect(reviewerCacheAffinity(base, "pypi")).toBe("cache-base:pypi");
+    expect(reviewerCacheAffinity(base, "rubygems")).toBe("cache-base:generic");
+    expect(reviewerCacheAffinity({}, "npm")).toBe(
+      "staged-publish-review-agentic-release-reviewer-v1:npm",
+    );
+  });
+
+  test("respects the override and ignores scan id", () => {
+    const env = { AI_CACHE_AFFINITY: "override-base" };
+
+    expect(reviewerCacheAffinity(env, "npm")).toBe("override-base:npm");
+    expect(reviewerCacheAffinity(env, "npm")).toBe(
+      reviewerCacheAffinity({ ...env, scanId: "scan-a" }, "npm"),
+    );
+    expect(reviewerCacheAffinity({ ...env, scanId: "scan-b" }, "npm")).toBe("override-base:npm");
   });
 });
 
