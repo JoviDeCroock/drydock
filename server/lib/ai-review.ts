@@ -186,7 +186,10 @@ export async function analyzeWithAi(
           usage,
         };
       } catch (err) {
-        if (isAiReviewBudgetTimeoutError(err)) {
+        // Fail closed on the budget once the deadline has passed, regardless of
+        // whether the abort surfaced as a recognizable TimeoutError or was
+        // wrapped by the SDK/provider into another error shape.
+        if (isAiReviewBudgetTimeoutError(err) || remainingAiReviewBudgetMs(deadline) <= 0) {
           return {
             review: budgetExceededReview(candidateModel, budgetMs),
             usage: null,

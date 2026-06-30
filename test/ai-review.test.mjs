@@ -415,6 +415,39 @@ describe("ai review orchestration", () => {
     expect(usage).toBeNull();
   });
 
+  test("a budget timeout wrapped into another error shape still fails safe to the budget message", async () => {
+    const modelCalls = [];
+    const wrappingModel = (model) => {
+      modelCalls.push(model);
+      return mockModel(async ({ abortSignal }) => {
+        await new Promise((_, reject) => {
+          const fail = () =>
+            // Simulate the SDK/provider re-wrapping the abort: a plain Error
+            // whose name is not "TimeoutError", so detection must fall back to
+            // the deadline check.
+            reject(new Error("APICallError: request aborted by client"));
+          if (abortSignal?.aborted) {
+            fail();
+            return;
+          }
+          abortSignal?.addEventListener("abort", fail, { once: true });
+        });
+      });
+    };
+
+    const { review: ai, usage } = await analyzeWithAi(
+      { AI_REVIEW_BUDGET_MS: "100" },
+      ["primary-reviewer", "fallback-reviewer"],
+      BASE_OPTIONS,
+      wrappingModel,
+    );
+
+    expect(modelCalls).toEqual(["primary-reviewer"]);
+    expect(ai.status).toBe("unavailable");
+    expect(ai.summary).toContain("time budget");
+    expect(usage).toBeNull();
+  });
+
   test("a persistent capacity error exhausts retries and fails safe to unavailable", async () => {
     skipRetryDelay();
     let calls = 0;
