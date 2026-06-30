@@ -26,12 +26,14 @@ export function PageShell({
   width = "wide",
   brand = true,
   headerActions,
+  feedbackPosition = "start",
 }: {
   class?: string;
   children: ComponentChildren;
   width?: "narrow" | "doc" | "wide";
   brand?: boolean;
   headerActions?: ComponentChildren;
+  feedbackPosition?: "start" | "end";
 }) {
   const maxWidth = WIDTH_CLASS[width];
   // Narrow pages are single short cards (auth, 404, invite). Center them in the
@@ -63,15 +65,9 @@ export function PageShell({
               )}
             </div>
             <div class="flex items-center gap-2">
-              <LinkButton
-                href={FEEDBACK_MAILTO}
-                variant="ghost"
-                size="sm"
-                title="Email drydock@drydock.org with any issues"
-              >
-                Feedback
-              </LinkButton>
+              {feedbackPosition === "start" ? <FeedbackButton /> : null}
               {headerActions}
+              {feedbackPosition === "end" ? <FeedbackButton /> : null}
             </div>
           </div>
         ) : null}
@@ -84,6 +80,19 @@ export function PageShell({
       </main>
       <SiteFooter maxWidth={maxWidth} />
     </div>
+  );
+}
+
+function FeedbackButton() {
+  return (
+    <LinkButton
+      href={FEEDBACK_MAILTO}
+      variant="ghost"
+      size="sm"
+      title="Email drydock@drydock.org with any issues"
+    >
+      Feedback
+    </LinkButton>
   );
 }
 

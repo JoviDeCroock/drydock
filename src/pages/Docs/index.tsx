@@ -8,7 +8,11 @@ export default function DocsPage() {
   const authed = useAuthedSession();
 
   return (
-    <PageShell class="gap-12" headerActions={<MarketingHeaderActions authed={authed} />}>
+    <PageShell
+      class="gap-12"
+      headerActions={<MarketingHeaderActions authed={authed} />}
+      feedbackPosition="end"
+    >
       <PageSeo metadata={docsPageSeo} />
       <header class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
         <Eyebrow tone="accent">Documentation</Eyebrow>
