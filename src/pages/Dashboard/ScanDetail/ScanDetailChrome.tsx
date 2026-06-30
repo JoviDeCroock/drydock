@@ -44,7 +44,6 @@ export function ScanDetailHeader({
                   release {releaseRisk}
                 </Badge>
               ) : null,
-              <span key="scan-id">scan {detail.scan.id.slice(0, 12)}</span>,
             ]}
           />
         ) : (
