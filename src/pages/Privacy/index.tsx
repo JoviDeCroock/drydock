@@ -118,6 +118,18 @@ export default function PrivacyPage() {
           </Prose>
         </Section>
 
+        <Section id="product-analytics" label="Product analytics">
+          <Prose>
+            We use a privacy-conscious product analytics tool (PostHog, hosted in the EU) to
+            understand how the product is used — for example which steps of an inspection people
+            reach — so we can improve it. Analytics events are sent first-party through Drydock and
+            are keyed only to your opaque account and organization identifiers; we do not send your
+            name, email, package names, release contents, findings, or credentials, and we drop your
+            IP address before the data leaves Drydock. If your browser sends a “Do Not Track” signal
+            we honor it and skip analytics.
+          </Prose>
+        </Section>
+
         <Section id="cookies" label="Cookies">
           <Prose>
             We use first-party cookies that are strictly necessary to sign you in and keep your

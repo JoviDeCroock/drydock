@@ -6,6 +6,7 @@ import type {
   PackageJsonSummary,
 } from "../../server/lib/review";
 import { apiFetch, apiJson, errorMessage } from "./api";
+import { AnalyticsEvent, trackEvent } from "../lib/analytics";
 import {
   decideWorkflowGate,
   getWorkflowGateByScan,
@@ -284,6 +285,13 @@ export const ScanListModel = createModel(() => {
               : scan,
           )
           .filter((scan) => scanMatchesDecisionFilter(scan, activeFilter));
+        trackEvent(AnalyticsEvent.ScanDecisionRecorded, {
+          surface: "list",
+          decision,
+          outcome: decision === "publish" ? "ship" : "hold",
+          risk: updated.scan.risk ?? null,
+          had_reason: Boolean(reason),
+        });
         this.decisionStatus.value = "idle";
       } catch (err) {
         this.decisionError.value = errorMessage(err);
@@ -463,10 +471,18 @@ export const ScanDetailModel = createModel((id: string) => {
     async load(): Promise<void> {
       const id = this.scanId.peek();
       try {
+        const firstView = this.detail.peek() === null;
         const data = await getScan(id);
         this.detail.value = data;
         if (this.selectedPath.peek() === null) {
           this.selectedPath.value = pickInitialPath(data);
+        }
+        if (firstView) {
+          trackEvent(AnalyticsEvent.ScanDetailViewed, {
+            status: data.scan.status ?? null,
+            risk: data.scan.risk ?? null,
+            source: data.scan.source ?? null,
+          });
         }
       } catch (err) {
         this.error.value = errorMessage(err);
@@ -513,6 +529,13 @@ export const ScanDetailModel = createModel((id: string) => {
       try {
         const updated = await setScanDecision(id, decision, reason);
         this.detail.value = updated;
+        trackEvent(AnalyticsEvent.ScanDecisionRecorded, {
+          surface: "detail",
+          decision,
+          outcome: decision === "publish" ? "ship" : "hold",
+          risk: updated.scan.risk ?? null,
+          had_reason: Boolean(reason),
+        });
         this.decisionStatus.value = "idle";
       } catch (err) {
         this.decisionError.value = errorMessage(err);
@@ -560,6 +583,10 @@ export const ScanDetailModel = createModel((id: string) => {
           totpCode,
         );
         this.gate.value = updated;
+        trackEvent(AnalyticsEvent.WorkflowGateDecisionRecorded, {
+          decision,
+          had_comment: Boolean(comment),
+        });
         this.gateDecisionStatus.value = "idle";
         // The decision also writes the scan's publish/no_publish decision and an
         // audit event server-side; refresh so the workbench reflects both.

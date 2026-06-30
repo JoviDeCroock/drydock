@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { ANALYTICS_PROXY_PREFIX } from "./lib/analytics-proxy-path";
+import { proxyAnalyticsRequest } from "./lib/analytics-proxy";
 import {
   createDb,
   enforceRateLimit,
@@ -123,6 +125,12 @@ app.use("*", async (c, next) => canonicalDomainRedirect(c.req.raw) ?? next());
 // CSRF middleware below — the signature verification inside the handler is the
 // trust boundary.
 app.route("/webhooks", githubWebhookRoutes);
+
+// First-party reverse proxy to PostHog EU for product analytics. Public and
+// auth-free by design (the browser SDK has no session), it forwards to PostHog
+// while stripping client IP headers so analytics traffic stays same-origin and
+// no reviewer IP leaves Drydock. See docs/product-analytics.md.
+app.all(`${ANALYTICS_PROXY_PREFIX}/*`, (c) => proxyAnalyticsRequest(c.req.raw));
 
 app.use("/api/*", async (c, next) => {
   try {

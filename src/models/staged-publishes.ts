@@ -1,6 +1,7 @@
 import { createModel, signal } from "@preact/signals";
 import type { StagedPublishesScanResponse } from "../../server/lib/staged-publishes";
 import { apiFetch, errorMessage } from "./api";
+import { AnalyticsEvent, trackEvent } from "../lib/analytics";
 
 export type { StagedPublishesScanResponse };
 
@@ -38,6 +39,11 @@ export const StagedPublishesModel = createModel(() => {
         this.lastResult.value = result;
         this.lastDiscoveryAt.value = Date.now();
         this.error.value = null;
+        trackEvent(AnalyticsEvent.ScanDiscoveryRun, {
+          found: result.found,
+          created: result.created,
+          skipped: result.skipped,
+        });
         return result;
       } catch (err) {
         this.error.value = errorMessage(err);

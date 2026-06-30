@@ -9,6 +9,7 @@ export type { Severity, Status, BadgeTone } from "./Badge";
 export { Alert } from "./Alert";
 export type { AlertTone } from "./Alert";
 export { Toaster, pushToast, dismissToast } from "./Toast";
+export { AnalyticsTracker } from "./AnalyticsTracker";
 export type { ToastTone } from "./Toast";
 export { Dialog } from "./Dialog";
 export {

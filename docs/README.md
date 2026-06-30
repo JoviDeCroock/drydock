@@ -32,6 +32,7 @@ Start here instead of reading every Markdown file. Pick the smallest set that ma
 - [`two-factor-auth.md`](./two-factor-auth.md) — step-up auth and sensitive actions.
 - [`slack-notifications.md`](./slack-notifications.md) — Slack install and notification flow.
 - [`account-deletion.md`](./account-deletion.md) — account deletion lifecycle.
+- [`product-analytics.md`](./product-analytics.md) — first-party PostHog product analytics, privacy posture, and captured events.
 
 ## Retired or compatibility pointers
 

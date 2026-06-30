@@ -1,6 +1,6 @@
 import { hydrate, render } from "preact";
 import { ErrorBoundary, LocationProvider, Route, Router, lazy, prerender as ssr } from "preact-iso";
-import { Toaster } from "./components";
+import { AnalyticsTracker, Toaster } from "./components";
 import { extractPrerenderHead, getPageSeoMetadata } from "./lib/seo";
 import {
   isDashboardShellRoute,
@@ -43,6 +43,7 @@ export function App() {
           <Route default component={NotFoundPage} />
         </Router>
       </ErrorBoundary>
+      <AnalyticsTracker />
       <Toaster />
     </LocationProvider>
   );
