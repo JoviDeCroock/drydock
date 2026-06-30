@@ -20,7 +20,10 @@ import {
   user,
 } from "./schema";
 
-export async function ensurePersonalOrganization(db: AppDb, session: WorkspaceSession) {
+export async function ensurePersonalOrganizationWithCreation(
+  db: AppDb,
+  session: WorkspaceSession,
+): Promise<{ organizationId: string; created: boolean }> {
   const organizationId = personalOrganizationId(session.userId);
   const [existing] = await db
     .select({ organizationId: organizationMembers.organizationId })
@@ -32,12 +35,12 @@ export async function ensurePersonalOrganization(db: AppDb, session: WorkspaceSe
       ),
     )
     .limit(1);
-  if (existing) return organizationId;
+  if (existing) return { organizationId, created: false };
 
   const now = new Date();
   const name = session.name || session.email || "Personal workspace";
 
-  await db
+  const inserted = await db
     .insert(organizations)
     .values({
       id: organizationId,
@@ -46,7 +49,8 @@ export async function ensurePersonalOrganization(db: AppDb, session: WorkspaceSe
       createdAt: now,
       updatedAt: now,
     })
-    .onConflictDoNothing();
+    .onConflictDoNothing()
+    .returning({ id: organizations.id });
 
   await db
     .insert(organizationMembers)
@@ -60,6 +64,11 @@ export async function ensurePersonalOrganization(db: AppDb, session: WorkspaceSe
     })
     .onConflictDoNothing();
 
+  return { organizationId, created: inserted.length > 0 };
+}
+
+export async function ensurePersonalOrganization(db: AppDb, session: WorkspaceSession) {
+  const { organizationId } = await ensurePersonalOrganizationWithCreation(db, session);
   return organizationId;
 }
 

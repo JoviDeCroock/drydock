@@ -10,7 +10,9 @@ model, the role-based access guards, and the email-token invitation flow.
 - `owner` — the `organizations.ownerUserId`. Exactly one per org. Cannot be
   removed or demoted through the API. Created implicitly when an org is created
   (`createOrganization` / `ensurePersonalOrganization` insert the owner's
-  `organization_members` row with role `owner`).
+  `organization_members` row with role `owner`). The first personal-org
+  creation now also seeds one normal sample scan so a brand-new workbench opens
+  with real findings instead of an empty dashboard.
 - `admin` — full management of members, invitations, npm connections, and GitHub
   release targets.
 - `member` — read access to org-scoped resources; can act on releases (record

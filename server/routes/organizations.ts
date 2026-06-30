@@ -7,7 +7,6 @@ import {
   deleteNotificationRecipient,
   deleteOrganization,
   enforceRateLimit,
-  ensurePersonalOrganization,
   getOrganizationRole,
   isOrganizationOwner,
   listNotificationRecipients,
@@ -22,6 +21,7 @@ import { sanitizeAddress } from "../lib/email";
 import { rateLimitResponse } from "../lib/http";
 import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
 import { personalOrganizationId } from "../lib/ownership";
+import { resolvePersonalOrganization } from "../lib/personal-organization";
 import { roleCanManageIntegrations, type OrganizationRole } from "../lib/roles";
 import type { Bindings, Variables } from "../types";
 
@@ -35,7 +35,7 @@ export const organizationsRoutes = new Hono<{ Bindings: Bindings; Variables: Var
 organizationsRoutes.get("/", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
-  await ensurePersonalOrganization(db, session);
+  await resolvePersonalOrganization(db, session, c.env);
   const organizations = await listUserOrganizations(db, session.userId);
   return c.json({ organizations });
 });

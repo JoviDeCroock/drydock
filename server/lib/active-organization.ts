@@ -1,8 +1,8 @@
 import type { Context } from "hono";
 import { and, eq } from "drizzle-orm";
 import type { AppDb } from "../db";
-import { ensurePersonalOrganization } from "../db";
 import { organizationMembers } from "../db/schema";
+import { resolvePersonalOrganization } from "./personal-organization";
 import { personalOrganizationId } from "./ownership";
 import type { OrganizationRole } from "./roles";
 import type { Bindings, Variables } from "../types";
@@ -28,7 +28,7 @@ export async function requireActiveOrganization(
       .limit(1);
     if (membership) return requested;
   }
-  await ensurePersonalOrganization(db, session);
+  await resolvePersonalOrganization(db, session, c.env);
   return personalOrganizationId(session.userId);
 }
 
@@ -66,6 +66,6 @@ export async function requireActiveOrganizationContext(
       };
     }
   }
-  const organizationId = await ensurePersonalOrganization(db, session);
+  const organizationId = await resolvePersonalOrganization(db, session, c.env);
   return { organizationId, role: "owner" };
 }
