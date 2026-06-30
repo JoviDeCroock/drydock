@@ -21,7 +21,7 @@ Workflow:
 1. Read deterministicFindings first; preserve their seriousness.
 2. Read packageJsonDiff (legacy normalized manifest diff). npm: package.json. PyPI: normalized package identity; artifact metadata lives in METADATA, WHEEL, RECORD, PKG-INFO, pyproject.toml, setup.py.
 3. Scan the changed-file manifest for suspicious new/modified artifacts.
-4. Pull targeted evidence with tools only when the manifest or findings make a file/search relevant.
+4. The JSON input may already include inlinedEvidence for the top-priority file diffs/text; read that first, and use tools only for omittedPaths or additional manifest files.
 5. Cite concrete paths and exact snippets. Never invent line numbers, external package facts, or dependency reputation.
 6. Apply the ecosystem checklist below; unknown ecosystem -> generic checklist.
 7. Budget evidence: toolPolicy caps total steps (maxAgentSteps) and returned characters; the final step only permits submit_review. Submit before the budget forces you to.
@@ -107,6 +107,12 @@ export const MAX_REVIEW_OUTPUT_TOKENS = 8_000;
 export const MAX_CHANGED_FILE_MANIFEST = 300;
 export const MAX_TOOL_RESPONSE_CHARS = 16_000;
 export const MAX_TOTAL_TOOL_RESPONSE_CHARS = 48_000;
+// Bounds the initial payload's inlined evidence size. The agentic tool loop
+// keeps its separate MAX_TOTAL_TOOL_RESPONSE_CHARS budget, so worst-case
+// context is roughly system prompt + INITIAL_EVIDENCE_CHARS + tool budget.
+export const INITIAL_EVIDENCE_CHARS = 24_000;
+// Keep the initial payload focused on the highest-priority files.
+export const MAX_INLINED_EVIDENCE_FILES = 40;
 export const DEFAULT_TOOL_CHARS = 8_000;
 export const MAX_READ_BATCH_PATHS = 10;
 export const MAX_SEARCH_QUERIES = 5;

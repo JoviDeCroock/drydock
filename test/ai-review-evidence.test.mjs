@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { buildAiReviewPayload, createAiReviewTools } from "../server/lib/ai-review-evidence.ts";
+import {
+  buildAiReviewPayload,
+  buildInlinedEvidence,
+  buildEvidenceIndex,
+  createAiReviewTools,
+  renderPathEvidence,
+} from "../server/lib/ai-review-evidence.ts";
+import { INITIAL_EVIDENCE_CHARS } from "../server/lib/ai-review-contract.ts";
 
 const EMPTY_PACKAGE_JSON_DIFF = {
   name: "fixture",
@@ -38,10 +45,27 @@ function reviewOptions() {
     file("README.md", "# fixture\n"),
   ];
 
+  const previousFiles = files.map((entry) =>
+    entry.path === "package.json"
+      ? file(
+          "package.json",
+          JSON.stringify(
+            {
+              name: "fixture",
+              version: "1.0.0",
+              scripts: { postinstall: "node scripts/install" },
+            },
+            null,
+            2,
+          ),
+        )
+      : entry,
+  );
+
   return {
     ecosystem: "npm",
     files,
-    previousFiles: files,
+    previousFiles,
     diff: [
       {
         path: "package.json",
@@ -81,7 +105,12 @@ function reviewOptions() {
       },
     ],
     packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
-    ruleFindings: [],
+    ruleFindings: [
+      {
+        file: "scripts/install.js",
+        severity: "high",
+      },
+    ],
     previousVersionAvailable: true,
   };
 }
@@ -114,6 +143,98 @@ describe("AI review evidence tools", () => {
 
     const readme = reads.results[1];
     expect(readme.ok).toBe(false);
+  });
+
+  test("inlines the highest-priority evidence before tools", () => {
+    const payload = buildAiReviewPayload(reviewOptions());
+
+    const packageJson = payload.inlinedEvidence.find((entry) => entry.path === "package.json");
+    expect(packageJson).toMatchObject({
+      ok: true,
+      kind: "diff",
+      path: "package.json",
+    });
+    expect(packageJson.content).toContain('"postinstall"');
+
+    const finding = payload.inlinedEvidence.find((entry) => entry.path === "scripts/install.js");
+    expect(finding).toMatchObject({
+      ok: true,
+      kind: "text",
+      path: "scripts/install.js",
+    });
+    expect(finding.content).toContain("process.env.NPM_TOKEN");
+
+    expect(payload.inlinedEvidence.some((entry) => entry.path === "README.md")).toBe(false);
+    expect(payload.inlinedEvidenceNote).toContain("highest-priority file diffs/text");
+  });
+
+  test("shares the path renderer between inlined evidence and read tool output", async () => {
+    const options = reviewOptions();
+    const payload = buildAiReviewPayload(options);
+    const tools = createAiReviewTools(options, () => {});
+
+    const read = await tools.read.execute({ paths: ["package.json"], maxChars: 4_000 });
+    const direct = renderPathEvidence(
+      "package.json",
+      buildEvidenceIndex(options),
+      4_000,
+      { remaining: 4_000 },
+      { remaining: 4_000 },
+    );
+    const inlined = payload.inlinedEvidence.find((entry) => entry.path === "package.json");
+
+    expect(read.results[0]).toEqual(direct);
+    expect(inlined).toEqual(read.results[0]);
+  });
+
+  test("respects the initial inlined evidence budget and reports omissions", () => {
+    const manyFiles = Array.from({ length: 50 }, (_, index) => {
+      const path = `src/file-${String(index).padStart(2, "0")}.js`;
+      return file(
+        path,
+        `export const file${index} = ${"x".repeat(4_000)};
+`,
+      );
+    });
+    const options = {
+      ecosystem: "npm",
+      files: [
+        file("package.json", JSON.stringify({ name: "fixture", version: "1.0.1" }, null, 2)),
+        ...manyFiles,
+      ],
+      previousFiles: [],
+      diff: [
+        {
+          path: "package.json",
+          status: "modified",
+          previousSize: 1,
+          stagedSize: 40,
+          previousSha256: "sha-old-package.json",
+          stagedSha256: "sha-package.json",
+          flags: [],
+        },
+        ...manyFiles.map((entry) => ({
+          path: entry.path,
+          status: "added",
+          stagedSize: entry.size,
+          stagedSha256: entry.sha256,
+          flags: [],
+        })),
+      ],
+      packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
+      ruleFindings: [],
+      previousVersionAvailable: false,
+    };
+
+    const inlined = buildInlinedEvidence(options);
+    const totalContent = inlined.entries.reduce(
+      (sum, entry) => sum + (entry.content?.length ?? 0),
+      0,
+    );
+
+    expect(totalContent).toBeLessThanOrEqual(INITIAL_EVIDENCE_CHARS);
+    expect(inlined.budgetExhausted || inlined.omittedPaths.length > 0).toBe(true);
+    expect(inlined.omittedPaths.length).toBeGreaterThan(0);
   });
 
   test("returns a unified diff for changed files when previous text is available", async () => {
