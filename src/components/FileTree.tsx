@@ -106,7 +106,9 @@ function TreeNode({
             >
               ▸
             </span>
-            <span class={cn("flex-1 truncate", statusToText(node.status))}>{node.name}/</span>
+            <span class={cn("flex-1 truncate", statusToText(node.status))} title={`${node.name}/`}>
+              {node.name}/
+            </span>
             <FindingCountBadge count={node.findingCount} severity={node.findingSeverity} />
             {node.status !== "unchanged" ? (
               <Badge tone={statusToTone(node.status)}>{node.status}</Badge>
@@ -141,7 +143,10 @@ function TreeNode({
         )}
       >
         <TreeIndent depth={depth} />
-        <span class={cn("flex-1 truncate", isSelected ? "text-ink" : statusToText(node.status))}>
+        <span
+          class={cn("flex-1 truncate", isSelected ? "text-ink" : statusToText(node.status))}
+          title={node.name}
+        >
           {node.name}
         </span>
         <FindingCountBadge count={node.findingCount} severity={node.findingSeverity} />
