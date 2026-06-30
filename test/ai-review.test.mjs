@@ -7,6 +7,7 @@ import {
   analyzeWithAi,
   aiGatewayMetadataHeader,
   displayedAiResult,
+  selectModelCandidates,
 } from "../server/lib/ai-review.ts";
 import {
   buildReviewerSystemPrompt,
@@ -146,6 +147,102 @@ describe("ai review orchestration", () => {
     expect(AI_MODEL).toBe("@cf/moonshotai/kimi-k2.7-code");
     expect(AI_FALLBACK_MODEL).toBe("@cf/qwen/qwen3-30b-a3b-fp8");
     expect(AI_MODEL_CANDIDATES).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
+  });
+  test("selects the cheaper model first for a clean low-signal release", () => {
+    expect(selectModelCandidates(BASE_OPTIONS)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
+  });
+
+  test("keeps the strong model first when deterministic findings are present", () => {
+    const options = {
+      ...BASE_OPTIONS,
+      ruleFindings: [aiFinding("high", "package.json")],
+      diff: [
+        {
+          path: "src/index.js",
+          status: "added",
+          stagedSize: 10,
+          stagedSha256: "sha-1",
+          flags: [],
+        },
+      ],
+    };
+
+    expect(selectModelCandidates(options)).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
+  });
+
+  test("keeps the strong model first when lifecycle scripts change", () => {
+    const options = {
+      ...BASE_OPTIONS,
+      packageJsonDiff: {
+        ...EMPTY_PACKAGE_JSON_DIFF,
+        scripts: [{ key: "postinstall", status: "added", staged: "node install.js" }],
+      },
+      diff: [
+        {
+          path: "src/index.js",
+          status: "added",
+          stagedSize: 10,
+          stagedSha256: "sha-1",
+          flags: [],
+        },
+      ],
+    };
+
+    expect(selectModelCandidates(options)).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
+  });
+
+  test("keeps the strong model first when entrypoints change", () => {
+    const options = {
+      ...BASE_OPTIONS,
+      packageJsonDiff: {
+        ...EMPTY_PACKAGE_JSON_DIFF,
+        entrypointsChanged: true,
+      },
+      diff: [
+        {
+          path: "src/index.js",
+          status: "added",
+          stagedSize: 10,
+          stagedSha256: "sha-1",
+          flags: [],
+        },
+      ],
+    };
+
+    expect(selectModelCandidates(options)).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
+  });
+
+  test("keeps the strong model first when no previous version is available", () => {
+    const options = {
+      ...BASE_OPTIONS,
+      previousVersionAvailable: false,
+      diff: [
+        {
+          path: "src/index.js",
+          status: "added",
+          stagedSize: 10,
+          stagedSha256: "sha-1",
+          flags: [],
+        },
+      ],
+    };
+
+    expect(selectModelCandidates(options)).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
+  });
+
+  test("keeps the strong model first when the changed-file count exceeds the threshold", () => {
+    const options = {
+      ...BASE_OPTIONS,
+      diff: Array.from({ length: 6 }, (_, index) => ({
+        path: `src/file-${index}.js`,
+        status: "added",
+        stagedSize: 10,
+        stagedSha256: `sha-${index}`,
+        flags: [],
+      })),
+    };
+
+    expect(selectModelCandidates(options)).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
   });
 
   test("keeps AI Gateway metadata within the five-field log limit", () => {

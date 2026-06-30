@@ -125,6 +125,9 @@ export const MAX_REVIEW_OUTPUT_TOKENS = 8_000;
 export const MAX_CHANGED_FILE_MANIFEST = 300;
 export const MAX_TOOL_RESPONSE_CHARS = 16_000;
 export const MAX_TOTAL_TOOL_RESPONSE_CHARS = 48_000;
+// Low-signal releases can lead with the faster fallback model; beyond this many
+// changed files, keep the strong model first.
+export const MAX_LOW_SIGNAL_CHANGED_FILES = 5;
 export const DEFAULT_TOOL_CHARS = 8_000;
 export const MAX_READ_BATCH_PATHS = 10;
 export const MAX_SEARCH_QUERIES = 5;

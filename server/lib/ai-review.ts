@@ -5,6 +5,7 @@ import {
   buildReviewerSystemPrompt,
   clampAiReviewSubmission,
   MAX_AGENT_STEPS,
+  MAX_LOW_SIGNAL_CHANGED_FILES,
   MAX_REVIEW_OUTPUT_TOKENS,
   selectReportedFindings,
   type AiReviewSubmission,
@@ -43,6 +44,21 @@ const DEFAULT_CACHE_AFFINITY = "staged-publish-review-agentic-release-reviewer-v
 const AI_REVIEW_MAX_ATTEMPTS = 3;
 const AI_REVIEW_RETRY_DELAY_MS = 500;
 
+export function selectModelCandidates(options: SelectiveAiReviewOptions): readonly string[] {
+  return isLowSignalReview(options) ? [AI_FALLBACK_MODEL, AI_MODEL] : AI_MODEL_CANDIDATES;
+}
+
+function isLowSignalReview(options: SelectiveAiReviewOptions): boolean {
+  return (
+    options.ruleFindings.length === 0 &&
+    options.packageJsonDiff.entrypointsChanged === false &&
+    options.packageJsonDiff.scripts.length === 0 &&
+    options.previousVersionAvailable === true &&
+    options.diff.filter((entry) => entry.status !== "unchanged").length <=
+      MAX_LOW_SIGNAL_CHANGED_FILES
+  );
+}
+
 type LanguageModelFactory = (model: string) => LanguageModel;
 type LanguageModelOverride = LanguageModel | LanguageModelFactory;
 
@@ -50,7 +66,7 @@ export async function runSelectiveAiReview(
   env: Cloudflare.Env,
   options: SelectiveAiReviewOptions,
 ): Promise<AiReviewResult> {
-  return analyzeWithAi(env, AI_MODEL_CANDIDATES, options);
+  return analyzeWithAi(env, selectModelCandidates(options), options);
 }
 
 export async function analyzeWithAi(
