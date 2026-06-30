@@ -298,7 +298,9 @@ function toUsage(usage: LanguageModelUsage, steps: number): AiReviewUsage {
 
 function resolveAiReviewBudgetMs(env: Cloudflare.Env): number {
   const parsed = Number(env.AI_REVIEW_BUDGET_MS);
-  return Number.isFinite(parsed) ? parsed : AI_REVIEW_TOTAL_BUDGET_MS;
+  // Guard against empty/zero/negative overrides (Number("") === 0) that would
+  // otherwise zero the budget and fail every review straight to `unavailable`.
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : AI_REVIEW_TOTAL_BUDGET_MS;
 }
 
 function remainingAiReviewBudgetMs(deadline: number): number {
