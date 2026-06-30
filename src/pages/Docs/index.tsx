@@ -71,7 +71,7 @@ export default function DocsPage() {
                 </>,
                 <>
                   That's it. Drydock picks up new staged publishes automatically, and{" "}
-                  <Code>Check npm</Code> on the dashboard runs an on-demand check.
+                  <Code>Dock npm</Code> on the dashboard runs an on-demand check.
                 </>,
               ]}
             />
@@ -87,7 +87,7 @@ export default function DocsPage() {
               items={[
                 <>
                   Drydock finds a new staged publish, either automatically or when you hit{" "}
-                  <Code>Check npm</Code>, and queues a scan.
+                  <Code>Dock npm</Code>, and queues a scan for it.
                 </>,
                 <>
                   Your npm token is stored encrypted and only decrypted at the moment Drydock needs

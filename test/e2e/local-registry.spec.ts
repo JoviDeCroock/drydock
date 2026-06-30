@@ -69,7 +69,7 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
       timeout: 30_000,
     });
 
-    // Run the report assertions first via the async scan API. Check npm fans
+    // Run the report assertions first via the async scan API. Dock npm fans out
     // out nine concurrent background scans on the dev Worker, and CI's workerd
     // serializes them so badly that one scan can take minutes to surface a
     // report — waiting for this scan to finish before that contention starts
@@ -102,13 +102,13 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
       fullPage: true,
     });
 
-    // Now exercise Check npm as the live entry point. The button kicks off
+    // Now exercise Dock npm as the live entry point. The button kicks off
     // discovery and we wait only for the "new versions docked" message —
     // the resulting background scans are exercised by the scenarios below.
     await page.goto("/dashboard");
-    const checkNpm = page.getByRole("button", { name: "Check npm" });
-    await expect(checkNpm).toBeEnabled({ timeout: 30_000 });
-    await checkNpm.click();
+    const dockNpm = page.getByRole("button", { name: "Dock npm" });
+    await expect(dockNpm).toBeEnabled({ timeout: 30_000 });
+    await dockNpm.click();
     await expect(
       page.getByText(
         /(?:New version docked|\d+ new versions docked) and ready for inspection from npm/,
