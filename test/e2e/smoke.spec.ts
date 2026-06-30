@@ -22,9 +22,9 @@ test("renders and decides a workflow-gate review", async ({ page }) => {
   await expect(page.getByText("Docked packages")).toBeVisible();
   await expect(page.getByText("@drydock/sidecar@0.4.0")).toBeVisible();
 
-  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await page.getByRole("button", { name: "Ship", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Package clearance" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Clear package" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Ship package" })).toBeVisible();
   await page.getByRole("button", { name: "Hold release" }).click();
 
   await expect(page.getByText("held · job anchored").first()).toBeVisible();

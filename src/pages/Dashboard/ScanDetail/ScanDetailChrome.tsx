@@ -77,7 +77,7 @@ export function ScanDetailHeader({
           ) : null}
           {onDecideClick ? (
             <Button variant={decision ? "secondary" : "primary"} onClick={onDecideClick}>
-              {decision ? "Update clearance" : "Clear"}
+              {decision ? "Update clearance" : "Ship"}
             </Button>
           ) : null}
         </div>
