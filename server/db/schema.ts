@@ -436,6 +436,38 @@ export const githubWorkflowGates = sqliteTable(
   }),
 );
 
+// Organization-scoped programmatic access tokens for headless agents (the MCP
+// server / CI). Only a SHA-256 hash of the presented secret is stored; the
+// plaintext is shown once at creation. `scope` is currently always "read" — the
+// agent surface is advisory and cannot mutate scans or decisions. `expiresAt`
+// and `revokedAt` are null until set; a token is usable only when neither is in
+// the past.
+export const apiTokens = sqliteTable(
+  "api_tokens",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    // First bytes of the token, kept in the clear purely so the UI/CLI can help
+    // a maintainer recognize which token a row refers to. Never the full secret.
+    tokenPrefix: text("token_prefix").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    scope: text("scope").notNull().default("read"),
+    createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    tokenHashUniqueIdx: uniqueIndex("api_tokens_token_hash_unique_idx").on(table.tokenHash),
+    orgCreatedIdx: index("api_tokens_org_created_idx").on(table.organizationId, table.createdAt),
+  }),
+);
+
 export const session = sqliteTable("session", {
   id: text("id").primaryKey(),
   expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),

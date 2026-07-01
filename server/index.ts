@@ -36,8 +36,10 @@ import {
   recordExpiredNpmConnection,
   StagedPublishesFetchError,
 } from "./lib/staged-publishes-discovery";
+import { apiTokensRoutes } from "./routes/api-tokens";
 import { githubAppRoutes } from "./routes/github-app";
 import { githubWebhookRoutes } from "./routes/github-webhooks";
+import { mcpRoutes } from "./routes/mcp";
 import { npmConnectionRoutes } from "./routes/npm-connection";
 import { organizationMembersRoutes } from "./routes/organization-members";
 import { organizationsRoutes } from "./routes/organizations";
@@ -52,7 +54,7 @@ export { NpmAdapterBroker } from "./lib/adapters/npm";
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 const CANONICAL_HOSTNAME = "drydock.org";
 const LEGACY_HOSTNAME = "drydock.resynapse.dev";
-const SERVER_OWNED_PATH_PREFIXES = ["/api", "/webhooks"];
+const SERVER_OWNED_PATH_PREFIXES = ["/api", "/webhooks", "/mcp"];
 const DASHBOARD_STATIC_ASSET_PATHS = new Set([
   "/dashboard",
   "/dashboard/",
@@ -97,7 +99,9 @@ function applySecurityHeaders(c: { res: Response; req: { path: string } }) {
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
   // Worker-owned routes carry the locked-down API policy; static asset responses
   // fetched through the ASSETS binding keep the document policy.
-  headers.set("Content-Security-Policy", c.req.path.startsWith("/api/") ? API_CSP : DOCUMENT_CSP);
+  const usesApiPolicy =
+    c.req.path.startsWith("/api/") || c.req.path === "/mcp" || c.req.path.startsWith("/mcp/");
+  headers.set("Content-Security-Policy", usesApiPolicy ? API_CSP : DOCUMENT_CSP);
 
   c.res = new Response(c.res.body, {
     status: c.res.status,
@@ -123,6 +127,13 @@ app.use("*", async (c, next) => canonicalDomainRedirect(c.req.raw) ?? next());
 // CSRF middleware below — the signature verification inside the handler is the
 // trust boundary.
 app.route("/webhooks", githubWebhookRoutes);
+
+// The read-only MCP server authenticates with org-scoped bearer tokens, not
+// Better Auth cookies, and headless agents POST without an Origin header. Like
+// the signed webhook route above it is mounted before the /api/* auth and CSRF
+// middleware; the API-token hash lookup inside the handler is its trust
+// boundary. See docs/mcp.md.
+app.route("/mcp", mcpRoutes);
 
 app.use("/api/*", async (c, next) => {
   try {
@@ -237,6 +248,8 @@ app.get("/api", (c) =>
       scanDetail: "GET /api/v1/scans/:id",
       stagedPublishes: "POST /api/v1/staged-publishes/scan",
       npmConnection: "GET/POST/DELETE /api/v1/npm-connection; POST /api/v1/npm-connection/validate",
+      apiTokens: "GET/POST /api/v1/api-tokens; DELETE /api/v1/api-tokens/:id",
+      mcp: "POST /mcp (JSON-RPC 2.0; org-scoped read-only bearer token; see docs/mcp.md)",
       organizations:
         "GET /api/v1/organizations; POST /api/v1/organizations; PATCH /api/v1/organizations/:id",
       organizationMembers:
@@ -254,6 +267,7 @@ app.get("/api", (c) =>
 );
 
 app.route("/api/v1/github-app", githubAppRoutes);
+app.route("/api/v1/api-tokens", apiTokensRoutes);
 app.route("/api/v1/npm-connection", npmConnectionRoutes);
 app.route("/api/v1/organizations", organizationsRoutes);
 app.route("/api/v1/organizations", organizationMembersRoutes);

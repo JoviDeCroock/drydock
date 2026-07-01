@@ -73,6 +73,8 @@ Cron-triggered npm discovery finds staged publishes for organizations with valid
 
 All non-auth `/api/*` endpoints require a Better Auth session and an active organization. Users may belong to multiple organizations; scan data, npm connections, workflow gates, release targets, Slack installs, and settings must be organization-scoped. Email verification and membership/invitation behavior are described in [`organization-members.md`](./organization-members.md).
 
+Headless agents use a second, narrower path: organization-scoped read-only API tokens (`/api/v1/api-tokens`) authenticate a JSON-RPC MCP endpoint at `POST /mcp`, mounted before the cookie/CSRF middleware and gated by a token-hash lookup. It exposes only read tools over persisted scans and cannot record decisions. See [`mcp.md`](./mcp.md).
+
 ## npm connection model
 
 Organizations store their own encrypted npm connection. The UI validates baseline registry auth/list access after save; discovery and scan workers re-check validation before use. Custom registries are supported, but token use still flows only through the constrained npm gateway.

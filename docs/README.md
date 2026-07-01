@@ -13,6 +13,7 @@ Start here instead of reading every Markdown file. Pick the smallest set that ma
 
 - [`architecture.md`](./architecture.md) — Worker, sandbox, adapters, storage, org model, and API shape.
 - [`workflow-gates.md`](./workflow-gates.md) — GitHub Environment gate flow for PyPI and npm workflow-gated releases.
+- [`mcp.md`](./mcp.md) — read-only MCP/agent integration: API tokens and the scan-evidence tool surface.
 - [`diff-baseline.md`](./diff-baseline.md) — default previous-version comparison strategy.
 - [`artifact-storage.md`](./artifact-storage.md) — D1/R2 report and artifact persistence.
 

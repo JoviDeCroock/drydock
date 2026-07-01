@@ -903,6 +903,92 @@ export async function getScanCompareData(
   return { scan, files: detailFiles.map(stripFileSampleForList), findings: findingRows };
 }
 
+// Rehydrate the evidence surface (redacted staged files + diff + deterministic
+// findings) for a persisted scan so the shared evidence reader — the same one
+// the internal AI reviewer uses live — can walk it post-hoc for the MCP agent
+// surface. Text samples are the same redacted, bounded samples persisted during
+// the scan; no package bytes are re-fetched.
+export interface ScanEvidenceDetail {
+  scan: typeof scans.$inferSelect;
+  files: FileRecord[];
+  diff: DiffEntry[];
+  findings: Finding[];
+}
+
+const DIFF_STATUSES: ReadonlySet<DiffEntry["status"]> = new Set([
+  "added",
+  "removed",
+  "modified",
+  "unchanged",
+]);
+
+function fileRowToRecord(row: typeof scanFiles.$inferSelect): FileRecord {
+  return {
+    path: row.path,
+    size: row.size ?? 0,
+    sha256: row.sha256 ?? "",
+    textSample: row.textSample ?? undefined,
+    flags: Array.isArray(row.flagsJson) ? (row.flagsJson as string[]) : [],
+  };
+}
+
+interface FindingLike {
+  severity: string;
+  file: string;
+  evidence: string;
+  reason: string;
+  line?: number | null;
+  ruleId?: string | null;
+  ruleVersion?: string | null;
+}
+
+function toFinding(row: FindingLike): Finding {
+  return {
+    severity: row.severity as Finding["severity"],
+    file: row.file,
+    evidence: row.evidence,
+    reason: row.reason,
+    line: row.line ?? undefined,
+    ruleId: row.ruleId ?? undefined,
+    ruleVersion: row.ruleVersion ?? undefined,
+  };
+}
+
+export async function getScanEvidence(
+  db: AppDb,
+  id: string,
+  organizationId: string,
+  artifactBucket?: R2Bucket,
+): Promise<ScanEvidenceDetail | null> {
+  const [scanRows, files, findings] = await Promise.all([
+    db
+      .select()
+      .from(scans)
+      .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
+      .limit(1),
+    db.select().from(scanFiles).where(eq(scanFiles.scanId, id)),
+    db.select().from(scanFindings).where(eq(scanFindings.scanId, id)),
+  ]);
+  const scan = scanRows[0];
+  if (!scan) return null;
+  const artifactDetail = await loadScanArtifacts(artifactBucket, scan);
+  const mergedFiles = artifactDetail ? mergeArtifactFiles(files, artifactDetail.files, id) : files;
+  const fileRecords = mergedFiles.map(fileRowToRecord);
+  // Prefer the digest-verified artifact diff; degraded/legacy scans fall back to
+  // a file-granularity diff derived from persisted per-file status.
+  const diff: DiffEntry[] = artifactDetail?.diff
+    ? artifactDetail.diff
+    : mergedFiles.map((file) => ({
+        path: file.path,
+        status: DIFF_STATUSES.has(file.status as DiffEntry["status"])
+          ? (file.status as DiffEntry["status"])
+          : "modified",
+        flags: Array.isArray(file.flagsJson) ? (file.flagsJson as string[]) : [],
+      }));
+  const findingRows = artifactDetail ? artifactDetail.findings : findings;
+  return { scan, files: fileRecords, diff, findings: findingRows.map(toFinding) };
+}
+
 function stripFileSampleForList<T extends { textSample: string | null }>(file: T): T {
   return file.textSample === null ? file : { ...file, textSample: null };
 }

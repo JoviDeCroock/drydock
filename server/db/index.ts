@@ -6,3 +6,4 @@ export * from "./slack-connection";
 export * from "./invitations";
 export * from "./npm-connections";
 export * from "./scans";
+export * from "./api-tokens";
