@@ -1,13 +1,8 @@
 import { env } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
-import {
-  claimScanForRun,
-  createDb,
-  createScanJob,
-  ensurePersonalOrganization,
-  getScan,
-  persistScan,
-} from "../../server/db";
+import { createDb } from "../../server/db/client";
+import { ensurePersonalOrganization } from "../../server/db/organizations";
+import { claimScanForRun, createScanJob, getScan, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { createPackageDiff } from "../../server/lib/review";
 

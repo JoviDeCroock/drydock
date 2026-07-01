@@ -19,7 +19,10 @@ const notifyMock = vi.hoisted(() => ({
   notifyScanCompletion: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("../server/db/index.ts", () => dbMock);
+vi.mock("../server/db/client.ts", () => dbMock);
+vi.mock("../server/db/events.ts", () => dbMock);
+vi.mock("../server/db/npm-connections.ts", () => dbMock);
+vi.mock("../server/db/scans.ts", () => dbMock);
 vi.mock("../server/lib/scan-pipeline.ts", () => pipelineMock);
 vi.mock("../server/lib/npm-connection.ts", () => npmConnectionMock);
 vi.mock("../server/lib/notify.ts", () => notifyMock);

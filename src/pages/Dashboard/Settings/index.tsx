@@ -19,14 +19,11 @@ import {
   roleCanManageMembers,
   type OrganizationRole,
 } from "../../../../server/lib/roles";
-import {
-  Eyebrow,
-  LoadingState,
-  Muted,
-  OrgSwitcher,
-  PageShell,
-  UserMenu,
-} from "../../../components";
+import { LoadingState } from "../../../components/Loading";
+import { OrgSwitcher } from "../../../components/OrgSwitcher";
+import { PageShell } from "../../../components/PageShell";
+import { Eyebrow, Muted } from "../../../components/Typography";
+import { UserMenu } from "../../../components/UserMenu";
 import { GeneralSection } from "./GeneralSection";
 import { ReleaseSecuritySection } from "./ReleaseSecuritySection";
 import { GithubAppSection } from "./GithubAppSection";

@@ -1,11 +1,8 @@
 import { Hono } from "hono";
-import {
-  createDb,
-  enforceRateLimit,
-  getOrganizationOwnerUserId,
-  listAutoDiscoveryNpmConnections,
-  RateLimitError,
-} from "./db";
+import { createDb } from "./db/client";
+import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
+import { getOrganizationOwnerUserId } from "./db/organizations";
+import { RateLimitError, enforceRateLimit } from "./db/rate-limit";
 import { createAuth, getAuthSession } from "./lib/auth";
 import { rateLimitResponse } from "./lib/http";
 import { allowInsecureLocalRegistry } from "./lib/npm-connection";

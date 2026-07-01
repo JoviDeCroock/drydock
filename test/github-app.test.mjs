@@ -1,20 +1,22 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
+import { fetchRepository } from "../server/lib/github-app/api.ts";
 import {
   GithubAppConfigError,
   GithubAppValidationError,
+  isGithubAppConfigured,
+  readGithubAppConfig,
+} from "../server/lib/github-app/config.ts";
+import { generateGithubAppJwt } from "../server/lib/github-app/jwt.ts";
+import {
   buildInstallUrl,
   exchangeGithubUserCode,
-  fetchRepository,
-  generateGithubAppJwt,
-  isGithubAppConfigured,
   listUserAccessibleInstallations,
-  readGithubAppConfig,
   signOAuthState,
-  validateReleaseTargetShape,
-  verifyUserCanAccessInstallation,
   verifyOAuthState,
-} from "../server/lib/github-app/index.ts";
+  verifyUserCanAccessInstallation,
+} from "../server/lib/github-app/oauth.ts";
+import { validateReleaseTargetShape } from "../server/lib/github-app/validation.ts";
 
 const originalFetch = globalThis.fetch;
 

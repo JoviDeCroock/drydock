@@ -1,5 +1,5 @@
-import type { AppDb } from "../db";
-import { getNpmConnection, markNpmConnectionUsed } from "../db";
+import { type AppDb } from "../db/client";
+import { getNpmConnection, markNpmConnectionUsed } from "../db/npm-connections";
 import { base64UrlDecode, base64UrlEncode } from "./crypto-utils";
 import { errorMessage } from "./errors";
 import { reliableFetch } from "./reliable-fetch";

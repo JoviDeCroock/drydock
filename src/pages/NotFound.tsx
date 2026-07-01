@@ -1,4 +1,7 @@
-import { Card, Eyebrow, LinkButton, Muted, PageShell } from "../components";
+import { LinkButton } from "../components/Button";
+import { Card } from "../components/Card";
+import { PageShell } from "../components/PageShell";
+import { Eyebrow, Muted } from "../components/Typography";
 
 export default function NotFoundPage() {
   return (

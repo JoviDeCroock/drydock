@@ -4,15 +4,12 @@ import { useLocation } from "preact-iso";
 import { sessionModel } from "../../../models/auth";
 import { ApiError, apiJson, errorMessage } from "../../../models/api";
 import { setActiveOrganizationId } from "../../../models/active-organization";
-import {
-  Alert,
-  Card,
-  Eyebrow,
-  LinkButton,
-  LoadingState,
-  Muted,
-  PageShell,
-} from "../../../components";
+import { Alert } from "../../../components/Alert";
+import { LinkButton } from "../../../components/Button";
+import { Card } from "../../../components/Card";
+import { LoadingState } from "../../../components/Loading";
+import { PageShell } from "../../../components/PageShell";
+import { Eyebrow, Muted } from "../../../components/Typography";
 
 type InviteState = "checking" | "accepting" | "error";
 

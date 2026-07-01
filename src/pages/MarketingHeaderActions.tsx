@@ -1,6 +1,6 @@
 import type { Signal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
-import { LinkButton } from "../components";
+import { LinkButton } from "../components/Button";
 
 export function MarketingHeaderActions({ authed }: { authed: Signal<boolean> }) {
   return (

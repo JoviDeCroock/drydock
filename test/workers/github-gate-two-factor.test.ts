@@ -3,19 +3,15 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import * as OTPAuth from "otpauth";
 import worker from "../../server/index";
+import { createDb } from "../../server/db/client";
 import {
-  createDb,
-  createScanJob,
   ensurePersonalOrganization,
-  persistScan,
   setRequireTwoFactorForReleaseDecisions,
-} from "../../server/db";
+} from "../../server/db/organizations";
+import { createScanJob, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
-import {
-  createReleaseTarget,
-  getGateForOrganization,
-  upsertInstallation,
-} from "../../server/lib/github-app";
+import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
+import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
 import { personalOrganizationId } from "../../server/lib/ownership";
 
 // 2FA gate-decision step-up is the trust boundary in issue #162: a maintainer

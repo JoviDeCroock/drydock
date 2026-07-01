@@ -2,15 +2,14 @@ import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { createDb } from "../../server/db/client";
+import { addOrganizationMember, getOrganizationRole } from "../../server/db/invitations";
+import { getNpmConnection } from "../../server/db/npm-connections";
 import {
-  addOrganizationMember,
-  createDb,
   ensurePersonalOrganization,
-  getNpmConnection,
-  getOrganizationRole,
   listNotificationRecipients,
   resolveNotificationEmails,
-} from "../../server/db";
+} from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
 import { ACTIVE_ORG_HEADER } from "../../server/lib/active-organization";
 import { npmConnectionRoutes } from "../../server/routes/npm-connection";

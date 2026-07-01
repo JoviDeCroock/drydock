@@ -1,24 +1,22 @@
 import { createExecutionContext, env } from "cloudflare:test";
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, test, vi } from "vitest";
-import { createDb, ensurePersonalOrganization } from "../../server/db";
+import { createDb } from "../../server/db/client";
+import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
-import {
-  createReleaseTarget,
-  getGateForOrganization,
-  readGithubAppConfig,
-  upsertInstallation,
-} from "../../server/lib/github-app";
+import { readGithubAppConfig } from "../../server/lib/github-app/config";
+import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
+import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
+import { npmWorkflowGateAdapter } from "../../server/lib/workflow-gates/npm";
+import { prepareReleaseCandidatesForGate } from "../../server/lib/workflow-gates/prepare";
 import {
   AMBIGUOUS_ARCHIVE_ECOSYSTEM,
   classifyBundleArtifact,
   detectArchiveEcosystems,
   getWorkflowGateAdapter,
-  npmWorkflowGateAdapter,
-  prepareReleaseCandidatesForGate,
   supportedWorkflowGateEcosystems,
-} from "../../server/lib/workflow-gates";
-import type { ParsedGateArtifact } from "../../server/lib/workflow-gates";
+} from "../../server/lib/workflow-gates/registry";
+import { type ParsedGateArtifact } from "../../server/lib/workflow-gates/types";
 import { npmGateAdapter } from "../../server/lib/adapters/npm/gate";
 import type { NpmGateDetails } from "../../server/lib/adapters/npm/gate";
 

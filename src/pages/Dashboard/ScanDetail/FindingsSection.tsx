@@ -1,15 +1,9 @@
 import { compareSeverity, groupFindingsByRule } from "../../../lib/findings";
 import { pluralize } from "../../../lib/format";
 import type { FindingDiffStatus } from "../../../../server/lib/review";
-import {
-  Badge,
-  EmptyLine,
-  FindingCard,
-  FindingRow,
-  GroupedFindingCard,
-  Muted,
-  SectionLabel,
-} from "../../../components";
+import { Badge } from "../../../components/Badge";
+import { FindingCard, FindingRow, GroupedFindingCard } from "../../../components/FindingCard";
+import { EmptyLine, Muted, SectionLabel } from "../../../components/Typography";
 import type { FindingWithDiffStatus } from "./types";
 
 export function RiskSignalsSection({

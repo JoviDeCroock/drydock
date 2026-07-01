@@ -4,7 +4,10 @@ import { pluralize } from "../../../lib/format";
 import { getReleaseRecommendation } from "../recommendation";
 import type { AiFinding, DisplayedAiResult } from "../../../../server/lib/ai-review-types";
 import type { PersistedScanDetail } from "../../../models/scan";
-import { Badge, Card, SectionLabel, SeverityBar } from "../../../components";
+import { Badge } from "../../../components/Badge";
+import { Card } from "../../../components/Card";
+import { SeverityBar } from "../../../components/SeverityBar";
+import { SectionLabel } from "../../../components/Typography";
 import type { FindingWithDiffStatus, PersistedFinding, PersistedSummary } from "./types";
 
 export function ReleaseRecommendation({

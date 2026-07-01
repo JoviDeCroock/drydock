@@ -1,5 +1,5 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
-import type { AppDb } from "../../db";
+import { type AppDb } from "../../db/client";
 import { githubWorkflowGates, scans } from "../../db/schema";
 import type { InstallationRecord, ReleaseTargetRecord } from "./persistence";
 import type { ParsedDeploymentProtectionEvent } from "./webhook";

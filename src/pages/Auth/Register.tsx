@@ -5,7 +5,13 @@ import { useLocation } from "preact-iso";
 import { normalizeAuthReturnTo } from "../../lib/auth-return";
 import { sessionModel } from "../../models/auth";
 import { errorMessage } from "../../models/api";
-import { Alert, Button, Card, Eyebrow, Field, Input, PageShell, Muted } from "../../components";
+import { Alert } from "../../components/Alert";
+import { Button } from "../../components/Button";
+import { Card } from "../../components/Card";
+import { Field } from "../../components/Field";
+import { Input } from "../../components/Input";
+import { PageShell } from "../../components/PageShell";
+import { Eyebrow, Muted } from "../../components/Typography";
 
 export default function RegisterPage() {
   const location = useLocation();

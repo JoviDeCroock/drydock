@@ -1,5 +1,5 @@
 import { hexDecode, hmacSha256, timingSafeEqual } from "../crypto-utils";
-import type { AppDb } from "../../db";
+import { type AppDb } from "../../db/client";
 import { getInstallationAccessToken } from "./api";
 import type { GithubAppConfig } from "./config";
 import { reliableFetch } from "../reliable-fetch";

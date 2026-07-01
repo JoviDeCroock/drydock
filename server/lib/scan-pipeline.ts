@@ -1,4 +1,4 @@
-import { type AppDb, type WorkspaceSession } from "../db";
+import { type AppDb, type WorkspaceSession } from "../db/client";
 import type { AiReview } from "./ai-review-types";
 import type {
   AdapterBroker,

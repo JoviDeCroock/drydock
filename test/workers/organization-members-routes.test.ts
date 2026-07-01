@@ -1,14 +1,14 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
+import { createDb } from "../../server/db/client";
 import {
   addOrganizationMember,
-  createDb,
-  ensurePersonalOrganization,
   getOrganizationRole,
   listPendingInvitations,
   upsertInvitation,
-} from "../../server/db";
+} from "../../server/db/invitations";
+import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
 import { ACTIVE_ORG_HEADER } from "../../server/lib/active-organization";
 import { generateInvitationToken } from "../../server/lib/invitation-token";

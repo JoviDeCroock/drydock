@@ -4,7 +4,8 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError } from "better-auth/api";
 import { twoFactor } from "better-auth/plugins";
 import { eq } from "drizzle-orm";
-import { createDb, deleteUserAccount, findCoOwnedOrganizations, type AppDb } from "../db";
+import { type AppDb, createDb } from "../db/client";
+import { deleteUserAccount, findCoOwnedOrganizations } from "../db/organizations";
 import * as schema from "../db/schema";
 import { sendAccountVerificationEmail } from "./account-email";
 

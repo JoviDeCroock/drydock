@@ -1,6 +1,6 @@
 import { buildNpmReleaseManifest, npmGateAdapter } from "../adapters/npm/gate";
 import type { AdapterBroker, PackageAdapter } from "../adapters/types";
-import { WorkflowArtifactError } from "../github-app";
+import { WorkflowArtifactError } from "../github-app/artifacts";
 import type {
   ArchiveContents,
   ParsedGateArtifact,

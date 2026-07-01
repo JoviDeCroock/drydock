@@ -1,11 +1,8 @@
-import {
-  getOrganizationOwnerUserId,
-  getScan,
-  getSlackConnectionSecret,
-  recordScanEvent,
-  resolveNotificationEmails,
-  type AppDb,
-} from "../db";
+import { type AppDb } from "../db/client";
+import { recordScanEvent } from "../db/events";
+import { getOrganizationOwnerUserId, resolveNotificationEmails } from "../db/organizations";
+import { getScan } from "../db/scans";
+import { getSlackConnectionSecret } from "../db/slack-connection";
 import { sendNotificationEmail } from "./email";
 import type { RiskLevel } from "./review";
 import type { OrganizationRole } from "./roles";

@@ -1,7 +1,9 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { Hono } from "hono";
 import { describe, expect, test, vi } from "vitest";
-import { createDb, ensurePersonalOrganization, getNpmConnection } from "../../server/db";
+import { createDb } from "../../server/db/client";
+import { getNpmConnection } from "../../server/db/npm-connections";
+import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
 import { npmConnectionRoutes } from "../../server/routes/npm-connection";
 import type { Bindings, Variables } from "../../server/types";

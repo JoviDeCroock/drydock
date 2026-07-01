@@ -7,18 +7,13 @@ import {
   type CallbackError,
   type GithubAppCallbackErrorCode,
 } from "../../models/github-app";
-import {
-  Alert,
-  Card,
-  Eyebrow,
-  LinkButton,
-  LoadingState,
-  MonoDetail,
-  Muted,
-  PageShell,
-  SectionLabel,
-  UserMenu,
-} from "../../components";
+import { Alert } from "../../components/Alert";
+import { LinkButton } from "../../components/Button";
+import { Card } from "../../components/Card";
+import { LoadingState } from "../../components/Loading";
+import { PageShell } from "../../components/PageShell";
+import { Eyebrow, MonoDetail, Muted, SectionLabel } from "../../components/Typography";
+import { UserMenu } from "../../components/UserMenu";
 
 const SETTINGS_PATH = "/dashboard/settings";
 const SUCCESS_REDIRECT_MS = 1500;

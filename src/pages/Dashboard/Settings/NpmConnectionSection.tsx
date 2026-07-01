@@ -1,16 +1,13 @@
 import { useModel } from "@preact/signals";
 import { formatTimestamp } from "../../../lib/format";
 import { NpmConnectionModel } from "../../../models/npm-connection";
-import {
-  Alert,
-  Badge,
-  Button,
-  CollapsibleCard,
-  Field,
-  Input,
-  Muted,
-  SettingsCardBody,
-} from "../../../components";
+import { Alert } from "../../../components/Alert";
+import { Badge } from "../../../components/Badge";
+import { Button } from "../../../components/Button";
+import { CollapsibleCard, SettingsCardBody } from "../../../components/Card";
+import { Field } from "../../../components/Field";
+import { Input } from "../../../components/Input";
+import { Muted } from "../../../components/Typography";
 
 export function NpmConnectionSection({
   npm,

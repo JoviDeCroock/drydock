@@ -1,5 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { createDb, getNpmConnection, type AppDb } from "../../../db";
+import { type AppDb, createDb } from "../../../db/client";
+import { getNpmConnection } from "../../../db/npm-connections";
 import { allowInsecureLocalRegistry, decryptNpmToken } from "../../npm-connection";
 import { downloadPublishedTarball } from "../../published-tarball";
 import { fetchPackageMetadata, type RegistryMetadata } from "../../registry";

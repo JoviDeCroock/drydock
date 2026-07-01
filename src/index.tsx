@@ -1,6 +1,6 @@
 import { hydrate, render } from "preact";
 import { ErrorBoundary, LocationProvider, Route, Router, lazy, prerender as ssr } from "preact-iso";
-import { Toaster } from "./components";
+import { Toaster } from "./components/Toast";
 import { extractPrerenderHead, getPageSeoMetadata } from "./lib/seo";
 import {
   isDashboardShellRoute,

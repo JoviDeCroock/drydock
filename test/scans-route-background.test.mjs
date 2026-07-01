@@ -25,10 +25,26 @@ const stagedPublishesMock = vi.hoisted(() => ({
 vi.mock("cloudflare:workers", () => ({
   WorkerEntrypoint: class {},
 }));
-vi.mock("../server/db/index.ts", async (importOriginal) => {
-  const actual = await importOriginal();
-  return { ...actual, ...dbMock };
-});
+vi.mock("../server/db/client.ts", async (importOriginal) => ({
+  ...(await importOriginal()),
+  ...dbMock,
+}));
+vi.mock("../server/db/events.ts", async (importOriginal) => ({
+  ...(await importOriginal()),
+  ...dbMock,
+}));
+vi.mock("../server/db/npm-connections.ts", async (importOriginal) => ({
+  ...(await importOriginal()),
+  ...dbMock,
+}));
+vi.mock("../server/db/rate-limit.ts", async (importOriginal) => ({
+  ...(await importOriginal()),
+  ...dbMock,
+}));
+vi.mock("../server/db/scans.ts", async (importOriginal) => ({
+  ...(await importOriginal()),
+  ...dbMock,
+}));
 vi.mock("../server/lib/active-organization.ts", () => activeOrgMock);
 vi.mock("../server/lib/scan-job.ts", () => scanJobMock);
 vi.mock("../server/lib/npm-connection.ts", async (importOriginal) => {

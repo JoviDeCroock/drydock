@@ -1,4 +1,6 @@
-import { persistScan, recordScanEvent, type AppDb, type WorkspaceSession } from "../db";
+import { type AppDb, type WorkspaceSession } from "../db/client";
+import { recordScanEvent } from "../db/events";
+import { persistScan } from "../db/scans";
 import type { AiReview } from "./ai-review";
 import type {
   AcquiredArtifact,

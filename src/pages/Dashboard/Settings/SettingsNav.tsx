@@ -1,4 +1,4 @@
-import { cn } from "../../../components";
+import { cn } from "../../../components/cn";
 
 export type SettingsTab = "general" | "members" | "notifications" | "integrations";
 

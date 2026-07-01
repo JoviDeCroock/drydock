@@ -1,16 +1,15 @@
 import { env } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
+import { createDb } from "../../server/db/client";
 import {
-  createDb,
-  createScanJob,
   deleteOrganization,
   deleteUserAccount,
-  discardGateScans,
   ensurePersonalOrganization,
-} from "../../server/db";
+} from "../../server/db/organizations";
+import { createScanJob, discardGateScans } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
-import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app";
+import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
 import type { DiffEntry, FileRecord } from "../../server/lib/review";
 import {
   deleteOrganizationArtifacts,

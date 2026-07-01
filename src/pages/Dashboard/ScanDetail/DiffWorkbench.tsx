@@ -1,12 +1,8 @@
 import type { DiffEntry, FileRecord } from "../../../../server/lib/review";
 import type { PersistedScanDetail } from "../../../models/scan";
-import {
-  DiffView,
-  EmptyLine,
-  IndeterminateBar,
-  LoadingLine,
-  type DiffFinding,
-} from "../../../components";
+import { type DiffFinding, DiffView } from "../../../components/DiffView";
+import { IndeterminateBar } from "../../../components/Loading";
+import { EmptyLine, LoadingLine } from "../../../components/Typography";
 import { selectDiffWorkbenchState } from "./diff-helpers";
 
 export function DiffWorkbench({

@@ -18,7 +18,10 @@ const slackMock = vi.hoisted(() => ({
   renderSlackMessage: vi.fn(() => ({ text: "rendered", blocks: [] })),
 }));
 
-vi.mock("../server/db/index.ts", () => dbMock);
+vi.mock("../server/db/events.ts", () => dbMock);
+vi.mock("../server/db/organizations.ts", () => dbMock);
+vi.mock("../server/db/scans.ts", () => dbMock);
+vi.mock("../server/db/slack-connection.ts", () => dbMock);
 vi.mock("../server/lib/email.ts", () => emailMock);
 vi.mock("../server/lib/secret-box.ts", () => secretBoxMock);
 vi.mock("../server/lib/slack.ts", () => slackMock);

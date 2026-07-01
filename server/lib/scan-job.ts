@@ -1,15 +1,7 @@
-import {
-  claimScanForRun,
-  createDb,
-  discardScanAttempt,
-  getNpmConnection,
-  markNpmConnectionUsed,
-  markScanFailed,
-  recordScanEvent,
-  type AppDb,
-  type ScanSource,
-  type WorkspaceSession,
-} from "../db";
+import { type AppDb, type WorkspaceSession, createDb } from "../db/client";
+import { recordScanEvent } from "../db/events";
+import { getNpmConnection, markNpmConnectionUsed } from "../db/npm-connections";
+import { type ScanSource, claimScanForRun, discardScanAttempt, markScanFailed } from "../db/scans";
 import { npmAdapter } from "./adapters/npm";
 import { errorMessage } from "./errors";
 import { notifyScanCompletion } from "./notify";

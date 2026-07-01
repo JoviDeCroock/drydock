@@ -1,22 +1,21 @@
 import { Hono } from "hono";
+import { createDb } from "../db/client";
+import { recordScanEvent } from "../db/events";
+import { getOrganizationRole } from "../db/invitations";
 import {
-  RateLimitError,
+  type NotificationRecipient,
   addNotificationRecipient,
-  createDb,
   createOrganization,
   deleteNotificationRecipient,
   deleteOrganization,
-  enforceRateLimit,
   ensurePersonalOrganization,
-  getOrganizationRole,
   isOrganizationOwner,
   listNotificationRecipients,
   listUserOrganizations,
-  recordScanEvent,
   renameOrganization,
   setRequireTwoFactorForReleaseDecisions,
-  type NotificationRecipient,
-} from "../db";
+} from "../db/organizations";
+import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
 import { userHasTwoFactor, verifyTotpStepUp } from "../lib/auth";
 import { sanitizeAddress } from "../lib/email";
 import { rateLimitResponse } from "../lib/http";

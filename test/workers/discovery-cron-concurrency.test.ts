@@ -1,11 +1,11 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { createDb } from "../../server/db/client";
 import {
-  createDb,
-  ensurePersonalOrganization,
   updateNpmConnectionValidation,
   upsertNpmConnection,
-} from "../../server/db";
+} from "../../server/db/npm-connections";
+import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
 import { encryptNpmToken } from "../../server/lib/npm-connection";
 import worker from "../../server/index";

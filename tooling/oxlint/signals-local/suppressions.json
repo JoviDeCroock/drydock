@@ -1,9 +1,8 @@
 {
   "src/components/Menu.tsx": [69],
-  "src/pages/Auth/Login.tsx": [113, 114, 117, 137, 159, 162, 176, 214, 217],
-  "src/pages/Auth/Register.tsx": [88, 89, 92, 145, 148],
-  "src/pages/Auth/VerifyEmail.tsx": [114, 115, 120],
-  "src/pages/Dashboard/Account/DeleteAccountSection.tsx": [86, 114],
-  "src/pages/Dashboard/GithubAppCallback.tsx": [88, 100, 113, 135],
-  "src/pages/Dashboard/Invite/index.tsx": [72]
+  "src/pages/Auth/Login.tsx": [119, 120, 123, 143, 165, 168, 182, 220, 223],
+  "src/pages/Auth/VerifyEmail.tsx": [111, 112, 117],
+  "src/pages/Dashboard/Account/DeleteAccountSection.tsx": [83, 111],
+  "src/pages/Dashboard/GithubAppCallback.tsx": [83, 95, 108, 130],
+  "src/pages/Dashboard/Invite/index.tsx": [69]
 }

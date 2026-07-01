@@ -1,17 +1,18 @@
 import { createExecutionContext, env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
-import { createDb, createScanJob, ensurePersonalOrganization, getScan } from "../../server/db";
+import { createDb } from "../../server/db/client";
+import { ensurePersonalOrganization } from "../../server/db/organizations";
+import { createScanJob, getScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { eq } from "drizzle-orm";
+import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
 import {
-  createReleaseTarget,
   attachScanToGate,
   getGateForOrganization,
   listGatePackageScans,
   markGateDecided,
-  upsertInstallation,
-} from "../../server/lib/github-app";
+} from "../../server/lib/github-app/webhook-gates";
 import {
   classifyGateTimeout,
   executeWorkflowGateJob,

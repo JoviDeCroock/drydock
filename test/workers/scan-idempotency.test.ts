@@ -1,16 +1,16 @@
 import { env } from "cloudflare:test";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
+import { createDb } from "../../server/db/client";
+import { ensurePersonalOrganization } from "../../server/db/organizations";
 import {
   claimScanForRun,
-  getScan,
-  createDb,
   createScanJob,
-  ensurePersonalOrganization,
+  getScan,
   listExistingScanStageIds,
   markScanFailed,
   persistScan,
-} from "../../server/db";
+} from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { createPackageDiff } from "../../server/lib/review";
 

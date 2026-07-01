@@ -1,19 +1,14 @@
 import { useModel, useSignal } from "@preact/signals";
 import { sessionModel } from "../../../models/auth";
 import { TwoFactorModel } from "../../../models/two-factor";
-import {
-  Alert,
-  Badge,
-  Button,
-  Dialog,
-  Field,
-  Input,
-  LinkButton,
-  MonoDetail,
-  Muted,
-  SectionLabel,
-  SettingsCard,
-} from "../../../components";
+import { Alert } from "../../../components/Alert";
+import { Badge } from "../../../components/Badge";
+import { Button, LinkButton } from "../../../components/Button";
+import { SettingsCard } from "../../../components/Card";
+import { Dialog } from "../../../components/Dialog";
+import { Field } from "../../../components/Field";
+import { Input } from "../../../components/Input";
+import { MonoDetail, Muted, SectionLabel } from "../../../components/Typography";
 
 type DialogMode = "none" | "enroll" | "regenerate" | "disable";
 type EnrollStep = "password" | "verify" | "backup";

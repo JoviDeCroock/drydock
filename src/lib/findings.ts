@@ -1,4 +1,4 @@
-import type { SeverityCounts, SeverityKey } from "../components";
+import { type SeverityCounts, type SeverityKey } from "../components/SeverityBar";
 
 export const SEVERITY_RANK: Record<SeverityKey, number> = {
   critical: 0,

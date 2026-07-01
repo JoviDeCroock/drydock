@@ -2,16 +2,16 @@ import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { createDb } from "../../server/db/client";
+import { addOrganizationMember } from "../../server/db/invitations";
+import { ensurePersonalOrganization } from "../../server/db/organizations";
 import {
-  addOrganizationMember,
-  createDb,
-  ensurePersonalOrganization,
   getSlackConnection,
   getSlackConnectionSecret,
   setSlackConnectionChannel,
   setSlackConnectionEnabled,
   upsertSlackConnection,
-} from "../../server/db";
+} from "../../server/db/slack-connection";
 import * as schema from "../../server/db/schema";
 import { ACTIVE_ORG_HEADER } from "../../server/lib/active-organization";
 import { decryptSlackBotToken, encryptSlackBotToken } from "../../server/lib/secret-box";

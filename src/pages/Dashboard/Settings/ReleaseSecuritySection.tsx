@@ -2,7 +2,13 @@ import { useModel, useSignal } from "@preact/signals";
 import type { OrganizationRole } from "../../../../server/lib/roles";
 import { sessionModel } from "../../../models/auth";
 import { OrganizationModel } from "../../../models/organization";
-import { Alert, Badge, Button, Card, Field, Input, Muted, SectionLabel } from "../../../components";
+import { Alert } from "../../../components/Alert";
+import { Badge } from "../../../components/Badge";
+import { Button } from "../../../components/Button";
+import { Card } from "../../../components/Card";
+import { Field } from "../../../components/Field";
+import { Input } from "../../../components/Input";
+import { Muted, SectionLabel } from "../../../components/Typography";
 
 /**
  * Owner-only control for the org-wide policy that forces a fresh two-factor

@@ -1,18 +1,17 @@
 import { Hono } from "hono";
+import { createDb } from "../db/client";
+import { recordScanEvent } from "../db/events";
+import { getOrganizationRole } from "../db/invitations";
+import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
 import {
-  RateLimitError,
-  createDb,
+  type SlackConnection,
   deleteSlackConnection,
-  enforceRateLimit,
-  getOrganizationRole,
   getSlackConnection,
   getSlackConnectionSecret,
-  recordScanEvent,
   setSlackConnectionChannel,
   setSlackConnectionEnabled,
   upsertSlackConnection,
-  type SlackConnection,
-} from "../db";
+} from "../db/slack-connection";
 import {
   requireActiveOrganization,
   requireActiveOrganizationContext,
