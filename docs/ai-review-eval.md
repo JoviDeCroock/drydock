@@ -60,14 +60,14 @@ up in gateway logs/cost analytics). Set `AI_EVAL_NO_GATEWAY=1` to bypass it or
 
 All via environment variables:
 
-| var | default | meaning |
-| --- | --- | --- |
-| `AI_EVAL_MODELS` | shipped candidates + a couple cheaper models | comma-separated model ids to compare |
-| `AI_EVAL_GATEWAY_ID` | `drydock-gateway` | AI Gateway id to route through |
-| `AI_EVAL_NO_GATEWAY` | unset | set to bypass the gateway |
-| `AI_EVAL_PRICES` | `{}` | JSON `{ "<model>": { "input": usdPer1MInput, "output": usdPer1MOutput } }` for cost estimates |
-| `AI_EVAL_CONCURRENCY` | `4` | per-model case concurrency |
-| `AI_EVAL_LIMIT` | all | cap the number of cases (smoke runs) |
+| var                   | default                                      | meaning                                                                                       |
+| --------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `AI_EVAL_MODELS`      | shipped candidates + a couple cheaper models | comma-separated model ids to compare                                                          |
+| `AI_EVAL_GATEWAY_ID`  | `drydock-gateway`                            | AI Gateway id to route through                                                                |
+| `AI_EVAL_NO_GATEWAY`  | unset                                        | set to bypass the gateway                                                                     |
+| `AI_EVAL_PRICES`      | `{}`                                         | JSON `{ "<model>": { "input": usdPer1MInput, "output": usdPer1MOutput } }` for cost estimates |
+| `AI_EVAL_CONCURRENCY` | `4`                                          | per-model case concurrency                                                                    |
+| `AI_EVAL_LIMIT`       | all                                          | cap the number of cases (smoke runs)                                                          |
 
 Example — compare the current primary against a cheaper model, with prices:
 
