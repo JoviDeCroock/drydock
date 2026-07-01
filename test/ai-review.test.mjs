@@ -132,26 +132,53 @@ describe("AI review prompt selection", () => {
 });
 
 describe("reviewer cache affinity", () => {
-  test("anchors cache affinity on ecosystem instead of scan id", () => {
+  test("anchors cache affinity on ecosystem and package name instead of scan id", () => {
     const base = { AI_CACHE_AFFINITY: "cache-base" };
 
-    expect(reviewerCacheAffinity(base, "npm")).toBe("cache-base:npm");
-    expect(reviewerCacheAffinity(base, "npm")).toBe(reviewerCacheAffinity(base, "npm"));
-    expect(reviewerCacheAffinity(base, "pypi")).toBe("cache-base:pypi");
-    expect(reviewerCacheAffinity(base, "rubygems")).toBe("cache-base:generic");
-    expect(reviewerCacheAffinity({}, "npm")).toBe(
-      "staged-publish-review-agentic-release-reviewer-v1:npm",
+    expect(reviewerCacheAffinity(base, "npm", "left-pad")).toBe("cache-base:npm:left-pad");
+    expect(reviewerCacheAffinity(base, "npm", "left-pad")).toBe(
+      reviewerCacheAffinity(base, "npm", "left-pad"),
+    );
+    expect(reviewerCacheAffinity(base, "pypi", "requests")).toBe("cache-base:pypi:requests");
+    expect(reviewerCacheAffinity(base, "rubygems", "rails")).toBe("cache-base:generic:rails");
+    expect(reviewerCacheAffinity({}, "npm", "left-pad")).toBe(
+      "staged-publish-review-agentic-release-reviewer-v1:npm:left-pad",
+    );
+  });
+
+  test("scopes distinct packages to distinct keys and falls back when the name is missing", () => {
+    const base = { AI_CACHE_AFFINITY: "cache-base" };
+
+    expect(reviewerCacheAffinity(base, "npm", "a")).not.toBe(
+      reviewerCacheAffinity(base, "npm", "b"),
+    );
+    // A missing/empty package name falls back to the ecosystem-only key.
+    expect(reviewerCacheAffinity(base, "npm", null)).toBe("cache-base:npm");
+    expect(reviewerCacheAffinity(base, "npm", "")).toBe("cache-base:npm");
+  });
+
+  test("slugifies scoped and attacker-controlled package names into a header-safe key", () => {
+    const base = { AI_CACHE_AFFINITY: "cache-base" };
+
+    expect(reviewerCacheAffinity(base, "npm", "@scope/Pkg")).toBe("cache-base:npm:scope-pkg");
+    expect(reviewerCacheAffinity(base, "npm", "  weird::name!! ")).toBe(
+      "cache-base:npm:weird-name",
+    );
+    expect(reviewerCacheAffinity(base, "npm", "a".repeat(300))).toBe(
+      `cache-base:npm:${"a".repeat(128)}`,
     );
   });
 
   test("respects the override and ignores scan id", () => {
     const env = { AI_CACHE_AFFINITY: "override-base" };
 
-    expect(reviewerCacheAffinity(env, "npm")).toBe("override-base:npm");
-    expect(reviewerCacheAffinity(env, "npm")).toBe(
-      reviewerCacheAffinity({ ...env, scanId: "scan-a" }, "npm"),
+    expect(reviewerCacheAffinity(env, "npm", "left-pad")).toBe("override-base:npm:left-pad");
+    expect(reviewerCacheAffinity(env, "npm", "left-pad")).toBe(
+      reviewerCacheAffinity({ ...env, scanId: "scan-a" }, "npm", "left-pad"),
     );
-    expect(reviewerCacheAffinity({ ...env, scanId: "scan-b" }, "npm")).toBe("override-base:npm");
+    expect(reviewerCacheAffinity({ ...env, scanId: "scan-b" }, "npm", "left-pad")).toBe(
+      "override-base:npm:left-pad",
+    );
   });
 });
 

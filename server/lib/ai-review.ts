@@ -90,7 +90,11 @@ export async function analyzeWithAi(
             gateway: { id: "drydock-gateway" },
           })(candidateModel, {
             extraHeaders: {
-              "x-session-affinity": reviewerCacheAffinity(env, options.ecosystem),
+              "x-session-affinity": reviewerCacheAffinity(
+                env,
+                options.ecosystem,
+                options.packageJsonDiff.name,
+              ),
               "cf-aig-metadata": aiGatewayMetadataHeader(options, candidateModel, attempt),
             },
           });
@@ -266,14 +270,33 @@ function toUsage(usage: LanguageModelUsage, steps: number): AiReviewUsage {
   };
 }
 
-export function reviewerCacheAffinity(env: Cloudflare.Env, ecosystem: string | undefined): string {
+export function reviewerCacheAffinity(
+  env: Cloudflare.Env,
+  ecosystem: string | undefined,
+  packageName: string | null | undefined,
+): string {
   const base = env.AI_CACHE_AFFINITY || DEFAULT_CACHE_AFFINITY;
-  // Use a stable per-ecosystem routing key so every scan reuses the same cache
-  // affinity for the static reviewer prefix. This improves cross-scan prompt
-  // reuse while preserving within-scan reuse; concurrent same-ecosystem scans
-  // may share routing and contend slightly, but current volume keeps that risk
-  // negligible. Operators can override the base via AI_CACHE_AFFINITY.
-  return `${base}:${normalizeAiReviewEcosystem(ecosystem)}`;
+  // Use a stable per-ecosystem + per-package routing key so every scan of a
+  // package reuses the same cache affinity for the static reviewer prefix. This
+  // improves cross-scan prompt reuse while preserving within-scan reuse, and
+  // scoping to the package keeps successive versions of the same release routing
+  // together (their evidence overlaps most) rather than contending with
+  // unrelated packages. Operators can override the base via AI_CACHE_AFFINITY.
+  const key = `${base}:${normalizeAiReviewEcosystem(ecosystem)}`;
+  const slug = slugifyPackageName(packageName);
+  return slug ? `${key}:${slug}` : key;
+}
+
+// Package names can be scoped (`@scope/pkg`) and are attacker-controlled, so
+// reduce them to a stable, header-safe slug and never let the `:` separator or
+// unbounded length leak into the routing key.
+function slugifyPackageName(packageName: string | null | undefined): string {
+  if (!packageName) return "";
+  return packageName
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 128);
 }
 
 function normalizeAiResponse(model: string, text: string): AiReview {
