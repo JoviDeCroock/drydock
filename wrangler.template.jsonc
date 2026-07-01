@@ -7,7 +7,10 @@
 // production deployment; do not deploy with it. Fork from this template.
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "drydock",
+	// Worker service name. Kept as `staged-publish-review` so the `db:migrate:*`
+	// scripts in package.json (which target the D1 database `staged-publish-review`)
+	// work unchanged. Rename both together if you prefer a different name.
+	"name": "staged-publish-review",
 	"main": "./server/index.ts",
 	"compatibility_date": "2026-05-20",
 	"compatibility_flags": [
@@ -45,8 +48,8 @@
 	"d1_databases": [
 		{
 			"binding": "DB",
-			"database_name": "drydock",
-			// From: pnpm exec wrangler d1 create drydock
+			"database_name": "staged-publish-review",
+			// From: pnpm exec wrangler d1 create staged-publish-review
 			"database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
 			"migrations_dir": "drizzle"
 		}
@@ -61,24 +64,24 @@
 	"r2_buckets": [
 		{
 			"binding": "ARTIFACTS",
-			"bucket_name": "drydock-artifacts"
+			"bucket_name": "staged-publish-review-artifacts"
 		}
 	],
 	"queues": {
 		"producers": [
 			{
 				"binding": "SCAN_QUEUE",
-				"queue": "drydock-scans"
+				"queue": "staged-publish-review-scans"
 			}
 		],
 		"consumers": [
 			{
-				"queue": "drydock-scans",
+				"queue": "staged-publish-review-scans",
 				"max_batch_size": 1,
 				"max_batch_timeout": 5,
 				"max_concurrency": 10,
 				"max_retries": 3,
-				"dead_letter_queue": "drydock-scans-dlq"
+				"dead_letter_queue": "staged-publish-review-scans-dlq"
 			}
 		]
 	},

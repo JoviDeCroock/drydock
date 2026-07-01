@@ -56,14 +56,20 @@ pnpm exec wrangler r2 bucket create staged-publish-review-artifacts
 ```
 
 The checked-in `wrangler.jsonc` targets the maintainers' production deployment.
-Do not deploy from it. Instead, copy the template and fill in your own values:
+Do not deploy from it. In your own fork, replace the contents of `wrangler.jsonc`
+with `wrangler.template.jsonc` and fill in your account values:
 
 ```sh
 cp wrangler.template.jsonc wrangler.jsonc
 ```
 
-`wrangler.template.jsonc` marks every account-owned value with a `REPLACE_*`
-placeholder. Replace at least:
+`wrangler.jsonc` is tracked in git, so this leaves your fork with account-specific
+edits in a tracked file. That is expected for a fork; just do not include those
+edits in pull requests you send back upstream.
+
+`wrangler.template.jsonc` keeps the production resource names (so the
+`db:migrate:*` scripts work unchanged) and marks every account-owned value with a
+`REPLACE_*` placeholder. Replace at least:
 
 - `d1_databases[].database_id` and `kv_namespaces[].id`;
 - custom `routes` with your own custom domain, or remove `routes` and use the
