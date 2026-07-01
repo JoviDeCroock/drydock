@@ -24,15 +24,14 @@ export default function LandingPage() {
     <PageShell class="gap-12" headerActions={<MarketingHeaderActions authed={authed} />}>
       <PageSeo metadata={homePageSeo} />
       <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
-        <Eyebrow tone="accent">Package review before npm or PyPI publish</Eyebrow>
+        <Eyebrow tone="accent">Package review before publish</Eyebrow>
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
-          Review the package that will actually ship.
+          Review the package that will ship.
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-          The package on the registry is not the pull request you reviewed. It is the built output
-          after scripts, bundlers, and CI have had their say. Drydock pauses npm staged publishes
-          and GitHub-gated PyPI or npm releases, compares the artifact with the last published
-          version, and pins supply-chain findings to changed lines. You make the final call.
+          Drydock sees npm staged publishes and GitHub-gated releases, compares the artifact with
+          the last published version, and pins supply-chain findings to changed lines. You make the
+          final call.
         </p>
         <div class="flex gap-3 mt-2">
           <Show
@@ -235,9 +234,9 @@ function ScanPreview() {
             </span>
             <ul class="list-none p-0 m-0 flex flex-col gap-0.5 font-mono text-[12px]">
               <TreeRow depth={0} folder open name="lib" tone="mixed" />
-              <TreeRow depth={1} name="install.js" tone="added" status="added" />
-              <TreeRow depth={1} name="api.js" tone="modified" status="modified" selected />
-              <TreeRow depth={0} name="package.json" tone="modified" status="modified" />
+              <TreeRow depth={1} name="install.js" tone="added" findings={1} />
+              <TreeRow depth={1} name="api.js" tone="modified" findings={1} selected />
+              <TreeRow depth={0} name="package.json" tone="modified" findings={1} />
               <TreeRow depth={0} name="README.md" tone="unchanged" />
               <TreeRow depth={0} name="LICENSE" tone="unchanged" />
             </ul>
@@ -290,7 +289,7 @@ function TreeRow({
   depth,
   name,
   tone,
-  status,
+  findings,
   folder,
   open,
   selected,
@@ -298,7 +297,7 @@ function TreeRow({
   depth: number;
   name: string;
   tone: "added" | "removed" | "modified" | "unchanged" | "mixed";
-  status?: "added" | "removed" | "modified";
+  findings?: number;
   folder?: boolean;
   open?: boolean;
   selected?: boolean;
@@ -333,7 +332,11 @@ function TreeRow({
         {name}
         {folder ? "/" : ""}
       </span>
-      {status ? <Badge tone={status}>{status}</Badge> : null}
+      {findings ? (
+        <Badge tone="medium">
+          {findings} {findings === 1 ? "finding" : "findings"}
+        </Badge>
+      ) : null}
     </li>
   );
 }
