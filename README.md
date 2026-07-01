@@ -85,3 +85,11 @@ Consult route definitions under `server/routes/` for exact request/response shap
 - Raw tarballs are not retained by default; persisted reports use redacted summaries and canonical report JSON.
 
 See [`docs/security-model.md`](docs/security-model.md) for the full contract.
+
+## License
+
+Drydock is released under the [Functional Source License, Version 1.1, Apache 2.0
+Future License](LICENSE.md) (`FSL-1.1-Apache-2.0`). You may read, self-host,
+modify, and contribute to Drydock for free; the license only bars using it to
+offer a competing commercial product or service. Each release converts to the
+Apache License 2.0 two years after it is made available.

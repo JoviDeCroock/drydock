@@ -55,12 +55,19 @@ pnpm exec wrangler kv namespace create COMPARE_CACHE
 pnpm exec wrangler r2 bucket create staged-publish-review-artifacts
 ```
 
-The checked-in `wrangler.jsonc` is the Drydock deployment config. Before
-deploying from another Cloudflare account, replace account-owned values:
+The checked-in `wrangler.jsonc` targets the maintainers' production deployment.
+Do not deploy from it. Instead, copy the template and fill in your own values:
+
+```sh
+cp wrangler.template.jsonc wrangler.jsonc
+```
+
+`wrangler.template.jsonc` marks every account-owned value with a `REPLACE_*`
+placeholder. Replace at least:
 
 - `d1_databases[].database_id` and `kv_namespaces[].id`;
-- custom `routes` for `drydock.org` / `drydock.resynapse.dev`, or remove
-  `routes` and use `workers_dev` / your own routes instead;
+- custom `routes` with your own custom domain, or remove `routes` and use the
+  generated `workers_dev` subdomain instead;
 - the `flagship` app id if you use Cloudflare Flagship for AI review, or remove
   the `flagship` block to keep AI review disabled;
 - public integration vars such as `BETTER_AUTH_URL`, `EMAIL_FROM_ADDRESS`,
