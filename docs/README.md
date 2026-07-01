@@ -27,7 +27,8 @@ Start here instead of reading every Markdown file. Pick the smallest set that ma
 ## Domain docs
 
 - [`security-detection-corpus.md`](./security-detection-corpus.md) — rule/eval fixture layout and expected findings.
-- [`detection-eval.md`](./detection-eval.md) — eval harness, metrics, and gates.
+- [`detection-eval.md`](./detection-eval.md) — deterministic-rule eval harness, metrics, and gates.
+- [`ai-review-eval.md`](./ai-review-eval.md) — AI-reviewer model comparison eval (`pnpm run eval:ai`).
 - [`organization-members.md`](./organization-members.md) — organization invitation/membership behavior.
 - [`two-factor-auth.md`](./two-factor-auth.md) — step-up auth and sensitive actions.
 - [`slack-notifications.md`](./slack-notifications.md) — Slack install and notification flow.

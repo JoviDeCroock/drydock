@@ -48,7 +48,8 @@ New functionality needs tests at the narrowest useful layer; add broader coverag
 - `pnpm run typecheck` — TypeScript typecheck.
 - `pnpm run test` — Vitest logic + Worker-runtime suites.
 - `pnpm run test:e2e` — Playwright fake-registry e2e.
-- `pnpm run eval` — detection eval harness.
+- `pnpm run eval` — deterministic detection eval harness.
+- `pnpm run eval:ai` — AI-reviewer model comparison (live Workers AI; not in `pnpm test`/CI). See `docs/ai-review-eval.md`.
 - `pnpm db:generate` — generate Drizzle migrations; never hand-write SQL migrations.
 
 ## Documentation expectations
