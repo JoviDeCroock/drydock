@@ -44,7 +44,7 @@ apiTokensRoutes.post("/", async (c) => {
   let expiresAt: Date | null = null;
   if (body.expiresInDays !== undefined && body.expiresInDays !== null) {
     const days = Number(body.expiresInDays);
-    if (!Number.isFinite(days) || days <= 0 || days > MAX_EXPIRY_DAYS) {
+    if (!Number.isFinite(days) || days < 1 || days > MAX_EXPIRY_DAYS) {
       return c.json({ error: `expiresInDays must be between 1 and ${MAX_EXPIRY_DAYS}` }, 400);
     }
     expiresAt = new Date(Date.now() + Math.floor(days) * 24 * 60 * 60 * 1000);
