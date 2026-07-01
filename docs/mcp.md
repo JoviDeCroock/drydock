@@ -51,15 +51,15 @@ All tools are org-scoped to the token's organization; a scan in another
 organization is indistinguishable from one that does not exist (`isError` tool
 result, never a leak).
 
-| Tool | Purpose |
-| --- | --- |
-| `find_scans` | List scans (newest first) with risk + decision state; paginate via the opaque `nextCursor`. Filter by `undecided` \| `publish` \| `no_publish` \| `all`. |
-| `get_scan_status` | Lightweight lifecycle status (`pending` \| `running` \| `complete` \| `failed`) + package/version metadata. Cheap to poll while a scan runs. |
-| `get_scan_report` | Full analysis for a completed scan: risk summary, deterministic findings (with diff-status + release-delta annotations), and the advisory AI review if present. No file contents. |
-| `list_scan_files` | File metadata for a focused subset — `changed` \| `scripts` \| `binaries` \| `large` \| `entrypoints` \| `findings`. Metadata only. |
-| `read_scan_files` | Bounded redacted text for up to 10 package-relative paths. Changed files return a unified diff; others return staged text. |
-| `search_scan_files` | Literal case-insensitive search (up to 5 queries) over the redacted text samples. |
-| `list_scan_events` | The redacted lifecycle/audit event trail for a scan, oldest first. |
+| Tool                | Purpose                                                                                                                                                                           |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `find_scans`        | List scans (newest first) with risk + decision state; paginate via the opaque `nextCursor`. Filter by `undecided` \| `publish` \| `no_publish` \| `all`.                          |
+| `get_scan_status`   | Lightweight lifecycle status (`pending` \| `running` \| `complete` \| `failed`) + package/version metadata. Cheap to poll while a scan runs.                                      |
+| `get_scan_report`   | Full analysis for a completed scan: risk summary, deterministic findings (with diff-status + release-delta annotations), and the advisory AI review if present. No file contents. |
+| `list_scan_files`   | File metadata for a focused subset — `changed` \| `scripts` \| `binaries` \| `large` \| `entrypoints` \| `findings`. Metadata only.                                               |
+| `read_scan_files`   | Bounded redacted text for up to 10 package-relative paths. Changed files return a unified diff; others return staged text.                                                        |
+| `search_scan_files` | Literal case-insensitive search (up to 5 queries) over the redacted text samples.                                                                                                 |
+| `list_scan_events`  | The redacted lifecycle/audit event trail for a scan, oldest first.                                                                                                                |
 
 `read_scan_files` / `search_scan_files` / `list_scan_files` are backed by the same
 `EvidenceReader` the internal AI reviewer uses (`server/lib/ai-review-evidence.ts`),
