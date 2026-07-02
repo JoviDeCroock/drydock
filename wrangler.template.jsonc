@@ -1,0 +1,121 @@
+// Wrangler configuration template for self-hosting Drydock on your own
+// Cloudflare account. Copy this to `wrangler.jsonc` and replace every
+// REPLACE_* placeholder with values from your account. See
+// `docs/self-hosting.md` for the full walkthrough.
+//
+// The canonical `wrangler.jsonc` in this repo targets the maintainers'
+// production deployment; do not deploy with it. Fork from this template.
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	// Worker service name. Kept as `staged-publish-review` so the `db:migrate:*`
+	// scripts in package.json (which target the D1 database `staged-publish-review`)
+	// work unchanged. Rename both together if you prefer a different name.
+	"name": "staged-publish-review",
+	"main": "./server/index.ts",
+	"compatibility_date": "2026-05-20",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"workers_dev": true,
+	"observability": {
+		"logs": {
+			"enabled": true,
+			"invocation_logs": true
+		}
+	},
+	"assets": {
+		"not_found_handling": "single-page-application",
+		"binding": "ASSETS",
+		"run_worker_first": true
+	},
+	"ai": {
+		"binding": "AI"
+	},
+	// Optional: only needed if you use Cloudflare Flagship to gate the AI
+	// reviewer. Remove this block to keep AI review disabled, or set your own
+	// Flagship app id.
+	"flagship": [
+		{
+			"binding": "FLAGS",
+			"app_id": "REPLACE_WITH_YOUR_FLAGSHIP_APP_ID"
+		}
+	],
+	"worker_loaders": [
+		{
+			"binding": "LOADER"
+		}
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "staged-publish-review",
+			// From: pnpm exec wrangler d1 create staged-publish-review
+			"database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+			"migrations_dir": "drizzle"
+		}
+	],
+	"kv_namespaces": [
+		{
+			"binding": "COMPARE_CACHE",
+			// From: pnpm exec wrangler kv namespace create COMPARE_CACHE
+			"id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "ARTIFACTS",
+			"bucket_name": "staged-publish-review-artifacts"
+		}
+	],
+	"queues": {
+		"producers": [
+			{
+				"binding": "SCAN_QUEUE",
+				"queue": "staged-publish-review-scans"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "staged-publish-review-scans",
+				"max_batch_size": 1,
+				"max_batch_timeout": 5,
+				"max_concurrency": 10,
+				"max_retries": 3,
+				"dead_letter_queue": "staged-publish-review-scans-dlq"
+			}
+		]
+	},
+	"send_email": [
+		{
+			"name": "SEND_EMAIL"
+		}
+	],
+	"triggers": {
+		"crons": [
+			"*/15 * * * *"
+		]
+	},
+	// Remove `routes` to serve on your generated *.workers.dev subdomain, or
+	// replace these with your own custom domain(s).
+	"routes": [
+		{
+			"pattern": "REPLACE_WITH_YOUR_DOMAIN",
+			"custom_domain": true
+		}
+	],
+	"vars": {
+		// Must match your deployed origin (custom domain or *.workers.dev URL).
+		"BETTER_AUTH_URL": "https://REPLACE_WITH_YOUR_ORIGIN",
+		"AI_CACHE_AFFINITY": "drydock-release-reviewer-v1",
+		"NPM_REGISTRY": "https://registry.npmjs.org",
+		"PNPM_VERSION": "11.1.1",
+		"EMAIL_FROM_ADDRESS": "drydock@REPLACE_WITH_YOUR_DOMAIN",
+		"EMAIL_FROM_NAME": "Drydock",
+		// Optional GitHub App (workflow gates). Remove if unused.
+		"GITHUB_APP_ID": "REPLACE_WITH_YOUR_GITHUB_APP_ID",
+		"GITHUB_APP_SLUG": "REPLACE_WITH_YOUR_GITHUB_APP_SLUG",
+		"GITHUB_APP_CLIENT_ID": "REPLACE_WITH_YOUR_GITHUB_APP_CLIENT_ID",
+		// Optional Slack app (notifications). Remove if unused.
+		"SLACK_CLIENT_ID": "REPLACE_WITH_YOUR_SLACK_CLIENT_ID"
+	}
+}
