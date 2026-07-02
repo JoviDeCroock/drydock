@@ -41,6 +41,7 @@ import { githubWebhookRoutes } from "./routes/github-webhooks";
 import { npmConnectionRoutes } from "./routes/npm-connection";
 import { organizationMembersRoutes } from "./routes/organization-members";
 import { organizationsRoutes } from "./routes/organizations";
+import { publicReportsRoutes } from "./routes/public-reports";
 import { slackRoutes } from "./routes/slack";
 import { scansRoutes } from "./routes/scans";
 import { stagedPublishesRoutes } from "./routes/staged-publishes";
@@ -123,6 +124,11 @@ app.use("*", async (c, next) => canonicalDomainRedirect(c.req.raw) ?? next());
 // CSRF middleware below — the signature verification inside the handler is the
 // trust boundary.
 app.route("/webhooks", githubWebhookRoutes);
+
+// Public report shares are bearer-token gated, not session gated, so they are
+// mounted before the auth/CSRF middleware below. The unguessable share token
+// (hash-checked in the handler) is the trust boundary.
+app.route("/api/public/reports", publicReportsRoutes);
 
 app.use("/api/*", async (c, next) => {
   try {

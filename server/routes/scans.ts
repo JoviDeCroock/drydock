@@ -15,10 +15,13 @@ import {
   getScan,
   getScanCompareData,
   getScanFile,
+  getScanReportShareStatus,
   getScanStatus,
   listScans,
   recordScanDecision,
   recordScanEvent,
+  revokeScanReportShare,
+  upsertScanReportShare,
 } from "../db";
 import {
   requireActiveOrganization,
@@ -50,6 +53,7 @@ import { annotateFindingsWithDiffStatus, createPackageDiff, type FileRecord } fr
 import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
 import { parseScanInput } from "../lib/scan-input";
 import { reportExportFilename, serializeReportExport } from "../lib/report-export";
+import { generateReportShareToken } from "../lib/report-share-token";
 import { executeScanJob, type ScanQueueMessage } from "../lib/scan-job";
 import { roleCanManageIntegrations } from "../lib/roles";
 import { checkStagedPublishAccess } from "../lib/staged-publishes";
@@ -262,6 +266,68 @@ scansRoutes.post("/:id/decision", async (c) => {
   }
 
   return c.json(updated);
+});
+
+scansRoutes.get("/:id/share", async (c) => {
+  const db = createDb(c.env.DB);
+  const organizationId = await requireActiveOrganization(c, db);
+  const scan = await getScanStatus(db, c.req.param("id"), organizationId);
+  if (!scan) return c.json({ error: "not found" }, 404);
+  const share = await getScanReportShareStatus(db, scan.id, organizationId);
+  return c.json({ share });
+});
+
+scansRoutes.post("/:id/share", async (c) => {
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
+  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
+
+  const scan = await getScanStatus(db, c.req.param("id"), organizationId);
+  if (!scan) return c.json({ error: "not found" }, 404);
+  if (scan.status !== "complete") {
+    return c.json({ error: "share links are only available for completed scans" }, 409);
+  }
+
+  // The raw token exists only in this response; rotating replaces the stored
+  // hash, so every previously issued link stops resolving.
+  const { token, tokenHash } = await generateReportShareToken();
+  await upsertScanReportShare(db, {
+    scanId: scan.id,
+    organizationId,
+    createdByUserId: session.userId,
+    tokenHash,
+  });
+  await recordScanEvent(db, {
+    organizationId,
+    actorUserId: session.userId,
+    scanId: scan.id,
+    type: "scan.report_share.created",
+    metadata: { stageId: scan.stageId },
+  });
+  const share = await getScanReportShareStatus(db, scan.id, organizationId);
+  return c.json({ share, token, path: `/reports/${token}` }, 201);
+});
+
+scansRoutes.delete("/:id/share", async (c) => {
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
+  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
+
+  const scan = await getScanStatus(db, c.req.param("id"), organizationId);
+  if (!scan) return c.json({ error: "not found" }, 404);
+  const revoked = await revokeScanReportShare(db, scan.id, organizationId);
+  if (revoked) {
+    await recordScanEvent(db, {
+      organizationId,
+      actorUserId: session.userId,
+      scanId: scan.id,
+      type: "scan.report_share.revoked",
+      metadata: { stageId: scan.stageId },
+    });
+  }
+  return c.json({ share: { active: false, createdAt: null } });
 });
 
 scansRoutes.get("/:id", async (c) => {

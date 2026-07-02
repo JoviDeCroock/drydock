@@ -15,6 +15,7 @@ Start here instead of reading every Markdown file. Pick the smallest set that ma
 - [`workflow-gates.md`](./workflow-gates.md) — GitHub Environment gate flow for PyPI and npm workflow-gated releases.
 - [`diff-baseline.md`](./diff-baseline.md) — default previous-version comparison strategy.
 - [`artifact-storage.md`](./artifact-storage.md) — D1/R2 report and artifact persistence.
+- [`report-sharing.md`](./report-sharing.md) — public read-only report share links and badges.
 
 ## Operations and setup
 

@@ -2,6 +2,7 @@ import { getDashboardReturnUrl } from "../../../lib/query-state";
 import { formatDateTime } from "../../../lib/format";
 import { reportExportFilename } from "../../../../server/lib/report-export";
 import type { PersistedScanDetail } from "../../../models/scan";
+import { ShareReportControl } from "./ShareReportControl";
 import {
   Alert,
   Badge,
@@ -64,6 +65,7 @@ export function ScanDetailHeader({
               ) : null}
             </div>
           ) : null}
+          {detail && isComplete ? <ShareReportControl scanId={detail.scan.id} /> : null}
           {detail && isComplete ? (
             <LinkButton
               variant="ghost"

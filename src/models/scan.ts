@@ -192,6 +192,30 @@ export function getScanCompareFile(
   );
 }
 
+export interface ReportShareStatus {
+  active: boolean;
+  createdAt: string | number | Date | null;
+}
+
+export function getReportShare(id: string): Promise<{ share: ReportShareStatus }> {
+  return apiFetch<{ share: ReportShareStatus }>(`/api/v1/scans/${encodeURIComponent(id)}/share`);
+}
+
+export function createReportShare(
+  id: string,
+): Promise<{ share: ReportShareStatus; token: string; path: string }> {
+  return apiJson<{ share: ReportShareStatus; token: string; path: string }>(
+    `/api/v1/scans/${encodeURIComponent(id)}/share`,
+    {},
+  );
+}
+
+export function revokeReportShare(id: string): Promise<{ share: ReportShareStatus }> {
+  return apiFetch<{ share: ReportShareStatus }>(`/api/v1/scans/${encodeURIComponent(id)}/share`, {
+    method: "DELETE",
+  });
+}
+
 export type DecisionStatus = "idle" | "saving" | "error";
 
 export function scanMatchesDecisionFilter(

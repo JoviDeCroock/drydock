@@ -436,6 +436,32 @@ export const githubWorkflowGates = sqliteTable(
   }),
 );
 
+// One share link per scan. Only the SHA-256 hash of the bearer token is stored,
+// so a database read never yields a usable link; rotation replaces the hash and
+// revocation clears the row's active state without deleting the audit trail.
+export const scanReportShares = sqliteTable(
+  "scan_report_shares",
+  {
+    id: text("id").primaryKey(),
+    scanId: text("scan_id")
+      .notNull()
+      .references(() => scans.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    scanUniqueIdx: uniqueIndex("scan_report_shares_scan_unique_idx").on(table.scanId),
+    tokenHashUniqueIdx: uniqueIndex("scan_report_shares_token_hash_unique_idx").on(table.tokenHash),
+    orgIdx: index("scan_report_shares_org_idx").on(table.organizationId),
+  }),
+);
+
 export const session = sqliteTable("session", {
   id: text("id").primaryKey(),
   expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),

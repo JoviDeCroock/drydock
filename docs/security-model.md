@@ -80,13 +80,15 @@ For npm registry tarballs, consumer install lifecycle hooks are `preinstall`, `i
 
 Every non-auth `/api/*` endpoint requires a Better Auth session and organization resolution. Reads and writes for scans, reports, npm connections, Slack installs, release targets, workflow gates, and settings must check organization ownership. UI state is not an authority; server routes make all access-control decisions.
 
+The one deliberate exception is `/api/public/reports/*`: read-only access to the redacted canonical report export, gated by a high-entropy bearer token whose hash is stored in `scan_report_shares`. Only org owners/admins can create, rotate, or revoke a share; a share never exposes anything beyond the report export and never writes scan state. See [`report-sharing.md`](./report-sharing.md).
+
 ## Browser response headers
 
 Production responses should keep conservative security headers: no package-provided active content, no cross-origin credential leakage, and no relaxed CSP/CORS decisions for convenience.
 
 ## Known gaps / future work
 
-- Public signed reports are not exposed yet; report data should remain canonical and future-signable.
+- Shared report links expose the unsigned canonical export; report signing is not implemented yet, so report data should remain canonical and future-signable.
 - Raw-artifact retention, if ever added, must be explicit, short-TTL, organization-scoped, and documented.
 - Additional ecosystems need adapter-specific credential, baseline, artifact, and failure-mode review before enablement.
 - Keep dependency and parser updates covered by regression/fuzz tests because archive handling is a trust boundary.
