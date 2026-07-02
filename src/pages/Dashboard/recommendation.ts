@@ -42,7 +42,7 @@ export function getReleaseRecommendation(
     return {
       label: "package context only",
       tone: "neutral",
-      copy: "The changed files have no deterministic risk signals. Existing package context is still shown below.",
+      copy: "The changed files have no deterministic risk signals. Package context is summarized below.",
     };
   }
   return {

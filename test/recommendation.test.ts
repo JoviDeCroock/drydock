@@ -13,6 +13,7 @@ describe("scan detail recommendation", () => {
     expect(getReleaseRecommendation("high", "low", 0)).toMatchObject({
       label: "package context only",
       tone: "neutral",
+      copy: "The changed files have no deterministic risk signals. Package context is summarized below.",
     });
   });
 });

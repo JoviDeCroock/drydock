@@ -133,18 +133,18 @@ function buildRecommendationEvidence(
 ): Array<{ label: string; value: ComponentChildren }> {
   const evidence: Array<{ label: string; value: ComponentChildren }> = [];
   const releaseFindings: RecommendationFinding[] = [...changedFindings, ...assistantFindings];
-  const topFindings = sortFindingsBySeverity(
-    releaseFindings.length ? releaseFindings : detail.findings,
-  ).slice(0, 3);
-  for (const finding of topFindings) {
-    evidence.push({
-      label: releaseFindings.length ? (finding.severity ?? "signal") : "existing",
-      value: (
-        <>
-          <code>{finding.file}</code>: {finding.reason}
-        </>
-      ),
-    });
+  if (releaseFindings.length) {
+    const topFindings = sortFindingsBySeverity(releaseFindings).slice(0, 3);
+    for (const finding of topFindings) {
+      evidence.push({
+        label: finding.severity ?? "signal",
+        value: (
+          <>
+            <code>{finding.file}</code>: {finding.reason}
+          </>
+        ),
+      });
+    }
   }
 
   const manifest = summary.packageJsonDiff;
