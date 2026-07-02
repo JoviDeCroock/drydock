@@ -63,6 +63,14 @@ export interface CreateScanJobInput {
   source?: ScanSource;
   /** Links a workflow-gate review scan back to its gate. */
   gateId?: string | null;
+  /**
+   * Package identity known before the tarball is inspected (from the staged
+   * publishes listing or the gate bundle). Lets failed scans — including ones
+   * whose tarball never parsed — still carry a display label; the pipeline
+   * overwrites both with tarball-derived values when it completes.
+   */
+  packageName?: string | null;
+  stagedVersion?: string | null;
 }
 
 export const SCAN_SOURCES = ["manual", "auto_discovery", "workflow_gate"] as const;
@@ -76,6 +84,8 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
     organizationId: input.organizationId,
     ownerUserId: input.ownerUserId,
     gateId: input.gateId ?? null,
+    packageName: input.packageName ?? null,
+    stagedVersion: input.stagedVersion ?? null,
     risk: "unknown",
     status: "pending",
     source: input.source ?? "manual",

@@ -76,12 +76,18 @@ describe("scans route queue behavior", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-        expect(String(url)).toBe(
-          "https://registry.npmjs.org/-/stage/stage-route-queue-000001/tarball",
-        );
+        if (String(url) === "https://registry.npmjs.org/-/stage/stage-route-queue-000001/tarball") {
+          expect((init?.headers as Record<string, string>)?.authorization).toBe(`Bearer ${token}`);
+          expect((init?.headers as Record<string, string>)?.range).toBe("bytes=0-0");
+          return new Response("", { status: 206 });
+        }
+        expect(String(url)).toBe("https://registry.npmjs.org/-/stage/stage-route-queue-000001");
         expect((init?.headers as Record<string, string>)?.authorization).toBe(`Bearer ${token}`);
-        expect((init?.headers as Record<string, string>)?.range).toBe("bytes=0-0");
-        return new Response("", { status: 206 });
+        return Response.json({
+          id: "stage-route-queue-000001",
+          packageName: "@org/queued",
+          version: "2.0.0",
+        });
       }),
     );
 
@@ -97,9 +103,18 @@ describe("scans route queue behavior", () => {
     await waitOnExecutionContext(ctx);
 
     expect(res.status).toBe(202);
-    const body = (await res.json()) as { scan: { id: string; stageId: string }; queued: boolean };
+    const body = (await res.json()) as {
+      scan: {
+        id: string;
+        stageId: string;
+        packageName: string | null;
+        stagedVersion: string | null;
+      };
+      queued: boolean;
+    };
     expect(body.queued).toBe(true);
     expect(body.scan.stageId).toBe("stage-route-queue-000001");
+    expect(body.scan).toMatchObject({ packageName: "@org/queued", stagedVersion: "2.0.0" });
 
     expect(queue.send).toHaveBeenCalledTimes(1);
     const message = queue.send.mock.calls[0]?.[0];

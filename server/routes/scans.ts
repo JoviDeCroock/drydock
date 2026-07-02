@@ -52,7 +52,7 @@ import { parseScanInput } from "../lib/scan-input";
 import { reportExportFilename, serializeReportExport } from "../lib/report-export";
 import { executeScanJob, type ScanQueueMessage } from "../lib/scan-job";
 import { roleCanManageIntegrations } from "../lib/roles";
-import { checkStagedPublishAccess } from "../lib/staged-publishes";
+import { checkStagedPublishAccess, fetchStagedPublishDetails } from "../lib/staged-publishes";
 import type { Bindings, ScanInput, Variables } from "../types";
 
 export const scansRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -100,12 +100,23 @@ scansRoutes.post("/", async (c) => {
       );
     }
 
+    // Best-effort: staged metadata gives the scan a package label up front, so
+    // a scan whose tarball never parses still shows which package it was for.
+    const staged = await fetchStagedPublishDetails(
+      npmConnection.registryUrl,
+      token,
+      input.stageId,
+      { allowInsecureLocalhost: allowInsecureLocalRegistry(c.env) },
+    ).catch(() => null);
+
     const scanId = crypto.randomUUID();
     const detail = await createScanJob(db, {
       id: scanId,
       stageId: input.stageId,
       organizationId,
       ownerUserId: session.userId,
+      packageName: staged?.packageName ?? null,
+      stagedVersion: staged?.version ?? null,
     });
     if (!detail) return c.json({ error: "failed to create scan" }, 500);
     const message: ScanQueueMessage = {

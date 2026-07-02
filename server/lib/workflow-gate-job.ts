@@ -433,6 +433,8 @@ async function reviewGatePackages(
       ownerUserId,
       source: "workflow_gate",
       gateId: gate.id,
+      packageName: candidate.package.name,
+      stagedVersion: candidate.package.version,
     });
 
     try {

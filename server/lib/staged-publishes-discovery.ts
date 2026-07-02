@@ -238,6 +238,8 @@ export async function discoverAndQueueStagedPublishes(
       organizationId,
       ownerUserId: actorUserId,
       source,
+      packageName: item.packageName,
+      stagedVersion: item.version,
     });
     if (!detail) continue;
     existingStageIds.add(stageId);

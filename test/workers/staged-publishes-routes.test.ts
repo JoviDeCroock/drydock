@@ -130,5 +130,9 @@ describe("staged publishes route", () => {
     expect(queue.send.mock.calls[0]?.[0]).toMatchObject({ stageId: "stage-new-123" });
     const { scans } = await listScans(db, owner.organizationId);
     expect(scans.map((scan) => scan.stageId)).toContain("stage-new-123");
+    expect(scans.find((scan) => scan.stageId === "stage-new-123")).toMatchObject({
+      packageName: "@org/new",
+      stagedVersion: "1.1.0",
+    });
   });
 });
