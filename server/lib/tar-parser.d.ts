@@ -24,7 +24,11 @@ export interface ParsedPackageJson {
   exports?: unknown;
 }
 
-export type TarSuspiciousEntryKind = "non-regular" | "duplicate" | "unicode-confusable";
+export type TarSuspiciousEntryKind =
+  | "non-regular"
+  | "duplicate"
+  | "unicode-confusable"
+  | "content-skipped";
 
 export interface TarSuspiciousEntry {
   kind: TarSuspiciousEntryKind;
@@ -57,10 +61,17 @@ export function describeNonRegularType(type: string): string;
 export function sha256Hex(bytes: Uint8Array): Promise<string>;
 export function shouldSkipTextSample(path: string): boolean;
 export function summarizeFile(path: string, body: Uint8Array): Promise<ParsedFile>;
+export function summarizeSkippedFile(path: string, size: number): ParsedFile;
 export function readTar(
   buffer: ArrayBuffer | Uint8Array,
   maxFiles: number,
   maxTarBytes: number,
+): Promise<ReadTarResult>;
+export function readTarStream(
+  body: ReadableStream<Uint8Array> | null,
+  maxFiles: number,
+  maxTarBytes: number,
+  maxStreamBytes: number,
 ): Promise<ReadTarResult>;
 export function readUint16Le(bytes: Uint8Array, offset: number): number;
 export function readUint32Le(bytes: Uint8Array, offset: number): number;

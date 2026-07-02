@@ -123,6 +123,8 @@ function tarSuspiciousReason(entry: TarSuspiciousEntry): string {
       return "two entries share the same normalized path; last-write-wins extraction means a benign first entry can mask a malicious second";
     case "unicode-confusable":
       return "path contains zero-width or visually-confusable characters; the consumer's tar implementation may canonicalize this differently than the reviewer and let it bypass deterministic file checks";
+    case "content-skipped":
+      return "file body exceeded the scanner's retention limit, so only its path and size were recorded; the content was never inspected and must be verified through provenance or out-of-band review";
   }
 }
 

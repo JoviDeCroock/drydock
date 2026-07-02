@@ -515,6 +515,94 @@ describe("readTar limits and malformed archives", () => {
     );
   });
 
+  test("skips an oversized entry body but records its metadata", async () => {
+    const limits = { maxFiles: 100, maxTarBytes: 1024 };
+    const big = new Uint8Array(2048).fill(0x42);
+    const tar = buildTar([
+      { name: "package/index.js", body: "export const x = 1;\n" },
+      { name: "package/bin/native.node", body: big },
+      { name: "package/after.js", body: "// after\n" },
+    ]);
+    const { files, suspicious } = await parseFull(tar, limits);
+    expect(files.map((f) => f.path)).toEqual(["index.js", "bin/native.node", "after.js"]);
+    const skipped = files[1];
+    expect(skipped.size).toBe(2048);
+    expect(skipped.sha256).toBe("");
+    expect(skipped.flags).toEqual(["content-skipped"]);
+    expect(skipped.textSample).toBeUndefined();
+    // Entries after the skipped body are still fully parsed.
+    expect(files[2].textSample).toBe("// after\n");
+    expect(files[2].sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(suspicious).toEqual([
+      {
+        kind: "content-skipped",
+        path: "bin/native.node",
+        detail: expect.stringContaining("2048 bytes"),
+      },
+    ]);
+  });
+
+  test("skips entries once the cumulative retention budget is exhausted", async () => {
+    const limits = { maxFiles: 100, maxTarBytes: 1000 };
+    const bodyA = new Uint8Array(600).fill(0x61);
+    const bodyB = new Uint8Array(600).fill(0x62);
+    const tar = buildTar([
+      { name: "package/a.bin", body: bodyA },
+      { name: "package/b.bin", body: bodyB },
+    ]);
+    const { files, suspicious } = await parseFull(tar, limits);
+    expect(files[0].sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(files[1].sha256).toBe("");
+    expect(files[1].flags).toEqual(["content-skipped"]);
+    expect(suspicious.map((s) => s.kind)).toEqual(["content-skipped"]);
+  });
+
+  test("readTarStream parses chunked input identically to readTar", async () => {
+    const tar = buildTar([
+      { name: "package/index.js", body: "export const x = 1;\n" },
+      { name: "package/lib/util.js", body: "// util\n" },
+    ]);
+    const chunked = new ReadableStream({
+      start(controller) {
+        for (let i = 0; i < tar.length; i += 100) {
+          controller.enqueue(tar.subarray(i, Math.min(i + 100, tar.length)));
+        }
+        controller.close();
+      },
+    });
+    const streamed = await tarParser.readTarStream(
+      chunked,
+      PARSE_LIMITS.maxFiles,
+      PARSE_LIMITS.maxTarBytes,
+      Infinity,
+    );
+    const buffered = await parseFull(tar);
+    expect(streamed).toEqual(buffered);
+  });
+
+  test("readTarStream fails closed when the total stream exceeds its cap", async () => {
+    const tar = buildTar([{ name: "package/big.bin", body: new Uint8Array(4096) }]);
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(tar);
+        controller.close();
+      },
+    });
+    await expect(tarParser.readTarStream(stream, 100, 512, 2048)).rejects.toThrow(
+      /archive expands beyond safety limit/,
+    );
+  });
+
+  test("throws truncated when a skipped entry body overruns the archive", async () => {
+    const tar = buildTar([{ name: "package/x.bin", body: "abc" }]);
+    // Claim a body far beyond both the retention limit and the archive length:
+    // the skip path must still detect the overrun instead of succeeding.
+    tar.set(encoder.encode("00000010000\0"), 124);
+    await expect(parse(tar, { maxFiles: 100, maxTarBytes: 1024 })).rejects.toThrow(
+      /truncated tar entry/,
+    );
+  });
+
   test("stops at the end-of-archive marker even with trailing garbage", async () => {
     const tar = buildTar([{ name: "package/a.js", body: "// a\n" }]);
     // Append garbage after the zero blocks; readTar should not see it.
@@ -640,9 +728,9 @@ describe("rendered sandbox parser source", () => {
     "sha256Hex",
     "shouldSkipTextSample",
     "summarizeFile",
-    "readTar",
+    "summarizeSkippedFile",
+    "readTarStream",
     "parsePackageJson",
-    "gunzipBounded",
   ];
 
   test("every required parser export keeps its function name", () => {

@@ -1,4 +1,5 @@
 import { pickBaselineVersion } from "../../registry";
+import { SandboxError } from "../../sandbox";
 import type { PackageJsonSummary } from "../../review";
 import type { StagedPublishDetails } from "../../staged-publishes";
 import type { AcquiredArtifact, AdapterContext, BaselineInfo, StagedDetails } from "../types";
@@ -80,9 +81,23 @@ export async function acquireBaselineNpm(
     };
   }
 
-  const previous = await broker.downloadPublished(tarballUrl, {
-    maxFiles: input.maxFiles,
-  });
+  let previous;
+  try {
+    previous = await broker.downloadPublished(tarballUrl, {
+      maxFiles: input.maxFiles,
+    });
+  } catch (err) {
+    // A baseline too large to fetch degrades to a no-baseline scan (the staged
+    // artifact still gets fully reviewed) instead of failing the whole scan —
+    // prepackaged-binary packages routinely publish multi-hundred-MB tarballs.
+    if (isArchiveTooLarge(err)) {
+      return {
+        artifact: null,
+        baseline: { ...baseline, reason: `${baseline.reason}:baseline-too-large` },
+      };
+    }
+    throw err;
+  }
   return {
     artifact: {
       files: previous.files,
@@ -107,6 +122,16 @@ function hasMetadataMismatch(
   if (details.packageName && pkg.name && details.packageName !== pkg.name) return true;
   if (details.version && pkg.version && details.version !== pkg.version) return true;
   return false;
+}
+
+function isArchiveTooLarge(err: unknown): boolean {
+  if (!(err instanceof SandboxError)) return false;
+  try {
+    const detail = JSON.parse(err.message) as { error?: string; status?: number };
+    return detail.status === 413;
+  } catch {
+    return false;
+  }
 }
 
 function emptyBaseline(tag: string | null, reason: string): BaselineInfo {

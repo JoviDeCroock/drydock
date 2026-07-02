@@ -14,7 +14,7 @@
 //     cross-function calls resolve by the lexical names below.
 
 /** @typedef {{ path: string, size: number, sha256: string, flags: string[], textSample?: string }} ParsedFile */
-/** @typedef {{ kind: "non-regular"|"duplicate"|"unicode-confusable", path: string, detail: string }} TarSuspiciousEntry */
+/** @typedef {{ kind: "non-regular"|"duplicate"|"unicode-confusable"|"content-skipped", path: string, detail: string }} TarSuspiciousEntry */
 
 export function readString(bytes, start, len) {
   let end = start;
@@ -224,9 +224,93 @@ export function shouldSkipTextSample(path) {
   return false;
 }
 
+export function summarizeSkippedFile(path, size) {
+  // Metadata-only record for an entry whose body exceeded the retention limit:
+  // path and declared size are kept so the release manifest stays complete, but
+  // the content was never buffered, so there is no hash or text sample.
+  return { path, size, sha256: "", flags: ["content-skipped"] };
+}
+
 export async function readTar(buffer, maxFiles, maxTarBytes) {
-  const nul = String.fromCharCode(0);
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  return readTarStream(new Response(bytes).body, maxFiles, maxTarBytes, Infinity);
+}
+
+// Streaming tar reader. Walks entries sequentially as decompressed bytes
+// arrive, so the whole archive never has to fit in memory: `maxTarBytes`
+// bounds the bytes *retained* for inspection (per entry and cumulatively),
+// while `maxStreamBytes` bounds the total bytes consumed from the stream.
+// Regular files whose body would blow the retention budget are recorded as
+// content-skipped (path + declared size, no hash/text) instead of failing the
+// parse — the esbuild/rover pattern of multi-hundred-megabyte prepackaged
+// platform binaries alongside a small manifest.
+export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes) {
+  const nul = String.fromCharCode(0);
+  if (!body) throw new Error("tarball decompression failed");
+  const reader = body.getReader();
+  const streamLimit = Number.isFinite(maxStreamBytes) ? maxStreamBytes : Infinity;
+  const chunks = [];
+  let buffered = 0;
+  let streamed = 0;
+  let streamDone = false;
+
+  async function fill(target) {
+    while (buffered < target && !streamDone) {
+      const { value, done } = await reader.read();
+      if (done) {
+        streamDone = true;
+        break;
+      }
+      streamed += value.byteLength;
+      if (streamed > streamLimit) {
+        reader.cancel().catch(() => undefined);
+        throw new Error("archive expands beyond safety limit");
+      }
+      chunks.push(value);
+      buffered += value.byteLength;
+    }
+    return buffered >= target;
+  }
+
+  function take(count) {
+    const out = new Uint8Array(count);
+    let offset = 0;
+    while (offset < count) {
+      const head = chunks[0];
+      const need = count - offset;
+      if (head.byteLength <= need) {
+        out.set(head, offset);
+        offset += head.byteLength;
+        buffered -= head.byteLength;
+        chunks.shift();
+      } else {
+        out.set(head.subarray(0, need), offset);
+        chunks[0] = head.subarray(need);
+        buffered -= need;
+        offset = count;
+      }
+    }
+    return out;
+  }
+
+  async function discard(count) {
+    let remaining = count;
+    while (remaining > 0) {
+      if (!buffered && !(await fill(1))) return false;
+      const head = chunks[0];
+      if (head.byteLength <= remaining) {
+        remaining -= head.byteLength;
+        buffered -= head.byteLength;
+        chunks.shift();
+      } else {
+        chunks[0] = head.subarray(remaining);
+        buffered -= remaining;
+        remaining = 0;
+      }
+    }
+    return true;
+  }
+
   const files = [];
   const suspicious = [];
   const suspiciousLimit = Math.max(1, Number.isFinite(maxFiles) ? maxFiles : 250);
@@ -234,6 +318,7 @@ export async function readTar(buffer, maxFiles, maxTarBytes) {
   const seenPaths = new Map();
   let nextLongName = null;
   let pax = null;
+  let retainedBytes = 0;
 
   function addSuspicious(entry) {
     if (suspicious.length < suspiciousLimit) {
@@ -250,8 +335,8 @@ export async function readTar(buffer, maxFiles, maxTarBytes) {
     }
   }
 
-  for (let offset = 0; offset + 512 <= bytes.length; ) {
-    const header = bytes.subarray(offset, offset + 512);
+  while (await fill(512)) {
+    const header = take(512);
     if (header.every((b) => b === 0)) break;
 
     const rawName = readString(header, 0, 100);
@@ -259,31 +344,35 @@ export async function readTar(buffer, maxFiles, maxTarBytes) {
     const sizeText = readString(header, 124, 12).trim() || "0";
     if (!/^[0-7]+$/.test(sizeText)) throw new Error("invalid tar entry size");
     const size = parseInt(sizeText, 8);
-    if (!Number.isFinite(size) || size < 0 || size > maxTarBytes)
-      throw new Error("invalid tar entry size");
+    if (!Number.isFinite(size) || size < 0) throw new Error("invalid tar entry size");
     const type = String.fromCharCode(header[156] || 48);
-    offset += 512;
-    if (offset + size > bytes.length) throw new Error("truncated tar entry");
-    const body = bytes.subarray(offset, offset + size);
+    const padding = Math.ceil(size / 512) * 512 - size;
 
-    if (type === "x") {
-      // Local PAX header. Its path attribute applies only to the next entry.
-      pax = parsePax(body);
-      if (pax && typeof pax.path === "string" && !isSafePaxPath(pax.path)) {
-        throw new Error("invalid pax path");
+    if (type === "x" || type === "g" || type === "L") {
+      // Metadata entries must be materialized to be interpreted; a metadata
+      // body beyond the retention limit is only ever hand-crafted.
+      if (size > maxTarBytes) throw new Error("invalid tar entry size");
+      if (!(await fill(size))) throw new Error("truncated tar entry");
+      const body = take(size);
+      if (type === "x") {
+        // Local PAX header. Its path attribute applies only to the next entry.
+        pax = parsePax(body);
+        if (pax && typeof pax.path === "string" && !isSafePaxPath(pax.path)) {
+          throw new Error("invalid pax path");
+        }
+      } else if (type === "g") {
+        // Global PAX metadata does not override the path of following entries.
+        // Ignoring path here keeps scanner paths aligned with tar extraction.
+        parsePax(body);
+        nextLongName = null;
+        pax = null;
+      } else {
+        // readString already stops at the first NUL terminator, so the long-name
+        // payload is implicitly trimmed at the NUL boundary.
+        const candidate = readString(body, 0, body.length);
+        if (!isSafePaxPath(candidate)) throw new Error("invalid long-name path");
+        nextLongName = candidate;
       }
-    } else if (type === "g") {
-      // Global PAX metadata does not override the path of following entries.
-      // Ignoring path here keeps scanner paths aligned with tar extraction.
-      parsePax(body);
-      nextLongName = null;
-      pax = null;
-    } else if (type === "L") {
-      // readString already stops at the first NUL terminator, so the long-name
-      // payload is implicitly trimmed at the NUL boundary.
-      const candidate = readString(body, 0, body.length);
-      if (!isSafePaxPath(candidate)) throw new Error("invalid long-name path");
-      nextLongName = candidate;
     } else if (type === "0" || type === nul) {
       const rawCandidate =
         (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName;
@@ -299,7 +388,24 @@ export async function readTar(buffer, maxFiles, maxTarBytes) {
             : "path contained zero-width or visually-confusable characters and normalized to an unsafe path",
         });
       }
-      if (path) {
+      const retainBody = size <= maxTarBytes && retainedBytes + size <= maxTarBytes;
+      let summarized = null;
+      if (path && retainBody) {
+        if (!(await fill(size))) throw new Error("truncated tar entry");
+        summarized = await summarizeFile(path, take(size));
+        retainedBytes += size;
+      } else {
+        if (!(await discard(size))) throw new Error("truncated tar entry");
+        if (path) {
+          summarized = summarizeSkippedFile(path, size);
+          addSuspicious({
+            kind: "content-skipped",
+            path,
+            detail: `file body (${size} bytes) exceeds the ${maxTarBytes}-byte retention limit; metadata recorded but content not inspected`,
+          });
+        }
+      }
+      if (path && summarized) {
         if (seenPaths.has(path)) {
           // Match last-write-wins extraction so downstream checks inspect the
           // bytes consumers are likely to receive, while still surfacing the duplicate.
@@ -308,11 +414,9 @@ export async function readTar(buffer, maxFiles, maxTarBytes) {
             path,
             detail: "duplicate path; later entry replaced earlier entry",
           });
-          const summarized = await summarizeFile(path, body);
           files[seenPaths.get(path)] = summarized;
         } else {
           if (files.length >= maxFiles) throw new Error("archive contains too many files");
-          const summarized = await summarizeFile(path, body);
           seenPaths.set(path, files.length);
           files.push(summarized);
         }
@@ -330,12 +434,16 @@ export async function readTar(buffer, maxFiles, maxTarBytes) {
         path: reportedPath,
         detail: `typeflag ${type} (${describeNonRegularType(type)})`,
       });
+      if (!(await discard(size))) throw new Error("truncated tar entry");
       nextLongName = null;
       pax = null;
     }
 
-    offset += Math.ceil(size / 512) * 512;
+    // Inter-entry padding; a missing final pad block is tolerated like the
+    // buffer reader tolerated a trailing partial block.
+    if (padding > 0) await discard(padding);
   }
+  reader.cancel().catch(() => undefined);
   return { files, suspicious };
 }
 
