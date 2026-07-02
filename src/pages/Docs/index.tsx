@@ -313,6 +313,94 @@ export default function DocsPage() {
           </Subsection>
         </section>
 
+        <section
+          id="agent-access"
+          class="flex flex-col gap-8 scroll-mt-6 border-t border-border pt-10"
+        >
+          <div class="flex flex-col gap-3">
+            <SectionLabel>
+              Agent access: MCP <Badge tone="info">Read-only</Badge>
+            </SectionLabel>
+            <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
+              Let an agent read a scan; a human still decides.
+            </h2>
+            <Prose>
+              Drydock exposes a read-only, organization-scoped{" "}
+              <a
+                class="underline"
+                href="https://modelcontextprotocol.io"
+                target="_blank"
+                rel="noreferrer"
+              >
+                MCP
+              </a>{" "}
+              endpoint so a headless agent — an IDE assistant or a CI job — can inspect a scan and
+              help you reason about whether to publish. It walks the same redacted evidence the
+              internal reviewer sees: risk summary, deterministic findings on changed lines, file
+              samples, and the audit trail. It is strictly advisory: no tool records a clearance,
+              mutates a scan, or fetches package bytes. The agent informs; you still clear or hold
+              in the workbench with your own 2FA.
+            </Prose>
+          </div>
+
+          <Subsection title="Create an API token">
+            <Steps
+              items={[
+                <>Sign in and choose the organization whose scans the agent should read.</>,
+                <>
+                  Open <Code>Organization settings → integrations</Code> and create an API token.
+                  Owners and admins can manage tokens.
+                </>,
+                <>
+                  Copy the token (<Code>dryd_pat_…</Code>) when it's shown. Drydock stores only a
+                  hash, so the secret is displayed once and can't be recovered — revoke and recreate
+                  if it's lost.
+                </>,
+                <>
+                  Give the token to your agent as a bearer credential. Revoke it anytime; each
+                  create and revoke is recorded in the audit log.
+                </>,
+              ]}
+            />
+            <div class="flex flex-wrap gap-2 pt-1">
+              <LinkButton href="/dashboard/settings?tab=integrations" size="sm">
+                Open Organization settings
+              </LinkButton>
+            </div>
+          </Subsection>
+
+          <Subsection title="Connect the endpoint">
+            <Prose>
+              Point an MCP client at <Code>POST /mcp</Code> with{" "}
+              <Code>Authorization: Bearer dryd_pat_…</Code>. It speaks JSON-RPC 2.0 and is scoped to
+              the token's organization — another org's scans are indistinguishable from missing.
+            </Prose>
+            <CodeBlock name="mcp-client config" lang="json">
+              {`{
+  "mcpServers": {
+    "drydock": {
+      "url": "https://<your-drydock-host>/mcp",
+      "headers": { "Authorization": "Bearer dryd_pat_..." }
+    }
+  }
+}`}
+            </CodeBlock>
+          </Subsection>
+
+          <Subsection title="What the agent can do">
+            <Prose>
+              The token grants read-only tools over scans that have finished inspecting:{" "}
+              <Code>find_scans</Code> and <Code>get_scan_status</Code> to locate work,{" "}
+              <Code>get_scan_report</Code> for the risk summary and deterministic findings, and{" "}
+              <Code>list_scan_files</Code>, <Code>read_scan_files</Code>, and{" "}
+              <Code>search_scan_files</Code> over redacted file evidence, plus{" "}
+              <Code>list_scan_events</Code> for the audit trail. Rich findings exist once a scan
+              completes, so an agent polls status and analyzes on completion. There is no tool to
+              publish, clear, or hold — those stay in human hands.
+            </Prose>
+          </Subsection>
+        </section>
+
         <section class="flex flex-col gap-4 border-t border-border pt-10">
           <SectionLabel>Start inspecting releases</SectionLabel>
           <div class="flex flex-wrap gap-3">
