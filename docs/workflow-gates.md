@@ -82,19 +82,25 @@ jobs:
     steps:
       - run: npm ci
       - run: npm pack --json > pack.json
+      # Record the digests Drydock reviews and the publish job re-checks.
+      - run: sha256sum *.tgz > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: npm-package
-          path: "*.tgz"
+          path: |
+            *.tgz
+            SHA256SUMS
   publish:
     needs: pack
     environment: production
     steps:
       - uses: actions/download-artifact@v4
+      # Fail closed if the downloaded bytes drifted from what was reviewed.
+      - run: sha256sum --check --strict SHA256SUMS
       - run: npm publish *.tgz
 ```
 
-Drydock should be the deployment-protection rule for the `production` environment. The publish job must consume the exact uploaded artifact reviewed by Drydock; rebuilding after approval breaks the review boundary.
+Drydock should be the deployment-protection rule for the `production` environment. The publish job must consume the exact uploaded artifact reviewed by Drydock; rebuilding after approval breaks the review boundary. The `SHA256SUMS` record/check pair makes that enforceable in CI: the digests match the ones Drydock recomputes and shows in the report Provenance section, and the publish job fails closed on any drift. Drydock ignores `SHA256SUMS` in the bundle (it is not a `.tgz`).
 
 See [`pypi-workflow-gate.md`](./pypi-workflow-gate.md) for the PyPI-specific
 workflow shape, including build-time `SHA256SUMS` generation and publish-time

@@ -260,10 +260,10 @@ export default function DocsPage() {
               then publishes the verified bundle with whatever tool you prefer.
             </Prose>
             <Prose>
-              npm looks the same. <Code>npm pack</Code> the workspaces, upload{" "}
-              <Code>dist/*.tgz</Code>, and gate the publish job on a GitHub Environment. The publish
-              job downloads the reviewed tarballs and publishes them exactly as reviewed, without
-              re-packing.
+              npm looks the same. <Code>npm pack</Code> the workspaces, record a{" "}
+              <Code>SHA256SUMS</Code>, upload <Code>dist/*.tgz</Code>, and gate the publish job on a
+              GitHub Environment. The publish job downloads the reviewed tarballs, re-checks their
+              digests, and publishes them exactly as reviewed, without re-packing.
             </Prose>
             <CodeBlock name=".github/workflows/release.yml (npm)" lang="yaml">
               {`jobs:
@@ -272,10 +272,14 @@ export default function DocsPage() {
     steps:
       - uses: actions/checkout@v4
       - run: npm run pack:all   # npm pack each workspace into dist/*.tgz
+      # Record the digests Drydock reviews and the publish job re-checks.
+      - run: cd dist && sha256sum *.tgz > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: npm-release-candidates
-          path: dist/*.tgz
+          path: |
+            dist/*.tgz
+            dist/SHA256SUMS
 
   publish:
     needs: build-release-artifacts
@@ -288,6 +292,8 @@ export default function DocsPage() {
         with:
           name: npm-release-candidates
           path: dist
+      # Fail closed if the bytes drifted from what was reviewed.
+      - run: cd dist && sha256sum --check --strict SHA256SUMS
       # no checkout, no re-pack: publish exactly the reviewed bytes
       - run: |
           for tgz in dist/*.tgz; do
