@@ -87,7 +87,9 @@ function ProvenanceView({ provenance }: { provenance: ReleaseProvenance }) {
       ? "PyPI"
       : provenance.ecosystem === "vscode"
         ? "VS Code"
-        : "npm";
+        : provenance.ecosystem === "rubygems"
+          ? "RubyGems"
+          : "npm";
   return (
     <div class="flex flex-col gap-3">
       <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">

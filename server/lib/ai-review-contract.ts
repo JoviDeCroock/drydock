@@ -1,6 +1,6 @@
 import z from "zod";
 
-export type AiReviewEcosystem = "npm" | "pypi" | "vscode" | "generic";
+export type AiReviewEcosystem = "npm" | "pypi" | "vscode" | "rubygems" | "generic";
 
 // We surface only the highest-signal findings: critical/high, most severe
 // first, capped at this count. Lower-severity context belongs in the summary.
@@ -73,6 +73,21 @@ High-priority VS Code risks:
 
 VS Code evidence policy: a VSIX ships already-built code, so the extension's own devDependencies and npm lifecycle scripts (prepare/postinstall/prepublish) usually do not run for consumers — don't treat them as consumer-install hooks without evidence they altered the packed output. Contributes, commands, and menus are ordinary; escalate when activation, entrypoints, transitive extensions, credential/network/process capability, undeclared configuration inputs, obfuscation, or native payloads change. When risk hinges on an asset downloaded at runtime that you cannot see, require manual review.`;
 
+const RUBYGEMS_REVIEW_PROMPT = `Ecosystem: RubyGems.
+
+High-priority RubyGems risks:
+- Artifact identity/metadata integrity: the serialized gemspec (metadata.gz) must match the reviewed name/version. Missing gemspec metadata or mismatched name/version fields -> manual review; may indicate artifact tampering.
+- Install-time execution: gems with declared extensions compile on the consumer machine. Flag extconf.rb, mkrf_conf, ext/ Rakefiles, or Cargo.toml build files invoking system/exec/spawn, Open3, IO.popen, backticks/%x, curl/wget, git, Net::HTTP/open-uri, or dynamic evaluation.
+- Entrypoint/executable changes: new or changed executables land on consumer PATHs; require_paths or default_executable changes route consumers to new code.
+- Supply-chain: added/modified gemspec dependencies can pull code on install. Flag git/path-sourced dependencies, typo-squat names, broad/surprising version ranges, and native/build-tool deps. You can't fetch dependency metadata; if risk hinges on unavailable metadata or maintainer reputation, require manual review.
+- Credential/host access: ENV reads, GEM_HOST_API_KEY/GITHUB_TOKEN/AWS/private-key tokens, ~/.gem/credentials, .netrc, .ssh, CI metadata, credential files.
+- Network/process execution: Net::HTTP, open-uri/URI.open, sockets, system/exec/spawn, Open3, IO.popen, backticks, PTY.spawn, staged payload downloaders.
+- Obfuscation/dynamic code: eval, instance_eval/class_eval/module_eval, Marshal.load, RubyVM::InstructionSequence, base64/hex decode then execute, packed/minified generated files, encrypted blobs.
+- Native/executable artifacts: .so, .bundle, .dylib, .dll, .exe, precompiled binaries or shell scripts inside ext/, large binaries, hard-to-audit generated code.
+- Package-shape surprises: removed tests/source with added generated/native artifacts, renamed files hiding behavior, version bump with unrelated behavioral changes. Platform-specific gems appear under gem/<platform> namespaces; compare them carefully.
+
+RubyGems evidence policy: don't assume a gem is safe because its gemspec says so. Normal Ruby packaging files aren't suspicious by themselves; escalate when they introduce install/build execution, executable or dependency drift, metadata inconsistency, native payloads, credential/network/process capability, obfuscation, or unexplained package-shape change.`;
+
 const GENERIC_REVIEW_PROMPT = `Ecosystem: generic package release.
 
 High-priority risks:
@@ -99,7 +114,13 @@ Summary style:
 - Spend words only on what raises concern, citing concrete paths; stay terse even then.`;
 
 export function normalizeAiReviewEcosystem(ecosystem: string | undefined): AiReviewEcosystem {
-  if (ecosystem === "npm" || ecosystem === "pypi" || ecosystem === "vscode") return ecosystem;
+  if (
+    ecosystem === "npm" ||
+    ecosystem === "pypi" ||
+    ecosystem === "vscode" ||
+    ecosystem === "rubygems"
+  )
+    return ecosystem;
   return "generic";
 }
 
@@ -107,6 +128,7 @@ const ECOSYSTEM_REVIEW_PROMPTS: Record<AiReviewEcosystem, string> = {
   npm: NPM_REVIEW_PROMPT,
   pypi: PYPI_REVIEW_PROMPT,
   vscode: VSCODE_REVIEW_PROMPT,
+  rubygems: RUBYGEMS_REVIEW_PROMPT,
   generic: GENERIC_REVIEW_PROMPT,
 };
 

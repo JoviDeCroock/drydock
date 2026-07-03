@@ -14,7 +14,8 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 ## Product/runtime docs
 
 - [`architecture.md`](./architecture.md) — Worker, sandbox, adapters, storage, org model, and API shape.
-- [`workflow-gates.md`](./workflow-gates.md) — GitHub Environment gate flow for PyPI, npm, and VS Code workflow-gated releases.
+- [`workflow-gates.md`](./workflow-gates.md) — GitHub Environment gate flow for PyPI, npm, VS Code, and RubyGems workflow-gated releases.
+- [`rubygems-workflow-gate.md`](./rubygems-workflow-gate.md) — RubyGems-specific gate behavior, gem parsing, and publish workflow shape.
 - [`diff-baseline.md`](./diff-baseline.md) — default previous-version comparison strategy.
 - [`artifact-storage.md`](./artifact-storage.md) — D1/R2 report and artifact persistence.
 

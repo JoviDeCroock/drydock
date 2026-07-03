@@ -204,7 +204,7 @@ describe("release target validation", () => {
 
   test("rejects unsupported ecosystems", () => {
     try {
-      validateReleaseTargetShape({ ...VALID_RELEASE_TARGET, ecosystem: "rubygems" });
+      validateReleaseTargetShape({ ...VALID_RELEASE_TARGET, ecosystem: "cargo" });
       throw new Error("expected validation to throw");
     } catch (err) {
       expect(err).toBeInstanceOf(GithubAppValidationError);

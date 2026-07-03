@@ -106,7 +106,8 @@ Drydock should be the deployment-protection rule for the `production` environmen
 
 See [`pypi-workflow-gate.md`](./pypi-workflow-gate.md) for the PyPI-specific
 workflow shape, including build-time `SHA256SUMS` generation and publish-time
-verification.
+verification, and [`rubygems-workflow-gate.md`](./rubygems-workflow-gate.md)
+for the RubyGems equivalent.
 
 ## VS Code workflow-gate notes
 

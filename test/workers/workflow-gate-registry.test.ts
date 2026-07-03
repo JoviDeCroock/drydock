@@ -37,6 +37,7 @@ describe("workflow-gate adapter registry", () => {
 
   test("lists every registered ecosystem", () => {
     expect(supportedWorkflowGateEcosystems()).toContain("pypi");
+    expect(supportedWorkflowGateEcosystems()).toContain("rubygems");
   });
 });
 

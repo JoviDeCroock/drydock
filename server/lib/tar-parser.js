@@ -1301,6 +1301,96 @@ export async function readStreamBounded(body, maxBytes) {
   return out;
 }
 
+export async function gunzipBounded(bytes, maxBytes) {
+  const body = new Response(bytes).body.pipeThrough(new DecompressionStream("gzip"));
+  return readStreamBounded(body, maxBytes);
+}
+
+// Extract the regular-file members of an UNCOMPRESSED tar held fully in memory.
+// A RubyGems `.gem` is exactly this shape: a plain tar whose members are
+// `metadata.gz`, `data.tar.gz`, and `checksums.yaml.gz` — always regular files,
+// never pax/long-name entries. Anything else (non-regular entries, pax/GNU
+// extensions, unsafe paths) is not something `gem build` emits, so the parse
+// fails closed rather than modeling attacker-shaped structure.
+export function readPlainTarMembers(bytes, maxMembers, maxMemberBytes) {
+  const nul = String.fromCharCode(0);
+  const members = [];
+  let offset = 0;
+  while (offset + 512 <= bytes.length) {
+    const header = bytes.subarray(offset, offset + 512);
+    offset += 512;
+    if (header.every((b) => b === 0)) break;
+    const rawName = readString(header, 0, 100);
+    const prefix = readString(header, 345, 155);
+    const sizeText = readString(header, 124, 12).trim() || "0";
+    if (!/^[0-7]+$/.test(sizeText)) throw tarError("invalid tar entry size");
+    const size = parseInt(sizeText, 8);
+    if (!Number.isFinite(size) || size < 0 || size > maxMemberBytes) {
+      throw tarError("invalid tar entry size");
+    }
+    const type = String.fromCharCode(header[156] || 48);
+    if (type !== "0" && type !== nul) throw tarError("gem archive contains unsupported entry");
+    const path = normalizeTarPath((prefix ? prefix + "/" : "") + rawName);
+    if (!path) throw tarError("gem archive contains unsupported entry");
+    if (offset + size > bytes.length) throw tarError("truncated tar entry");
+    if (members.length >= maxMembers) throw tarError("archive contains too many files");
+    members.push({ path, body: bytes.subarray(offset, offset + size) });
+    offset += Math.ceil(size / 512) * 512;
+  }
+  return members;
+}
+
+// Parse a RubyGems `.gem` archive: an uncompressed outer tar carrying the
+// gzipped gemspec metadata (`metadata.gz`) and the gzipped payload tar
+// (`data.tar.gz`). The decompressed gemspec YAML is surfaced as a synthetic
+// `metadata.gz` file record so deterministic rules and the diff can inspect it;
+// data files keep their native paths. Retention/stream limits apply to both the
+// outer members and the nested data tar, so a nested bomb cannot bypass the
+// budgets the flat tgz path enforces.
+export async function readGemArchive(buffer, maxFiles, maxTarBytes, maxStreamBytes) {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const members = readPlainTarMembers(bytes, 16, maxTarBytes);
+  const metadataMember = members.find((member) => member.path === "metadata.gz");
+  const dataMember = members.find((member) => member.path === "data.tar.gz");
+  if (!metadataMember || !dataMember) {
+    throw tarError("gem archive is missing metadata.gz or data.tar.gz");
+  }
+
+  let metadataBytes;
+  try {
+    metadataBytes = await gunzipBounded(metadataMember.body, maxTarBytes);
+  } catch (err) {
+    if (err && err.message === "archive too large") {
+      throw tarError("archive expands beyond safety limit");
+    }
+    throw tarError("gem metadata decompression failed");
+  }
+  const metadataRecord = await summarizeFile("metadata.gz", metadataBytes);
+
+  const dataStream = new Response(dataMember.body).body.pipeThrough(
+    new DecompressionStream("gzip"),
+  );
+  const parsed = await readTarStream(dataStream, maxFiles, maxTarBytes, maxStreamBytes);
+
+  const files = [metadataRecord];
+  const suspicious = [...parsed.suspicious];
+  for (const file of parsed.files) {
+    if (file.path === "metadata.gz") {
+      // A data file shadowing the gem's own metadata member is hostile shape:
+      // keep the authoritative gemspec record and surface the collision.
+      suspicious.push({
+        kind: "duplicate",
+        path: "metadata.gz",
+        detail: "data.tar.gz entry collides with the gem metadata member",
+      });
+      continue;
+    }
+    files.push(file);
+  }
+  if (files.length > maxFiles) throw tarError("archive contains too many files");
+  return { files, suspicious };
+}
+
 export function parsePackageJson(files) {
   const pkg = files.find((f) => f.path === "package.json" && f.textSample);
   if (!pkg || !pkg.textSample) return null;

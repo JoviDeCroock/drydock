@@ -36,7 +36,7 @@ export interface AcquiredArtifact {
 // Opaque to the pipeline — the adapter is the only thing that interprets it.
 export type StagedDetails = unknown;
 
-export type ReleaseProvenanceArtifactKind = "tarball" | "wheel" | "sdist" | "vsix";
+export type ReleaseProvenanceArtifactKind = "tarball" | "wheel" | "sdist" | "vsix" | "gem";
 
 // One reviewed release artifact bound to the SHA-256 the control plane
 // recomputed from its immutable bytes.
@@ -53,7 +53,7 @@ export interface ReleaseProvenanceArtifact {
 // uniformly across ecosystems in the report "Provenance" section and surfaced in
 // the report export so a maintainer's CI can verify against it.
 export interface ReleaseProvenance {
-  ecosystem: "npm" | "pypi" | "vscode";
+  ecosystem: "npm" | "pypi" | "vscode" | "rubygems";
   mode: "workflow_gate";
   artifacts: ReleaseProvenanceArtifact[];
 }

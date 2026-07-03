@@ -136,9 +136,9 @@ describe("AI review prompt selection", () => {
   });
 
   test("falls back to generic package guidance for unknown adapters", () => {
-    expect(normalizeAiReviewEcosystem("rubygems")).toBe("generic");
+    expect(normalizeAiReviewEcosystem("cargo")).toBe("generic");
     expect(normalizeAiReviewEcosystem(undefined)).toBe("generic");
-    expect(buildReviewerSystemPrompt("rubygems")).toContain("Ecosystem: generic package release.");
+    expect(buildReviewerSystemPrompt("cargo")).toContain("Ecosystem: generic package release.");
   });
 });
 

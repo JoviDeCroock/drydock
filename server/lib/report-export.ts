@@ -142,7 +142,10 @@ function extractProvenance(stagedPublish: unknown): ReleaseProvenance | null {
   if (!isRecord(provenance)) return null;
   const { ecosystem, mode, artifacts } = provenance;
   if (
-    (ecosystem !== "npm" && ecosystem !== "pypi" && ecosystem !== "vscode") ||
+    (ecosystem !== "npm" &&
+      ecosystem !== "pypi" &&
+      ecosystem !== "vscode" &&
+      ecosystem !== "rubygems") ||
     mode !== "workflow_gate"
   ) {
     return null;
@@ -153,7 +156,13 @@ function extractProvenance(stagedPublish: unknown): ReleaseProvenance | null {
     if (!isRecord(artifact)) return null;
     const { path, kind, sha256 } = artifact;
     if (typeof path !== "string" || typeof sha256 !== "string") return null;
-    if (kind === "tarball" || kind === "wheel" || kind === "sdist" || kind === "vsix") {
+    if (
+      kind === "tarball" ||
+      kind === "wheel" ||
+      kind === "sdist" ||
+      kind === "vsix" ||
+      kind === "gem"
+    ) {
       mapped.push({ path, kind, sha256 });
       continue;
     }

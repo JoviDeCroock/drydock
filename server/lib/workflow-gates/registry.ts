@@ -1,5 +1,6 @@
 import { npmWorkflowGateAdapter } from "./npm";
 import { pypiWorkflowGateAdapter } from "./pypi";
+import { rubygemsWorkflowGateAdapter } from "./rubygems";
 import { vscodeWorkflowGateAdapter } from "./vscode";
 import type { ArchiveContents, WorkflowGateAdapter } from "./types";
 
@@ -28,6 +29,7 @@ const WORKFLOW_GATE_ADAPTERS: Record<string, WorkflowGateAdapter> = {
   [pypiWorkflowGateAdapter.ecosystem]: pypiWorkflowGateAdapter,
   [npmWorkflowGateAdapter.ecosystem]: npmWorkflowGateAdapter,
   [vscodeWorkflowGateAdapter.ecosystem]: vscodeWorkflowGateAdapter,
+  [rubygemsWorkflowGateAdapter.ecosystem]: rubygemsWorkflowGateAdapter,
 };
 
 /** Resolve the workflow-gate adapter for a release target's ecosystem. */

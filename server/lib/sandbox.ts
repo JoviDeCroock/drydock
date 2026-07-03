@@ -56,6 +56,9 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.inflateRawBounded,
   tarParser.readStreamBounded,
   tarParser.readZipArchiveBuffered,
+  tarParser.gunzipBounded,
+  tarParser.readPlainTarMembers,
+  tarParser.readGemArchive,
   tarParser.parsePackageJson,
 ];
 
@@ -136,7 +139,7 @@ export interface DownloadResult {
 export interface DownloadOptions {
   stageId?: string;
   tarballUrl?: string;
-  archiveFormat?: "tgz" | "zip" | "vsix";
+  archiveFormat?: "tgz" | "zip" | "vsix" | "gem";
   publicArtifactUrls?: string[];
   maxFiles?: number;
   npmToken?: string;
@@ -198,7 +201,7 @@ function isSerializedSandboxDetail(message: string): boolean {
 
 export interface InlineDownloadOptions {
   bytes: Uint8Array;
-  format: "tgz" | "zip" | "vsix";
+  format: "tgz" | "zip" | "vsix" | "gem";
   maxFiles?: number;
 }
 
@@ -258,7 +261,7 @@ async function parseInCredentialsFreeSandbox(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
   body: ArrayBuffer | ReadableStream<Uint8Array>,
-  format: "tgz" | "zip" | "vsix",
+  format: "tgz" | "zip" | "vsix" | "gem",
   maxFiles?: number,
 ): Promise<DownloadResult> {
   const sandbox = env.LOADER.load({
@@ -376,7 +379,7 @@ export default {
     const archiveFormat = inlineFormat || env.ARCHIVE_FORMAT || "tgz";
     let res;
     if (inlineFormat) {
-      if (archiveFormat !== "zip" && archiveFormat !== "tgz" && archiveFormat !== "vsix") return json({ error: "invalid inline archive format", status: 400 }, 400);
+      if (archiveFormat !== "zip" && archiveFormat !== "tgz" && archiveFormat !== "vsix" && archiveFormat !== "gem") return json({ error: "invalid inline archive format", status: 400 }, 400);
       res = new Response(request.body, { status: 200, headers: { "content-type": "application/octet-stream" } });
     } else {
       const { stageId, tarballUrl } = await request.json();
@@ -387,10 +390,30 @@ export default {
       res = await fetch(url, { headers: { accept: "application/octet-stream" } });
       if (!res.ok) return json({ error: "download failed", status: res.status }, 502);
 
-      // Only the vsix path buffers the whole archive, so only it needs the
-      // wire-size gate; tgz and wheel zips stream.
+      // Only the vsix and gem paths buffer the whole archive, so only they need
+      // the wire-size gate; tgz and wheel zips stream.
       const contentLength = Number(res.headers.get("content-length") || "0");
-      if (archiveFormat === "vsix" && contentLength > maxTarBytes) return json({ error: "tarball too large", status: 413 }, 413);
+      if ((archiveFormat === "vsix" || archiveFormat === "gem") && contentLength > maxTarBytes) return json({ error: "tarball too large", status: 413 }, 413);
+    }
+    if (archiveFormat === "gem") {
+      let gem;
+      try {
+        gem = await readStreamBounded(res.body, maxTarBytes);
+      } catch (err) {
+        const reason = err && err.message === "archive too large" ? "archive too large" : "archive download failed";
+        const status = reason === "archive too large" ? 413 : 400;
+        return json({ error: reason, status }, status);
+      }
+      const maxGemStreamBytes = env.MAX_STREAM_TAR_BYTES || maxTarBytes * 10;
+      let parsedGem;
+      try {
+        parsedGem = await readGemArchive(gem, env.MAX_FILES || 2_500, maxTarBytes, maxGemStreamBytes);
+      } catch (err) {
+        const reason = err && err.tarSafety && err.message ? err.message : "gem parse failed";
+        const status = reason === "archive contains too many files" || reason === "archive expands beyond safety limit" ? 413 : 400;
+        return json({ error: reason, status }, status);
+      }
+      return json({ files: parsedGem.files, packageJson: null, suspiciousEntries: parsedGem.suspicious });
     }
     const maxStreamTarBytes = env.MAX_STREAM_TAR_BYTES || maxTarBytes * 10;
     if (archiveFormat === "vsix") {

@@ -30,11 +30,14 @@ export async function resolveBundleArtifacts(
     const lowerPath = file.path.toLowerCase();
     // Wheels stream through the zip reader; VSIX archives are yazl-packed
     // with data-descriptor entries and must take the buffered CD-first path.
+    // RubyGems .gem archives are ustar tarballs read by the gem format.
     const format = lowerPath.endsWith(".vsix")
       ? "vsix"
       : lowerPath.endsWith(".whl")
         ? "zip"
-        : "tgz";
+        : lowerPath.endsWith(".gem")
+          ? "gem"
+          : "tgz";
     const parsed = await downloadInSandboxInline(env, ctx, { bytes: file.bytes, format });
     const contents = { files: parsed.files, packageJson: parsed.packageJson ?? null };
 
@@ -45,7 +48,7 @@ export async function resolveBundleArtifacts(
       if (claims.length === 0) {
         throw new WorkflowArtifactError(
           "artifact_identity_missing",
-          `${file.path} is not a recognizable npm or PyPI release artifact`,
+          `${file.path} is not a recognizable npm, PyPI, or RubyGems release artifact`,
         );
       }
       if (claims.length > 1) {

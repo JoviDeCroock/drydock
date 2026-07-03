@@ -157,4 +157,16 @@ export function readStreamBounded(
   body: ReadableStream<Uint8Array> | null,
   maxBytes: number,
 ): Promise<Uint8Array>;
+export function gunzipBounded(bytes: Uint8Array, maxBytes: number): Promise<Uint8Array>;
+export function readPlainTarMembers(
+  bytes: Uint8Array,
+  maxMembers: number,
+  maxMemberBytes: number,
+): Array<{ path: string; body: Uint8Array }>;
+export function readGemArchive(
+  buffer: ArrayBuffer | Uint8Array,
+  maxFiles: number,
+  maxTarBytes: number,
+  maxStreamBytes: number,
+): Promise<ReadTarResult>;
 export function parsePackageJson(files: ParsedFile[]): ParsedPackageJson | null;
