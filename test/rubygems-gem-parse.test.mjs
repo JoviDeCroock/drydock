@@ -157,6 +157,15 @@ describe("readGem", () => {
     await expect(readGem(gem, ...LIMITS)).rejects.toThrow(/duplicate members/);
   });
 
+  test("throws on legacy uncompressed control members RubyGems would honour", async () => {
+    const gem = buildGem({
+      files: [{ name: "lib/x.rb", body: "x = 1\n" }],
+      metadata: METADATA,
+      extraMembers: [{ name: "metadata", body: METADATA.replace("example", "evil") }],
+    });
+    await expect(readGem(gem, ...LIMITS)).rejects.toThrow(/unexpected control members/);
+  });
+
   test("readTarRawEntries returns only the requested members verbatim", async () => {
     const gem = buildGem({ files: [{ name: "lib/x.rb", body: "x\n" }], metadata: METADATA });
     const members = await readTarRawEntries(gem, ["metadata.gz", "data.tar.gz"], LIMITS[1]);

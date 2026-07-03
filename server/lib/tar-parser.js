@@ -600,7 +600,19 @@ export async function readTarRawEntries(buffer, wantedNames, maxTarBytes) {
 // bounded by the same `maxTarBytes` cap, so a gzip bomb in either member fails
 // closed instead of expanding without limit.
 export async function readGem(buffer, maxFiles, maxTarBytes) {
-  const members = await readTarRawEntries(buffer, ["data.tar.gz", "metadata.gz"], maxTarBytes);
+  const members = await readTarRawEntries(
+    buffer,
+    ["data.tar.gz", "metadata.gz", "data.tar", "metadata"],
+    maxTarBytes,
+  );
+
+  // RubyGems' own reader also honours legacy uncompressed `metadata`/`data.tar`
+  // members. `gem build` never emits them, so alongside the gzipped members
+  // they can only be a crafted archive feeding RubyGems an identity or payload
+  // this parse never saw; fail closed rather than review the wrong bytes.
+  if (members.has("metadata") || members.has("data.tar")) {
+    throw new Error("gem archive has unexpected control members");
+  }
 
   const dataGz = members.get("data.tar.gz");
   if (!dataGz) throw new Error("gem missing data archive");

@@ -63,9 +63,10 @@ and file/byte caps), and gunzips `metadata.gz` to surface the raw gemspec YAML a
 gzip bomb in either member fails closed. Oversized gemspec metadata also fails
 closed instead of being parsed from a truncated prefix, because the gemspec is the
 source of package identity. Duplicate `metadata.gz`/`data.tar.gz` members fail
-closed too: real gems carry each control member exactly once, and picking one of
+closed too — real gems carry each control member exactly once, and picking one of
 a crafted pair could review a different payload than RubyGems' own reader
-extracts. The installation token never enters the sandbox; only
+extracts — as do the legacy uncompressed `metadata`/`data.tar` spellings that
+RubyGems' reader would also honour but `gem build` never emits. The installation token never enters the sandbox; only
 the gem bytes cross the trust boundary, through the credentials-free
 `downloadInSandboxInline` path.
 
