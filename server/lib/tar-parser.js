@@ -578,7 +578,12 @@ export async function readTarRawEntries(buffer, wantedNames, maxTarBytes) {
     offset += 512;
     if (offset + size > bytes.length) throw new Error("truncated tar entry");
     const name = (prefix ? prefix + "/" : "") + rawName;
-    if ((type === "0" || type === nul) && wanted.has(name) && !out.has(name)) {
+    if ((type === "0" || type === nul) && wanted.has(name)) {
+      // A real gem carries each control member exactly once. A duplicate means
+      // a crafted archive betting that we review one payload while RubyGems'
+      // own sequential reader extracts the other; fail closed instead of
+      // picking either.
+      if (out.has(name)) throw new Error("gem archive has duplicate members");
       out.set(name, bytes.subarray(offset, offset + size));
     }
     offset += Math.ceil(size / 512) * 512;

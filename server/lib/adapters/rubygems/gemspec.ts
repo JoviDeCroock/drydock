@@ -67,6 +67,7 @@ export function parseGemspecMetadata(yaml: string | null | undefined): GemspecSu
   if (!yaml || typeof yaml !== "string") return summary;
 
   const blocks = collectTopLevelBlocks(yaml);
+  if (!blocks) return summary;
 
   summary.name = scalar(blocks.get("name")?.inline);
   summary.platform = scalar(blocks.get("platform")?.inline);
@@ -85,20 +86,36 @@ export function parseGemspecMetadata(yaml: string | null | undefined): GemspecSu
   return summary;
 }
 
-function collectTopLevelBlocks(yaml: string): Map<string, TopLevelBlock> {
+// Returns null when the document contains a root-level construct this parser
+// does not model but Psych does — quoted or escaped mapping keys, explicit
+// `? key` syntax, directives, or a second YAML document. Psych applies
+// last-key-wins across key spellings and reads only the first document, so
+// silently skipping such a line would let a crafted spec show this parser one
+// identity while `gem push` publishes under another. Psych's own
+// Gem::Specification output never emits these shapes, so real gems are
+// unaffected and a crafted one degrades to a missing identity (fail closed).
+function collectTopLevelBlocks(yaml: string): Map<string, TopLevelBlock> | null {
   const blocks = new Map<string, TopLevelBlock>();
   let current: TopLevelBlock | null = null;
   for (const line of yaml.replace(/\r\n/g, "\n").split("\n")) {
-    if (line === "---" || line.startsWith("--- ") || line.startsWith("...")) continue;
+    if (line === "---" || line.startsWith("--- ") || line.startsWith("...")) {
+      // A marker is only valid as the document opener; after content it starts
+      // a second document, which Psych would ignore but we would keep reading.
+      if (blocks.size > 0 || current) return null;
+      continue;
+    }
     const match = TOP_KEY_RE.exec(line);
     if (match) {
       current = { inline: match[2] !== undefined ? match[2] : null, body: [] };
       // Last write wins; a duplicate top-level key in a crafted spec keeps the
       // later value, matching Psych's own last-key-wins mapping behavior.
       blocks.set(match[1], current);
-    } else if (current) {
-      current.body.push(line);
+      continue;
     }
+    // Root-level lines that are neither a bare key, a sequence item, blank,
+    // nor indented continuation are the unmodeled-key shapes described above.
+    if (line && !/^[ \t]/.test(line) && !/^-(?: |$)/.test(line)) return null;
+    if (current) current.body.push(line);
   }
   return blocks;
 }

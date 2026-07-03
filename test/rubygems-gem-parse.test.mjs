@@ -146,6 +146,17 @@ describe("readGem", () => {
     await expect(readGem(gem, ...LIMITS)).rejects.toThrow(/metadata too large/);
   });
 
+  test("throws on duplicate control members instead of picking one", async () => {
+    const benignGz = gzipSync(Buffer.from(buildTar([{ name: "lib/x.rb", body: "x = 1\n" }])));
+    const evilGz = gzipSync(Buffer.from(buildTar([{ name: "lib/x.rb", body: "system 'sh'\n" }])));
+    const gem = buildTar([
+      { name: "metadata.gz", body: new Uint8Array(gzipSync(Buffer.from(METADATA))) },
+      { name: "data.tar.gz", body: new Uint8Array(benignGz) },
+      { name: "data.tar.gz", body: new Uint8Array(evilGz) },
+    ]);
+    await expect(readGem(gem, ...LIMITS)).rejects.toThrow(/duplicate members/);
+  });
+
   test("readTarRawEntries returns only the requested members verbatim", async () => {
     const gem = buildGem({ files: [{ name: "lib/x.rb", body: "x\n" }], metadata: METADATA });
     const members = await readTarRawEntries(gem, ["metadata.gz", "data.tar.gz"], LIMITS[1]);

@@ -150,6 +150,37 @@ required_ruby_version: !ruby/object:Gem::Requirement
     expect(parseGemspecMetadata("").dependencies).toEqual([]);
   });
 
+  // Psych treats quoted keys as the same mapping key (last write wins), so a
+  // crafted spec could show this parser one identity while RubyGems publishes
+  // under another. The parser must fail closed on any root-level key shape it
+  // does not model instead of skipping it.
+  test("fails closed when a quoted top-level key could shadow the identity", () => {
+    const spec = parseGemspecMetadata(`--- !ruby/object:Gem::Specification
+name: trusted-gem
+"name": evil-gem
+version: !ruby/object:Gem::Version
+  version: 1.0.0
+`);
+    expect(spec.name).toBeNull();
+    expect(spec.version).toBeNull();
+  });
+
+  // Psych reads only the first YAML document; keys read across a second
+  // document could disagree with the identity RubyGems sees.
+  test("fails closed on a second YAML document", () => {
+    const spec = parseGemspecMetadata(`--- !ruby/object:Gem::Specification
+name: evil-gem
+version: !ruby/object:Gem::Version
+  version: 9.9.9
+--- !ruby/object:Gem::Specification
+name: trusted-gem
+version: !ruby/object:Gem::Version
+  version: 1.0.0
+`);
+    expect(spec.name).toBeNull();
+    expect(spec.version).toBeNull();
+  });
+
   test("unquotes double-quoted scalars", () => {
     const spec = parseGemspecMetadata(`--- !ruby/object:Gem::Specification
 name: "quoted-name"
