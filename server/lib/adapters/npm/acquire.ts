@@ -1,5 +1,5 @@
 import { pickBaselineVersion } from "../../registry";
-import { sandboxErrorDetail } from "../../sandbox";
+import { parseSandboxErrorDetail } from "../../sandbox";
 import type { PackageJsonSummary } from "../../review";
 import type { StagedPublishDetails } from "../../staged-publishes";
 import type { AcquiredArtifact, AdapterContext, BaselineInfo, StagedDetails } from "../types";
@@ -87,13 +87,16 @@ export async function acquireBaselineNpm(
       maxFiles: input.maxFiles,
     });
   } catch (err) {
-    // A baseline too large to fetch degrades to a no-baseline scan (the staged
-    // artifact still gets fully reviewed) instead of failing the whole scan —
-    // prepackaged-binary packages routinely publish multi-hundred-MB tarballs.
-    if (isArchiveTooLarge(err)) {
+    // A baseline the sandbox rejects on a safety limit degrades to a no-baseline
+    // scan (the staged artifact still gets fully reviewed) instead of failing the
+    // whole scan — prepackaged-binary packages routinely publish multi-hundred-MB
+    // tarballs. The reason names the actual limit so operators are not told
+    // "too large" when the baseline instead had too many entries.
+    const limit = baselineSafetyLimit(err);
+    if (limit) {
       return {
         artifact: null,
-        baseline: { ...baseline, reason: `${baseline.reason}:baseline-too-large` },
+        baseline: { ...baseline, reason: `${baseline.reason}:${limit}` },
       };
     }
     throw err;
@@ -124,15 +127,22 @@ function hasMetadataMismatch(
   return false;
 }
 
-function isArchiveTooLarge(err: unknown): boolean {
-  const detailText = sandboxErrorDetail(err);
-  if (detailText === null) return false;
-  try {
-    const detail = JSON.parse(detailText) as { error?: string; status?: number };
-    return detail.status === 413;
-  } catch {
-    return false;
-  }
+/**
+ * Classify a sandbox baseline-download failure into the specific safety limit it
+ * hit, or null if it is an unrelated error that must still fail the scan. The
+ * sandbox maps every safety-limit rejection to status 413, so the status gates
+ * the branch and the error string names the cause — matching the classification
+ * `classifyScanError` uses for the staged tarball.
+ */
+function baselineSafetyLimit(
+  err: unknown,
+): "baseline-too-large" | "baseline-too-many-files" | null {
+  const detail = parseSandboxErrorDetail(err);
+  if (!detail || detail.status !== 413) return null;
+  const error = detail.error ?? "";
+  if (error.includes("too many files")) return "baseline-too-many-files";
+  if (error.includes("too large") || error.includes("safety limit")) return "baseline-too-large";
+  return null;
 }
 
 function emptyBaseline(tag: string | null, reason: string): BaselineInfo {

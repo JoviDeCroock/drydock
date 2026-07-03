@@ -230,6 +230,55 @@ describe("PyPI artifact summaries and review", () => {
     });
   });
 
+  test("surfaces content-skipped tar entries as findings instead of dropping them", () => {
+    const manifest = parsePyPiReleaseManifest({
+      schema: "drydock.release-artifacts.v1",
+      ecosystem: "pypi",
+      package: "demo-package",
+      version: "1.2.0",
+      artifacts: [{ path: "dist/demo_package-1.2.0.tar.gz", sha256: "b".repeat(64) }],
+    });
+
+    const review = createPyPiReleaseCandidateReview({
+      manifest,
+      artifacts: [
+        {
+          path: "dist/demo_package-1.2.0.tar.gz",
+          files: [
+            file(
+              "demo_package-1.2.0/PKG-INFO",
+              "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
+            ),
+            {
+              path: "demo_package-1.2.0/big.so",
+              size: 50_000_000,
+              sha256: "",
+              flags: ["content-skipped"],
+            },
+          ],
+          suspiciousEntries: [
+            {
+              kind: "content-skipped",
+              path: "demo_package-1.2.0/big.so",
+              detail:
+                "file body (50000000 bytes) exceeds the 26214400-byte per-file inspection limit",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(review.ruleFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "tar.suspicious-entry",
+          severity: "medium",
+          file: "dist/demo_package-1.2.0.tar.gz/demo_package-1.2.0/big.so",
+        }),
+      ]),
+    );
+  });
+
   test("marks manifest and artifact metadata mismatches as critical", () => {
     const manifest = parsePyPiReleaseManifest({
       schema: "drydock.release-artifacts.v1",

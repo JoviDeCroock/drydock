@@ -65,4 +65,47 @@ describe("acquireBaselineNpm", () => {
       { maxFiles: undefined },
     );
   });
+
+  test.each([
+    ["too large", "tarball too large", "dist-tag:latest:baseline-too-large"],
+    ["expansion bomb", "archive expands beyond safety limit", "dist-tag:latest:baseline-too-large"],
+    [
+      "too many files",
+      "archive contains too many files",
+      "dist-tag:latest:baseline-too-many-files",
+    ],
+  ])("labels a 413 %s baseline with its actual cause", async (_name, error, expectedReason) => {
+    const broker = {
+      dispose() {},
+      fetchPackageMetadata: vi.fn(async () => metadata()),
+      fetchStagedDetails: vi.fn(async () => null),
+      downloadStaged: vi.fn(async () => {
+        throw new Error("unused");
+      }),
+      downloadPublished: vi.fn(async () => {
+        throw new SandboxError(JSON.stringify({ error, status: 413 }));
+      }),
+    };
+
+    const result = await acquireBaselineNpm({}, {}, broker, stagedArtifact());
+
+    expect(result.artifact).toBeNull();
+    expect(result.baseline).toMatchObject({ version: "1.0.0", reason: expectedReason });
+  });
+
+  test("rethrows a non-safety-limit sandbox error instead of degrading", async () => {
+    const broker = {
+      dispose() {},
+      fetchPackageMetadata: vi.fn(async () => metadata()),
+      fetchStagedDetails: vi.fn(async () => null),
+      downloadStaged: vi.fn(async () => {
+        throw new Error("unused");
+      }),
+      downloadPublished: vi.fn(async () => {
+        throw new SandboxError(JSON.stringify({ error: "download failed", status: 502 }));
+      }),
+    };
+
+    await expect(acquireBaselineNpm({}, {}, broker, stagedArtifact())).rejects.toThrow();
+  });
 });

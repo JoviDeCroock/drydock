@@ -47,7 +47,11 @@ export const pypiWorkflowGateAdapter: WorkflowGateAdapter = {
 
   prepareReleaseCandidates(artifacts: ParsedGateArtifact[]): PreparedReleaseCandidate[] {
     const entries: PreparedArtifactEntry[] = artifacts.map((artifact) => {
-      const input: PyPiArtifactInput = { path: artifact.path, files: artifact.files };
+      const input: PyPiArtifactInput = {
+        path: artifact.path,
+        files: artifact.files,
+        ...(artifact.suspiciousEntries ? { suspiciousEntries: artifact.suspiciousEntries } : {}),
+      };
       return { artifact, input, prepared: preparePyPiArtifact(input) };
     });
     return deriveReleaseCandidates(entries);

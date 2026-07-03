@@ -37,6 +37,8 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.shouldSkipTextSample,
   tarParser.summarizeFile,
   tarParser.summarizeSkippedFile,
+  tarParser.isRetainedManifestPath,
+  tarParser.tarError,
   tarParser.readTarStream,
   tarParser.readUint16Le,
   tarParser.readUint32Le,
@@ -148,6 +150,28 @@ export function sandboxErrorDetail(err: unknown): string | null {
     return value.message;
   }
   return null;
+}
+
+/**
+ * Parse a sandbox error's serialized `{ error, status }` detail. Returns null
+ * when the error is not a sandbox error or its detail is not the expected shape,
+ * so callers can branch on the sandbox's own status/error without each
+ * re-implementing the JSON.parse dance.
+ */
+export function parseSandboxErrorDetail(
+  err: unknown,
+): { error: string | null; status: number | null } | null {
+  const detailText = sandboxErrorDetail(err);
+  if (detailText === null) return null;
+  try {
+    const parsed = JSON.parse(detailText) as { error?: unknown; status?: unknown };
+    return {
+      error: typeof parsed.error === "string" ? parsed.error : null,
+      status: typeof parsed.status === "number" ? parsed.status : null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function isSerializedSandboxDetail(message: string): boolean {
@@ -357,17 +381,10 @@ export default {
       files = parsed.files;
       suspiciousEntries = parsed.suspicious;
     } catch (err) {
-      const message = err && err.message ? err.message : "";
-      const parserMessages = [
-        "archive contains too many files",
-        "archive expands beyond safety limit",
-        "truncated tar entry",
-        "invalid tar entry size",
-        "invalid pax path",
-        "invalid long-name path",
-      ];
-      // Anything the parser did not throw itself is a gzip stream failure.
-      const reason = parserMessages.includes(message) ? message : "tarball decompression failed";
+      // The parser tags its own safety-limit / malformed-archive errors, so
+      // anything untagged is an upstream gzip/stream failure. This avoids
+      // matching on exact message text, which silently drifts on a reword.
+      const reason = err && err.tarSafety && err.message ? err.message : "tarball decompression failed";
       const status = reason === "archive contains too many files" || reason === "archive expands beyond safety limit" ? 413 : 400;
       return json({ error: reason, status }, status);
     }

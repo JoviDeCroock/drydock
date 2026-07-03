@@ -30,7 +30,7 @@ export function useScanFileContent(
     const cache = model.stagedFileContentCache.value;
     const meta = stagedFileMeta.value;
     if (!path) return null;
-    return cache[path] ?? (meta?.textSample || isPersistedBinary(meta) ? meta : null);
+    return cache[path] ?? (meta?.textSample || hasNoLoadableBody(meta) ? meta : null);
   });
 
   const previousFileMeta = useComputed(() => {
@@ -47,7 +47,7 @@ export function useScanFileContent(
     if (!path) return;
     if (cache[path]) return;
     if (!meta) return;
-    if (meta.textSample || isPersistedBinary(meta)) return;
+    if (meta.textSample || hasNoLoadableBody(meta)) return;
     void model.loadStagedFile(path);
   });
 
@@ -72,7 +72,7 @@ export function useScanFileContent(
     if (!key) return;
     if (cache[key]) return;
     if (!meta) return;
-    if (meta.flags?.includes("binary")) return;
+    if (meta.flags?.includes("binary") || meta.flags?.includes("content-skipped")) return;
     if (!version || !path) return;
     void model.loadPreviousFile(version, path);
   });
@@ -80,6 +80,12 @@ export function useScanFileContent(
   return { stagedFileMeta, stagedFile, previousFileMeta, previousFile };
 }
 
-function isPersistedBinary(file: PersistedScanFile | null): boolean {
-  return Array.isArray(file?.flagsJson) && (file.flagsJson as unknown[]).includes("binary");
+// A file whose body the scanner never captured as text: binary payloads (bytes
+// but no text sample) and content-skipped entries (oversized bodies recorded as
+// metadata only). Neither can be lazily fetched, so the UI shows the metadata
+// placeholder instead of spinning on a load that would never resolve.
+function hasNoLoadableBody(file: PersistedScanFile | null): boolean {
+  if (!Array.isArray(file?.flagsJson)) return false;
+  const flags = file.flagsJson as unknown[];
+  return flags.includes("binary") || flags.includes("content-skipped");
 }

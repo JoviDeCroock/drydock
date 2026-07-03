@@ -6,7 +6,6 @@ import { buildTar, encoder } from "./helpers/archive-fixtures.mjs";
 const {
   canonicalizePath,
   decodeText,
-  gunzipBounded,
   hasUnicodeConfusables,
   isRootGypPath,
   isSafePaxPath,
@@ -651,6 +650,71 @@ describe("readTar limits and malformed archives", () => {
     const files = await parse(extended);
     expect(files.map((f) => f.path)).toEqual(["a.js"]);
   });
+
+  test("fails closed on an oversized manifest instead of nulling the package identity", async () => {
+    // A package.json too large to inspect must fail the scan: skipping it would
+    // return packageJson:null and silently disable every manifest-derived rule.
+    const limits = { maxFiles: 100, maxTarBytes: 1024 };
+    const bigManifest = JSON.stringify({ name: "pkg", version: "1.0.0", _pad: "x".repeat(2000) });
+    const tar = buildTar([{ name: "package/package.json", body: bigManifest }]);
+    await expect(parse(tar, limits)).rejects.toThrow(/invalid tar entry size/);
+  });
+
+  test("retains a PyPI sdist manifest (PKG-INFO) even under budget pressure", async () => {
+    // The tgz path is shared with PyPI sdists, whose manifest is PKG-INFO under a
+    // version directory. It must be force-retained the same way package.json is.
+    const limits = { maxFiles: 100, maxTarBytes: 950 };
+    const filler = new Uint8Array(900).fill(0x61);
+    const tar = buildTar([
+      { name: "foo-1.0.0/big.bin", body: filler },
+      { name: "foo-1.0.0/PKG-INFO", body: "Metadata-Version: 2.1\nName: foo\nVersion: 1.0.0\n" },
+    ]);
+    const { files } = await parseFull(tar, limits);
+    const manifest = files.find((file) => file.path.endsWith("PKG-INFO"));
+    expect(manifest?.textSample).toContain("Name: foo");
+    expect(manifest?.flags ?? []).not.toContain("content-skipped");
+  });
+
+  test("distinguishes per-file-limit skips from cumulative-budget skips in the detail", async () => {
+    const limits = { maxFiles: 100, maxTarBytes: 1024 };
+    const tar = buildTar([
+      { name: "package/huge.node", body: new Uint8Array(2048).fill(0x42) },
+      { name: "package/filler.bin", body: new Uint8Array(1000).fill(0x61) },
+      { name: "package/late.js", body: "x".repeat(100) },
+    ]);
+    const { suspicious } = await parseFull(tar, limits);
+    const huge = suspicious.find((s) => s.path === "huge.node");
+    const late = suspicious.find((s) => s.path === "late.js");
+    expect(huge.detail).toContain("per-file inspection limit");
+    expect(late.detail).toContain("cumulative retention budget");
+  });
+
+  test("releases a replaced duplicate's bytes so later files are not needlessly skipped", async () => {
+    // Both copies of dup.bin fit the budget at their own decision point, so the
+    // old accounting counted 1200 bytes for a 600-byte record and then wrongly
+    // skipped other.bin. The replacement must release the earlier body's budget.
+    const limits = { maxFiles: 100, maxTarBytes: 2000 };
+    const tar = buildTar([
+      { name: "package/dup.bin", body: new Uint8Array(600).fill(0x61) },
+      { name: "package/dup.bin", body: new Uint8Array(600).fill(0x62) },
+      { name: "package/other.bin", body: new Uint8Array(900).fill(0x63) },
+    ]);
+    const { files, suspicious } = await parseFull(tar, limits);
+    const other = files.find((file) => file.path === "other.bin");
+    expect(other?.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(other?.flags ?? []).not.toContain("content-skipped");
+    expect(suspicious.map((s) => s.kind)).toContain("duplicate");
+  });
+
+  test("isRetainedManifestPath matches ecosystem manifests by basename", () => {
+    expect(tarParser.isRetainedManifestPath("package.json")).toBe(true);
+    expect(tarParser.isRetainedManifestPath("foo-1.0.0/PKG-INFO")).toBe(true);
+    expect(tarParser.isRetainedManifestPath("foo-1.0.0/pyproject.toml")).toBe(true);
+    expect(tarParser.isRetainedManifestPath("foo/bar.whl/METADATA")).toBe(true);
+    expect(tarParser.isRetainedManifestPath("lib/index.js")).toBe(false);
+    expect(tarParser.isRetainedManifestPath("")).toBe(false);
+    expect(tarParser.isRetainedManifestPath(null)).toBe(false);
+  });
 });
 
 describe("parsePackageJson", () => {
@@ -768,6 +832,8 @@ describe("rendered sandbox parser source", () => {
     "shouldSkipTextSample",
     "summarizeFile",
     "summarizeSkippedFile",
+    "isRetainedManifestPath",
+    "tarError",
     "readTarStream",
     "parsePackageJson",
   ];
@@ -796,42 +862,5 @@ return {
 };`,
     );
     expect(run()).toEqual({ safe: true, unsafe: false, normalized: "index.js" });
-  });
-});
-
-describe("gunzipBounded", () => {
-  function streamFrom(bytes) {
-    return new ReadableStream({
-      start(controller) {
-        controller.enqueue(bytes);
-        controller.close();
-      },
-    });
-  }
-
-  async function gzip(input) {
-    const cs = new CompressionStream("gzip");
-    const writer = cs.writable.getWriter();
-    writer.write(input);
-    writer.close();
-    return new Uint8Array(await new Response(cs.readable).arrayBuffer());
-  }
-
-  test("decompresses a small gzip stream", async () => {
-    const compressed = await gzip(encoder.encode("hello hello hello"));
-    const buf = await gunzipBounded(streamFrom(compressed), 1024);
-    expect(new TextDecoder().decode(buf)).toBe("hello hello hello");
-  });
-
-  test("throws when decompressed bytes exceed the cap", async () => {
-    // 64 KB of repeated text compresses well — small input expands past the cap.
-    const compressed = await gzip(encoder.encode("a".repeat(64 * 1024)));
-    await expect(gunzipBounded(streamFrom(compressed), 1024)).rejects.toThrow(
-      /archive expands beyond safety limit/,
-    );
-  });
-
-  test("throws on a missing body", async () => {
-    await expect(gunzipBounded(null, 1024)).rejects.toThrow(/tarball decompression failed/);
   });
 });

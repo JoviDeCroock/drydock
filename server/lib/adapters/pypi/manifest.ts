@@ -1,4 +1,5 @@
 import type { FileRecord } from "../../review";
+import type { TarSuspiciousEntry } from "../../tar-parser.js";
 import {
   PYPI_ARTIFACT_LIMIT,
   PYPI_PROJECT_NAME_RE,
@@ -98,13 +99,40 @@ function parsePyPiArtifactInputs(raw: unknown, field: string): PyPiArtifactInput
     if (!isSafeManifestPath(path)) throw new Error(`${field}[${index}] path is not safe`);
     if (!Array.isArray(artifact.files))
       throw new Error(`${field}[${index}] files must be an array`);
+    const suspiciousEntries = parseSuspiciousEntries(artifact.suspiciousEntries);
     return {
       path,
       files: artifact.files.map((file, fileIndex) =>
         parseFileRecord(file, field, index, fileIndex),
       ),
+      ...(suspiciousEntries ? { suspiciousEntries } : {}),
     };
   });
+}
+
+const SUSPICIOUS_ENTRY_KINDS = new Set([
+  "non-regular",
+  "duplicate",
+  "unicode-confusable",
+  "content-skipped",
+]);
+
+// Preserve (and re-validate) the tar-parser's suspicious entries across the
+// adapter-input boundary so oversized content-skipped bodies still reach the
+// gate's findings instead of being silently dropped during input parsing.
+function parseSuspiciousEntries(raw: unknown): TarSuspiciousEntry[] | undefined {
+  if (!Array.isArray(raw) || !raw.length) return undefined;
+  const entries: TarSuspiciousEntry[] = [];
+  for (const item of raw) {
+    if (!isRecord(item)) continue;
+    if (typeof item.kind !== "string" || !SUSPICIOUS_ENTRY_KINDS.has(item.kind)) continue;
+    entries.push({
+      kind: item.kind as TarSuspiciousEntry["kind"],
+      path: typeof item.path === "string" ? item.path : "",
+      detail: typeof item.detail === "string" ? item.detail : "",
+    });
+  }
+  return entries.length ? entries : undefined;
 }
 
 function parseFileRecord(

@@ -15,12 +15,6 @@ const registryMock = vi.hoisted(() => ({
 }));
 const sandboxMock = vi.hoisted(() => ({
   downloadInSandbox: vi.fn(),
-  sandboxErrorDetail: vi.fn((err) => {
-    if (err?.name !== "SandboxError") return null;
-    if (typeof err.detail === "string") return err.detail;
-    if (typeof err.message === "string" && err.message.trim().startsWith("{")) return err.message;
-    return null;
-  }),
 }));
 const publishedTarballMock = vi.hoisted(() => ({
   downloadPublishedTarball: vi.fn(),
@@ -43,7 +37,10 @@ vi.mock("../server/lib/registry.ts", async () => ({
   ...(await vi.importActual("../server/lib/registry.ts")),
   fetchPackageMetadata: registryMock.fetchPackageMetadata,
 }));
-vi.mock("../server/lib/sandbox.ts", () => sandboxMock);
+vi.mock("../server/lib/sandbox.ts", async () => ({
+  ...(await vi.importActual("../server/lib/sandbox.ts")),
+  downloadInSandbox: sandboxMock.downloadInSandbox,
+}));
 vi.mock("../server/lib/published-tarball.ts", () => publishedTarballMock);
 vi.mock("../server/lib/staged-publishes.ts", async () => ({
   ...(await vi.importActual("../server/lib/staged-publishes.ts")),

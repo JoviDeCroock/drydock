@@ -26,6 +26,7 @@ export function preparePyPiArtifact(input: PyPiArtifactInput): PyPiPreparedArtif
     kind,
     files,
     summary: summarizePyPiArtifact(input.path, kind, files),
+    ...(input.suspiciousEntries ? { suspiciousEntries: input.suspiciousEntries } : {}),
   };
 }
 

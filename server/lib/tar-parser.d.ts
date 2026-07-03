@@ -62,6 +62,8 @@ export function sha256Hex(bytes: Uint8Array): Promise<string>;
 export function shouldSkipTextSample(path: string): boolean;
 export function summarizeFile(path: string, body: Uint8Array): Promise<ParsedFile>;
 export function summarizeSkippedFile(path: string, size: number): ParsedFile;
+export function isRetainedManifestPath(path: string | null | undefined): boolean;
+export function tarError(message: string): Error & { tarSafety: true };
 export function readTar(
   buffer: ArrayBuffer | Uint8Array,
   maxFiles: number,
@@ -87,7 +89,3 @@ export function readStreamBounded(
   maxBytes: number,
 ): Promise<Uint8Array>;
 export function parsePackageJson(files: ParsedFile[]): ParsedPackageJson | null;
-export function gunzipBounded(
-  body: ReadableStream<Uint8Array> | null,
-  maxBytes: number,
-): Promise<ArrayBuffer>;
