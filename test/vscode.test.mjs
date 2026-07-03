@@ -325,6 +325,69 @@ describe("VS Code extension review adapter", () => {
     );
   });
 
+  test("accepts capitalized extension names the Marketplace grandfathered in", () => {
+    const manifest = buildVscodeReleaseManifest("golang.Go", "0.42.0", [
+      { path: "dist/go-0.42.0.vsix", sha256: SHA },
+    ]);
+    const review = createVscodeExtensionReview({
+      manifest,
+      artifact: {
+        path: "dist/go-0.42.0.vsix",
+        sha256: SHA,
+        files: [
+          file(
+            "extension/package.json",
+            JSON.stringify({
+              name: "Go",
+              publisher: "golang",
+              version: "0.42.0",
+              engines: { vscode: "^1.80.0" },
+              activationEvents: ["onLanguage:go"],
+            }),
+          ),
+          file("extension/out/extension.js", "exports.activate = () => {};"),
+        ],
+      },
+    });
+
+    expect(review.package).toEqual({ name: "golang.Go", version: "0.42.0" });
+    expect(review.ruleFindings.map((finding) => finding.ruleId)).not.toEqual(
+      expect.arrayContaining([VSCODE_RULE_IDS.metadataMismatch]),
+    );
+  });
+
+  test("treats section-scoped reads of declared properties as declared", () => {
+    const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
+      { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
+    ]);
+    const review = createVscodeExtensionReview({
+      manifest,
+      artifact: artifact([
+        file(
+          "extension/package.json",
+          extensionPackageJson({
+            activationEvents: ["onCommand:remoteTextFetcher.run"],
+            contributes: {
+              configuration: {
+                properties: {
+                  "remoteTextFetcher.advanced.url": { type: "string" },
+                },
+              },
+            },
+          }),
+        ),
+        file(
+          "extension/out/extension.js",
+          "const vscode = require('vscode'); vscode.workspace.getConfiguration('remoteTextFetcher.advanced').get('url');",
+        ),
+      ]),
+    });
+
+    expect(review.ruleFindings.map((finding) => finding.ruleId)).not.toEqual(
+      expect.arrayContaining([VSCODE_RULE_IDS.undeclaredConfigurationRead]),
+    );
+  });
+
   test("allows declared configuration reads and narrow activation", () => {
     const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
       { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },

@@ -286,7 +286,9 @@ function configurationKeyLinePattern(key: string): RegExp {
 }
 
 function isDeclaredConfigurationKey(key: string, declared: Set<string>): boolean {
-  return declared.has(key);
+  // A section-scoped read like getConfiguration("myExt.section") is declared
+  // when any contributed property lives under that section.
+  return declared.has(key) || [...declared].some((property) => property.startsWith(`${key}.`));
 }
 
 function isCommonConfigurationKey(key: string): boolean {

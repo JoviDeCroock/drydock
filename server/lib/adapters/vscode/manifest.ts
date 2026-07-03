@@ -8,7 +8,9 @@ import {
   type VscodeReleaseManifest,
 } from "./types";
 
-const SAFE_EXTENSION_NAME_RE = /^[a-z0-9][a-z0-9-]{0,127}$/;
+// Case-insensitive to match vsce's own name validation: grandfathered
+// Marketplace extensions keep capitalized names (golang.Go, ms-vscode.PowerShell).
+const SAFE_EXTENSION_NAME_RE = /^[a-z0-9][a-z0-9-]{0,127}$/i;
 const SAFE_PUBLISHER_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const SAFE_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
 const SHA256_RE = /^[a-f0-9]{64}$/i;
@@ -52,7 +54,7 @@ export function parseVscodeExtensionManifest(files: FileRecord[]): {
   const publisher = typeof raw.publisher === "string" ? raw.publisher.trim() : "";
   const version = typeof raw.version === "string" ? raw.version.trim() : "";
   if (!SAFE_EXTENSION_NAME_RE.test(name)) {
-    throw new Error("VSIX package.json name must be lowercase alphanumeric/dash");
+    throw new Error("VSIX package.json name must be alphanumeric/dash");
   }
   if (!SAFE_PUBLISHER_RE.test(publisher)) throw new Error("VSIX package.json publisher is invalid");
   if (!SAFE_VERSION_RE.test(version)) throw new Error("VSIX package.json version is invalid");
