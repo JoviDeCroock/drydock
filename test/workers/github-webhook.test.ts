@@ -1,17 +1,17 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { createDb, ensurePersonalOrganization } from "../../server/db";
+import { createDb } from "../../server/db/client";
+import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
 import { eq } from "drizzle-orm";
+import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
 import {
-  createReleaseTarget,
   getGateByDeliveryId,
   getGateForOrganization,
   markGateDecided,
   markGateErrored,
-  upsertInstallation,
-} from "../../server/lib/github-app";
+} from "../../server/lib/github-app/webhook-gates";
 import { githubWebhookRoutes } from "../../server/routes/github-webhooks";
 import type { Bindings, Variables } from "../../server/types";
 
@@ -458,8 +458,9 @@ describe("markGateDecided", () => {
 
 describe("postDeploymentProtectionDecision integration via mock fetch", () => {
   test("rejects when the stored callback URL is no longer github-controlled", async () => {
-    const { postDeploymentProtectionDecision } = await import("../../server/lib/github-app");
-    const { readGithubAppConfig } = await import("../../server/lib/github-app");
+    const { postDeploymentProtectionDecision } =
+      await import("../../server/lib/github-app/webhook");
+    const { readGithubAppConfig } = await import("../../server/lib/github-app/config");
     const config = readGithubAppConfig({
       GITHUB_APP_ID: "12345",
       GITHUB_APP_SLUG: "drydock-test",
@@ -484,7 +485,8 @@ describe("postDeploymentProtectionDecision integration via mock fetch", () => {
   });
 
   test("posts to the callback URL with installation token + structured body", async () => {
-    const { postDeploymentProtectionDecision } = await import("../../server/lib/github-app");
+    const { postDeploymentProtectionDecision } =
+      await import("../../server/lib/github-app/webhook");
     const tokenFetch = vi.fn(async () =>
       Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" }),
     );
@@ -499,7 +501,7 @@ describe("postDeploymentProtectionDecision integration via mock fetch", () => {
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
     const privateKeyPem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
 
-    const { readGithubAppConfig } = await import("../../server/lib/github-app");
+    const { readGithubAppConfig } = await import("../../server/lib/github-app/config");
     const config = readGithubAppConfig({
       GITHUB_APP_ID: "12345",
       GITHUB_APP_SLUG: "drydock-test",

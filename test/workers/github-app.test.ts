@@ -2,26 +2,22 @@ import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import {
-  createDb,
-  createScanJob,
-  ensurePersonalOrganization,
-  markScanFailed,
-  persistScan,
-} from "../../server/db";
+import { createDb } from "../../server/db/client";
+import { ensurePersonalOrganization } from "../../server/db/organizations";
+import { createScanJob, markScanFailed, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
+import { GithubAppValidationError } from "../../server/lib/github-app/config";
 import {
-  GithubAppValidationError,
   createReleaseTarget,
   deleteReleaseTarget,
-  getGateForOrganization,
   getInstallationByExternalId,
   listInstallationsForOrganization,
   listReleaseTargetsForOrganization,
   markInstallationStatus,
   resolveDeploymentProtectionTarget,
   upsertInstallation,
-} from "../../server/lib/github-app";
+} from "../../server/lib/github-app/persistence";
+import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
 import { githubAppRoutes } from "../../server/routes/github-app";
 import type { Bindings, Variables } from "../../server/types";
 

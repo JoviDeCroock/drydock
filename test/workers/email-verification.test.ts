@@ -2,7 +2,7 @@ import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import worker from "../../server/index";
-import { createDb } from "../../server/db";
+import { createDb } from "../../server/db/client";
 import * as schema from "../../server/db/schema";
 
 const ORIGIN = "http://example.com";

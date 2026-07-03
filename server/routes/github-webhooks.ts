@@ -1,14 +1,18 @@
 import { Hono } from "hono";
-import { createDb, enforceRateLimit, RateLimitError, recordScanEvent } from "../db";
+import { createDb } from "../db/client";
+import { recordScanEvent } from "../db/events";
+import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
 import {
-  applyGithubWebhookEvent,
   GithubAppConfigError,
   isGithubAppConfigured,
-  parseGithubWebhookEvent,
   readGithubAppConfig,
-  verifyGithubWebhookSignature,
+} from "../lib/github-app/config";
+import {
   type WebhookOutcome,
-} from "../lib/github-app";
+  applyGithubWebhookEvent,
+  parseGithubWebhookEvent,
+  verifyGithubWebhookSignature,
+} from "../lib/github-app/webhook";
 import { emitOperationalEvent } from "../lib/observability";
 import type { Bindings, Variables } from "../types";
 

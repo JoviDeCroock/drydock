@@ -6,18 +6,16 @@ import {
   type PublicGithubAppInstallation,
   type PublicReleaseTarget,
 } from "../../../models/github-app";
+import { Alert } from "../../../components/Alert";
+import { Badge, type BadgeTone } from "../../../components/Badge";
+import { Button } from "../../../components/Button";
 import {
-  Alert,
-  Badge,
-  Button,
   CollapsibleCard,
-  MonoDetail,
-  Muted,
   SettingsCardBody,
   SettingsCardHeader,
   SettingsCardListItem,
-  type BadgeTone,
-} from "../../../components";
+} from "../../../components/Card";
+import { MonoDetail, Muted } from "../../../components/Typography";
 import { ReleaseTargetForm } from "./ReleaseTargetForm";
 
 export function GithubAppSection({

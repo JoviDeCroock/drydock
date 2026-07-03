@@ -1,16 +1,14 @@
 import { createExecutionContext, env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
-import { createDb, ensurePersonalOrganization } from "../../server/db";
+import { createDb } from "../../server/db/client";
+import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
-import {
-  createReleaseTarget,
-  getGateForOrganization,
-  readGithubAppConfig,
-  upsertInstallation,
-} from "../../server/lib/github-app";
+import { readGithubAppConfig } from "../../server/lib/github-app/config";
+import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
+import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
 import type { PyPiAdapterInput } from "../../server/lib/adapters/pypi/index";
-import { prepareReleaseCandidatesForGate } from "../../server/lib/workflow-gates";
+import { prepareReleaseCandidatesForGate } from "../../server/lib/workflow-gates/prepare";
 
 const WEBHOOK_SECRET = "webhook-secret-value-1234567890";
 

@@ -1,4 +1,4 @@
-import type { AppDb, WorkspaceSession } from "../../db";
+import { type AppDb, type WorkspaceSession } from "../../db/client";
 import type {
   CodePatternSet,
   DiffEntry,

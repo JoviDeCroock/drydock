@@ -1,5 +1,7 @@
 import type { ComponentChildren } from "preact";
-import { Eyebrow, LinkButton, PageShell, SectionLabel } from "../../components";
+import { LinkButton } from "../../components/Button";
+import { PageShell } from "../../components/PageShell";
+import { Eyebrow, SectionLabel } from "../../components/Typography";
 import { privacyPageSeo, PageSeo } from "../../lib/seo";
 
 const EFFECTIVE_DATE = "2026-06-16";

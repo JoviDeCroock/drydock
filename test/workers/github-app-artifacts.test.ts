@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
+  type WorkflowArtifactSource,
   evaluateGithubArtifactEgress,
   fetchReleaseBundleWithToken,
-  type WorkflowArtifactSource,
-} from "../../server/lib/github-app";
+} from "../../server/lib/github-app/artifacts";
 
 const TOKEN = "ghs_installation_test_token";
 const REPO = "octo/example";

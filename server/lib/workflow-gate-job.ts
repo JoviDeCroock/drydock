@@ -1,34 +1,31 @@
 import { and, eq } from "drizzle-orm";
-import {
-  createDb,
-  createScanJob,
-  discardGateScans,
-  getOrganizationOwnerUserId,
-  markScanFailed,
-  recordScanEvent,
-  type AppDb,
-} from "../db";
+import { type AppDb, createDb } from "../db/client";
+import { recordScanEvent } from "../db/events";
+import { getOrganizationOwnerUserId } from "../db/organizations";
+import { createScanJob, discardGateScans, markScanFailed } from "../db/scans";
 import { githubAppInstallations } from "../db/schema";
+import { WorkflowArtifactError } from "./github-app/artifacts";
 import {
+  type GithubAppConfig,
+  GithubAppConfigError,
+  readGithubAppConfig,
+} from "./github-app/config";
+import { postDeploymentProtectionDecision } from "./github-app/webhook";
+import {
+  type WorkflowGateRecord,
   attachScanToGate,
   claimGateReviewStart,
-  GithubAppConfigError,
-  type GithubAppConfig,
   getGateForOrganization,
   markGateDecided,
-  postDeploymentProtectionDecision,
-  readGithubAppConfig,
   releaseGateReviewClaim,
-  WorkflowArtifactError,
-  type WorkflowGateRecord,
-} from "./github-app";
+} from "./github-app/webhook-gates";
 import { notifyWorkflowGateReview, notifyWorkflowGateTimeout } from "./notify";
 import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
 import {
-  prepareReleaseCandidatesForGate,
   type PreparedGatePackage,
   type PreparedGateRelease,
-} from "./workflow-gates";
+  prepareReleaseCandidatesForGate,
+} from "./workflow-gates/prepare";
 import { combineRisk, type RiskLevel } from "./review";
 import { runScanPipeline } from "./scan-pipeline";
 import { classifyScanError, type WorkflowGateQueueMessage } from "./scan-job";

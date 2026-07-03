@@ -1,20 +1,19 @@
 import { createExecutionContext, env } from "cloudflare:test";
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, test } from "vitest";
-import { createDb, ensurePersonalOrganization } from "../../server/db";
+import { createDb } from "../../server/db/client";
+import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
+import { readGithubAppConfig } from "../../server/lib/github-app/config";
+import { upsertInstallation } from "../../server/lib/github-app/persistence";
+import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
+import { prepareReleaseCandidatesForGate } from "../../server/lib/workflow-gates/prepare";
+import { pypiWorkflowGateAdapter } from "../../server/lib/workflow-gates/pypi";
 import {
-  getGateForOrganization,
-  readGithubAppConfig,
-  upsertInstallation,
-} from "../../server/lib/github-app";
-import {
-  getWorkflowGateAdapter,
-  prepareReleaseCandidatesForGate,
-  pypiWorkflowGateAdapter,
-  supportedWorkflowGateEcosystems,
   UnsupportedEcosystemError,
-} from "../../server/lib/workflow-gates";
+  getWorkflowGateAdapter,
+  supportedWorkflowGateEcosystems,
+} from "../../server/lib/workflow-gates/registry";
 
 // ── Pure adapter dispatch ────────────────────────────────────────────────────
 

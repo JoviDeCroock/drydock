@@ -2,15 +2,10 @@ import { getDashboardReturnUrl } from "../../../lib/query-state";
 import { formatDateTime } from "../../../lib/format";
 import { reportExportFilename } from "../../../../server/lib/report-export";
 import type { PersistedScanDetail } from "../../../models/scan";
-import {
-  Alert,
-  Badge,
-  Button,
-  LinkButton,
-  LoadingLine,
-  MonoDetail,
-  severityTone,
-} from "../../../components";
+import { Alert } from "../../../components/Alert";
+import { Badge, severityTone } from "../../../components/Badge";
+import { Button, LinkButton } from "../../../components/Button";
+import { LoadingLine, MonoDetail } from "../../../components/Typography";
 
 export function ScanDetailHeader({
   detail,

@@ -1,7 +1,12 @@
 import { useEffect } from "preact/hooks";
 import { useModel } from "@preact/signals";
 import { GithubAppModel, type PublicGithubAppInstallation } from "../../../models/github-app";
-import { Alert, Button, Field, Muted, Select, SettingsCardForm } from "../../../components";
+import { Alert } from "../../../components/Alert";
+import { Button } from "../../../components/Button";
+import { SettingsCardForm } from "../../../components/Card";
+import { Field } from "../../../components/Field";
+import { Select } from "../../../components/Select";
+import { Muted } from "../../../components/Typography";
 
 type GithubApp = ReturnType<typeof useModel<typeof GithubAppModel.prototype>>;
 

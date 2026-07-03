@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import { and, eq } from "drizzle-orm";
-import type { AppDb } from "../db";
-import { ensurePersonalOrganization } from "../db";
+import { type AppDb } from "../db/client";
+import { ensurePersonalOrganization } from "../db/organizations";
 import { organizationMembers } from "../db/schema";
 import { personalOrganizationId } from "./ownership";
 import type { OrganizationRole } from "./roles";

@@ -1,13 +1,9 @@
 import { Hono, type Context } from "hono";
-import {
-  RateLimitError,
-  createDb,
-  enforceRateLimit,
-  getScan,
-  organizationRequiresTwoFactorForReleaseDecisions,
-  recordGatePackageDecision,
-  recordScanEvent,
-} from "../db";
+import { createDb } from "../db/client";
+import { recordScanEvent } from "../db/events";
+import { organizationRequiresTwoFactorForReleaseDecisions } from "../db/organizations";
+import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
+import { getScan, recordGatePackageDecision } from "../db/scans";
 import {
   requireActiveOrganization,
   requireActiveOrganizationContext,
@@ -23,37 +19,45 @@ import {
   executeWorkflowGateJob,
 } from "../lib/workflow-gate-job";
 import {
-  GithubAppConfigError,
-  GithubAppValidationError,
-  SUPPORTED_ECOSYSTEMS,
-  type GatePackageScan,
-  type GithubAppConfig,
-  type GithubAppValidationCode,
-  type InstallationRecord,
-  type ReleaseTargetRecord,
-  type SupportedEcosystem,
-  type WorkflowGateRecord,
-  buildInstallUrl,
-  createReleaseTarget,
-  deleteReleaseTarget,
   fetchInstallationMetadata,
   fetchRepository,
-  getGateByScanId,
-  getGateForOrganization,
-  isGithubAppConfigured,
-  listGatePackageScans,
   listInstallationRepositories,
+  listRepositoryEnvironments,
+} from "../lib/github-app/api";
+import {
+  type GithubAppConfig,
+  GithubAppConfigError,
+  type GithubAppValidationCode,
+  GithubAppValidationError,
+  SUPPORTED_ECOSYSTEMS,
+  type SupportedEcosystem,
+  isGithubAppConfigured,
+  readGithubAppConfig,
+} from "../lib/github-app/config";
+import {
+  buildInstallUrl,
+  signOAuthState,
+  verifyOAuthState,
+  verifyUserCanAccessInstallation,
+} from "../lib/github-app/oauth";
+import {
+  type InstallationRecord,
+  type ReleaseTargetRecord,
+  createReleaseTarget,
+  deleteReleaseTarget,
   listInstallationsForOrganization,
   listReleaseTargetsForOrganization,
-  listRepositoryEnvironments,
-  markGateDecidedForPackageAggregate,
-  readGithubAppConfig,
-  resetGateReviewForRetry,
-  signOAuthState,
   upsertInstallation,
-  verifyUserCanAccessInstallation,
-  verifyOAuthState,
-} from "../lib/github-app";
+} from "../lib/github-app/persistence";
+import {
+  type GatePackageScan,
+  type WorkflowGateRecord,
+  getGateByScanId,
+  getGateForOrganization,
+  listGatePackageScans,
+  markGateDecidedForPackageAggregate,
+  resetGateReviewForRetry,
+} from "../lib/github-app/webhook-gates";
 import type { Bindings, Variables } from "../types";
 
 type RouteContext = Context<{ Bindings: Bindings; Variables: Variables }>;

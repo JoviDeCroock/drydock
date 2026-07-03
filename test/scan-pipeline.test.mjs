@@ -29,7 +29,10 @@ const aiReviewMock = vi.hoisted(() => ({
   runSelectiveAiReview: vi.fn(),
 }));
 
-vi.mock("../server/db/index.ts", () => dbMock);
+vi.mock("../server/db/client.ts", () => dbMock);
+vi.mock("../server/db/events.ts", () => dbMock);
+vi.mock("../server/db/npm-connections.ts", () => dbMock);
+vi.mock("../server/db/scans.ts", () => dbMock);
 vi.mock("../server/lib/registry.ts", async () => ({
   ...(await vi.importActual("../server/lib/registry.ts")),
   fetchPackageMetadata: registryMock.fetchPackageMetadata,

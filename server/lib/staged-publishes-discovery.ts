@@ -1,13 +1,12 @@
+import { type AppDb } from "../db/client";
+import { recordScanEvent } from "../db/events";
+import { markNpmConnectionUsed, updateNpmConnectionValidation } from "../db/npm-connections";
 import {
+  type ScanSource,
   createScanJob,
   deletePendingScanJob,
   listExistingScanStageIds,
-  markNpmConnectionUsed,
-  recordScanEvent,
-  updateNpmConnectionValidation,
-  type AppDb,
-  type ScanSource,
-} from "../db";
+} from "../db/scans";
 import {
   decryptNpmToken,
   validateNpmCredential,

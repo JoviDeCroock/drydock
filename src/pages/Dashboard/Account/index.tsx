@@ -3,17 +3,12 @@ import { useSignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
 import { rememberDashboardReturnUrl } from "../../../lib/query-state";
 import { sessionModel } from "../../../models/auth";
-import {
-  Eyebrow,
-  LinkButton,
-  LoadingState,
-  MonoDetail,
-  Muted,
-  PageShell,
-  SectionLabel,
-  SettingsCard,
-  UserMenu,
-} from "../../../components";
+import { LinkButton } from "../../../components/Button";
+import { SettingsCard } from "../../../components/Card";
+import { LoadingState } from "../../../components/Loading";
+import { PageShell } from "../../../components/PageShell";
+import { Eyebrow, MonoDetail, Muted, SectionLabel } from "../../../components/Typography";
+import { UserMenu } from "../../../components/UserMenu";
 import { TwoFactorSection } from "./TwoFactorSection";
 import { DeleteAccountSection } from "./DeleteAccountSection";
 

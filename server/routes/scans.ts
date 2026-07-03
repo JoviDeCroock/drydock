@@ -1,25 +1,24 @@
 import { Hono, type Context } from "hono";
+import { createDb } from "../db/client";
+import { recordScanEvent } from "../db/events";
+import { getOrganizationRole } from "../db/invitations";
+import { getNpmConnection } from "../db/npm-connections";
+import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
 import {
   LIST_SCANS_DEFAULT_LIMIT,
   LIST_SCANS_MAX_LIMIT,
-  RateLimitError,
   SCAN_DECISIONS,
   SCAN_DECISION_FILTERS,
   type ScanDecision,
   type ScanDecisionFilter,
-  createDb,
   createScanJob,
-  enforceRateLimit,
-  getNpmConnection,
-  getOrganizationRole,
   getScan,
   getScanCompareData,
   getScanFile,
   getScanStatus,
   listScans,
   recordScanDecision,
-  recordScanEvent,
-} from "../db";
+} from "../db/scans";
 import {
   requireActiveOrganization,
   requireActiveOrganizationContext,

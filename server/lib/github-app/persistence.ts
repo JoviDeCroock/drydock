@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import type { AppDb } from "../../db";
+import { type AppDb } from "../../db/client";
 import { githubAppInstallations, githubReleaseTargets } from "../../db/schema";
 import {
   ACCOUNT_LOGIN_MAX,

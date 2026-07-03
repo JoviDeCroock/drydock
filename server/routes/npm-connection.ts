@@ -1,14 +1,13 @@
 import { Hono } from "hono";
+import { createDb } from "../db/client";
+import { recordScanEvent } from "../db/events";
 import {
-  RateLimitError,
-  createDb,
   deleteNpmConnection,
-  enforceRateLimit,
   getNpmConnection,
-  recordScanEvent,
   updateNpmConnectionValidation,
   upsertNpmConnection,
-} from "../db";
+} from "../db/npm-connections";
+import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
 import {
   requireActiveOrganization,
   requireActiveOrganizationContext,

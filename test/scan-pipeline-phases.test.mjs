@@ -5,7 +5,8 @@ const dbMock = vi.hoisted(() => ({
   recordScanEvent: vi.fn(async () => undefined),
 }));
 
-vi.mock("../server/db/index.ts", () => dbMock);
+vi.mock("../server/db/events.ts", () => dbMock);
+vi.mock("../server/db/scans.ts", () => dbMock);
 
 const {
   resolveBaseline,

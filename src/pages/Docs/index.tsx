@@ -1,6 +1,10 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo } from "preact/hooks";
-import { Badge, Card, Eyebrow, LinkButton, PageShell, SectionLabel } from "../../components";
+import { Badge } from "../../components/Badge";
+import { LinkButton } from "../../components/Button";
+import { Card } from "../../components/Card";
+import { PageShell } from "../../components/PageShell";
+import { Eyebrow, SectionLabel } from "../../components/Typography";
 import { ensureHighlighter, highlighterReady, tokenizeLines } from "../../components/highlight";
 import { docsPageSeo, PageSeo } from "../../lib/seo";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";

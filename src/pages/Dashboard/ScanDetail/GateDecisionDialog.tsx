@@ -7,19 +7,13 @@ import type {
   PublicWorkflowGate,
   WorkflowGateDecision,
 } from "../../../models/github-app";
-import {
-  Alert,
-  Badge,
-  Button,
-  Dialog,
-  Field,
-  Input,
-  LoadingLine,
-  MonoDetail,
-  Muted,
-  SectionLabel,
-  severityTone,
-} from "../../../components";
+import { Alert } from "../../../components/Alert";
+import { Badge, severityTone } from "../../../components/Badge";
+import { Button } from "../../../components/Button";
+import { Dialog } from "../../../components/Dialog";
+import { Field } from "../../../components/Field";
+import { Input } from "../../../components/Input";
+import { LoadingLine, MonoDetail, Muted, SectionLabel } from "../../../components/Typography";
 
 export function gateStatusTone(status: PublicWorkflowGate["status"]) {
   switch (status) {

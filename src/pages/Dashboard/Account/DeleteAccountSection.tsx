@@ -1,16 +1,13 @@
 import { useSignal } from "@preact/signals";
 import { sessionModel } from "../../../models/auth";
 import { errorMessage } from "../../../models/api";
-import {
-  Alert,
-  Button,
-  Dialog,
-  Field,
-  Input,
-  Muted,
-  SectionLabel,
-  SettingsCard,
-} from "../../../components";
+import { Alert } from "../../../components/Alert";
+import { Button } from "../../../components/Button";
+import { SettingsCard } from "../../../components/Card";
+import { Dialog } from "../../../components/Dialog";
+import { Field } from "../../../components/Field";
+import { Input } from "../../../components/Input";
+import { Muted, SectionLabel } from "../../../components/Typography";
 
 export function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
   const email = sessionModel.user.value?.email ?? "";

@@ -16,23 +16,16 @@ import {
   type ScanListItem,
 } from "../../models/scan";
 import { StagedPublishesModel } from "../../models/staged-publishes";
-import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  EmptyLine,
-  Eyebrow,
-  LinkButton,
-  LoadingState,
-  Muted,
-  OrgSwitcher,
-  PageShell,
-  SectionLabel,
-  Select,
-  UserMenu,
-  severityTone,
-} from "../../components";
+import { Alert } from "../../components/Alert";
+import { Badge, severityTone } from "../../components/Badge";
+import { Button, LinkButton } from "../../components/Button";
+import { Card } from "../../components/Card";
+import { LoadingState } from "../../components/Loading";
+import { OrgSwitcher } from "../../components/OrgSwitcher";
+import { PageShell } from "../../components/PageShell";
+import { Select } from "../../components/Select";
+import { EmptyLine, Eyebrow, Muted, SectionLabel } from "../../components/Typography";
+import { UserMenu } from "../../components/UserMenu";
 import { DecisionDialog } from "./ScanDetail/DecisionDialog";
 
 export default function DashboardPage() {

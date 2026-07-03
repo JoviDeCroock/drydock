@@ -1,18 +1,14 @@
 import { useModel, useSignal } from "@preact/signals";
 import type { OrganizationRole } from "../../../../server/lib/roles";
 import { OrganizationModel } from "../../../models/organization";
-import {
-  Alert,
-  Badge,
-  Button,
-  Dialog,
-  Field,
-  Input,
-  MonoDetail,
-  Muted,
-  SectionLabel,
-  SettingsCard,
-} from "../../../components";
+import { Alert } from "../../../components/Alert";
+import { Badge } from "../../../components/Badge";
+import { Button } from "../../../components/Button";
+import { SettingsCard } from "../../../components/Card";
+import { Dialog } from "../../../components/Dialog";
+import { Field } from "../../../components/Field";
+import { Input } from "../../../components/Input";
+import { MonoDetail, Muted, SectionLabel } from "../../../components/Typography";
 
 export function GeneralSection({
   organizations,

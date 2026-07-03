@@ -6,21 +6,19 @@ import {
   type OrganizationInvitation,
   type OrganizationMember,
 } from "../../../models/organization-members";
+import { Alert } from "../../../components/Alert";
+import { Badge, type BadgeTone } from "../../../components/Badge";
+import { Button } from "../../../components/Button";
 import {
-  Alert,
-  Badge,
-  Button,
   CollapsibleCard,
-  Field,
-  Input,
-  MonoDetail,
-  Muted,
-  Select,
   SettingsCardBody,
   SettingsCardHeader,
   SettingsCardListItem,
-  type BadgeTone,
-} from "../../../components";
+} from "../../../components/Card";
+import { Field } from "../../../components/Field";
+import { Input } from "../../../components/Input";
+import { Select } from "../../../components/Select";
+import { MonoDetail, Muted } from "../../../components/Typography";
 
 export function OrganizationMembersSection({
   members,

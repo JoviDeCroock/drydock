@@ -1,4 +1,4 @@
-import { type ResolvedReleaseBundle, WorkflowArtifactError } from "../github-app";
+import { type ResolvedReleaseBundle, WorkflowArtifactError } from "../github-app/artifacts";
 import { downloadInSandboxInline } from "../sandbox";
 import { AMBIGUOUS_ARCHIVE_ECOSYSTEM, detectArchiveEcosystems } from "./registry";
 import type { ParsedGateArtifact } from "./types";

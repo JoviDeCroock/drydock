@@ -3,17 +3,13 @@ import {
   NotificationRecipientsModel,
   type NotificationRecipient,
 } from "../../../models/notification-recipients";
-import {
-  Alert,
-  Badge,
-  Button,
-  CollapsibleCard,
-  Field,
-  Input,
-  LoadingLine,
-  Muted,
-  SettingsCardBody,
-} from "../../../components";
+import { Alert } from "../../../components/Alert";
+import { Badge } from "../../../components/Badge";
+import { Button } from "../../../components/Button";
+import { CollapsibleCard, SettingsCardBody } from "../../../components/Card";
+import { Field } from "../../../components/Field";
+import { Input } from "../../../components/Input";
+import { LoadingLine, Muted } from "../../../components/Typography";
 
 export function NotificationRecipientsSection({
   recipients,

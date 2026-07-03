@@ -16,18 +16,15 @@ import { ScanDetailModel, type DecisionStatus, type ScanDecision } from "../../.
 import type { WorkflowGateDecision } from "../../../models/github-app";
 import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review-types";
 import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
-import {
-  Alert,
-  Button,
-  Card,
-  FileTree,
-  Input,
-  LoadingLine,
-  LoadingState,
-  PageShell,
-  SectionLabel,
-  VersionPicker,
-} from "../../../components";
+import { Alert } from "../../../components/Alert";
+import { Button } from "../../../components/Button";
+import { Card } from "../../../components/Card";
+import { FileTree } from "../../../components/FileTree";
+import { Input } from "../../../components/Input";
+import { LoadingState } from "../../../components/Loading";
+import { PageShell } from "../../../components/PageShell";
+import { LoadingLine, SectionLabel } from "../../../components/Typography";
+import { VersionPicker } from "../../../components/VersionPicker";
 import { DecisionDialog } from "./DecisionDialog";
 import { GateContextPanel, GateDecisionDialog, GatePackagesPanel } from "./GateDecisionDialog";
 import { DiffWorkbench } from "./DiffWorkbench";

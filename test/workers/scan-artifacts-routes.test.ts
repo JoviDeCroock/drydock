@@ -2,13 +2,9 @@ import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
-import {
-  createDb,
-  createScanJob,
-  ensurePersonalOrganization,
-  getScan,
-  persistScan,
-} from "../../server/db";
+import { createDb } from "../../server/db/client";
+import { ensurePersonalOrganization } from "../../server/db/organizations";
+import { createScanJob, getScan, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import {
   DETERMINISTIC_RULES_VERSION,

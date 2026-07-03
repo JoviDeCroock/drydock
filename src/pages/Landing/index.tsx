@@ -1,19 +1,14 @@
 import type { ComponentChildren } from "preact";
 import { Show } from "@preact/signals/utils";
 import { homePageSeo, PageSeo, StructuredData } from "../../lib/seo";
-import {
-  AikidoPartnerStrip,
-  Badge,
-  Card,
-  Eyebrow,
-  LinkButton,
-  MonoDetail,
-  PageShell,
-  SectionLabel,
-  SeverityBar,
-  StatusStrip,
-  StatusStripItem,
-} from "../../components";
+import { AikidoPartnerStrip } from "../../components/AikidoPartner";
+import { Badge } from "../../components/Badge";
+import { LinkButton } from "../../components/Button";
+import { Card } from "../../components/Card";
+import { PageShell } from "../../components/PageShell";
+import { SeverityBar } from "../../components/SeverityBar";
+import { StatusStrip, StatusStripItem } from "../../components/StatusStrip";
+import { Eyebrow, MonoDetail, SectionLabel } from "../../components/Typography";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
 

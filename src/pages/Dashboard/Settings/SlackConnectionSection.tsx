@@ -6,18 +6,14 @@ import {
   type SlackConnection,
   type SlackTestResult,
 } from "../../../models/slack-connection";
-import {
-  Alert,
-  Badge,
-  Button,
-  CollapsibleCard,
-  Input,
-  LoadingLine,
-  Muted,
-  pushToast,
-  Select,
-  SettingsCardBody,
-} from "../../../components";
+import { Alert } from "../../../components/Alert";
+import { Badge } from "../../../components/Badge";
+import { Button } from "../../../components/Button";
+import { CollapsibleCard, SettingsCardBody } from "../../../components/Card";
+import { Input } from "../../../components/Input";
+import { Select } from "../../../components/Select";
+import { pushToast } from "../../../components/Toast";
+import { LoadingLine, Muted } from "../../../components/Typography";
 
 export function SlackConnectionSection({
   slack,

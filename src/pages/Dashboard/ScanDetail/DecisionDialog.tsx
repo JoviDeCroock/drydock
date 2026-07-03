@@ -2,7 +2,12 @@ import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { formatDateTime } from "../../../lib/format";
 import type { DecisionStatus, ScanDecision } from "../../../models/scan";
-import { Alert, Badge, Button, Dialog, Field, Input } from "../../../components";
+import { Alert } from "../../../components/Alert";
+import { Badge } from "../../../components/Badge";
+import { Button } from "../../../components/Button";
+import { Dialog } from "../../../components/Dialog";
+import { Field } from "../../../components/Field";
+import { Input } from "../../../components/Input";
 
 export function DecisionDialog({
   open,

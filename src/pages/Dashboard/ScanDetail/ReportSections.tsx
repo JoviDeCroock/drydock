@@ -2,15 +2,9 @@ import type { ComponentChildren } from "preact";
 import { sortFindingsBySeverity } from "../../../lib/findings";
 import type { AiFinding, DisplayedAiResult } from "../../../../server/lib/ai-review-types";
 import type { PackageJsonDiff } from "../../../../server/types";
-import {
-  Badge,
-  EmptyLine,
-  FindingCard,
-  FindingRow,
-  SectionLabel,
-  severityTone,
-  statusTone,
-} from "../../../components";
+import { Badge, severityTone, statusTone } from "../../../components/Badge";
+import { FindingCard, FindingRow } from "../../../components/FindingCard";
+import { EmptyLine, SectionLabel } from "../../../components/Typography";
 import type { PersistedSummary } from "./types";
 
 export function PersistedReportSections({

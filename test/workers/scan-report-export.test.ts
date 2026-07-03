@@ -1,13 +1,9 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
-import {
-  createDb,
-  createOrganization,
-  createScanJob,
-  ensurePersonalOrganization,
-  persistScan,
-} from "../../server/db";
+import { createDb } from "../../server/db/client";
+import { createOrganization, ensurePersonalOrganization } from "../../server/db/organizations";
+import { createScanJob, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";

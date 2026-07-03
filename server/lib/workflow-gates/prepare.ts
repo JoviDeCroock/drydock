@@ -1,17 +1,19 @@
 import { and, eq } from "drizzle-orm";
-import type { AppDb } from "../../db";
+import { type AppDb } from "../../db/client";
 import { githubAppInstallations, githubReleaseTargets } from "../../db/schema";
 import type { AdapterBroker, PackageAdapter } from "../adapters/types";
 import {
   type ClassifyArtifact,
-  fetchReleaseBundleForGate,
-  getGateForOrganization,
-  type GithubAppConfig,
-  markGateErrored,
   type ResolvedReleaseBundle,
   WorkflowArtifactError,
+  fetchReleaseBundleForGate,
+} from "../github-app/artifacts";
+import { type GithubAppConfig } from "../github-app/config";
+import {
   type WorkflowGateRecord,
-} from "../github-app";
+  getGateForOrganization,
+  markGateErrored,
+} from "../github-app/webhook-gates";
 import { describeOperationalError, emitOperationalEvent } from "../observability";
 import {
   classifyBundleArtifact,
