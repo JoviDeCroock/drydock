@@ -429,15 +429,21 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes)
         if (path === "package.json" && size > maxTarBytes) {
           throw tarError("invalid tar entry size");
         }
-        // Manifests bypass the shared retention budget so a package's identity is
-        // always inspected even behind large binaries, but they draw on a bounded
-        // headroom (a second maxTarBytes) rather than an unlimited bypass — a tar
-        // stuffed with manifest-named files cannot amplify retained memory past
-        // 2×maxTarBytes.
+        // Retention tiers, tightest first:
+        //  - the root npm manifest is ALWAYS inspected — parsePackageJson depends
+        //    on it, and it is a single deduped path, so this adds at most one
+        //    manifest body (≤ maxTarBytes) and cannot be starved by earlier files;
+        //  - other manifests (nested npm, PyPI/wheel metadata, whose root path is
+        //    attacker-shaped and so cannot get the guarantee) draw on a bounded
+        //    second maxTarBytes of headroom, so a tar stuffed with manifest-named
+        //    files still cannot amplify retained memory;
+        //  - everything else must fit the shared maxTarBytes budget.
+        const isRootManifest = path === "package.json";
         const mustRetainBody = path ? isRetainedManifestPath(path) : false;
         const retainBody =
           size <= maxTarBytes &&
-          (retainedBytes + size <= maxTarBytes ||
+          (isRootManifest ||
+            retainedBytes + size <= maxTarBytes ||
             (mustRetainBody && retainedBytes + size <= 2 * maxTarBytes));
         let summarized = null;
         let contributed = 0;

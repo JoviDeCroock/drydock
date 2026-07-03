@@ -744,6 +744,30 @@ describe("readTar limits and malformed archives", () => {
     expect(manifest?.flags ?? []).not.toContain("content-skipped");
   });
 
+  test("always retains the root npm manifest even after nested manifests exhaust the headroom", async () => {
+    // Nested package.json files spend the shared 2×maxTarBytes manifest headroom,
+    // but the real root manifest must still be inspected or parsePackageJson goes
+    // null and every npm identity/script/dependency check is silently disabled.
+    const limits = { maxFiles: 100, maxTarBytes: 500 };
+    const tar = buildTar([
+      { name: "a/package.json", body: new Uint8Array(500).fill(0x61) },
+      { name: "b/package.json", body: new Uint8Array(500).fill(0x62) },
+      {
+        name: "package/package.json",
+        body: JSON.stringify({
+          name: "pkg",
+          version: "1.0.0",
+          scripts: { postinstall: "node x.js" },
+        }),
+      },
+    ]);
+    const { files } = await parseFull(tar, limits);
+    const root = files.find((f) => f.path === "package.json");
+    expect(root?.textSample).toContain("postinstall");
+    expect(root?.flags ?? []).not.toContain("content-skipped");
+    expect(parsePackageJson(files)?.name).toBe("pkg");
+  });
+
   test("bounds manifest retention headroom to twice the per-file cap", async () => {
     // Manifests bypass the shared budget but only up to a second maxTarBytes, so
     // a tar stuffed with manifest-named files cannot amplify retained memory.
