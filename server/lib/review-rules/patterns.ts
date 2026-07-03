@@ -90,6 +90,49 @@ const PYTHON_CREDENTIAL_ACCESS_PATTERNS = [
   /\.netrc/,
 ];
 
+const RUBY_PROCESS_EXECUTION_PATTERNS = [
+  /(?<![\w.])system\s*(?:\(|["'`%])/,
+  /(?<![\w.:])exec\s*(?:\(|["'`%])/,
+  /\bIO\.popen\b/,
+  /\bOpen3\b/,
+  /\bProcess\.spawn\b/,
+  /(?<![\w.])spawn\s*(?:\(|["'`%])/,
+  /\bPTY\.spawn\b/,
+  /%x[([{]/,
+  /`[^`\n]+`/,
+  /\bKernel\.(?:system|exec|spawn)\b/,
+];
+const RUBY_NETWORK_ACCESS_PATTERNS = [
+  /\bNet::(?:HTTP|FTP|SMTP|Telnet)\b/,
+  /\brequire\s+["'](?:net\/http|open-uri|socket)["']/,
+  /\bopen-uri\b/,
+  /\bURI\.(?:open|parse)\b/,
+  /\bTCPSocket\b/,
+  /\bSocket\.(?:tcp|new|open)\b/,
+  /\b(?:HTTParty|Faraday|RestClient|Excon|Typhoeus)\b/,
+  /\bopen\s*\(\s*["']https?:\/\//,
+];
+const RUBY_DYNAMIC_EVALUATION_PATTERNS = [
+  /(?<![\w.])eval\s*\(/,
+  /\b(?:instance|class|module)_eval\b/,
+  /\bMarshal\.load\b/,
+  /\bYAML\.(?:unsafe_load|load)\b/,
+  /\bObject\.const_get\b/,
+  /\bBinding\b#?/,
+  /\bBase64\.(?:decode64|urlsafe_decode64)\s*\(/,
+  /\bKernel\.eval\b/,
+];
+const RUBY_CREDENTIAL_ACCESS_PATTERNS = [
+  /\bENV\s*\[/,
+  /\bENV\.fetch\s*\(/,
+  /\bGEM_HOST_API_KEY\b/,
+  /\bNetrc\b/,
+  /\.aws\/credentials/,
+  /\.ssh\/id_/,
+  /\.netrc/,
+  /\.gem\/credentials/,
+];
+
 export const JS_PATTERN_SET = {
   processExecution: JS_PROCESS_EXECUTION_PATTERNS,
   networkAccess: JS_NETWORK_ACCESS_PATTERNS,
@@ -102,6 +145,12 @@ export const PYTHON_PATTERN_SET = {
   dynamicEvaluation: PYTHON_DYNAMIC_EVALUATION_PATTERNS,
   credentialAccess: PYTHON_CREDENTIAL_ACCESS_PATTERNS,
 };
+export const RUBY_PATTERN_SET = {
+  processExecution: RUBY_PROCESS_EXECUTION_PATTERNS,
+  networkAccess: RUBY_NETWORK_ACCESS_PATTERNS,
+  dynamicEvaluation: RUBY_DYNAMIC_EVALUATION_PATTERNS,
+  credentialAccess: RUBY_CREDENTIAL_ACCESS_PATTERNS,
+};
 
 // Python process-execution, network, and dynamic-evaluation capability in one set.
 // Reused by ecosystem adapters that need to know whether a file executes code
@@ -110,6 +159,16 @@ export const PYTHON_EXECUTION_CAPABILITY_PATTERNS = [
   ...PYTHON_PROCESS_EXECUTION_PATTERNS,
   ...PYTHON_NETWORK_ACCESS_PATTERNS,
   ...PYTHON_DYNAMIC_EVALUATION_PATTERNS,
+];
+
+// Ruby process-execution, network, and dynamic-evaluation capability in one set.
+// Reused by the rubygems adapter to decide whether a native-extension build file
+// (extconf.rb, Rakefile, mkrf_conf.rb, …) does more than a normal mkmf build —
+// `gem install` runs those scripts, so code there executes on the consumer.
+export const RUBY_EXECUTION_CAPABILITY_PATTERNS = [
+  ...RUBY_PROCESS_EXECUTION_PATTERNS,
+  ...RUBY_NETWORK_ACCESS_PATTERNS,
+  ...RUBY_DYNAMIC_EVALUATION_PATTERNS,
 ];
 
 export const SECRET_PATTERNS: Array<[RegExp, string]> = [
@@ -149,5 +208,7 @@ function genericSecretPatterns(): Array<[RegExp, string]> {
 }
 
 export function codePatternsFor(codePatternSet: CodePatternSet | undefined): typeof JS_PATTERN_SET {
-  return codePatternSet === "python" ? PYTHON_PATTERN_SET : JS_PATTERN_SET;
+  if (codePatternSet === "python") return PYTHON_PATTERN_SET;
+  if (codePatternSet === "ruby") return RUBY_PATTERN_SET;
+  return JS_PATTERN_SET;
 }

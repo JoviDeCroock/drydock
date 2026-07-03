@@ -1,0 +1,42 @@
+{
+  "id": "rubygems-metadata-missing",
+  "parityGroup": "identity",
+  "title": "gem ships no parseable Gem::Specification",
+  "category": "identity",
+  "intent": "a gem with no usable metadata cannot be proven to match the manifest and must raise metadata-missing",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "rubygems",
+    "package": "bare",
+    "version": "1.0.0",
+    "artifacts": [
+      {
+        "path": "bare-1.0.0.gem",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "bare-1.0.0.gem",
+      "gemMetadata": null,
+      "files": [
+        {
+          "path": "lib/bare.rb",
+          "size": 17,
+          "sha256": "sha-lib/bare.rb",
+          "flags": [],
+          "textSample": "module Bare; end\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedFindings": [
+    {
+      "ruleId": "rubygems.metadata-missing",
+      "severity": "medium",
+      "file": "bare-1.0.0.gem (gemspec)"
+    }
+  ]
+}

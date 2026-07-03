@@ -1,5 +1,6 @@
 import { npmWorkflowGateAdapter } from "./npm";
 import { pypiWorkflowGateAdapter } from "./pypi";
+import { rubygemsWorkflowGateAdapter } from "./rubygems";
 import type { ArchiveContents, WorkflowGateAdapter } from "./types";
 
 /**
@@ -26,6 +27,7 @@ export class UnsupportedEcosystemError extends Error {
 const WORKFLOW_GATE_ADAPTERS: Record<string, WorkflowGateAdapter> = {
   [pypiWorkflowGateAdapter.ecosystem]: pypiWorkflowGateAdapter,
   [npmWorkflowGateAdapter.ecosystem]: npmWorkflowGateAdapter,
+  [rubygemsWorkflowGateAdapter.ecosystem]: rubygemsWorkflowGateAdapter,
 };
 
 /** Resolve the workflow-gate adapter for a release target's ecosystem. */

@@ -37,6 +37,13 @@ export interface ReadTarResult {
   suspicious: TarSuspiciousEntry[];
 }
 
+export interface ReadGemResult {
+  files: ParsedFile[];
+  suspicious: TarSuspiciousEntry[];
+  /** Raw Gem::Specification YAML from the `.gem`'s `metadata.gz` member. */
+  gemMetadata: string | null;
+}
+
 export function readString(bytes: Uint8Array, start: number, len: number): string;
 export function decodeText(bytes: Uint8Array): string;
 export function isPlainObject(value: unknown): value is Record<string, unknown>;
@@ -50,7 +57,10 @@ export function hasImplicitNodeGypInstall(
   packageJson: { scripts?: unknown; gypfile?: unknown } | null | undefined,
 ): boolean;
 export function isSafePaxPath(value: unknown): boolean;
-export function normalizeTarPath(rawPath: string | null | undefined): string | null;
+export function normalizeTarPath(
+  rawPath: string | null | undefined,
+  stripPackageRoot?: boolean,
+): string | null;
 export function normalizeZipPath(rawPath: string | null | undefined): string | null;
 export function parsePax(body: Uint8Array): Record<string, string>;
 export function describeNonRegularType(type: string): string;
@@ -61,6 +71,7 @@ export function readTar(
   buffer: ArrayBuffer | Uint8Array,
   maxFiles: number,
   maxTarBytes: number,
+  options?: { stripPackageRoot?: boolean },
 ): Promise<ReadTarResult>;
 export function readUint16Le(bytes: Uint8Array, offset: number): number;
 export function readUint32Le(bytes: Uint8Array, offset: number): number;
@@ -80,3 +91,13 @@ export function gunzipBounded(
   body: ReadableStream<Uint8Array> | null,
   maxBytes: number,
 ): Promise<ArrayBuffer>;
+export function readTarRawEntries(
+  buffer: ArrayBuffer | Uint8Array,
+  wantedNames: string[],
+  maxTarBytes: number,
+): Promise<Map<string, Uint8Array>>;
+export function readGem(
+  buffer: ArrayBuffer | Uint8Array,
+  maxFiles: number,
+  maxTarBytes: number,
+): Promise<ReadGemResult>;

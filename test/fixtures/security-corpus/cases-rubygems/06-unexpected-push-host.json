@@ -1,0 +1,42 @@
+{
+  "id": "rubygems-unexpected-push-host",
+  "parityGroup": "provenance",
+  "title": "gemspec restricts pushes to a non-rubygems host",
+  "category": "provenance",
+  "intent": "an allowed_push_host other than rubygems.org is a provenance signal worth surfacing at low severity",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "rubygems",
+    "package": "internal-tool",
+    "version": "3.2.0",
+    "artifacts": [
+      {
+        "path": "internal-tool-3.2.0.gem",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "internal-tool-3.2.0.gem",
+      "gemMetadata": "--- !ruby/object:Gem::Specification\nname: internal-tool\nversion: !ruby/object:Gem::Version\n  version: 3.2.0\nplatform: ruby\nbindir: bin\ndependencies: []\nexecutables: []\nextensions: []\nmetadata:\n  allowed_push_host: https://gems.internal.test\nrequire_paths:\n- lib\n",
+      "files": [
+        {
+          "path": "lib/internal_tool.rb",
+          "size": 25,
+          "sha256": "sha-lib/internal_tool.rb",
+          "flags": [],
+          "textSample": "module InternalTool; end\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": [
+    {
+      "ruleId": "rubygems.unexpected-push-host",
+      "severity": "low",
+      "file": "internal-tool-3.2.0.gem (gemspec)"
+    }
+  ]
+}

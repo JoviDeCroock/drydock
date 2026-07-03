@@ -40,7 +40,7 @@ export interface FindingDiffAnnotation {
   releaseDelta: boolean;
 }
 
-export type CodePatternSet = "javascript" | "python";
+export type CodePatternSet = "javascript" | "python" | "ruby";
 
 export interface FindingAnnotationOptions {
   previousFiles?: Array<Pick<FileRecord, "path" | "textSample" | "flags">>;
@@ -59,6 +59,7 @@ export {
   deterministicFindings,
   packageJsonDiffFindings,
   PYTHON_EXECUTION_CAPABILITY_PATTERNS,
+  RUBY_EXECUTION_CAPABILITY_PATTERNS,
 } from "./review-rules";
 export {
   annotateFindingsWithDiffStatus,

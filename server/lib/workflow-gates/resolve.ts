@@ -27,7 +27,7 @@ export async function resolveBundleArtifacts(
   bundle: ResolvedReleaseBundle,
 ): Promise<ParsedGateArtifact[]> {
   return mapWithConcurrency(bundle.artifacts, GATE_ARTIFACT_PARSE_CONCURRENCY, async (file) => {
-    const format = file.path.toLowerCase().endsWith(".whl") ? "zip" : "tgz";
+    const format = archiveFormatForPath(file.path);
     const parsed = await downloadInSandboxInline(env, ctx, { bytes: file.bytes, format });
     const contents = { files: parsed.files, packageJson: parsed.packageJson ?? null };
 
@@ -63,6 +63,7 @@ export async function resolveBundleArtifacts(
       kind,
       files: parsed.files,
       packageJson: parsed.packageJson ?? null,
+      ...(parsed.gemMetadata ? { gemMetadata: parsed.gemMetadata } : {}),
       ...(parsed.suspiciousEntries ? { suspiciousEntries: parsed.suspiciousEntries } : {}),
     };
   });
@@ -85,4 +86,14 @@ async function mapWithConcurrency<T, U>(
   });
   await Promise.all(workers);
   return items.map((_, index) => results.get(index)!);
+}
+
+// npm tarballs and PyPI sdists are gzipped tars, wheels are zips, and a
+// RubyGems `.gem` is an uncompressed tar wrapping nested gzipped members — each
+// needs its own sandbox parse path.
+function archiveFormatForPath(path: string): "tgz" | "zip" | "gem" {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".whl")) return "zip";
+  if (lower.endsWith(".gem")) return "gem";
+  return "tgz";
 }

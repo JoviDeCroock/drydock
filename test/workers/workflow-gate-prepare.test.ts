@@ -29,7 +29,11 @@ async function seedGateForTest(opts: {
   installationExternalId: string;
   repositoryId: number;
   runId: number;
+  ecosystem?: "pypi" | "npm" | "rubygems";
+  environment?: string;
 }) {
+  const ecosystem = opts.ecosystem ?? "pypi";
+  const environment = opts.environment ?? "pypi";
   const db = createDb(env.DB);
   const now = new Date();
   const userId = `user_${crypto.randomUUID()}`;
@@ -54,10 +58,10 @@ async function seedGateForTest(opts: {
   const releaseTarget = await createReleaseTarget(db, {
     organizationId,
     installationRowId: installation.id,
-    ecosystem: "pypi",
+    ecosystem,
     repositoryId: opts.repositoryId,
     repositoryFullName: "octo/example",
-    environment: "pypi",
+    environment,
     createdByUserId: null,
   });
 
@@ -70,7 +74,7 @@ async function seedGateForTest(opts: {
     deliveryId: crypto.randomUUID(),
     repositoryId: opts.repositoryId,
     repositoryFullName: "octo/example",
-    environment: "pypi",
+    environment,
     runId: opts.runId,
     deploymentId: 909,
     deploymentCallbackUrl: `https://api.github.com/repos/octo/example/actions/runs/${opts.runId}/deployment_protection_rule`,
@@ -207,6 +211,56 @@ function buildLoaderMock(fileSets: SandboxFile[][]) {
   };
 }
 
+// A `.gem` sandbox parse surfaces inner files plus the raw Gem::Specification
+// YAML as `gemMetadata`; the gem gate adapter reads identity from that text.
+function gemspecYaml(name: string, version: string, platform = "ruby"): string {
+  return (
+    [
+      "--- !ruby/object:Gem::Specification",
+      `name: ${name}`,
+      "version: !ruby/object:Gem::Version",
+      `  version: ${version}`,
+      `platform: ${platform}`,
+      "dependencies: []",
+      "executables: []",
+      "extensions: []",
+      "metadata: {}",
+      "require_paths:",
+      "- lib",
+    ].join("\n") + "\n"
+  );
+}
+
+function buildGemLoaderMock(
+  sets: Array<{ files: SandboxFile[]; gemMetadata: string | null; suspiciousEntries?: unknown[] }>,
+) {
+  const calls: { format: string | null }[] = [];
+  let index = 0;
+  return {
+    calls,
+    binding: {
+      load: vi.fn(() => ({
+        getEntrypoint: () => ({
+          fetch: vi.fn(async (request: Request) => {
+            calls.push({ format: request.headers.get("x-archive-format") });
+            const set = sets[Math.min(index, sets.length - 1)] ?? { files: [], gemMetadata: null };
+            index += 1;
+            return new Response(
+              JSON.stringify({
+                files: set.files,
+                packageJson: null,
+                gemMetadata: set.gemMetadata,
+                ...(set.suspiciousEntries ? { suspiciousEntries: set.suspiciousEntries } : {}),
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            );
+          }),
+        }),
+      })),
+    },
+  };
+}
+
 function buildCtxWithGateway() {
   const ctx = createExecutionContext() as ExecutionContext & {
     exports: { NpmStageGateway(options: { props: unknown }): Fetcher };
@@ -239,9 +293,11 @@ async function buildScenario(
   runId: number,
   opts?: {
     artifactPaths?: string[];
+    artifactName?: string;
     extraArtifacts?: Array<{ id: number; name: string; artifactPaths: string[] }>;
   },
 ) {
+  const artifactName = opts?.artifactName ?? "pypi-release-candidate";
   const artifactPaths = opts?.artifactPaths ?? ["dist/demo_package-1.2.0-py3-none-any.whl"];
   const bundles = new Map<number, Uint8Array>();
   const bundleZip = zipForArtifactPaths(artifactPaths);
@@ -265,7 +321,7 @@ async function buildScenario(
           artifacts: [
             {
               id: 88888,
-              name: "pypi-release-candidate",
+              name: artifactName,
               size_in_bytes: bundleZip.length,
               expired: false,
             },
@@ -523,6 +579,113 @@ describe("prepareReleaseCandidatesForGate", () => {
     const refreshed = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
     expect(refreshed?.status).toBe("pending");
     expect(refreshed?.failureReason).toBe("artifact_identity_inconsistent");
+  });
+
+  test("derives the gem release identity for a pinned rubygems target", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9120",
+      repositoryId: 71010,
+      runId: 13131,
+      ecosystem: "rubygems",
+      environment: "rubygems",
+    });
+    const scenario = await buildScenario(13131, {
+      artifactPaths: ["pkg/example-1.4.0.gem"],
+      artifactName: "rubygems-release-candidate",
+    });
+    const loaderMock = buildGemLoaderMock([
+      {
+        files: [
+          { path: "lib/example.rb", size: 8, sha256: "cd".repeat(32), flags: [], textSample: "x" },
+        ],
+        gemMetadata: gemspecYaml("example", "1.4.0"),
+      },
+    ]);
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const config = readGithubAppConfig({
+      ...bindings,
+      BETTER_AUTH_SECRET: bindings.BETTER_AUTH_SECRET,
+    });
+    const sandboxEnv = {
+      ...env,
+      ...bindings,
+      LOADER: loaderMock.binding as unknown as WorkerLoader,
+    } as Cloudflare.Env;
+
+    const db = createDb(env.DB);
+    const result = await prepareReleaseCandidatesForGate(sandboxEnv, ctx, db, {
+      config,
+      organizationId: seeded.organizationId,
+      gateId: seeded.gateId,
+    });
+
+    expect(result.packages).toHaveLength(1);
+    const [prepared] = result.packages;
+    expect(prepared.candidate.ecosystem).toBe("rubygems");
+    expect(prepared.packageAdapter.id).toBe("rubygems");
+    expect(prepared.candidate.package).toEqual({ name: "example", version: "1.4.0" });
+    // The `.gem` extension routes through the dedicated sandbox gem parse path.
+    expect(loaderMock.calls[0].format).toBe("gem");
+    expect(scenario.artifactPaths[0]).toBe("pkg/example-1.4.0.gem");
+  });
+
+  test("preserves suspicious gem tar entries in the rubygems pipeline input", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9121",
+      repositoryId: 71011,
+      runId: 14141,
+      ecosystem: "rubygems",
+      environment: "rubygems",
+    });
+    await buildScenario(14141, {
+      artifactPaths: ["pkg/linked-1.0.0.gem"],
+      artifactName: "rubygems-release-candidate",
+    });
+    const loaderMock = buildGemLoaderMock([
+      {
+        files: [
+          { path: "lib/linked.rb", size: 8, sha256: "cd".repeat(32), flags: [], textSample: "x" },
+        ],
+        gemMetadata: gemspecYaml("linked", "1.0.0"),
+        suspiciousEntries: [
+          {
+            kind: "non-regular",
+            path: "lib/linked.rb",
+            detail: "typeflag 2 (symlink)",
+          },
+        ],
+      },
+    ]);
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const config = readGithubAppConfig({
+      ...bindings,
+      BETTER_AUTH_SECRET: bindings.BETTER_AUTH_SECRET,
+    });
+    const sandboxEnv = {
+      ...env,
+      ...bindings,
+      LOADER: loaderMock.binding as unknown as WorkerLoader,
+    } as Cloudflare.Env;
+
+    const db = createDb(env.DB);
+    const result = await prepareReleaseCandidatesForGate(sandboxEnv, ctx, db, {
+      config,
+      organizationId: seeded.organizationId,
+      gateId: seeded.gateId,
+    });
+    const pipelineInput = result.packages[0].candidate.pipelineInput as {
+      artifacts: Array<{ suspiciousEntries?: unknown[] }>;
+    };
+
+    expect(pipelineInput.artifacts[0].suspiciousEntries).toEqual([
+      {
+        kind: "non-regular",
+        path: "lib/linked.rb",
+        detail: "typeflag 2 (symlink)",
+      },
+    ]);
   });
 
   test("rejects with bundle_unavailable when the gate id does not belong to the org", async () => {

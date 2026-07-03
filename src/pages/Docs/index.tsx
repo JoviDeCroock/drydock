@@ -41,7 +41,11 @@ export default function DocsPage() {
             Run <Code>npm publish --stage</Code>. npm holds a private candidate, Drydock reviews it,
             and you complete the publish in npm with your own 2FA.
           </ModeCard>
-          <ModeCard href="#workflow-gating" title="Workflow gating: PyPI & npm" badge="Preview">
+          <ModeCard
+            href="#workflow-gating"
+            title="Workflow gating: PyPI, npm & RubyGems"
+            badge="Preview"
+          >
             GitHub Actions builds and uploads the release artifact. A GitHub Environment pauses
             publishing until a maintainer approves or rejects the Drydock review.
           </ModeCard>
@@ -122,43 +126,48 @@ export default function DocsPage() {
         <section id="workflow-gating" class="flex flex-col gap-8 scroll-mt-6">
           <div class="flex flex-col gap-3">
             <SectionLabel>
-              Workflow gating: PyPI &amp; npm on GitHub Actions <Badge tone="info">Preview</Badge>
+              Workflow gating: PyPI, npm &amp; RubyGems on GitHub Actions{" "}
+              <Badge tone="info">Preview</Badge>
             </SectionLabel>
             <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
               When the registry can't pause, the workflow can.
             </h2>
             <Prose>
-              PyPI has no staging step, and some npm workflows publish directly from CI. For those
-              releases, the publish job becomes the checkpoint: CI builds wheels, sdists, or
-              tarballs, uploads them as a workflow artifact, and enters a GitHub Environment
-              protected by Drydock. Drydock reviews the upload and records a recommendation; a
-              maintainer approves or rejects in the workbench; if approved, the job continues using
-              its own credential.
+              PyPI and RubyGems have no staging step, and some npm workflows publish directly from
+              CI. For those releases, the publish job becomes the checkpoint: CI builds wheels,
+              sdists, tarballs, or gems, uploads them as a workflow artifact, and enters a GitHub
+              Environment protected by Drydock. Drydock reviews the upload and records a
+              recommendation; a maintainer approves or rejects in the workbench; if approved, the
+              job continues using its own credential.
             </Prose>
             <Prose>
-              PyPI and npm use the same gate. Drydock detects each package's ecosystem from the
-              uploaded files, so this walkthrough uses PyPI as the example. For npm, a workflow gate
-              is the alternative to{" "}
+              PyPI, npm, and RubyGems use the same gate. Drydock detects each package's ecosystem
+              from the uploaded files, so this walkthrough starts with PyPI as the example. For npm,
+              a workflow gate is the alternative to{" "}
               <a class="underline" href="#staged-publishing">
                 staged-publish review
               </a>{" "}
-              when a repository publishes without staging.
+              when a repository publishes without staging; for RubyGems, the gate reviews the exact{" "}
+              <Code>.gem</Code> files that GitHub Actions later pushes.
             </Prose>
           </div>
 
           <Subsection title="Set it up">
             <Steps
               items={[
-                <>Sign in and choose the organization that owns the PyPI project.</>,
+                <>
+                  Sign in and choose the organization that owns the package project or repository.
+                </>,
                 <>
                   Open <Code>Organization settings → GitHub App</Code> and install the Drydock
                   GitHub App on the GitHub account that hosts your repository. You'll be redirected
                   to GitHub to pick the account and grant access to the repo, then back to Drydock.
                 </>,
                 <>
-                  In the repository, create a GitHub Environment (for example <Code>pypi</Code>),
-                  configure it as a PyPI Trusted Publisher, and enable Drydock as a custom
-                  deployment protection rule on that same environment.
+                  In the repository, create a GitHub Environment (for example <Code>pypi</Code> or{" "}
+                  <Code>rubygems</Code>), configure the registry's trusted publishing integration
+                  against that environment when the registry supports it, and enable Drydock as a
+                  custom deployment protection rule on the same environment.
                 </>,
                 <>
                   On the same settings page, map the repository and environment so Drydock knows
@@ -182,11 +191,11 @@ export default function DocsPage() {
 
           <Subsection title="Release-candidate bundle">
             <Prose>
-              You do not write a manifest. CI builds and uploads <Code>dist/*</Code>, and Drydock
-              treats every <Code>.whl</Code>, <Code>.tar.gz</Code>, and <Code>.tgz</Code> it finds
-              in the upload as part of the release. The settings form can narrow this down to one
-              artifact name; when left blank, Drydock inspects every non-expired artifact from the
-              held run and fails closed if an archive is ambiguous.
+              You do not write a manifest. CI builds and uploads the release files, and Drydock
+              treats every <Code>.whl</Code>, <Code>.tar.gz</Code>, <Code>.tgz</Code>, and{" "}
+              <Code>.gem</Code> it finds in the upload as part of the release. The settings form can
+              narrow this down to one artifact name; when left blank, Drydock inspects every
+              non-expired artifact from the held run and fails closed if an archive is ambiguous.
             </Prose>
             <Prose>
               Drydock reads each package's name and version out of the files themselves and
@@ -197,17 +206,18 @@ export default function DocsPage() {
             </Prose>
             <Prose>
               You usually do not declare which ecosystem you're publishing. Drydock tells an npm
-              tarball from a PyPI sdist by looking inside it, so the same gate can review either one
-              or both at once in a mixed monorepo.
+              tarball from a PyPI sdist by looking inside it, and routes RubyGems by the unique{" "}
+              <Code>.gem</Code> extension, so the same gate can review several ecosystems at once in
+              a mixed monorepo.
             </Prose>
           </Subsection>
 
           <Subsection title="Monorepo releases">
             <Prose>
               One workflow run can publish several packages at once, like a monorepo cutting many
-              wheels and sdists in a single release. Drydock groups the uploads by package and opens
-              one review per package, each diffed against its own previously published version. A
-              single gate covers every package the environment publishes.
+              wheels, sdists, tarballs, or gems in a single release. Drydock groups the uploads by
+              package and opens one review per package, each diffed against its own previously
+              published version. A single gate covers every package the environment publishes.
             </Prose>
             <Prose>
               The held publish is released once every package is approved, and rejecting any single
@@ -298,6 +308,47 @@ export default function DocsPage() {
       - run: |
           for tgz in dist/*.tgz; do
             npm publish "$tgz" --access public --provenance
+          done`}
+            </CodeBlock>
+            <Prose>
+              RubyGems uses the same no-rebuild rule. Build <Code>pkg/*.gem</Code>, upload those gem
+              files, and have the gated publish job download and push the reviewed bytes through
+              RubyGems Trusted Publishing.
+            </Prose>
+            <CodeBlock name=".github/workflows/release.yml (RubyGems)">
+              {`jobs:
+  build-release-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+      - run: gem build *.gemspec --output pkg/example.gem
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rubygems-release-candidate
+          path: pkg/*.gem
+
+  publish:
+    needs: build-release-artifacts
+    runs-on: ubuntu-latest
+    environment: rubygems
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+      - uses: actions/download-artifact@v4
+        with:
+          name: rubygems-release-candidate
+          path: pkg
+      - uses: rubygems/configure-rubygems-credentials@main
+      - run: |
+          for gem in pkg/*.gem; do
+            gem push "$gem"
           done`}
             </CodeBlock>
           </Subsection>

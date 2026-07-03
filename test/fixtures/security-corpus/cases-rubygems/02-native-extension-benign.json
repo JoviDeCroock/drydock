@@ -1,0 +1,49 @@
+{
+  "id": "rubygems-native-extension-benign",
+  "parityGroup": "native-extension",
+  "title": "benign native extension flags the install-time build surface",
+  "category": "native",
+  "intent": "declaring native extensions surfaces that gem install compiles code, even when the build script is benign",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "rubygems",
+    "package": "fastcalc",
+    "version": "1.0.0",
+    "artifacts": [
+      {
+        "path": "fastcalc-1.0.0.gem",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "fastcalc-1.0.0.gem",
+      "gemMetadata": "--- !ruby/object:Gem::Specification\nname: fastcalc\nversion: !ruby/object:Gem::Version\n  version: 1.0.0\nplatform: ruby\nbindir: bin\ndependencies: []\nexecutables: []\nextensions:\n- ext/fastcalc/extconf.rb\nmetadata: {}\nrequire_paths:\n- lib\n",
+      "files": [
+        {
+          "path": "ext/fastcalc/extconf.rb",
+          "size": 75,
+          "sha256": "sha-ext/fastcalc/extconf.rb",
+          "flags": [],
+          "textSample": "require 'mkmf'\nhave_header('stdio.h')\ncreate_makefile('fastcalc/fastcalc')\n"
+        },
+        {
+          "path": "lib/fastcalc.rb",
+          "size": 28,
+          "sha256": "sha-lib/fastcalc.rb",
+          "flags": [],
+          "textSample": "require 'fastcalc/fastcalc'\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedFindings": [
+    {
+      "ruleId": "rubygems.native-extension",
+      "severity": "medium",
+      "file": "fastcalc-1.0.0.gem/ext/fastcalc/extconf.rb"
+    }
+  ]
+}

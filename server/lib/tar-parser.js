@@ -99,10 +99,11 @@ export function isSafePaxPath(value) {
   return typeof value === "string" && !value.includes(nul) && !value.includes("\\");
 }
 
-export function normalizeTarPath(rawPath) {
+export function normalizeTarPath(rawPath, stripPackageRoot = true) {
   const nul = String.fromCharCode(0);
   if (!rawPath || rawPath.includes(nul) || rawPath.includes("\\")) return null;
-  let path = rawPath.replace(/^\/+/, "").replace(/^package\//, "");
+  let path = rawPath.replace(/^\/+/, "");
+  if (stripPackageRoot) path = path.replace(/^package\//, "");
   if (!path || path.startsWith("../") || path.includes("/../") || /^[A-Za-z]:/.test(path))
     return null;
   const parts = path.split("/").filter(Boolean);
@@ -224,7 +225,8 @@ export function shouldSkipTextSample(path) {
   return false;
 }
 
-export async function readTar(buffer, maxFiles, maxTarBytes) {
+export async function readTar(buffer, maxFiles, maxTarBytes, options) {
+  const stripPackageRoot = !(options && options.stripPackageRoot === false);
   const nul = String.fromCharCode(0);
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   const files = [];
@@ -288,8 +290,8 @@ export async function readTar(buffer, maxFiles, maxTarBytes) {
       const rawCandidate =
         (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName;
       const canonicalCandidate = canonicalizePath(rawCandidate);
-      const path = normalizeTarPath(rawCandidate);
-      const canonicalPath = normalizeTarPath(canonicalCandidate);
+      const path = normalizeTarPath(rawCandidate, stripPackageRoot);
+      const canonicalPath = normalizeTarPath(canonicalCandidate, stripPackageRoot);
       if (rawCandidate !== canonicalCandidate) {
         addSuspicious({
           kind: "unicode-confusable",
@@ -324,7 +326,8 @@ export async function readTar(buffer, maxFiles, maxTarBytes) {
       // reserved). npm publish never emits these; a hand-crafted tar can.
       const rawCandidate =
         (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName;
-      const reportedPath = normalizeTarPath(canonicalizePath(rawCandidate)) || rawCandidate || "";
+      const reportedPath =
+        normalizeTarPath(canonicalizePath(rawCandidate), stripPackageRoot) || rawCandidate || "";
       addSuspicious({
         kind: "non-regular",
         path: reportedPath,
@@ -543,4 +546,73 @@ export async function gunzipBounded(body, maxBytes) {
     offset += chunk.byteLength;
   }
   return out.buffer;
+}
+
+// Walk an uncompressed tar and return the raw bytes of the named top-level
+// members. A `.gem` is itself an uncompressed tar whose members are fixed
+// (`metadata.gz`, `data.tar.gz`, `checksums.yaml.gz`, plus optional `.sig`
+// siblings), so unlike `readTar` we must hand back the member bytes verbatim to
+// decompress + re-parse them, and we match the exact member name rather than
+// normalizing it (these are archive control members, not package file paths).
+export async function readTarRawEntries(buffer, wantedNames, maxTarBytes) {
+  const nul = String.fromCharCode(0);
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const wanted = new Set(wantedNames);
+  const out = new Map();
+  let members = 0;
+  for (let offset = 0; offset + 512 <= bytes.length; ) {
+    const header = bytes.subarray(offset, offset + 512);
+    if (header.every((b) => b === 0)) break;
+    // A `.gem` holds a handful of members; a header count far above that means a
+    // crafted archive trying to exhaust us, not a real gem.
+    if (++members > 64) throw new Error("gem archive has too many members");
+    const rawName = readString(header, 0, 100);
+    const prefix = readString(header, 345, 155);
+    const sizeText = readString(header, 124, 12).trim() || "0";
+    if (!/^[0-7]+$/.test(sizeText)) throw new Error("invalid tar entry size");
+    const size = parseInt(sizeText, 8);
+    if (!Number.isFinite(size) || size < 0 || size > maxTarBytes) {
+      throw new Error("invalid tar entry size");
+    }
+    const type = String.fromCharCode(header[156] || 48);
+    offset += 512;
+    if (offset + size > bytes.length) throw new Error("truncated tar entry");
+    const name = (prefix ? prefix + "/" : "") + rawName;
+    if ((type === "0" || type === nul) && wanted.has(name) && !out.has(name)) {
+      out.set(name, bytes.subarray(offset, offset + size));
+    }
+    offset += Math.ceil(size / 512) * 512;
+  }
+  return out;
+}
+
+// Parse a RubyGems `.gem` archive: an uncompressed tar whose `data.tar.gz`
+// member is the gzipped tar of the installed files and whose `metadata.gz`
+// member is the gzipped Gem::Specification YAML. We reuse the same hardened
+// `readTar` for the inner file tar (so the gem's contents flow through the exact
+// untrusted-archive parser npm/PyPI use) and surface the raw gemspec text for
+// the adapter to read identity + capabilities from. Nested decompression is
+// bounded by the same `maxTarBytes` cap, so a gzip bomb in either member fails
+// closed instead of expanding without limit.
+export async function readGem(buffer, maxFiles, maxTarBytes) {
+  const members = await readTarRawEntries(buffer, ["data.tar.gz", "metadata.gz"], maxTarBytes);
+
+  const dataGz = members.get("data.tar.gz");
+  if (!dataGz) throw new Error("gem missing data archive");
+  const dataTar = await gunzipBounded(new Response(dataGz).body, maxTarBytes);
+  if (dataTar.byteLength > maxTarBytes) throw new Error("archive expands beyond safety limit");
+  const parsed = await readTar(dataTar, maxFiles, maxTarBytes, { stripPackageRoot: false });
+
+  let gemMetadata = null;
+  const metaGz = members.get("metadata.gz");
+  if (metaGz) {
+    const metaBuf = await gunzipBounded(new Response(metaGz).body, maxTarBytes);
+    // The gemspec decides package identity; parsing a truncated prefix could
+    // disagree with RubyGems' full YAML parse if later duplicate keys override
+    // the prefix. Fail closed instead of reviewing a partial identity.
+    if (metaBuf.byteLength > 262144) throw new Error("gem metadata too large");
+    gemMetadata = decodeText(new Uint8Array(metaBuf)) || null;
+  }
+
+  return { files: parsed.files, suspicious: parsed.suspicious, gemMetadata };
 }

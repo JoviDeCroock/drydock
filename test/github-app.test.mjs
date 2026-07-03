@@ -204,12 +204,18 @@ describe("release target validation", () => {
 
   test("rejects unsupported ecosystems", () => {
     try {
-      validateReleaseTargetShape({ ...VALID_RELEASE_TARGET, ecosystem: "rubygems" });
+      validateReleaseTargetShape({ ...VALID_RELEASE_TARGET, ecosystem: "cargo" });
       throw new Error("expected validation to throw");
     } catch (err) {
       expect(err).toBeInstanceOf(GithubAppValidationError);
       expect(err.code).toBe("unsupported_ecosystem");
     }
+  });
+
+  test("accepts the rubygems ecosystem", () => {
+    expect(() =>
+      validateReleaseTargetShape({ ...VALID_RELEASE_TARGET, ecosystem: "rubygems" }),
+    ).not.toThrow();
   });
 
   test("rejects malformed repository identifiers", () => {

@@ -26,8 +26,10 @@ export interface ParsedGateArtifact {
   ecosystem: string;
   kind: WorkflowArtifactKind;
   files: FileRecord[];
-  /** npm tarballs surface their `package.json`; PyPI artifacts are `null`. */
+  /** npm tarballs surface their `package.json`; PyPI/rubygems artifacts are `null`. */
   packageJson: PackageJsonSummary | null;
+  /** `.gem` artifacts surface the raw Gem::Specification YAML; others are absent. */
+  gemMetadata?: string | null;
   suspiciousEntries?: TarSuspiciousEntry[];
 }
 

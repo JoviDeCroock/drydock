@@ -105,9 +105,12 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     // Constant-fold runtime-assembled identifiers (`'chi'+'ld_process'`,
     // `globalThis['re'+'quire']`) so the literal regex set sees them. Matching
     // both raw and normalized text means folding can only add detections, never
-    // drop one a literal scan already finds. JavaScript only for now; the
-    // normalizer is JS-flavored and Python evasion is out of scope.
-    const normalized = ctx.codePatternSet === "python" ? sample : normalizeCodeForScanning(sample);
+    // drop one a literal scan already finds. JavaScript only; the normalizer is
+    // JS-flavored, so Python/Ruby scans use the raw sample.
+    const normalized =
+      ctx.codePatternSet === undefined || ctx.codePatternSet === "javascript"
+        ? normalizeCodeForScanning(sample)
+        : sample;
     const prefix = changedPrefix(ctx, file.path);
     const changed = ctx.diffByPath.get(file.path)?.status;
     const lifecycleScriptFile = isLifecycleScriptFile(ctx, file.path);

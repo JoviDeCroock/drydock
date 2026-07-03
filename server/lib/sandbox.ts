@@ -39,6 +39,8 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.readStreamBounded,
   tarParser.parsePackageJson,
   tarParser.gunzipBounded,
+  tarParser.readTarRawEntries,
+  tarParser.readGem,
 ];
 
 function renderTarParserSource() {
@@ -113,12 +115,14 @@ export interface DownloadResult {
   files: FileRecord[];
   packageJson?: PackageJsonSummary | null;
   suspiciousEntries?: TarSuspiciousEntry[];
+  /** Raw Gem::Specification YAML, present only for `.gem` (rubygems) parses. */
+  gemMetadata?: string | null;
 }
 
 export interface DownloadOptions {
   stageId?: string;
   tarballUrl?: string;
-  archiveFormat?: "tgz" | "zip";
+  archiveFormat?: "tgz" | "zip" | "gem";
   publicArtifactUrls?: string[];
   maxFiles?: number;
   npmToken?: string;
@@ -158,7 +162,7 @@ function isSerializedSandboxDetail(message: string): boolean {
 
 export interface InlineDownloadOptions {
   bytes: Uint8Array;
-  format: "tgz" | "zip";
+  format: "tgz" | "zip" | "gem";
   maxFiles?: number;
 }
 
@@ -297,7 +301,7 @@ export default {
     const archiveFormat = inlineFormat || env.ARCHIVE_FORMAT || "tgz";
     let res;
     if (inlineFormat) {
-      if (archiveFormat !== "zip" && archiveFormat !== "tgz") return json({ error: "invalid inline archive format", status: 400 }, 400);
+      if (archiveFormat !== "zip" && archiveFormat !== "tgz" && archiveFormat !== "gem") return json({ error: "invalid inline archive format", status: 400 }, 400);
       res = new Response(request.body, { status: 200, headers: { "content-type": "application/octet-stream" } });
     } else {
       const { stageId, tarballUrl } = await request.json();
@@ -335,6 +339,32 @@ export default {
         return json({ error: reason, status }, status);
       }
       return json({ files, packageJson: null });
+    }
+
+    if (archiveFormat === "gem") {
+      let gemBytes;
+      try {
+        gemBytes = await readStreamBounded(res.body, maxTarBytes);
+      } catch (err) {
+        const reason = err && err.message === "archive too large" ? "archive too large" : "archive download failed";
+        const status = reason === "archive too large" ? 413 : 400;
+        return json({ error: reason, status }, status);
+      }
+      let parsed;
+      try {
+        parsed = await readGem(gemBytes, env.MAX_FILES || 2_500, maxTarBytes);
+      } catch (err) {
+        const reason = err && err.message === "archive contains too many files"
+          ? "archive contains too many files"
+          : err && err.message === "archive expands beyond safety limit"
+            ? "archive expands beyond safety limit"
+            : err && err.message
+              ? err.message
+              : "gem parse failed";
+        const status = reason === "archive contains too many files" || reason === "archive expands beyond safety limit" ? 413 : 400;
+        return json({ error: reason, status }, status);
+      }
+      return json({ files: parsed.files, packageJson: null, suspiciousEntries: parsed.suspicious, gemMetadata: parsed.gemMetadata });
     }
 
     let tar;

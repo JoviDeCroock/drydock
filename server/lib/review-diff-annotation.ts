@@ -63,6 +63,7 @@ function isReleaseScopedFinding(finding: { ruleId?: string | null }): boolean {
   return Boolean(
     finding.ruleId?.startsWith("stage.") ||
     finding.ruleId?.startsWith("pypi.") ||
+    finding.ruleId?.startsWith("rubygems.") ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyUnusualSpec ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyOptionalAdded ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffCredentialFileAdded ||

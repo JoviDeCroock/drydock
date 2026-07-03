@@ -23,7 +23,9 @@ export {
   codePatternsFor,
   JS_PATTERN_SET,
   PYTHON_PATTERN_SET,
+  RUBY_PATTERN_SET,
   PYTHON_EXECUTION_CAPABILITY_PATTERNS,
+  RUBY_EXECUTION_CAPABILITY_PATTERNS,
   SECRET_PATTERNS,
 } from "./patterns";
 export { safeJson } from "./helpers";

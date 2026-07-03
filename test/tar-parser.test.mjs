@@ -37,6 +37,11 @@ describe("normalizeTarPath", () => {
     expect(normalizeTarPath("//etc/passwd")).toBe("etc/passwd");
   });
 
+  test("can preserve a leading `package/` prefix for non-npm tar users", () => {
+    expect(normalizeTarPath("package/index.rb", false)).toBe("package/index.rb");
+    expect(normalizeTarPath("/package/lib/foo.rb", false)).toBe("package/lib/foo.rb");
+  });
+
   test("rejects path traversal sequences", () => {
     expect(normalizeTarPath("package/../../../etc/passwd")).toBeNull();
     expect(normalizeTarPath("../escape")).toBeNull();

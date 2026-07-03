@@ -1,0 +1,42 @@
+{
+  "id": "rubygems-metadata-name-mismatch",
+  "parityGroup": "identity",
+  "title": "gemspec name disagrees with the reviewed manifest",
+  "category": "identity",
+  "intent": "a gem whose metadata.gz name does not match the reviewed manifest is a critical identity failure",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "rubygems",
+    "package": "trusted-gem",
+    "version": "1.0.0",
+    "artifacts": [
+      {
+        "path": "trusted-gem-1.0.0.gem",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "trusted-gem-1.0.0.gem",
+      "gemMetadata": "--- !ruby/object:Gem::Specification\nname: evil-gem\nversion: !ruby/object:Gem::Version\n  version: 1.0.0\nplatform: ruby\nbindir: bin\ndependencies: []\nexecutables: []\nextensions: []\nmetadata: {}\nrequire_paths:\n- lib\n",
+      "files": [
+        {
+          "path": "lib/trusted.rb",
+          "size": 20,
+          "sha256": "sha-lib/trusted.rb",
+          "flags": [],
+          "textSample": "module Trusted; end\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "critical",
+  "expectedFindings": [
+    {
+      "ruleId": "rubygems.metadata-mismatch",
+      "severity": "critical",
+      "file": "trusted-gem-1.0.0.gem (gemspec)"
+    }
+  ]
+}

@@ -2,9 +2,9 @@
 
 Workflow gates are Drydock's review mode for releases whose registry cannot hold a private staged artifact. GitHub Actions builds the release, uploads the candidate artifacts, and a GitHub Environment custom deployment-protection rule pauses publishing while Drydock reviews the bytes.
 
-Supported gate ecosystems: **PyPI** and **npm**. Shared GitHub plumbing lives in `server/lib/workflow-gates/`; artifact-specific behavior lives behind adapters.
+Supported gate ecosystems: **PyPI**, **npm**, and **RubyGems**. Shared GitHub plumbing lives in `server/lib/workflow-gates/`; artifact-specific behavior lives behind adapters. npm workflow-gate specifics are documented in [`npm-workflow-gate.md`](./npm-workflow-gate.md), and RubyGems specifics are documented in [`rubygems-workflow-gate.md`](./rubygems-workflow-gate.md).
 
-## Core contract
+## Core Contract
 
 1. A repository installs the Drydock GitHub App and configures a GitHub Environment with Drydock as a deployment-protection rule.
 2. The publish workflow builds release artifacts and uploads them before the protected publish job starts.
@@ -17,7 +17,7 @@ Supported gate ecosystems: **PyPI** and **npm**. Shared GitHub plumbing lives in
 
 The GitHub webhook is public but signed with `GITHUB_WEBHOOK_SECRET` and bypasses Better Auth only after signature verification. All stored gate state remains organization-scoped.
 
-## Shared implementation
+## Shared Implementation
 
 - `server/routes/github-webhooks.ts` verifies GitHub webhook signatures and persists gate deliveries.
 - `server/routes/github-app.ts` handles App install/callback setup.
@@ -28,7 +28,7 @@ The GitHub webhook is public but signed with `GITHUB_WEBHOOK_SECRET` and bypasse
 
 Required bindings/secrets include the GitHub App id/private key/client credentials, webhook secret, installation access, queues, D1, R2, and normal scan pipeline bindings. See [`self-hosting.md`](./self-hosting.md) for setup.
 
-## Release set derivation
+## Release Set Derivation
 
 A release set is the boundary between CI and Drydock. Drydock never trusts a maintainer-declared manifest as authority over reviewed bytes; it recomputes identity and digest evidence from the uploaded artifacts themselves.
 
@@ -53,7 +53,7 @@ Those digests match the ones Drydock recomputes and surfaces in the report
 Provenance section and `report.json` (`provenance.artifacts[]`), so the build,
 review, and publish all hash the same bytes.
 
-## PyPI workflow-gate notes
+## PyPI Workflow-Gate Notes
 
 PyPI has no `drydock-manifest.json`. The release set is whatever wheels and sdists the workflow uploads, with identity parsed from wheel `METADATA` or sdist `PKG-INFO`.
 
@@ -68,7 +68,7 @@ The PyPI adapter (`server/lib/adapters/pypi/`):
 - downloads matching baseline wheels/sdists through a credential-free broker restricted to `https://files.pythonhosted.org`;
 - reports metadata mismatches, missing wheel `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, and `.pyd` native extensions.
 
-## npm workflow-gate notes
+## npm Workflow-Gate Notes
 
 Use npm workflow gates when CI publishes from built artifacts instead of `npm publish --stage`, or when the release must be paused by GitHub rather than npm registry staging.
 
@@ -106,7 +106,23 @@ See [`pypi-workflow-gate.md`](./pypi-workflow-gate.md) for the PyPI-specific
 workflow shape, including build-time `SHA256SUMS` generation and publish-time
 verification.
 
-## Trust and failure behavior
+## RubyGems Workflow-Gate Notes
+
+RubyGems has no registry-side staging step for external review. The candidate is the uploaded `.gem` artifact, and the protected publish job must download and push that exact reviewed file through RubyGems Trusted Publishing. Do not rebuild after approval.
+
+The RubyGems adapter (`server/lib/adapters/rubygems/`):
+
+- classifies `.gem` files by path; unlike npm `.tgz` versus PyPI sdists, `.gem` is not content-ambiguous;
+- parses RubyGems' uncompressed outer tar, then bounded `metadata.gz` and `data.tar.gz` members;
+- derives gem name, version, platform, executables, extensions, dependencies, requirements, and metadata from the Gem::Specification YAML;
+- groups native platform variants by normalized gem name and requires each group to share one version;
+- rejects missing identity, version skew, and duplicate name/platform artifacts fail-closed;
+- selects the current published baseline from the RubyGems versions API and downloads matching staged platforms from `https://rubygems.org/downloads/`;
+- reports metadata mismatches, missing metadata, native extension build hooks, and unexpected `metadata.allowed_push_host` values.
+
+See [`rubygems-workflow-gate.md`](./rubygems-workflow-gate.md) for the complete RubyGems workflow and parser trust boundary.
+
+## Trust and Failure Behavior
 
 - The GitHub webhook signature is mandatory.
 - Gate decisions must resolve to the original installation, repository, workflow run, environment, and callback URL.
@@ -115,11 +131,11 @@ verification.
 - If artifact resolution, baseline acquisition, validation, scan, or callback fails, the gate remains blocked or is rejected; do not fail open.
 - Drydock never publishes. It only posts the GitHub deployment-protection decision.
 
-## Maintainer workbench
+## Maintainer Workbench
 
 The gate review workbench shows the release target, package identity/version, artifact set, scan status, findings, changed files, and accept/reject controls. Accept/reject actions require an authenticated maintainer in the owning organization. Step-up auth requirements should match other sensitive release decisions; see [`two-factor-auth.md`](./two-factor-auth.md).
 
-## Adding a new ecosystem
+## Adding A New Ecosystem
 
 1. Add or extend a package adapter under `server/lib/adapters/<ecosystem>/`.
 2. Implement release-set derivation from uploaded artifact bytes.
@@ -129,7 +145,7 @@ The gate review workbench shows the release target, package identity/version, ar
 6. Add Worker-route tests for webhook/gate lifecycle and adapter tests for archive/metadata/baseline behavior.
 7. Add fake-registry or fake-artifact e2e coverage when the publish workflow or browser-visible review flow changes.
 
-## Provenance surfacing
+## Provenance Surfacing
 
 Each gate adapter's `summarizeDetails` emits a `provenance` block — `{ ecosystem,
 mode, artifacts: [{ path, kind, sha256 }] }` — built from the digests the control
@@ -140,7 +156,7 @@ scan workbench, and re-validated into the `report.json` export as a top-level
 checksum file it built and the bytes it is about to publish, closing the
 byte-continuity loop without trusting any single step.
 
-## Remaining work
+## Remaining Work
 
 - Expand gate-specific e2e coverage as more ecosystems are added.
-- Keep GitHub/PyPI/npm validation failures user-actionable without leaking credentials or private package bytes.
+- Keep GitHub/PyPI/npm/RubyGems validation failures user-actionable without leaking credentials or private package bytes.
