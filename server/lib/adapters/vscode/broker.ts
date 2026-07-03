@@ -73,7 +73,7 @@ export function createVscodeBroker(ctx: AdapterContext, _ref: AdapterConnectionR
       const { downloadInSandbox } = await import("../../sandbox");
       return downloadInSandbox(ctx.env, ctx.executionCtx, {
         tarballUrl: artifact.url,
-        archiveFormat: "zip",
+        archiveFormat: "vsix",
         publicArtifactUrls: [artifact.url],
         maxFiles: opts?.maxFiles,
       });

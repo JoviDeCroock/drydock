@@ -4,7 +4,7 @@ vi.mock("cloudflare:workers", () => ({
   WorkerEntrypoint: class {},
 }));
 
-const { fetchPublishedTarballBytes, isPublishedTarballUrlAllowed } =
+const { fetchPublishedTarballStream, isPublishedTarballUrlAllowed } =
   await import("../server/lib/published-tarball.ts");
 
 const REGISTRY = "https://registry.npmjs.org";
@@ -85,14 +85,15 @@ describe("isPublishedTarballUrlAllowed", () => {
   });
 });
 
-describe("fetchPublishedTarballBytes credential + origin guard", () => {
+describe("fetchPublishedTarballStream credential + origin guard", () => {
   test("attaches the npm token only for an allowed same-origin URL", async () => {
     const { captured } = stubFetch(() => streamResponse(new Uint8Array([1, 2, 3])));
 
-    const bytes = await fetchPublishedTarballBytes(ALLOWED_URL, {
+    const stream = await fetchPublishedTarballStream(ALLOWED_URL, {
       registryUrl: REGISTRY,
       npmToken: "npm_secret_token",
     });
+    const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
 
     expect(Array.from(bytes)).toEqual([1, 2, 3]);
     expect(captured).toHaveLength(1);
@@ -103,7 +104,7 @@ describe("fetchPublishedTarballBytes credential + origin guard", () => {
     const { fetchSpy } = stubFetch(() => streamResponse(new Uint8Array([1])));
 
     await expect(
-      fetchPublishedTarballBytes("https://evil.example.com/pkg/-/pkg-1.0.0.tgz", {
+      fetchPublishedTarballStream("https://evil.example.com/pkg/-/pkg-1.0.0.tgz", {
         registryUrl: REGISTRY,
         npmToken: "npm_should_not_leak",
       }),
@@ -115,34 +116,61 @@ describe("fetchPublishedTarballBytes credential + origin guard", () => {
   test("omits Authorization when no token is configured", async () => {
     const { captured } = stubFetch(() => streamResponse(new Uint8Array([9])));
 
-    await fetchPublishedTarballBytes(ALLOWED_URL, { registryUrl: REGISTRY });
+    const stream = await fetchPublishedTarballStream(ALLOWED_URL, { registryUrl: REGISTRY });
+    await new Response(stream).arrayBuffer();
 
     expect(captured[0].authorization).toBeNull();
   });
 
-  test("rejects when the advertised content-length exceeds the cap", async () => {
+  test("streams tarballs larger than the old 25 MB buffer cap", async () => {
+    // The parent no longer buffers the baseline, so a big-binary previous
+    // version streams through instead of degrading the scan to no-baseline.
     stubFetch(() => streamResponse(new Uint8Array([1]), { contentLength: 26 * 1024 * 1024 }));
 
+    const stream = await fetchPublishedTarballStream(ALLOWED_URL, { registryUrl: REGISTRY });
+    expect(stream).toBeInstanceOf(ReadableStream);
+  });
+
+  test("rejects when the advertised content-length exceeds the stream cap", async () => {
+    stubFetch(() => streamResponse(new Uint8Array([1]), { contentLength: 64 }));
+
     const detail = await rejectionDetail(
-      fetchPublishedTarballBytes(ALLOWED_URL, { registryUrl: REGISTRY }),
+      fetchPublishedTarballStream(ALLOWED_URL, { registryUrl: REGISTRY, maxBytes: 16 }),
     );
     expect(detail.status).toBe(413);
   });
 
-  test("enforces the byte cap while streaming when content-length is absent", async () => {
+  test("passes bytes between the sandbox cap and the 2x backstop through untouched", async () => {
+    // The sandbox enforces the real compressed cap (with a degradable 413);
+    // a parent-side error at the same threshold would reach the parser as an
+    // anonymous stream failure and fail the whole scan instead of degrading.
+    // The parent must therefore never win that race: bytes past `maxBytes`
+    // but under 2x flow through untouched.
+    stubFetch(() => streamResponse(new Uint8Array(24).fill(3), { contentLength: undefined }));
+
+    const stream = await fetchPublishedTarballStream(ALLOWED_URL, {
+      registryUrl: REGISTRY,
+      maxBytes: 16,
+    });
+    const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+    expect(bytes).toEqual(new Uint8Array(24).fill(3));
+  });
+
+  test("errors the stream at the 2x backstop when content-length is absent", async () => {
     stubFetch(() => streamResponse(new Uint8Array(64), { contentLength: undefined }));
 
-    const detail = await rejectionDetail(
-      fetchPublishedTarballBytes(ALLOWED_URL, { registryUrl: REGISTRY, maxBytes: 16 }),
-    );
-    expect(detail.status).toBe(413);
+    const stream = await fetchPublishedTarballStream(ALLOWED_URL, {
+      registryUrl: REGISTRY,
+      maxBytes: 16,
+    });
+    await expect(new Response(stream).arrayBuffer()).rejects.toThrow(/tarball too large/);
   });
 
   test("maps upstream non-OK responses to a download failure", async () => {
     stubFetch(() => new Response("nope", { status: 404 }));
 
     const detail = await rejectionDetail(
-      fetchPublishedTarballBytes(ALLOWED_URL, { registryUrl: REGISTRY }),
+      fetchPublishedTarballStream(ALLOWED_URL, { registryUrl: REGISTRY }),
     );
     expect(detail.status).toBe(404);
   });

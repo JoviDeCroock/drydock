@@ -1,12 +1,11 @@
 import { registryProtocolAllowed } from "./npm-connection";
 import { reliableFetch } from "./reliable-fetch";
 import {
-  downloadInSandboxInline,
+  downloadInSandboxStream,
   SandboxError,
-  SANDBOX_MAX_TAR_BYTES,
+  SANDBOX_MAX_STREAM_TAR_BYTES,
   type DownloadResult,
 } from "./sandbox";
-import { readStreamBounded } from "./tar-parser.js";
 
 export function isPublishedTarballUrlAllowed(
   tarballUrl: string,
@@ -35,19 +34,23 @@ export interface PublishedTarballFetchOptions {
 }
 
 /**
- * Fetches a published npm tarball from inside the trusted parent worker.
+ * Opens a published npm tarball stream from inside the trusted parent worker.
  *
  * The npm token is attached only after the URL is proven to share the
  * configured registry origin, so the credential can never reach a
- * package-controlled host. Bytes are read with a hard size cap but are NOT
- * decompressed here — gunzip/untar of this hostile archive stays inside the
- * credentials-free inline sandbox via {@link downloadPublishedTarball}.
+ * package-controlled host. The bytes are NOT buffered or decompressed here —
+ * the body streams straight into the credentials-free sandbox via
+ * {@link downloadPublishedTarball}, so the parent's memory footprint is
+ * independent of tarball size. Size enforcement lives in the sandbox (its
+ * compressed and decompressed stream caps map to a 413 that lets callers
+ * degrade gracefully); here `maxBytes` only gates the advertised
+ * content-length up front and anchors a 2× mid-stream backstop.
  */
-export async function fetchPublishedTarballBytes(
+export async function fetchPublishedTarballStream(
   tarballUrl: string,
   options: PublishedTarballFetchOptions,
-): Promise<Uint8Array> {
-  const maxBytes = options.maxBytes ?? SANDBOX_MAX_TAR_BYTES;
+): Promise<ReadableStream<Uint8Array>> {
+  const maxBytes = options.maxBytes ?? SANDBOX_MAX_STREAM_TAR_BYTES;
   if (
     !isPublishedTarballUrlAllowed(
       tarballUrl,
@@ -82,17 +85,39 @@ export async function fetchPublishedTarballBytes(
   if (contentLength > maxBytes) {
     throw new SandboxError(JSON.stringify({ error: "tarball too large", status: 413 }));
   }
-  try {
-    return await readStreamBounded(response.body, maxBytes);
-  } catch (err) {
-    const tooLarge = err instanceof Error && err.message === "archive too large";
-    throw new SandboxError(
-      JSON.stringify({
-        error: tooLarge ? "tarball too large" : "archive download failed",
-        status: tooLarge ? 413 : 502,
-      }),
-    );
+  if (!response.body) {
+    throw new SandboxError(JSON.stringify({ error: "archive download failed", status: 502 }));
   }
+  return capByteStream(response.body, maxBytes);
+}
+
+// Backstop, not enforcement. The sandbox bounds the compressed wire bytes
+// itself (boundedByteStream at the same `maxBytes` default), and its overflow
+// surfaces as a proper 413 through the response path, which lets
+// acquireBaselineNpm degrade to a no-baseline scan. A mid-stream error THROWN
+// HERE cannot carry a 413 across the sandbox boundary — it reaches the parser
+// as an anonymous stream failure and would fail the whole scan — so this cap
+// sits at double the sandbox's threshold: the sandbox always trips first and
+// cancels the pipe, and this transform only fires if a (compromised,
+// cap-ignoring) sandbox keeps pulling, where failing hard is correct.
+function capByteStream(
+  body: ReadableStream<Uint8Array>,
+  maxBytes: number,
+): ReadableStream<Uint8Array> {
+  const backstop = 2 * maxBytes;
+  let total = 0;
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        total += chunk.byteLength;
+        if (total > backstop) {
+          controller.error(new Error("tarball too large"));
+          return;
+        }
+        controller.enqueue(chunk);
+      },
+    }),
+  );
 }
 
 export interface DownloadPublishedTarballOptions extends PublishedTarballFetchOptions {
@@ -100,8 +125,9 @@ export interface DownloadPublishedTarballOptions extends PublishedTarballFetchOp
 }
 
 /**
- * Trusted-parent fetch + credentials-free inline parse of a published npm
- * tarball used as the previous-version diff baseline.
+ * Trusted-parent fetch + credentials-free streaming parse of a published npm
+ * tarball used as the previous-version diff baseline. The archive is never
+ * materialized in the parent worker.
  */
 export async function downloadPublishedTarball(
   env: Cloudflare.Env,
@@ -109,9 +135,9 @@ export async function downloadPublishedTarball(
   tarballUrl: string,
   options: DownloadPublishedTarballOptions,
 ): Promise<DownloadResult> {
-  const bytes = await fetchPublishedTarballBytes(tarballUrl, options);
-  return downloadInSandboxInline(env, ctx, {
-    bytes,
+  const body = await fetchPublishedTarballStream(tarballUrl, options);
+  return downloadInSandboxStream(env, ctx, {
+    body,
     format: "tgz",
     maxFiles: options.maxFiles,
   });

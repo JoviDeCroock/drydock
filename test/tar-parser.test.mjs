@@ -514,7 +514,7 @@ describe("readTar limits and malformed archives", () => {
     );
   });
 
-  test("skips an oversized entry body but records its metadata", async () => {
+  test("skips an oversized entry body but records its metadata and hash", async () => {
     const limits = { maxFiles: 100, maxTarBytes: 1024 };
     const big = new Uint8Array(2048).fill(0x42);
     const tar = buildTar([
@@ -526,7 +526,9 @@ describe("readTar limits and malformed archives", () => {
     expect(files.map((f) => f.path)).toEqual(["index.js", "bin/native.node", "after.js"]);
     const skipped = files[1];
     expect(skipped.size).toBe(2048);
-    expect(skipped.sha256).toBe("");
+    // The body is discarded but hashed on the way past, so the diff layer can
+    // still prove whether the uninspected binary changed against the baseline.
+    expect(skipped.sha256).toBe(await tarParser.sha256Hex(big));
     expect(skipped.flags).toEqual(["content-skipped"]);
     expect(skipped.textSample).toBeUndefined();
     // Entries after the skipped body are still fully parsed.
@@ -551,6 +553,18 @@ describe("readTar limits and malformed archives", () => {
     await expect(parse(tar, limits)).rejects.toThrow(/invalid tar entry size/);
   });
 
+  test("duplicate paths still count toward the file-count cap", async () => {
+    // Duplicates replace their earlier entry, so distinct-path counting alone
+    // would let thousands of records for one path bypass the cap while every
+    // body is still streamed and hashed.
+    const tar = buildTar(
+      Array.from({ length: 6 }, () => ({ name: "package/dup.js", body: "x\n" })),
+    );
+    await expect(parse(tar, { maxFiles: 5, maxTarBytes: 1 << 20 })).rejects.toThrow(
+      /archive contains too many files/,
+    );
+  });
+
   test("skips entries once the cumulative retention budget is exhausted", async () => {
     const limits = { maxFiles: 100, maxTarBytes: 1000 };
     const bodyA = new Uint8Array(600).fill(0x61);
@@ -561,7 +575,7 @@ describe("readTar limits and malformed archives", () => {
     ]);
     const { files, suspicious } = await parseFull(tar, limits);
     expect(files[0].sha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(files[1].sha256).toBe("");
+    expect(files[1].sha256).toBe(await tarParser.sha256Hex(bodyB));
     expect(files[1].flags).toEqual(["content-skipped"]);
     expect(suspicious.map((s) => s.kind)).toEqual(["content-skipped"]);
   });
@@ -934,6 +948,68 @@ describe("parsePackageJson", () => {
   });
 });
 
+describe("boundedByteStream", () => {
+  // The sandbox pipes compressed tgz wire bytes through this cap before the
+  // DecompressionStream: gzip can decode a huge input to almost nothing, so
+  // the decompressed budget alone does not bound download size/inflater CPU.
+  const streamOf = (bytes) =>
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(bytes.subarray(0, 32));
+        controller.enqueue(bytes.subarray(32));
+        controller.close();
+      },
+    });
+
+  test("passes bytes through under the cap", async () => {
+    const bytes = new Uint8Array(64).fill(7);
+    const out = new Uint8Array(
+      await new Response(tarParser.boundedByteStream(streamOf(bytes), 64)).arrayBuffer(),
+    );
+    expect(out).toEqual(bytes);
+  });
+
+  test("fails closed, tagged, when raw bytes exceed the cap", async () => {
+    const bytes = new Uint8Array(64).fill(7);
+    await expect(
+      new Response(tarParser.boundedByteStream(streamOf(bytes), 63)).arrayBuffer(),
+    ).rejects.toMatchObject({
+      tarSafety: true,
+      message: "archive expands beyond safety limit",
+    });
+  });
+
+  test("a cap overflow reaches the parser tagged through the gzip pipe", async () => {
+    // The exact composition the sandbox tgz branch uses. The tag must survive
+    // pipeThrough(DecompressionStream) so the sandbox maps the overflow to a
+    // 413 and acquireBaselineNpm can degrade to a no-baseline scan — an
+    // untagged error would fail the whole scan instead.
+    const body = new Uint8Array(65536);
+    crypto.getRandomValues(body); // incompressible: gzip output ≈ input
+    const tar = buildTar([{ name: "package/blob.bin", body }]);
+    const cs = new CompressionStream("gzip");
+    const writer = cs.writable.getWriter();
+    writer.write(tar);
+    writer.close();
+    const compressed = new Uint8Array(await new Response(cs.readable).arrayBuffer());
+    const src = new ReadableStream({
+      start(controller) {
+        for (let i = 0; i < compressed.length; i += 512) {
+          controller.enqueue(compressed.subarray(i, Math.min(i + 512, compressed.length)));
+        }
+        controller.close();
+      },
+    });
+    const piped = tarParser
+      .boundedByteStream(src, 4096)
+      .pipeThrough(new DecompressionStream("gzip"));
+    await expect(tarParser.readTarStream(piped, 100, 1 << 20, 1 << 20)).rejects.toMatchObject({
+      tarSafety: true,
+      message: "archive expands beyond safety limit",
+    });
+  });
+});
+
 describe("rendered sandbox parser source", () => {
   // The dynamic sandbox worker is built by concatenating
   // `Function.toString()` of these parser exports (see
@@ -953,6 +1029,8 @@ describe("rendered sandbox parser source", () => {
     "parsePax",
     "describeNonRegularType",
     "sha256Hex",
+    "createSha256Digester",
+    "createStreamCursor",
     "shouldSkipTextSample",
     "summarizeFile",
     "summarizeSkippedFile",
@@ -960,6 +1038,17 @@ describe("rendered sandbox parser source", () => {
     "isRootManifestPath",
     "tarError",
     "readTarStream",
+    "readUint16Le",
+    "readUint32Le",
+    "inflateRawBounded",
+    "boundedByteStream",
+    "pumpDeflatedZipEntry",
+    "digestSkippedZipEntry",
+    "inflateRetainedZipEntry",
+    "readZipStream",
+    "findZipEndOfCentralDirectory",
+    "readStreamBounded",
+    "readZipArchiveBuffered",
     "parsePackageJson",
   ];
 

@@ -34,6 +34,8 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.parsePax,
   tarParser.describeNonRegularType,
   tarParser.sha256Hex,
+  tarParser.createSha256Digester,
+  tarParser.createStreamCursor,
   tarParser.shouldSkipTextSample,
   tarParser.summarizeFile,
   tarParser.summarizeSkippedFile,
@@ -43,10 +45,15 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.readTarStream,
   tarParser.readUint16Le,
   tarParser.readUint32Le,
+  tarParser.boundedByteStream,
+  tarParser.pumpDeflatedZipEntry,
+  tarParser.digestSkippedZipEntry,
+  tarParser.inflateRetainedZipEntry,
+  tarParser.readZipStream,
   tarParser.findZipEndOfCentralDirectory,
   tarParser.inflateRawBounded,
-  tarParser.readZipArchive,
   tarParser.readStreamBounded,
+  tarParser.readZipArchiveBuffered,
   tarParser.parsePackageJson,
 ];
 
@@ -127,7 +134,7 @@ export interface DownloadResult {
 export interface DownloadOptions {
   stageId?: string;
   tarballUrl?: string;
-  archiveFormat?: "tgz" | "zip";
+  archiveFormat?: "tgz" | "zip" | "vsix";
   publicArtifactUrls?: string[];
   maxFiles?: number;
   npmToken?: string;
@@ -189,7 +196,13 @@ function isSerializedSandboxDetail(message: string): boolean {
 
 export interface InlineDownloadOptions {
   bytes: Uint8Array;
-  format: "tgz" | "zip";
+  format: "tgz" | "zip" | "vsix";
+  maxFiles?: number;
+}
+
+export interface StreamDownloadOptions {
+  body: ReadableStream<Uint8Array>;
+  format: "tgz" | "zip" | "vsix";
   maxFiles?: number;
 }
 
@@ -213,17 +226,47 @@ export async function downloadInSandboxInline(
   if (!options.bytes || options.bytes.byteLength === 0) {
     throw new SandboxError(JSON.stringify({ error: "inline archive body is empty", status: 400 }));
   }
-  if (options.bytes.byteLength > MAX_TAR_BYTES) {
+  // Parse-side sanity cap only: the sandbox streams both formats now, so the
+  // bound is total streaming work, not what fits in the sandbox heap.
+  if (options.bytes.byteLength > MAX_STREAM_TAR_BYTES) {
     throw new SandboxError(JSON.stringify({ error: "archive too large", status: 413 }));
   }
+  const body = new ArrayBuffer(options.bytes.byteLength);
+  new Uint8Array(body).set(options.bytes);
+  return parseInCredentialsFreeSandbox(env, ctx, body, options.format, options.maxFiles);
+}
+
+/**
+ * Streaming variant of {@link downloadInSandboxInline}: the caller pipes a
+ * (still hostile, already policy-checked) archive body straight through to
+ * the sandbox without the parent worker ever buffering it. Used for the
+ * previous-published-version diff baseline, whose token-credentialed fetch
+ * must stay in the trusted parent while its bytes must not occupy parent
+ * memory.
+ */
+export async function downloadInSandboxStream(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  options: StreamDownloadOptions,
+): Promise<DownloadResult> {
+  return parseInCredentialsFreeSandbox(env, ctx, options.body, options.format, options.maxFiles);
+}
+
+async function parseInCredentialsFreeSandbox(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  body: ArrayBuffer | ReadableStream<Uint8Array>,
+  format: "tgz" | "zip" | "vsix",
+  maxFiles?: number,
+): Promise<DownloadResult> {
   const sandbox = env.LOADER.load({
     compatibilityDate: "2026-05-20",
     mainModule: "sandbox.js",
     modules: { "sandbox.js": sandboxSource() },
     env: {
       NPM_REGISTRY: env.NPM_REGISTRY || "https://registry.npmjs.org",
-      ARCHIVE_FORMAT: options.format,
-      MAX_FILES: Math.min(options.maxFiles ?? MAX_FILES, MAX_FILES),
+      ARCHIVE_FORMAT: format,
+      MAX_FILES: Math.min(maxFiles ?? MAX_FILES, MAX_FILES),
       MAX_TAR_BYTES,
       MAX_STREAM_TAR_BYTES,
     },
@@ -235,17 +278,18 @@ export async function downloadInSandboxInline(
     limits: { cpuMs: 2_000, subRequests: 0 },
   });
 
-  const body = new ArrayBuffer(options.bytes.byteLength);
-  new Uint8Array(body).set(options.bytes);
   const response = await sandbox.getEntrypoint().fetch(
     new Request("https://sandbox.local/download", {
       method: "POST",
       body,
       headers: {
         "content-type": "application/octet-stream",
-        "x-archive-format": options.format,
+        "x-archive-format": format,
       },
-    }),
+      // Fetch-spec streaming uploads require half duplex; workerd streams
+      // same-process request bodies either way, so this is a no-op there.
+      duplex: "half",
+    } as RequestInit),
   );
 
   if (!response.ok) {
@@ -330,7 +374,7 @@ export default {
     const archiveFormat = inlineFormat || env.ARCHIVE_FORMAT || "tgz";
     let res;
     if (inlineFormat) {
-      if (archiveFormat !== "zip" && archiveFormat !== "tgz") return json({ error: "invalid inline archive format", status: 400 }, 400);
+      if (archiveFormat !== "zip" && archiveFormat !== "tgz" && archiveFormat !== "vsix") return json({ error: "invalid inline archive format", status: 400 }, 400);
       res = new Response(request.body, { status: 200, headers: { "content-type": "application/octet-stream" } });
     } else {
       const { stageId, tarballUrl } = await request.json();
@@ -341,12 +385,17 @@ export default {
       res = await fetch(url, { headers: { accept: "application/octet-stream" } });
       if (!res.ok) return json({ error: "download failed", status: res.status }, 502);
 
-      // Only the zip path buffers the whole archive, so only it needs the wire-size
-      // gate. The tgz path streams: oversized bodies are skipped, never buffered.
+      // Only the vsix path buffers the whole archive, so only it needs the
+      // wire-size gate; tgz and wheel zips stream.
       const contentLength = Number(res.headers.get("content-length") || "0");
-      if (archiveFormat === "zip" && contentLength > maxTarBytes) return json({ error: "tarball too large", status: 413 }, 413);
+      if (archiveFormat === "vsix" && contentLength > maxTarBytes) return json({ error: "tarball too large", status: 413 }, 413);
     }
-    if (archiveFormat === "zip") {
+    const maxStreamTarBytes = env.MAX_STREAM_TAR_BYTES || maxTarBytes * 10;
+    if (archiveFormat === "vsix") {
+      // VSIX zips are packed by yazl (via vsce), whose streamed entries carry
+      // their sizes in data descriptors — only the central directory (what
+      // consumers read) is authoritative, so the archive buffers under the
+      // wire cap and is parsed CD-first, exactly as before zip streaming.
       let zip;
       try {
         zip = await readStreamBounded(res.body, maxTarBytes);
@@ -357,27 +406,41 @@ export default {
       }
       let files;
       try {
-        files = await readZipArchive(zip, env.MAX_FILES || 2_500, maxTarBytes);
+        files = await readZipArchiveBuffered(zip, env.MAX_FILES || 2_500, maxTarBytes);
       } catch (err) {
-        const reason = err && err.message === "archive contains too many files"
-          ? "archive contains too many files"
-          : err && err.message === "archive expands beyond safety limit"
-            ? "archive expands beyond safety limit"
-            : err && err.message
-              ? err.message
-              : "zip parse failed";
+        const reason = err && err.tarSafety && err.message ? err.message : "zip parse failed";
         const status = reason === "archive contains too many files" || reason === "archive expands beyond safety limit" ? 413 : 400;
         return json({ error: reason, status }, status);
       }
       return json({ files, packageJson: null });
     }
+    if (archiveFormat === "zip") {
+      let files;
+      let suspiciousEntries;
+      try {
+        if (!res.body) return json({ error: "archive download failed", status: 400 }, 400);
+        const parsed = await readZipStream(res.body, env.MAX_FILES || 2_500, maxTarBytes, maxStreamTarBytes);
+        files = parsed.files;
+        suspiciousEntries = parsed.suspicious;
+      } catch (err) {
+        // The parser tags its own safety-limit / malformed-archive errors, so
+        // anything untagged is an upstream stream failure. This avoids
+        // matching on exact message text, which silently drifts on a reword.
+        const reason = err && err.tarSafety && err.message ? err.message : "zip parse failed";
+        const status = reason === "archive contains too many files" || reason === "archive expands beyond safety limit" ? 413 : 400;
+        return json({ error: reason, status }, status);
+      }
+      return json({ files, packageJson: null, suspiciousEntries });
+    }
 
-    const maxStreamTarBytes = env.MAX_STREAM_TAR_BYTES || maxTarBytes * 10;
     let files;
     let suspiciousEntries;
     try {
       if (!res.body) return json({ error: "tarball decompression failed", status: 400 }, 400);
-      const tarStream = res.body.pipeThrough(new DecompressionStream("gzip"));
+      // Cap the compressed wire bytes too: gzip can decode a huge input to
+      // almost nothing, so the decompressed budget inside readTarStream does
+      // not bound download size or inflater CPU on its own.
+      const tarStream = boundedByteStream(res.body, maxStreamTarBytes).pipeThrough(new DecompressionStream("gzip"));
       const parsed = await readTarStream(tarStream, env.MAX_FILES || 2_500, maxTarBytes, maxStreamTarBytes);
       files = parsed.files;
       suspiciousEntries = parsed.suspicious;
@@ -394,6 +457,6 @@ export default {
   },
 };
 
-function json(value, status = 200) { return new Response(JSON.stringify(value, null, 2), { status, headers: { "content-type": "application/json; charset=utf-8" } }); }
+function json(value, status = 200) { return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json; charset=utf-8" } }); }
 `;
 }

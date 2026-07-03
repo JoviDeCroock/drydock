@@ -52,7 +52,7 @@ describe("review", () => {
     expect(diff.find((entry) => entry.path === "index.js")?.status).toBe("unchanged");
   });
 
-  test("diff treats skipped file content as modified even when placeholder hashes match", () => {
+  test("diff treats skipped file content as modified when hashes are missing (legacy artifacts)", () => {
     const before = [
       {
         path: "bin/native.node",
@@ -76,6 +76,48 @@ describe("review", () => {
       status: "modified",
       flags: ["content-skipped"],
     });
+  });
+
+  test("diff proves a skipped file unchanged when its streamed hashes match", () => {
+    // Skipped bodies are hashed while being discarded, so equal real hashes
+    // mean the uninspected binary is byte-identical to the published baseline.
+    const hash = "a".repeat(64);
+    const before = [
+      { path: "bin/native.node", size: 50_000_000, sha256: hash, flags: ["content-skipped"] },
+    ];
+    const staged = [
+      { path: "bin/native.node", size: 50_000_000, sha256: hash, flags: ["content-skipped"] },
+    ];
+
+    const diff = createPackageDiff(before, staged);
+
+    expect(diff.find((entry) => entry.path === "bin/native.node")).toMatchObject({
+      status: "unchanged",
+      flags: ["content-skipped"],
+    });
+  });
+
+  test("diff marks a skipped file modified when its streamed hashes differ", () => {
+    const before = [
+      {
+        path: "bin/native.node",
+        size: 50_000_000,
+        sha256: "a".repeat(64),
+        flags: ["content-skipped"],
+      },
+    ];
+    const staged = [
+      {
+        path: "bin/native.node",
+        size: 50_000_001,
+        sha256: "b".repeat(64),
+        flags: ["content-skipped"],
+      },
+    ];
+
+    const diff = createPackageDiff(before, staged);
+
+    expect(diff.find((entry) => entry.path === "bin/native.node")?.status).toBe("modified");
   });
 
   test("deterministic policy escalates risky new staged changes", () => {
