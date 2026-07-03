@@ -379,7 +379,12 @@ function normalizePathSegments(path: string): string | null {
 }
 
 function broadActivationEvent(events: string[]): string | null {
-  return events.find((event) => event === "*" || event === "onStartupFinished") ?? null;
+  return (
+    events.find(
+      (event) =>
+        event === "*" || event === "onStartupFinished" || event.startsWith("workspaceContains:"),
+    ) ?? null
+  );
 }
 
 function matches(patterns: RegExp[], sample: string, normalized: string): boolean {
