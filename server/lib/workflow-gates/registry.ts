@@ -1,3 +1,5 @@
+import { cratesWorkflowGateAdapter } from "./crates";
+import { goWorkflowGateAdapter } from "./go";
 import { npmWorkflowGateAdapter } from "./npm";
 import { pypiWorkflowGateAdapter } from "./pypi";
 import { vscodeWorkflowGateAdapter } from "./vscode";
@@ -28,6 +30,8 @@ const WORKFLOW_GATE_ADAPTERS: Record<string, WorkflowGateAdapter> = {
   [pypiWorkflowGateAdapter.ecosystem]: pypiWorkflowGateAdapter,
   [npmWorkflowGateAdapter.ecosystem]: npmWorkflowGateAdapter,
   [vscodeWorkflowGateAdapter.ecosystem]: vscodeWorkflowGateAdapter,
+  [cratesWorkflowGateAdapter.ecosystem]: cratesWorkflowGateAdapter,
+  [goWorkflowGateAdapter.ecosystem]: goWorkflowGateAdapter,
 };
 
 /** Resolve the workflow-gate adapter for a release target's ecosystem. */

@@ -136,10 +136,10 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     // `globalThis['re'+'quire']`) so the literal regex set sees them. Matching
     // both raw and normalized text means folding can only add detections, never
     // drop one a literal scan already finds. JavaScript only for now; the
-    // normalizer is JS-flavored and Python evasion is out of scope.
-    const normalized = ctx.codePatternSet === "python" ? sample : normalizeCodeForScanning(sample);
-    const packedObfuscation =
-      ctx.codePatternSet !== "python" && hasRotatingStringTableObfuscation(sample);
+    // normalizer is JS-flavored and evasion in other languages is out of scope.
+    const jsFlavored = ctx.codePatternSet === undefined || ctx.codePatternSet === "javascript";
+    const normalized = jsFlavored ? normalizeCodeForScanning(sample) : sample;
+    const packedObfuscation = jsFlavored && hasRotatingStringTableObfuscation(sample);
     const prefix = changedPrefix(ctx, file.path);
     const changed = ctx.diffByPath.get(file.path)?.status;
     const lifecycleScriptFile = isLifecycleScriptFile(ctx, file.path);
@@ -166,10 +166,10 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       packedObfuscation,
       true,
     );
-    const credentialSample =
-      ctx.codePatternSet === "python" ? sample : omitCommonEnvironmentAccesses(sample);
-    const credentialNormalized =
-      ctx.codePatternSet === "python" ? normalized : omitCommonEnvironmentAccesses(normalized);
+    const credentialSample = jsFlavored ? omitCommonEnvironmentAccesses(sample) : sample;
+    const credentialNormalized = jsFlavored
+      ? omitCommonEnvironmentAccesses(normalized)
+      : normalized;
     const credentialAccess = matchCategory(
       ctx.patterns.credentialAccess,
       credentialSample,

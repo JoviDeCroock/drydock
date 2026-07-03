@@ -30,9 +30,10 @@ export async function resolveBundleArtifacts(
     const lowerPath = file.path.toLowerCase();
     // Wheels stream through the zip reader; VSIX archives are yazl-packed
     // with data-descriptor entries and must take the buffered CD-first path.
+    // Go modules ship as .zip and take the same zip reader.
     const format = lowerPath.endsWith(".vsix")
       ? "vsix"
-      : lowerPath.endsWith(".whl")
+      : lowerPath.endsWith(".whl") || lowerPath.endsWith(".zip")
         ? "zip"
         : "tgz";
     const parsed = await downloadInSandboxInline(env, ctx, { bytes: file.bytes, format });
@@ -45,7 +46,7 @@ export async function resolveBundleArtifacts(
       if (claims.length === 0) {
         throw new WorkflowArtifactError(
           "artifact_identity_missing",
-          `${file.path} is not a recognizable npm or PyPI release artifact`,
+          `${file.path} is not a release artifact any registered ecosystem recognizes`,
         );
       }
       if (claims.length > 1) {

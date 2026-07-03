@@ -41,7 +41,7 @@ export interface FindingDiffAnnotation {
   releaseDelta: boolean;
 }
 
-export type CodePatternSet = "javascript" | "python";
+export type CodePatternSet = "javascript" | "python" | "rust" | "go";
 
 export interface FindingAnnotationOptions {
   previousFiles?: Array<Pick<FileRecord, "path" | "textSample" | "flags">>;

@@ -7,13 +7,20 @@ import * as schema from "../../server/db/schema";
 import { readGithubAppConfig } from "../../server/lib/github-app/config";
 import { upsertInstallation } from "../../server/lib/github-app/persistence";
 import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
+import { WorkflowArtifactError } from "../../server/lib/github-app/artifacts";
+import { cratesWorkflowGateAdapter } from "../../server/lib/workflow-gates/crates";
+import { goWorkflowGateAdapter } from "../../server/lib/workflow-gates/go";
 import { prepareReleaseCandidatesForGate } from "../../server/lib/workflow-gates/prepare";
 import { pypiWorkflowGateAdapter } from "../../server/lib/workflow-gates/pypi";
 import {
+  AMBIGUOUS_ARCHIVE_ECOSYSTEM,
   UnsupportedEcosystemError,
+  classifyBundleArtifact,
+  detectArchiveEcosystems,
   getWorkflowGateAdapter,
   supportedWorkflowGateEcosystems,
 } from "../../server/lib/workflow-gates/registry";
+import type { ParsedGateArtifact } from "../../server/lib/workflow-gates/types";
 
 // ── Pure adapter dispatch ────────────────────────────────────────────────────
 
@@ -36,7 +43,133 @@ describe("workflow-gate adapter registry", () => {
   });
 
   test("lists every registered ecosystem", () => {
-    expect(supportedWorkflowGateEcosystems()).toContain("pypi");
+    expect(supportedWorkflowGateEcosystems()).toEqual(
+      expect.arrayContaining(["pypi", "npm", "crates", "go"]),
+    );
+  });
+
+  test("resolves the crates and go adapters by ecosystem", () => {
+    expect(getWorkflowGateAdapter("crates")).toBe(cratesWorkflowGateAdapter);
+    expect(getWorkflowGateAdapter("go")).toBe(goWorkflowGateAdapter);
+  });
+});
+
+// ── crates/go: classification, content detection, candidate derivation ───────
+
+function gateFile(path: string, textSample: string) {
+  return { path, size: textSample.length, sha256: `sha-${path}`, flags: [], textSample };
+}
+
+function crateArtifact(name: string, version: string, path: string): ParsedGateArtifact {
+  return {
+    path,
+    sha256: "ab".repeat(32),
+    ecosystem: "crates",
+    kind: "crate",
+    files: [
+      gateFile(
+        `${name}-${version}/Cargo.toml`,
+        `[package]\nname = "${name}"\nversion = "${version}"\n`,
+      ),
+      gateFile(`${name}-${version}/src/lib.rs`, "pub fn v() {}\n"),
+    ],
+    packageJson: null,
+  };
+}
+
+function goArtifact(modulePath: string, version: string, path: string): ParsedGateArtifact {
+  return {
+    path,
+    sha256: "cd".repeat(32),
+    ecosystem: "go",
+    kind: "module",
+    files: [
+      gateFile(`${modulePath}@${version}/go.mod`, `module ${modulePath}\n\ngo 1.22\n`),
+      gateFile(`${modulePath}@${version}/main.go`, "package demo\n"),
+    ],
+    packageJson: null,
+  };
+}
+
+describe("workflow-gate registry with crates and go registered", () => {
+  test("classifies .crate as crates and .zip as go, keeping .tar.gz ambiguous", () => {
+    expect(classifyBundleArtifact("target/package/demo-1.0.0.crate")).toEqual({
+      ecosystem: "crates",
+      kind: "crate",
+    });
+    expect(classifyBundleArtifact("dist/demo-v1.0.0.zip")).toEqual({
+      ecosystem: "go",
+      kind: "module",
+    });
+    expect(classifyBundleArtifact("dist/pkg-1.0.0.tar.gz")).toEqual({
+      ecosystem: AMBIGUOUS_ARCHIVE_ECOSYSTEM,
+      kind: "archive",
+    });
+  });
+
+  test("content-detects a crate via its root Cargo.toml.orig and a module zip via its root", () => {
+    expect(
+      detectArchiveEcosystems({
+        files: [gateFile("demo-1.0.0/Cargo.toml.orig", "[package]")],
+        packageJson: null,
+      }),
+    ).toEqual([{ ecosystem: "crates", kind: "crate" }]);
+    expect(
+      detectArchiveEcosystems({
+        files: [gateFile("example.com/demo@v1.0.0/go.mod", "module example.com/demo\n")],
+        packageJson: null,
+      }),
+    ).toEqual([{ ecosystem: "go", kind: "module" }]);
+    // A vendored Cargo.toml deeper in the tree must not claim the archive.
+    expect(
+      detectArchiveEcosystems({
+        files: [gateFile("pkg/vendor/demo/Cargo.toml.orig", "[package]")],
+        packageJson: null,
+      }),
+    ).toEqual([]);
+  });
+
+  test("derives one crates candidate per crate name and rejects duplicates", () => {
+    const candidates = cratesWorkflowGateAdapter.prepareReleaseCandidates([
+      crateArtifact("demo-a", "1.0.0", "demo-a-1.0.0.crate"),
+      crateArtifact("demo-b", "2.0.0", "demo-b-2.0.0.crate"),
+    ]);
+    expect(candidates.map((candidate) => candidate.package)).toEqual([
+      { name: "demo-a", version: "1.0.0" },
+      { name: "demo-b", version: "2.0.0" },
+    ]);
+    expect(candidates.every((candidate) => candidate.ecosystem === "crates")).toBe(true);
+
+    expect(() =>
+      cratesWorkflowGateAdapter.prepareReleaseCandidates([
+        crateArtifact("demo-a", "1.0.0", "one.crate"),
+        crateArtifact("demo-a", "1.0.0", "two.crate"),
+      ]),
+    ).toThrow(WorkflowArtifactError);
+  });
+
+  test("derives one go candidate per module path and rejects identity-less zips", () => {
+    const candidates = goWorkflowGateAdapter.prepareReleaseCandidates([
+      goArtifact("example.com/demo", "v1.0.0", "demo-v1.0.0.zip"),
+      goArtifact("example.com/other", "v2.0.0", "other-v2.0.0.zip"),
+    ]);
+    expect(candidates.map((candidate) => candidate.package)).toEqual([
+      { name: "example.com/demo", version: "v1.0.0" },
+      { name: "example.com/other", version: "v2.0.0" },
+    ]);
+
+    expect(() =>
+      goWorkflowGateAdapter.prepareReleaseCandidates([
+        {
+          path: "bad.zip",
+          sha256: "ef".repeat(32),
+          ecosystem: "go",
+          kind: "module",
+          files: [gateFile("go.mod", "module example.com/demo\n")],
+          packageJson: null,
+        },
+      ]),
+    ).toThrow(WorkflowArtifactError);
   });
 });
 

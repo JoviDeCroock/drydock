@@ -82,12 +82,14 @@ function ReportSection({
 }
 
 function ProvenanceView({ provenance }: { provenance: ReleaseProvenance }) {
-  const ecosystem =
-    provenance.ecosystem === "pypi"
-      ? "PyPI"
-      : provenance.ecosystem === "vscode"
-        ? "VS Code"
-        : "npm";
+  const ecosystemLabels: Record<ReleaseProvenance["ecosystem"], string> = {
+    npm: "npm",
+    pypi: "PyPI",
+    vscode: "VS Code",
+    crates: "crates.io",
+    go: "Go module",
+  };
+  const ecosystem = ecosystemLabels[provenance.ecosystem] ?? provenance.ecosystem;
   return (
     <div class="flex flex-col gap-3">
       <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">

@@ -92,6 +92,76 @@ const PYTHON_CREDENTIAL_ACCESS_PATTERNS = [
   /\.ssh\/id_/,
   /\.netrc/,
 ];
+const RUST_PROCESS_EXECUTION_PATTERNS = [
+  /\bprocess::Command\b/,
+  /\bCommand::new\s*\(/,
+  /\bstd::process\b/,
+  /\bcurl\s/,
+  /\bwget\s/,
+  /\bbash\s+-c/,
+  /\bpowershell\s/,
+];
+const RUST_NETWORK_ACCESS_PATTERNS = [
+  /\bstd::net\b/,
+  /\bTcpStream::connect\s*\(/,
+  /\bUdpSocket::bind\s*\(/,
+  /\breqwest::/,
+  /\bureq::/,
+  /\bhyper::Client\b/,
+];
+const RUST_DYNAMIC_EVALUATION_PATTERNS = [
+  // Rust has no eval; the equivalent capability is loading native code at
+  // runtime or decoding an embedded payload before handing it to one of the
+  // process/network sinks above.
+  /\blibloading\b/,
+  /\bdlopen\b/,
+  /\bLibrary::new\s*\(/,
+  /\bbase64::decode\s*\(/,
+  /\bSTANDARD\.decode\s*\(/,
+  /\bfrom_hex\s*\(/,
+];
+const RUST_CREDENTIAL_ACCESS_PATTERNS = [
+  /\benv::var(?:_os)?\s*\(/,
+  /\bstd::env\b/,
+  /\bCARGO_REGISTRY_TOKEN\b/,
+  /\bGITHUB_TOKEN\b/,
+  /\bAWS_SECRET\b/,
+  /\.aws\/credentials/,
+  /\.ssh\/id_/,
+  /\.netrc/,
+];
+const GO_PROCESS_EXECUTION_PATTERNS = [
+  /"os\/exec"/,
+  /\bexec\.Command(?:Context)?\s*\(/,
+  /\bsyscall\.Exec\s*\(/,
+  /\bcurl\s/,
+  /\bwget\s/,
+  /\bbash\s+-c/,
+  /\bpowershell\s/,
+];
+const GO_NETWORK_ACCESS_PATTERNS = [
+  /"net\/http"/,
+  /\bhttp\.(?:Get|Post|PostForm|NewRequest)\s*\(/,
+  /\bnet\.(?:Dial|DialTimeout|Listen)\s*\(/,
+  /\bwebsocket\./,
+];
+const GO_DYNAMIC_EVALUATION_PATTERNS = [
+  // Go has no eval; the equivalent capability is loading code at runtime or
+  // decoding an embedded payload before handing it to a process/network sink.
+  /\bplugin\.Open\s*\(/,
+  /\bbase64\.(?:Std|URL|RawStd|RawURL)Encoding\.DecodeString\s*\(/,
+  /\bhex\.DecodeString\s*\(/,
+];
+const GO_CREDENTIAL_ACCESS_PATTERNS = [
+  /\bos\.Getenv\s*\(/,
+  /\bos\.LookupEnv\s*\(/,
+  /\bos\.Environ\s*\(/,
+  /\bGITHUB_TOKEN\b/,
+  /\bAWS_SECRET\b/,
+  /\.aws\/credentials/,
+  /\.ssh\/id_/,
+  /\.netrc/,
+];
 
 export const JS_PATTERN_SET = {
   processExecution: JS_PROCESS_EXECUTION_PATTERNS,
@@ -104,6 +174,18 @@ export const PYTHON_PATTERN_SET = {
   networkAccess: PYTHON_NETWORK_ACCESS_PATTERNS,
   dynamicEvaluation: PYTHON_DYNAMIC_EVALUATION_PATTERNS,
   credentialAccess: PYTHON_CREDENTIAL_ACCESS_PATTERNS,
+};
+export const RUST_PATTERN_SET = {
+  processExecution: RUST_PROCESS_EXECUTION_PATTERNS,
+  networkAccess: RUST_NETWORK_ACCESS_PATTERNS,
+  dynamicEvaluation: RUST_DYNAMIC_EVALUATION_PATTERNS,
+  credentialAccess: RUST_CREDENTIAL_ACCESS_PATTERNS,
+};
+export const GO_PATTERN_SET = {
+  processExecution: GO_PROCESS_EXECUTION_PATTERNS,
+  networkAccess: GO_NETWORK_ACCESS_PATTERNS,
+  dynamicEvaluation: GO_DYNAMIC_EVALUATION_PATTERNS,
+  credentialAccess: GO_CREDENTIAL_ACCESS_PATTERNS,
 };
 
 // Python process-execution, network, and dynamic-evaluation capability in one set.
@@ -152,5 +234,8 @@ function genericSecretPatterns(): Array<[RegExp, string]> {
 }
 
 export function codePatternsFor(codePatternSet: CodePatternSet | undefined): typeof JS_PATTERN_SET {
-  return codePatternSet === "python" ? PYTHON_PATTERN_SET : JS_PATTERN_SET;
+  if (codePatternSet === "python") return PYTHON_PATTERN_SET;
+  if (codePatternSet === "rust") return RUST_PATTERN_SET;
+  if (codePatternSet === "go") return GO_PATTERN_SET;
+  return JS_PATTERN_SET;
 }

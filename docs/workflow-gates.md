@@ -2,7 +2,7 @@
 
 Workflow gates are Drydock's review mode for releases whose registry cannot hold a private staged artifact. GitHub Actions builds the release, uploads the candidate artifacts, and a GitHub Environment custom deployment-protection rule pauses publishing while Drydock reviews the bytes.
 
-Supported gate ecosystems: **PyPI**, **npm**, and **VS Code extensions**. Shared GitHub plumbing lives in `server/lib/workflow-gates/`; artifact-specific behavior lives behind adapters.
+Supported gate ecosystems: **PyPI**, **npm**, **VS Code extensions**, **crates.io**, and **Go modules**. Shared GitHub plumbing lives in `server/lib/workflow-gates/`; artifact-specific behavior lives behind adapters.
 
 ## Core contract
 
@@ -143,6 +143,30 @@ jobs:
 ```
 
 The publish job must publish the reviewed VSIX bytes. Repacking after approval breaks the review boundary.
+
+## crates.io workflow-gate notes
+
+The candidate is whatever `cargo package` `.crate` archives (gzipped tars) the workflow uploads — `cargo publish` from GitHub Actions is paused by the deployment-protection rule between packaging and the registry upload.
+
+The crates adapter (`server/lib/adapters/crates/`):
+
+- reads crate identity from the normalized `Cargo.toml` inside each archive (content detection uses the root `Cargo.toml.orig` cargo writes next to it);
+- strips the `{name}-{version}/` archive root so staged/baseline diffs align across versions;
+- groups archives by crate name (a cargo workspace can release several crates from one run) and requires exactly one `.crate` per crate version;
+- selects the baseline from the crates.io sparse index (newest non-yanked published version) and downloads it through a credential-free broker restricted to `https://static.crates.io`;
+- reports build-script additions/changes, proc-macro introduction, `links` key changes, and new git/path dependencies, and scans changed lines with Rust code patterns.
+
+## Go modules workflow-gate notes
+
+Go has no publish step — the release is the tag plus the module proxy's first fetch — so the gate pauses the tag/release workflow. The candidate is the module zip the workflow builds (e.g. with `golang.org/x/mod/zip`).
+
+The Go adapter (`server/lib/adapters/gomod/`):
+
+- reads module identity from the zip's mandatory `{module}@{version}/` root and its `go.mod`, and fail-closes when they disagree;
+- strips that root so staged/baseline diffs align across versions;
+- groups zips by module path (multi-module repositories can tag several modules per release) and requires exactly one zip per module version;
+- selects the highest published semver from `proxy.golang.org/@v/list` as the baseline and downloads it through a credential-free broker restricted to `https://proxy.golang.org`;
+- reports `//go:generate` additions, cgo introduction, new `unsafe`/`syscall` imports, and `replace` directives in `go.mod`, and scans changed lines with Go code patterns.
 
 ## Trust and failure behavior
 
