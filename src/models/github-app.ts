@@ -87,6 +87,46 @@ export async function getWorkflowGateByScan(scanId: string): Promise<PublicWorkf
   }
 }
 
+export function listWorkflowGates(options: { limit?: number } = {}): Promise<{
+  gates: PublicWorkflowGate[];
+  limit: number;
+}> {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  const qs = params.toString();
+  return apiFetch<{ gates: PublicWorkflowGate[]; limit: number }>(
+    `/api/v1/github-app/workflow-gates${qs ? `?${qs}` : ""}`,
+  );
+}
+
+export const WorkflowGateListModel = createModel(() => {
+  const gates = signal<PublicWorkflowGate[]>([]);
+  const loaded = signal(false);
+  const refreshing = signal(false);
+  const error = signal<string | null>(null);
+
+  return {
+    gates,
+    loaded,
+    refreshing,
+    error,
+
+    async refresh(): Promise<void> {
+      refreshing.value = true;
+      try {
+        const data = await listWorkflowGates();
+        gates.value = data.gates;
+        error.value = null;
+      } catch (err) {
+        error.value = errorMessage(err);
+      } finally {
+        loaded.value = true;
+        refreshing.value = false;
+      }
+    },
+  };
+});
+
 // Records a decision for a single package of the gate (`scanId`). The gate only
 // finalizes — releasing or blocking the held GitHub job — once every package is
 // approved, or the moment any one is rejected.

@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { type AppDb } from "../../db/client";
 import { githubWorkflowGates, scans } from "../../db/schema";
 import type { InstallationRecord, ReleaseTargetRecord } from "./persistence";
@@ -109,6 +109,31 @@ export async function getGateForOrganization(
     )
     .limit(1);
   return row ? readGateRow(row) : null;
+}
+
+export interface ListWorkflowGatesOptions {
+  status?: WorkflowGateStatus | "all";
+  limit?: number;
+}
+
+export async function listWorkflowGatesForOrganization(
+  db: AppDb,
+  organizationId: string,
+  options: ListWorkflowGatesOptions = {},
+): Promise<WorkflowGateRecord[]> {
+  const limit = Math.min(50, Math.max(1, Math.floor(options.limit ?? 10)));
+  const status = options.status ?? "pending";
+  const conditions = [eq(githubWorkflowGates.organizationId, organizationId)];
+  if (status !== "all") {
+    conditions.push(eq(githubWorkflowGates.status, status));
+  }
+  const rows = await db
+    .select()
+    .from(githubWorkflowGates)
+    .where(and(...conditions))
+    .orderBy(desc(githubWorkflowGates.requestedAt), desc(githubWorkflowGates.id))
+    .limit(limit);
+  return rows.map(readGateRow);
 }
 
 /**

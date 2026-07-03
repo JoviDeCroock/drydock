@@ -1242,7 +1242,47 @@ describe("github-app workflow-gate decision route", () => {
   });
 });
 
-describe("github-app workflow-gate by-scan route", () => {
+describe("github-app workflow-gate read routes", () => {
+  test("lists pending gates before a review scan is attached", async () => {
+    const { userId, organizationId } = await seedUser();
+    const { gateId, runId } = await seedGate(organizationId);
+
+    const res = await callGithubAppRoute(
+      buildTestApp(userId),
+      "GET",
+      "/api/v1/github-app/workflow-gates",
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { gates: Array<Record<string, unknown>> };
+    expect(body.gates).toHaveLength(1);
+    expect(body.gates[0]).toMatchObject({
+      id: gateId,
+      repositoryFullName: "octo/example",
+      runId,
+      status: "pending",
+      scanId: null,
+      packages: [],
+    });
+    expect(body.gates[0]).not.toHaveProperty("deploymentCallbackUrl");
+  });
+
+  test("lists only pending gates for the caller's organization", async () => {
+    const caller = await seedUser();
+    const other = await seedUser();
+    await seedGate(caller.organizationId, { status: "approved", decision: "approved" });
+    await seedGate(other.organizationId);
+
+    const res = await callGithubAppRoute(
+      buildTestApp(caller.userId),
+      "GET",
+      "/api/v1/github-app/workflow-gates",
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ gates: [] });
+  });
+
   test("returns 404 when no gate references the scan", async () => {
     const { userId } = await seedUser();
     const res = await callGithubAppRoute(

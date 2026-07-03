@@ -55,6 +55,7 @@ import {
   getGateByScanId,
   getGateForOrganization,
   listGatePackageScans,
+  listWorkflowGatesForOrganization,
   markGateDecidedForPackageAggregate,
   resetGateReviewForRetry,
 } from "../lib/github-app/webhook-gates";
@@ -402,6 +403,30 @@ const GATE_DECISIONS = ["approved", "rejected"] as const;
 type GateDecision = (typeof GATE_DECISIONS)[number];
 const GATE_DECISION_SET = new Set<GateDecision>(GATE_DECISIONS);
 const GATE_DECISION_COMMENT_MAX = 500;
+
+githubAppRoutes.get("/workflow-gates", async (c) => {
+  const db = createDb(c.env.DB);
+  const organizationId = await requireActiveOrganization(c, db);
+  const rawLimit = Number(c.req.query("limit"));
+  const limit = Number.isFinite(rawLimit) ? Math.min(50, Math.max(1, Math.floor(rawLimit))) : 10;
+  const gates = await listWorkflowGatesForOrganization(db, organizationId, {
+    status: "pending",
+    limit,
+  });
+  const orgRequiresTwoFactor = await organizationRequiresTwoFactorForReleaseDecisions(
+    db,
+    organizationId,
+  );
+  const packagesByGate = await Promise.all(
+    gates.map(async (gate) => listGatePackageScans(db, organizationId, gate.id)),
+  );
+  return c.json({
+    gates: gates.map((gate, index) =>
+      publicWorkflowGate(gate, packagesByGate[index] ?? [], orgRequiresTwoFactor),
+    ),
+    limit,
+  });
+});
 
 githubAppRoutes.get("/workflow-gates/by-scan/:scanId", async (c) => {
   const db = createDb(c.env.DB);

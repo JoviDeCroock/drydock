@@ -11,9 +11,10 @@ Supported gate ecosystems: **PyPI** and **npm**. Shared GitHub plumbing lives in
 3. GitHub sends a `deployment_protection_rule` webhook to `/webhooks/github`.
 4. Drydock resolves the installation, repository, run, environment, release target, and uploaded artifacts.
 5. The adapter derives one or more reviewable release candidates from those artifacts.
-6. A queue worker runs the shared scan pipeline for each candidate.
-7. A maintainer accepts or rejects the gate review in Drydock.
-8. Drydock posts the deployment-protection decision back to GitHub; the workflow either continues to publish or fails closed.
+6. The dashboard surfaces the pending gate immediately from the stored webhook row, even before package scans finish.
+7. A queue worker runs the shared scan pipeline for each candidate.
+8. A maintainer accepts or rejects the gate review in Drydock.
+9. Drydock posts the deployment-protection decision back to GitHub; the workflow either continues to publish or fails closed.
 
 The GitHub webhook is public but signed with `GITHUB_WEBHOOK_SECRET` and bypasses Better Auth only after signature verification. All stored gate state remains organization-scoped.
 
@@ -117,7 +118,9 @@ verification.
 
 ## Maintainer workbench
 
-The gate review workbench shows the release target, package identity/version, artifact set, scan status, findings, changed files, and accept/reject controls. Accept/reject actions require an authenticated maintainer in the owning organization. Step-up auth requirements should match other sensitive release decisions; see [`two-factor-auth.md`](./two-factor-auth.md).
+The dashboard lists pending release gates from `GET /api/v1/github-app/workflow-gates` as soon as GitHub's signed webhook has been persisted. Early rows may not have package scans yet; they show the repository, environment, workflow run, and queued/reviewing state until artifact resolution creates the package scan rows.
+
+The gate review workbench shows the release target, package identity/version, artifact set, scan status, findings, changed files, and accept/reject controls. It loads gate context for workflow-gate scans while the scan is still pending or running, but accept/reject actions remain disabled until the package reaches a reviewable terminal state. Accept/reject actions require an authenticated maintainer in the owning organization. Step-up auth requirements should match other sensitive release decisions; see [`two-factor-auth.md`](./two-factor-auth.md).
 
 ## Adding a new ecosystem
 

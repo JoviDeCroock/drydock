@@ -7,6 +7,11 @@ import { rememberDashboardReturnUrl, useQuerySignal } from "../../lib/query-stat
 import { npmStagedPackagesUrlFor } from "../../lib/npm-staged-url";
 import { pluralize } from "../../lib/format";
 import { sessionModel } from "../../models/auth";
+import {
+  WorkflowGateListModel,
+  type GatePackageScan,
+  type PublicWorkflowGate,
+} from "../../models/github-app";
 import { NpmConnectionModel } from "../../models/npm-connection";
 import { OrganizationModel } from "../../models/organization";
 import {
@@ -31,6 +36,7 @@ import { DecisionDialog } from "./ScanDetail/DecisionDialog";
 export default function DashboardPage() {
   const location = useLocation();
   const scans = useModel(ScanListModel);
+  const gates = useModel(WorkflowGateListModel);
   const npm = useModel(NpmConnectionModel);
   const organizations = useModel(OrganizationModel);
   const stagedPublishes = useModel(StagedPublishesModel);
@@ -59,7 +65,7 @@ export default function DashboardPage() {
         return;
       }
       sessionChecked.value = true;
-      await Promise.all([organizations.load(), scans.refresh(), npm.load()]);
+      await Promise.all([organizations.load(), scans.refresh(), gates.refresh(), npm.load()]);
     })();
     return () => {
       cancelled = true;
@@ -68,14 +74,14 @@ export default function DashboardPage() {
 
   const onSwitchOrganization = async (organizationId: string) => {
     if (organizations.activate(organizationId)) {
-      await Promise.all([scans.refresh(), npm.load()]);
+      await Promise.all([scans.refresh(), gates.refresh(), npm.load()]);
     }
   };
 
   const onCreateOrganization = async (name: string) => {
     const created = await organizations.create(name);
     if (created) {
-      await Promise.all([scans.refresh(), npm.load()]);
+      await Promise.all([scans.refresh(), gates.refresh(), npm.load()]);
     }
   };
 
@@ -102,8 +108,9 @@ export default function DashboardPage() {
 
   const user = sessionModel.user.value;
   const scansLoaded = scans.loaded.value;
+  const gatesLoaded = gates.loaded.value;
   const npmLoaded = npm.loaded.value;
-  const workspaceLoaded = scansLoaded && npmLoaded;
+  const workspaceLoaded = scansLoaded && gatesLoaded && npmLoaded;
 
   return (
     <PageShell
@@ -129,6 +136,7 @@ export default function DashboardPage() {
       {workspaceLoaded ? (
         <>
           {!npm.connection.value ? <NpmSetupCallout /> : null}
+          <ReleaseGatesSection gates={gates} />
           <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
         </>
       ) : (
@@ -138,8 +146,10 @@ export default function DashboardPage() {
             npmLoaded
               ? "fetching recent reviews"
               : scansLoaded
-                ? "checking npm connection"
-                : "loading reviews · checking npm connection"
+                ? gatesLoaded
+                  ? "checking npm connection"
+                  : "checking release gates"
+                : "loading reviews · checking release gates · checking npm connection"
           }
         />
       )}
@@ -382,6 +392,180 @@ function NpmSetupCallout() {
         Open settings
       </LinkButton>
     </Card>
+  );
+}
+
+function ReleaseGatesSection({
+  gates,
+}: {
+  gates: ReturnType<typeof useModel<typeof WorkflowGateListModel.prototype>>;
+}) {
+  const activeGates = gates.gates.value;
+  const error = gates.error.value;
+  if (!activeGates.length && !error) return null;
+
+  return (
+    <Card as="section" padding="none" class="overflow-hidden">
+      <div class="px-5 py-4 flex flex-col gap-3 md:flex-row md:items-center">
+        <SectionLabel class="flex-1 min-w-0 after:hidden">Release gates</SectionLabel>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => void gates.refresh()}
+          disabled={gates.refreshing.value}
+          title="Reload pending release gates"
+        >
+          {gates.refreshing.value ? "Refreshing…" : "Refresh"}
+        </Button>
+      </div>
+      {error ? (
+        <div class="px-5 pb-4">
+          <Alert tone="critical">{error}</Alert>
+        </div>
+      ) : null}
+      {activeGates.length ? (
+        <ReleaseGateTable gates={activeGates} />
+      ) : (
+        <div class="border-t border-border p-5">
+          <EmptyLine>No release gates waiting on this organization.</EmptyLine>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function ReleaseGateTable({ gates }: { gates: PublicWorkflowGate[] }) {
+  return (
+    <div class="border-t border-border overflow-x-auto">
+      <table class="w-full border-collapse text-[13px]">
+        <thead>
+          <tr class="border-b border-border bg-surface-2">
+            <Th>Target</Th>
+            <Th>Packages</Th>
+            <Th>Review</Th>
+            <Th>Decision</Th>
+            <Th>Action</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {gates.map((gate) => {
+            const review = gateReviewState(gate);
+            const href = gateReviewHref(gate);
+            const releaseRisk = highestReleaseRisk(gate.packages);
+            return (
+              <tr key={gate.id} class="border-b border-border last:border-b-0 hover:bg-surface-2">
+                <Td>
+                  <div class="flex flex-col gap-1 min-w-[220px]">
+                    <a
+                      href={githubRunUrl(gate)}
+                      target="_blank"
+                      rel="noreferrer"
+                      class="font-medium"
+                    >
+                      {gate.repositoryFullName}
+                    </a>
+                    <span class="font-mono text-[11px] text-ink-subtle">
+                      env {gate.environment} · run #{gate.runId}
+                    </span>
+                  </div>
+                </Td>
+                <Td>
+                  <span class="font-mono text-xs text-ink-muted whitespace-nowrap">
+                    {gatePackageProgressLabel(gate.packages)}
+                  </span>
+                </Td>
+                <Td>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <Badge tone={review.tone}>{review.label}</Badge>
+                    {releaseRisk ? (
+                      <Badge tone={severityTone(releaseRisk)}>{releaseRisk}</Badge>
+                    ) : null}
+                  </div>
+                </Td>
+                <Td>
+                  <Badge tone={gateDecisionTone(gate)}>{gateDecisionLabel(gate)}</Badge>
+                </Td>
+                <Td>
+                  {href ? (
+                    <LinkButton variant="secondary" size="sm" href={href}>
+                      Open review
+                    </LinkButton>
+                  ) : (
+                    <Button variant="secondary" size="sm" disabled>
+                      Review pending
+                    </Button>
+                  )}
+                </Td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function githubRunUrl(gate: PublicWorkflowGate): string {
+  return `https://github.com/${gate.repositoryFullName}/actions/runs/${gate.runId}`;
+}
+
+function gateReviewHref(gate: PublicWorkflowGate): string | null {
+  const scanId = gate.scanId ?? gate.packages[0]?.scanId ?? null;
+  return scanId ? `/dashboard/scans/${encodeURIComponent(scanId)}` : null;
+}
+
+function gatePackageProgressLabel(packages: GatePackageScan[]): string {
+  if (!packages.length) return "resolving artifacts";
+  const reviewed = packages.filter((pkg) => pkg.status === "complete" || pkg.status === "failed");
+  return `${reviewed.length}/${packages.length} ${pluralize("package", packages.length)}`;
+}
+
+function gateReviewState(gate: PublicWorkflowGate): {
+  label: string;
+  tone: "info" | "medium" | "critical" | "ok";
+} {
+  if (gate.status === "approved") return { label: "released", tone: "ok" };
+  if (gate.status === "rejected") return { label: "blocked", tone: "critical" };
+  if (gate.failureReason) return { label: "artifact failed", tone: "critical" };
+  if (!gate.packages.length) return { label: "review queued", tone: "info" };
+  if (gate.packages.some((pkg) => pkg.status === "pending" || pkg.status === "running")) {
+    return { label: "reviewing", tone: "info" };
+  }
+  if (gate.packages.some((pkg) => pkg.status === "failed")) {
+    return { label: "needs review", tone: "critical" };
+  }
+  return { label: "ready", tone: "medium" };
+}
+
+function gateDecisionTone(gate: PublicWorkflowGate): "neutral" | "medium" | "critical" | "ok" {
+  if (gate.status === "approved") return "ok";
+  if (gate.status === "rejected" || gate.status === "errored") return "critical";
+  if (gate.packages.some((pkg) => pkg.decision === "publish")) return "medium";
+  return "neutral";
+}
+
+function gateDecisionLabel(gate: PublicWorkflowGate): string {
+  if (gate.status === "approved") return "approved";
+  if (gate.status === "rejected") return "rejected";
+  if (gate.status === "errored") return "errored";
+  const approved = gate.packages.filter((pkg) => pkg.decision === "publish").length;
+  return approved ? `${approved} approved` : "held";
+}
+
+const RISK_RANK: Record<string, number> = {
+  none: 0,
+  low: 1,
+  medium: 2,
+  high: 3,
+  critical: 4,
+};
+
+function highestReleaseRisk(packages: GatePackageScan[]): string | null {
+  return (
+    packages
+      .map((pkg) => pkg.releaseRisk)
+      .filter((risk): risk is string => Boolean(risk))
+      .sort((a, b) => (RISK_RANK[b] ?? -1) - (RISK_RANK[a] ?? -1))[0] ?? null
   );
 }
 

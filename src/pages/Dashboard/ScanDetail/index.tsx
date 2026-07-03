@@ -96,12 +96,11 @@ export default function ScanDetailPage() {
 
   const versionsSignal = useScanVersions(model);
 
-  // Load the workflow gate once the review reaches a terminal state. Completed
-  // and failed scans may both be linked to the pending gate so the workbench can
-  // show the held GitHub job context.
+  // Load workflow-gate context as soon as the scan row exists. The gate row is
+  // created by the webhook before review finishes, and `scans.gate_id` lets the
+  // workbench show the held GitHub job while the package scan is still running.
   useSignalEffect(() => {
     if (!model.isWorkflowGate.value) return;
-    if (model.status.value !== "complete" && model.status.value !== "failed") return;
     if (model.gateLoaded.value) return;
     void model.loadGate();
     const retryTimer = window.setInterval(() => {
