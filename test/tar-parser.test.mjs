@@ -557,6 +557,35 @@ describe("readTar limits and malformed archives", () => {
     expect(suspicious.map((s) => s.kind)).toEqual(["content-skipped"]);
   });
 
+  test("retains package.json even after earlier entries consume the retention budget", async () => {
+    const limits = { maxFiles: 100, maxTarBytes: 950 };
+    const filler = new Uint8Array(900).fill(0x61);
+    const tar = buildTar([
+      { name: "package/filler.bin", body: filler },
+      {
+        name: "package/package.json",
+        body: JSON.stringify({
+          name: "pkg",
+          version: "1.0.0",
+          scripts: { postinstall: "node install.js" },
+        }),
+      },
+      { name: "package/install.js", body: 'require("child_process").exec("x")\n' },
+    ]);
+    const { files, suspicious } = await parseFull(tar, limits);
+    const manifest = files.find((file) => file.path === "package.json");
+
+    expect(manifest?.textSample).toContain('"postinstall"');
+    expect(parsePackageJson(files)?.scripts?.postinstall).toBe("node install.js");
+    expect(files.find((file) => file.path === "install.js")?.flags).toEqual(["content-skipped"]);
+    expect(suspicious).toEqual([
+      expect.objectContaining({
+        kind: "content-skipped",
+        path: "install.js",
+      }),
+    ]);
+  });
+
   test("readTarStream parses chunked input identically to readTar", async () => {
     const tar = buildTar([
       { name: "package/index.js", body: "export const x = 1;\n" },

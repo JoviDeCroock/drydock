@@ -388,7 +388,9 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes)
             : "path contained zero-width or visually-confusable characters and normalized to an unsafe path",
         });
       }
-      const retainBody = size <= maxTarBytes && retainedBytes + size <= maxTarBytes;
+      const mustRetainBody = path === "package.json";
+      const retainBody =
+        size <= maxTarBytes && (mustRetainBody || retainedBytes + size <= maxTarBytes);
       let summarized = null;
       if (path && retainBody) {
         if (!(await fill(size))) throw new Error("truncated tar entry");
