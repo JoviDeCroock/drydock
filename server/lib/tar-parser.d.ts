@@ -63,6 +63,7 @@ export function shouldSkipTextSample(path: string): boolean;
 export function summarizeFile(path: string, body: Uint8Array): Promise<ParsedFile>;
 export function summarizeSkippedFile(path: string, size: number): ParsedFile;
 export function isRetainedManifestPath(path: string | null | undefined): boolean;
+export function isRootManifestPath(path: string | null | undefined): boolean;
 export function tarError(message: string): Error & { tarSafety: true };
 export function readTar(
   buffer: ArrayBuffer | Uint8Array,

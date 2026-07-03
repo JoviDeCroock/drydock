@@ -250,6 +250,24 @@ export function isRetainedManifestPath(path) {
   );
 }
 
+// The *root* manifest an ecosystem derives package identity/dependencies from:
+// npm's `package.json` (the `package/` prefix is already stripped) and a PyPI
+// sdist's `PKG-INFO`/`pyproject.toml`, which live at the archive root or under a
+// single `<name>-<version>/` directory. A body too large to inspect here would
+// null the manifest and leave identity/deps uninspected, so it fails the parse
+// rather than degrading to a finding. Matching is anchored to the root (not the
+// basename anywhere) so a benign deeply-nested/vendored manifest-named file is
+// skipped, not fatal.
+export function isRootManifestPath(path) {
+  const normalized = String(path || "").replaceAll("\\", "/");
+  if (normalized === "package.json") return true;
+  if (normalized === "PKG-INFO" || normalized === "pyproject.toml") return true;
+  const slash = normalized.indexOf("/");
+  if (slash === -1 || normalized.indexOf("/", slash + 1) !== -1) return false;
+  const rest = normalized.slice(slash + 1);
+  return rest === "PKG-INFO" || rest === "pyproject.toml";
+}
+
 // Tags a parser safety-limit / malformed-archive error so the sandbox worker can
 // distinguish it from an upstream gzip/stream failure without matching on exact
 // message strings (which silently drift when a message is reworded).
@@ -421,12 +439,13 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes)
               : "path contained zero-width or visually-confusable characters and normalized to an unsafe path",
           });
         }
-        // The root npm manifest is the one file parsePackageJson depends on, and
-        // a body too large to inspect there would silently null the manifest and
-        // disable every manifest-derived detection. A >25MB package.json is only
-        // ever hostile, so fail closed. Nested/vendored manifest-named files are
-        // not the package manifest, so they are skipped (below), not fatal.
-        if (path === "package.json" && size > maxTarBytes) {
+        // A root manifest (npm package.json, PyPI PKG-INFO/pyproject.toml) too
+        // large to inspect would null the package's identity/dependency metadata
+        // and disable every manifest-derived detection. A >25MB manifest is only
+        // ever hostile, so fail closed rather than downgrade the trust-boundary
+        // failure to a finding. Nested/vendored manifest-named files are not the
+        // root manifest, so they are skipped (below), not fatal.
+        if (path && isRootManifestPath(path) && size > maxTarBytes) {
           throw tarError("invalid tar entry size");
         }
         // Retention tiers, tightest first:

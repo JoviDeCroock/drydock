@@ -651,14 +651,22 @@ describe("readTar limits and malformed archives", () => {
     expect(files.map((f) => f.path)).toEqual(["a.js"]);
   });
 
-  test("fails closed on an oversized manifest instead of nulling the package identity", async () => {
-    // A package.json too large to inspect must fail the scan: skipping it would
-    // return packageJson:null and silently disable every manifest-derived rule.
-    const limits = { maxFiles: 100, maxTarBytes: 1024 };
-    const bigManifest = JSON.stringify({ name: "pkg", version: "1.0.0", _pad: "x".repeat(2000) });
-    const tar = buildTar([{ name: "package/package.json", body: bigManifest }]);
-    await expect(parse(tar, limits)).rejects.toThrow(/invalid tar entry size/);
-  });
+  test.each([
+    ["npm package.json", "package/package.json"],
+    ["PyPI sdist PKG-INFO", "foo-1.0.0/PKG-INFO"],
+    ["PyPI sdist pyproject.toml", "foo-1.0.0/pyproject.toml"],
+    ["root PKG-INFO", "PKG-INFO"],
+  ])(
+    "fails closed on an oversized root manifest (%s) instead of nulling the identity",
+    async (_name, path) => {
+      // A root manifest too large to inspect must fail the scan: skipping it
+      // would leave package identity/dependency metadata uninspected and only
+      // surface a finding, downgrading the trust-boundary failure.
+      const limits = { maxFiles: 100, maxTarBytes: 1024 };
+      const tar = buildTar([{ name: path, body: "x".repeat(2048) }]);
+      await expect(parse(tar, limits)).rejects.toThrow(/invalid tar entry size/);
+    },
+  );
 
   test("retains a PyPI sdist manifest (PKG-INFO) even under budget pressure", async () => {
     // The tgz path is shared with PyPI sdists, whose manifest is PKG-INFO under a
@@ -716,20 +724,37 @@ describe("readTar limits and malformed archives", () => {
     expect(tarParser.isRetainedManifestPath(null)).toBe(false);
   });
 
-  test("skips a nested oversized manifest-named file instead of failing the scan", async () => {
-    // Only the exact root package.json fails closed when oversized; a vendored
-    // file that merely shares the basename is skipped, not fatal for the scan.
+  test("isRootManifestPath anchors to the archive root, not the basename anywhere", () => {
+    expect(tarParser.isRootManifestPath("package.json")).toBe(true);
+    expect(tarParser.isRootManifestPath("PKG-INFO")).toBe(true);
+    expect(tarParser.isRootManifestPath("pyproject.toml")).toBe(true);
+    expect(tarParser.isRootManifestPath("foo-1.0.0/PKG-INFO")).toBe(true);
+    expect(tarParser.isRootManifestPath("foo-1.0.0/pyproject.toml")).toBe(true);
+    // Nested/vendored files that merely share the basename are not root manifests.
+    expect(tarParser.isRootManifestPath("vendor/dep/package.json")).toBe(false);
+    expect(tarParser.isRootManifestPath("foo-1.0.0/sub/PKG-INFO")).toBe(false);
+    expect(tarParser.isRootManifestPath("a/b/pyproject.toml")).toBe(false);
+    // package.json is only the root at the top level (npm strips the package/ prefix).
+    expect(tarParser.isRootManifestPath("foo-1.0.0/package.json")).toBe(false);
+    expect(tarParser.isRootManifestPath("")).toBe(false);
+    expect(tarParser.isRootManifestPath(null)).toBe(false);
+  });
+
+  test("skips a deeply-nested oversized manifest-named file instead of failing the scan", async () => {
+    // Only root manifests fail closed when oversized; a vendored file that merely
+    // shares the basename deeper in the tree is skipped, not fatal for the scan.
     const limits = { maxFiles: 100, maxTarBytes: 1024 };
     const tar = buildTar([
       { name: "package/package.json", body: JSON.stringify({ name: "pkg", version: "1.0.0" }) },
       { name: "package/vendor/dep/package.json", body: "x".repeat(2048) },
+      { name: "package/vendor/py/sub/PKG-INFO", body: "y".repeat(2048) },
     ]);
     const { files, suspicious } = await parseFull(tar, limits);
     expect(parsePackageJson(files)?.name).toBe("pkg");
-    expect(files.find((f) => f.path === "vendor/dep/package.json")?.flags).toEqual([
-      "content-skipped",
-    ]);
-    expect(suspicious.some((s) => s.path === "vendor/dep/package.json")).toBe(true);
+    for (const nested of ["vendor/dep/package.json", "vendor/py/sub/PKG-INFO"]) {
+      expect(files.find((f) => f.path === nested)?.flags).toEqual(["content-skipped"]);
+      expect(suspicious.some((s) => s.path === nested)).toBe(true);
+    }
   });
 
   test("retains a manifest via headroom once the shared budget is exhausted", async () => {
@@ -900,6 +925,7 @@ describe("rendered sandbox parser source", () => {
     "summarizeFile",
     "summarizeSkippedFile",
     "isRetainedManifestPath",
+    "isRootManifestPath",
     "tarError",
     "readTarStream",
     "parsePackageJson",

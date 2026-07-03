@@ -38,6 +38,7 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.summarizeFile,
   tarParser.summarizeSkippedFile,
   tarParser.isRetainedManifestPath,
+  tarParser.isRootManifestPath,
   tarParser.tarError,
   tarParser.readTarStream,
   tarParser.readUint16Le,
