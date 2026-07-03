@@ -256,10 +256,6 @@ function findingFingerprint(finding: { file: string; ruleId?: string | null }): 
   return `${finding.ruleId ?? ""}\u0000${finding.file}`;
 }
 
-export function isReleaseDeltaStatus(status: FindingDiffStatus): boolean {
-  return status === "added" || status === "modified";
-}
-
 export function normalizeFindingDiffStatus(value: unknown): FindingDiffStatus {
   switch (value) {
     case "added":

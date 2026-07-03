@@ -23,16 +23,7 @@ import type {
 } from "./ai-review-types";
 import { errorMessage } from "./errors";
 
-export type {
-  AiFinding,
-  AiReleaseAssessment,
-  AiReview,
-  AiReviewResult,
-  AiReviewStatus,
-  AiReviewUsage,
-  DisplayedAiResult,
-  SelectiveAiReviewOptions,
-} from "./ai-review-types";
+export type { AiReview, AiReviewResult, SelectiveAiReviewOptions } from "./ai-review-types";
 export { displayedAiResult } from "./ai-review-types";
 
 // Reviewer model order: prefer the strongest affordable model, then fail over.

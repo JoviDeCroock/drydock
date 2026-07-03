@@ -52,12 +52,7 @@ export interface FindingAnnotationOptions {
 export { createPackageDiff } from "./review-diff";
 export type { DiffEntry } from "./review-diff";
 export { summarizePackageJsonDiff } from "./review-serialize";
-export type {
-  DependencySection,
-  PackageJsonDiff,
-  PackageJsonDiffEntry,
-  PackageJsonSummary,
-} from "./review-serialize";
+export type { PackageJsonDiff, PackageJsonSummary } from "./review-serialize";
 export {
   DETERMINISTIC_RULE_IDS,
   DETERMINISTIC_RULES_VERSION,
@@ -65,10 +60,8 @@ export {
   packageJsonDiffFindings,
   PYTHON_EXECUTION_CAPABILITY_PATTERNS,
 } from "./review-rules";
-export type { DeterministicFindingOptions } from "./review-rules";
 export {
   annotateFindingsWithDiffStatus,
-  isReleaseDeltaStatus,
   normalizeFindingDiffStatus,
 } from "./review-diff-annotation";
 export { redactFileRecords, redactFindings, redactJson, redactText } from "./review-redaction";

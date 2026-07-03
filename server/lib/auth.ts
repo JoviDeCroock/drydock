@@ -179,10 +179,6 @@ export async function getAuthSession(auth: Auth, request: Request): Promise<Auth
   }
 }
 
-export async function isAuthenticated(auth: Auth, request: Request) {
-  return Boolean(await getAuthSession(auth, request));
-}
-
 /**
  * Whether the user has completed two-factor enrollment. Drives the step-up
  * requirement on high-trust actions: a member who turned on 2FA must prove a

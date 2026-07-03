@@ -72,5 +72,4 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
 };
 
 export type { NpmAdapterInput, NpmBroker };
-export { createNpmBroker };
 export { NpmAdapterBroker } from "./broker";

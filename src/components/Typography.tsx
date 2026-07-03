@@ -44,16 +44,6 @@ export function SectionLabel({
   );
 }
 
-export function MonoLine({
-  children,
-  class: className,
-}: {
-  children: ComponentChildren;
-  class?: string;
-}) {
-  return <p class={cn("font-mono text-xs text-ink-muted m-0", className)}>{children}</p>;
-}
-
 export function MonoDetail({
   parts,
   class: className,

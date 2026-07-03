@@ -132,10 +132,6 @@ export class SandboxError extends Error {
   }
 }
 
-export function isSandboxError(err: unknown): boolean {
-  return sandboxErrorDetail(err) !== null;
-}
-
 export function sandboxErrorDetail(err: unknown): string | null {
   if (err instanceof SandboxError) return err.detail;
   if (!err || typeof err !== "object") return null;
