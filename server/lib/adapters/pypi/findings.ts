@@ -1,4 +1,9 @@
-import { type FileRecord, type Finding, PYTHON_EXECUTION_CAPABILITY_PATTERNS } from "../../review";
+import {
+  type FileRecord,
+  type Finding,
+  PYTHON_EXECUTION_CAPABILITY_PATTERNS,
+  tarSuspiciousEntryFindings,
+} from "../../review";
 import { firstMatchingLine } from "../../text-utils";
 import { normalizePyPiProjectName } from "./manifest";
 import {
@@ -29,6 +34,13 @@ export function pyPiReleaseFindings(
 
   for (const artifact of artifacts) {
     const { summary } = artifact;
+    // Surface tar-parser evidence (oversized content-skipped bodies, non-regular
+    // entries, duplicates, confusable paths) the sandbox recorded for this
+    // artifact. Without this the gate would drop them and pass an sdist whose
+    // oversized file was never inspected — a fail-open gap the npm path avoids.
+    for (const finding of tarSuspiciousEntryFindings(artifact.suspiciousEntries)) {
+      findings.push({ ...finding, file: namespacedPath(artifact.path, finding.file) });
+    }
     const metadataEvidencePath = namespacedPath(artifact.path, summary.metadataPath ?? "METADATA");
     if (!summary.metadataPath || !summary.name || !summary.version) {
       findings.push(

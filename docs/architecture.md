@@ -38,7 +38,7 @@ The Worker is the trusted control plane; the sandbox treats package bytes as hos
 
 ## Sandbox parser
 
-Archive parsing is shared by the sandbox and tests rather than copied as strings. Tar parsing lives in `server/lib/tar-parser.js`; ZIP wheel parsing is covered by `test/zip-parser.test.mjs`; shared fixture writers live in `test/helpers/archive-fixtures.mjs`. The parser enforces path safety, file-count and expansion caps, unsupported-entry reporting, duplicate-path handling, and fail-closed behavior. `pnpm run fuzz` scales the archive-parser property suite for deeper exploration.
+Archive parsing is shared by the sandbox and tests rather than copied as strings. Tar parsing lives in `server/lib/tar-parser.js`; ZIP wheel parsing is covered by `test/zip-parser.test.mjs`; shared fixture writers live in `test/helpers/archive-fixtures.mjs`. The parser enforces path safety, file-count and expansion caps, unsupported-entry reporting, duplicate-path handling, and fail-closed behavior. Tarballs are parsed as a stream: entry bodies beyond the retention budget (`SANDBOX_MAX_TAR_BYTES`) — typically prepackaged platform binaries — are skipped rather than buffered, recorded as `content-skipped` files/findings with path and size only, under a total stream cap (`SANDBOX_MAX_STREAM_TAR_BYTES`). `pnpm run fuzz` scales the archive-parser property suite for deeper exploration.
 
 ## Scan pipeline
 

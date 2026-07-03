@@ -38,7 +38,6 @@ const {
   shouldSkipTextSample,
   readTar,
   readZipArchive,
-  gunzipBounded,
 } = parser;
 
 const SEED = 0xc0ffee;
@@ -439,38 +438,6 @@ describe("regression invariants", () => {
         expect(files[0].textSample).toContain(marker);
       }),
       { seed: SEED, numRuns: runs(40, 300) },
-    );
-  });
-
-  test("gunzipBounded round-trips within the cap and refuses to overrun it", async () => {
-    const gzip = async (input) => {
-      const cs = new CompressionStream("gzip");
-      const writer = cs.writable.getWriter();
-      writer.write(input);
-      writer.close();
-      return new Uint8Array(await new Response(cs.readable).arrayBuffer());
-    };
-    const streamFrom = (bytes) =>
-      new ReadableStream({
-        start(controller) {
-          controller.enqueue(bytes);
-          controller.close();
-        },
-      });
-
-    await fc.assert(
-      fc.asyncProperty(fc.uint8Array({ maxLength: 8192 }), async (original) => {
-        const compressed = await gzip(original);
-        const out = new Uint8Array(await gunzipBounded(streamFrom(compressed), original.length));
-        expect(out.length).toBe(original.length);
-        expect(out).toEqual(original);
-        if (original.length > 0) {
-          await expect(gunzipBounded(streamFrom(compressed), original.length - 1)).rejects.toThrow(
-            /expands beyond safety limit/,
-          );
-        }
-      }),
-      { seed: SEED, numRuns: runs(60, 400) },
     );
   });
 });

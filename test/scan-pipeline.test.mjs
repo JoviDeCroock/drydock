@@ -37,7 +37,10 @@ vi.mock("../server/lib/registry.ts", async () => ({
   ...(await vi.importActual("../server/lib/registry.ts")),
   fetchPackageMetadata: registryMock.fetchPackageMetadata,
 }));
-vi.mock("../server/lib/sandbox.ts", () => sandboxMock);
+vi.mock("../server/lib/sandbox.ts", async () => ({
+  ...(await vi.importActual("../server/lib/sandbox.ts")),
+  downloadInSandbox: sandboxMock.downloadInSandbox,
+}));
 vi.mock("../server/lib/published-tarball.ts", () => publishedTarballMock);
 vi.mock("../server/lib/staged-publishes.ts", async () => ({
   ...(await vi.importActual("../server/lib/staged-publishes.ts")),

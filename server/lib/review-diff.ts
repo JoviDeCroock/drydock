@@ -37,7 +37,13 @@ export function createPackageDiff(
         previousSha256: before.sha256,
         flags: before.flags,
       };
-    if (before && after && before.sha256 !== after.sha256) {
+    if (
+      before &&
+      after &&
+      (before.sha256 !== after.sha256 ||
+        hasUninspectableContent(before) ||
+        hasUninspectableContent(after))
+    ) {
       return {
         path,
         status: "modified",
@@ -58,4 +64,8 @@ export function createPackageDiff(
       flags: [...new Set([...(before?.flags || []), ...(after?.flags || [])])],
     };
   });
+}
+
+function hasUninspectableContent(file: FileRecord): boolean {
+  return file.flags.includes("content-skipped");
 }

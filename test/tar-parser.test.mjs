@@ -6,7 +6,6 @@ import { buildTar, encoder } from "./helpers/archive-fixtures.mjs";
 const {
   canonicalizePath,
   decodeText,
-  gunzipBounded,
   hasUnicodeConfusables,
   isRootGypPath,
   isSafePaxPath,
@@ -515,6 +514,133 @@ describe("readTar limits and malformed archives", () => {
     );
   });
 
+  test("skips an oversized entry body but records its metadata", async () => {
+    const limits = { maxFiles: 100, maxTarBytes: 1024 };
+    const big = new Uint8Array(2048).fill(0x42);
+    const tar = buildTar([
+      { name: "package/index.js", body: "export const x = 1;\n" },
+      { name: "package/bin/native.node", body: big },
+      { name: "package/after.js", body: "// after\n" },
+    ]);
+    const { files, suspicious } = await parseFull(tar, limits);
+    expect(files.map((f) => f.path)).toEqual(["index.js", "bin/native.node", "after.js"]);
+    const skipped = files[1];
+    expect(skipped.size).toBe(2048);
+    expect(skipped.sha256).toBe("");
+    expect(skipped.flags).toEqual(["content-skipped"]);
+    expect(skipped.textSample).toBeUndefined();
+    // Entries after the skipped body are still fully parsed.
+    expect(files[2].textSample).toBe("// after\n");
+    expect(files[2].sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(suspicious).toEqual([
+      {
+        kind: "content-skipped",
+        path: "bin/native.node",
+        detail: expect.stringContaining("2048 bytes"),
+      },
+    ]);
+  });
+
+  test("fails closed on an oversized non-regular entry instead of streaming its body", async () => {
+    // npm publish never emits non-regular entries, so a hand-crafted archive
+    // is the only source; unlike a regular file there is no retention/skip
+    // path for it, and it must be rejected before its body is streamed at all.
+    const limits = { maxFiles: 100, maxTarBytes: 1024 };
+    const big = new Uint8Array(2048).fill(0x42);
+    const tar = buildTar([{ name: "package/link", type: "2", body: big }]);
+    await expect(parse(tar, limits)).rejects.toThrow(/invalid tar entry size/);
+  });
+
+  test("skips entries once the cumulative retention budget is exhausted", async () => {
+    const limits = { maxFiles: 100, maxTarBytes: 1000 };
+    const bodyA = new Uint8Array(600).fill(0x61);
+    const bodyB = new Uint8Array(600).fill(0x62);
+    const tar = buildTar([
+      { name: "package/a.bin", body: bodyA },
+      { name: "package/b.bin", body: bodyB },
+    ]);
+    const { files, suspicious } = await parseFull(tar, limits);
+    expect(files[0].sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(files[1].sha256).toBe("");
+    expect(files[1].flags).toEqual(["content-skipped"]);
+    expect(suspicious.map((s) => s.kind)).toEqual(["content-skipped"]);
+  });
+
+  test("retains package.json even after earlier entries consume the retention budget", async () => {
+    const limits = { maxFiles: 100, maxTarBytes: 950 };
+    const filler = new Uint8Array(900).fill(0x61);
+    const tar = buildTar([
+      { name: "package/filler.bin", body: filler },
+      {
+        name: "package/package.json",
+        body: JSON.stringify({
+          name: "pkg",
+          version: "1.0.0",
+          scripts: { postinstall: "node install.js" },
+        }),
+      },
+      { name: "package/install.js", body: 'require("child_process").exec("x")\n' },
+    ]);
+    const { files, suspicious } = await parseFull(tar, limits);
+    const manifest = files.find((file) => file.path === "package.json");
+
+    expect(manifest?.textSample).toContain('"postinstall"');
+    expect(parsePackageJson(files)?.scripts?.postinstall).toBe("node install.js");
+    expect(files.find((file) => file.path === "install.js")?.flags).toEqual(["content-skipped"]);
+    expect(suspicious).toEqual([
+      expect.objectContaining({
+        kind: "content-skipped",
+        path: "install.js",
+      }),
+    ]);
+  });
+
+  test("readTarStream parses chunked input identically to readTar", async () => {
+    const tar = buildTar([
+      { name: "package/index.js", body: "export const x = 1;\n" },
+      { name: "package/lib/util.js", body: "// util\n" },
+    ]);
+    const chunked = new ReadableStream({
+      start(controller) {
+        for (let i = 0; i < tar.length; i += 100) {
+          controller.enqueue(tar.subarray(i, Math.min(i + 100, tar.length)));
+        }
+        controller.close();
+      },
+    });
+    const streamed = await tarParser.readTarStream(
+      chunked,
+      PARSE_LIMITS.maxFiles,
+      PARSE_LIMITS.maxTarBytes,
+      Infinity,
+    );
+    const buffered = await parseFull(tar);
+    expect(streamed).toEqual(buffered);
+  });
+
+  test("readTarStream fails closed when the total stream exceeds its cap", async () => {
+    const tar = buildTar([{ name: "package/big.bin", body: new Uint8Array(4096) }]);
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(tar);
+        controller.close();
+      },
+    });
+    await expect(tarParser.readTarStream(stream, 100, 512, 2048)).rejects.toThrow(
+      /archive expands beyond safety limit/,
+    );
+  });
+
+  test("throws truncated when a skipped entry body overruns the archive", async () => {
+    const tar = buildTar([{ name: "package/x.bin", body: "abc" }]);
+    // Claim a body far beyond both the retention limit and the archive length:
+    // the skip path must still detect the overrun instead of succeeding.
+    tar.set(encoder.encode("00000010000\0"), 124);
+    await expect(parse(tar, { maxFiles: 100, maxTarBytes: 1024 })).rejects.toThrow(
+      /truncated tar entry/,
+    );
+  });
+
   test("stops at the end-of-archive marker even with trailing garbage", async () => {
     const tar = buildTar([{ name: "package/a.js", body: "// a\n" }]);
     // Append garbage after the zero blocks; readTar should not see it.
@@ -523,6 +649,195 @@ describe("readTar limits and malformed archives", () => {
     extended.fill(0x66, tar.length); // 'f'
     const files = await parse(extended);
     expect(files.map((f) => f.path)).toEqual(["a.js"]);
+  });
+
+  test.each([
+    ["npm package.json", "package/package.json"],
+    ["PyPI sdist PKG-INFO", "foo-1.0.0/PKG-INFO"],
+    ["PyPI sdist pyproject.toml", "foo-1.0.0/pyproject.toml"],
+    ["root PKG-INFO", "PKG-INFO"],
+  ])(
+    "fails closed on an oversized root manifest (%s) instead of nulling the identity",
+    async (_name, path) => {
+      // A root manifest too large to inspect must fail the scan: skipping it
+      // would leave package identity/dependency metadata uninspected and only
+      // surface a finding, downgrading the trust-boundary failure.
+      const limits = { maxFiles: 100, maxTarBytes: 1024 };
+      const tar = buildTar([{ name: path, body: "x".repeat(2048) }]);
+      await expect(parse(tar, limits)).rejects.toThrow(/invalid tar entry size/);
+    },
+  );
+
+  test("fails closed when a root manifest is crowded out of the retention budget", async () => {
+    // Earlier manifest-named (non-root) entries fill the 2×maxTarBytes headroom,
+    // so the real root PKG-INFO cannot be retained. Skipping it would leave
+    // identity/dependency metadata unread, so the parse fails closed instead of
+    // degrading the trust-boundary failure to a content-skipped finding.
+    const limits = { maxFiles: 100, maxTarBytes: 500 };
+    const tar = buildTar([
+      { name: "a/b/METADATA", body: new Uint8Array(500).fill(0x61) },
+      { name: "c/d/METADATA", body: new Uint8Array(500).fill(0x62) },
+      { name: "foo-1.0.0/PKG-INFO", body: "Metadata-Version: 2.1\nName: foo\nVersion: 1.0.0\n" },
+    ]);
+    await expect(parse(tar, limits)).rejects.toThrow(/invalid tar entry size/);
+  });
+
+  test("retains a PyPI sdist manifest (PKG-INFO) even under budget pressure", async () => {
+    // The tgz path is shared with PyPI sdists, whose manifest is PKG-INFO under a
+    // version directory. It must be force-retained the same way package.json is.
+    const limits = { maxFiles: 100, maxTarBytes: 950 };
+    const filler = new Uint8Array(900).fill(0x61);
+    const tar = buildTar([
+      { name: "foo-1.0.0/big.bin", body: filler },
+      { name: "foo-1.0.0/PKG-INFO", body: "Metadata-Version: 2.1\nName: foo\nVersion: 1.0.0\n" },
+    ]);
+    const { files } = await parseFull(tar, limits);
+    const manifest = files.find((file) => file.path.endsWith("PKG-INFO"));
+    expect(manifest?.textSample).toContain("Name: foo");
+    expect(manifest?.flags ?? []).not.toContain("content-skipped");
+  });
+
+  test("distinguishes per-file-limit skips from cumulative-budget skips in the detail", async () => {
+    const limits = { maxFiles: 100, maxTarBytes: 1024 };
+    const tar = buildTar([
+      { name: "package/huge.node", body: new Uint8Array(2048).fill(0x42) },
+      { name: "package/filler.bin", body: new Uint8Array(1000).fill(0x61) },
+      { name: "package/late.js", body: "x".repeat(100) },
+    ]);
+    const { suspicious } = await parseFull(tar, limits);
+    const huge = suspicious.find((s) => s.path === "huge.node");
+    const late = suspicious.find((s) => s.path === "late.js");
+    expect(huge.detail).toContain("per-file inspection limit");
+    expect(late.detail).toContain("cumulative retention budget");
+  });
+
+  test("releases a replaced duplicate's bytes so later files are not needlessly skipped", async () => {
+    // Both copies of dup.bin fit the budget at their own decision point, so the
+    // old accounting counted 1200 bytes for a 600-byte record and then wrongly
+    // skipped other.bin. The replacement must release the earlier body's budget.
+    const limits = { maxFiles: 100, maxTarBytes: 2000 };
+    const tar = buildTar([
+      { name: "package/dup.bin", body: new Uint8Array(600).fill(0x61) },
+      { name: "package/dup.bin", body: new Uint8Array(600).fill(0x62) },
+      { name: "package/other.bin", body: new Uint8Array(900).fill(0x63) },
+    ]);
+    const { files, suspicious } = await parseFull(tar, limits);
+    const other = files.find((file) => file.path === "other.bin");
+    expect(other?.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(other?.flags ?? []).not.toContain("content-skipped");
+    expect(suspicious.map((s) => s.kind)).toContain("duplicate");
+  });
+
+  test("retains a duplicate that only fits once the earlier copy's bytes are released", async () => {
+    // maxTarBytes 1000, two 900-byte copies of one path. The last-write-wins copy
+    // is the bytes a consumer receives; it only fits if the budget check discounts
+    // the earlier copy it replaces, or that content goes uninspected.
+    const limits = { maxFiles: 100, maxTarBytes: 1000 };
+    const tar = buildTar([
+      { name: "package/a.js", body: new Uint8Array(900).fill(0x61) },
+      { name: "package/a.js", body: new Uint8Array(900).fill(0x62) },
+    ]);
+    const { files, suspicious } = await parseFull(tar, limits);
+    const a = files.filter((file) => file.path === "a.js");
+    expect(a).toHaveLength(1);
+    expect(a[0].flags ?? []).not.toContain("content-skipped");
+    // The retained bytes are the last-write-wins copy (0x62 → "b"), not the first.
+    expect(a[0].textSample).toBe("b".repeat(900));
+    expect(suspicious.map((s) => s.kind)).toContain("duplicate");
+  });
+
+  test("isRetainedManifestPath matches ecosystem manifests by basename", () => {
+    expect(tarParser.isRetainedManifestPath("package.json")).toBe(true);
+    expect(tarParser.isRetainedManifestPath("foo-1.0.0/PKG-INFO")).toBe(true);
+    expect(tarParser.isRetainedManifestPath("foo-1.0.0/pyproject.toml")).toBe(true);
+    expect(tarParser.isRetainedManifestPath("foo/bar.whl/METADATA")).toBe(true);
+    expect(tarParser.isRetainedManifestPath("lib/index.js")).toBe(false);
+    expect(tarParser.isRetainedManifestPath("")).toBe(false);
+    expect(tarParser.isRetainedManifestPath(null)).toBe(false);
+  });
+
+  test("isRootManifestPath anchors to the archive root, not the basename anywhere", () => {
+    expect(tarParser.isRootManifestPath("package.json")).toBe(true);
+    expect(tarParser.isRootManifestPath("PKG-INFO")).toBe(true);
+    expect(tarParser.isRootManifestPath("pyproject.toml")).toBe(true);
+    expect(tarParser.isRootManifestPath("foo-1.0.0/PKG-INFO")).toBe(true);
+    expect(tarParser.isRootManifestPath("foo-1.0.0/pyproject.toml")).toBe(true);
+    // Nested/vendored files that merely share the basename are not root manifests.
+    expect(tarParser.isRootManifestPath("vendor/dep/package.json")).toBe(false);
+    expect(tarParser.isRootManifestPath("foo-1.0.0/sub/PKG-INFO")).toBe(false);
+    expect(tarParser.isRootManifestPath("a/b/pyproject.toml")).toBe(false);
+    // package.json is only the root at the top level (npm strips the package/ prefix).
+    expect(tarParser.isRootManifestPath("foo-1.0.0/package.json")).toBe(false);
+    expect(tarParser.isRootManifestPath("")).toBe(false);
+    expect(tarParser.isRootManifestPath(null)).toBe(false);
+  });
+
+  test("skips a deeply-nested oversized manifest-named file instead of failing the scan", async () => {
+    // Only root manifests fail closed when oversized; a vendored file that merely
+    // shares the basename deeper in the tree is skipped, not fatal for the scan.
+    const limits = { maxFiles: 100, maxTarBytes: 1024 };
+    const tar = buildTar([
+      { name: "package/package.json", body: JSON.stringify({ name: "pkg", version: "1.0.0" }) },
+      { name: "package/vendor/dep/package.json", body: "x".repeat(2048) },
+      { name: "package/vendor/py/sub/PKG-INFO", body: "y".repeat(2048) },
+    ]);
+    const { files, suspicious } = await parseFull(tar, limits);
+    expect(parsePackageJson(files)?.name).toBe("pkg");
+    for (const nested of ["vendor/dep/package.json", "vendor/py/sub/PKG-INFO"]) {
+      expect(files.find((f) => f.path === nested)?.flags).toEqual(["content-skipped"]);
+      expect(suspicious.some((s) => s.path === nested)).toBe(true);
+    }
+  });
+
+  test("retains a manifest via headroom once the shared budget is exhausted", async () => {
+    const limits = { maxFiles: 100, maxTarBytes: 500 };
+    const tar = buildTar([
+      { name: "package/filler.bin", body: new Uint8Array(500).fill(0x61) },
+      { name: "foo-1.0.0/PKG-INFO", body: "Metadata-Version: 2.1\nName: foo\nVersion: 1.0.0\n" },
+    ]);
+    const { files } = await parseFull(tar, limits);
+    const manifest = files.find((f) => f.path.endsWith("PKG-INFO"));
+    expect(manifest?.textSample).toContain("Name: foo");
+    expect(manifest?.flags ?? []).not.toContain("content-skipped");
+  });
+
+  test("always retains the root npm manifest even after nested manifests exhaust the headroom", async () => {
+    // Nested package.json files spend the shared 2×maxTarBytes manifest headroom,
+    // but the real root manifest must still be inspected or parsePackageJson goes
+    // null and every npm identity/script/dependency check is silently disabled.
+    const limits = { maxFiles: 100, maxTarBytes: 500 };
+    const tar = buildTar([
+      { name: "a/package.json", body: new Uint8Array(500).fill(0x61) },
+      { name: "b/package.json", body: new Uint8Array(500).fill(0x62) },
+      {
+        name: "package/package.json",
+        body: JSON.stringify({
+          name: "pkg",
+          version: "1.0.0",
+          scripts: { postinstall: "node x.js" },
+        }),
+      },
+    ]);
+    const { files } = await parseFull(tar, limits);
+    const root = files.find((f) => f.path === "package.json");
+    expect(root?.textSample).toContain("postinstall");
+    expect(root?.flags ?? []).not.toContain("content-skipped");
+    expect(parsePackageJson(files)?.name).toBe("pkg");
+  });
+
+  test("bounds manifest retention headroom to twice the per-file cap", async () => {
+    // Manifests bypass the shared budget but only up to a second maxTarBytes, so
+    // a tar stuffed with manifest-named files cannot amplify retained memory.
+    const limits = { maxFiles: 100, maxTarBytes: 500 };
+    const tar = buildTar([
+      { name: "a/package.json", body: new Uint8Array(500).fill(0x61) },
+      { name: "b/package.json", body: new Uint8Array(400).fill(0x62) },
+      { name: "c/package.json", body: new Uint8Array(400).fill(0x63) },
+    ]);
+    const { files } = await parseFull(tar, limits);
+    expect(files.find((f) => f.path === "a/package.json")?.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(files.find((f) => f.path === "b/package.json")?.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(files.find((f) => f.path === "c/package.json")?.flags).toEqual(["content-skipped"]);
   });
 });
 
@@ -640,9 +955,12 @@ describe("rendered sandbox parser source", () => {
     "sha256Hex",
     "shouldSkipTextSample",
     "summarizeFile",
-    "readTar",
+    "summarizeSkippedFile",
+    "isRetainedManifestPath",
+    "isRootManifestPath",
+    "tarError",
+    "readTarStream",
     "parsePackageJson",
-    "gunzipBounded",
   ];
 
   test("every required parser export keeps its function name", () => {
@@ -669,42 +987,5 @@ return {
 };`,
     );
     expect(run()).toEqual({ safe: true, unsafe: false, normalized: "index.js" });
-  });
-});
-
-describe("gunzipBounded", () => {
-  function streamFrom(bytes) {
-    return new ReadableStream({
-      start(controller) {
-        controller.enqueue(bytes);
-        controller.close();
-      },
-    });
-  }
-
-  async function gzip(input) {
-    const cs = new CompressionStream("gzip");
-    const writer = cs.writable.getWriter();
-    writer.write(input);
-    writer.close();
-    return new Uint8Array(await new Response(cs.readable).arrayBuffer());
-  }
-
-  test("decompresses a small gzip stream", async () => {
-    const compressed = await gzip(encoder.encode("hello hello hello"));
-    const buf = await gunzipBounded(streamFrom(compressed), 1024);
-    expect(new TextDecoder().decode(buf)).toBe("hello hello hello");
-  });
-
-  test("throws when decompressed bytes exceed the cap", async () => {
-    // 64 KB of repeated text compresses well — small input expands past the cap.
-    const compressed = await gzip(encoder.encode("a".repeat(64 * 1024)));
-    await expect(gunzipBounded(streamFrom(compressed), 1024)).rejects.toThrow(
-      /archive expands beyond safety limit/,
-    );
-  });
-
-  test("throws on a missing body", async () => {
-    await expect(gunzipBounded(null, 1024)).rejects.toThrow(/tarball decompression failed/);
   });
 });

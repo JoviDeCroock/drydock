@@ -3,6 +3,7 @@ import {
   annotatePersistedFindings,
   filterDiffEntries,
   findingCountsByPath,
+  hasNoLoadableBodyFlags,
   scanFilesToFileRecords,
   selectDiffWorkbenchState,
 } from "../src/pages/Dashboard/ScanDetail/diff-helpers.ts";
@@ -92,16 +93,25 @@ describe("scanFilesToFileRecords", () => {
   });
 });
 
+describe("hasNoLoadableBodyFlags", () => {
+  test("treats binary and content-skipped files as unpreviewable", () => {
+    expect(hasNoLoadableBodyFlags(["binary"])).toBe(true);
+    expect(hasNoLoadableBodyFlags(["content-skipped"])).toBe(true);
+    expect(hasNoLoadableBodyFlags(["truncated"])).toBe(false);
+    expect(hasNoLoadableBodyFlags([])).toBe(false);
+  });
+});
+
 describe("selectDiffWorkbenchState", () => {
   const base = {
     hasEntry: true,
     entryStatus: "modified",
     hasStagedMeta: true,
     hasStagedContent: true,
-    stagedIsBinary: false,
+    stagedHasNoLoadableBody: false,
     hasPreviousMeta: true,
     hasPreviousContent: true,
-    previousIsBinary: false,
+    previousHasNoLoadableBody: false,
     compareReady: true,
     compareLoading: false,
   };
@@ -151,19 +161,19 @@ describe("selectDiffWorkbenchState", () => {
     expect(state).toEqual({ kind: "diff" });
   });
 
-  test("renders the diff for a binary staged file instead of waiting on its body", () => {
+  test("renders the diff for an unpreviewable staged file instead of waiting on its body", () => {
     const state = selectDiffWorkbenchState({
       ...base,
       hasStagedContent: false,
-      stagedIsBinary: true,
+      stagedHasNoLoadableBody: true,
     });
     expect(state).toEqual({ kind: "diff" });
   });
 
-  test("renders the diff for a binary previous file instead of waiting on its body", () => {
+  test("renders the diff for an unpreviewable previous file instead of waiting on its body", () => {
     const state = selectDiffWorkbenchState({
       ...base,
-      previousIsBinary: true,
+      previousHasNoLoadableBody: true,
       hasPreviousContent: false,
     });
     expect(state).toEqual({ kind: "diff" });

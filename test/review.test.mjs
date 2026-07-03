@@ -52,6 +52,32 @@ describe("review", () => {
     expect(diff.find((entry) => entry.path === "index.js")?.status).toBe("unchanged");
   });
 
+  test("diff treats skipped file content as modified even when placeholder hashes match", () => {
+    const before = [
+      {
+        path: "bin/native.node",
+        size: 50_000_000,
+        sha256: "",
+        flags: ["content-skipped"],
+      },
+    ];
+    const staged = [
+      {
+        path: "bin/native.node",
+        size: 50_000_000,
+        sha256: "",
+        flags: ["content-skipped"],
+      },
+    ];
+
+    const diff = createPackageDiff(before, staged);
+
+    expect(diff.find((entry) => entry.path === "bin/native.node")).toMatchObject({
+      status: "modified",
+      flags: ["content-skipped"],
+    });
+  });
+
   test("deterministic policy escalates risky new staged changes", () => {
     const staged = [
       {

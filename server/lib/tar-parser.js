@@ -14,7 +14,7 @@
 //     cross-function calls resolve by the lexical names below.
 
 /** @typedef {{ path: string, size: number, sha256: string, flags: string[], textSample?: string }} ParsedFile */
-/** @typedef {{ kind: "non-regular"|"duplicate"|"unicode-confusable", path: string, detail: string }} TarSuspiciousEntry */
+/** @typedef {{ kind: "non-regular"|"duplicate"|"unicode-confusable"|"content-skipped", path: string, detail: string }} TarSuspiciousEntry */
 
 export function readString(bytes, start, len) {
   let end = start;
@@ -194,8 +194,8 @@ export async function summarizeFile(path, body) {
   // over textSample in the parent worker, so clipping here is exactly the
   // truncation hole that lets an attacker bury a payload past a fixed window
   // (issue #191). The persisted/display sample is bounded separately at the
-  // persistence layer; total work stays bounded by the archive cap
-  // (MAX_TAR_BYTES) and MAX_FILES.
+  // persistence layer; per-body work is bounded by the per-file cap and total
+  // retained bytes by the streaming reader's retention budget and MAX_FILES.
   const text = decodeText(body);
   if (!text) flags.push("binary");
   return {
@@ -224,16 +224,147 @@ export function shouldSkipTextSample(path) {
   return false;
 }
 
+export function summarizeSkippedFile(path, size) {
+  // Metadata-only record for an entry whose body exceeded the retention limit:
+  // path and declared size are kept so the release manifest stays complete, but
+  // the content was never buffered, so there is no hash or text sample.
+  return { path, size, sha256: "", flags: ["content-skipped"] };
+}
+
+// Manifests carry the identity/metadata every ecosystem review depends on
+// (name, version, install hooks, dependency and RECORD/METADATA data), so they
+// must always be inspected even when the retention budget has been spent on
+// large prepackaged binaries. Matching by basename covers npm's `package.json`,
+// PyPI sdists' `PKG-INFO`/`pyproject.toml`, and wheel `METADATA` regardless of
+// the version directory the archive nests them under. A manifest too large to
+// inspect fails the parse (see readTarStream) rather than silently nulling the
+// package's identity.
+export function isRetainedManifestPath(path) {
+  const normalized = String(path || "").replaceAll("\\", "/");
+  const basename = normalized.slice(normalized.lastIndexOf("/") + 1);
+  return (
+    basename === "package.json" ||
+    basename === "PKG-INFO" ||
+    basename === "pyproject.toml" ||
+    basename === "METADATA"
+  );
+}
+
+// The *root* manifest an ecosystem derives package identity/dependencies from:
+// npm's `package.json` (the `package/` prefix is already stripped) and a PyPI
+// sdist's `PKG-INFO`/`pyproject.toml`, which live at the archive root or under a
+// single `<name>-<version>/` directory. A body too large to inspect here would
+// null the manifest and leave identity/deps uninspected, so it fails the parse
+// rather than degrading to a finding. Matching is anchored to the root (not the
+// basename anywhere) so a benign deeply-nested/vendored manifest-named file is
+// skipped, not fatal.
+export function isRootManifestPath(path) {
+  const normalized = String(path || "").replaceAll("\\", "/");
+  if (normalized === "package.json") return true;
+  if (normalized === "PKG-INFO" || normalized === "pyproject.toml") return true;
+  const slash = normalized.indexOf("/");
+  if (slash === -1 || normalized.indexOf("/", slash + 1) !== -1) return false;
+  const rest = normalized.slice(slash + 1);
+  return rest === "PKG-INFO" || rest === "pyproject.toml";
+}
+
+// Tags a parser safety-limit / malformed-archive error so the sandbox worker can
+// distinguish it from an upstream gzip/stream failure without matching on exact
+// message strings (which silently drift when a message is reworded).
+export function tarError(message) {
+  const err = new Error(message);
+  err.tarSafety = true;
+  return err;
+}
+
 export async function readTar(buffer, maxFiles, maxTarBytes) {
-  const nul = String.fromCharCode(0);
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  return readTarStream(new Response(bytes).body, maxFiles, maxTarBytes, Infinity);
+}
+
+// Streaming tar reader. Walks entries sequentially as decompressed bytes
+// arrive, so the whole archive never has to fit in memory: `maxTarBytes`
+// bounds the bytes *retained* for inspection (per entry and cumulatively),
+// while `maxStreamBytes` bounds the total bytes consumed from the stream.
+// Regular files whose body would blow the retention budget are recorded as
+// content-skipped (path + declared size, no hash/text) instead of failing the
+// parse — the esbuild/rover pattern of multi-hundred-megabyte prepackaged
+// platform binaries alongside a small manifest.
+export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes) {
+  const nul = String.fromCharCode(0);
+  if (!body) throw tarError("tarball decompression failed");
+  const reader = body.getReader();
+  const chunks = [];
+  let buffered = 0;
+  let streamed = 0;
+  let streamDone = false;
+
+  async function fill(target) {
+    while (buffered < target && !streamDone) {
+      const { value, done } = await reader.read();
+      if (done) {
+        streamDone = true;
+        break;
+      }
+      streamed += value.byteLength;
+      if (streamed > maxStreamBytes) throw tarError("archive expands beyond safety limit");
+      chunks.push(value);
+      buffered += value.byteLength;
+    }
+    return buffered >= target;
+  }
+
+  function take(count) {
+    const out = new Uint8Array(count);
+    let offset = 0;
+    while (offset < count) {
+      const head = chunks[0];
+      const need = count - offset;
+      if (head.byteLength <= need) {
+        out.set(head, offset);
+        offset += head.byteLength;
+        buffered -= head.byteLength;
+        chunks.shift();
+      } else {
+        out.set(head.subarray(0, need), offset);
+        chunks[0] = head.subarray(need);
+        buffered -= need;
+        offset = count;
+      }
+    }
+    return out;
+  }
+
+  async function discard(count) {
+    let remaining = count;
+    while (remaining > 0) {
+      if (!buffered && !(await fill(1))) return false;
+      const head = chunks[0];
+      if (head.byteLength <= remaining) {
+        remaining -= head.byteLength;
+        buffered -= head.byteLength;
+        chunks.shift();
+      } else {
+        chunks[0] = head.subarray(remaining);
+        buffered -= remaining;
+        remaining = 0;
+      }
+    }
+    return true;
+  }
+
   const files = [];
   const suspicious = [];
   const suspiciousLimit = Math.max(1, Number.isFinite(maxFiles) ? maxFiles : 250);
   let suspiciousLimitReached = false;
   const seenPaths = new Map();
+  // Bytes each retained path contributes to `retainedBytes`, so a later
+  // duplicate that replaces an entry releases the earlier body's budget instead
+  // of double-counting it (which would prematurely exhaust the retention limit).
+  const retainedByPath = new Map();
   let nextLongName = null;
   let pax = null;
+  let retainedBytes = 0;
 
   function addSuspicious(entry) {
     if (suspicious.length < suspiciousLimit) {
@@ -250,93 +381,168 @@ export async function readTar(buffer, maxFiles, maxTarBytes) {
     }
   }
 
-  for (let offset = 0; offset + 512 <= bytes.length; ) {
-    const header = bytes.subarray(offset, offset + 512);
-    if (header.every((b) => b === 0)) break;
+  try {
+    while (await fill(512)) {
+      const header = take(512);
+      if (header.every((b) => b === 0)) break;
 
-    const rawName = readString(header, 0, 100);
-    const prefix = readString(header, 345, 155);
-    const sizeText = readString(header, 124, 12).trim() || "0";
-    if (!/^[0-7]+$/.test(sizeText)) throw new Error("invalid tar entry size");
-    const size = parseInt(sizeText, 8);
-    if (!Number.isFinite(size) || size < 0 || size > maxTarBytes)
-      throw new Error("invalid tar entry size");
-    const type = String.fromCharCode(header[156] || 48);
-    offset += 512;
-    if (offset + size > bytes.length) throw new Error("truncated tar entry");
-    const body = bytes.subarray(offset, offset + size);
+      const rawName = readString(header, 0, 100);
+      const prefix = readString(header, 345, 155);
+      const sizeText = readString(header, 124, 12).trim() || "0";
+      if (!/^[0-7]+$/.test(sizeText)) throw tarError("invalid tar entry size");
+      const size = parseInt(sizeText, 8);
+      if (!Number.isFinite(size) || size < 0) throw tarError("invalid tar entry size");
+      const type = String.fromCharCode(header[156] || 48);
+      const isRegular = type === "0" || type === nul;
+      const padding = Math.ceil(size / 512) * 512 - size;
 
-    if (type === "x") {
-      // Local PAX header. Its path attribute applies only to the next entry.
-      pax = parsePax(body);
-      if (pax && typeof pax.path === "string" && !isSafePaxPath(pax.path)) {
-        throw new Error("invalid pax path");
-      }
-    } else if (type === "g") {
-      // Global PAX metadata does not override the path of following entries.
-      // Ignoring path here keeps scanner paths aligned with tar extraction.
-      parsePax(body);
-      nextLongName = null;
-      pax = null;
-    } else if (type === "L") {
-      // readString already stops at the first NUL terminator, so the long-name
-      // payload is implicitly trimmed at the NUL boundary.
-      const candidate = readString(body, 0, body.length);
-      if (!isSafePaxPath(candidate)) throw new Error("invalid long-name path");
-      nextLongName = candidate;
-    } else if (type === "0" || type === nul) {
-      const rawCandidate =
-        (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName;
-      const canonicalCandidate = canonicalizePath(rawCandidate);
-      const path = normalizeTarPath(rawCandidate);
-      const canonicalPath = normalizeTarPath(canonicalCandidate);
-      if (rawCandidate !== canonicalCandidate) {
-        addSuspicious({
-          kind: "unicode-confusable",
-          path: canonicalPath || path || "<invalid-path>",
-          detail: canonicalPath
-            ? "path contained zero-width or visually-confusable characters"
-            : "path contained zero-width or visually-confusable characters and normalized to an unsafe path",
-        });
-      }
-      if (path) {
-        if (seenPaths.has(path)) {
-          // Match last-write-wins extraction so downstream checks inspect the
-          // bytes consumers are likely to receive, while still surfacing the duplicate.
-          addSuspicious({
-            kind: "duplicate",
-            path,
-            detail: "duplicate path; later entry replaced earlier entry",
-          });
-          const summarized = await summarizeFile(path, body);
-          files[seenPaths.get(path)] = summarized;
+      // Only regular files stream-skip oversized bodies (the prepackaged-binary
+      // case). Metadata (x/g/L) and non-regular entries must be materialized or
+      // are never legitimately huge, so an oversized body is malformed/hostile —
+      // fail closed rather than burn the sandbox's CPU budget discarding it.
+      if (!isRegular && size > maxTarBytes) throw tarError("invalid tar entry size");
+
+      if (type === "x" || type === "g" || type === "L") {
+        if (!(await fill(size))) throw tarError("truncated tar entry");
+        const body = take(size);
+        if (type === "x") {
+          // Local PAX header. Its path attribute applies only to the next entry.
+          pax = parsePax(body);
+          if (pax && typeof pax.path === "string" && !isSafePaxPath(pax.path)) {
+            throw tarError("invalid pax path");
+          }
+        } else if (type === "g") {
+          // Global PAX metadata does not override the path of following entries.
+          // Ignoring path here keeps scanner paths aligned with tar extraction.
+          parsePax(body);
+          nextLongName = null;
+          pax = null;
         } else {
-          if (files.length >= maxFiles) throw new Error("archive contains too many files");
-          const summarized = await summarizeFile(path, body);
-          seenPaths.set(path, files.length);
-          files.push(summarized);
+          // readString already stops at the first NUL terminator, so the long-name
+          // payload is implicitly trimmed at the NUL boundary.
+          const candidate = readString(body, 0, body.length);
+          if (!isSafePaxPath(candidate)) throw tarError("invalid long-name path");
+          nextLongName = candidate;
         }
+      } else if (isRegular) {
+        const rawCandidate =
+          (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName;
+        const canonicalCandidate = canonicalizePath(rawCandidate);
+        const path = normalizeTarPath(rawCandidate);
+        const canonicalPath = normalizeTarPath(canonicalCandidate);
+        if (rawCandidate !== canonicalCandidate) {
+          addSuspicious({
+            kind: "unicode-confusable",
+            path: canonicalPath || path || "<invalid-path>",
+            detail: canonicalPath
+              ? "path contained zero-width or visually-confusable characters"
+              : "path contained zero-width or visually-confusable characters and normalized to an unsafe path",
+          });
+        }
+        // A duplicate path replaces (does not add to) its earlier entry under
+        // last-write-wins, so exclude that earlier copy's retained bytes from the
+        // budget here — otherwise a duplicate that would fit after the release is
+        // wrongly skipped, leaving the very bytes a consumer receives uninspected.
+        const priorContribution = path && seenPaths.has(path) ? retainedByPath.get(path) || 0 : 0;
+        const budgetBase = retainedBytes - priorContribution;
+        // Retention tiers, tightest first:
+        //  - the root npm manifest is ALWAYS inspected — parsePackageJson depends
+        //    on it, and it is a single deduped path, so this adds at most one
+        //    manifest body (≤ maxTarBytes) and cannot be starved by earlier files;
+        //  - other manifests (nested npm, PyPI/wheel metadata, whose root path is
+        //    attacker-shaped and so cannot get the guarantee) draw on a bounded
+        //    second maxTarBytes of headroom, so a tar stuffed with manifest-named
+        //    files still cannot amplify retained memory;
+        //  - everything else must fit the shared maxTarBytes budget.
+        const isNpmRootManifest = path === "package.json";
+        const mustRetainBody = path ? isRetainedManifestPath(path) : false;
+        const retainBody =
+          size <= maxTarBytes &&
+          (isNpmRootManifest ||
+            budgetBase + size <= maxTarBytes ||
+            (mustRetainBody && budgetBase + size <= 2 * maxTarBytes));
+        // A root manifest we cannot inspect — too large for the per-file limit, or
+        // crowded out of the retention budget by earlier manifest-named entries —
+        // must fail the parse rather than degrade its name/version/dependency
+        // metadata to a content-skipped finding, honoring the fail-closed manifest
+        // guarantee for PyPI (whose attacker-shaped root path cannot get npm's
+        // always-retain guarantee) as well as npm. Nested/vendored manifest-named
+        // files are not root manifests and are skipped below, not fatal.
+        if (path && isRootManifestPath(path) && !retainBody) {
+          throw tarError("invalid tar entry size");
+        }
+        let summarized = null;
+        let contributed = 0;
+        if (path && retainBody) {
+          if (!(await fill(size))) throw tarError("truncated tar entry");
+          summarized = await summarizeFile(path, take(size));
+          contributed = size;
+        } else {
+          if (!(await discard(size))) throw tarError("truncated tar entry");
+          if (path) {
+            summarized = summarizeSkippedFile(path, size);
+            // Distinguish a body too large to inspect on its own from a small
+            // body skipped only because earlier files spent the shared budget —
+            // the message is user-facing evidence and must be accurate.
+            const detail =
+              size > maxTarBytes
+                ? `file body (${size} bytes) exceeds the ${maxTarBytes}-byte per-file inspection limit`
+                : `file body (${size} bytes) did not fit the archive's ${maxTarBytes}-byte cumulative retention budget already spent on earlier files`;
+            addSuspicious({
+              kind: "content-skipped",
+              path,
+              detail: `${detail}; metadata recorded but content not inspected`,
+            });
+          }
+        }
+        if (path && summarized) {
+          if (seenPaths.has(path)) {
+            // Match last-write-wins extraction so downstream checks inspect the
+            // bytes consumers are likely to receive, while still surfacing the duplicate.
+            addSuspicious({
+              kind: "duplicate",
+              path,
+              detail: "duplicate path; later entry replaced earlier entry",
+            });
+            retainedBytes -= retainedByPath.get(path) || 0;
+            files[seenPaths.get(path)] = summarized;
+          } else {
+            if (files.length >= maxFiles) throw tarError("archive contains too many files");
+            seenPaths.set(path, files.length);
+            files.push(summarized);
+          }
+          retainedByPath.set(path, contributed);
+          retainedBytes += contributed;
+        }
+        nextLongName = null;
+        pax = null;
+      } else {
+        // Non-regular entry (hardlink, symlink, device, directory, fifo,
+        // reserved). npm publish never emits these; a hand-crafted tar can.
+        const rawCandidate =
+          (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName;
+        const reportedPath = normalizeTarPath(canonicalizePath(rawCandidate)) || rawCandidate || "";
+        addSuspicious({
+          kind: "non-regular",
+          path: reportedPath,
+          detail: `typeflag ${type} (${describeNonRegularType(type)})`,
+        });
+        if (!(await discard(size))) throw tarError("truncated tar entry");
+        nextLongName = null;
+        pax = null;
       }
-      nextLongName = null;
-      pax = null;
-    } else {
-      // Non-regular entry (hardlink, symlink, device, directory, fifo,
-      // reserved). npm publish never emits these; a hand-crafted tar can.
-      const rawCandidate =
-        (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName;
-      const reportedPath = normalizeTarPath(canonicalizePath(rawCandidate)) || rawCandidate || "";
-      addSuspicious({
-        kind: "non-regular",
-        path: reportedPath,
-        detail: `typeflag ${type} (${describeNonRegularType(type)})`,
-      });
-      nextLongName = null;
-      pax = null;
-    }
 
-    offset += Math.ceil(size / 512) * 512;
+      // Inter-entry padding; a missing final pad block is tolerated like the
+      // buffer reader tolerated a trailing partial block.
+      if (padding > 0) await discard(padding);
+    }
+    return { files, suspicious };
+  } finally {
+    // Release the stream on every exit — success, break, or any thrown parser
+    // error — so a malformed archive never leaves the reader lock held and the
+    // upstream fetch/DecompressionStream pipe open against the sandbox budget.
+    reader.cancel().catch(() => undefined);
   }
-  return { files, suspicious };
 }
 
 export function readUint16Le(bytes, offset) {
@@ -518,29 +724,4 @@ export function parsePackageJson(files) {
   } catch {
     return null;
   }
-}
-
-export async function gunzipBounded(body, maxBytes) {
-  if (!body) throw new Error("tarball decompression failed");
-  const ds = new DecompressionStream("gzip");
-  const reader = body.pipeThrough(ds).getReader();
-  const chunks = [];
-  let total = 0;
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      reader.cancel().catch(() => undefined);
-      throw new Error("archive expands beyond safety limit");
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return out.buffer;
 }

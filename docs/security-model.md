@@ -64,7 +64,7 @@ The sandbox parses untrusted bytes under archive/file/expanded-size caps and ret
 - PyPI artifact downloads restricted to `https://files.pythonhosted.org`;
 - GitHub artifact downloads scoped to the workflow-gate installation/run being reviewed.
 
-The sandbox must remain small and boring. Parser bugs should fail scans, not skip evidence.
+The sandbox must remain small and boring. Genuine parser bugs and malformed archives fail closed — the scan errors rather than returning partial evidence. Size is the one deliberate exception: tarballs are parsed as a stream, and a regular-file body larger than the per-file inspection limit, or one that no longer fits the archive's cumulative retention budget, is recorded as a `content-skipped` finding (path and declared size only, no hash or text) so oversized prepackaged binaries can be reviewed without buffering them. Skipped content is surfaced as a medium finding on every ecosystem path and must be verified out of band; manifests are always retained, or the scan fails closed. An oversized baseline (previous-version) archive degrades to a no-baseline scan rather than failing the staged review.
 
 ## Workflow-gate posture
 

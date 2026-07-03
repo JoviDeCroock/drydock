@@ -1,4 +1,5 @@
 import type { DiffEntry, FileRecord, Finding, RiskLevel } from "../../review";
+import type { TarSuspiciousEntry } from "../../tar-parser.js";
 
 export const PYPI_RELEASE_MANIFEST_SCHEMA = "drydock.release-artifacts.v1";
 export const PYPI_RULES_VERSION = "0.2.0";
@@ -40,6 +41,10 @@ export interface PyPiReleaseManifest {
 export interface PyPiArtifactInput {
   path: string;
   files: FileRecord[];
+  // Tar-parser findings (oversized content-skipped bodies, non-regular entries,
+  // duplicates, confusable paths) for this artifact. Carried through so the gate
+  // surfaces them as findings instead of dropping evidence the sandbox recorded.
+  suspiciousEntries?: TarSuspiciousEntry[];
 }
 
 export interface PyPiArtifactSummary {

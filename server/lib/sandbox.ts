@@ -6,8 +6,14 @@ import type { TarSuspiciousEntry } from "./tar-parser.js";
 
 export const SANDBOX_MAX_FILES = 2_500;
 export const SANDBOX_MAX_TAR_BYTES = 25 * 1024 * 1024;
+// Total decompressed bytes the streaming tar reader may consume. Bodies beyond
+// the retention budget (SANDBOX_MAX_TAR_BYTES) are skipped, not buffered, so
+// this cap bounds CPU/streaming work rather than memory — it is what lets big
+// prepackaged-binary packages dock without buffering their binaries.
+export const SANDBOX_MAX_STREAM_TAR_BYTES = 10 * SANDBOX_MAX_TAR_BYTES;
 const MAX_FILES = SANDBOX_MAX_FILES;
 const MAX_TAR_BYTES = SANDBOX_MAX_TAR_BYTES;
+const MAX_STREAM_TAR_BYTES = SANDBOX_MAX_STREAM_TAR_BYTES;
 
 // Functions whose source text is concatenated into the sandbox worker module.
 // They must remain referenced only by lexical name (no closures) so the order
@@ -30,7 +36,11 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.sha256Hex,
   tarParser.shouldSkipTextSample,
   tarParser.summarizeFile,
-  tarParser.readTar,
+  tarParser.summarizeSkippedFile,
+  tarParser.isRetainedManifestPath,
+  tarParser.isRootManifestPath,
+  tarParser.tarError,
+  tarParser.readTarStream,
   tarParser.readUint16Le,
   tarParser.readUint32Le,
   tarParser.findZipEndOfCentralDirectory,
@@ -38,7 +48,6 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.readZipArchive,
   tarParser.readStreamBounded,
   tarParser.parsePackageJson,
-  tarParser.gunzipBounded,
 ];
 
 function renderTarParserSource() {
@@ -144,6 +153,28 @@ export function sandboxErrorDetail(err: unknown): string | null {
   return null;
 }
 
+/**
+ * Parse a sandbox error's serialized `{ error, status }` detail. Returns null
+ * when the error is not a sandbox error or its detail is not the expected shape,
+ * so callers can branch on the sandbox's own status/error without each
+ * re-implementing the JSON.parse dance.
+ */
+export function parseSandboxErrorDetail(
+  err: unknown,
+): { error: string | null; status: number | null } | null {
+  const detailText = sandboxErrorDetail(err);
+  if (detailText === null) return null;
+  try {
+    const parsed = JSON.parse(detailText) as { error?: unknown; status?: unknown };
+    return {
+      error: typeof parsed.error === "string" ? parsed.error : null,
+      status: typeof parsed.status === "number" ? parsed.status : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function isSerializedSandboxDetail(message: string): boolean {
   if (!message.trim().startsWith("{")) return false;
   try {
@@ -194,6 +225,7 @@ export async function downloadInSandboxInline(
       ARCHIVE_FORMAT: options.format,
       MAX_FILES: Math.min(options.maxFiles ?? MAX_FILES, MAX_FILES),
       MAX_TAR_BYTES,
+      MAX_STREAM_TAR_BYTES,
     },
     globalOutbound: (
       ctx as unknown as {
@@ -256,6 +288,7 @@ export async function downloadInSandbox(
       ARCHIVE_FORMAT: options.archiveFormat || "tgz",
       MAX_FILES: Math.min(options.maxFiles ?? MAX_FILES, MAX_FILES),
       MAX_TAR_BYTES,
+      MAX_STREAM_TAR_BYTES,
     },
     globalOutbound: (
       ctx as unknown as {
@@ -308,8 +341,10 @@ export default {
       res = await fetch(url, { headers: { accept: "application/octet-stream" } });
       if (!res.ok) return json({ error: "download failed", status: res.status }, 502);
 
+      // Only the zip path buffers the whole archive, so only it needs the wire-size
+      // gate. The tgz path streams: oversized bodies are skipped, never buffered.
       const contentLength = Number(res.headers.get("content-length") || "0");
-      if (contentLength > maxTarBytes) return json({ error: "tarball too large", status: 413 }, 413);
+      if (archiveFormat === "zip" && contentLength > maxTarBytes) return json({ error: "tarball too large", status: 413 }, 413);
     }
     if (archiveFormat === "zip") {
       let zip;
@@ -337,30 +372,21 @@ export default {
       return json({ files, packageJson: null });
     }
 
-    let tar;
-    try {
-      tar = await gunzipBounded(res.body, maxTarBytes);
-    } catch (err) {
-      const reason = err && err.message === "archive expands beyond safety limit"
-        ? "archive expands beyond safety limit"
-        : "tarball decompression failed";
-      const status = reason === "archive expands beyond safety limit" ? 413 : 400;
-      return json({ error: reason, status }, status);
-    }
-    if (tar.byteLength > maxTarBytes) return json({ error: "archive expands beyond safety limit", status: 413 }, 413);
+    const maxStreamTarBytes = env.MAX_STREAM_TAR_BYTES || maxTarBytes * 10;
     let files;
     let suspiciousEntries;
     try {
-      const parsed = await readTar(tar, env.MAX_FILES || 2_500, maxTarBytes);
+      if (!res.body) return json({ error: "tarball decompression failed", status: 400 }, 400);
+      const tarStream = res.body.pipeThrough(new DecompressionStream("gzip"));
+      const parsed = await readTarStream(tarStream, env.MAX_FILES || 2_500, maxTarBytes, maxStreamTarBytes);
       files = parsed.files;
       suspiciousEntries = parsed.suspicious;
     } catch (err) {
-      const reason = err && err.message === "archive contains too many files"
-        ? "archive contains too many files"
-        : err && err.message
-          ? err.message
-          : "tarball parse failed";
-      const status = reason === "archive contains too many files" ? 413 : 400;
+      // The parser tags its own safety-limit / malformed-archive errors, so
+      // anything untagged is an upstream gzip/stream failure. This avoids
+      // matching on exact message text, which silently drifts on a reword.
+      const reason = err && err.tarSafety && err.message ? err.message : "tarball decompression failed";
+      const status = reason === "archive contains too many files" || reason === "archive expands beyond safety limit" ? 413 : 400;
       return json({ error: reason, status }, status);
     }
     const packageJson = parsePackageJson(files);

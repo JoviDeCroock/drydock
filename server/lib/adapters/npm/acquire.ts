@@ -1,4 +1,5 @@
 import { pickBaselineVersion } from "../../registry";
+import { parseSandboxErrorDetail } from "../../sandbox";
 import type { PackageJsonSummary } from "../../review";
 import type { StagedPublishDetails } from "../../staged-publishes";
 import type { AcquiredArtifact, AdapterContext, BaselineInfo, StagedDetails } from "../types";
@@ -80,9 +81,26 @@ export async function acquireBaselineNpm(
     };
   }
 
-  const previous = await broker.downloadPublished(tarballUrl, {
-    maxFiles: input.maxFiles,
-  });
+  let previous;
+  try {
+    previous = await broker.downloadPublished(tarballUrl, {
+      maxFiles: input.maxFiles,
+    });
+  } catch (err) {
+    // A baseline the sandbox rejects on a safety limit degrades to a no-baseline
+    // scan (the staged artifact still gets fully reviewed) instead of failing the
+    // whole scan — prepackaged-binary packages routinely publish multi-hundred-MB
+    // tarballs. The reason names the actual limit so operators are not told
+    // "too large" when the baseline instead had too many entries.
+    const limit = baselineSafetyLimit(err);
+    if (limit) {
+      return {
+        artifact: null,
+        baseline: { ...baseline, reason: `${baseline.reason}:${limit}` },
+      };
+    }
+    throw err;
+  }
   return {
     artifact: {
       files: previous.files,
@@ -107,6 +125,25 @@ function hasMetadataMismatch(
   if (details.packageName && pkg.name && details.packageName !== pkg.name) return true;
   if (details.version && pkg.version && details.version !== pkg.version) return true;
   return false;
+}
+
+/**
+ * Classify a sandbox baseline-download failure into the specific safety limit it
+ * hit, or null if it is an unrelated error that must still fail the scan. Only
+ * whole-archive size limits (oversized tarball, decompression-bomb expansion,
+ * too-many-files) degrade the baseline; the sandbox maps those to status 413, so
+ * the status gates the branch and the error string names the cause. A malformed
+ * baseline (truncated/invalid entry, status 400) still fails the scan.
+ */
+function baselineSafetyLimit(
+  err: unknown,
+): "baseline-too-large" | "baseline-too-many-files" | null {
+  const detail = parseSandboxErrorDetail(err);
+  if (!detail || detail.status !== 413) return null;
+  const error = detail.error ?? "";
+  if (error.includes("too many files")) return "baseline-too-many-files";
+  if (error.includes("too large") || error.includes("safety limit")) return "baseline-too-large";
+  return null;
 }
 
 function emptyBaseline(tag: string | null, reason: string): BaselineInfo {
