@@ -1,4 +1,5 @@
 import type { getScan } from "../db/scans";
+import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "./adapters/types";
 
 // A persisted scan detail, as returned by getScan (never null at the call site).
 type ScanDetail = NonNullable<Awaited<ReturnType<typeof getScan>>>;
@@ -43,6 +44,11 @@ export function buildReportExport(detail: ScanDetail) {
     },
     baseline: summary.baseline ?? null,
     safety: summary.safety ?? null,
+    // Byte-continuity record: the reviewed artifacts + the digests recomputed
+    // from the immutable release bytes, so a consumer can verify the published
+    // wheel/sdist/tarball matches what Drydock reviewed. Workflow-gate reviews
+    // only; null for staged-publish scans.
+    provenance: extractProvenance(summary.stagedPublish),
     riskSummary: detail.riskSummary ?? null,
     packageJsonDiff: summary.packageJsonDiff ?? null,
     diff: summary.diff ?? null,
@@ -110,6 +116,31 @@ function toIso(value: unknown): string | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// Pull the provenance block out of the persisted, adapter-shaped staged details.
+// The shape is re-validated rather than trusted so a malformed or pre-provenance
+// record exports as `null` instead of leaking partial data.
+function extractProvenance(stagedPublish: unknown): ReleaseProvenance | null {
+  if (!isRecord(stagedPublish)) return null;
+  const provenance = stagedPublish.provenance;
+  if (!isRecord(provenance)) return null;
+  const { ecosystem, mode, artifacts } = provenance;
+  if ((ecosystem !== "npm" && ecosystem !== "pypi") || mode !== "workflow_gate") return null;
+  if (!Array.isArray(artifacts)) return null;
+  const mapped: ReleaseProvenanceArtifact[] = [];
+  for (const artifact of artifacts) {
+    if (!isRecord(artifact)) return null;
+    const { path, kind, sha256 } = artifact;
+    if (typeof path !== "string" || typeof sha256 !== "string") return null;
+    if (kind === "tarball" || kind === "wheel" || kind === "sdist") {
+      mapped.push({ path, kind, sha256 });
+      continue;
+    }
+    return null;
+  }
+  if (!mapped.length) return null;
+  return { ecosystem, mode, artifacts: mapped };
 }
 
 function filenameSegment(value: string | null | undefined): string | null {

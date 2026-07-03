@@ -150,6 +150,114 @@ describe("scan report JSON export", () => {
     expect(await again.text()).toBe(text);
   });
 
+  test("surfaces reviewed-artifact provenance digests for a gate review", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const scanId = `scan_${crypto.randomUUID()}`;
+    const stageId = `stage-${scanId.slice(-12)}`;
+    await createScanJob(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+    });
+    const provenance = {
+      ecosystem: "pypi",
+      mode: "workflow_gate",
+      artifacts: [
+        { path: "dist/demo_package-1.2.0-py3-none-any.whl", kind: "wheel", sha256: "a".repeat(64) },
+        { path: "dist/demo_package-1.2.0.tar.gz", kind: "sdist", sha256: "b".repeat(64) },
+      ],
+    };
+    await persistScan(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+      packageJson: { name: "demo-package", version: "1.2.0" },
+      risk: "low",
+      status: "complete",
+      summary: {
+        report: {
+          version: 1,
+          digest: "abc123",
+          digestAlgorithm: "sha256",
+          generatedAt: "2026-01-01T00:00:00.000Z",
+          rulesVersion: "1.8.0",
+        },
+        // The whole adapter snapshot is persisted here; only `provenance` is
+        // promoted to a first-class export field, the rest stays opaque.
+        stagedPublish: { provenance, manifest: { package: "demo-package" } },
+      },
+      ai: null,
+      files: [],
+      diff: [],
+      findings: [],
+      report: { version: 1, digest: "abc123" },
+    });
+
+    const res = await getReport(buildTestApp(owner), scanId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { provenance: typeof provenance | null };
+    expect(body.provenance).toEqual(provenance);
+  });
+
+  test("omits provenance when any artifact entry is malformed", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const scanId = `scan_${crypto.randomUUID()}`;
+    const stageId = `stage-${scanId.slice(-12)}`;
+    await createScanJob(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+    });
+    await persistScan(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+      packageJson: { name: "demo-package", version: "1.2.0" },
+      risk: "low",
+      status: "complete",
+      summary: {
+        stagedPublish: {
+          provenance: {
+            ecosystem: "pypi",
+            mode: "workflow_gate",
+            artifacts: [
+              {
+                path: "dist/demo_package-1.2.0-py3-none-any.whl",
+                kind: "wheel",
+                sha256: "a".repeat(64),
+              },
+              { path: "dist/demo_package-1.2.0.tar.gz", kind: "sdist" },
+            ],
+          },
+        },
+      },
+      ai: null,
+      files: [],
+      diff: [],
+      findings: [],
+      report: { version: 1, digest: "abc123" },
+    });
+
+    const res = await getReport(buildTestApp(owner), scanId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { provenance: unknown };
+    expect(body.provenance).toBeNull();
+  });
+
+  test("omits provenance for a staged-publish scan with no gate details", async () => {
+    const owner = await seedUser();
+    const scanId = await seedCompletedScan(owner);
+    const res = await getReport(buildTestApp(owner), scanId);
+    const body = (await res.json()) as { provenance: unknown };
+    expect(body.provenance).toBeNull();
+  });
+
   test("uses an organization query for native browser downloads", async () => {
     const owner = await seedUser();
     const db = createDb(env.DB);

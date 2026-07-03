@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { sortFindingsBySeverity } from "../../../lib/findings";
 import type { AiFinding, DisplayedAiResult } from "../../../../server/lib/ai-review-types";
-import type { PackageJsonDiff } from "../../../../server/types";
+import type { PackageJsonDiff, ReleaseProvenance } from "../../../../server/types";
 import { Badge, severityTone, statusTone } from "../../../components/Badge";
 import { FindingCard, FindingRow } from "../../../components/FindingCard";
 import { EmptyLine, SectionLabel } from "../../../components/Typography";
@@ -23,6 +23,12 @@ export function PersistedReportSections({
           <EmptyLine>No manifest changes were saved for this review.</EmptyLine>
         )}
       </ReportSection>
+
+      {summary.stagedPublish?.provenance?.artifacts?.length ? (
+        <ReportSection title="Provenance">
+          <ProvenanceView provenance={summary.stagedPublish.provenance} />
+        </ReportSection>
+      ) : null}
 
       {ai != null && ai.model != null && (
         <ReportSection title="Reviewer notes">
@@ -92,6 +98,37 @@ function AiFindingList({ findings }: { findings: AiFinding[] }) {
         </FindingCard>
       ))}
     </ul>
+  );
+}
+
+function ProvenanceView({ provenance }: { provenance: ReleaseProvenance }) {
+  const ecosystem = provenance.ecosystem === "pypi" ? "PyPI" : "npm";
+  return (
+    <div class="flex flex-col gap-3">
+      <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">
+        SHA-256 digests recomputed from the reviewed {ecosystem} release bytes. The publish job
+        re-verifies these against the immutable artifact before upload, so the bytes reviewed are
+        the bytes published.
+      </p>
+      <div class="border border-border rounded-lg overflow-hidden divide-y divide-border">
+        {provenance.artifacts.map((artifact) => (
+          <div key={artifact.path} class="flex flex-col gap-1.5 px-3 py-2.5 min-w-0">
+            <div class="flex flex-wrap items-center gap-2 min-w-0">
+              <Badge tone="neutral">{artifact.kind}</Badge>
+              <code class="font-mono text-[12px] text-ink break-all min-w-0">{artifact.path}</code>
+            </div>
+            <div class="flex items-baseline gap-2 min-w-0">
+              <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle flex-shrink-0">
+                sha256
+              </span>
+              <code class="font-mono text-[11px] text-ink-muted break-all min-w-0">
+                {artifact.sha256}
+              </code>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
