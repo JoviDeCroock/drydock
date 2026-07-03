@@ -194,8 +194,8 @@ export async function summarizeFile(path, body) {
   // over textSample in the parent worker, so clipping here is exactly the
   // truncation hole that lets an attacker bury a payload past a fixed window
   // (issue #191). The persisted/display sample is bounded separately at the
-  // persistence layer; total work stays bounded by the archive cap
-  // (MAX_TAR_BYTES) and MAX_FILES.
+  // persistence layer; per-body work is bounded by the per-file cap and total
+  // retained bytes by the streaming reader's retention budget and MAX_FILES.
   const text = decodeText(body);
   if (!text) flags.push("binary");
   return {
@@ -421,14 +421,24 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes)
               : "path contained zero-width or visually-confusable characters and normalized to an unsafe path",
           });
         }
-        // A manifest too large to inspect must fail the scan, never silently
-        // become a null manifest that disables every manifest-derived detection.
-        if (path && isRetainedManifestPath(path) && size > maxTarBytes) {
+        // The root npm manifest is the one file parsePackageJson depends on, and
+        // a body too large to inspect there would silently null the manifest and
+        // disable every manifest-derived detection. A >25MB package.json is only
+        // ever hostile, so fail closed. Nested/vendored manifest-named files are
+        // not the package manifest, so they are skipped (below), not fatal.
+        if (path === "package.json" && size > maxTarBytes) {
           throw tarError("invalid tar entry size");
         }
+        // Manifests bypass the shared retention budget so a package's identity is
+        // always inspected even behind large binaries, but they draw on a bounded
+        // headroom (a second maxTarBytes) rather than an unlimited bypass — a tar
+        // stuffed with manifest-named files cannot amplify retained memory past
+        // 2×maxTarBytes.
         const mustRetainBody = path ? isRetainedManifestPath(path) : false;
         const retainBody =
-          size <= maxTarBytes && (mustRetainBody || retainedBytes + size <= maxTarBytes);
+          size <= maxTarBytes &&
+          (retainedBytes + size <= maxTarBytes ||
+            (mustRetainBody && retainedBytes + size <= 2 * maxTarBytes));
         let summarized = null;
         let contributed = 0;
         if (path && retainBody) {

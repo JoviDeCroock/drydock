@@ -129,10 +129,11 @@ function hasMetadataMismatch(
 
 /**
  * Classify a sandbox baseline-download failure into the specific safety limit it
- * hit, or null if it is an unrelated error that must still fail the scan. The
- * sandbox maps every safety-limit rejection to status 413, so the status gates
- * the branch and the error string names the cause — matching the classification
- * `classifyScanError` uses for the staged tarball.
+ * hit, or null if it is an unrelated error that must still fail the scan. Only
+ * whole-archive size limits (oversized tarball, decompression-bomb expansion,
+ * too-many-files) degrade the baseline; the sandbox maps those to status 413, so
+ * the status gates the branch and the error string names the cause. A malformed
+ * baseline (truncated/invalid entry, status 400) still fails the scan.
  */
 function baselineSafetyLimit(
   err: unknown,

@@ -715,6 +715,49 @@ describe("readTar limits and malformed archives", () => {
     expect(tarParser.isRetainedManifestPath("")).toBe(false);
     expect(tarParser.isRetainedManifestPath(null)).toBe(false);
   });
+
+  test("skips a nested oversized manifest-named file instead of failing the scan", async () => {
+    // Only the exact root package.json fails closed when oversized; a vendored
+    // file that merely shares the basename is skipped, not fatal for the scan.
+    const limits = { maxFiles: 100, maxTarBytes: 1024 };
+    const tar = buildTar([
+      { name: "package/package.json", body: JSON.stringify({ name: "pkg", version: "1.0.0" }) },
+      { name: "package/vendor/dep/package.json", body: "x".repeat(2048) },
+    ]);
+    const { files, suspicious } = await parseFull(tar, limits);
+    expect(parsePackageJson(files)?.name).toBe("pkg");
+    expect(files.find((f) => f.path === "vendor/dep/package.json")?.flags).toEqual([
+      "content-skipped",
+    ]);
+    expect(suspicious.some((s) => s.path === "vendor/dep/package.json")).toBe(true);
+  });
+
+  test("retains a manifest via headroom once the shared budget is exhausted", async () => {
+    const limits = { maxFiles: 100, maxTarBytes: 500 };
+    const tar = buildTar([
+      { name: "package/filler.bin", body: new Uint8Array(500).fill(0x61) },
+      { name: "foo-1.0.0/PKG-INFO", body: "Metadata-Version: 2.1\nName: foo\nVersion: 1.0.0\n" },
+    ]);
+    const { files } = await parseFull(tar, limits);
+    const manifest = files.find((f) => f.path.endsWith("PKG-INFO"));
+    expect(manifest?.textSample).toContain("Name: foo");
+    expect(manifest?.flags ?? []).not.toContain("content-skipped");
+  });
+
+  test("bounds manifest retention headroom to twice the per-file cap", async () => {
+    // Manifests bypass the shared budget but only up to a second maxTarBytes, so
+    // a tar stuffed with manifest-named files cannot amplify retained memory.
+    const limits = { maxFiles: 100, maxTarBytes: 500 };
+    const tar = buildTar([
+      { name: "a/package.json", body: new Uint8Array(500).fill(0x61) },
+      { name: "b/package.json", body: new Uint8Array(400).fill(0x62) },
+      { name: "c/package.json", body: new Uint8Array(400).fill(0x63) },
+    ]);
+    const { files } = await parseFull(tar, limits);
+    expect(files.find((f) => f.path === "a/package.json")?.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(files.find((f) => f.path === "b/package.json")?.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(files.find((f) => f.path === "c/package.json")?.flags).toEqual(["content-skipped"]);
+  });
 });
 
 describe("parsePackageJson", () => {

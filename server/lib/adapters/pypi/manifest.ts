@@ -117,13 +117,18 @@ const SUSPICIOUS_ENTRY_KINDS = new Set([
   "content-skipped",
 ]);
 
+// The sandbox parser caps suspicious entries at maxFiles; this bounds the
+// re-validation on the adapter-input boundary so a hand-crafted input (not
+// straight from the sandbox) cannot materialize an unbounded array.
+const SUSPICIOUS_ENTRY_INPUT_LIMIT = 5_000;
+
 // Preserve (and re-validate) the tar-parser's suspicious entries across the
 // adapter-input boundary so oversized content-skipped bodies still reach the
 // gate's findings instead of being silently dropped during input parsing.
 function parseSuspiciousEntries(raw: unknown): TarSuspiciousEntry[] | undefined {
   if (!Array.isArray(raw) || !raw.length) return undefined;
   const entries: TarSuspiciousEntry[] = [];
-  for (const item of raw) {
+  for (const item of raw.slice(0, SUSPICIOUS_ENTRY_INPUT_LIMIT)) {
     if (!isRecord(item)) continue;
     if (typeof item.kind !== "string" || !SUSPICIOUS_ENTRY_KINDS.has(item.kind)) continue;
     entries.push({
