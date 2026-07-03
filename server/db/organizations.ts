@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { personalOrganizationId } from "../lib/ownership";
 import { deleteOrganizationArtifacts } from "../lib/scan-artifacts";
 import type { AppDb, WorkspaceSession } from "./client";
@@ -288,22 +288,23 @@ export async function findCoOwnedOrganizations(
   userId: string,
 ): Promise<CoOwnedOrganization[]> {
   const personalId = personalOrganizationId(userId);
-  const owned = await db
-    .select({ id: organizations.id, name: organizations.name })
+  const rows = await db
+    .select({
+      id: organizations.id,
+      name: organizations.name,
+      otherMemberCount: sql<number>`count(${organizationMembers.userId})`,
+    })
     .from(organizations)
-    .where(eq(organizations.ownerUserId, userId));
-
-  const conflicts: CoOwnedOrganization[] = [];
-  for (const org of owned) {
-    if (org.id === personalId) continue;
-    const members = await db
-      .select({ userId: organizationMembers.userId })
-      .from(organizationMembers)
-      .where(eq(organizationMembers.organizationId, org.id));
-    const otherMemberCount = members.filter((member) => member.userId !== userId).length;
-    if (otherMemberCount > 0) conflicts.push({ id: org.id, name: org.name, otherMemberCount });
-  }
-  return conflicts;
+    .innerJoin(
+      organizationMembers,
+      and(
+        eq(organizationMembers.organizationId, organizations.id),
+        ne(organizationMembers.userId, userId),
+      ),
+    )
+    .where(and(eq(organizations.ownerUserId, userId), ne(organizations.id, personalId)))
+    .groupBy(organizations.id, organizations.name);
+  return rows;
 }
 
 /**

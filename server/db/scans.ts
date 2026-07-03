@@ -191,9 +191,9 @@ export async function discardGateScans(
     ? await db.select({ id: scans.id }).from(scans).where(condition)
     : [];
   await db.delete(scans).where(condition);
-  for (const { id } of discarded) {
-    await deleteScanArtifacts(artifactBucket, organizationId, id);
-  }
+  await Promise.all(
+    discarded.map(({ id }) => deleteScanArtifacts(artifactBucket, organizationId, id)),
+  );
 }
 
 export async function persistScan(db: AppDb, input: PersistedScanInput) {
