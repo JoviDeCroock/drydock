@@ -25,10 +25,8 @@ export {
   PYTHON_PATTERN_SET,
   PYTHON_EXECUTION_CAPABILITY_PATTERNS,
   SECRET_PATTERNS,
-  HIGH_CONFIDENCE_SECRET_PATTERNS,
 } from "./patterns";
 export { safeJson } from "./helpers";
-export { normalizeCodeForScanning } from "./normalize";
 export type { DeterministicFindingOptions } from "./context";
 
 // Every deterministic finding carries the same ruleset version, so the family

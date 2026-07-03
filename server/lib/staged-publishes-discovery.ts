@@ -41,13 +41,6 @@ export interface DiscoverStagedPublishesResult {
   scans: StartedStagedPublishScan[];
 }
 
-export class MissingNpmConnectionError extends Error {
-  constructor(public organizationId: string) {
-    super(`npm connection missing for org ${organizationId}`);
-    this.name = "MissingNpmConnectionError";
-  }
-}
-
 export class InvalidNpmConnectionError extends Error {
   constructor(
     public organizationId: string,

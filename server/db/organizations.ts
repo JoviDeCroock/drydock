@@ -481,17 +481,6 @@ export async function deleteNotificationRecipient(
   return removed ?? null;
 }
 
-export async function countNotificationRecipients(
-  db: AppDb,
-  organizationId: string,
-): Promise<number> {
-  const rows = await db
-    .select({ id: organizationNotificationRecipients.id })
-    .from(organizationNotificationRecipients)
-    .where(eq(organizationNotificationRecipients.organizationId, organizationId));
-  return rows.length;
-}
-
 /**
  * Resolve who receives a notification for an organization. When the org has
  * configured recipients they fully define the set; otherwise we fall back to the

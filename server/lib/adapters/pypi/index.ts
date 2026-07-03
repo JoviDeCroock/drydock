@@ -118,28 +118,17 @@ export function createPyPiReleaseCandidateReview(input: {
   };
 }
 
-export { PYPI_RELEASE_MANIFEST_SCHEMA, PYPI_RULE_IDS, PYPI_RULES_VERSION } from "./types";
+export { PYPI_RELEASE_MANIFEST_SCHEMA, PYPI_RULES_VERSION } from "./types";
 export type {
-  PyPiAdapterDetails,
   PyPiAdapterInput,
   PyPiArtifactInput,
-  PyPiArtifactKind,
-  PyPiArtifactSummary,
-  PyPiBaselineSelection,
-  PyPiBaselineSelectionSource,
   PyPiPreparedArtifact,
-  PyPiProjectMetadata,
   PyPiReleaseCandidateReview,
-  PyPiReleaseFile,
   PyPiReleaseManifest,
-  PyPiReleaseManifestArtifact,
-  PyPiRemoteArtifact,
 } from "./types";
 export {
   inferPyPiArtifactKind,
-  isValidPyPiProjectName,
   normalizePyPiProjectName,
-  parsePyPiAdapterInput,
   parsePyPiReleaseManifest,
 } from "./manifest";
 export {
