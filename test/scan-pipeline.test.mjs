@@ -15,6 +15,12 @@ const registryMock = vi.hoisted(() => ({
 }));
 const sandboxMock = vi.hoisted(() => ({
   downloadInSandbox: vi.fn(),
+  sandboxErrorDetail: vi.fn((err) => {
+    if (err?.name !== "SandboxError") return null;
+    if (typeof err.detail === "string") return err.detail;
+    if (typeof err.message === "string" && err.message.trim().startsWith("{")) return err.message;
+    return null;
+  }),
 }));
 const publishedTarballMock = vi.hoisted(() => ({
   downloadPublishedTarball: vi.fn(),

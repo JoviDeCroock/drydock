@@ -1,5 +1,5 @@
 import { pickBaselineVersion } from "../../registry";
-import { SandboxError } from "../../sandbox";
+import { sandboxErrorDetail } from "../../sandbox";
 import type { PackageJsonSummary } from "../../review";
 import type { StagedPublishDetails } from "../../staged-publishes";
 import type { AcquiredArtifact, AdapterContext, BaselineInfo, StagedDetails } from "../types";
@@ -125,9 +125,10 @@ function hasMetadataMismatch(
 }
 
 function isArchiveTooLarge(err: unknown): boolean {
-  if (!(err instanceof SandboxError)) return false;
+  const detailText = sandboxErrorDetail(err);
+  if (detailText === null) return false;
   try {
-    const detail = JSON.parse(err.message) as { error?: string; status?: number };
+    const detail = JSON.parse(detailText) as { error?: string; status?: number };
     return detail.status === 413;
   } catch {
     return false;
