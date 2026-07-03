@@ -229,16 +229,16 @@ function RecentReviewsSection({
             disabled={discoveryRefreshing || !ready}
             title="Find staged npm publishes and dock them for inspection"
           >
-            {discoveryRefreshing ? "Docking npm…" : "Dock npm"}
+            {discoveryRefreshing ? "Checking npm…" : "Check npm"}
           </Button>
           <Button
             variant="ghost"
             size="sm"
             onClick={() => void scans.refresh()}
             disabled={scans.refreshing.value}
-            title="Re-dock the inspections list"
+            title="Reload the inspections list"
           >
-            {scans.refreshing.value ? "Re-docking…" : "Re-dock"}
+            {scans.refreshing.value ? "Refreshing…" : "Refresh"}
           </Button>
         </div>
       </div>
@@ -366,7 +366,7 @@ function emptyStateMessage(filter: ScanDecisionFilter): string {
     case "no_publish":
       return "No held inspections yet.";
     default:
-      return "No versions docked yet. Dock npm or wait for auto-discovery to find a staged release.";
+      return "No versions docked yet. Check npm or wait for auto-discovery to find a staged release.";
   }
 }
 

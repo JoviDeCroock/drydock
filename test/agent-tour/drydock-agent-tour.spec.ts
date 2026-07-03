@@ -123,10 +123,10 @@ test("agent tour: local Drydock release review walkthrough", async ({
     await tour.capture(page, "failed-review", "Fail-closed review state for unavailable evidence.");
 
     await page.goto("/dashboard?filter=all");
-    await expect(page.getByRole("button", { name: "Dock npm" })).toBeEnabled({
+    await expect(page.getByRole("button", { name: "Check npm" })).toBeEnabled({
       timeout: 30_000,
     });
-    await page.getByRole("button", { name: "Dock npm" }).click();
+    await page.getByRole("button", { name: "Check npm" }).click();
     await expect(
       page.getByText(
         /(?:New version docked|\d+ new versions docked) and ready for inspection from npm|No open staged publishes found/,
