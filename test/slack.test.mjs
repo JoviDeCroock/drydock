@@ -208,7 +208,7 @@ describe("listSlackPublicChannels", () => {
 describe("renderSlackMessage", () => {
   test("includes package, source, and risk in the summary text and fields", () => {
     const message = renderSlackMessage({
-      title: "New version docked and ready for inspection",
+      title: "Staged release scan complete",
       packageLabel: "demo-package@1.2.0",
       source: "npm staged publish",
       risk: "high",
@@ -229,7 +229,7 @@ describe("renderSlackMessage", () => {
 
   test.each(["low", "medium", "high", "critical"])("renders the %s risk level", (risk) => {
     const message = renderSlackMessage({
-      title: "Release docked for inspection",
+      title: "Release gate needs a decision",
       packageLabel: "demo-package@2.0.0",
       source: "GitHub workflow gate",
       risk,
@@ -240,26 +240,26 @@ describe("renderSlackMessage", () => {
 
   test("omits optional fields when absent and adds no action button without a URL", () => {
     const message = renderSlackMessage({
-      title: "Version could not dock for inspection",
+      title: "Staged release scan failed",
       packageLabel: "demo-package",
       source: "npm staged publish",
       risk: null,
     });
     const serialized = JSON.stringify(message.blocks);
-    expect(serialized).not.toContain("Inspect in Drydock");
+    expect(serialized).not.toContain("Open in Drydock");
     expect(serialized).not.toContain("Risk");
     expect(message.text).not.toContain("risk");
   });
 
-  test("adds an Inspect in Drydock action only when a dashboard URL is present", () => {
+  test("adds an Open in Drydock action only when a dashboard URL is present", () => {
     const message = renderSlackMessage({
-      title: "New version docked and ready for inspection",
+      title: "Staged release scan complete",
       packageLabel: "demo-package",
       source: "npm staged publish",
       dashboardUrl: "https://drydock.test/dashboard/scans/scan_1",
     });
     const serialized = JSON.stringify(message.blocks);
-    expect(serialized).toContain("Inspect in Drydock");
+    expect(serialized).toContain("Open in Drydock");
     expect(serialized).toContain("https://drydock.test/dashboard/scans/scan_1");
   });
 });

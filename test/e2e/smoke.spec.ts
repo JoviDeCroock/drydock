@@ -16,19 +16,19 @@ test("renders and decides a workflow-gate review", async ({ page }) => {
     "href",
     "/dashboard",
   );
-  await expect(page.getByText("Release gate")).toBeVisible();
-  await expect(page.getByText("awaiting clearance").first()).toBeVisible();
+  await expect(page.getByText("Deployment gate")).toBeVisible();
+  await expect(page.getByText("awaiting decision").first()).toBeVisible();
   await expect(page.getByText("drydock/example").first()).toBeVisible();
-  await expect(page.getByText("Docked packages")).toBeVisible();
+  await expect(page.getByText("Release packages")).toBeVisible();
   await expect(page.getByText("@drydock/sidecar@0.4.0")).toBeVisible();
 
-  await page.getByRole("button", { name: "Ship", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "Package clearance" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Ship package" })).toBeVisible();
-  await page.getByRole("button", { name: "Hold release" }).click();
+  await page.getByRole("button", { name: "Decide", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Package decision" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Approve package" })).toBeVisible();
+  await page.getByRole("button", { name: "Reject & block release" }).click();
 
-  await expect(page.getByText("held · job anchored").first()).toBeVisible();
-  await expect(page.getByText("held").first()).toBeVisible();
+  await expect(page.getByText("rejected · job blocked").first()).toBeVisible();
+  await expect(page.getByText("blocked").first()).toBeVisible();
 });
 
 async function installWorkflowGateMocks(page: Page) {

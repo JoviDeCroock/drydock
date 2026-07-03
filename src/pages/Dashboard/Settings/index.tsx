@@ -250,8 +250,8 @@ function SettingsHeader() {
       <Eyebrow>Organization settings</Eyebrow>
       <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Settings</h1>
       <Muted class="text-[14px] leading-[1.55] m-0">
-        Manage members, notifications, and the npm or GitHub connections Drydock uses to dock
-        releases for inspection.
+        Manage members, notifications, and the npm or GitHub connections Drydock uses to hold
+        releases for review.
       </Muted>
     </header>
   );

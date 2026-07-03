@@ -163,12 +163,12 @@ describe("notifyWorkflowGateReview", () => {
     }
   });
 
-  test("flags a monorepo bundle so the owner knows every package needs clearance", async () => {
+  test("flags a monorepo bundle so the owner knows every package needs approval", async () => {
     await notifyWorkflowGateReview(gateInput({ packageCount: 3 }));
 
     const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
     expect(message.text).toContain(
-      "demo-package@1.2.0 (+2 more in this release; each must be cleared)",
+      "demo-package@1.2.0 (+2 more in this release; each must be approved)",
     );
   });
 
@@ -277,7 +277,7 @@ describe("notifyScanCompletion", () => {
     );
 
     const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
-    expect(message.subject).toContain("Version could not dock for inspection");
+    expect(message.subject).toContain("Staged release scan failed");
     expect(message.text).toContain("Reason: tarball unavailable");
     const [, event] = dbMock.recordScanEvent.mock.calls[0];
     expect(event.type).toBe("scan.notification_sent");
@@ -332,7 +332,7 @@ describe("Slack connection delivery", () => {
     expect(slackMock.renderSlackMessage).toHaveBeenCalledTimes(1);
     const [payload] = slackMock.renderSlackMessage.mock.calls[0];
     expect(payload.packageLabel).toBe(
-      "demo-package@1.2.0 (+1 more in this release; each must be cleared)",
+      "demo-package@1.2.0 (+1 more in this release; each must be approved)",
     );
   });
 

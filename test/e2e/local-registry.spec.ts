@@ -63,9 +63,7 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
   const { context, page } = await openAuthenticatedPage(browser, baseURL);
   try {
     await page.goto("/dashboard");
-    await expect(
-      page.getByRole("heading", { name: "New version docked and ready for inspection" }),
-    ).toBeVisible({
+    await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible({
       timeout: 30_000,
     });
 
@@ -103,17 +101,13 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
     });
 
     // Now exercise Check npm as the live entry point. The button kicks off
-    // discovery and we wait only for the "new versions docked" message —
+    // discovery and we wait only for the "Started N new reviews" message —
     // the resulting background scans are exercised by the scenarios below.
     await page.goto("/dashboard");
     const checkNpm = page.getByRole("button", { name: "Check npm" });
     await expect(checkNpm).toBeEnabled({ timeout: 30_000 });
     await checkNpm.click();
-    await expect(
-      page.getByText(
-        /(?:New version docked|\d+ new versions docked) and ready for inspection from npm/,
-      ),
-    ).toBeVisible({
+    await expect(page.getByText(/Started \d+ new reviews? from npm/)).toBeVisible({
       timeout: 60_000,
     });
   } finally {
@@ -126,9 +120,7 @@ for (const scenario of scenarios.filter((item) => item.stageId !== uiStageId)) {
     const { context, page } = await openAuthenticatedPage(browser, baseURL);
     try {
       await page.goto("/dashboard");
-      await expect(
-        page.getByRole("heading", { name: "New version docked and ready for inspection" }),
-      ).toBeVisible({
+      await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible({
         timeout: 30_000,
       });
 
@@ -187,9 +179,7 @@ async function registerAndConnect(page: Page) {
   await page.getByRole("button", { name: "Create account" }).click();
   await page.waitForURL(/\/dashboard$/, { timeout: 30_000 });
 
-  await expect(
-    page.getByRole("heading", { name: "New version docked and ready for inspection" }),
-  ).toBeVisible({
+  await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible({
     timeout: 30_000,
   });
 

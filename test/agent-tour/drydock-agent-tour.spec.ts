@@ -49,18 +49,14 @@ test("agent tour: local Drydock release review walkthrough", async ({
     await tour.capture(page, "docs", "Setup documentation for staged publishing and gates.");
 
     await register(page);
-    await expect(
-      page.getByRole("heading", { name: "New version docked and ready for inspection" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible();
     await tour.capture(page, "dashboard-no-npm", "Fresh workspace before npm access is connected.");
 
     await connectNpmThroughSettings(page);
     await tour.capture(page, "settings-npm-connected", "Organization npm access saved and valid.");
 
     await page.goto("/dashboard");
-    await expect(
-      page.getByRole("heading", { name: "New version docked and ready for inspection" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible();
     const reviewScan = await createScan(page, "stage-implicit-node-gyp-000001");
     tour.note(`Started targeted review scan ${reviewScan.scan.id}.`);
     await tour.capture(
@@ -105,12 +101,12 @@ test("agent tour: local Drydock release review walkthrough", async ({
     await download.saveAs(exportedReportPath);
     tour.note(`Exported canonical report JSON to ${relative(exportedReportPath)}.`);
 
-    await page.getByRole("button", { name: "Ship" }).click();
-    await expect(page.getByRole("heading", { name: "Release clearance" })).toBeVisible();
+    await page.getByRole("button", { name: "Decide" }).click();
+    await expect(page.getByRole("heading", { name: "Publish decision" })).toBeVisible();
     await page.getByLabel("Reason (optional)").fill("Agent tour: high-risk implicit node-gyp.");
     await tour.capture(page, "decision-dialog", "Maintainer decision dialog before blocking.");
-    await page.getByRole("button", { name: "Keep held" }).click();
-    await expect(page.getByText("held").first()).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: "Block publish" }).click();
+    await expect(page.getByText("blocked").first()).toBeVisible({ timeout: 30_000 });
     await tour.capture(page, "decision-recorded", "Audit decision recorded on the report.");
 
     const failedScan = await createScan(page, "stage-registry-failure-000001");
@@ -128,9 +124,7 @@ test("agent tour: local Drydock release review walkthrough", async ({
     });
     await page.getByRole("button", { name: "Check npm" }).click();
     await expect(
-      page.getByText(
-        /(?:New version docked|\d+ new versions docked) and ready for inspection from npm|No open staged publishes found/,
-      ),
+      page.getByText(/Started \d+ new reviews? from npm|No open staged publishes found/),
     ).toBeVisible({ timeout: 60_000 });
     await tour.capture(page, "dashboard-discovery", "Manual npm discovery from the dashboard.");
 

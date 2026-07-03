@@ -311,7 +311,7 @@ export function renderSlackMessage(payload: SlackNotificationPayload): SlackMess
       elements: [
         {
           type: "button",
-          text: { type: "plain_text", text: "Inspect in Drydock", emoji: false },
+          text: { type: "plain_text", text: "Open in Drydock", emoji: false },
           url: payload.dashboardUrl,
         },
       ],
