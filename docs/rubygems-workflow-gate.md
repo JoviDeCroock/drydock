@@ -62,7 +62,10 @@ and file/byte caps), and gunzips `metadata.gz` to surface the raw gemspec YAML a
 `gemMetadata`. Nested decompression is bounded by the same `maxTarBytes` cap, so a
 gzip bomb in either member fails closed. Oversized gemspec metadata also fails
 closed instead of being parsed from a truncated prefix, because the gemspec is the
-source of package identity. The installation token never enters the sandbox; only
+source of package identity. Duplicate `metadata.gz`/`data.tar.gz` members fail
+closed too: real gems carry each control member exactly once, and picking one of
+a crafted pair could review a different payload than RubyGems' own reader
+extracts. The installation token never enters the sandbox; only
 the gem bytes cross the trust boundary, through the credentials-free
 `downloadInSandboxInline` path.
 
@@ -72,7 +75,10 @@ from that gemspec YAML by a small, defensive line reader
 (`server/lib/adapters/rubygems/gemspec.ts`) — not a general YAML library, because
 the gemspec layout is regular and the bytes are attacker-controlled. A malformed
 gemspec degrades every field to null/empty (surfacing as a `metadata-missing`
-finding) rather than throwing.
+finding) rather than throwing. Root-level shapes the reader does not model but
+Psych would honor — quoted or escaped mapping keys, explicit `? key` syntax,
+directives, a second YAML document — invalidate the whole parse the same way, so
+a crafted spec cannot present one identity to Drydock and another to `gem push`.
 
 ## No auto-detection ambiguity
 
