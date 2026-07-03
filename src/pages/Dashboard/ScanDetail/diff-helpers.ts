@@ -45,6 +45,10 @@ export type DiffWorkbenchState =
   | { kind: "processing"; title: string; detail: string }
   | { kind: "diff" };
 
+export function hasNoLoadableBodyFlags(flags: readonly unknown[]): boolean {
+  return flags.includes("binary") || flags.includes("content-skipped");
+}
+
 // Decides what the diff panel should show for the selected file. Extracted so
 // the loading/empty/diff guards are testable: the previous version is fetched
 // through the sandbox after the file tree already renders, and during that
@@ -56,10 +60,10 @@ export function selectDiffWorkbenchState(input: {
   entryStatus: DiffEntry["status"] | null;
   hasStagedMeta: boolean;
   hasStagedContent: boolean;
-  stagedIsBinary: boolean;
+  stagedHasNoLoadableBody: boolean;
   hasPreviousMeta: boolean;
   hasPreviousContent: boolean;
-  previousIsBinary: boolean;
+  previousHasNoLoadableBody: boolean;
   compareReady: boolean;
   compareLoading: boolean;
 }): DiffWorkbenchState {
@@ -89,7 +93,7 @@ export function selectDiffWorkbenchState(input: {
   if (
     needsPrevious &&
     input.hasPreviousMeta &&
-    !input.previousIsBinary &&
+    !input.previousHasNoLoadableBody &&
     !input.hasPreviousContent
   ) {
     return {
@@ -99,7 +103,12 @@ export function selectDiffWorkbenchState(input: {
     };
   }
 
-  if (needsStaged && input.hasStagedMeta && !input.stagedIsBinary && !input.hasStagedContent) {
+  if (
+    needsStaged &&
+    input.hasStagedMeta &&
+    !input.stagedHasNoLoadableBody &&
+    !input.hasStagedContent
+  ) {
     return {
       kind: "processing",
       title: "Loading file diff",

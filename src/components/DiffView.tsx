@@ -489,8 +489,9 @@ export function DiffView({
   const ignoreWhitespace = useSignal(false);
 
   const binary = hasFlag(before, "binary") || hasFlag(after, "binary");
+  const contentSkipped = hasFlag(before, "content-skipped") || hasFlag(after, "content-skipped");
   const truncated = hasFlag(before, "truncated") || hasFlag(after, "truncated");
-  const showDiffOptions = !binary && Boolean(beforeSample && afterSample);
+  const showDiffOptions = !binary && !contentSkipped && Boolean(beforeSample && afterSample);
 
   return (
     <div class="flex flex-col gap-3 min-h-0">
@@ -500,6 +501,7 @@ export function DiffView({
           <code class="font-mono text-xs text-ink-muted break-all">{path}</code>
           {truncated ? <Badge tone="neutral">truncated</Badge> : null}
           {binary ? <Badge tone="neutral">binary</Badge> : null}
+          {contentSkipped ? <Badge tone="neutral">content skipped</Badge> : null}
         </div>
         {showDiffOptions ? (
           <DiffControls wordDiff={wordDiff} ignoreWhitespace={ignoreWhitespace} />
@@ -519,6 +521,7 @@ export function DiffView({
         beforeSample={beforeSample}
         afterSample={afterSample}
         binary={binary}
+        contentSkipped={contentSkipped}
         beforeLabel={beforeLabel}
         afterLabel={afterLabel}
         findings={findings}
@@ -586,6 +589,7 @@ function DiffBody({
   beforeSample,
   afterSample,
   binary,
+  contentSkipped,
   beforeLabel,
   afterLabel,
   findings,
@@ -597,6 +601,7 @@ function DiffBody({
   beforeSample: string;
   afterSample: string;
   binary: boolean;
+  contentSkipped: boolean;
   beforeLabel: string;
   afterLabel: string;
   findings: DiffFinding[];
@@ -610,6 +615,14 @@ function DiffBody({
 
   if (binary) {
     return <DiffMessage findings={findings}>Binary file. No text diff available.</DiffMessage>;
+  }
+
+  if (contentSkipped) {
+    return (
+      <DiffMessage findings={findings}>
+        File content was not retained. No text diff available.
+      </DiffMessage>
+    );
   }
 
   if (status === "added") {

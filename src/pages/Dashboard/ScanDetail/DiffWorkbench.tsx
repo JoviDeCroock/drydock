@@ -3,7 +3,7 @@ import type { PersistedScanDetail } from "../../../models/scan";
 import { type DiffFinding, DiffView } from "../../../components/DiffView";
 import { IndeterminateBar } from "../../../components/Loading";
 import { EmptyLine, LoadingLine } from "../../../components/Typography";
-import { selectDiffWorkbenchState } from "./diff-helpers";
+import { hasNoLoadableBodyFlags, selectDiffWorkbenchState } from "./diff-helpers";
 
 export function DiffWorkbench({
   entry,
@@ -37,10 +37,10 @@ export function DiffWorkbench({
     entryStatus: entry.status,
     hasStagedMeta: Boolean(stagedMeta),
     hasStagedContent: Boolean(staged),
-    stagedIsBinary: isPersistedBinary(stagedMeta),
+    stagedHasNoLoadableBody: isPersistedUnpreviewable(stagedMeta),
     hasPreviousMeta: Boolean(previousMeta),
     hasPreviousContent: Boolean(previousContent),
-    previousIsBinary: Boolean(previousMeta?.flags?.includes("binary")),
+    previousHasNoLoadableBody: isUnpreviewable(previousMeta),
     compareReady,
     compareLoading,
   });
@@ -72,8 +72,12 @@ export function DiffWorkbench({
   );
 }
 
-function isPersistedBinary(file: PersistedScanDetail["files"][number] | null): boolean {
-  return Array.isArray(file?.flagsJson) && (file.flagsJson as unknown[]).includes("binary");
+function isPersistedUnpreviewable(file: PersistedScanDetail["files"][number] | null): boolean {
+  return hasNoLoadableBodyFlags(Array.isArray(file?.flagsJson) ? file.flagsJson : []);
+}
+
+function isUnpreviewable(file: FileRecord | null): boolean {
+  return hasNoLoadableBodyFlags(file?.flags ?? []);
 }
 
 // A centered processing block that fills the diff panel so the "still working"
