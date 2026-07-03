@@ -4,7 +4,7 @@ import {
   redactFindings,
   summarizePackageJsonDiff,
 } from "../../review";
-import type { AcquiredArtifact, BaselineInfo, PackageAdapter } from "../types";
+import type { AcquiredArtifact, BaselineInfo, PackageAdapter, ReleaseProvenance } from "../types";
 import { createVscodeBroker, pickVscodeBaselineVersion, type VscodeBroker } from "./broker";
 import { buildVscodeFindings } from "./findings";
 import {
@@ -123,6 +123,18 @@ export const vscodeAdapter: PackageAdapter<VscodeAdapterInput, VscodeBroker> = {
     return {
       manifest: d.manifest,
       artifact: d.artifact,
+      provenance: {
+        // A VS Code release is exactly one VSIX; the recomputed digest is the
+        // bytes the publish job uploads to the Marketplace. Mirrors the npm/PyPI
+        // gates so approved VSIX gates carry the same byte-continuity evidence.
+        ecosystem: "vscode",
+        mode: "workflow_gate",
+        artifacts: d.manifest.artifacts.map((artifact) => ({
+          path: artifact.path,
+          kind: artifact.kind,
+          sha256: artifact.sha256,
+        })),
+      } satisfies ReleaseProvenance,
     };
   },
 };

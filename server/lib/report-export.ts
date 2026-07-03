@@ -126,14 +126,19 @@ function extractProvenance(stagedPublish: unknown): ReleaseProvenance | null {
   const provenance = stagedPublish.provenance;
   if (!isRecord(provenance)) return null;
   const { ecosystem, mode, artifacts } = provenance;
-  if ((ecosystem !== "npm" && ecosystem !== "pypi") || mode !== "workflow_gate") return null;
+  if (
+    (ecosystem !== "npm" && ecosystem !== "pypi" && ecosystem !== "vscode") ||
+    mode !== "workflow_gate"
+  ) {
+    return null;
+  }
   if (!Array.isArray(artifacts)) return null;
   const mapped: ReleaseProvenanceArtifact[] = [];
   for (const artifact of artifacts) {
     if (!isRecord(artifact)) return null;
     const { path, kind, sha256 } = artifact;
     if (typeof path !== "string" || typeof sha256 !== "string") return null;
-    if (kind === "tarball" || kind === "wheel" || kind === "sdist") {
+    if (kind === "tarball" || kind === "wheel" || kind === "sdist" || kind === "vsix") {
       mapped.push({ path, kind, sha256 });
       continue;
     }

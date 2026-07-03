@@ -530,6 +530,25 @@ describe("VS Code extension review adapter", () => {
     );
   });
 
+  test("summarizeDetails surfaces the reviewed VSIX digest as a provenance block", async () => {
+    const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
+      { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
+    ]);
+    const adapterInput = vscodeAdapter.parseInput({
+      manifest,
+      artifact: artifact([file("extension/package.json", extensionPackageJson())]),
+    });
+    const staged = await vscodeAdapter.acquireStaged({}, adapterInput, fakeVscodeBroker({}));
+    // Provenance binds the report to the digest the gate recomputed from the
+    // immutable VSIX bytes, mirroring the npm/PyPI gates so an approved VSIX gate
+    // carries byte-continuity evidence the publish job can verify.
+    expect(vscodeAdapter.summarizeDetails(staged.details).provenance).toEqual({
+      ecosystem: "vscode",
+      mode: "workflow_gate",
+      artifacts: [{ path: "dist/remote-text-fetcher-1.0.0.vsix", kind: "vsix", sha256: SHA }],
+    });
+  });
+
   test("selects the newest allowed marketplace VSIX older than the candidate", () => {
     const oldUrl =
       "https://old.gallerycdn.vsassets.io/extensions/example/remote-text-fetcher/0.8.0/123/Microsoft.VisualStudio.Services.VSIXPackage";

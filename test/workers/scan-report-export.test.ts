@@ -202,6 +202,55 @@ describe("scan report JSON export", () => {
     expect(body.provenance).toEqual(provenance);
   });
 
+  test("surfaces the reviewed VSIX digest for a VS Code gate review", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const scanId = `scan_${crypto.randomUUID()}`;
+    const stageId = `stage-${scanId.slice(-12)}`;
+    await createScanJob(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+    });
+    const provenance = {
+      ecosystem: "vscode",
+      mode: "workflow_gate",
+      artifacts: [
+        { path: "dist/remote-text-fetcher-1.0.0.vsix", kind: "vsix", sha256: "c".repeat(64) },
+      ],
+    };
+    await persistScan(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+      packageJson: { name: "example.remote-text-fetcher", version: "1.0.0" },
+      risk: "low",
+      status: "complete",
+      summary: {
+        report: {
+          version: 1,
+          digest: "abc123",
+          digestAlgorithm: "sha256",
+          generatedAt: "2026-01-01T00:00:00.000Z",
+          rulesVersion: "1.8.0",
+        },
+        stagedPublish: { provenance, manifest: { package: "example.remote-text-fetcher" } },
+      },
+      ai: null,
+      files: [],
+      diff: [],
+      findings: [],
+      report: { version: 1, digest: "abc123" },
+    });
+
+    const res = await getReport(buildTestApp(owner), scanId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { provenance: typeof provenance | null };
+    expect(body.provenance).toEqual(provenance);
+  });
+
   test("omits provenance when any artifact entry is malformed", async () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
