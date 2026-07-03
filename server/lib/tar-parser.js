@@ -439,15 +439,12 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes)
               : "path contained zero-width or visually-confusable characters and normalized to an unsafe path",
           });
         }
-        // A root manifest (npm package.json, PyPI PKG-INFO/pyproject.toml) too
-        // large to inspect would null the package's identity/dependency metadata
-        // and disable every manifest-derived detection. A >25MB manifest is only
-        // ever hostile, so fail closed rather than downgrade the trust-boundary
-        // failure to a finding. Nested/vendored manifest-named files are not the
-        // root manifest, so they are skipped (below), not fatal.
-        if (path && isRootManifestPath(path) && size > maxTarBytes) {
-          throw tarError("invalid tar entry size");
-        }
+        // A duplicate path replaces (does not add to) its earlier entry under
+        // last-write-wins, so exclude that earlier copy's retained bytes from the
+        // budget here — otherwise a duplicate that would fit after the release is
+        // wrongly skipped, leaving the very bytes a consumer receives uninspected.
+        const priorContribution = path && seenPaths.has(path) ? retainedByPath.get(path) || 0 : 0;
+        const budgetBase = retainedBytes - priorContribution;
         // Retention tiers, tightest first:
         //  - the root npm manifest is ALWAYS inspected — parsePackageJson depends
         //    on it, and it is a single deduped path, so this adds at most one
@@ -457,13 +454,23 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes)
         //    second maxTarBytes of headroom, so a tar stuffed with manifest-named
         //    files still cannot amplify retained memory;
         //  - everything else must fit the shared maxTarBytes budget.
-        const isRootManifest = path === "package.json";
+        const isNpmRootManifest = path === "package.json";
         const mustRetainBody = path ? isRetainedManifestPath(path) : false;
         const retainBody =
           size <= maxTarBytes &&
-          (isRootManifest ||
-            retainedBytes + size <= maxTarBytes ||
-            (mustRetainBody && retainedBytes + size <= 2 * maxTarBytes));
+          (isNpmRootManifest ||
+            budgetBase + size <= maxTarBytes ||
+            (mustRetainBody && budgetBase + size <= 2 * maxTarBytes));
+        // A root manifest we cannot inspect — too large for the per-file limit, or
+        // crowded out of the retention budget by earlier manifest-named entries —
+        // must fail the parse rather than degrade its name/version/dependency
+        // metadata to a content-skipped finding, honoring the fail-closed manifest
+        // guarantee for PyPI (whose attacker-shaped root path cannot get npm's
+        // always-retain guarantee) as well as npm. Nested/vendored manifest-named
+        // files are not root manifests and are skipped below, not fatal.
+        if (path && isRootManifestPath(path) && !retainBody) {
+          throw tarError("invalid tar entry size");
+        }
         let summarized = null;
         let contributed = 0;
         if (path && retainBody) {

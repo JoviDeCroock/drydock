@@ -668,6 +668,20 @@ describe("readTar limits and malformed archives", () => {
     },
   );
 
+  test("fails closed when a root manifest is crowded out of the retention budget", async () => {
+    // Earlier manifest-named (non-root) entries fill the 2×maxTarBytes headroom,
+    // so the real root PKG-INFO cannot be retained. Skipping it would leave
+    // identity/dependency metadata unread, so the parse fails closed instead of
+    // degrading the trust-boundary failure to a content-skipped finding.
+    const limits = { maxFiles: 100, maxTarBytes: 500 };
+    const tar = buildTar([
+      { name: "a/b/METADATA", body: new Uint8Array(500).fill(0x61) },
+      { name: "c/d/METADATA", body: new Uint8Array(500).fill(0x62) },
+      { name: "foo-1.0.0/PKG-INFO", body: "Metadata-Version: 2.1\nName: foo\nVersion: 1.0.0\n" },
+    ]);
+    await expect(parse(tar, limits)).rejects.toThrow(/invalid tar entry size/);
+  });
+
   test("retains a PyPI sdist manifest (PKG-INFO) even under budget pressure", async () => {
     // The tgz path is shared with PyPI sdists, whose manifest is PKG-INFO under a
     // version directory. It must be force-retained the same way package.json is.
@@ -711,6 +725,24 @@ describe("readTar limits and malformed archives", () => {
     const other = files.find((file) => file.path === "other.bin");
     expect(other?.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(other?.flags ?? []).not.toContain("content-skipped");
+    expect(suspicious.map((s) => s.kind)).toContain("duplicate");
+  });
+
+  test("retains a duplicate that only fits once the earlier copy's bytes are released", async () => {
+    // maxTarBytes 1000, two 900-byte copies of one path. The last-write-wins copy
+    // is the bytes a consumer receives; it only fits if the budget check discounts
+    // the earlier copy it replaces, or that content goes uninspected.
+    const limits = { maxFiles: 100, maxTarBytes: 1000 };
+    const tar = buildTar([
+      { name: "package/a.js", body: new Uint8Array(900).fill(0x61) },
+      { name: "package/a.js", body: new Uint8Array(900).fill(0x62) },
+    ]);
+    const { files, suspicious } = await parseFull(tar, limits);
+    const a = files.filter((file) => file.path === "a.js");
+    expect(a).toHaveLength(1);
+    expect(a[0].flags ?? []).not.toContain("content-skipped");
+    // The retained bytes are the last-write-wins copy (0x62 → "b"), not the first.
+    expect(a[0].textSample).toBe("b".repeat(900));
     expect(suspicious.map((s) => s.kind)).toContain("duplicate");
   });
 
