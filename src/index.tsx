@@ -61,7 +61,7 @@ function emptyAppShell() {
 if (typeof window !== "undefined") {
   const appElement = document.getElementById("app");
   if (!appElement) throw new Error("App element not found");
-  if (isPrerenderedRoute(location.pathname)) {
+  if (isPrerenderedRoute(location.pathname) && appElement.firstChild) {
     hydrate(<App />, appElement);
   } else {
     appElement.innerHTML = "";
