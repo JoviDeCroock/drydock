@@ -11,6 +11,7 @@ import {
   parseRubyGemsAdapterInput,
   parseRubyGemsReleaseManifest,
   pickRubyGemsBaselineVersion,
+  rubygemsAdapter,
 } from "../server/lib/adapters/rubygems/index.ts";
 import { RUBYGEMS_RULE_IDS } from "../server/lib/adapters/rubygems/types.ts";
 
@@ -264,6 +265,25 @@ describe("rubygems release review", () => {
       .map((entry) => entry.path);
     expect(added).toContain("ruby/bin/demo");
     expect(review.previousFileCount).toBe(1);
+  });
+
+  test("summarizeDetails surfaces reviewed gem digests as a provenance block", () => {
+    const artifact = gemArtifact("demo-1.0.0.gem", { name: "demo", version: "1.0.0" }, [
+      file("lib/demo.rb", "module Demo; end\n"),
+    ]);
+    const input = rubygemsAdapter.parseInput({
+      manifest: manifestFor("demo", "1.0.0", [artifact]),
+      artifacts: [artifact],
+    });
+    const staged = acquireStagedRubyGems(input);
+
+    // Provenance binds the report to the digests the gate recomputed from the
+    // immutable bytes, mirroring the npm and PyPI gates.
+    expect(rubygemsAdapter.summarizeDetails(staged.details).provenance).toEqual({
+      ecosystem: "rubygems",
+      mode: "workflow_gate",
+      artifacts: [{ path: "demo-1.0.0.gem", kind: "gem", sha256: "a".repeat(64) }],
+    });
   });
 });
 

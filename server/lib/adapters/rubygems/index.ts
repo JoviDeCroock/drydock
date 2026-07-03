@@ -6,7 +6,7 @@ import {
   summarizePackageJsonDiff,
   tarSuspiciousEntryFindings,
 } from "../../review";
-import type { PackageAdapter } from "../types";
+import type { PackageAdapter, ReleaseProvenance } from "../types";
 import {
   acquireBaselineRubyGems,
   acquireStagedRubyGems,
@@ -72,6 +72,18 @@ export const rubygemsAdapter: PackageAdapter<RubyGemsAdapterInput, RubyGemsBroke
       ecosystem: "rubygems",
       manifest: d.manifest,
       artifacts: d.artifacts,
+      provenance: {
+        // Gems only reach review through the workflow gate; the manifest carries
+        // each `.gem` digest recomputed from the immutable bundle bytes, which
+        // the publish job re-verifies before `gem push`.
+        ecosystem: "rubygems",
+        mode: "workflow_gate",
+        artifacts: d.manifest.artifacts.map((artifact) => ({
+          path: artifact.path,
+          kind: "gem" as const,
+          sha256: artifact.sha256,
+        })),
+      } satisfies ReleaseProvenance,
     };
   },
 };

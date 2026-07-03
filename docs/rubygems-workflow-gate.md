@@ -39,7 +39,10 @@ Integrity rests on **GitHub artifact immutability**, exactly like the PyPI gate:
 Drydock synthesizes an internal release manifest
 (`drydock.release-artifacts.v1`, `ecosystem: "rubygems"`) from the parsed
 Gem::Specification identity plus the recomputed digest. Maintainers never author
-it.
+it. The recomputed digests surface as the report **Provenance** section and in
+the `report.json` export (`provenance.artifacts[]`, `kind: "gem"`), so the
+publish job can verify the gem it is about to push against the reviewed bytes;
+see [`workflow-gates.md`](./workflow-gates.md#provenance-surfacing).
 
 ## Parsing a `.gem` (nested archives)
 
