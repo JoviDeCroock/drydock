@@ -68,6 +68,50 @@ const PYTHON_DYNAMIC_EVALUATION_PATTERNS = [
   /\bcodecs\.decode\s*\(/,
   /\bbytes\.fromhex\s*\(/,
 ];
+const PHP_PROCESS_EXECUTION_PATTERNS = [
+  /\bshell_exec\s*\(/,
+  /(?<![\w$>])\bexec\s*\(/,
+  /(?<![\w$>])\bsystem\s*\(/,
+  /\bpassthru\s*\(/,
+  /\bproc_open\s*\(/,
+  /(?<![\w$>])\bpopen\s*\(/,
+  /\bpcntl_exec\s*\(/,
+];
+const PHP_NETWORK_ACCESS_PATTERNS = [
+  /\bcurl_init\s*\(/,
+  /\bcurl_exec\s*\(/,
+  /\bcurl_multi_exec\s*\(/,
+  /\bfsockopen\s*\(/,
+  /\bstream_socket_client\s*\(/,
+  /\bsocket_create\s*\(/,
+  /\bfile_get_contents\s*\(\s*['"]https?:/i,
+  /(?<![\w$>])\bfopen\s*\(\s*['"]https?:/i,
+];
+const PHP_DYNAMIC_EVALUATION_PATTERNS = [
+  /(?<![\w$>])\beval\s*\(/,
+  /(?<![\w$>])\bassert\s*\(\s*[$'"]/,
+  /\bcreate_function\s*\(/,
+  /\bcall_user_func(?:_array)?\s*\(\s*\$/,
+  /\bbase64_decode\s*\(/,
+  /\bgzinflate\s*\(/,
+  /\bgzuncompress\s*\(/,
+  /\bstr_rot13\s*\(/,
+  /\bhex2bin\s*\(/,
+  /\bunserialize\s*\(/,
+  /\bPhar::/,
+  /\binclude(?:_once)?\s*\(?\s*\$/,
+  /\brequire(?:_once)?\s*\(?\s*\$/,
+];
+const PHP_CREDENTIAL_ACCESS_PATTERNS = [
+  /\bgetenv\s*\(/,
+  /\$_ENV\b/,
+  /\$_SERVER\s*\[\s*['"](?:HTTP_AUTHORIZATION|PHP_AUTH_)/,
+  /auth\.json/,
+  /\.aws\/credentials/,
+  /\.ssh\/id_/,
+  /\.netrc/,
+];
+
 const JS_CREDENTIAL_ACCESS_PATTERNS = [
   /\bprocess\.env\b/,
   /\bnpm_config_/,
@@ -105,6 +149,12 @@ export const PYTHON_PATTERN_SET = {
   dynamicEvaluation: PYTHON_DYNAMIC_EVALUATION_PATTERNS,
   credentialAccess: PYTHON_CREDENTIAL_ACCESS_PATTERNS,
 };
+export const PHP_PATTERN_SET = {
+  processExecution: PHP_PROCESS_EXECUTION_PATTERNS,
+  networkAccess: PHP_NETWORK_ACCESS_PATTERNS,
+  dynamicEvaluation: PHP_DYNAMIC_EVALUATION_PATTERNS,
+  credentialAccess: PHP_CREDENTIAL_ACCESS_PATTERNS,
+};
 
 // Python process-execution, network, and dynamic-evaluation capability in one set.
 // Reused by ecosystem adapters that need to know whether a file executes code
@@ -113,6 +163,15 @@ export const PYTHON_EXECUTION_CAPABILITY_PATTERNS = [
   ...PYTHON_PROCESS_EXECUTION_PATTERNS,
   ...PYTHON_NETWORK_ACCESS_PATTERNS,
   ...PYTHON_DYNAMIC_EVALUATION_PATTERNS,
+];
+
+// PHP process-execution, network, and dynamic-evaluation capability in one set.
+// Reused by the Composer adapter for files that execute in consumer context
+// (autoload.files, Composer plugin classes, bin entries).
+export const PHP_EXECUTION_CAPABILITY_PATTERNS = [
+  ...PHP_PROCESS_EXECUTION_PATTERNS,
+  ...PHP_NETWORK_ACCESS_PATTERNS,
+  ...PHP_DYNAMIC_EVALUATION_PATTERNS,
 ];
 
 export const SECRET_PATTERNS: Array<[RegExp, string]> = [
@@ -152,5 +211,7 @@ function genericSecretPatterns(): Array<[RegExp, string]> {
 }
 
 export function codePatternsFor(codePatternSet: CodePatternSet | undefined): typeof JS_PATTERN_SET {
-  return codePatternSet === "python" ? PYTHON_PATTERN_SET : JS_PATTERN_SET;
+  if (codePatternSet === "python") return PYTHON_PATTERN_SET;
+  if (codePatternSet === "php") return PHP_PATTERN_SET;
+  return JS_PATTERN_SET;
 }

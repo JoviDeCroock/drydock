@@ -1,3 +1,4 @@
+import { composerWorkflowGateAdapter } from "./composer";
 import { npmWorkflowGateAdapter } from "./npm";
 import { pypiWorkflowGateAdapter } from "./pypi";
 import { vscodeWorkflowGateAdapter } from "./vscode";
@@ -28,6 +29,7 @@ const WORKFLOW_GATE_ADAPTERS: Record<string, WorkflowGateAdapter> = {
   [pypiWorkflowGateAdapter.ecosystem]: pypiWorkflowGateAdapter,
   [npmWorkflowGateAdapter.ecosystem]: npmWorkflowGateAdapter,
   [vscodeWorkflowGateAdapter.ecosystem]: vscodeWorkflowGateAdapter,
+  [composerWorkflowGateAdapter.ecosystem]: composerWorkflowGateAdapter,
 };
 
 /** Resolve the workflow-gate adapter for a release target's ecosystem. */

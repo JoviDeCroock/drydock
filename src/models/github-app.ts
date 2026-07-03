@@ -16,7 +16,7 @@ export interface PublicGithubAppInstallation {
   updatedAt: string;
 }
 
-export type SupportedEcosystem = "pypi" | "npm" | "vscode";
+export type SupportedEcosystem = "pypi" | "npm" | "vscode" | "composer";
 
 export interface PublicReleaseTarget {
   id: string;

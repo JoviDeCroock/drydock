@@ -1,0 +1,59 @@
+{
+  "id": "composer-plugin-introduction",
+  "title": "release turns a library into a composer plugin",
+  "category": "install-time-execution",
+  "intent": "converting a library into a composer-plugin gives it code execution inside every consumer's Composer process",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "composer",
+    "package": "acme/demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo-package-1.2.0.zip",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo-package-1.2.0.zip",
+      "files": [
+        {
+          "path": "composer.json",
+          "size": 220,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "flags": [],
+          "textSample": "{\"name\": \"acme/demo-package\", \"version\": \"1.2.0\", \"type\": \"composer-plugin\", \"require\": {\"composer-plugin-api\": \"^2.0\"}, \"extra\": {\"class\": \"Acme\\\\Demo\\\\Plugin\"}}"
+        }
+      ]
+    }
+  ],
+  "previousArtifacts": [
+    {
+      "path": "baseline-1.1.0.zip",
+      "files": [
+        {
+          "path": "composer.json",
+          "size": 110,
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "flags": [],
+          "textSample": "{\"name\": \"acme/demo-package\", \"version\": \"1.1.0\", \"type\": \"library\"}"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "composer.plugin",
+      "severity": "high",
+      "file": "dist/demo-package-1.2.0.zip/composer.json"
+    },
+    {
+      "ruleId": "composer.plugin-api-requirement",
+      "severity": "high",
+      "file": "dist/demo-package-1.2.0.zip/composer.json"
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "id": "composer-benign-control",
+  "title": "clean archive version bump raises nothing",
+  "category": "control",
+  "intent": "a well-formed release with matching composer.json identity and no new active declarations must stay low risk",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "composer",
+    "package": "acme/demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo-package-1.2.0.zip",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo-package-1.2.0.zip",
+      "files": [
+        {
+          "path": "composer.json",
+          "size": 120,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "flags": [],
+          "textSample": "{\"name\": \"acme/demo-package\", \"version\": \"1.2.0\", \"type\": \"library\", \"require\": {\"php\": \">=8.1\"}}"
+        },
+        {
+          "path": "src/Demo.php",
+          "size": 64,
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "flags": [],
+          "textSample": "<?php\n\nnamespace Acme\\Demo;\n\nclass Demo\n{\n    public function greet(): string\n    {\n        return \"hello\";\n    }\n}\n"
+        }
+      ]
+    }
+  ],
+  "previousArtifacts": [
+    {
+      "path": "baseline-1.1.0.zip",
+      "files": [
+        {
+          "path": "composer.json",
+          "size": 120,
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "flags": [],
+          "textSample": "{\"name\": \"acme/demo-package\", \"version\": \"1.1.0\", \"type\": \"library\", \"require\": {\"php\": \">=8.1\"}}"
+        },
+        {
+          "path": "src/Demo.php",
+          "size": 64,
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "flags": [],
+          "textSample": "<?php\n\nnamespace Acme\\Demo;\n\nclass Demo\n{\n    public function greet(): string\n    {\n        return \"hello\";\n    }\n}\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": []
+}

@@ -253,3 +253,26 @@ The corpus records these intentional blind spots rather than hiding them:
 - PyPI corpus only: `pnpm run test:node -- security-corpus-pypi.test.mjs`
 - Regression net after a rules-version bump: `pnpm run test:node -- security-corpus.test.mjs pypi.test.mjs`
 - Full pre-commit parity: `pnpm run verify`
+
+## Composer corpus
+
+The Composer adapter (`server/lib/adapters/composer/index.ts`) has its own golden corpus under
+`test/fixtures/security-corpus/cases-composer/`, evaluated by
+`test/security-corpus-composer.test.mjs`, following the same two-rule-family invariant as PyPI:
+
+- `composer.*` findings come from `composerReleaseFindings` and carry `COMPOSER_RULES_VERSION`
+  (currently `0.1.0`). They cover composer-plugin declarations, `allow-plugins`, `autoload.files`,
+  `bin` entries, custom repositories, `replace`/`provide` shadowing, unstable stability, and
+  insecure-transport/source-install config, firing only on what is new relative to the baseline.
+- shared `file.*` / `code.*` / `diff.*` findings carry `DETERMINISTIC_RULES_VERSION` and use the
+  **PHP** capability matcher (backticks/`shell_exec`/`proc_open`, `curl_*`/`fsockopen`/http
+  `file_get_contents`, `eval`/`create_function`/base64+inflate decode chains, `getenv`/`$_ENV`/
+  auth.json/`.ssh` access).
+
+Fixture format matches the PyPI corpus (`manifest` with `ecosystem: "composer"`, `artifacts`,
+optional `previousArtifacts`, exact `expectedRisk`/`expectedFindings`). Path namespacing:
+`composer.*` findings use `namespacedPath(artifactPath, "composer.json")` (e.g.
+`dist/demo-package-1.2.0.zip/composer.json`); shared findings use the root-stripped in-archive path
+(a single Composer archive per package needs no artifact namespace prefix).
+
+Run with `pnpm run test:node -- security-corpus-composer.test.mjs`.

@@ -41,7 +41,7 @@ export interface FindingDiffAnnotation {
   releaseDelta: boolean;
 }
 
-export type CodePatternSet = "javascript" | "python";
+export type CodePatternSet = "javascript" | "python" | "php";
 
 export interface FindingAnnotationOptions {
   previousFiles?: Array<Pick<FileRecord, "path" | "textSample" | "flags">>;
@@ -59,6 +59,7 @@ export {
   DETERMINISTIC_RULES_VERSION,
   deterministicFindings,
   packageJsonDiffFindings,
+  PHP_EXECUTION_CAPABILITY_PATTERNS,
   PYTHON_EXECUTION_CAPABILITY_PATTERNS,
 } from "./review-rules";
 export {

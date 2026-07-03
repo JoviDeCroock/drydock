@@ -1,0 +1,59 @@
+{
+  "id": "composer-insecure-custom-repository",
+  "title": "release adds a plaintext-HTTP custom repository",
+  "category": "dependency-substitution",
+  "intent": "a new non-HTTPS custom repository lets dependencies be swapped in transit or served from an attacker-controlled host",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "composer",
+    "package": "acme/demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo-package-1.2.0.zip",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo-package-1.2.0.zip",
+      "files": [
+        {
+          "path": "composer.json",
+          "size": 200,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "flags": [],
+          "textSample": "{\"name\": \"acme/demo-package\", \"version\": \"1.2.0\", \"repositories\": [{\"type\": \"composer\", \"url\": \"http://mirror.example.com/packages\"}], \"config\": {\"secure-http\": false}}"
+        }
+      ]
+    }
+  ],
+  "previousArtifacts": [
+    {
+      "path": "baseline-1.1.0.zip",
+      "files": [
+        {
+          "path": "composer.json",
+          "size": 110,
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "flags": [],
+          "textSample": "{\"name\": \"acme/demo-package\", \"version\": \"1.1.0\"}"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "composer.custom-repository",
+      "severity": "high",
+      "file": "dist/demo-package-1.2.0.zip/composer.json"
+    },
+    {
+      "ruleId": "composer.source-install",
+      "severity": "high",
+      "file": "dist/demo-package-1.2.0.zip/composer.json"
+    }
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "id": "composer-manifest-identity-mismatch",
+  "title": "archive composer.json disagrees with the reviewed manifest",
+  "category": "identity",
+  "intent": "an archive whose composer.json name/version differ from the reviewed manifest must fail the gate as critical",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "composer",
+    "package": "acme/demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo-package-1.2.0.zip",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo-package-1.2.0.zip",
+      "files": [
+        {
+          "path": "composer.json",
+          "size": 120,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "flags": [],
+          "textSample": "{\"name\": \"mallory/impostor\", \"version\": \"9.9.9\"}"
+        }
+      ]
+    }
+  ],
+  "previousArtifacts": [
+    {
+      "path": "baseline-1.1.0.zip",
+      "files": [
+        {
+          "path": "composer.json",
+          "size": 110,
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "flags": [],
+          "textSample": "{\"name\": \"acme/demo-package\", \"version\": \"1.1.0\"}"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "critical",
+  "expectedFindings": [
+    {
+      "ruleId": "composer.manifest-mismatch",
+      "severity": "critical",
+      "file": "dist/demo-package-1.2.0.zip/composer.json"
+    },
+    {
+      "ruleId": "composer.manifest-mismatch",
+      "severity": "critical",
+      "file": "dist/demo-package-1.2.0.zip/composer.json"
+    }
+  ]
+}

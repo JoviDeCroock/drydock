@@ -2,7 +2,7 @@
 
 Workflow gates are Drydock's review mode for releases whose registry cannot hold a private staged artifact. GitHub Actions builds the release, uploads the candidate artifacts, and a GitHub Environment custom deployment-protection rule pauses publishing while Drydock reviews the bytes.
 
-Supported gate ecosystems: **PyPI**, **npm**, and **VS Code extensions**. Shared GitHub plumbing lives in `server/lib/workflow-gates/`; artifact-specific behavior lives behind adapters.
+Supported gate ecosystems: **PyPI**, **npm**, **VS Code extensions**, and **Composer**. Shared GitHub plumbing lives in `server/lib/workflow-gates/`; artifact-specific behavior lives behind adapters.
 
 ## Core contract
 
@@ -143,6 +143,22 @@ jobs:
 ```
 
 The publish job must publish the reviewed VSIX bytes. Repacking after approval breaks the review boundary.
+
+## Composer workflow-gate notes
+
+Packagist serves dist archives straight from the VCS host, so the workflow gate is the only review-before-publish path for Composer packages. The release set is whatever `.zip` / `.tar.gz` / `.tgz` archives the workflow uploads, with identity read from each archive's root `composer.json` (`name` required; `version` optional).
+
+The Composer adapter (`server/lib/adapters/composer/`):
+
+- normalizes `vendor/package` names to lowercase;
+- accepts `.zip`, `.tar.gz`, and `.tgz` artifacts;
+- strips a single common archive root so `composer archive` output and `git archive`/GitHub zipball trees diff cleanly against each other;
+- groups artifacts by normalized package name — one candidate per package, exactly one archive per package;
+- selects the baseline from Packagist's Composer v2 metadata (`repo.packagist.org/p2/`), newest published release by upload time;
+- downloads the baseline dist through a credential-free broker restricted to Packagist's HTTPS dist hosts (GitHub, GitLab, Bitbucket), resolving redirects hop-by-hop against the allowlist;
+- reports composer-plugin declarations, `allow-plugins`, `autoload.files`, `bin` entries, custom repositories, `replace`/`provide` shadowing, unstable stability, insecure-transport/source-install config, and PHP capability patterns on changed lines.
+
+See [`composer-workflow-gate.md`](./composer-workflow-gate.md) for the Composer-specific workflow shape and finding catalogue.
 
 ## Trust and failure behavior
 
