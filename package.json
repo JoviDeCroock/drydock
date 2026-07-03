@@ -37,7 +37,7 @@
     "@fontsource-variable/geist-mono": "^5.2.8",
     "@preact/signals": "^2.9.2",
     "ai": "^6.0.207",
-    "better-auth": "^1.6.19",
+    "better-auth": "^1.6.23",
     "diff": "^9.0.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.27",
