@@ -171,6 +171,26 @@ describe("VS Code workflow-gate adapter", () => {
       ]),
     ).toThrow(/version 1.0.1 disagrees with 1.0.0/);
   });
+
+  test("fails closed on case-only duplicate VSIX identities", () => {
+    // The Marketplace resolves publisher/name case-insensitively and the parser
+    // accepts grandfathered capitalized names, so example.Remote-Text-Fetcher and
+    // example.remote-text-fetcher are the same extension. They must collapse to a
+    // single identity and fail closed, not split into two review candidates.
+    expect(() =>
+      vscodeWorkflowGateAdapter.prepareReleaseCandidates([
+        vsixArtifact("dist/remote-text-fetcher-1.0.0.vsix", "Remote-Text-Fetcher", "1.0.0"),
+        vsixArtifact("dist/remote-text-fetcher-copy-1.0.0.vsix", "remote-text-fetcher", "1.0.0"),
+      ]),
+    ).toThrow(/more than one VSIX artifact/);
+  });
+
+  test("preserves the original extension id casing for a single VSIX", () => {
+    const [candidate] = vscodeWorkflowGateAdapter.prepareReleaseCandidates([
+      vsixArtifact("dist/remote-text-fetcher-1.0.0.vsix", "Remote-Text-Fetcher", "1.0.0"),
+    ]);
+    expect(candidate.package.name).toBe("example.Remote-Text-Fetcher");
+  });
 });
 
 // ── Integration: auto-detect VSIX bundle through the shared runner ────────────

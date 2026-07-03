@@ -49,9 +49,15 @@ function deriveVscodeReleaseCandidates(
     const files = normalizeVsixFiles(artifact.files);
     const { manifest: extensionManifest } = parseExtensionManifest(artifact, files);
     const extensionId = extensionIdFromManifest(extensionManifest);
-    const group = groups.get(extensionId);
+    // The Marketplace resolves publisher/name case-insensitively, and the parser
+    // accepts grandfathered capitalized names, so group by a normalized lowercase
+    // key. This fails closed on case-only duplicates (e.g. golang.Go and
+    // golang.go) instead of splitting them into two review candidates, while the
+    // stored value keeps the original id for display.
+    const identityKey = extensionId.toLowerCase();
+    const group = groups.get(identityKey);
     if (!group) {
-      groups.set(extensionId, { extensionId, version: extensionManifest.version, artifact });
+      groups.set(identityKey, { extensionId, version: extensionManifest.version, artifact });
       continue;
     }
     if (extensionManifest.version !== group.version) {
