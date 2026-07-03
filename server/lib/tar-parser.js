@@ -428,6 +428,10 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes)
     } else {
       // Non-regular entry (hardlink, symlink, device, directory, fifo,
       // reserved). npm publish never emits these; a hand-crafted tar can.
+      // Unlike regular files, there is no legitimate reason to stream-discard
+      // a huge body here, so fail fast instead of burning the sandbox's CPU
+      // budget on content that is never retained.
+      if (size > maxTarBytes) throw new Error("invalid tar entry size");
       const rawCandidate =
         (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName;
       const reportedPath = normalizeTarPath(canonicalizePath(rawCandidate)) || rawCandidate || "";

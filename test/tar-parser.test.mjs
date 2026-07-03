@@ -542,6 +542,16 @@ describe("readTar limits and malformed archives", () => {
     ]);
   });
 
+  test("fails closed on an oversized non-regular entry instead of streaming its body", async () => {
+    // npm publish never emits non-regular entries, so a hand-crafted archive
+    // is the only source; unlike a regular file there is no retention/skip
+    // path for it, and it must be rejected before its body is streamed at all.
+    const limits = { maxFiles: 100, maxTarBytes: 1024 };
+    const big = new Uint8Array(2048).fill(0x42);
+    const tar = buildTar([{ name: "package/link", type: "2", body: big }]);
+    await expect(parse(tar, limits)).rejects.toThrow(/invalid tar entry size/);
+  });
+
   test("skips entries once the cumulative retention budget is exhausted", async () => {
     const limits = { maxFiles: 100, maxTarBytes: 1000 };
     const bodyA = new Uint8Array(600).fill(0x61);
