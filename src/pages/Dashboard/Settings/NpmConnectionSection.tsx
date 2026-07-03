@@ -53,14 +53,14 @@ export function NpmConnectionSection({
     >
       <SettingsCardBody>
         <Muted class="text-[13px] m-0 max-w-[760px]">
-          Add a read-only organization npm token so inspections can fetch staged packages securely.
-          We encrypt it, hide it after save, and use it only to retrieve release evidence.
+          Add a read-only organization npm token so reviews can fetch staged packages securely. We
+          encrypt it, hide it after save, and use it only to retrieve release evidence.
         </Muted>
 
         {connection && connection.validationStatus === "invalid" ? (
           <Alert tone="critical">
             Drydock can no longer reach the staging registry with this token, so staged-release
-            inspections are paused. Rotate the token below to resume.
+            reviews are paused. Rotate the token below to resume.
           </Alert>
         ) : null}
 
@@ -129,7 +129,7 @@ export function NpmConnectionSection({
         </form>
 
         <Muted class="text-xs">
-          After save, Drydock validates the token before any inspection uses it.
+          After save, Drydock validates the token before any review uses it.
         </Muted>
 
         {error ? <Alert tone="critical">{error}</Alert> : null}

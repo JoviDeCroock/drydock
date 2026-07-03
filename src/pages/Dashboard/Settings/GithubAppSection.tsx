@@ -59,9 +59,9 @@ export function GithubAppSection({
           <div class="flex flex-col gap-1.5 max-w-[600px]">
             <Muted class="text-[13px] m-0">
               Install the Drydock GitHub App on your organization so releases gated by a GitHub
-              Actions environment can be cleared here. Drydock never asks for publish credentials.
-              Your workflow keeps its own OIDC/Trusted Publishing trust, and Drydock only grants
-              deployment-protection clearance.
+              Actions environment can be approved here. Drydock never asks for publish credentials.
+              Your workflow keeps its own OIDC/Trusted Publishing trust, and Drydock only acts as
+              the deployment-protection approver.
             </Muted>
             <MonoDetail
               parts={[

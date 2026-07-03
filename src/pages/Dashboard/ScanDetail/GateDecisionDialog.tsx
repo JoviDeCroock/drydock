@@ -36,13 +36,13 @@ export function gateStatusTone(status: PublicWorkflowGate["status"]) {
 export function gateStatusLabel(status: PublicWorkflowGate["status"]): string {
   switch (status) {
     case "approved":
-      return "cleared · job released";
+      return "approved · job released";
     case "rejected":
-      return "held · job anchored";
+      return "rejected · job blocked";
     case "errored":
-      return "inspection errored";
+      return "review errored";
     default:
-      return "awaiting clearance";
+      return "awaiting decision";
   }
 }
 
@@ -55,11 +55,11 @@ function packageDecisionTone(pkg: GatePackageScan) {
 }
 
 function packageDecisionLabel(pkg: GatePackageScan): string {
-  if (pkg.decision === "publish") return "cleared";
-  if (pkg.decision === "no_publish") return "held";
-  if (pkg.status === "failed") return "inspection failed";
-  if (pkg.status !== "complete") return "inspecting";
-  return "awaiting clearance";
+  if (pkg.decision === "publish") return "approved";
+  if (pkg.decision === "no_publish") return "rejected";
+  if (pkg.status === "failed") return "review failed";
+  if (pkg.status !== "complete") return "reviewing";
+  return "awaiting decision";
 }
 
 function packageLabel(pkg: GatePackageScan): string {
@@ -70,9 +70,9 @@ function packageLabel(pkg: GatePackageScan): string {
 /**
  * Roster of every package the gated release publishes. A monorepo fans the gate
  * out into one scan per package and the held deployment only releases once all
- * of them are cleared — so this panel makes the sibling packages and their
- * per-package decision state visible from any one package's inspection page, with a
- * link to open each sibling's own inspection and an inline decide action on the row
+ * of them are approved — so this panel makes the sibling packages and their
+ * per-package decision state visible from any one package's review page, with a
+ * link to open each sibling's own review and an inline decide action on the row
  * for the package you're currently looking at.
  *
  * Renders nothing for a single-package gate, where the roster would just echo
@@ -85,7 +85,7 @@ export function GatePackagesPanel({
 }: {
   gate: PublicWorkflowGate;
   currentScanId: string;
-  /** Opens the decision dialog for the current package; absent until its inspection resolves. */
+  /** Opens the decision dialog for the current package; absent until its review resolves. */
   onDecide?: () => void;
 }) {
   const packages = gate.packages;
@@ -97,15 +97,15 @@ export function GatePackagesPanel({
   return (
     <section class="flex flex-col gap-3 border border-border rounded-lg p-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
-        <SectionLabel>Docked packages</SectionLabel>
+        <SectionLabel>Release packages</SectionLabel>
         <span class="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-subtle">
-          {approved} of {packages.length} cleared
-          {rejected ? ` · ${rejected} held` : ""}
+          {approved} of {packages.length} approved
+          {rejected ? ` · ${rejected} rejected` : ""}
         </span>
       </div>
       <p class="m-0 max-w-[760px] text-[13px] leading-[1.55] text-ink-muted">
-        This release publishes {packages.length} packages. Every one must be cleared before the held
-        deployment undocks; holding any single package anchors the whole release.
+        This release publishes {packages.length} packages. Every one must be approved before the
+        held deployment releases; rejecting any single package blocks the whole release.
       </p>
       <ul class="m-0 p-0 list-none flex flex-col">
         {packages.map((pkg) => {
@@ -131,7 +131,7 @@ export function GatePackagesPanel({
                       onClick={onDecide}
                       class="font-mono text-[11px] underline text-accent bg-transparent border-0 p-0 cursor-pointer"
                     >
-                      clear →
+                      decide →
                     </button>
                   ) : (
                     <span class="font-mono text-[11px] text-ink-subtle">shown here</span>
@@ -141,7 +141,7 @@ export function GatePackagesPanel({
                     class="font-mono text-[11px] underline text-accent"
                     href={`/dashboard/scans/${encodeURIComponent(pkg.scanId)}`}
                   >
-                    {pending && !pkg.decision ? "inspect →" : "open →"}
+                    {pending && !pkg.decision ? "review →" : "open →"}
                   </a>
                 )}
               </div>
@@ -172,7 +172,7 @@ export function GateContextPanel({
   return (
     <section class="flex flex-col gap-3 border border-border rounded-lg p-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
-        <SectionLabel>Release gate</SectionLabel>
+        <SectionLabel>Deployment gate</SectionLabel>
         {gate ? (
           <Badge tone={gateStatusTone(gate.status)}>{gateStatusLabel(gate.status)}</Badge>
         ) : null}
@@ -200,17 +200,17 @@ export function GateContextPanel({
       )}
       {gate?.failureReason ? (
         <Alert tone="critical">
-          Drydock held this release automatically because the published artifacts could not be
-          verified against the inspected manifest ({gate.failureReason}).
+          Drydock blocked this release automatically because the published artifacts could not be
+          verified against the reviewed manifest ({gate.failureReason}).
         </Alert>
       ) : null}
       {canRetry && onRetry ? (
         <div class="flex flex-wrap items-center gap-3">
           <Button variant="secondary" onClick={onRetry} disabled={retrying}>
-            {retrying ? "Retrying…" : "Retry inspection"}
+            {retrying ? "Retrying…" : "Retry review"}
           </Button>
           <Muted class="m-0 text-[12px]">
-            Re-runs the gate inspection from the workflow artifacts and replaces the failed batch.
+            Re-runs the gate review from the workflow artifacts and replaces the failed batch.
           </Muted>
         </div>
       ) : null}
@@ -293,11 +293,11 @@ export function GateDecisionDialog({
     <Dialog
       open={open}
       onClose={handleClose}
-      title={multi ? "Package clearance" : "Release clearance"}
+      title={multi ? "Package decision" : "Release decision"}
       description={
         multi
-          ? "Clear this package. The held GitHub Actions job undocks only after every package is cleared; holding any one anchors the whole release. Publishing still runs through your workflow's own publish step, such as Trusted Publishing or OIDC. Drydock never holds your registry credentials."
-          : "Clear to undock the held GitHub Actions job. Hold to anchor it. Publishing still runs through your workflow's own publish step, such as Trusted Publishing or OIDC. Drydock never holds your registry credentials or uploads the package."
+          ? "Decide this package. The held GitHub Actions job releases only after every package is approved; rejecting any one blocks the whole release. Publishing still runs through your workflow's own publish step, such as Trusted Publishing or OIDC. Drydock never holds your registry credentials."
+          : "Approve to release the held GitHub Actions job. Reject to block it. Publishing still runs through your workflow's own publish step, such as Trusted Publishing or OIDC. Drydock never holds your registry credentials or uploads the package."
       }
     >
       <div class="flex flex-col gap-2 border border-border rounded-md p-3">
@@ -313,33 +313,33 @@ export function GateDecisionDialog({
           <Badge tone={gateStatusTone(gate.status)}>{gateStatusLabel(gate.status)}</Badge>
         ) : packageDecision ? (
           <Badge tone={packageDecision === "publish" ? "ok" : "critical"}>
-            this package {packageDecision === "publish" ? "cleared" : "held"}
+            this package {packageDecision === "publish" ? "approved" : "rejected"}
           </Badge>
         ) : null}
       </div>
 
       {multi && !gateDecided ? (
         <Muted class="m-0 text-[13px]">
-          {approvedCount} of {packages.length} packages cleared. All must be cleared before the held
-          deployment undocks.
+          {approvedCount} of {packages.length} packages approved. All must be approved before the
+          held deployment releases.
         </Muted>
       ) : null}
 
       {reviewFailed && !gateDecided && !packageAlreadyDecided ? (
         <Alert tone="warn">
-          This package inspection failed. Retry the inspection, or record human clearance based on
-          the release evidence you have inspected.
+          This package review failed. Retry the review, or record a human decision based on the
+          release evidence you have inspected.
         </Alert>
       ) : null}
 
       {mustEnroll ? (
         <Alert tone="warn">
-          Your organization requires two-factor authentication to clear or hold releases. Enable it
-          in{" "}
+          Your organization requires two-factor authentication to approve or block releases. Enable
+          it in{" "}
           <a class="underline text-accent" href="/dashboard/account">
             Account
           </a>
-          , then reopen this clearance.
+          , then reopen this decision.
         </Alert>
       ) : null}
 
@@ -348,7 +348,7 @@ export function GateDecisionDialog({
           id="gateComment"
           type="text"
           value={commentDraft.value}
-          placeholder="e.g. inspected changed files, no risk signals"
+          placeholder="e.g. reviewed changed files, no risk signals"
           onInput={(e) => (commentDraft.value = (e.target as HTMLInputElement).value)}
           disabled={saving || gateDecided || packageAlreadyDecided || mustEnroll}
           maxLength={500}
@@ -372,20 +372,19 @@ export function GateDecisionDialog({
             onInput={(e) => (codeDraft.value = (e.target as HTMLInputElement).value)}
           />
           <Muted class="m-0 mt-1 text-[12px]">
-            Confirm with the code from your authenticator app to clear or hold this deployment.
+            Confirm with the code from your authenticator app to release or block this deployment.
           </Muted>
         </Field>
       ) : null}
 
       {gateDecided ? (
         <Muted class="m-0 text-[13px]">
-          This gate has already been cleared or held. The clearance is final, and GitHub has been
-          notified.
+          This gate has already been decided. The decision is final, and GitHub has been notified.
         </Muted>
       ) : packageAlreadyDecided ? (
         <Muted class="m-0 text-[13px]">
-          This package clearance has been recorded. The held deployment stays pending until the
-          remaining packages receive clearance.
+          This package decision has been recorded. The held deployment stays pending until the
+          remaining packages are decided.
         </Muted>
       ) : (
         <div class="flex flex-wrap gap-2">
@@ -398,11 +397,11 @@ export function GateDecisionDialog({
                 ? "Submitting…"
                 : reviewFailed
                   ? multi
-                    ? "Ship package anyway"
-                    : "Ship anyway & release"
+                    ? "Approve package anyway"
+                    : "Approve anyway & release"
                   : multi
-                    ? "Ship package"
-                    : "Ship & release"}
+                    ? "Approve package"
+                    : "Approve & release"}
             </Button>
           ) : null}
           <Button
@@ -410,14 +409,14 @@ export function GateDecisionDialog({
             onClick={() => submit("rejected")}
             disabled={saving || blockedOnCode || mustEnroll}
           >
-            {saving ? "Submitting…" : "Hold release"}
+            {saving ? "Submitting…" : "Reject & block release"}
           </Button>
         </div>
       )}
       {!gateDecided && !canApprove ? (
         <Muted class="m-0 text-[13px]">
-          Clearance requires a completed inspection batch. Retry the inspection or hold the held
-          GitHub job at the dock.
+          Approval requires a completed review batch. Retry the review or reject to block the held
+          GitHub job.
         </Muted>
       ) : null}
       {error ? <Alert tone="critical">{error}</Alert> : null}

@@ -111,8 +111,8 @@ export default function RegisterPage() {
         <Eyebrow>Get started</Eyebrow>
         <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Create account</h1>
         <Muted class="text-[13px] m-0">
-          Create a workspace, connect npm or a GitHub gate, and inspect docked versions before they
-          go live.
+          Create a workspace, connect npm or a GitHub gate, and review held releases before they go
+          live.
         </Muted>
 
         <form class="flex flex-col gap-4 mt-2" onSubmit={onSubmit}>

@@ -181,7 +181,7 @@ export default function ScanDetailPage() {
     return (
       <PageShell>
         <ScanDetailHeader />
-        <LoadingState title="Opening inspection" detail="confirming session · fetching report" />
+        <LoadingState title="Opening review" detail="confirming session · fetching report" />
       </PageShell>
     );
   }
@@ -250,9 +250,7 @@ export default function ScanDetailPage() {
       {pollingStalled ? (
         <Alert tone="warn">
           <div class="flex flex-wrap items-center justify-between gap-3">
-            <span>
-              Automatic refresh stopped after 10 minutes without the inspection finishing.
-            </span>
+            <span>Automatic refresh stopped after 10 minutes without the review finishing.</span>
             <Button variant="secondary" size="sm" onClick={() => model.resumePolling()}>
               Resume refresh
             </Button>
@@ -277,10 +275,7 @@ export default function ScanDetailPage() {
       ) : null}
 
       {!detail && !error ? (
-        <LoadingState
-          title="Loading saved inspection"
-          detail="fetching report · normalizing diff"
-        />
+        <LoadingState title="Loading saved review" detail="fetching report · normalizing diff" />
       ) : null}
 
       {detail ? (
@@ -386,12 +381,8 @@ export default function ScanDetailPage() {
           // auto-refresh; the warn Alert above carries the state instead.
           pollingStalled ? null : (
             <LoadingState
-              title={
-                detail.scan.status === "pending"
-                  ? "Version waiting to dock"
-                  : "Inspecting docked version"
-              }
-              detail="auto-refreshes when the inspection report is ready"
+              title={detail.scan.status === "pending" ? "Review queued" : "Reviewing release"}
+              detail="auto-refreshes when the report is ready"
             />
           )
         ) : null

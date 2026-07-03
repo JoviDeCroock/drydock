@@ -64,8 +64,8 @@ export function OrganizationMembersSection({
       <SettingsCardBody>
         <Muted class="text-[13px] m-0 max-w-[760px]">
           Invite teammates to collaborate on this organization's release targets, integrations, and
-          gate inspections. Owners and admins manage membership; members get read access to
-          org-scoped scans and can grant clearance.
+          gate reviews. Owners and admins manage membership; members get read access to org-scoped
+          scans and can act on releases.
         </Muted>
 
         {error ? <Alert tone="critical">{error}</Alert> : null}

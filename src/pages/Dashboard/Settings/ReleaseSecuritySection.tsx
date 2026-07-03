@@ -53,10 +53,11 @@ export function ReleaseSecuritySection({
       </div>
 
       <Muted class="text-[13px] m-0 max-w-[760px]">
-        Require two-factor authentication to clear or hold a release gate. Clearing a gate undocks
-        the held GitHub Actions job and publishing proceeds over Trusted Publishing/OIDC, which
-        cannot be undone — so when this is on, every member must confirm with a fresh authenticator
-        code, and a member who has not enabled 2FA cannot grant clearance until they do.
+        Require two-factor authentication to approve or block a release gate. Approving a gate
+        releases the held GitHub Actions job and publishing proceeds over Trusted Publishing/OIDC,
+        which cannot be undone — so when this is on, every member must confirm with a fresh
+        authenticator code, and a member who has not enabled 2FA cannot decide a release until they
+        do.
       </Muted>
 
       {active ? (
@@ -67,7 +68,7 @@ export function ReleaseSecuritySection({
               <a class="underline text-accent" href="/dashboard/account">
                 Account
               </a>{" "}
-              before you can require it for release clearances.
+              before you can require it for releases.
             </Alert>
           ) : enabled ? (
             // Relaxing the policy weakens a security control, so confirm with a
@@ -89,7 +90,7 @@ export function ReleaseSecuritySection({
                 />
                 <Muted class="m-0 mt-1 text-[12px]">
                   Enter the code from your authenticator app to stop requiring two-factor for
-                  release clearances.
+                  releases.
                 </Muted>
               </Field>
               <Button
@@ -111,13 +112,13 @@ export function ReleaseSecuritySection({
                 disabled={saving}
                 class="self-start"
               >
-                {saving ? "Saving…" : "Require two-factor for clearance"}
+                {saving ? "Saving…" : "Require two-factor for releases"}
               </Button>
             </div>
           )
         ) : (
           <Muted class="text-[13px] m-0">
-            Only the organization owner can change the release-clearance two-factor policy.
+            Only the organization owner can change the release two-factor policy.
           </Muted>
         )
       ) : (

@@ -21,7 +21,7 @@ export default function PrivacyPage() {
         </p>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
           This policy explains what Drydock collects when you use the service, how that information
-          is used, and the choices you have. We collect the minimum needed to inspect your releases
+          is used, and the choices you have. We collect the minimum needed to review your releases
           and run your account.
         </p>
       </header>
@@ -38,8 +38,7 @@ export default function PrivacyPage() {
               </>,
               <>
                 <Strong>Organization data.</Strong> The organizations, members, and invitations you
-                create, and the repositories, registries, and environments you connect for
-                inspection.
+                create, and the repositories, registries, and environments you connect for review.
               </>,
               <>
                 <Strong>Integration credentials.</Strong> Tokens you provide to connect a registry
@@ -48,7 +47,7 @@ export default function PrivacyPage() {
               </>,
               <>
                 <Strong>Release metadata.</Strong> Package names, versions, file listings, diffs,
-                checksums, and the inspection findings we compute for the releases you submit.
+                checksums, and the review findings we compute for the releases you submit.
               </>,
               <>
                 <Strong>Operational data.</Strong> Logs and events generated as the service runs,
@@ -64,14 +63,12 @@ export default function PrivacyPage() {
           <List
             items={[
               <>operate your account, organizations, and sessions;</>,
-              <>inspect the releases you submit and show you the resulting report;</>,
+              <>review the releases you submit and show you the resulting report;</>,
               <>
-                connect to the registries and code hosts you authorize, and report clearances back;
+                connect to the registries and code hosts you authorize, and report decisions back;
               </>,
               <>keep the service secure, prevent abuse, and diagnose problems;</>,
-              <>
-                send you transactional messages such as verification and inspection notifications.
-              </>,
+              <>send you transactional messages such as verification and review notifications.</>,
             ]}
           />
           <Prose>
@@ -94,15 +91,15 @@ export default function PrivacyPage() {
           <Prose>
             We share information only as needed to run the service: with infrastructure providers
             that host and operate Drydock, with the registries and code hosts you explicitly connect
-            (to fetch the artifacts you ask us to inspect and report clearances back), and where we
+            (to fetch the artifacts you ask us to review and report decisions back), and where we
             are legally required to. We do not sell or rent your information to third parties.
           </Prose>
         </Section>
 
         <Section id="retention" label="Data retention">
           <Prose>
-            We keep account and organization data for as long as your account is active. Inspection
-            reports and release metadata are retained so you can refer back to past clearances.
+            We keep account and organization data for as long as your account is active. Review
+            reports and release metadata are retained so you can refer back to past decisions.
             Operational logs are kept for a limited period and then deleted. When you delete your
             account or an organization, we delete or anonymize the associated data, except where we
             must retain it to meet a legal obligation.

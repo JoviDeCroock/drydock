@@ -69,9 +69,7 @@ test("enrolls in TOTP 2FA and signs in through the challenge", async ({ browser,
     await page.getByRole("button", { name: "Verify" }).click();
 
     await page.waitForURL(/\/dashboard$/, { timeout: 30_000 });
-    await expect(
-      page.getByRole("heading", { name: "New version docked and ready for inspection" }),
-    ).toBeVisible({
+    await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible({
       timeout: 30_000,
     });
   } finally {
