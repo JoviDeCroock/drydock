@@ -569,7 +569,7 @@ function DiffOptionToggle({
       <input
         type="checkbox"
         class="sr-only peer"
-        checked={checked.value}
+        checked={checked}
         onChange={(event) => (checked.value = event.currentTarget.checked)}
         aria-label={description}
       />

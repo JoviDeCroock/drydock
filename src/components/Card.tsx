@@ -10,6 +10,12 @@ const cardPaddingClass: Record<CardPadding, string> = {
   none: "",
 };
 
+function bodyLayoutClass(inset: "all" | "belowHeader", gap: "default" | "compact" | "none") {
+  const insetClass = inset === "belowHeader" ? "px-5 pb-5" : "p-5";
+  const gapClass = gap === "none" ? "" : gap === "compact" ? "gap-4" : "gap-5";
+  return cn(insetClass, "flex flex-col", gapClass);
+}
+
 export function Card({
   class: className,
   children,
@@ -57,9 +63,7 @@ export function SettingsCardBody({
   inset?: "all" | "belowHeader";
   gap?: "default" | "compact" | "none";
 }) {
-  const insetClass = inset === "belowHeader" ? "px-5 pb-5" : "p-5";
-  const gapClass = gap === "none" ? "" : gap === "compact" ? "gap-4" : "gap-5";
-  return <div class={cn(insetClass, "flex flex-col", gapClass, className)}>{children}</div>;
+  return <div class={cn(bodyLayoutClass(inset, gap), className)}>{children}</div>;
 }
 
 export function SettingsCardForm({
@@ -75,10 +79,8 @@ export function SettingsCardForm({
   inset?: "all" | "belowHeader";
   gap?: "default" | "compact" | "none";
 }) {
-  const insetClass = inset === "belowHeader" ? "px-5 pb-5" : "p-5";
-  const gapClass = gap === "none" ? "" : gap === "compact" ? "gap-4" : "gap-5";
   return (
-    <form class={cn(insetClass, "flex flex-col", gapClass, className)} onSubmit={onSubmit}>
+    <form class={cn(bodyLayoutClass(inset, gap), className)} onSubmit={onSubmit}>
       {children}
     </form>
   );
