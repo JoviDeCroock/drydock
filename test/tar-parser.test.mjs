@@ -632,6 +632,30 @@ describe("readTar limits and malformed archives", () => {
     expect(streamed).toEqual(buffered);
   });
 
+  test("readTarStream parses byte-at-a-time input identically to readTar", async () => {
+    const tar = buildTar([
+      { name: "package/index.js", body: "export const x = 1;\n" },
+      { name: "package/lib/util.js", body: "// util\n" },
+      { name: "package/readme.txt", body: "chunk cursor regression\n" },
+    ]);
+    const chunked = new ReadableStream({
+      start(controller) {
+        for (let i = 0; i < tar.length; i += 1) {
+          controller.enqueue(tar.subarray(i, i + 1));
+        }
+        controller.close();
+      },
+    });
+    const streamed = await tarParser.readTarStream(
+      chunked,
+      PARSE_LIMITS.maxFiles,
+      PARSE_LIMITS.maxTarBytes,
+      Infinity,
+    );
+    const buffered = await parseFull(tar);
+    expect(streamed).toEqual(buffered);
+  });
+
   test("readTarStream fails closed when the total stream exceeds its cap", async () => {
     const tar = buildTar([{ name: "package/big.bin", body: new Uint8Array(4096) }]);
     const stream = new ReadableStream({

@@ -229,6 +229,7 @@ export function createStreamCursor(body, maxStreamBytes) {
   const reader = body.getReader();
   const streamLimit = Number.isFinite(maxStreamBytes) ? maxStreamBytes : Infinity;
   const chunks = [];
+  let head = 0;
   let buffered = 0;
   let streamed = 0;
   let consumedBytes = 0;
@@ -252,20 +253,38 @@ export function createStreamCursor(body, maxStreamBytes) {
     return buffered >= target;
   }
 
+  function currentHead() {
+    return chunks[head];
+  }
+
+  function compact() {
+    if (head === 0) return;
+    if (head === chunks.length) {
+      chunks.length = 0;
+      head = 0;
+      return;
+    }
+    if (head > 64 && head * 2 >= chunks.length) {
+      chunks.splice(0, head);
+      head = 0;
+    }
+  }
+
   function take(count) {
     const out = new Uint8Array(count);
     let offset = 0;
     while (offset < count) {
-      const head = chunks[0];
+      const chunk = currentHead();
       const need = count - offset;
-      if (head.byteLength <= need) {
-        out.set(head, offset);
-        offset += head.byteLength;
-        buffered -= head.byteLength;
-        chunks.shift();
+      if (chunk.byteLength <= need) {
+        out.set(chunk, offset);
+        offset += chunk.byteLength;
+        buffered -= chunk.byteLength;
+        head += 1;
+        compact();
       } else {
-        out.set(head.subarray(0, need), offset);
-        chunks[0] = head.subarray(need);
+        out.set(chunk.subarray(0, need), offset);
+        chunks[head] = chunk.subarray(need);
         buffered -= need;
         offset = count;
       }
@@ -278,16 +297,17 @@ export function createStreamCursor(body, maxStreamBytes) {
     let remaining = count;
     while (remaining > 0) {
       if (!buffered && !(await fill(1))) return false;
-      const head = chunks[0];
-      if (head.byteLength <= remaining) {
-        if (sink) await sink(head);
-        remaining -= head.byteLength;
-        buffered -= head.byteLength;
-        consumedBytes += head.byteLength;
-        chunks.shift();
+      const chunk = currentHead();
+      if (chunk.byteLength <= remaining) {
+        if (sink) await sink(chunk);
+        remaining -= chunk.byteLength;
+        buffered -= chunk.byteLength;
+        consumedBytes += chunk.byteLength;
+        head += 1;
+        compact();
       } else {
-        if (sink) await sink(head.subarray(0, remaining));
-        chunks[0] = head.subarray(remaining);
+        if (sink) await sink(chunk.subarray(0, remaining));
+        chunks[head] = chunk.subarray(remaining);
         buffered -= remaining;
         consumedBytes += remaining;
         remaining = 0;
