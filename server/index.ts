@@ -1,6 +1,14 @@
 import { Hono } from "hono";
+import {
+  apiTokenHasScope,
+  authenticateApiToken,
+  isDrydockApiToken,
+  markApiTokenUsed,
+  type ApiTokenScope,
+} from "./db/api-tokens";
 import { createDb } from "./db/client";
 import { AUDIT_LOG_RETENTION_DAYS, pruneAuditEventsOlderThan } from "./db/audit-log";
+import { recordScanEvent } from "./db/events";
 import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
 import { getOrganizationOwnerUserId } from "./db/organizations";
 import { RateLimitError, enforceRateLimit } from "./db/rate-limit";
@@ -154,6 +162,7 @@ const STATE_CHANGING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 app.use("/api/*", async (c, next) => {
   if (!STATE_CHANGING_METHODS.has(c.req.method)) return next();
+  if (hasDrydockBearer(c.req.raw)) return next();
   const expected = c.env.BETTER_AUTH_URL;
   if (!expected) return next();
   const expectedOrigin = (() => {
@@ -228,11 +237,89 @@ function authIpLimit(path: string): { bucket: string; max: number; windowMs: num
 }
 
 app.use("/api/*", async (c, next) => {
+  const bearer = readBearerToken(c.req.raw);
+  if (bearer) {
+    const db = createDb(c.env.DB);
+    const token = await authenticateApiToken(db, bearer);
+    if (!token) return c.json({ error: "unauthorized" }, 401);
+    c.set("apiToken", token);
+    // Keep legacy route code that expects an authSession from throwing. Token
+    // scope middleware below prevents these synthetic sessions from reaching
+    // session-only routes; token-aware scan routes use the apiToken context.
+    c.set("authSession", { userId: token.createdByUserId ?? "" });
+    await next();
+    return;
+  }
+
   const session = await getAuthSession(c.get("auth"), c.req.raw);
   if (!session) return c.json({ error: "unauthorized" }, 401);
   c.set("authSession", session);
   await next();
 });
+
+app.use("/api/*", async (c, next) => {
+  const token = c.get("apiToken");
+  if (!token) return next();
+
+  const requiredScope = requiredApiTokenScope(c.req.method, c.req.path);
+  if (!requiredScope) return c.json({ error: "forbidden" }, 403);
+  if (!apiTokenHasScope(token, requiredScope)) {
+    return c.json({ error: "insufficient token scope" }, 403);
+  }
+
+  const db = createDb(c.env.DB);
+  try {
+    await enforceRateLimit(db, {
+      key: `api-token:${token.id}`,
+      limit: 120,
+      windowMs: 60 * 1000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return rateLimitResponse(c, "API token rate limit exceeded", err);
+    }
+    throw err;
+  }
+
+  await Promise.all([
+    markApiTokenUsed(db, token.id),
+    recordScanEvent(db, {
+      organizationId: token.organizationId,
+      actorUserId: null,
+      type: "api_token.used",
+      metadata: {
+        tokenId: token.id,
+        name: token.name,
+        scope: requiredScope,
+        method: c.req.method,
+        path: c.req.path,
+      },
+    }),
+  ]);
+  return next();
+});
+
+function readBearerToken(request: Request): string | null {
+  const authorization = request.headers.get("authorization")?.trim();
+  if (!authorization) return null;
+  const [scheme, token, extra] = authorization.split(/\s+/);
+  if (extra) return null;
+  if (scheme?.toLowerCase() !== "bearer" || !token) return null;
+  return token.trim();
+}
+
+function hasDrydockBearer(request: Request): boolean {
+  const token = readBearerToken(request);
+  return token ? isDrydockApiToken(token) : false;
+}
+
+function requiredApiTokenScope(method: string, path: string): ApiTokenScope | null {
+  if (method === "GET" && (path === "/api/v1/scans" || path.startsWith("/api/v1/scans/"))) {
+    return "scans:read";
+  }
+  if (method === "POST" && path === "/api/v1/scans") return "scans:write";
+  return null;
+}
 
 app.get("/api/health", (c) =>
   c.json({
@@ -255,6 +342,8 @@ app.get("/api", (c) =>
         "GET /api/v1/organizations; POST /api/v1/organizations; PATCH /api/v1/organizations/:id",
       organizationMembers:
         "GET /api/v1/organizations/members; DELETE /api/v1/organizations/members/:userId; GET/POST /api/v1/organizations/invitations; DELETE /api/v1/organizations/invitations/:invitationId; POST /api/v1/organizations/invitations/accept",
+      apiTokens:
+        "GET/POST /api/v1/organizations/:id/api-tokens; DELETE /api/v1/organizations/:id/api-tokens/:tokenId",
       githubApp:
         "GET /api/v1/github-app/config; POST /api/v1/github-app/install; POST /api/v1/github-app/install/callback; GET /api/v1/github-app/installations; GET/POST /api/v1/github-app/release-targets; DELETE /api/v1/github-app/release-targets/:id; GET /api/v1/github-app/workflow-gates/by-scan/:scanId; POST /api/v1/github-app/workflow-gates/:gateId/decision",
       githubWebhooks: "POST /webhooks/github (signed by GitHub App webhook secret)",

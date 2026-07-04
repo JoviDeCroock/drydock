@@ -71,7 +71,7 @@ Cron-triggered npm discovery finds staged publishes for organizations with valid
 
 ## Organization and auth model
 
-All non-auth `/api/*` endpoints require a Better Auth session and an active organization, with one deliberate exception: the anonymous public package-diff endpoints under `/api/public/v1/package-diff` (below). Users may belong to multiple organizations; scan data, npm connections, workflow gates, release targets, Slack installs, and settings must be organization-scoped. Email verification and membership/invitation behavior are described in [`organization-members.md`](./organization-members.md).
+All non-auth `/api/*` endpoints require authenticated organization context, with one deliberate exception: the anonymous public package-diff endpoints under `/api/public/v1/package-diff` (below). Browser UI requests use a Better Auth session plus the active-organization header; users may belong to multiple organizations. Programmatic requests may instead use an organization API token (`Authorization: Bearer drydock_...`), which resolves directly to one organization and is accepted only for scoped scan read/create endpoints. Scan data, npm connections, workflow gates, release targets, Slack installs, API tokens, and settings must remain organization-scoped. Email verification and membership/invitation behavior are described in [`organization-members.md`](./organization-members.md).
 
 ## Public package diff
 
@@ -87,4 +87,4 @@ Reports should remain canonical and future-signable: stable ordering, explicit r
 
 ## API direction
 
-Keep request/response types shared between `server/` and `src/`. Prefer route helpers and typed fetch wrappers over ad hoc shape duplication. New API behavior should update this file only when it changes runtime shape, trust boundaries, storage, or cross-layer contracts; otherwise point to route-local tests and code.
+Keep request/response types shared between `server/` and `src/`. Prefer route helpers and typed fetch wrappers over ad hoc shape duplication. New API behavior should update this file only when it changes runtime shape, trust boundaries, storage, or cross-layer contracts; otherwise point to route-local tests and code. Bearer-token endpoints must declare their accepted scopes explicitly; do not infer write access from a valid token alone.

@@ -266,6 +266,40 @@ export const rateLimits = sqliteTable(
   }),
 );
 
+export const organizationApiTokens = sqliteTable(
+  "organization_api_tokens",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    tokenLast4: text("token_last4").notNull(),
+    scopesJson: text("scopes_json", { mode: "json" }).notNull(),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    revokedByUserId: text("revoked_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+    lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    tokenHashUniqueIdx: uniqueIndex("organization_api_tokens_token_hash_unique_idx").on(
+      table.tokenHash,
+    ),
+    orgActiveIdx: index("organization_api_tokens_org_active_idx").on(
+      table.organizationId,
+      table.revokedAt,
+      table.createdAt,
+    ),
+  }),
+);
+
 export const npmConnections = sqliteTable(
   "npm_connections",
   {

@@ -3,6 +3,7 @@ import { createDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
 import { getOrganizationRole } from "../db/invitations";
 import { getNpmConnection } from "../db/npm-connections";
+import { getOrganizationOwnerUserId } from "../db/organizations";
 import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
 import {
   LIST_SCANS_DEFAULT_LIMIT,
@@ -65,8 +66,9 @@ scansRoutes.post("/", async (c) => {
 
   try {
     const db = createDb(c.env.DB);
-    const session = c.get("authSession");
     const organizationId = await requireActiveOrganization(c, db);
+    const actorUserId = await resolveScanActorUserId(c, db, organizationId);
+    if (!actorUserId) return c.json({ error: "organization actor unavailable" }, 403);
     await enforceRateLimit(db, {
       key: `scan:${organizationId}`,
       limit: 10,
@@ -114,7 +116,7 @@ scansRoutes.post("/", async (c) => {
       id: scanId,
       stageId: input.stageId,
       organizationId,
-      ownerUserId: session.userId,
+      ownerUserId: actorUserId,
       packageName: staged?.packageName ?? null,
       stagedVersion: staged?.version ?? null,
     });
@@ -123,7 +125,7 @@ scansRoutes.post("/", async (c) => {
       ...input,
       scanId,
       organizationId,
-      actorUserId: session.userId,
+      actorUserId,
     };
 
     if (c.env.SCAN_QUEUE) {
@@ -358,6 +360,8 @@ async function resolveReportExportOrganization(
   c: Context<{ Bindings: Bindings; Variables: Variables }>,
   db: ReturnType<typeof createDb>,
 ): Promise<string | null> {
+  const apiToken = c.get("apiToken");
+  if (apiToken) return apiToken.organizationId;
   const requested = c.req.query("organizationId")?.trim() || null;
   if (!requested) return requireActiveOrganization(c, db);
   const session = c.get("authSession");
@@ -366,7 +370,6 @@ async function resolveReportExportOrganization(
 
 scansRoutes.get("/:id/versions", async (c) => {
   const db = createDb(c.env.DB);
-  const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
   const scan = await getScanStatus(db, c.req.param("id"), organizationId);
   if (!scan) return c.json({ error: "not found" }, 404);
@@ -383,7 +386,7 @@ scansRoutes.get("/:id/versions", async (c) => {
   try {
     [, connection] = await Promise.all([
       enforceRateLimit(db, {
-        key: `compare-versions:${session.userId}`,
+        key: `compare-versions:${requestRateLimitPrincipal(c)}`,
         limit: 60,
         windowMs: 60 * 1000,
       }),
@@ -465,7 +468,6 @@ async function resolveCompareContext(
   if (!scanId) return { error: c.json({ error: "missing scan id" }, 400) } as const;
 
   const db = createDb(c.env.DB);
-  const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
   const scan = await getScanCompareData(db, scanId, organizationId, scanArtifactReadBucket(c.env));
   if (!scan) return { error: c.json({ error: "not found" }, 404) } as const;
@@ -475,7 +477,7 @@ async function resolveCompareContext(
   return {
     version,
     db,
-    session,
+    rateLimitPrincipal: requestRateLimitPrincipal(c),
     organizationId,
     scan,
     packageName: scan.scan.packageName,
@@ -487,7 +489,7 @@ scansRoutes.get("/:id/compare", async (c) => {
   if ("error" in ctx) return ctx.error;
 
   const loaded = await loadCompareArchive(c, ctx, {
-    rateLimitKey: `compare-fetch:${ctx.session.userId}`,
+    rateLimitKey: "compare-fetch",
     rateLimit: 30,
   });
   if ("error" in loaded) return loaded.error;
@@ -519,7 +521,7 @@ async function loadCompareArchive(
   try {
     [, connection] = await Promise.all([
       enforceRateLimit(ctx.db, {
-        key: options.rateLimitKey,
+        key: `${options.rateLimitKey}:${ctx.rateLimitPrincipal}`,
         limit: options.rateLimit,
         windowMs: 60 * 1000,
       }),
@@ -631,6 +633,21 @@ function scanFilesToFileRecords(
   }));
 }
 
+async function resolveScanActorUserId(
+  c: Context<{ Bindings: Bindings; Variables: Variables }>,
+  db: ReturnType<typeof createDb>,
+  organizationId: string,
+): Promise<string | null> {
+  const apiToken = c.get("apiToken");
+  if (!apiToken) return c.get("authSession").userId;
+  return apiToken.createdByUserId ?? getOrganizationOwnerUserId(db, organizationId);
+}
+
+function requestRateLimitPrincipal(c: Context<{ Bindings: Bindings; Variables: Variables }>) {
+  const apiToken = c.get("apiToken");
+  return apiToken ? `api-token:${apiToken.id}` : `user:${c.get("authSession").userId}`;
+}
+
 scansRoutes.get("/:id/compare/file", async (c) => {
   const ctx = await resolveCompareContext(c);
   if ("error" in ctx) return ctx.error;
@@ -638,7 +655,7 @@ scansRoutes.get("/:id/compare/file", async (c) => {
   if (!path) return c.json({ error: "path is required" }, 400);
 
   const loaded = await loadCompareArchive(c, ctx, {
-    rateLimitKey: `compare-file:${ctx.session.userId}`,
+    rateLimitKey: "compare-file",
     rateLimit: 240,
   });
   if ("error" in loaded) return loaded.error;

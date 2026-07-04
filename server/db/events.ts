@@ -24,6 +24,7 @@ export async function recordScanEvent(db: AppDb, input: AuditEventInput) {
 const SENSITIVE_EVENT_METADATA_KEYS = new Set([
   "tokenCiphertext",
   "tokenFingerprint",
+  "tokenHash",
   "tokenLast4",
   "tokenNonce",
   "botToken",
