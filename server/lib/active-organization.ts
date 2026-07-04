@@ -13,6 +13,8 @@ export async function requireActiveOrganization(
   c: Context<{ Bindings: Bindings; Variables: Variables }>,
   db: AppDb,
 ): Promise<string> {
+  const apiToken = c.get("apiToken");
+  if (apiToken) return apiToken.organizationId;
   const session = c.get("authSession");
   const requested = c.req.header(ACTIVE_ORG_HEADER)?.trim() || null;
   if (requested) {
@@ -43,6 +45,8 @@ export async function requireActiveOrganizationContext(
   c: Context<{ Bindings: Bindings; Variables: Variables }>,
   db: AppDb,
 ): Promise<ActiveOrganizationContext> {
+  const apiToken = c.get("apiToken");
+  if (apiToken) return { organizationId: apiToken.organizationId, role: "member" };
   const session = c.get("authSession");
   const requested = c.req.header(ACTIVE_ORG_HEADER)?.trim() || null;
   if (requested) {

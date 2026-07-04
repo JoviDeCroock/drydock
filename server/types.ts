@@ -1,4 +1,5 @@
 import type { Auth, AuthSession } from "./lib/auth";
+import type { AuthenticatedApiToken } from "./db/api-tokens";
 import type { BaselineInfo } from "./lib/adapters/types";
 
 export type {
@@ -23,6 +24,7 @@ export type Bindings = Cloudflare.Env;
 export type Variables = {
   auth: Auth;
   authSession: AuthSession;
+  apiToken?: AuthenticatedApiToken;
 };
 
 export interface ScanInput {

@@ -7,6 +7,7 @@ import {
   useQuerySignal,
 } from "../../../lib/query-state";
 import { sessionModel } from "../../../models/auth";
+import { ApiTokensModel } from "../../../models/api-tokens";
 import { NpmConnectionModel } from "../../../models/npm-connection";
 import { NotificationRecipientsModel } from "../../../models/notification-recipients";
 import { SlackConnectionModel } from "../../../models/slack-connection";
@@ -29,12 +30,14 @@ import { ReleaseSecuritySection } from "./ReleaseSecuritySection";
 import { GithubAppSection } from "./GithubAppSection";
 import { NotificationRecipientsSection } from "./NotificationRecipientsSection";
 import { SlackConnectionSection } from "./SlackConnectionSection";
+import { ApiTokensSection } from "./ApiTokensSection";
 import { NpmConnectionSection } from "./NpmConnectionSection";
 import { OrganizationMembersSection } from "./OrganizationMembersSection";
 import { SettingsNav, isSettingsTab, type SettingsTab } from "./SettingsNav";
 
 export default function SettingsPage() {
   const location = useLocation();
+  const apiTokens = useModel(ApiTokensModel);
   const npm = useModel(NpmConnectionModel);
   const organizations = useModel(OrganizationModel);
   const githubApp = useModel(GithubAppModel);
@@ -80,6 +83,10 @@ export default function SettingsPage() {
         githubApp.loadInstallations(),
         githubApp.loadReleaseTargets(),
         members.load(canManageMembers(organizations)),
+        apiTokens.load(
+          organizations.active.peek()?.id ?? null,
+          canManageIntegrations(organizations),
+        ),
         recipients.load(organizations.active.peek()?.id ?? null),
         slack.load(organizations.active.peek()?.id ?? null),
       ]);
@@ -90,7 +97,12 @@ export default function SettingsPage() {
   }, []);
 
   const reloadActiveOrgScopedData = async () => {
-    const loaders: Promise<unknown>[] = [npm.load(), members.load(canManageMembers(organizations))];
+    const canManageIntegrationsNow = canManageIntegrations(organizations);
+    const loaders: Promise<unknown>[] = [
+      npm.load(),
+      members.load(canManageMembers(organizations)),
+      apiTokens.load(organizations.active.peek()?.id ?? null, canManageIntegrationsNow),
+    ];
     githubApp.clearForm();
     if (!githubApp.configLoaded.peek()) loaders.push(githubApp.loadConfig());
     loaders.push(githubApp.loadInstallations(), githubApp.loadReleaseTargets());
@@ -129,7 +141,8 @@ export default function SettingsPage() {
   const user = sessionModel.user.value;
   const githubAppLoaded = githubApp.loaded.value;
   const npmLoaded = npm.loaded.value;
-  const workspaceLoaded = githubAppLoaded && npmLoaded;
+  const apiTokensLoaded = apiTokens.loaded.value;
+  const workspaceLoaded = githubAppLoaded && npmLoaded && apiTokensLoaded;
   const tab = activeTab.value;
 
   return (
@@ -193,6 +206,12 @@ export default function SettingsPage() {
             ) : null}
             {tab === "integrations" ? (
               <>
+                <ApiTokensSection
+                  apiTokens={apiTokens}
+                  organizationId={organizations.active.value?.id ?? null}
+                  canManage={canManageIntegrations(organizations)}
+                  defaultOpen
+                />
                 <NpmConnectionSection npm={npm} defaultOpen />
                 <GithubAppSection githubApp={githubApp} defaultOpen />
               </>
@@ -200,7 +219,10 @@ export default function SettingsPage() {
           </div>
         </div>
       ) : (
-        <LoadingState title="Loading settings" detail={loadingDetail(npmLoaded, githubAppLoaded)} />
+        <LoadingState
+          title="Loading settings"
+          detail={loadingDetail(npmLoaded, apiTokensLoaded, githubAppLoaded)}
+        />
       )}
     </PageShell>
   );
@@ -234,9 +256,14 @@ function ownerFallbackEmail(
   return user.email ?? undefined;
 }
 
-function loadingDetail(npmLoaded: boolean, githubAppLoaded: boolean): string {
+function loadingDetail(
+  npmLoaded: boolean,
+  apiTokensLoaded: boolean,
+  githubAppLoaded: boolean,
+): string {
   const parts: string[] = [];
   if (!npmLoaded) parts.push("checking npm connection");
+  if (!apiTokensLoaded) parts.push("checking API tokens");
   if (!githubAppLoaded) parts.push("checking GitHub App");
   return parts.join(" · ");
 }

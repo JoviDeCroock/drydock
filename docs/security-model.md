@@ -78,7 +78,9 @@ For npm registry tarballs, consumer install lifecycle hooks are `preinstall`, `i
 
 ## Authorization posture
 
-Every non-auth `/api/*` endpoint requires a Better Auth session and organization resolution. Reads and writes for scans, reports, npm connections, Slack installs, release targets, workflow gates, and settings must check organization ownership. UI state is not an authority; server routes make all access-control decisions.
+Every non-auth `/api/*` endpoint requires authenticated organization resolution. Browser requests use a Better Auth session; programmatic scan requests may use an organization API token. Reads and writes for scans, reports, npm connections, Slack installs, release targets, workflow gates, and settings must check organization ownership. UI state is not an authority; server routes make all access-control decisions.
+
+Organization API tokens are the one non-cookie API auth path. They are scoped to exactly one organization, stored only as high-entropy SHA-256 hashes, returned only once at creation, and accepted only on the minimal programmatic scan surface (`scans:read` for scan reads/exports and `scans:write` for creating a scan). Tokens must not manage settings, rotate credentials, decide scans, decide workflow gates, or bypass any release-decision 2FA requirement. Each accepted token request is rate-limited per token and records a redacted `api_token.used` audit event.
 
 ## Browser response headers
 

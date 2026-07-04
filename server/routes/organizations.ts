@@ -1,4 +1,11 @@
 import { Hono } from "hono";
+import {
+  createApiToken,
+  listApiTokens,
+  normalizeApiTokenName,
+  normalizeApiTokenScopes,
+  revokeApiToken,
+} from "../db/api-tokens";
 import { createDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
 import { getOrganizationRole } from "../db/invitations";
@@ -205,6 +212,96 @@ organizationsRoutes.delete("/:id", async (c) => {
   // so the audit row would be deleted in the same breath. ARTIFACTS is passed so
   // the org's R2 artifacts are torn down alongside its D1 rows.
   await deleteOrganization(db, organizationId, c.env.ARTIFACTS);
+  return c.json({ ok: true });
+});
+
+organizationsRoutes.get("/:id/api-tokens", async (c) => {
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = c.req.param("id");
+  const role = await requireOrganizationMember(db, organizationId, session.userId);
+  if (!role) return c.json({ error: "not found" }, 404);
+  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
+  return c.json({ tokens: await listApiTokens(db, organizationId) });
+});
+
+organizationsRoutes.post("/:id/api-tokens", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    name?: unknown;
+    scopes?: unknown;
+  };
+  const name = normalizeApiTokenName(body.name);
+  if (!name) return c.json({ error: "token name is required" }, 400);
+  const scopes = normalizeApiTokenScopes(body.scopes);
+  if (!scopes) {
+    return c.json({ error: "scopes must include scans:read or scans:write" }, 400);
+  }
+
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = c.req.param("id");
+  const role = await requireOrganizationMember(db, organizationId, session.userId);
+  if (!role) return c.json({ error: "not found" }, 404);
+  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
+
+  try {
+    await enforceRateLimit(db, {
+      key: `api-tokens:create:${organizationId}`,
+      limit: 20,
+      windowMs: 60 * 60 * 1000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return rateLimitResponse(c, "API token create rate limit exceeded", err);
+    }
+    throw err;
+  }
+
+  const created = await createApiToken(db, {
+    organizationId,
+    name,
+    scopes,
+    createdByUserId: session.userId,
+  });
+  await recordScanEvent(db, {
+    organizationId,
+    actorUserId: session.userId,
+    type: "api_token.created",
+    metadata: {
+      tokenId: created.token.id,
+      name,
+      scopes,
+      tokenLast4: created.token.tokenLast4,
+    },
+  });
+  return c.json({ token: created.token, secret: created.secret }, 201);
+});
+
+organizationsRoutes.delete("/:id/api-tokens/:tokenId", async (c) => {
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = c.req.param("id");
+  const role = await requireOrganizationMember(db, organizationId, session.userId);
+  if (!role) return c.json({ error: "not found" }, 404);
+  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
+
+  const token = await revokeApiToken(db, {
+    organizationId,
+    tokenId: c.req.param("tokenId"),
+    revokedByUserId: session.userId,
+  });
+  if (!token) return c.json({ error: "not found" }, 404);
+  await recordScanEvent(db, {
+    organizationId,
+    actorUserId: session.userId,
+    type: "api_token.revoked",
+    metadata: {
+      tokenId: token.id,
+      name: token.name,
+      scopes: token.scopes,
+      tokenLast4: token.tokenLast4,
+    },
+  });
   return c.json({ ok: true });
 });
 

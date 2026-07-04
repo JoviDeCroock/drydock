@@ -14,6 +14,13 @@ const protectedRoutes: RouteCase[] = [
   { method: "GET", path: "/api/health" },
   { method: "GET", path: "/api/v1/organizations" },
   { method: "POST", path: "/api/v1/organizations", body: { name: "acme" } },
+  { method: "GET", path: "/api/v1/organizations/org_auth_route/api-tokens" },
+  {
+    method: "POST",
+    path: "/api/v1/organizations/org_auth_route/api-tokens",
+    body: { name: "ci", scopes: ["scans:read"] },
+  },
+  { method: "DELETE", path: "/api/v1/organizations/org_auth_route/api-tokens/token_auth_route" },
   { method: "GET", path: "/api/v1/npm-connection" },
   {
     method: "POST",
