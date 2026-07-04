@@ -1,7 +1,7 @@
 import QRCode from "qrcode";
 import { createModel, signal } from "@preact/signals";
-import { errorMessage } from "./api";
 import { authPost, sessionModel } from "./auth";
+import { runAction } from "./async-action";
 
 interface EnableResponse {
   totpURI?: string;
@@ -46,71 +46,75 @@ export const TwoFactorModel = createModel(() => {
     },
 
     async beginEnroll(password: string): Promise<boolean> {
-      this.busy.value = true;
-      this.error.value = null;
-      try {
-        const data = (await authPost("/api/auth/two-factor/enable", {
-          password,
-        })) as EnableResponse;
-        if (!data.totpURI) throw new Error("Could not start two-factor setup.");
-        this.totpURI.value = data.totpURI;
-        this.secret.value = parseSecret(data.totpURI);
-        this.backupCodes.value = data.backupCodes ?? null;
-        this.qrDataUrl.value = await QRCode.toDataURL(data.totpURI, { margin: 1, width: 200 });
-        return true;
-      } catch (err) {
-        this.error.value = errorMessage(err);
-        return false;
-      } finally {
-        this.busy.value = false;
-      }
+      return (
+        (await runAction({
+          status: this.busy,
+          error: this.error,
+          pending: true,
+          idle: false,
+          run: async () => {
+            const data = (await authPost("/api/auth/two-factor/enable", {
+              password,
+            })) as EnableResponse;
+            if (!data.totpURI) throw new Error("Could not start two-factor setup.");
+            this.totpURI.value = data.totpURI;
+            this.secret.value = parseSecret(data.totpURI);
+            this.backupCodes.value = data.backupCodes ?? null;
+            this.qrDataUrl.value = await QRCode.toDataURL(data.totpURI, { margin: 1, width: 200 });
+            return true;
+          },
+        })) ?? false
+      );
     },
 
     async confirmEnroll(code: string): Promise<boolean> {
-      this.busy.value = true;
-      this.error.value = null;
-      try {
-        await authPost("/api/auth/two-factor/verify-totp", { code });
-        await sessionModel.load();
-        return true;
-      } catch (err) {
-        this.error.value = errorMessage(err);
-        return false;
-      } finally {
-        this.busy.value = false;
-      }
+      return (
+        (await runAction({
+          status: this.busy,
+          error: this.error,
+          pending: true,
+          idle: false,
+          run: async () => {
+            await authPost("/api/auth/two-factor/verify-totp", { code });
+            await sessionModel.load();
+            return true;
+          },
+        })) ?? false
+      );
     },
 
     async disable(password: string): Promise<boolean> {
-      this.busy.value = true;
-      this.error.value = null;
-      try {
-        await authPost("/api/auth/two-factor/disable", { password });
-        await sessionModel.load();
-        return true;
-      } catch (err) {
-        this.error.value = errorMessage(err);
-        return false;
-      } finally {
-        this.busy.value = false;
-      }
+      return (
+        (await runAction({
+          status: this.busy,
+          error: this.error,
+          pending: true,
+          idle: false,
+          run: async () => {
+            await authPost("/api/auth/two-factor/disable", { password });
+            await sessionModel.load();
+            return true;
+          },
+        })) ?? false
+      );
     },
 
     async regenerateBackupCodes(password: string): Promise<boolean> {
-      this.busy.value = true;
-      this.error.value = null;
-      try {
-        const data = (await authPost("/api/auth/two-factor/generate-backup-codes", {
-          password,
-        })) as BackupCodesResponse;
-        this.backupCodes.value = data.backupCodes ?? null;
-        return true;
-      } catch (err) {
-        this.error.value = errorMessage(err);
-        return false;
-      } finally {
-        this.busy.value = false;
-      }
+      return (
+        (await runAction({
+          status: this.busy,
+          error: this.error,
+          pending: true,
+          idle: false,
+          run: async () => {
+            const data = (await authPost("/api/auth/two-factor/generate-backup-codes", {
+              password,
+            })) as BackupCodesResponse;
+            this.backupCodes.value = data.backupCodes ?? null;
+            return true;
+          },
+        })) ?? false
+      );
     },
   };
 });

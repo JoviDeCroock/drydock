@@ -1,5 +1,7 @@
 import { computed, createModel, signal } from "@preact/signals";
 import { ApiError, apiFetch, apiJson, errorMessage } from "./api";
+import { busySignal, runAction } from "./async-action";
+import { createKeyedCache } from "./keyed-cache";
 
 export type InstallationStatus = "active" | "suspended" | "uninstalled";
 
@@ -33,116 +35,6 @@ export interface PublicReleaseTarget {
   environment: string;
   createdAt: string;
   updatedAt: string;
-}
-
-export type WorkflowGateStatus = "pending" | "approved" | "rejected" | "errored";
-export type WorkflowGateDecision = "approved" | "rejected";
-export type GatePackageDecision = "publish" | "no_publish";
-
-// One entry per distinct package the gated release publishes. A monorepo fans
-// out into several; the gate releases only once every package is approved.
-export interface GatePackageScan {
-  scanId: string;
-  packageName: string | null;
-  version: string | null;
-  status: string;
-  releaseRisk: string | null;
-  decision: GatePackageDecision | null;
-}
-
-export interface PublicWorkflowGate {
-  id: string;
-  organizationId: string;
-  releaseTargetId: string;
-  repositoryFullName: string;
-  environment: string;
-  runId: number;
-  status: WorkflowGateStatus;
-  decision: WorkflowGateDecision | null;
-  decisionComment: string | null;
-  reportUrl: string | null;
-  scanId: string | null;
-  failureReason: string | null;
-  // Org policy: every member must step up with a fresh code to decide this gate,
-  // and a member who has not enrolled in 2FA cannot decide it at all.
-  organizationRequiresTwoFactor: boolean;
-  packages: GatePackageScan[];
-  requestedAt: string;
-  decidedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-// Returns null when no gate is mapped to the scan (404) so callers can treat a
-// plain manual/auto-discovery scan and a not-yet-loaded gate the same way.
-export async function getWorkflowGateByScan(scanId: string): Promise<PublicWorkflowGate | null> {
-  try {
-    const data = await apiFetch<{ gate: PublicWorkflowGate }>(
-      `/api/v1/github-app/workflow-gates/by-scan/${encodeURIComponent(scanId)}`,
-    );
-    return data.gate;
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) return null;
-    throw err;
-  }
-}
-
-// Records a decision for a single package of the gate (`scanId`). The gate only
-// finalizes — releasing or blocking the held GitHub job — once every package is
-// approved, or the moment any one is rejected.
-export function decideWorkflowGate(
-  gateId: string,
-  scanId: string,
-  decision: WorkflowGateDecision,
-  comment: string | null,
-  totpCode?: string | null,
-): Promise<{ gate: PublicWorkflowGate }> {
-  const payload: {
-    scanId: string;
-    decision: WorkflowGateDecision;
-    comment?: string;
-    totpCode?: string;
-  } = { scanId, decision };
-  if (comment) payload.comment = comment;
-  if (totpCode) payload.totpCode = totpCode;
-  return apiJson<{ gate: PublicWorkflowGate }>(
-    `/api/v1/github-app/workflow-gates/${encodeURIComponent(gateId)}/decision`,
-    payload,
-  ).catch((err) => {
-    if (err instanceof ApiError && err.status === 401) {
-      if (err.code === "two_factor_required") {
-        throw new ApiError(
-          "Enter your authentication code to decide this gate.",
-          401,
-          err.detail,
-          err.code,
-        );
-      }
-      if (err.code === "two_factor_invalid") {
-        throw new ApiError("That authentication code is invalid.", 401, err.detail, err.code);
-      }
-    }
-    if (
-      err instanceof ApiError &&
-      err.status === 403 &&
-      err.code === "two_factor_enrollment_required"
-    ) {
-      throw new ApiError(
-        "Your organization requires two-factor authentication to decide releases. Enable it in Settings, then try again.",
-        403,
-        err.detail,
-        err.code,
-      );
-    }
-    throw err;
-  });
-}
-
-export function retryWorkflowGate(gateId: string): Promise<{ gate: PublicWorkflowGate }> {
-  return apiJson<{ gate: PublicWorkflowGate }>(
-    `/api/v1/github-app/workflow-gates/${encodeURIComponent(gateId)}/retry`,
-    {},
-  );
 }
 
 export interface InstallationRepository {
@@ -223,36 +115,34 @@ export const GithubAppModel = createModel(() => {
   const formStatus = signal<ReleaseTargetFormStatus>("idle");
   const formError = signal<string | null>(null);
 
-  const repositoryCache = signal<Record<string, InstallationRepository[]>>({});
-  const repositoryStatus = signal<Record<string, RepositoryListStatus>>({});
-  const repositoryErrors = signal<Record<string, string>>({});
+  const repositoryCache = createKeyedCache<InstallationRepository, RepositoryListStatus>({
+    idle: "idle",
+    loading: "loading",
+    error: "error",
+  });
 
-  const environmentCache = signal<Record<string, RepositoryEnvironment[]>>({});
-  const environmentStatus = signal<Record<string, EnvironmentListStatus>>({});
-  const environmentErrors = signal<Record<string, string>>({});
+  const environmentCache = createKeyedCache<RepositoryEnvironment, EnvironmentListStatus>({
+    idle: "idle",
+    loading: "loading",
+    error: "error",
+  });
 
-  const busy = computed(() => status.value !== "idle");
+  const busy = busySignal(status);
   const notConfigured = computed(() => config.value?.configured === false);
   const loaded = computed(
     () => configLoaded.value && installationsLoaded.value && releaseTargetsLoaded.value,
   );
   const formSubmitting = computed(() => formStatus.value === "submitting");
 
-  const activeRepositories = computed<InstallationRepository[]>(() => {
-    const id = formInstallationRowId.value;
-    const cache = repositoryCache.value;
-    return id ? (cache[id] ?? []) : [];
-  });
-  const activeRepositoryStatus = computed<RepositoryListStatus>(() => {
-    const id = formInstallationRowId.value;
-    const statusMap = repositoryStatus.value;
-    return id ? (statusMap[id] ?? "idle") : "idle";
-  });
-  const activeRepositoryError = computed<string | null>(() => {
-    const id = formInstallationRowId.value;
-    const errors = repositoryErrors.value;
-    return id ? (errors[id] ?? null) : null;
-  });
+  const activeRepositories = computed<InstallationRepository[]>(() =>
+    repositoryCache.valueFor(formInstallationRowId.value),
+  );
+  const activeRepositoryStatus = computed<RepositoryListStatus>(() =>
+    repositoryCache.statusFor(formInstallationRowId.value),
+  );
+  const activeRepositoryError = computed<string | null>(() =>
+    repositoryCache.errorFor(formInstallationRowId.value),
+  );
   const availableRepositories = computed<InstallationRepository[]>(() =>
     selectUnmappedRepositories(activeRepositories.value, releaseTargets.value),
   );
@@ -262,21 +152,15 @@ export const GithubAppModel = createModel(() => {
     const repo = formRepositoryFullName.value;
     return installationId && repo ? `${installationId}::${repo}` : "";
   });
-  const activeEnvironments = computed<RepositoryEnvironment[]>(() => {
-    const key = environmentCacheKey.value;
-    const cache = environmentCache.value;
-    return key ? (cache[key] ?? []) : [];
-  });
-  const activeEnvironmentStatus = computed<EnvironmentListStatus>(() => {
-    const key = environmentCacheKey.value;
-    const statusMap = environmentStatus.value;
-    return key ? (statusMap[key] ?? "idle") : "idle";
-  });
-  const activeEnvironmentError = computed<string | null>(() => {
-    const key = environmentCacheKey.value;
-    const errors = environmentErrors.value;
-    return key ? (errors[key] ?? null) : null;
-  });
+  const activeEnvironments = computed<RepositoryEnvironment[]>(() =>
+    environmentCache.valueFor(environmentCacheKey.value),
+  );
+  const activeEnvironmentStatus = computed<EnvironmentListStatus>(() =>
+    environmentCache.statusFor(environmentCacheKey.value),
+  );
+  const activeEnvironmentError = computed<string | null>(() =>
+    environmentCache.errorFor(environmentCacheKey.value),
+  );
 
   const formValid = computed(
     () =>
@@ -284,28 +168,6 @@ export const GithubAppModel = createModel(() => {
       formRepositoryFullName.value.trim() !== "" &&
       formEnvironment.value.trim() !== "",
   );
-
-  function setRepositoryStatus(installationRowId: string, value: RepositoryListStatus) {
-    repositoryStatus.value = { ...repositoryStatus.peek(), [installationRowId]: value };
-  }
-
-  function setRepositoryError(installationRowId: string, message: string | null) {
-    const next = { ...repositoryErrors.peek() };
-    if (message) next[installationRowId] = message;
-    else delete next[installationRowId];
-    repositoryErrors.value = next;
-  }
-
-  function setEnvironmentStatus(key: string, value: EnvironmentListStatus) {
-    environmentStatus.value = { ...environmentStatus.peek(), [key]: value };
-  }
-
-  function setEnvironmentError(key: string, message: string | null) {
-    const next = { ...environmentErrors.peek() };
-    if (message) next[key] = message;
-    else delete next[key];
-    environmentErrors.value = next;
-  }
 
   function clearForm() {
     formInstallationRowId.value = "";
@@ -393,22 +255,16 @@ export const GithubAppModel = createModel(() => {
       { force = false }: { force?: boolean } = {},
     ): Promise<void> {
       if (!installationRowId) return;
-      if (!force && repositoryCache.peek()[installationRowId]) return;
-      setRepositoryStatus(installationRowId, "loading");
-      setRepositoryError(installationRowId, null);
-      try {
-        const data = await apiFetch<{ repositories: InstallationRepository[] }>(
-          `/api/v1/github-app/installations/${encodeURIComponent(installationRowId)}/repositories`,
-        );
-        repositoryCache.value = {
-          ...repositoryCache.peek(),
-          [installationRowId]: data.repositories,
-        };
-        setRepositoryStatus(installationRowId, "idle");
-      } catch (err) {
-        setRepositoryError(installationRowId, errorMessage(err));
-        setRepositoryStatus(installationRowId, "error");
-      }
+      await repositoryCache.load(
+        installationRowId,
+        async () => {
+          const data = await apiFetch<{ repositories: InstallationRepository[] }>(
+            `/api/v1/github-app/installations/${encodeURIComponent(installationRowId)}/repositories`,
+          );
+          return data.repositories;
+        },
+        { force },
+      );
     },
 
     async loadRepositoryEnvironments(
@@ -418,25 +274,23 @@ export const GithubAppModel = createModel(() => {
     ): Promise<void> {
       if (!installationRowId || !repositoryFullName) return;
       const key = `${installationRowId}::${repositoryFullName}`;
-      if (!force && environmentCache.peek()[key]) return;
-      setEnvironmentStatus(key, "loading");
-      setEnvironmentError(key, null);
+      if (!force && environmentCache.values.peek()[key]) return;
       const [owner, repo] = repositoryFullName.split("/", 2);
       if (!owner || !repo) {
-        setEnvironmentError(key, "repository must be in owner/repo form");
-        setEnvironmentStatus(key, "error");
+        environmentCache.setError(key, "repository must be in owner/repo form");
+        environmentCache.setStatus(key, "error");
         return;
       }
-      try {
-        const data = await apiFetch<{ environments: RepositoryEnvironment[] }>(
-          `/api/v1/github-app/installations/${encodeURIComponent(installationRowId)}/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/environments`,
-        );
-        environmentCache.value = { ...environmentCache.peek(), [key]: data.environments };
-        setEnvironmentStatus(key, "idle");
-      } catch (err) {
-        setEnvironmentError(key, errorMessage(err));
-        setEnvironmentStatus(key, "error");
-      }
+      await environmentCache.load(
+        key,
+        async () => {
+          const data = await apiFetch<{ environments: RepositoryEnvironment[] }>(
+            `/api/v1/github-app/installations/${encodeURIComponent(installationRowId)}/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/environments`,
+          );
+          return data.environments;
+        },
+        { force },
+      );
     },
 
     selectInstallation(installationRowId: string) {
@@ -466,35 +320,35 @@ export const GithubAppModel = createModel(() => {
 
     async createReleaseTarget(): Promise<PublicReleaseTarget | null> {
       if (formSubmitting.value) return null;
-      formStatus.value = "submitting";
-      formError.value = null;
-      try {
-        // Ecosystem and artifact name are intentionally omitted: the server
-        // treats both as auto-detect (null), deriving each package's ecosystem
-        // from the uploaded artifacts and scanning every artifact the held run
-        // uploads — the monorepo-friendly default, now the only behavior.
-        const payload: Record<string, string> = {
-          installationRowId: formInstallationRowId.value.trim(),
-          repositoryFullName: formRepositoryFullName.value.trim(),
-          environment: formEnvironment.value.trim(),
-        };
-        const data = await apiJson<{ releaseTarget: PublicReleaseTarget }>(
-          "/api/v1/github-app/release-targets",
-          payload,
-        );
-        const next = [
-          data.releaseTarget,
-          ...releaseTargets.peek().filter((row) => row.id !== data.releaseTarget.id),
-        ];
-        releaseTargets.value = next;
-        clearForm();
-        return data.releaseTarget;
-      } catch (err) {
-        formError.value = errorMessage(err);
-        return null;
-      } finally {
-        formStatus.value = "idle";
-      }
+      return (
+        (await runAction({
+          status: formStatus,
+          error: formError,
+          pending: "submitting",
+          run: async () => {
+            // Ecosystem and artifact name are intentionally omitted: the server
+            // treats both as auto-detect (null), deriving each package's ecosystem
+            // from the uploaded artifacts and scanning every artifact the held run
+            // uploads — the monorepo-friendly default, now the only behavior.
+            const payload: Record<string, string> = {
+              installationRowId: formInstallationRowId.value.trim(),
+              repositoryFullName: formRepositoryFullName.value.trim(),
+              environment: formEnvironment.value.trim(),
+            };
+            const data = await apiJson<{ releaseTarget: PublicReleaseTarget }>(
+              "/api/v1/github-app/release-targets",
+              payload,
+            );
+            const next = [
+              data.releaseTarget,
+              ...releaseTargets.peek().filter((row) => row.id !== data.releaseTarget.id),
+            ];
+            releaseTargets.value = next;
+            clearForm();
+            return data.releaseTarget;
+          },
+        })) ?? null
+      );
     },
 
     async deleteReleaseTarget(id: string): Promise<boolean> {

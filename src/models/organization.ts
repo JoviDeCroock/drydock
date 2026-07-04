@@ -1,6 +1,8 @@
 import { computed, createModel, signal } from "@preact/signals";
 import { activeOrganizationId, setActiveOrganizationId } from "./active-organization";
-import { ApiError, apiFetch, apiJson, errorMessage } from "./api";
+import { apiFetch, apiJson, errorMessage } from "./api";
+import { busySignal, runAction } from "./async-action";
+import { twoFactorErrorMessage } from "./two-factor-error-message";
 
 export interface Organization {
   id: string;
@@ -26,23 +28,12 @@ export type OrganizationStatus =
   | "deleting"
   | "updating";
 
-// The release-two-factor route answers with stable codes; map them to copy that
-// matches what the owner must do. `apiFetch` rewrites the generic 401 message but
-// preserves `code`, so we key off the code rather than the message text.
-function releaseTwoFactorErrorMessage(err: unknown): string {
-  if (err instanceof ApiError) {
-    if (err.code === "two_factor_enrollment_required") {
-      return "Enable two-factor authentication on your own account first, then change this policy.";
-    }
-    if (err.code === "two_factor_required") {
-      return "Enter the code from your authenticator app to stop requiring two-factor.";
-    }
-    if (err.code === "two_factor_invalid") {
-      return "That authentication code is invalid or expired — enter the current code.";
-    }
-  }
-  return errorMessage(err);
-}
+const RELEASE_TWO_FACTOR_COPY = {
+  enrollmentRequired:
+    "Enable two-factor authentication on your own account first, then change this policy.",
+  required: "Enter the code from your authenticator app to stop requiring two-factor.",
+  invalid: "That authentication code is invalid or expired — enter the current code.",
+};
 
 export const OrganizationModel = createModel(() => {
   const organizations = signal<Organization[]>([]);
@@ -59,7 +50,7 @@ export const OrganizationModel = createModel(() => {
     }
     return list[0] ?? null;
   });
-  const busy = computed(() => status.value !== "idle");
+  const busy = busySignal(status);
 
   return {
     organizations,
@@ -95,22 +86,22 @@ export const OrganizationModel = createModel(() => {
         this.error.value = "Name is required.";
         return null;
       }
-      this.status.value = "creating";
-      this.error.value = null;
-      try {
-        const data = await apiJson<{ organization: { id: string; name: string } }>(
-          "/api/v1/organizations",
-          { name: trimmed },
-        );
-        await this.load();
-        setActiveOrganizationId(data.organization.id);
-        return this.organizations.value.find((org) => org.id === data.organization.id) ?? null;
-      } catch (err) {
-        this.error.value = errorMessage(err);
-        return null;
-      } finally {
-        this.status.value = "idle";
-      }
+      return (
+        (await runAction({
+          status: this.status,
+          error: this.error,
+          pending: "creating",
+          run: async () => {
+            const data = await apiJson<{ organization: { id: string; name: string } }>(
+              "/api/v1/organizations",
+              { name: trimmed },
+            );
+            await this.load();
+            setActiveOrganizationId(data.organization.id);
+            return this.organizations.value.find((org) => org.id === data.organization.id) ?? null;
+          },
+        })) ?? null
+      );
     },
 
     activate(organizationId: string): boolean {
@@ -124,22 +115,22 @@ export const OrganizationModel = createModel(() => {
     },
 
     async delete(organizationId: string): Promise<boolean> {
-      this.status.value = "deleting";
-      this.error.value = null;
-      try {
-        await apiFetch(`/api/v1/organizations/${encodeURIComponent(organizationId)}`, {
-          method: "DELETE",
-        });
-        // load() re-points the active org when the stored id is no longer valid,
-        // so a deleted active org falls back to the personal workspace.
-        await this.load();
-        return true;
-      } catch (err) {
-        this.error.value = errorMessage(err);
-        return false;
-      } finally {
-        this.status.value = "idle";
-      }
+      return (
+        (await runAction({
+          status: this.status,
+          error: this.error,
+          pending: "deleting",
+          run: async () => {
+            await apiFetch(`/api/v1/organizations/${encodeURIComponent(organizationId)}`, {
+              method: "DELETE",
+            });
+            // load() re-points the active org when the stored id is no longer valid,
+            // so a deleted active org falls back to the personal workspace.
+            await this.load();
+            return true;
+          },
+        })) ?? false
+      );
     },
 
     async rename(organizationId: string, name: string): Promise<boolean> {
@@ -148,24 +139,24 @@ export const OrganizationModel = createModel(() => {
         this.error.value = "Name is required.";
         return false;
       }
-      this.status.value = "renaming";
-      this.error.value = null;
-      try {
-        await apiJson<{ organization: { id: string; name: string } }>(
-          `/api/v1/organizations/${encodeURIComponent(organizationId)}`,
-          { name: trimmed },
-          {
-            method: "PATCH",
+      return (
+        (await runAction({
+          status: this.status,
+          error: this.error,
+          pending: "renaming",
+          run: async () => {
+            await apiJson<{ organization: { id: string; name: string } }>(
+              `/api/v1/organizations/${encodeURIComponent(organizationId)}`,
+              { name: trimmed },
+              {
+                method: "PATCH",
+              },
+            );
+            await this.load();
+            return true;
           },
-        );
-        await this.load();
-        return true;
-      } catch (err) {
-        this.error.value = errorMessage(err);
-        return false;
-      } finally {
-        this.status.value = "idle";
-      }
+        })) ?? false
+      );
     },
 
     // Changing the policy is 2FA-guarded server-side: enabling requires the owner
@@ -176,24 +167,25 @@ export const OrganizationModel = createModel(() => {
       enabled: boolean,
       totpCode?: string | null,
     ): Promise<boolean> {
-      this.status.value = "updating";
-      this.error.value = null;
-      try {
-        await apiJson<{ requireTwoFactorForReleaseDecisions: boolean }>(
-          `/api/v1/organizations/${encodeURIComponent(organizationId)}/release-two-factor`,
-          { enabled, totpCode: totpCode?.trim() || undefined },
-          { method: "PUT" },
-        );
-        // Reload so `active.requireTwoFactorForReleaseDecisions` reflects the new
-        // policy everywhere that reads the org list.
-        await this.load();
-        return true;
-      } catch (err) {
-        this.error.value = releaseTwoFactorErrorMessage(err);
-        return false;
-      } finally {
-        this.status.value = "idle";
-      }
+      return (
+        (await runAction({
+          status: this.status,
+          error: this.error,
+          pending: "updating",
+          mapError: (err) => twoFactorErrorMessage(err, RELEASE_TWO_FACTOR_COPY),
+          run: async () => {
+            await apiJson<{ requireTwoFactorForReleaseDecisions: boolean }>(
+              `/api/v1/organizations/${encodeURIComponent(organizationId)}/release-two-factor`,
+              { enabled, totpCode: totpCode?.trim() || undefined },
+              { method: "PUT" },
+            );
+            // Reload so `active.requireTwoFactorForReleaseDecisions` reflects the new
+            // policy everywhere that reads the org list.
+            await this.load();
+            return true;
+          },
+        })) ?? false
+      );
     },
   };
 });

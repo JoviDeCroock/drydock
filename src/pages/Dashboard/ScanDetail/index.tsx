@@ -18,7 +18,7 @@ import {
   type DeleteStatus,
   type ScanDecision,
 } from "../../../models/scan";
-import type { WorkflowGateDecision } from "../../../models/github-app";
+import type { WorkflowGateDecision } from "../../../models/workflow-gate";
 import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review-types";
 import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
 import { Alert } from "../../../components/Alert";

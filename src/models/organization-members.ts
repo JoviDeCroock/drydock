@@ -1,6 +1,7 @@
-import { computed, createModel, signal } from "@preact/signals";
+import { createModel, signal } from "@preact/signals";
 import type { OrganizationRole } from "../../server/lib/roles";
 import { apiFetch, apiJson, errorMessage } from "./api";
+import { busySignal, runAction } from "./async-action";
 
 export interface OrganizationMember {
   userId: string;
@@ -30,7 +31,7 @@ export const MembersModel = createModel(() => {
   const loaded = signal(false);
   const status = signal<MembersStatus>("idle");
   const error = signal<string | null>(null);
-  const busy = computed(() => status.value !== "idle");
+  const busy = busySignal(status);
 
   return {
     members,
@@ -70,54 +71,55 @@ export const MembersModel = createModel(() => {
         this.error.value = "Email is required.";
         return false;
       }
-      this.status.value = "inviting";
-      this.error.value = null;
-      try {
-        await apiJson<{ invitation: OrganizationInvitation }>("/api/v1/organizations/invitations", {
-          email: trimmed,
-          role,
-        });
-        await this.refreshInvitations();
-        return true;
-      } catch (err) {
-        this.error.value = errorMessage(err);
-        return false;
-      } finally {
-        this.status.value = "idle";
-      }
+      return (
+        (await runAction({
+          status: this.status,
+          error: this.error,
+          pending: "inviting",
+          run: async () => {
+            await apiJson<{ invitation: OrganizationInvitation }>(
+              "/api/v1/organizations/invitations",
+              {
+                email: trimmed,
+                role,
+              },
+            );
+            await this.refreshInvitations();
+            return true;
+          },
+        })) ?? false
+      );
     },
 
     async revokeInvitation(invitationId: string): Promise<void> {
-      this.status.value = "revoking";
-      this.error.value = null;
-      try {
-        await apiFetch(`/api/v1/organizations/invitations/${encodeURIComponent(invitationId)}`, {
-          method: "DELETE",
-        });
-        await this.refreshInvitations();
-      } catch (err) {
-        this.error.value = errorMessage(err);
-      } finally {
-        this.status.value = "idle";
-      }
+      await runAction({
+        status: this.status,
+        error: this.error,
+        pending: "revoking",
+        run: async () => {
+          await apiFetch(`/api/v1/organizations/invitations/${encodeURIComponent(invitationId)}`, {
+            method: "DELETE",
+          });
+          await this.refreshInvitations();
+        },
+      });
     },
 
     async removeMember(userId: string): Promise<void> {
-      this.status.value = "removing";
-      this.error.value = null;
-      try {
-        await apiFetch(`/api/v1/organizations/members/${encodeURIComponent(userId)}`, {
-          method: "DELETE",
-        });
-        const memberData = await apiFetch<{ members: OrganizationMember[] }>(
-          "/api/v1/organizations/members",
-        );
-        this.members.value = memberData.members;
-      } catch (err) {
-        this.error.value = errorMessage(err);
-      } finally {
-        this.status.value = "idle";
-      }
+      await runAction({
+        status: this.status,
+        error: this.error,
+        pending: "removing",
+        run: async () => {
+          await apiFetch(`/api/v1/organizations/members/${encodeURIComponent(userId)}`, {
+            method: "DELETE",
+          });
+          const memberData = await apiFetch<{ members: OrganizationMember[] }>(
+            "/api/v1/organizations/members",
+          );
+          this.members.value = memberData.members;
+        },
+      });
     },
 
     async refreshInvitations(): Promise<void> {

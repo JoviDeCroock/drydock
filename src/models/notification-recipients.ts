@@ -1,5 +1,6 @@
-import { computed, createModel, signal } from "@preact/signals";
+import { createModel, signal } from "@preact/signals";
 import { apiFetch, apiJson, errorMessage } from "./api";
+import { busySignal, runAction } from "./async-action";
 
 export interface NotificationRecipient {
   id: string;
@@ -26,7 +27,7 @@ export const NotificationRecipientsModel = createModel(() => {
   let loadRequestId = 0;
   let currentOrganizationId: string | null = null;
 
-  const busy = computed(() => status.value !== "idle");
+  const busy = busySignal(status);
 
   return {
     recipients,
@@ -73,48 +74,41 @@ export const NotificationRecipientsModel = createModel(() => {
         this.error.value = "Email is required.";
         return false;
       }
-      this.status.value = "adding";
-      this.error.value = null;
-      try {
-        await apiJson<{ recipient: NotificationRecipient }>(recipientsPath(organizationId), {
-          email,
-        });
-        if (currentOrganizationId !== organizationId) return true;
-        this.draftEmail.value = "";
-        await this.load(organizationId);
-        return true;
-      } catch (err) {
-        if (currentOrganizationId === organizationId) {
-          this.error.value = errorMessage(err);
-        }
-        return false;
-      } finally {
-        if (currentOrganizationId === organizationId) {
-          this.status.value = "idle";
-        }
-      }
+      return (
+        (await runAction({
+          status: this.status,
+          error: this.error,
+          pending: "adding",
+          settle: () => currentOrganizationId === organizationId,
+          run: async () => {
+            await apiJson<{ recipient: NotificationRecipient }>(recipientsPath(organizationId), {
+              email,
+            });
+            if (currentOrganizationId !== organizationId) return true;
+            this.draftEmail.value = "";
+            await this.load(organizationId);
+            return true;
+          },
+        })) ?? false
+      );
     },
 
     async remove(organizationId: string, recipientId: string): Promise<void> {
       if (currentOrganizationId === null) currentOrganizationId = organizationId;
-      this.status.value = "removing";
-      this.error.value = null;
-      try {
-        await apiFetch<{ ok: boolean }>(
-          `${recipientsPath(organizationId)}/${encodeURIComponent(recipientId)}`,
-          { method: "DELETE" },
-        );
-        if (currentOrganizationId !== organizationId) return;
-        await this.load(organizationId);
-      } catch (err) {
-        if (currentOrganizationId === organizationId) {
-          this.error.value = errorMessage(err);
-        }
-      } finally {
-        if (currentOrganizationId === organizationId) {
-          this.status.value = "idle";
-        }
-      }
+      await runAction({
+        status: this.status,
+        error: this.error,
+        pending: "removing",
+        settle: () => currentOrganizationId === organizationId,
+        run: async () => {
+          await apiFetch<{ ok: boolean }>(
+            `${recipientsPath(organizationId)}/${encodeURIComponent(recipientId)}`,
+            { method: "DELETE" },
+          );
+          if (currentOrganizationId !== organizationId) return;
+          await this.load(organizationId);
+        },
+      });
     },
   };
 });

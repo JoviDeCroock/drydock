@@ -1,6 +1,7 @@
 import { createModel, signal } from "@preact/signals";
 import type { StagedPublishesScanResponse } from "../../server/lib/staged-publishes";
-import { apiFetch, errorMessage } from "./api";
+import { apiFetch } from "./api";
+import { runAction } from "./async-action";
 
 export type { StagedPublishesScanResponse };
 
@@ -32,19 +33,24 @@ export const StagedPublishesModel = createModel(() => {
     },
 
     async discover(): Promise<StagedPublishesScanResponse | null> {
-      this.refreshing.value = true;
       try {
-        const result = await startStagedPublishScans();
-        this.lastResult.value = result;
-        this.lastDiscoveryAt.value = Date.now();
-        this.error.value = null;
-        return result;
-      } catch (err) {
-        this.error.value = errorMessage(err);
-        return null;
+        return (
+          (await runAction({
+            status: this.refreshing,
+            error: this.error,
+            pending: true,
+            idle: false,
+            run: async () => {
+              const result = await startStagedPublishScans();
+              this.lastResult.value = result;
+              this.lastDiscoveryAt.value = Date.now();
+              this.error.value = null;
+              return result;
+            },
+          })) ?? null
+        );
       } finally {
         this.loaded.value = true;
-        this.refreshing.value = false;
       }
     },
   };

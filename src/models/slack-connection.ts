@@ -1,5 +1,6 @@
-import { computed, createModel, signal } from "@preact/signals";
+import { createModel, signal } from "@preact/signals";
 import { ApiError, apiFetch, apiJson, errorMessage } from "./api";
+import { busySignal } from "./async-action";
 
 export interface SlackConnection {
   teamId: string;
@@ -76,7 +77,7 @@ export const SlackConnectionModel = createModel(() => {
   let currentOrganizationId: string | null = null;
   let loadRequestId = 0;
 
-  const busy = computed(() => status.value !== "idle");
+  const busy = busySignal(status);
 
   async function saveChannel(channelId: string, channelName: string | null): Promise<boolean> {
     const org = currentOrganizationId;

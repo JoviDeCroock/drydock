@@ -12,7 +12,7 @@ import {
   retryWorkflowGate,
   type PublicWorkflowGate,
   type WorkflowGateDecision,
-} from "./github-app";
+} from "./workflow-gate";
 
 export interface ScanVersionsResponse {
   packageName: string | null;

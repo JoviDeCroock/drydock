@@ -6,7 +6,7 @@ import type {
   GatePackageScan,
   PublicWorkflowGate,
   WorkflowGateDecision,
-} from "../../../models/github-app";
+} from "../../../models/workflow-gate";
 import { Alert } from "../../../components/Alert";
 import { Badge, severityTone } from "../../../components/Badge";
 import { Button } from "../../../components/Button";

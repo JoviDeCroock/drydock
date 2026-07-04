@@ -1,5 +1,6 @@
 import { computed, createModel, signal } from "@preact/signals";
 import { apiFetch, apiJson, errorMessage } from "./api";
+import { busySignal, runAction } from "./async-action";
 
 export interface PublicNpmConnection {
   id: string;
@@ -49,7 +50,7 @@ export const NpmConnectionModel = createModel(() => {
   const registry = signal(DEFAULT_REGISTRY);
   const validationStageId = signal("");
 
-  const busy = computed(() => status.value !== "idle");
+  const busy = busySignal(status);
   const isConnected = computed(() => connection.value !== null);
   const validated = computed(() => connection.value?.validationStatus === "valid");
 
@@ -121,35 +122,34 @@ export const NpmConnectionModel = createModel(() => {
     },
 
     async validate(): Promise<void> {
-      this.status.value = "validating";
-      this.error.value = null;
-      try {
-        const stageId = this.validationStageId.value.trim() || undefined;
-        const data = await validateNpmConnection(stageId);
-        this.applyConnection(data.connection);
-        if (!data.validation.ok) {
-          this.error.value = "Npm validation reported invalid access.";
-        }
-      } catch (err) {
-        this.error.value = errorMessage(err);
-        await this.load();
-      } finally {
-        this.status.value = "idle";
-      }
+      const result = await runAction({
+        status: this.status,
+        error: this.error,
+        pending: "validating",
+        run: async () => {
+          const stageId = this.validationStageId.value.trim() || undefined;
+          const data = await validateNpmConnection(stageId);
+          this.applyConnection(data.connection);
+          if (!data.validation.ok) {
+            this.error.value = "Npm validation reported invalid access.";
+          }
+          return true;
+        },
+      });
+      if (result === undefined) await this.load();
     },
 
     async remove(): Promise<void> {
-      this.status.value = "deleting";
-      this.error.value = null;
-      try {
-        await apiFetch<{ ok: boolean }>("/api/v1/npm-connection", { method: "DELETE" });
-        this.connection.value = null;
-        this.token.value = "";
-      } catch (err) {
-        this.error.value = errorMessage(err);
-      } finally {
-        this.status.value = "idle";
-      }
+      await runAction({
+        status: this.status,
+        error: this.error,
+        pending: "deleting",
+        run: async () => {
+          await apiFetch<{ ok: boolean }>("/api/v1/npm-connection", { method: "DELETE" });
+          this.connection.value = null;
+          this.token.value = "";
+        },
+      });
     },
   };
 });
