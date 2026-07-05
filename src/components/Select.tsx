@@ -21,6 +21,7 @@ export function Select({
   onChange,
   children,
   size = "md",
+  class: className,
 }: {
   id?: string;
   value: string | Signal<string>;
@@ -28,6 +29,7 @@ export function Select({
   onChange: (value: string) => void;
   children: ComponentChildren;
   size?: SelectSize;
+  class?: string;
 }) {
   return (
     <div class="relative inline-block w-full">
@@ -39,6 +41,7 @@ export function Select({
         class={cn(
           "appearance-none w-full bg-bg border border-border rounded-md text-ink outline-none transition-[border-color,box-shadow] duration-150 ease-out focus:border-accent focus:shadow-[0_0_0_3px_var(--color-accent-soft)] disabled:opacity-60 disabled:cursor-not-allowed",
           sizeStyles[size],
+          className,
         )}
       >
         {children}

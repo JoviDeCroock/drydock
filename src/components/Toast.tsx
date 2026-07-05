@@ -1,5 +1,6 @@
 import { signal } from "@preact/signals";
 import { cn } from "./cn";
+import { CloseButton } from "./CloseButton";
 
 export type ToastTone = "ok" | "critical" | "info";
 
@@ -39,29 +40,23 @@ const toneDisc: Record<ToastTone, string> = {
 
 export function Toaster() {
   return (
-    <div
-      class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 w-[min(92vw,360px)] pointer-events-none"
-      aria-live="polite"
-    >
+    <div class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 w-[min(92vw,360px)] pointer-events-none">
       {items.value.map((item) => (
         <div
           key={item.id}
           class="pointer-events-auto flex items-start gap-2.5 bg-surface border border-border rounded-lg shadow-md px-3.5 py-3"
-          role="status"
+          role={item.tone === "critical" ? "alert" : "status"}
         >
           <span
             class={cn("w-4 h-4 rounded-full shrink-0 mt-0.5 opacity-90", toneDisc[item.tone])}
             aria-hidden
           />
           <span class="text-[13px] leading-[1.5] text-ink flex-1">{item.message}</span>
-          <button
-            type="button"
+          <CloseButton
             onClick={() => dismissToast(item.id)}
-            aria-label="Dismiss"
-            class="shrink-0 -mr-1 -mt-0.5 leading-none text-[13px] text-ink-subtle hover:text-ink"
-          >
-            ✕
-          </button>
+            ariaLabel="Dismiss"
+            class="shrink-0 -mr-1 -mt-0.5 text-[13px] text-ink-subtle hover:text-ink"
+          />
         </div>
       ))}
     </div>

@@ -19,9 +19,10 @@ export function Alert({
   class?: string;
   children: ComponentChildren;
 }) {
+  const role = tone === "critical" || tone === "warn" ? "alert" : "status";
   return (
     <div
-      role="alert"
+      role={role}
       class={cn(
         "flex items-start gap-2.5 px-3.5 py-3 rounded-md border text-[13px]",
         toneStyles[tone],

@@ -1,6 +1,7 @@
 import type { ComponentChildren, JSX } from "preact";
 import { useRef } from "preact/hooks";
-import { useSignal, useSignalEffect } from "@preact/signals";
+import { useComputed, useSignal, useSignalEffect } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
 import { cn } from "./cn";
 
 interface MenuProps {
@@ -23,7 +24,24 @@ export function Menu({
   disabled,
 }: MenuProps) {
   const open = useSignal(false);
+  const focusFirstOnOpen = useSignal(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+
+  const triggerContent = useComputed(() => trigger(open.value));
+
+  const getEnabledMenuItems = () => {
+    const node = rootRef.current;
+    if (!node) return [];
+    return Array.from(node.querySelectorAll<HTMLElement>("[data-menu-item]:not([disabled])"));
+  };
+
+  const focusMenuItem = (index: number) => {
+    const items = getEnabledMenuItems();
+    if (!items.length) return;
+    const nextIndex = ((index % items.length) + items.length) % items.length;
+    items[nextIndex]?.focus();
+  };
 
   useSignalEffect(() => {
     if (!open.value) return;
@@ -35,7 +53,10 @@ export function Menu({
       }
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") open.value = false;
+      if (event.key !== "Escape") return;
+      open.value = false;
+      focusFirstOnOpen.value = false;
+      triggerRef.current?.focus();
     };
     document.addEventListener("pointerdown", onPointer);
     document.addEventListener("keydown", onKey);
@@ -45,40 +66,100 @@ export function Menu({
     };
   });
 
+  useSignalEffect(() => {
+    if (!open.value || !focusFirstOnOpen.value) return;
+    const frame = requestAnimationFrame(() => {
+      focusMenuItem(0);
+      focusFirstOnOpen.value = false;
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+    };
+  });
+
+  const onRootKeyDown = (event: KeyboardEvent) => {
+    const key = event.key;
+    if (disabled) return;
+
+    if (event.target === triggerRef.current && !open.value) {
+      if (key === "Enter" || key === " " || key === "ArrowDown") {
+        event.preventDefault();
+        open.value = true;
+        focusFirstOnOpen.value = true;
+      }
+      return;
+    }
+
+    if (!open.value) return;
+
+    if (key === "Escape") {
+      event.preventDefault();
+      open.value = false;
+      focusFirstOnOpen.value = false;
+      triggerRef.current?.focus();
+      return;
+    }
+
+    if (key === "ArrowDown" || key === "ArrowUp" || key === "Home" || key === "End") {
+      event.preventDefault();
+      const items = getEnabledMenuItems();
+      if (!items.length) return;
+      const active = document.activeElement;
+      const currentIndex = items.indexOf(active as HTMLElement);
+      let nextIndex = 0;
+      if (key === "Home") {
+        nextIndex = 0;
+      } else if (key === "End") {
+        nextIndex = items.length - 1;
+      } else if (currentIndex === -1) {
+        nextIndex = key === "ArrowUp" ? items.length - 1 : 0;
+      } else if (key === "ArrowDown") {
+        nextIndex = currentIndex + 1;
+      } else {
+        nextIndex = currentIndex - 1;
+      }
+      focusMenuItem(nextIndex);
+    }
+  };
+
   const onPanelClick = (event: MouseEvent) => {
     const target = event.target as HTMLElement | null;
     if (target?.closest("[data-menu-item]")) open.value = false;
   };
 
   return (
-    <div ref={rootRef} class="relative inline-block">
+    <div ref={rootRef} onKeyDown={onRootKeyDown} class="relative inline-block">
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => {
+        onClick={(event) => {
           if (disabled) return;
+          if (event.detail === 0) return;
           open.value = !open.value;
         }}
         disabled={disabled}
         aria-haspopup="menu"
-        aria-expanded={open.value}
+        aria-expanded={open}
         aria-label={triggerAriaLabel}
         class={cn("cursor-pointer disabled:cursor-not-allowed disabled:opacity-60", triggerClass)}
       >
-        {trigger(open.value)}
+        {triggerContent}
       </button>
-      {open.value ? (
-        <div
-          role="menu"
-          onClick={onPanelClick}
-          class={cn(
-            "absolute z-20 mt-1 min-w-[200px] bg-surface border border-border rounded-md shadow-md py-1",
-            align === "end" ? "right-0" : "left-0",
-            panelClass,
-          )}
-        >
-          {children}
-        </div>
-      ) : null}
+      <Show when={open}>
+        {() => (
+          <div
+            role="menu"
+            onClick={onPanelClick}
+            class={cn(
+              "absolute z-20 mt-1 min-w-[200px] bg-surface border border-border rounded-md shadow-md py-1",
+              align === "end" ? "right-0" : "left-0",
+              panelClass,
+            )}
+          >
+            {children}
+          </div>
+        )}
+      </Show>
     </div>
   );
 }

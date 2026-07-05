@@ -2,6 +2,37 @@ import type { ComponentChildren } from "preact";
 import { Badge, severityTone, statusTone } from "./Badge";
 import { cn } from "./cn";
 
+export function FileRef({
+  file,
+  onSelect,
+  class: className,
+}: {
+  file: string;
+  onSelect?: () => void;
+  class?: string;
+}) {
+  return onSelect ? (
+    <button
+      type="button"
+      onClick={onSelect}
+      title={`Open ${file} in the diff`}
+      class={cn(
+        "font-mono text-[13px] text-ink-muted hover:text-accent truncate text-left [direction:rtl] bg-transparent border-0 p-0 m-0 cursor-pointer transition-colors duration-150 ease-out",
+        className,
+      )}
+    >
+      <bdi>{file}</bdi>
+    </button>
+  ) : (
+    <code
+      class={cn("text-[13px] text-ink-muted truncate text-left [direction:rtl]", className)}
+      title={file}
+    >
+      <bdi>{file}</bdi>
+    </code>
+  );
+}
+
 export function FindingCard({
   severity,
   file,
@@ -37,23 +68,7 @@ export function FindingCard({
           <Badge tone={severityTone(severity)} dot>
             {severity}
           </Badge>
-          {onSelect ? (
-            <button
-              type="button"
-              onClick={onSelect}
-              title={`Open ${file} in the diff`}
-              class="font-mono text-[13px] text-ink-muted hover:text-accent truncate text-left [direction:rtl] bg-transparent border-0 p-0 m-0 cursor-pointer transition-colors duration-150 ease-out"
-            >
-              <bdi>{file}</bdi>
-            </button>
-          ) : (
-            <code
-              class="text-[13px] text-ink-muted truncate text-left [direction:rtl]"
-              title={file}
-            >
-              <bdi>{file}</bdi>
-            </code>
-          )}
+          <FileRef file={file} onSelect={onSelect} />
           {diffStatus ? (
             <Badge tone={statusTone(diffStatus)} class="flex-shrink-0">
               {diffLabel ?? diffStatus}
@@ -132,23 +147,7 @@ export function GroupedFindingCard({
       <ul class="list-none p-0 m-0 flex flex-col gap-1">
         {files.map((entry) => (
           <li key={`${entry.file}:${entry.line ?? ""}`} class="flex items-center gap-2 min-w-0">
-            {entry.onSelect ? (
-              <button
-                type="button"
-                onClick={entry.onSelect}
-                title={`Open ${entry.file} in the diff`}
-                class="font-mono text-[13px] text-ink-muted hover:text-accent truncate text-left [direction:rtl] bg-transparent border-0 p-0 m-0 cursor-pointer transition-colors duration-150 ease-out"
-              >
-                <bdi>{entry.file}</bdi>
-              </button>
-            ) : (
-              <code
-                class="text-[13px] text-ink-muted truncate text-left [direction:rtl]"
-                title={entry.file}
-              >
-                <bdi>{entry.file}</bdi>
-              </code>
-            )}
+            <FileRef file={entry.file} onSelect={entry.onSelect} />
             {entry.line ? (
               <span class="flex-shrink-0 font-mono text-[11px] text-ink-subtle">L{entry.line}</span>
             ) : null}

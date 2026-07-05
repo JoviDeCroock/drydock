@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useId, useRef } from "preact/hooks";
+import { CloseButton } from "./CloseButton";
 import { cn } from "./cn";
 
 interface DialogProps {
@@ -60,14 +61,10 @@ export function Dialog({
       )}
     >
       <div class="relative flex flex-col gap-4 p-5">
-        <button
-          type="button"
+        <CloseButton
           onClick={onClose}
-          aria-label="Close"
-          class="absolute top-3 right-3 flex items-center justify-center w-7 h-7 rounded-md text-ink-subtle hover:text-ink hover:bg-surface-2 focus:outline-none focus:ring-2 focus:ring-accent leading-none text-[14px]"
-        >
-          ✕
-        </button>
+          class="absolute top-3 right-3 w-7 h-7 text-[14px] text-ink-subtle hover:text-ink hover:bg-surface-2 focus:ring-2 focus:ring-accent"
+        />
         <header class="flex flex-col gap-1 pr-7">
           <h2 id={titleId} class="text-[18px] font-medium tracking-[-0.01em] leading-[1.35] m-0">
             {title}
