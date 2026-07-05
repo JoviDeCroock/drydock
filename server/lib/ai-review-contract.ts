@@ -1,6 +1,6 @@
 import z from "zod";
 
-export type AiReviewEcosystem = "npm" | "pypi" | "generic";
+export type AiReviewEcosystem = "npm" | "pypi" | "vscode" | "generic";
 
 // We surface only the highest-signal findings: critical/high, most severe
 // first, capped at this count. Lower-severity context belongs in the summary.
@@ -19,7 +19,7 @@ Instruction boundary:
 
 Workflow:
 1. Read deterministicFindings first; preserve their seriousness.
-2. Read packageJsonDiff (legacy normalized manifest diff). npm: package.json. PyPI: normalized package identity; artifact metadata lives in METADATA, WHEEL, RECORD, PKG-INFO, pyproject.toml, setup.py.
+2. Read packageJsonDiff (legacy normalized manifest diff). npm: package.json. PyPI: normalized package identity; artifact metadata lives in METADATA, WHEEL, RECORD, PKG-INFO, pyproject.toml, setup.py. VS Code: the VSIX extension manifest package.json — publisher.name, name, version, engines.vscode, activationEvents, contributes, main/browser.
 3. Scan the changed-file manifest for suspicious new/modified artifacts.
 4. Pull targeted evidence with tools only when the manifest or findings make a file/search relevant.
 5. Cite concrete paths and exact snippets. Never invent line numbers, external package facts, or dependency reputation.
@@ -56,6 +56,23 @@ High-priority PyPI risks:
 
 PyPI evidence policy: don't assume a wheel/sdist is safe because metadata says so. Normal Python packaging files aren't suspicious by themselves; escalate when they introduce install/build execution, startup hooks, metadata inconsistency, native payloads, credential/network/process capability, obfuscation, or unexplained package-shape change.`;
 
+const VSCODE_REVIEW_PROMPT = `Ecosystem: VS Code extension (VSIX).
+
+The reviewed bytes are a packed .vsix (a ZIP) with the extension/ prefix stripped, so the extension manifest is package.json at the root. Extensions run in the Node.js extension host with the user's full privileges — process spawn, filesystem, network, environment, and VS Code's SecretStorage/authentication APIs — with no install sandbox, so the highest risk is code that runs automatically or reaches operator-controlled input.
+
+High-priority VS Code risks:
+- Startup/broad activation: activationEvents of "*" or "onStartupFinished", and workspaceContains globs that match ordinary repos, run extension code at launch or workspace open before the user invokes a feature. Treat new broad activation combined with network/process/dynamic-code capability as remote-command malware until evidence shows otherwise.
+- Entrypoint hijacking: changed main (Node extension host) or browser (web-extension worker) fields, or new files they load; trace what the activation entrypoint requires/imports.
+- Process/terminal execution: child_process, spawn/exec, window.createTerminal + terminal.sendText, tasks, or shell invocations run commands with no user prompt.
+- Network/staged payloads: fetch/http/https/net, downloading a language server, binary, or script after install and then executing it. A bundled or downloaded WebAssembly module (WebAssembly.instantiate/instantiateStreaming, wasm_exec, new Go()) can hide network/process behavior in an opaque payload.
+- Credential/secret/host access: SecretStorage, authentication.getSession, env.machineId/sessionId, process.env, reads of home/.ssh/.npmrc/.gitconfig, cloud or CI tokens, and telemetry that exfiltrates workspace contents or machine identifiers.
+- Undeclared configuration reads: workspace.getConfiguration keys not declared under contributes.configuration can be pre-seeded through a committed .vscode/settings.json and used as attacker-controlled input that never appears in the manifest.
+- Transitive install: extensionDependencies and extensionPack install and activate other extensions, a delivery path abused by malicious extension campaigns; confirm every referenced extension is intended.
+- Identity/metadata integrity: publisher.name, name, version, and engines.vscode must be present and match the reviewed release; a mismatch, or an unexpectedly broad engines.vscode, is tamper-like.
+- Obfuscation/native artifacts: eval, new Function, base64/hex decode then execute, packed/minified new bundles, and .node/.wasm/.dll/.so/.dylib/.exe payloads shipped in the VSIX.
+
+VS Code evidence policy: a VSIX ships already-built code, so the extension's own devDependencies and npm lifecycle scripts (prepare/postinstall/prepublish) usually do not run for consumers — don't treat them as consumer-install hooks without evidence they altered the packed output. Contributes, commands, and menus are ordinary; escalate when activation, entrypoints, transitive extensions, credential/network/process capability, undeclared configuration inputs, obfuscation, or native payloads change. When risk hinges on an asset downloaded at runtime that you cannot see, require manual review.`;
+
 const GENERIC_REVIEW_PROMPT = `Ecosystem: generic package release.
 
 High-priority risks:
@@ -82,18 +99,19 @@ Summary style:
 - Spend words only on what raises concern, citing concrete paths; stay terse even then.`;
 
 export function normalizeAiReviewEcosystem(ecosystem: string | undefined): AiReviewEcosystem {
-  if (ecosystem === "npm" || ecosystem === "pypi") return ecosystem;
+  if (ecosystem === "npm" || ecosystem === "pypi" || ecosystem === "vscode") return ecosystem;
   return "generic";
 }
 
+const ECOSYSTEM_REVIEW_PROMPTS: Record<AiReviewEcosystem, string> = {
+  npm: NPM_REVIEW_PROMPT,
+  pypi: PYPI_REVIEW_PROMPT,
+  vscode: VSCODE_REVIEW_PROMPT,
+  generic: GENERIC_REVIEW_PROMPT,
+};
+
 export function buildReviewerSystemPrompt(ecosystem: string | undefined): string {
-  const normalized = normalizeAiReviewEcosystem(ecosystem);
-  const ecosystemPrompt =
-    normalized === "npm"
-      ? NPM_REVIEW_PROMPT
-      : normalized === "pypi"
-        ? PYPI_REVIEW_PROMPT
-        : GENERIC_REVIEW_PROMPT;
+  const ecosystemPrompt = ECOSYSTEM_REVIEW_PROMPTS[normalizeAiReviewEcosystem(ecosystem)];
   return `${BASE_REVIEWER_SYSTEM_PROMPT}\n\n${ecosystemPrompt}\n\n${SEVERITY_GUIDANCE}`;
 }
 

@@ -3,7 +3,7 @@ import { toStatic, useHead, useLink, type MetaOptions } from "hoofd/preact";
 const SITE_NAME = "Drydock";
 const SITE_URL = "https://drydock.org";
 const OG_IMAGE_URL = `${SITE_URL}/og-image.png`;
-const OG_IMAGE_ALT = "Drydock — pre-publish package review for npm and PyPI maintainers";
+const OG_IMAGE_ALT = "Drydock — pre-publish package review for npm, PyPI, and VS Code maintainers";
 
 export interface PageSeoMetadata {
   title: string;
@@ -25,7 +25,7 @@ export interface PrerenderHead {
 export const homePageSeo: PageSeoMetadata = {
   title: "Drydock: pre-publish package review",
   description:
-    "Drydock lets npm and PyPI maintainers review the exact package artifact before a staged publish or gated release goes live.",
+    "Drydock lets npm, PyPI, and VS Code maintainers review the exact package artifact before a staged publish or gated release goes live.",
   path: "/",
 };
 

@@ -123,10 +123,11 @@ export default function LandingPage() {
             parks a private candidate. Drydock reviews that tarball and pins risk signals to the
             diff before the maintainer completes npm's 2FA confirmation.
           </RegistryCard>
-          <RegistryCard title="Workflow gating: PyPI & npm" badge="Preview">
-            For PyPI, or npm workflows that do not stage, a GitHub Environment pauses the publish
-            job after CI uploads the release artifact. Drydock reviews the upload, the maintainer
-            approves or rejects, and, if approved, the job continues with its own credential.
+          <RegistryCard title="Workflow gating: PyPI, npm & VS Code" badge="Preview">
+            For PyPI, VS Code extensions, or npm workflows that do not stage, a GitHub Environment
+            pauses the publish job after CI uploads the release artifact. Drydock reviews the
+            upload, the maintainer approves or rejects, and, if approved, the job continues with its
+            own credential.
           </RegistryCard>
         </div>
         <LinkButton href="/docs" variant="ghost" size="sm" class="self-start">

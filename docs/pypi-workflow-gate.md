@@ -68,10 +68,11 @@ after parsing the archive in the credentials-free sandbox:
   → **pypi**;
 - an npm tarball carries a root `package.json` → **npm**.
 
-This lives in the shared router (`server/lib/workflow-gates/resolve.ts`). A
-single auto-detect gate therefore reviews npm, PyPI, or a mixed monorepo that
-publishes both. Pinning `ecosystem: "pypi"` on the release target is supported
-but optional.
+This lives in the shared router (`server/lib/workflow-gates/resolve.ts`), which
+also routes `.vsix` files to the VS Code adapter by extension (they are not
+byte-ambiguous with tarballs). A single auto-detect gate therefore reviews npm,
+PyPI, VS Code, or a mixed monorepo that publishes several. Pinning
+`ecosystem: "pypi"` on the release target is supported but optional.
 
 **Ambiguity fails closed.** Package contents are untrusted, and an archive that
 presents as more than one ecosystem is rejected

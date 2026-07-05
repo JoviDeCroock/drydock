@@ -41,7 +41,11 @@ export default function DocsPage() {
             Run <Code>npm publish --stage</Code>. npm holds a private candidate, Drydock reviews it,
             and you complete the publish in npm with your own 2FA.
           </ModeCard>
-          <ModeCard href="#workflow-gating" title="Workflow gating: PyPI & npm" badge="Preview">
+          <ModeCard
+            href="#workflow-gating"
+            title="Workflow gating: PyPI, npm & VS Code"
+            badge="Preview"
+          >
             GitHub Actions builds and uploads the release artifact. A GitHub Environment pauses
             publishing until a maintainer approves or rejects the Drydock review.
           </ModeCard>
