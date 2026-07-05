@@ -713,6 +713,44 @@ describe("review", () => {
     });
   });
 
+  test("keeps VS Code adapter findings release scoped on an unchanged file with a baseline", () => {
+    const unchangedFile = {
+      path: "out/extension.js",
+      size: 40,
+      sha256: "same",
+      textSample: "exports.activate = () => require('vm').runInThisContext(x);",
+      flags: [],
+    };
+    const diff = [{ path: "out/extension.js", status: "unchanged" }];
+    // A VSIX with a marketplace baseline whose flagged file did not change since
+    // the last release. The finding is a property of the release, not a line
+    // diff, so it must stay release-scoped instead of falling through to a
+    // releaseDelta: false diff annotation that understates releaseRisk.
+    const annotated = annotateFindingsWithDiffStatus(
+      [
+        {
+          severity: "high",
+          file: "out/extension.js",
+          line: 1,
+          evidence: "activation loads a WebAssembly module on startup",
+          reason: "startup wasm loader",
+          ruleId: "vscode.startup-wasm-loader",
+        },
+      ],
+      diff,
+      {
+        codePatternSet: "javascript",
+        previousFiles: [unchangedFile],
+        stagedFiles: [unchangedFile],
+      },
+    );
+
+    expect(annotated[0]).toMatchObject({
+      diffStatus: "unchanged",
+      releaseDelta: true,
+    });
+  });
+
   test("package json diff summarizes release-review sensitive fields", () => {
     const summary = summarizePackageJsonDiff(
       {

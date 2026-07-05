@@ -2,7 +2,7 @@
 
 Workflow gates are Drydock's review mode for releases whose registry cannot hold a private staged artifact. GitHub Actions builds the release, uploads the candidate artifacts, and a GitHub Environment custom deployment-protection rule pauses publishing while Drydock reviews the bytes.
 
-Supported gate ecosystems: **PyPI** and **npm**. Shared GitHub plumbing lives in `server/lib/workflow-gates/`; artifact-specific behavior lives behind adapters.
+Supported gate ecosystems: **PyPI**, **npm**, and **VS Code extensions**. Shared GitHub plumbing lives in `server/lib/workflow-gates/`; artifact-specific behavior lives behind adapters.
 
 ## Core contract
 
@@ -32,9 +32,11 @@ Required bindings/secrets include the GitHub App id/private key/client credentia
 
 A release set is the boundary between CI and Drydock. Drydock never trusts a maintainer-declared manifest as authority over reviewed bytes; it recomputes identity and digest evidence from the uploaded artifacts themselves.
 
+Package identity and version come from each artifact's own metadata: wheel `METADATA`, sdist `PKG-INFO`, npm `package.json`, or VSIX `extension/package.json` (`publisher.name` + `version`). Every artifact must expose a package identity and version; files are grouped by normalized package name where the ecosystem has one, and artifacts that share a name must agree on the version. Distinct package names are separate releases, which is the expected monorepo shape.
+
 For every candidate artifact set, adapters must provide:
 
-- package/project identity and version;
+- package/project/extension identity and version;
 - ecosystem and artifact kind;
 - normalized file list and hashes;
 - current candidate bytes;
@@ -106,6 +108,42 @@ See [`pypi-workflow-gate.md`](./pypi-workflow-gate.md) for the PyPI-specific
 workflow shape, including build-time `SHA256SUMS` generation and publish-time
 verification.
 
+## VS Code workflow-gate notes
+
+VS Code extension gates review uploaded `.vsix` artifacts before a workflow publishes them to the Marketplace. Identity is derived from `extension/package.json` inside the VSIX as `publisher.name` plus `version`.
+
+The VS Code adapter (`server/lib/adapters/vscode/`):
+
+- accepts `.vsix` artifacts and parses them through the shared ZIP sandbox;
+- strips the VSIX `extension/` payload prefix before deterministic review;
+- requires a constrained `engines.vscode` value and safe extension identity fields;
+- groups by extension id and requires a single VSIX per extension release;
+- resolves a best-effort baseline from the public VS Code Marketplace, then downloads only allowed Marketplace or `*.gallerycdn.vsassets.io` VSIX assets without credentials;
+- treats Marketplace baseline lookup as a diff aid only: metadata, download, parse, or identity failures degrade to a no-baseline review;
+- reports metadata mismatches, broad startup activation, startup remote-command loaders, startup WebAssembly loaders, undeclared configuration reads, and transitive extension installs.
+
+Recommended workflow shape:
+
+```yaml
+jobs:
+  package:
+    steps:
+      - run: npm ci
+      - run: npx @vscode/vsce package --out dist/extension.vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vscode-release-candidate
+          path: dist/*.vsix
+  publish:
+    needs: package
+    environment: production
+    steps:
+      - uses: actions/download-artifact@v4
+      - run: npx @vscode/vsce publish --packagePath dist/*.vsix
+```
+
+The publish job must publish the reviewed VSIX bytes. Repacking after approval breaks the review boundary.
+
 ## Trust and failure behavior
 
 - The GitHub webhook signature is mandatory.
@@ -143,4 +181,4 @@ byte-continuity loop without trusting any single step.
 ## Remaining work
 
 - Expand gate-specific e2e coverage as more ecosystems are added.
-- Keep GitHub/PyPI/npm validation failures user-actionable without leaking credentials or private package bytes.
+- Keep GitHub/PyPI/npm/VS Code validation failures user-actionable without leaking credentials or private package bytes.

@@ -122,23 +122,26 @@ export default function DocsPage() {
         <section id="workflow-gating" class="flex flex-col gap-8 scroll-mt-6">
           <div class="flex flex-col gap-3">
             <SectionLabel>
-              Workflow gating: PyPI &amp; npm on GitHub Actions <Badge tone="info">Preview</Badge>
+              Workflow gating — PyPI, npm &amp; VS Code on GitHub Actions{" "}
+              <Badge tone="info">Preview</Badge>
             </SectionLabel>
             <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
               When the registry can't pause, the workflow can.
             </h2>
             <Prose>
-              PyPI has no staging step, and some npm workflows publish directly from CI. For those
-              releases, the publish job becomes the checkpoint: CI builds wheels, sdists, or
-              tarballs, uploads them as a workflow artifact, and enters a GitHub Environment
-              protected by Drydock. Drydock reviews the upload and records a recommendation; a
-              maintainer approves or rejects in the workbench; if approved, the job continues using
-              its own credential.
+              PyPI has no staging step, not every npm publish uses one, and VS Code extensions ship
+              as Marketplace VSIX files. For those releases the publish job itself becomes the
+              checkpoint. CI builds the release files (wheels and sdists for PyPI, packed tarballs
+              for npm, or VSIX files for VS Code) and uploads them, and a GitHub Environment with
+              Drydock's protection rule holds the publish job. Drydock reviews the upload and
+              records a recommendation, but a maintainer makes the decision from the review
+              workbench, and only then is the held job released or blocked. The publish runs on the
+              workflow's own credential, so Drydock never holds it.
             </Prose>
             <Prose>
-              PyPI and npm use the same gate. Drydock detects each package's ecosystem from the
-              uploaded files, so this walkthrough uses PyPI as the example. For npm, a workflow gate
-              is the alternative to{" "}
+              PyPI, npm, and VS Code extensions sit behind the same gate, and Drydock works out each
+              package's ecosystem from the uploaded files on its own. This walkthrough uses PyPI as
+              the example. For npm, a workflow gate is the alternative to{" "}
               <a class="underline" href="#staged-publishing">
                 staged-publish review
               </a>{" "}
@@ -182,11 +185,11 @@ export default function DocsPage() {
 
           <Subsection title="Release-candidate bundle">
             <Prose>
-              You do not write a manifest. CI builds and uploads <Code>dist/*</Code>, and Drydock
-              treats every <Code>.whl</Code>, <Code>.tar.gz</Code>, and <Code>.tgz</Code> it finds
-              in the upload as part of the release. The settings form can narrow this down to one
-              artifact name; when left blank, Drydock inspects every non-expired artifact from the
-              held run and fails closed if an archive is ambiguous.
+              There is no manifest to write. CI builds and uploads <Code>dist/*</Code>, and Drydock
+              treats every <Code>.whl</Code>, <Code>.tar.gz</Code>, <Code>.tgz</Code>, and{" "}
+              <Code>.vsix</Code> it finds in the upload as part of the release. The settings form
+              can narrow this down to one artifact name; when left blank, Drydock inspects every
+              non-expired artifact from the held run and fails closed if an archive is ambiguous.
             </Prose>
             <Prose>
               Drydock reads each package's name and version out of the files themselves and
@@ -196,9 +199,13 @@ export default function DocsPage() {
               provably the bytes that get published, with no rebuild in between.
             </Prose>
             <Prose>
-              You usually do not declare which ecosystem you're publishing. Drydock tells an npm
-              tarball from a PyPI sdist by looking inside it, so the same gate can review either one
-              or both at once in a mixed monorepo.
+              You usually do not declare which ecosystem you're publishing. Drydock tells npm
+              tarballs, PyPI sdists/wheels, and VSIX files apart by their names and parsed metadata,
+              so the same gate can review one ecosystem or a mixed monorepo at once.
+            </Prose>
+            <Prose>
+              VSIX reviews also flag broad startup activation, transitive extension installs, and
+              startup loaders that execute remote commands or bundled WebAssembly payloads.
             </Prose>
           </Subsection>
 

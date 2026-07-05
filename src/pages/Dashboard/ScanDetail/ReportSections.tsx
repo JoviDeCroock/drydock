@@ -102,7 +102,12 @@ function AiFindingList({ findings }: { findings: AiFinding[] }) {
 }
 
 function ProvenanceView({ provenance }: { provenance: ReleaseProvenance }) {
-  const ecosystem = provenance.ecosystem === "pypi" ? "PyPI" : "npm";
+  const ecosystem =
+    provenance.ecosystem === "pypi"
+      ? "PyPI"
+      : provenance.ecosystem === "vscode"
+        ? "VS Code"
+        : "npm";
   return (
     <div class="flex flex-col gap-3">
       <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">
