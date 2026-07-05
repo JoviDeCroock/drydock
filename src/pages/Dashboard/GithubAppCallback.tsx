@@ -1,11 +1,13 @@
 import { useEffect } from "preact/hooks";
-import { useModel, useSignal } from "@preact/signals";
+import { useComputed, useModel, useSignal } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { sessionModel } from "../../models/auth";
 import {
   GithubAppModel,
   type CallbackError,
   type GithubAppCallbackErrorCode,
+  type PublicGithubAppInstallation,
 } from "../../models/github-app";
 import { Alert } from "../../components/Alert";
 import { LinkButton } from "../../components/Button";
@@ -64,7 +66,17 @@ export default function GithubAppCallbackPage() {
 
   const user = sessionModel.user.value;
   const callbackError = githubApp.callbackError.value;
-  const lastLinked = githubApp.lastLinked.value;
+
+  const heading = useComputed(() =>
+    phase.value === "success"
+      ? "Installation linked"
+      : phase.value === "error"
+        ? "Installation could not be linked"
+        : "Finishing GitHub App install",
+  );
+  const linkedInstallation = useComputed(() =>
+    phase.value === "success" ? githubApp.lastLinked.value : null,
+  );
 
   const onSignOut = async () => {
     await sessionModel.signOut();
@@ -79,66 +91,66 @@ export default function GithubAppCallbackPage() {
     >
       <header class="flex flex-col gap-2 max-w-[640px]">
         <Eyebrow>GitHub App install</Eyebrow>
-        <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">
-          {phase.value === "success"
-            ? "Installation linked"
-            : phase.value === "error"
-              ? "Installation could not be linked"
-              : "Finishing GitHub App install"}
-        </h1>
+        <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">{heading}</h1>
         <Muted class="text-[14px] leading-[1.55] m-0">
           We're confirming the install with GitHub and storing the installation against your active
           organization.
         </Muted>
       </header>
 
-      {(phase.value === "checking-session" || phase.value === "verifying") && (
-        <LoadingState
-          title={
-            phase.value === "checking-session" ? "Confirming session" : "Verifying with GitHub"
-          }
-          detail={
-            phase.value === "checking-session"
-              ? "loading user"
-              : "exchanging code · linking installation"
-          }
-        />
-      )}
+      <Show when={() => phase.value === "checking-session" || phase.value === "verifying"}>
+        {() => (
+          <LoadingState
+            title={
+              phase.value === "checking-session" ? "Confirming session" : "Verifying with GitHub"
+            }
+            detail={
+              phase.value === "checking-session"
+                ? "loading user"
+                : "exchanging code · linking installation"
+            }
+          />
+        )}
+      </Show>
 
-      {phase.value === "success" && lastLinked ? (
-        <Card as="section" class="p-5 flex flex-col gap-4">
-          <SectionLabel>Linked installation</SectionLabel>
-          <div class="flex flex-col gap-2">
-            <span class="font-mono text-[16px] font-medium">{lastLinked.accountLogin}</span>
-            <MonoDetail
-              parts={[
-                <span key="installation">installation {lastLinked.installationId}</span>,
-                <span key="status">{lastLinked.status}</span>,
-                <span key="account">{lastLinked.accountType.toLowerCase()}</span>,
-              ]}
-            />
-          </div>
-          <Muted class="text-[13px] m-0">Returning you to settings…</Muted>
-          <div>
-            <LinkButton variant="secondary" size="sm" href={SETTINGS_PATH}>
-              Back to settings now
-            </LinkButton>
-          </div>
-        </Card>
-      ) : null}
+      <Show<PublicGithubAppInstallation | null> when={linkedInstallation}>
+        {(installation) => (
+          <Card as="section" class="p-5 flex flex-col gap-4">
+            <SectionLabel>Linked installation</SectionLabel>
+            <div class="flex flex-col gap-2">
+              <span class="font-mono text-[16px] font-medium">{installation.accountLogin}</span>
+              <MonoDetail
+                parts={[
+                  <span key="installation">installation {installation.installationId}</span>,
+                  <span key="status">{installation.status}</span>,
+                  <span key="account">{installation.accountType.toLowerCase()}</span>,
+                ]}
+              />
+            </div>
+            <Muted class="text-[13px] m-0">Returning you to settings…</Muted>
+            <div>
+              <LinkButton variant="secondary" size="sm" href={SETTINGS_PATH}>
+                Back to settings now
+              </LinkButton>
+            </div>
+          </Card>
+        )}
+      </Show>
 
-      {phase.value === "error" ? (
-        <Card as="section" class="p-5 flex flex-col gap-4">
-          <SectionLabel>What went wrong</SectionLabel>
-          <CallbackErrorView queryError={queryError.value} callbackError={callbackError} />
-          <div class="flex gap-2 flex-wrap">
-            <LinkButton href={SETTINGS_PATH}>Back to settings</LinkButton>
-            <LinkButton variant="ghost" href="/dashboard">
-              Go to dashboard
-            </LinkButton>
-          </div>
-        </Card>
-      ) : null}
+      <Show when={() => phase.value === "error"}>
+        {() => (
+          <Card as="section" class="p-5 flex flex-col gap-4">
+            <SectionLabel>What went wrong</SectionLabel>
+            <CallbackErrorView queryError={queryError.value} callbackError={callbackError} />
+            <div class="flex gap-2 flex-wrap">
+              <LinkButton href={SETTINGS_PATH}>Back to settings</LinkButton>
+              <LinkButton variant="ghost" href="/dashboard">
+                Go to dashboard
+              </LinkButton>
+            </div>
+          </Card>
+        )}
+      </Show>
     </PageShell>
   );
 }

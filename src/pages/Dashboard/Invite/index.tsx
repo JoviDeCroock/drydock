@@ -1,5 +1,6 @@
 import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { sessionModel } from "../../../models/auth";
 import { ApiError, apiJson, errorMessage } from "../../../models/api";
@@ -66,7 +67,7 @@ export default function InvitePage() {
           <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">
             We couldn't accept this invite
           </h1>
-          {error.value ? <Alert tone="critical">{error.value}</Alert> : null}
+          <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
           <Muted class="text-[13px] m-0">
             Ask the person who invited you to send a fresh invitation, then open the new link.
           </Muted>

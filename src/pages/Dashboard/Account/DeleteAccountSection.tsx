@@ -1,4 +1,5 @@
 import { useSignal } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
 import { sessionModel } from "../../../models/auth";
 import { errorMessage } from "../../../models/api";
 import { Alert } from "../../../components/Alert";
@@ -80,7 +81,9 @@ export function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
               form="account-delete-form"
               disabled={!canSubmit}
             >
-              {busy.value ? "Deleting…" : "Delete account"}
+              <Show when={busy} fallback="Delete account">
+                Deleting…
+              </Show>
             </Button>
           </>
         }
@@ -108,7 +111,7 @@ export function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
               onInput={(e) => (confirmEmail.value = (e.target as HTMLInputElement).value)}
             />
           </Field>
-          {error.value ? <Alert tone="critical">{error.value}</Alert> : null}
+          <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
         </form>
       </Dialog>
     </SettingsCard>
