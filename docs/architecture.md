@@ -29,7 +29,7 @@ Dynamic Worker sandbox
 
 The Worker is the trusted control plane; the sandbox treats package bytes as hostile evidence. Route handlers should stay thin and call shared pipeline/library code so HTTP routes, queue consumers, and local `waitUntil()` execution behave the same.
 
-Completed scan reads are split into a gateway handler and a `CachedScanReads` WorkerEntrypoint. The gateway keeps authentication, organization resolution, and scan-view event writes in the trusted worker, then forwards only the pure read to the cached entrypoint with `organizationId` in `ctx.props`. The cached entrypoint returns `Cache-Control`/`Cache-Tag` on completed scan detail, file, and report responses and exposes tag-based invalidation for decision mutations.
+Completed scan reads are split into a gateway handler and a `CachedScanReads` WorkerEntrypoint. The gateway keeps authentication, organization resolution, and scan-view event writes in the trusted worker, then forwards only the pure read to the cached entrypoint with `organizationId` in `ctx.props`. The tiered edge-cache dispatch is gated by `WORKERS_CACHE_PILOT` and is off by default; when the flag is off, or on runtimes that do not yet support the self-entrypoint `exports`/`props` binding, the reads stay in-process but still return the same `Cache-Control`/`Cache-Tag` headers. The cached entrypoint exposes tag-based invalidation for decision mutations, and enabling the pilot on a deployed Worker means setting `WORKERS_CACHE_PILOT=1`.
 
 ## Trust boundaries
 

@@ -224,6 +224,28 @@ describe("CachedScanReads", () => {
     expect(forwardedOptions.props.organizationId).toBe(owner.organizationId);
   });
 
+  test("gateway serves completed scan reads in-process when the pilot flag is off", async () => {
+    const owner = await seedUser();
+    const completed = await seedCompletedScan(owner);
+    const app = buildTestApp(owner);
+    const ctx = createExecutionContext();
+    const localEnv = { ...env, WORKERS_CACHE_PILOT: undefined } as typeof env;
+
+    const res = await app.fetch(
+      new Request(`http://test.local/api/v1/scans/${completed.scanId}`, { method: "GET" }),
+      localEnv,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toContain("public");
+    expect(res.headers.get("cache-tag")).toBe(`scan:${completed.scanId}`);
+    const body = (await res.json()) as { scan: { id: string; status: string } };
+    expect(body.scan.id).toBe(completed.scanId);
+    expect(body.scan.status).toBe("complete");
+  });
+
   test("gateway preserves file paths but strips organization and poll query params", async () => {
     const owner = await seedUser();
     const completed = await seedCompletedScan(owner);

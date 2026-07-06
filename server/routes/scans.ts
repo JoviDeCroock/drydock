@@ -61,19 +61,25 @@ interface CachedScanReadsEntrypoint {
   invalidate(scanId: string): Promise<void>;
 }
 
+function isWorkersCachePilotEnabled(env: Pick<Cloudflare.Env, "WORKERS_CACHE_PILOT">) {
+  return env.WORKERS_CACHE_PILOT === "true" || env.WORKERS_CACHE_PILOT === "1";
+}
+
 function cachedScanReadsEntrypoint(
   c: Context<{ Bindings: Bindings; Variables: Variables }>,
   organizationId: string,
 ) {
-  try {
-    const exports = (
-      c.executionCtx as ExecutionContext & {
-        exports?: { CachedScanReads?: CachedScanReadsEntrypoint };
-      }
-    ).exports;
-    if (exports?.CachedScanReads) return exports.CachedScanReads;
-  } catch {
-    // Fallback for local worker test runtimes that do not expose ctx.exports.
+  if (isWorkersCachePilotEnabled(c.env)) {
+    try {
+      const exports = (
+        c.executionCtx as ExecutionContext & {
+          exports?: { CachedScanReads?: CachedScanReadsEntrypoint };
+        }
+      ).exports;
+      if (exports?.CachedScanReads) return exports.CachedScanReads;
+    } catch {
+      // Fallback for local worker test runtimes that do not expose ctx.exports.
+    }
   }
 
   const entrypoint = Object.create(CachedScanReads.prototype) as CachedScanReads & {
