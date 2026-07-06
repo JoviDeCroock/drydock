@@ -15,7 +15,6 @@ import {
   deleteFailedScan,
   getScan,
   getScanCompareData,
-  getScanFile,
   getScanStatus,
   listScans,
   recordScanDecision,
@@ -49,13 +48,60 @@ import {
 import { annotateFindingsWithDiffStatus, createPackageDiff, type FileRecord } from "../lib/review";
 import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
 import { parseScanInput } from "../lib/scan-input";
-import { reportExportFilename, serializeReportExport } from "../lib/report-export";
+import { CachedScanReads } from "../lib/cached-scan-reads";
 import { executeScanJob, type ScanQueueMessage } from "../lib/scan-job";
 import { roleCanManageIntegrations } from "../lib/roles";
 import { checkStagedPublishAccess, fetchStagedPublishDetails } from "../lib/staged-publishes";
 import type { Bindings, ScanInput, Variables } from "../types";
 
 export const scansRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+interface CachedScanReadsEntrypoint {
+  fetch(request: Request, options: { props: { organizationId: string } }): Promise<Response>;
+  invalidate(scanId: string): Promise<void>;
+}
+
+function cachedScanReadsEntrypoint(
+  c: Context<{ Bindings: Bindings; Variables: Variables }>,
+  organizationId: string,
+) {
+  try {
+    const exports = (
+      c.executionCtx as ExecutionContext & {
+        exports?: { CachedScanReads?: CachedScanReadsEntrypoint };
+      }
+    ).exports;
+    if (exports?.CachedScanReads) return exports.CachedScanReads;
+  } catch {
+    // Fallback for local worker test runtimes that do not expose ctx.exports.
+  }
+
+  const entrypoint = Object.create(CachedScanReads.prototype) as CachedScanReads & {
+    env: Cloudflare.Env;
+    ctx: ExecutionContext & { props: { organizationId: string } };
+  };
+  entrypoint.env = c.env;
+  entrypoint.ctx = { props: { organizationId } } as ExecutionContext & {
+    props: { organizationId: string };
+  };
+  return entrypoint;
+}
+
+function buildCachedScanReadRequest(request: Request, allowedQueryKeys: string[]) {
+  const url = new URL(request.url);
+  for (const key of Array.from(url.searchParams.keys())) {
+    if (!allowedQueryKeys.includes(key)) url.searchParams.delete(key);
+  }
+
+  const headers = new Headers(request.headers);
+  headers.delete("authorization");
+  headers.delete("cookie");
+
+  return new Request(url, {
+    method: "GET",
+    headers,
+  });
+}
 
 scansRoutes.post("/", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as Partial<ScanInput>;
@@ -264,6 +310,15 @@ scansRoutes.post("/:id/decision", async (c) => {
     return c.json({ error: "decision can only be set on completed scans" }, 409);
   }
 
+  try {
+    await cachedScanReadsEntrypoint(c, organizationId).invalidate(c.req.param("id"));
+  } catch (err) {
+    emitOperationalEvent("warn", "cached_scan_reads.invalidate_failed", {
+      scanId: c.req.param("id"),
+      error: describeOperationalError(err),
+    });
+  }
+
   return c.json(updated);
 });
 
@@ -293,12 +348,33 @@ scansRoutes.delete("/:id", async (c) => {
 
 scansRoutes.get("/:id", async (c) => {
   const db = createDb(c.env.DB);
+  const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
-  const scan = await getScan(db, c.req.param("id"), organizationId, scanArtifactReadBucket(c.env), {
-    includeFileSamples: false,
-  });
+  const scan = await getScanStatus(db, c.req.param("id"), organizationId);
   if (!scan) return c.json({ error: "not found" }, 404);
-  return c.json(scan);
+
+  if (c.req.query("poll") !== "1") {
+    const response = await cachedScanReadsEntrypoint(c, organizationId).fetch(
+      buildCachedScanReadRequest(c.req.raw, []),
+      {
+        props: { organizationId },
+      },
+    );
+    await recordScanEvent(db, {
+      organizationId,
+      actorUserId: session.userId,
+      scanId: scan.id,
+      type: "scan.viewed",
+      metadata: { stageId: scan.stageId },
+    });
+    return response;
+  }
+  return cachedScanReadsEntrypoint(c, organizationId).fetch(
+    buildCachedScanReadRequest(c.req.raw, []),
+    {
+      props: { organizationId },
+    },
+  );
 });
 
 scansRoutes.get("/:id/status", async (c) => {
@@ -314,43 +390,19 @@ scansRoutes.get("/:id/file", async (c) => {
   if (!path) return c.json({ error: "path is required" }, 400);
   const db = createDb(c.env.DB);
   const organizationId = await requireActiveOrganization(c, db);
-  const file = await getScanFile(
-    db,
-    c.req.param("id"),
-    organizationId,
-    path,
-    scanArtifactReadBucket(c.env),
-  );
-  if (!file) return c.json({ error: "file not found in scan" }, 404);
-  return c.json({ file }, 200, { "cache-control": "private, max-age=300" });
+  const forwarded = buildCachedScanReadRequest(c.req.raw, ["path"]);
+  return cachedScanReadsEntrypoint(c, organizationId).fetch(forwarded, {
+    props: { organizationId },
+  });
 });
 
 scansRoutes.get("/:id/report.json", async (c) => {
   const db = createDb(c.env.DB);
   const organizationId = await resolveReportExportOrganization(c, db);
   if (!organizationId) return c.json({ error: "not found" }, 404);
-  // Full-detail export: the findings come from R2 for artifact-backed scans, so
-  // load the artifact bucket (unlike the metadata-only reads below).
-  const detail = await getScan(
-    db,
-    c.req.param("id"),
-    organizationId,
-    scanArtifactReadBucket(c.env),
-  );
-  if (!detail) return c.json({ error: "not found" }, 404);
-  if (detail.scan.status !== "complete") {
-    return c.json({ error: "report export is only available for completed scans" }, 409);
-  }
-  // Canonical, stable-ordered serialization so re-exports are byte-identical and
-  // two artifacts describing the same evidence compare equal. Served as a
-  // download; no scan.viewed event is recorded for a pure export.
-  return new Response(serializeReportExport(detail), {
-    status: 200,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "content-disposition": `attachment; filename="${reportExportFilename(detail.scan)}"`,
-      "cache-control": "private, no-store",
-    },
+  const forwarded = buildCachedScanReadRequest(c.req.raw, []);
+  return cachedScanReadsEntrypoint(c, organizationId).fetch(forwarded, {
+    props: { organizationId },
   });
 });
 

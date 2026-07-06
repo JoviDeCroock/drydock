@@ -6,6 +6,23 @@
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
+	"cache": {
+		"enabled": true
+	},
+	"exports": {
+		"default": {
+			"type": "worker",
+			"cache": {
+				"enabled": false
+			}
+		},
+		"CachedScanReads": {
+			"type": "worker",
+			"cache": {
+				"enabled": true
+			}
+		}
+	},
 	"workers_dev": true,
 	"observability": {
 		"logs": {

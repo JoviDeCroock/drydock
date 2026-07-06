@@ -13,6 +13,7 @@ Hono Worker
   ├─ D1 persistence and R2 report/artifact storage
   ├─ Queue-backed scan/gate orchestration
   ├─ Dynamic Worker loader for untrusted archive parsing
+  ├─ Cached inner entrypoints for immutable scan reads
   ├─ npm / PyPI / VS Code adapters and workflow-gate adapters
   └─ constrained brokers/gateways for registry/artifact downloads
         │
@@ -27,6 +28,8 @@ Dynamic Worker sandbox
 ```
 
 The Worker is the trusted control plane; the sandbox treats package bytes as hostile evidence. Route handlers should stay thin and call shared pipeline/library code so HTTP routes, queue consumers, and local `waitUntil()` execution behave the same.
+
+Completed scan reads are split into a gateway handler and a `CachedScanReads` WorkerEntrypoint. The gateway keeps authentication, organization resolution, and scan-view event writes in the trusted worker, then forwards only the pure read to the cached entrypoint with `organizationId` in `ctx.props`. The cached entrypoint returns `Cache-Control`/`Cache-Tag` on completed scan detail, file, and report responses and exposes tag-based invalidation for decision mutations.
 
 ## Trust boundaries
 
