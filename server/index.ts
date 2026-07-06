@@ -232,6 +232,7 @@ app.get("/api", (c) =>
     name: "staged-publish-review",
     endpoints: {
       createScan: "POST /api/v1/scans { stageId }",
+      retryScan: "POST /api/v1/scans/:id/retry",
       scans: "GET /api/v1/scans",
       scanDetail: "GET /api/v1/scans/:id",
       stagedPublishes: "POST /api/v1/staged-publishes/scan",

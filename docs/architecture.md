@@ -50,7 +50,7 @@ Archive parsing is shared by the sandbox and tests rather than copied as strings
 - changed-file diff construction;
 - report persistence and scan lifecycle updates.
 
-`POST /api/v1/scans` creates a queued scan record. A Queue consumer in production, or local `waitUntil()` execution in development, runs the pipeline. The UI polls `GET /api/v1/scans/:id` for status and report data. `DELETE /api/v1/scans/:id` removes an organization-owned scan only when its persisted status is `failed`; all other lifecycle states return `409` and remain intact.
+`POST /api/v1/scans` creates a queued scan record. A Queue consumer in production, or local `waitUntil()` execution in development, runs the pipeline. The UI polls `GET /api/v1/scans/:id` for status and report data. `DELETE /api/v1/scans/:id` removes an organization-owned scan only when its persisted status is `failed`; all other lifecycle states return `409` and remain intact. Failed user scans can be retried with `POST /api/v1/scans/:id/retry`; the server enforces a 5-minute retry cooldown before another retry is accepted.
 
 Baseline selection is tag-aware rather than simply highest-semver; see [`diff-baseline.md`](./diff-baseline.md).
 

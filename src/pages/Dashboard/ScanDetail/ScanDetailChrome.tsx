@@ -5,7 +5,7 @@ import type { PersistedScanDetail } from "../../../models/scan";
 import { Alert } from "../../../components/Alert";
 import { Badge, severityTone } from "../../../components/Badge";
 import { Button, LinkButton } from "../../../components/Button";
-import { LoadingLine, MonoDetail } from "../../../components/Typography";
+import { LoadingLine, MonoDetail, Muted } from "../../../components/Typography";
 
 export function ScanDetailHeader({
   detail,
@@ -117,25 +117,73 @@ const FAILURE_GUIDANCE: Record<string, { hint: string; action: string }> = {
   },
 };
 
-export function ScanFailureAlert({ errorJson }: { errorJson: unknown }) {
+export function ScanFailureAlert({
+  errorJson,
+  canRetry = false,
+  onRetry,
+  retryStatus = "idle",
+  retryError = null,
+  cooldownRemainingMs = 0,
+}: {
+  errorJson: unknown;
+  canRetry?: boolean;
+  onRetry?: () => void;
+  retryStatus?: "idle" | "saving" | "error";
+  retryError?: string | null;
+  cooldownRemainingMs?: number;
+}) {
   const error =
     errorJson && typeof errorJson === "object"
       ? (errorJson as { message?: unknown; code?: unknown })
       : null;
   const guidance = typeof error?.code === "string" ? FAILURE_GUIDANCE[error.code] : undefined;
+  const retrying = retryStatus === "saving";
+  const cooldownLabel = formatCooldownRemaining(cooldownRemainingMs);
   return (
     <Alert tone="critical">
-      <div class="flex flex-col gap-1">
-        <strong>{typeof error?.message === "string" ? error.message : "Review failed."}</strong>
-        {guidance ? (
-          <span>
-            {guidance.hint} <a href="/dashboard/settings?tab=integrations">{guidance.action}</a>
-          </span>
-        ) : null}
-        {typeof error?.code === "string" ? (
-          <span class="font-mono text-xs">code: {error.code}</span>
+      <div class="flex flex-col gap-3">
+        <div class="flex flex-col gap-1">
+          <strong>{typeof error?.message === "string" ? error.message : "Review failed."}</strong>
+          {guidance ? (
+            <span>
+              {guidance.hint} <a href="/dashboard/settings?tab=integrations">{guidance.action}</a>
+            </span>
+          ) : null}
+          {typeof error?.code === "string" ? (
+            <span class="font-mono text-xs">code: {error.code}</span>
+          ) : null}
+        </div>
+        {canRetry && onRetry ? (
+          <div class="flex flex-col gap-3">
+            <div class="flex flex-wrap items-center gap-3">
+              <Button
+                variant="secondary"
+                onClick={onRetry}
+                disabled={retrying || cooldownRemainingMs > 0}
+              >
+                {retrying ? "Retrying…" : "Retry review"}
+              </Button>
+              <Muted class="m-0 text-[12px]" as="span">
+                Re-runs the automated review from the staged artifacts and findings.
+                {cooldownLabel ? ` Available again in ${cooldownLabel}.` : ""}
+              </Muted>
+            </div>
+            {retryError ? <Alert tone="critical">{retryError}</Alert> : null}
+          </div>
         ) : null}
       </div>
     </Alert>
   );
+}
+
+function formatCooldownRemaining(milliseconds: number): string | null {
+  if (milliseconds <= 0) return null;
+  const totalSeconds = Math.ceil(milliseconds / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (!minutes) return `${seconds}s`;
+  if (minutes < 60) return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return `${hours}h ${remainingMinutes}m ${seconds.toString().padStart(2, "0")}s`;
 }

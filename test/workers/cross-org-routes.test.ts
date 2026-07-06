@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
-import { createScanJob, persistScan } from "../../server/db/scans";
+import { createScanJob, markScanFailed, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
@@ -62,6 +62,23 @@ async function seedCompletedScanWithStage(
     diff: [],
     findings: [],
     report: { version: 1, digest: "digest" },
+  });
+  return scanId;
+}
+
+async function seedFailedScan(owner: SeededUser) {
+  const db = createDb(env.DB);
+  const scanId = `scan_${crypto.randomUUID()}`;
+  const stageId = `stage-${scanId.slice(-12)}`;
+  await createScanJob(db, {
+    id: scanId,
+    stageId,
+    organizationId: owner.organizationId,
+    ownerUserId: owner.userId,
+  });
+  await markScanFailed(db, scanId, owner.organizationId, {
+    message: "review failed",
+    code: "test_failure",
   });
   return scanId;
 }
@@ -500,6 +517,24 @@ describe("scans routes enforce organization boundaries", () => {
 
     const intruderRes = await fetchWithSession(buildTestApp(intruder), `/api/v1/scans/${scanId}`);
     expect(intruderRes.status).toBe(404);
+  });
+
+  test("POST /scans/:id/retry returns 404 for scans owned by another organization", async () => {
+    const owner = await seedUser();
+    const intruder = await seedUser();
+    const scanId = await seedFailedScan(owner);
+
+    const ctx = createExecutionContext();
+    const res = await buildTestApp(intruder).fetch(
+      new Request(`http://test.local/api/v1/scans/${scanId}/retry`, {
+        method: "POST",
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(404);
   });
 
   test("GET /scans/:id includes scan-scoped events for the owning organization", async () => {

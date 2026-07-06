@@ -238,8 +238,15 @@ export default function ScanDetailPage() {
     return deleted;
   };
 
+  const handleScanRetry = async () => {
+    await model.retryScan();
+  };
+
   const gateReviewComplete = detail?.scan.status === "complete";
   const gateReviewFailed = detail?.scan.status === "failed";
+  const scanRetryCanRetry = useComputed(() =>
+    Boolean(detail && !isWorkflowGate && detail.scan.status === "failed"),
+  );
 
   // npm scans become decidable once complete; gate scans are decidable while
   // pending after the review either completes or fails. Human decisions remain
@@ -288,7 +295,14 @@ export default function ScanDetailPage() {
         <GatePackagesPanel gate={gate} currentScanId={detail.scan.id} onDecide={onDecideClick} />
       ) : null}
       {detail?.scan.status === "failed" ? (
-        <ScanFailureAlert errorJson={detail.scan.errorJson} />
+        <ScanFailureAlert
+          errorJson={detail.scan.errorJson}
+          canRetry={scanRetryCanRetry.value}
+          onRetry={handleScanRetry}
+          retryStatus={model.retryStatus.value}
+          retryError={model.retryError.value}
+          cooldownRemainingMs={model.retryCooldownRemainingMs.value}
+        />
       ) : null}
 
       {!detail && !error ? (

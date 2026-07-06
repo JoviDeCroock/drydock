@@ -155,6 +155,8 @@ export const scans = sqliteTable(
     changedFileCount: integer("changed_file_count"),
     findingCount: integer("finding_count"),
     riskSummaryJson: text("risk_summary_json", { mode: "json" }),
+    retryCount: integer("retry_count").notNull().default(0),
+    lastRetriedAt: integer("last_retried_at", { mode: "timestamp_ms" }),
     reportVersion: integer("report_version"),
     reportDigest: text("report_digest"),
     artifactStorageVersion: integer("artifact_storage_version"),

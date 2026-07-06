@@ -9,6 +9,7 @@ import {
   LIST_SCANS_MAX_LIMIT,
   SCAN_DECISIONS,
   SCAN_DECISION_FILTERS,
+  SCAN_RETRY_COOLDOWN_MS,
   type ScanDecision,
   type ScanDecisionFilter,
   createScanJob,
@@ -19,6 +20,8 @@ import {
   getScanStatus,
   listScans,
   recordScanDecision,
+  retryScan,
+  type ScanSource,
 } from "../db/scans";
 import {
   requireActiveOrganization,
@@ -141,6 +144,81 @@ scansRoutes.post("/", async (c) => {
     }
     throw err;
   }
+});
+
+scansRoutes.post("/:id/retry", async (c) => {
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = await requireActiveOrganization(c, db);
+  try {
+    await enforceRateLimit(db, {
+      key: `scan-retry:${organizationId}`,
+      limit: 20,
+      windowMs: 60 * 1000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return rateLimitResponse(c, "scan retry rate limit exceeded", err);
+    }
+    throw err;
+  }
+
+  const scanId = c.req.param("id");
+  const scan = await getScanStatus(db, scanId, organizationId);
+  if (!scan) return c.json({ error: "not found" }, 404);
+  if (scan.source === "workflow_gate") {
+    return c.json({ error: "workflow gate scans are retried from the deployment gate" }, 409);
+  }
+  if (scan.status !== "failed") {
+    return c.json({ error: "only failed scans can be retried" }, 409);
+  }
+
+  const now = Date.now();
+  const lastRetriedAt = scan.lastRetriedAt ? new Date(scan.lastRetriedAt).getTime() : null;
+  const retryableAtMs = lastRetriedAt !== null ? lastRetriedAt + SCAN_RETRY_COOLDOWN_MS : null;
+  if (retryableAtMs !== null && now < retryableAtMs) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((retryableAtMs - now) / 1000));
+    return c.json(
+      {
+        error: "this scan was retried recently; please wait before retrying it again",
+        retryableAt: retryableAtMs,
+        retryAfterSeconds,
+      },
+      429,
+      { "retry-after": String(retryAfterSeconds) },
+    );
+  }
+
+  const reset = await retryScan(db, scanId, organizationId);
+  if (!reset) return c.json({ error: "scan retry already processed or no longer allowed" }, 409);
+
+  const message: ScanQueueMessage = {
+    stageId: scan.stageId,
+    scanId,
+    organizationId,
+    actorUserId: session.userId,
+    source: scan.source as ScanSource,
+  };
+
+  await recordScanEvent(db, {
+    organizationId,
+    actorUserId: session.userId,
+    scanId,
+    type: "scan.retry_requested",
+    metadata: { stageId: scan.stageId, attempt: reset.retryCount },
+  });
+
+  if (c.env.SCAN_QUEUE) {
+    await c.env.SCAN_QUEUE.send(message);
+  } else {
+    c.executionCtx.waitUntil(
+      executeScanJob(c.env, c.executionCtx, message, db, { finalAttempt: true }),
+    );
+  }
+
+  const fresh = await getScanStatus(db, scanId, organizationId);
+  if (!fresh) return c.json({ error: "failed to reload retried scan" }, 500);
+  return c.json({ scan: fresh, queued: Boolean(c.env.SCAN_QUEUE) }, 202);
 });
 
 const DECISION_REASON_MAX = 500;

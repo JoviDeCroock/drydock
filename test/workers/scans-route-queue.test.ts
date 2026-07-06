@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
+import { markScanFailed, createScanJob, persistScan } from "../../server/db/scans";
 import {
   updateNpmConnectionValidation,
   upsertNpmConnection,
@@ -61,8 +62,30 @@ async function connectValidNpmToken(owner: SeededUser, token: string) {
   });
 }
 
+async function seedFailedScan(
+  owner: SeededUser,
+  source: "manual" | "auto_discovery" | "workflow_gate" = "manual",
+) {
+  const db = createDb(env.DB);
+  const scanId = `scan_${crypto.randomUUID()}`;
+  const stageId = `stage-${scanId.slice(-12)}`;
+  await createScanJob(db, {
+    id: scanId,
+    stageId,
+    organizationId: owner.organizationId,
+    ownerUserId: owner.userId,
+    source,
+  });
+  await markScanFailed(db, scanId, owner.organizationId, {
+    message: "review failed",
+    code: "test_failure",
+  });
+  return { scanId, stageId };
+}
+
 describe("scans route queue behavior", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -186,5 +209,188 @@ describe("scans route queue behavior", () => {
 
     expect(res.status).toBe(400);
     expect(queue.send).not.toHaveBeenCalled();
+  });
+
+  test("POST /scans/:id/retry requeues a failed scan and records the retry event", async () => {
+    const owner = await seedUser();
+    const { scanId, stageId } = await seedFailedScan(owner);
+    const queue = { send: vi.fn(async () => undefined) };
+    const app = buildTestApp(owner);
+    const ctx = createExecutionContext();
+
+    const res = await app.fetch(
+      new Request(`http://test.local/api/v1/scans/${scanId}/retry`, {
+        method: "POST",
+      }),
+      { ...env, SCAN_QUEUE: queue } as unknown as Bindings,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as {
+      scan: {
+        id: string;
+        stageId: string;
+        status: string;
+        retryCount: number;
+        lastRetriedAt: string | number | Date | null;
+      };
+      queued: boolean;
+    };
+    expect(body.queued).toBe(true);
+    expect(body.scan).toMatchObject({
+      id: scanId,
+      stageId,
+      status: "pending",
+      retryCount: 1,
+    });
+    expect(body.scan.lastRetriedAt).not.toBeNull();
+
+    expect(queue.send).toHaveBeenCalledTimes(1);
+    const message = queue.send.mock.calls[0]?.[0];
+    expect(message).toMatchObject({
+      scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      actorUserId: owner.userId,
+      source: "manual",
+    });
+
+    const db = createDb(env.DB);
+    const events = await db
+      .select()
+      .from(schema.scanEvents)
+      .where(eq(schema.scanEvents.scanId, scanId));
+    expect(events.map((event) => event.type)).toContain("scan.retry_requested");
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.id, scanId));
+    expect(scan?.status).toBe("pending");
+    expect(scan?.retryCount).toBe(1);
+    expect(scan?.lastRetriedAt).not.toBeNull();
+  });
+
+  test("POST /scans/:id/retry uses the inline executeScanJob fallback when no queue binding exists", async () => {
+    const owner = await seedUser();
+    const { scanId } = await seedFailedScan(owner);
+    const scanJobModule = await import("../../server/lib/scan-job");
+    const executeSpy = vi.spyOn(scanJobModule, "executeScanJob").mockResolvedValue(null as never);
+    const app = buildTestApp(owner);
+    const ctx = createExecutionContext();
+
+    const res = await app.fetch(
+      new Request(`http://test.local/api/v1/scans/${scanId}/retry`, {
+        method: "POST",
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(202);
+    expect(executeSpy).toHaveBeenCalledTimes(1);
+    expect(executeSpy.mock.calls[0]?.[2]).toMatchObject({
+      scanId,
+      organizationId: owner.organizationId,
+      actorUserId: owner.userId,
+      source: "manual",
+    });
+  });
+
+  test("POST /scans/:id/retry rejects pending and complete scans", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const app = buildTestApp(owner);
+    const pendingScanId = `scan_${crypto.randomUUID()}`;
+    await createScanJob(db, {
+      id: pendingScanId,
+      stageId: `stage-${pendingScanId.slice(-12)}`,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+    });
+    const completeScanId = `scan_${crypto.randomUUID()}`;
+    await createScanJob(db, {
+      id: completeScanId,
+      stageId: `stage-${completeScanId.slice(-12)}`,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+    });
+    await persistScan(db, {
+      id: completeScanId,
+      stageId: `stage-${completeScanId.slice(-12)}`,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+      packageJson: { name: "@org/complete", version: "1.0.0" },
+      risk: "low",
+      status: "complete",
+      summary: { ok: true },
+      ai: null,
+      files: [],
+      diff: [],
+      findings: [],
+      report: { version: 1, digest: "digest" },
+    });
+
+    const pendingRes = await app.fetch(
+      new Request(`http://test.local/api/v1/scans/${pendingScanId}/retry`, {
+        method: "POST",
+      }),
+      env,
+      createExecutionContext(),
+    );
+    const completeRes = await app.fetch(
+      new Request(`http://test.local/api/v1/scans/${completeScanId}/retry`, {
+        method: "POST",
+      }),
+      env,
+      createExecutionContext(),
+    );
+    expect(pendingRes.status).toBe(409);
+    expect(completeRes.status).toBe(409);
+  });
+
+  test("POST /scans/:id/retry returns 429 when the cooldown is still active", async () => {
+    const owner = await seedUser();
+    const { scanId } = await seedFailedScan(owner);
+    const db = createDb(env.DB);
+    const recent = new Date(Date.now() - 60_000);
+    await db
+      .update(schema.scans)
+      .set({ retryCount: 1, lastRetriedAt: recent, updatedAt: recent })
+      .where(eq(schema.scans.id, scanId));
+    const app = buildTestApp(owner);
+
+    const res = await app.fetch(
+      new Request(`http://test.local/api/v1/scans/${scanId}/retry`, {
+        method: "POST",
+      }),
+      { ...env, SCAN_QUEUE: { send: vi.fn(async () => undefined) } } as unknown as Bindings,
+      createExecutionContext(),
+    );
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).not.toBeNull();
+    const body = (await res.json()) as {
+      error: string;
+      retryableAt: number;
+      retryAfterSeconds: number;
+    };
+    expect(body.retryableAt).toBeGreaterThan(Date.now());
+    expect(body.retryAfterSeconds).toBeGreaterThan(0);
+  });
+
+  test("POST /scans/:id/retry rejects workflow gate scans", async () => {
+    const owner = await seedUser();
+    const { scanId } = await seedFailedScan(owner, "workflow_gate");
+    const app = buildTestApp(owner);
+
+    const res = await app.fetch(
+      new Request(`http://test.local/api/v1/scans/${scanId}/retry`, {
+        method: "POST",
+      }),
+      { ...env, SCAN_QUEUE: { send: vi.fn(async () => undefined) } } as unknown as Bindings,
+      createExecutionContext(),
+    );
+
+    expect(res.status).toBe(409);
   });
 });

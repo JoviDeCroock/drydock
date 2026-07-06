@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import {
   annotateFindingsWithDiffStatus,
@@ -508,6 +508,9 @@ export function chunkForD1<T>(rows: T[], columnsPerRow: number): T[][] {
 export const SCAN_DECISIONS = ["publish", "no_publish"] as const;
 export type ScanDecision = (typeof SCAN_DECISIONS)[number];
 
+// Keep in sync with `src/models/scan.ts` for client-side cooldown display.
+export const SCAN_RETRY_COOLDOWN_MS = 5 * 60_000;
+
 export const SCAN_DECISION_FILTERS = ["undecided", "publish", "no_publish", "all"] as const;
 export type ScanDecisionFilter = (typeof SCAN_DECISION_FILTERS)[number];
 
@@ -536,6 +539,8 @@ export interface ListScansResult {
     changedFileCount: number;
     findingCount: number;
     riskSummary: ScanRiskSummary | null;
+    retryCount: number;
+    lastRetriedAt: Date | null;
     reportVersion: number | null;
     reportDigest: string | null;
     startedAt: Date | null;
@@ -594,6 +599,8 @@ export async function listScans(
       changedFileCount: scans.changedFileCount,
       findingCount: scans.findingCount,
       riskSummaryJson: scans.riskSummaryJson,
+      retryCount: scans.retryCount,
+      lastRetriedAt: scans.lastRetriedAt,
       reportVersion: scans.reportVersion,
       reportDigest: scans.reportDigest,
       startedAt: scans.startedAt,
@@ -633,6 +640,8 @@ export async function listScans(
       changedFileCount: row.changedFileCount ?? 0,
       findingCount: row.findingCount ?? 0,
       riskSummary: row.status === "complete" ? readScanRiskBreakdown(row.riskSummaryJson) : null,
+      retryCount: row.retryCount ?? 0,
+      lastRetriedAt: row.lastRetriedAt,
       reportVersion: row.reportVersion,
       reportDigest: row.reportDigest,
       startedAt: row.startedAt,
@@ -642,6 +651,40 @@ export async function listScans(
     })),
     nextCursor,
   };
+}
+
+export async function retryScan(db: AppDb, scanId: string, organizationId: string) {
+  const now = new Date();
+  const cooldownStart = new Date(now.getTime() - SCAN_RETRY_COOLDOWN_MS);
+  const updated = await db
+    .update(scans)
+    .set({
+      status: "pending",
+      risk: "unknown",
+      errorJson: null,
+      startedAt: null,
+      completedAt: null,
+      retryCount: sql`${scans.retryCount} + 1`,
+      lastRetriedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(scans.id, scanId),
+        eq(scans.organizationId, organizationId),
+        eq(scans.status, "failed"),
+        ne(scans.source, "workflow_gate"),
+        or(isNull(scans.lastRetriedAt), lte(scans.lastRetriedAt, cooldownStart)),
+      ),
+    )
+    .returning({
+      id: scans.id,
+      stageId: scans.stageId,
+      source: scans.source,
+      retryCount: scans.retryCount,
+    });
+
+  return updated[0] ?? null;
 }
 
 function readScanRiskBreakdown(value: unknown): ScanRiskSummary | null {

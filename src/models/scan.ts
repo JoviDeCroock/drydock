@@ -72,6 +72,8 @@ export interface ScanListItem {
   changedFileCount?: number;
   findingCount?: number;
   riskSummary?: ScanRiskSummary | null;
+  retryCount?: number | null;
+  lastRetriedAt?: string | number | Date | null;
   reportVersion?: number | null;
   reportDigest?: string | null;
   startedAt?: string | number | Date | null;
@@ -198,8 +200,20 @@ export function getScanCompareFile(
   );
 }
 
+export function retryScan(id: string): Promise<RetryScanResponse> {
+  return apiJson<RetryScanResponse>(`/api/v1/scans/${encodeURIComponent(id)}/retry`, {});
+}
+
 export type DecisionStatus = "idle" | "saving" | "error";
 export type DeleteStatus = "idle" | "deleting" | "error";
+
+// Keep in sync with `server/db/scans.ts` for client-side cooldown display.
+export const SCAN_RETRY_COOLDOWN_MS = 5 * 60_000;
+
+export interface RetryScanResponse {
+  scan: PersistedScanDetail["scan"];
+  queued: boolean;
+}
 
 export function scanMatchesDecisionFilter(
   scan: Pick<ScanListItem, "decision">,
@@ -352,6 +366,8 @@ export const ScanDetailModel = createModel((id: string) => {
   const gateDecisionError = signal<string | null>(null);
   const gateRetryStatus = signal<DecisionStatus>("idle");
   const gateRetryError = signal<string | null>(null);
+  const retryStatus = signal<DecisionStatus>("idle");
+  const retryError = signal<string | null>(null);
 
   const isWorkflowGate = computed(() => detail.value?.scan.source === "workflow_gate");
   const status = computed(() => detail.value?.scan.status ?? null);
@@ -369,6 +385,12 @@ export const ScanDetailModel = createModel((id: string) => {
     const cache = compareCache.value;
     const v = selectedVersion.value;
     return v ? (cache[v] ?? null) : null;
+  });
+  const retryCooldownRemainingMs = computed(() => {
+    const lastRetriedAt = detail.value?.scan.lastRetriedAt ?? null;
+    if (!lastRetriedAt) return 0;
+    const retryAt = new Date(lastRetriedAt).getTime() + SCAN_RETRY_COOLDOWN_MS;
+    return Math.max(0, retryAt - Date.now());
   });
 
   // Background polling while the scan is still running. A self-scheduling
@@ -484,11 +506,14 @@ export const ScanDetailModel = createModel((id: string) => {
     gateDecisionError,
     gateRetryStatus,
     gateRetryError,
+    retryStatus,
+    retryError,
     isWorkflowGate,
     status,
     isPolling,
     isDefaultComparison,
     compare,
+    retryCooldownRemainingMs,
 
     async load(): Promise<void> {
       const id = this.scanId.peek();
@@ -628,6 +653,31 @@ export const ScanDetailModel = createModel((id: string) => {
       } catch (err) {
         this.gateRetryError.value = errorMessage(err);
         this.gateRetryStatus.value = "error";
+      }
+    },
+
+    async retryScan(): Promise<void> {
+      const id = this.scanId.peek();
+      this.retryStatus.value = "saving";
+      this.retryError.value = null;
+      try {
+        const updated = await retryScan(id);
+        const current = this.detail.peek();
+        this.detail.value = current
+          ? {
+              ...current,
+              scan: updated.scan,
+            }
+          : {
+              scan: updated.scan,
+              files: [],
+              findings: [],
+              events: [],
+            };
+        this.retryStatus.value = "idle";
+      } catch (err) {
+        this.retryError.value = errorMessage(err);
+        this.retryStatus.value = "error";
       }
     },
 
