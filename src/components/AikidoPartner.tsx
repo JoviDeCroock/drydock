@@ -1,9 +1,14 @@
 import aikidoLight from "../assets/aikido-wordmark.svg";
 import aikidoDark from "../assets/aikido-wordmark-inverted.svg";
+import auditBadgeLight from "../assets/aikido-audit-badge.svg";
+import auditBadgeDark from "../assets/aikido-audit-badge-inverted.svg";
 import { cn } from "./cn";
 import { SectionLabel } from "./Typography";
 
 const AIKIDO_URL = "https://www.aikido.dev";
+
+const AIKIDO_AUDIT_URL =
+  "https://app.aikido.dev/audit-report/external/CZk2iewoH6nxS5KNb3erdMV2/request";
 
 const markSizeClass = {
   xs: "h-[14px]",
@@ -45,6 +50,32 @@ export function AikidoFootnote({ class: className }: { class?: string }) {
       aria-label="Aikido Security"
     >
       <span class="mr-2">Sponsored by</span> <AikidoMark size="xs" />
+    </a>
+  );
+}
+
+export function AikidoAuditBadge({ class: className }: { class?: string }) {
+  const imgProps = {
+    alt: "Aikido Security audit report",
+    loading: "lazy",
+    decoding: "async",
+  } as const;
+  const imageClass = "h-5 w-auto";
+  return (
+    <a
+      href={AIKIDO_AUDIT_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      class={cn(
+        "inline-flex items-center opacity-80 hover:opacity-100 transition-opacity duration-150 ease-out",
+        className,
+      )}
+      aria-label="View Aikido Security audit report"
+    >
+      {/* Theme-matched badge swapped via the same prefers-color-scheme query the
+          tokens use, so it can never disagree with the page theme. */}
+      <img src={auditBadgeLight} {...imgProps} class={cn(imageClass, "dark:hidden")} />
+      <img src={auditBadgeDark} {...imgProps} class={cn(imageClass, "hidden dark:inline-block")} />
     </a>
   );
 }
