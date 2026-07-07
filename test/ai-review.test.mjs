@@ -123,6 +123,17 @@ describe("AI review prompt selection", () => {
     expect(prompt).not.toContain("optionalDependencies");
   });
 
+  test("routes the vscode ecosystem to the VS Code prompt without npm/PyPI leakage", () => {
+    expect(normalizeAiReviewEcosystem("vscode")).toBe("vscode");
+
+    const prompt = buildReviewerSystemPrompt("vscode");
+
+    expect(prompt).toContain("Ecosystem: VS Code extension (VSIX).");
+    expect(prompt).not.toContain("Ecosystem: npm.");
+    expect(prompt).not.toContain("Ecosystem: PyPI.");
+    expect(prompt).not.toContain("Ecosystem: generic package release.");
+  });
+
   test("falls back to generic package guidance for unknown adapters", () => {
     expect(normalizeAiReviewEcosystem("rubygems")).toBe("generic");
     expect(normalizeAiReviewEcosystem(undefined)).toBe("generic");

@@ -78,6 +78,8 @@ function reviewTaskFor(ecosystem: string): string {
       return "Review this staged npm release. Decide whether it looks ordinary or something is off and needs review before a maintainer approves it.";
     case "pypi":
       return "Review this PyPI release candidate. Decide whether the wheel/sdist changes look ordinary or something is off and needs review before the GitHub workflow gate allows publishing.";
+    case "vscode":
+      return "Review this VS Code extension release candidate. Decide whether the VSIX changes look ordinary or something is off and needs review before the GitHub workflow gate allows publishing to the Marketplace.";
     default:
       return "Review this staged package release. Decide whether it looks ordinary or something is off and needs review before a maintainer approves it.";
   }

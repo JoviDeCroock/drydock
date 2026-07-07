@@ -7,7 +7,7 @@ Approval stays outside Drydock: maintainers approve in npm, npmjs.com, or GitHub
 ## Modes
 
 - **npm registry staging** — `npm publish --stage` creates a private staged tarball. Drydock downloads it through a sandbox and leaves final approval in npm.
-- **Workflow gates** — for ecosystems where the registry cannot stage a candidate, GitHub Actions uploads built artifacts and a GitHub Environment custom deployment-protection rule blocks publishing until Drydock review is accepted or rejected. PyPI and npm workflow-gate artifacts are supported by the shared gate pipeline.
+- **Workflow gates** — for ecosystems where the registry cannot stage a candidate, GitHub Actions uploads built artifacts and a GitHub Environment custom deployment-protection rule blocks publishing until Drydock review is accepted or rejected. PyPI, npm, and VS Code workflow-gate artifacts are supported by the shared gate pipeline.
 
 ## Docs
 
@@ -16,7 +16,7 @@ Start with [`docs/README.md`](docs/README.md) to pick the smallest relevant refe
 - [`docs/self-hosting.md`](docs/self-hosting.md) — local setup, Cloudflare resources, deployment, GitHub App, and Slack setup.
 - [`docs/architecture.md`](docs/architecture.md) — runtime components, trust boundaries, adapters, storage, and API shape.
 - [`docs/security-model.md`](docs/security-model.md) — non-negotiable security posture.
-- [`docs/workflow-gates.md`](docs/workflow-gates.md) — GitHub Environment gate contract for PyPI and npm workflow-gated releases.
+- [`docs/workflow-gates.md`](docs/workflow-gates.md) — GitHub Environment gate contract for PyPI, npm, and VS Code workflow-gated releases.
 - [`docs/release-safety.md`](docs/release-safety.md), [`docs/security-detection-corpus.md`](docs/security-detection-corpus.md), [`docs/detection-eval.md`](docs/detection-eval.md), and [`docs/e2e-test-environment.md`](docs/e2e-test-environment.md) — verification and detection quality.
 
 ## Layout

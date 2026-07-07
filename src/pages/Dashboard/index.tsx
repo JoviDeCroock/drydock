@@ -153,7 +153,7 @@ function DashboardHeader() {
       <Eyebrow>Review workspace</Eyebrow>
       <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Ready for the next release</h1>
       <Muted class="text-[14px] leading-[1.55] m-0">
-        Review held npm and PyPI candidates before maintainers let them go live.
+        Review held npm, PyPI, and VS Code candidates before maintainers let them go live.
       </Muted>
     </header>
   );
