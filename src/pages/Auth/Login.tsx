@@ -1,5 +1,6 @@
 import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { normalizeAuthReturnTo } from "../../lib/auth-return";
 import { AuthError, sessionModel } from "../../models/auth";
@@ -116,11 +117,15 @@ export default function LoginPage() {
             Open the link to finish signing in. It expires in 24 hours.
           </Muted>
 
-          {error.value ? <Alert tone="critical">{error.value}</Alert> : null}
-          {resent.value ? <Alert tone="ok">We sent another verification link.</Alert> : null}
+          <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
+          <Show when={resent}>
+            <Alert tone="ok">We sent another verification link.</Alert>
+          </Show>
 
-          <Button variant="secondary" disabled={resending.value} onClick={onResend}>
-            {resending.value ? "Resending…" : "Resend verification email"}
+          <Button variant="secondary" disabled={resending} onClick={onResend}>
+            <Show when={resending} fallback="Resend verification email">
+              Resending…
+            </Show>
           </Button>
 
           <p class="text-[13px] text-ink-muted m-0">
@@ -140,9 +145,9 @@ export default function LoginPage() {
           <Eyebrow>Two-factor authentication</Eyebrow>
           <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Verify it's you</h1>
           <Muted class="text-[13px] m-0">
-            {useBackup.value
-              ? "Enter one of your saved backup recovery codes."
-              : "Enter the 6-digit code from your authenticator app."}
+            <Show when={useBackup} fallback="Enter the 6-digit code from your authenticator app.">
+              Enter one of your saved backup recovery codes.
+            </Show>
           </Muted>
 
           <form class="flex flex-col gap-4 mt-2" onSubmit={onVerify}>
@@ -162,10 +167,12 @@ export default function LoginPage() {
               />
             </Field>
 
-            {error.value ? <Alert tone="critical">{error.value}</Alert> : null}
+            <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
 
-            <Button type="submit" disabled={loading.value}>
-              {loading.value ? "Verifying…" : "Verify"}
+            <Button type="submit" disabled={loading}>
+              <Show when={loading} fallback="Verify">
+                Verifying…
+              </Show>
             </Button>
           </form>
 
@@ -179,7 +186,9 @@ export default function LoginPage() {
               error.value = null;
             }}
           >
-            {useBackup.value ? "Use an authenticator code instead" : "Use a backup code instead"}
+            <Show when={useBackup} fallback="Use a backup code instead">
+              Use an authenticator code instead
+            </Show>
           </Button>
         </Card>
       </PageShell>
@@ -217,10 +226,12 @@ export default function LoginPage() {
             />
           </Field>
 
-          {error.value ? <Alert tone="critical">{error.value}</Alert> : null}
+          <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
 
-          <Button type="submit" disabled={loading.value}>
-            {loading.value ? "Signing in…" : "Sign in"}
+          <Button type="submit" disabled={loading}>
+            <Show when={loading} fallback="Sign in">
+              Signing in…
+            </Show>
           </Button>
         </form>
 

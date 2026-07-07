@@ -1,5 +1,6 @@
 import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { normalizeAuthReturnTo } from "../../lib/auth-return";
 import { sessionModel } from "../../models/auth";
@@ -108,13 +109,15 @@ export default function VerifyEmailPage() {
             />
           </Field>
 
-          {error.value ? <Alert tone="critical">{error.value}</Alert> : null}
-          {resent.value ? (
+          <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
+          <Show when={resent}>
             <Alert tone="ok">If that account needs verifying, a new link is on its way.</Alert>
-          ) : null}
+          </Show>
 
-          <Button type="submit" disabled={resending.value}>
-            {resending.value ? "Sending…" : "Send new link"}
+          <Button type="submit" disabled={resending}>
+            <Show when={resending} fallback="Send new link">
+              Sending…
+            </Show>
           </Button>
         </form>
 

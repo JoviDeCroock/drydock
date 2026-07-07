@@ -1,7 +1,1 @@
-{
-  "src/pages/Auth/Login.tsx": [119, 120, 123, 143, 165, 168, 182, 220, 223],
-  "src/pages/Auth/VerifyEmail.tsx": [111, 112, 117],
-  "src/pages/Dashboard/Account/DeleteAccountSection.tsx": [83, 111],
-  "src/pages/Dashboard/GithubAppCallback.tsx": [83, 95, 108, 130],
-  "src/pages/Dashboard/Invite/index.tsx": [69]
-}
+{}
