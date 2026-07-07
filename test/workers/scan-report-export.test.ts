@@ -58,6 +58,10 @@ async function getReport(
 }
 
 async function seedCompletedScan(owner: SeededUser): Promise<string> {
+  return seedCompletedScanWithAi(owner, null);
+}
+
+async function seedCompletedScanWithAi(owner: SeededUser, ai: unknown): Promise<string> {
   const db = createDb(env.DB);
   const scanId = `scan_${crypto.randomUUID()}`;
   const stageId = `stage-${scanId.slice(-12)}`;
@@ -95,7 +99,7 @@ async function seedCompletedScan(owner: SeededUser): Promise<string> {
       },
       diff: [{ path: "package.json", status: "modified" }],
     },
-    ai: null,
+    ai,
     files: [{ path: "package.json", size: 10, sha256: "a", flags: [], textSample: "{}" }],
     diff: [{ path: "package.json", status: "modified", flags: [] }],
     findings: [
@@ -132,6 +136,7 @@ describe("scan report JSON export", () => {
       scan: { id: string; status: string };
       package: { name: string | null; stagedVersion: string | null };
       packageJsonDiff: unknown;
+      aiReview: unknown;
       findings: Array<{ ruleId: string | null; severity: string }>;
     };
     expect(body.schema).toBe("drydock.report.v1");
@@ -141,6 +146,7 @@ describe("scan report JSON export", () => {
     expect(body.package.name).toBe("@org/pkg");
     expect(body.package.stagedVersion).toBe("1.1.0");
     expect(body.packageJsonDiff).toBeTruthy();
+    expect(body.aiReview).toBeNull();
     expect(body.findings).toEqual([
       expect.objectContaining({ ruleId: "install-script.lifecycle", severity: "high" }),
     ]);
@@ -200,6 +206,108 @@ describe("scan report JSON export", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { provenance: typeof provenance | null };
     expect(body.provenance).toEqual(provenance);
+  });
+
+  test("exports a complete AI review with evidence and recommendations", async () => {
+    const owner = await seedUser();
+    const aiReview = {
+      status: "complete",
+      risk: "high",
+      releaseAssessment: "suspicious",
+      summary: "The release adds install-time execution and network access.",
+      findings: [
+        {
+          severity: "critical",
+          file: "package.json",
+          evidence: "postinstall runs node install.js",
+          reason: "consumer installs execute arbitrary code",
+          recommendation: "remove the install hook or gate it behind a manual step",
+        },
+      ],
+      requiresManualReview: true,
+      model: "ai-review-1",
+    } as const;
+
+    const scanId = await seedCompletedScanWithAi(owner, aiReview);
+    const res = await getReport(buildTestApp(owner), scanId);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    const body = JSON.parse(text) as {
+      aiReview: {
+        status: string;
+        model: string | null;
+        summary: string;
+        risk: string | null;
+        releaseAssessment: string | null;
+        requiresManualReview: boolean;
+        findings: Array<{
+          severity: string;
+          file: string;
+          evidence: string;
+          reason: string;
+          recommendation: string;
+        }>;
+      } | null;
+    };
+
+    expect(body.aiReview).toEqual({
+      status: "complete",
+      model: "ai-review-1",
+      summary: "The release adds install-time execution and network access.",
+      risk: "high",
+      releaseAssessment: "suspicious",
+      requiresManualReview: true,
+      findings: [
+        {
+          severity: "critical",
+          file: "package.json",
+          evidence: "postinstall runs node install.js",
+          reason: "consumer installs execute arbitrary code",
+          recommendation: "remove the install hook or gate it behind a manual step",
+        },
+      ],
+    });
+
+    // Stable serialization: a re-export of the same evidence is byte-identical.
+    const again = await getReport(buildTestApp(owner), scanId);
+    expect(await again.text()).toBe(text);
+  });
+
+  test("exports unavailable AI reviews without surfacing fallback low risk", async () => {
+    const owner = await seedUser();
+    const scanId = await seedCompletedScanWithAi(owner, {
+      status: "unavailable",
+      risk: "low",
+      releaseAssessment: "not_assessed",
+      summary: "AI review was unavailable.",
+      findings: [],
+      requiresManualReview: false,
+      model: null,
+    });
+
+    const res = await getReport(buildTestApp(owner), scanId);
+    expect(res.status).toBe(200);
+    const body = JSON.parse(await res.text()) as {
+      aiReview: {
+        status: string;
+        model: string | null;
+        summary: string;
+        risk: string | null;
+        releaseAssessment: string | null;
+        requiresManualReview: boolean;
+        findings: unknown[];
+      } | null;
+    };
+
+    expect(body.aiReview).toEqual({
+      status: "unavailable",
+      model: null,
+      summary: "AI review was unavailable.",
+      risk: null,
+      releaseAssessment: null,
+      requiresManualReview: false,
+      findings: [],
+    });
   });
 
   test("surfaces the reviewed VSIX digest for a VS Code gate review", async () => {

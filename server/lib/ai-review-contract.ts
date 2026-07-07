@@ -244,6 +244,46 @@ export function selectReportedFindings(
     .slice(0, MAX_AI_FINDINGS);
 }
 
+// Validation schema for a *persisted* AiReview (as stored in `scans.ai_json`),
+// as opposed to `aiReviewSubmissionSchema` which validates the model's raw
+// tool call. This one carries the reviewer envelope the pipeline adds after
+// normalization — `status`, `model`, the `not_assessed` release assessment used
+// by fallbacks, and per-finding `recommendation`. Unknown keys are dropped
+// rather than rejected so historical records stay parseable as the shape grows.
+const persistedAiFindingSchema = z.object({
+  severity: severitySchema,
+  file: z.string(),
+  evidence: z.string(),
+  reason: z.string(),
+  recommendation: z.string(),
+});
+
+export const persistedAiReviewSchema = z.object({
+  status: z.enum(["complete", "invalid", "unavailable"]),
+  risk: riskSchema,
+  releaseAssessment: z.enum([
+    "nothing_unusual",
+    "review_recommended",
+    "suspicious",
+    "blocked",
+    "not_assessed",
+  ]),
+  summary: z.string(),
+  findings: z.array(persistedAiFindingSchema),
+  requiresManualReview: z.boolean(),
+  model: z.string().nullable(),
+});
+
+export type PersistedAiReview = z.infer<typeof persistedAiReviewSchema>;
+
+// Re-validate an untrusted persisted AI review (a raw D1 `ai_json` value) before
+// a consumer reads it. Returns null for absent or malformed records so callers
+// degrade to "no AI review" instead of trusting a partial or legacy shape.
+export function parsePersistedAiReview(value: unknown): PersistedAiReview | null {
+  const parsed = persistedAiReviewSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 const toolPathSchema = z
   .string()
   .min(1)
