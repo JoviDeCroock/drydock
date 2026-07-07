@@ -1,7 +1,7 @@
 import type { ComponentChildren, JSX } from "preact";
 import { useRef } from "preact/hooks";
 import { useComputed, useSignal, useSignalEffect } from "@preact/signals";
-import { Show } from "@preact/signals/utils";
+import { Show, useLiveSignal } from "@preact/signals/utils";
 import { cn } from "./cn";
 
 interface MenuProps {
@@ -28,7 +28,11 @@ export function Menu({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
 
-  const triggerContent = useComputed(() => trigger(open.value));
+  // `trigger` is a plain prop whose closure can change (e.g. its label derives
+  // from parent state) without `open` changing. Track it via a live signal so
+  // the computed recomputes when the prop updates, not only on open toggles.
+  const triggerSignal = useLiveSignal(trigger);
+  const triggerContent = useComputed(() => triggerSignal.value(open.value));
 
   const getEnabledMenuItems = () => {
     const node = rootRef.current;
