@@ -1,8 +1,10 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo } from "preact/hooks";
+import { type Signal, useComputed, useSignal } from "@preact/signals";
 import { Badge } from "../../components/Badge";
 import { LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
+import { cn } from "../../components/cn";
 import { PageShell } from "../../components/PageShell";
 import { Eyebrow, SectionLabel } from "../../components/Typography";
 import { ensureHighlighter, highlighterReady, tokenizeLines } from "../../components/highlight";
@@ -10,8 +12,59 @@ import { docsPageSeo, PageSeo } from "../../lib/seo";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
 
+const TOC: Array<{ id: string; label: string; children: Array<{ id: string; label: string }> }> = [
+  {
+    id: "staged-publishing",
+    label: "Staged publishing: npm",
+    children: [
+      { id: "staged-setup", label: "Set it up" },
+      { id: "staged-lifecycle", label: "Review lifecycle" },
+    ],
+  },
+  {
+    id: "workflow-gating",
+    label: "Workflow gating: CI",
+    children: [
+      { id: "gate-setup", label: "Set it up" },
+      { id: "gate-bundle", label: "Release-candidate bundle" },
+      { id: "gate-monorepo", label: "Monorepo releases" },
+      { id: "gate-workflow", label: "Workflow shape" },
+      { id: "gate-decision", label: "Decision flow" },
+    ],
+  },
+];
+
+const TOC_IDS = TOC.flatMap((section) => [section.id, ...section.children.map((c) => c.id)]);
+
 export default function DocsPage() {
   const authed = useAuthedSession();
+  const activeId = useSignal(TOC_IDS[0]);
+
+  useEffect(() => {
+    const visible = new Set<string>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) visible.add(entry.target.id);
+          else visible.delete(entry.target.id);
+        }
+        // A parent <section> overlaps the reading band the whole way through, so
+        // the deepest (last in document order) visible id is the one being read.
+        for (let i = TOC_IDS.length - 1; i >= 0; i--) {
+          if (visible.has(TOC_IDS[i])) {
+            activeId.value = TOC_IDS[i];
+            return;
+          }
+        }
+      },
+      { rootMargin: "-8% 0px -72% 0px" },
+    );
+    for (const id of TOC_IDS) {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    }
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <PageShell
@@ -48,184 +101,213 @@ export default function DocsPage() {
         </nav>
       </header>
 
-      <div class="flex flex-col gap-14">
-        <section id="staged-publishing" class="flex flex-col gap-8 scroll-mt-6">
-          <div class="flex flex-col gap-3">
-            <SectionLabel>Staged publishing: npm</SectionLabel>
-            <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-              npm holds the candidate; you keep the approval.
-            </h2>
-            <Prose>
-              npm staged publishing gives Drydock a private release candidate to inspect. Run{" "}
-              <Code>npm publish --stage</Code>; npm holds the new version until you confirm with
-              2FA; Drydock reviews the staged tarball before that confirmation.
-            </Prose>
-          </div>
+      <details class="group lg:hidden rounded-md border border-border bg-surface">
+        <summary class="cursor-pointer list-none px-4 py-3 font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+          <span aria-hidden class="mr-2 inline group-open:hidden">
+            ▸
+          </span>
+          <span aria-hidden class="mr-2 hidden group-open:inline">
+            ▾
+          </span>
+          On this page
+        </summary>
+        <div class="border-t border-border px-4 py-3">
+          <TocList activeId={activeId} />
+        </div>
+      </details>
 
-          <Subsection title="Set it up">
-            <Steps
-              items={[
-                <>Sign in and choose the organization that publishes the package.</>,
-                <>
-                  Open <Code>Organization settings → npm access</Code> and paste an automation or
-                  granular npm token that can read the org's packages and list staged publishes.
-                </>,
-                <>
-                  Save. Drydock encrypts the token and checks it against the registry right away.
-                </>,
-                <>
-                  That's it. Drydock picks up new staged publishes automatically, and{" "}
-                  <Code>Check npm</Code> on the dashboard runs an on-demand check.
-                </>,
-              ]}
-            />
-            <div class="flex flex-wrap gap-2 pt-1">
-              <LinkButton href="/dashboard/settings?tab=integrations" size="sm">
-                Open Organization settings
-              </LinkButton>
+      <div class="lg:grid lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-10">
+        <aside class="hidden lg:block">
+          <nav
+            aria-label="On this page"
+            class="sticky top-8 flex max-h-[calc(100svh-4rem)] flex-col gap-3 overflow-y-auto"
+          >
+            <p class="m-0 font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+              On this page
+            </p>
+            <TocList activeId={activeId} />
+          </nav>
+        </aside>
+
+        <div class="flex flex-col gap-14 min-w-0">
+          <section id="staged-publishing" class="flex flex-col gap-8 scroll-mt-6">
+            <div class="flex flex-col gap-3">
+              <SectionLabel>Staged publishing: npm</SectionLabel>
+              <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
+                npm holds the candidate; you keep the approval.
+              </h2>
+              <Prose>
+                npm staged publishing gives Drydock a private release candidate to inspect. Run{" "}
+                <Code>npm publish --stage</Code>; npm holds the new version until you confirm with
+                2FA; Drydock reviews the staged tarball before that confirmation.
+              </Prose>
             </div>
-          </Subsection>
 
-          <Subsection title="Review lifecycle">
-            <Steps
-              items={[
-                <>
-                  Drydock finds a new staged publish, either automatically or when you hit{" "}
-                  <Code>Check npm</Code>, and queues a scan.
-                </>,
-                <>
-                  Your npm token is stored encrypted and only decrypted at the moment Drydock needs
-                  to talk to the registry.
-                </>,
-                <>
-                  A short-lived sandbox downloads the staged version. The token is attached by a
-                  separate gateway, so the sandbox never sees it.
-                </>,
-                <>
-                  The sandbox unpacks the archive into file listings and text samples. Nothing in
-                  the package is executed.
-                </>,
-                <>
-                  Drydock selects the right earlier version to compare against, diffs the two
-                  packages, checks what changed, and saves the report.
-                </>,
-                <>
-                  You read the report on the dashboard, record your decision, and can have Drydock
-                  open npm's staged-packages page filtered to that package. You still approve or
-                  decline in npm with your normal 2FA; Drydock never publishes on your behalf.
-                </>,
-              ]}
-            />
-          </Subsection>
-        </section>
+            <Subsection id="staged-setup" title="Set it up">
+              <Steps
+                items={[
+                  <>Sign in and choose the organization that publishes the package.</>,
+                  <>
+                    Open <Code>Organization settings → npm access</Code> and paste an automation or
+                    granular npm token that can read the org's packages and list staged publishes.
+                  </>,
+                  <>
+                    Save. Drydock encrypts the token and checks it against the registry right away.
+                  </>,
+                  <>
+                    That's it. Drydock picks up new staged publishes automatically, and{" "}
+                    <Code>Check npm</Code> on the dashboard runs an on-demand check.
+                  </>,
+                ]}
+              />
+              <div class="flex flex-wrap gap-2 pt-1">
+                <LinkButton href="/dashboard/settings?tab=integrations" size="sm">
+                  Open Organization settings
+                </LinkButton>
+              </div>
+            </Subsection>
 
-        <section id="workflow-gating" class="flex flex-col gap-8 scroll-mt-6">
-          <div class="flex flex-col gap-3">
-            <SectionLabel>
-              Workflow gating — PyPI, npm &amp; VS Code on GitHub Actions{" "}
-              <Badge tone="info">Preview</Badge>
-            </SectionLabel>
-            <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-              When the registry can't pause, the workflow can.
-            </h2>
-            <Prose>
-              PyPI has no staging step, not every npm publish uses one, and VS Code extensions ship
-              as Marketplace VSIX files. For those releases the publish job itself becomes the
-              checkpoint. CI builds the release files (wheels and sdists for PyPI, packed tarballs
-              for npm, or VSIX files for VS Code) and uploads them, and a GitHub Environment with
-              Drydock's protection rule holds the publish job. Drydock reviews the upload and
-              records a recommendation, but a maintainer makes the decision from the review
-              workbench, and only then is the held job released or blocked. The publish runs on the
-              workflow's own credential, so Drydock never holds it.
-            </Prose>
-            <Prose>
-              PyPI, npm, and VS Code extensions sit behind the same gate, and Drydock works out each
-              package's ecosystem from the uploaded files on its own. This walkthrough uses PyPI as
-              the example. For npm, a workflow gate is the alternative to{" "}
-              <a class="underline" href="#staged-publishing">
-                staged-publish review
-              </a>{" "}
-              when a repository publishes without staging.
-            </Prose>
-          </div>
+            <Subsection id="staged-lifecycle" title="Review lifecycle">
+              <Steps
+                items={[
+                  <>
+                    Drydock finds a new staged publish, either automatically or when you hit{" "}
+                    <Code>Check npm</Code>, and queues a scan.
+                  </>,
+                  <>
+                    Your npm token is stored encrypted and only decrypted at the moment Drydock
+                    needs to talk to the registry.
+                  </>,
+                  <>
+                    A short-lived sandbox downloads the staged version. The token is attached by a
+                    separate gateway, so the sandbox never sees it.
+                  </>,
+                  <>
+                    The sandbox unpacks the archive into file listings and text samples. Nothing in
+                    the package is executed.
+                  </>,
+                  <>
+                    Drydock selects the right earlier version to compare against, diffs the two
+                    packages, checks what changed, and saves the report.
+                  </>,
+                  <>
+                    You read the report on the dashboard, record your decision, and can have Drydock
+                    open npm's staged-packages page filtered to that package. You still approve or
+                    decline in npm with your normal 2FA; Drydock never publishes on your behalf.
+                  </>,
+                ]}
+              />
+            </Subsection>
+          </section>
 
-          <Subsection title="Set it up">
-            <Steps
-              items={[
-                <>Sign in and choose the organization that owns the PyPI project.</>,
-                <>
-                  Open <Code>Organization settings → GitHub App</Code> and install the Drydock
-                  GitHub App on the GitHub account that hosts your repository. You'll be redirected
-                  to GitHub to pick the account and grant access to the repo, then back to Drydock.
-                </>,
-                <>
-                  In the repository, create a GitHub Environment (for example <Code>pypi</Code>),
-                  configure it as a PyPI Trusted Publisher, and enable Drydock as a custom
-                  deployment protection rule on that same environment.
-                </>,
-                <>
-                  On the same settings page, map the repository and environment so Drydock knows
-                  which organization a held publish belongs to. Packages and ecosystems are derived
-                  from the uploaded artifacts.
-                </>,
-                <>
-                  Add the build and publish workflow below. The build job uploads the wheels and
-                  sdists as a workflow artifact. The publish job runs in{" "}
-                  <Code>environment: pypi</Code>, downloads that same artifact, and stays blocked
-                  until the review is approved in Drydock.
-                </>,
-              ]}
-            />
-            <div class="flex flex-wrap gap-2 pt-1">
-              <LinkButton href="/dashboard/settings?tab=integrations" size="sm">
-                Open Organization settings
-              </LinkButton>
+          <section id="workflow-gating" class="flex flex-col gap-8 scroll-mt-6">
+            <div class="flex flex-col gap-3">
+              <SectionLabel>
+                Workflow gating — PyPI, npm &amp; VS Code on GitHub Actions{" "}
+                <Badge tone="info">Preview</Badge>
+              </SectionLabel>
+              <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
+                When the registry can't pause, the workflow can.
+              </h2>
+              <Prose>
+                PyPI has no staging step, not every npm publish uses one, and VS Code extensions
+                ship as Marketplace VSIX files. For those releases the publish job itself becomes
+                the checkpoint. CI builds the release files (wheels and sdists for PyPI, packed
+                tarballs for npm, or VSIX files for VS Code) and uploads them, and a GitHub
+                Environment with Drydock's protection rule holds the publish job. Drydock reviews
+                the upload and records a recommendation, but a maintainer makes the decision from
+                the review workbench, and only then is the held job released or blocked. The publish
+                runs on the workflow's own credential, so Drydock never holds it.
+              </Prose>
+              <Prose>
+                PyPI, npm, and VS Code extensions sit behind the same gate, and Drydock works out
+                each package's ecosystem from the uploaded files on its own. This walkthrough uses
+                PyPI as the example. For npm, a workflow gate is the alternative to{" "}
+                <a class="underline" href="#staged-publishing">
+                  staged-publish review
+                </a>{" "}
+                when a repository publishes without staging.
+              </Prose>
             </div>
-          </Subsection>
 
-          <Subsection title="Release-candidate bundle">
-            <Prose>
-              There is no manifest to write. CI builds and uploads <Code>dist/*</Code>, and Drydock
-              treats every <Code>.whl</Code>, <Code>.tar.gz</Code>, <Code>.tgz</Code>, and{" "}
-              <Code>.vsix</Code> it finds in the upload as part of the release. The settings form
-              can narrow this down to one artifact name; when left blank, Drydock inspects every
-              non-expired artifact from the held run and fails closed if an archive is ambiguous.
-            </Prose>
-            <Prose>
-              Drydock reads each package's name and version out of the files themselves and
-              recomputes SHA-256 digests from the bytes it fetched. Those digests show up in the
-              review's Provenance section and the report export, and the publish job re-verifies the
-              downloaded bytes against them before upload — so the bytes that were reviewed are
-              provably the bytes that get published, with no rebuild in between.
-            </Prose>
-            <Prose>
-              You usually do not declare which ecosystem you're publishing. Drydock tells npm
-              tarballs, PyPI sdists/wheels, and VSIX files apart by their names and parsed metadata,
-              so the same gate can review one ecosystem or a mixed monorepo at once.
-            </Prose>
-            <Prose>
-              VSIX reviews also flag broad startup activation, transitive extension installs, and
-              startup loaders that execute remote commands or bundled WebAssembly payloads.
-            </Prose>
-          </Subsection>
+            <Subsection id="gate-setup" title="Set it up">
+              <Steps
+                items={[
+                  <>Sign in and choose the organization that owns the PyPI project.</>,
+                  <>
+                    Open <Code>Organization settings → GitHub App</Code> and install the Drydock
+                    GitHub App on the GitHub account that hosts your repository. You'll be
+                    redirected to GitHub to pick the account and grant access to the repo, then back
+                    to Drydock.
+                  </>,
+                  <>
+                    In the repository, create a GitHub Environment (for example <Code>pypi</Code>),
+                    configure it as a PyPI Trusted Publisher, and enable Drydock as a custom
+                    deployment protection rule on that same environment.
+                  </>,
+                  <>
+                    On the same settings page, map the repository and environment so Drydock knows
+                    which organization a held publish belongs to. Packages and ecosystems are
+                    derived from the uploaded artifacts.
+                  </>,
+                  <>
+                    Add the build and publish workflow below. The build job uploads the wheels and
+                    sdists as a workflow artifact. The publish job runs in{" "}
+                    <Code>environment: pypi</Code>, downloads that same artifact, and stays blocked
+                    until the review is approved in Drydock.
+                  </>,
+                ]}
+              />
+              <div class="flex flex-wrap gap-2 pt-1">
+                <LinkButton href="/dashboard/settings?tab=integrations" size="sm">
+                  Open Organization settings
+                </LinkButton>
+              </div>
+            </Subsection>
 
-          <Subsection title="Monorepo releases">
-            <Prose>
-              One workflow run can publish several packages at once, like a monorepo cutting many
-              wheels and sdists in a single release. Drydock groups the uploads by package and opens
-              one review per package, each diffed against its own previously published version. A
-              single gate covers every package the environment publishes.
-            </Prose>
-            <Prose>
-              The held publish is released once every package is approved, and rejecting any single
-              package blocks the whole release. The workbench lists the packages, tracks how many
-              are approved, and links each one to its own review.
-            </Prose>
-          </Subsection>
+            <Subsection id="gate-bundle" title="Release-candidate bundle">
+              <Prose>
+                There is no manifest to write. CI builds and uploads <Code>dist/*</Code>, and
+                Drydock treats every <Code>.whl</Code>, <Code>.tar.gz</Code>, <Code>.tgz</Code>, and{" "}
+                <Code>.vsix</Code> it finds in the upload as part of the release. The settings form
+                can narrow this down to one artifact name; when left blank, Drydock inspects every
+                non-expired artifact from the held run and fails closed if an archive is ambiguous.
+              </Prose>
+              <Prose>
+                Drydock reads each package's name and version out of the files themselves and
+                recomputes SHA-256 digests from the bytes it fetched. Those digests show up in the
+                review's Provenance section and the report export, and the publish job re-verifies
+                the downloaded bytes against them before upload — so the bytes that were reviewed
+                are provably the bytes that get published, with no rebuild in between.
+              </Prose>
+              <Prose>
+                You usually do not declare which ecosystem you're publishing. Drydock tells npm
+                tarballs, PyPI sdists/wheels, and VSIX files apart by their names and parsed
+                metadata, so the same gate can review one ecosystem or a mixed monorepo at once.
+              </Prose>
+              <Prose>
+                VSIX reviews also flag broad startup activation, transitive extension installs, and
+                startup loaders that execute remote commands or bundled WebAssembly payloads.
+              </Prose>
+            </Subsection>
 
-          <Subsection title="Workflow shape">
-            <CodeBlock name=".github/workflows/release.yml" lang="yaml">
-              {`jobs:
+            <Subsection id="gate-monorepo" title="Monorepo releases">
+              <Prose>
+                One workflow run can publish several packages at once, like a monorepo cutting many
+                wheels and sdists in a single release. Drydock groups the uploads by package and
+                opens one review per package, each diffed against its own previously published
+                version. A single gate covers every package the environment publishes.
+              </Prose>
+              <Prose>
+                The held publish is released once every package is approved, and rejecting any
+                single package blocks the whole release. The workbench lists the packages, tracks
+                how many are approved, and links each one to its own review.
+              </Prose>
+            </Subsection>
+
+            <Subsection id="gate-workflow" title="Workflow shape">
+              <CodeBlock name=".github/workflows/release.yml" lang="yaml">
+                {`jobs:
   build-release-artifacts:
     runs-on: ubuntu-latest
     steps:
@@ -257,23 +339,23 @@ export default function DocsPage() {
       - run: cd dist && sha256sum --check --strict SHA256SUMS
       - run: rm dist/SHA256SUMS
       # publish the downloaded dist/* to PyPI via Trusted Publishing (OIDC)`}
-            </CodeBlock>
-            <Prose>
-              No manifest is required. CI builds <Code>dist/*</Code>, records a{" "}
-              <Code>SHA256SUMS</Code> line for the digests Drydock reviews, and re-checks it before
-              upload. The <Code>environment: pypi</Code> line is the gate: configure that same
-              environment as a PyPI Trusted Publisher and enable Drydock as a deployment protection
-              rule on it. The publish job stays blocked until the review is approved in Drydock,
-              then publishes the verified bundle with whatever tool you prefer.
-            </Prose>
-            <Prose>
-              npm looks the same. <Code>npm pack</Code> the workspaces, record a{" "}
-              <Code>SHA256SUMS</Code>, upload <Code>dist/*.tgz</Code>, and gate the publish job on a
-              GitHub Environment. The publish job downloads the reviewed tarballs, re-checks their
-              digests, and publishes them exactly as reviewed, without re-packing.
-            </Prose>
-            <CodeBlock name=".github/workflows/release.yml (npm)" lang="yaml">
-              {`jobs:
+              </CodeBlock>
+              <Prose>
+                No manifest is required. CI builds <Code>dist/*</Code>, records a{" "}
+                <Code>SHA256SUMS</Code> line for the digests Drydock reviews, and re-checks it
+                before upload. The <Code>environment: pypi</Code> line is the gate: configure that
+                same environment as a PyPI Trusted Publisher and enable Drydock as a deployment
+                protection rule on it. The publish job stays blocked until the review is approved in
+                Drydock, then publishes the verified bundle with whatever tool you prefer.
+              </Prose>
+              <Prose>
+                npm looks the same. <Code>npm pack</Code> the workspaces, record a{" "}
+                <Code>SHA256SUMS</Code>, upload <Code>dist/*.tgz</Code>, and gate the publish job on
+                a GitHub Environment. The publish job downloads the reviewed tarballs, re-checks
+                their digests, and publishes them exactly as reviewed, without re-packing.
+              </Prose>
+              <CodeBlock name=".github/workflows/release.yml (npm)" lang="yaml">
+                {`jobs:
   build-release-artifacts:
     runs-on: ubuntu-latest
     steps:
@@ -306,57 +388,116 @@ export default function DocsPage() {
           for tgz in dist/*.tgz; do
             npm publish "$tgz" --access public --provenance
           done`}
-            </CodeBlock>
-          </Subsection>
+              </CodeBlock>
+            </Subsection>
 
-          <Subsection title="Decision flow">
-            <Steps
-              items={[
-                <>
-                  When the gated publish job starts, GitHub sends Drydock a signed webhook. Drydock
-                  verifies the signature and rejects anything unsigned or malformed.
-                </>,
-                <>
-                  Drydock matches the delivery to the repository and environment you mapped in
-                  settings and records a pending gate. Retried deliveries are recognized, and
-                  deliveries that don't match anything you configured are ignored.
-                </>,
-                <>
-                  Drydock fetches the uploaded bundle, recomputes artifact digests, and reviews each
-                  package against its own earlier version. The review records a recommendation and
-                  leaves the decision to a human.
-                </>,
-                <>
-                  A maintainer opens the review on the dashboard and approves or rejects each
-                  package. If their Drydock account has 2FA enabled, this asks for a fresh TOTP
-                  code. The held job is released once every package is approved and blocked the
-                  moment any one is rejected. A bundle Drydock can't verify is rejected
-                  automatically.
-                </>,
-                <>
-                  Drydock reports the final decision back to GitHub over its own pinned connection,
-                  so a spoofed webhook can't redirect the callback.
-                </>,
-                <>
-                  Each gate is decided exactly once, even when a manual decision and an automatic
-                  rejection race.
-                </>,
-              ]}
-            />
-          </Subsection>
-        </section>
+            <Subsection id="gate-decision" title="Decision flow">
+              <Steps
+                items={[
+                  <>
+                    When the gated publish job starts, GitHub sends Drydock a signed webhook.
+                    Drydock verifies the signature and rejects anything unsigned or malformed.
+                  </>,
+                  <>
+                    Drydock matches the delivery to the repository and environment you mapped in
+                    settings and records a pending gate. Retried deliveries are recognized, and
+                    deliveries that don't match anything you configured are ignored.
+                  </>,
+                  <>
+                    Drydock fetches the uploaded bundle, recomputes artifact digests, and reviews
+                    each package against its own earlier version. The review records a
+                    recommendation and leaves the decision to a human.
+                  </>,
+                  <>
+                    A maintainer opens the review on the dashboard and approves or rejects each
+                    package. If their Drydock account has 2FA enabled, this asks for a fresh TOTP
+                    code. The held job is released once every package is approved and blocked the
+                    moment any one is rejected. A bundle Drydock can't verify is rejected
+                    automatically.
+                  </>,
+                  <>
+                    Drydock reports the final decision back to GitHub over its own pinned
+                    connection, so a spoofed webhook can't redirect the callback.
+                  </>,
+                  <>
+                    Each gate is decided exactly once, even when a manual decision and an automatic
+                    rejection race.
+                  </>,
+                ]}
+              />
+            </Subsection>
+          </section>
 
-        <section class="flex flex-col gap-4 border-t border-border pt-10">
-          <SectionLabel>Start reviewing releases</SectionLabel>
-          <div class="flex flex-wrap gap-3">
-            <LinkButton href="/register">Create account</LinkButton>
-            <LinkButton href="/login" variant="secondary">
-              Sign in
-            </LinkButton>
-          </div>
-        </section>
+          <section class="flex flex-col gap-4 border-t border-border pt-10">
+            <SectionLabel>Start reviewing releases</SectionLabel>
+            <div class="flex flex-wrap gap-3">
+              <LinkButton href="/register">Create account</LinkButton>
+              <LinkButton href="/login" variant="secondary">
+                Sign in
+              </LinkButton>
+            </div>
+          </section>
+        </div>
       </div>
     </PageShell>
+  );
+}
+
+function TocList({ activeId }: { activeId: Signal<string> }) {
+  return (
+    <ul class="m-0 flex list-none flex-col border-l border-border p-0">
+      {TOC.map((section) => (
+        <li key={section.id}>
+          <TocLink id={section.id} activeId={activeId}>
+            {section.label}
+          </TocLink>
+          <ul class="m-0 flex list-none flex-col p-0">
+            {section.children.map((child) => (
+              <li key={child.id}>
+                <TocLink id={child.id} activeId={activeId} depth={1}>
+                  {child.label}
+                </TocLink>
+              </li>
+            ))}
+          </ul>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function TocLink({
+  id,
+  activeId,
+  depth = 0,
+  children,
+}: {
+  id: string;
+  activeId: Signal<string>;
+  depth?: 0 | 1;
+  children: ComponentChildren;
+}) {
+  const linkClass = useComputed(() =>
+    cn(
+      "-ml-px block border-l-2 py-1 text-[13px] leading-[1.5] no-underline transition-colors",
+      depth === 1 ? "pl-6" : "pl-3.5 font-medium",
+      activeId.value === id
+        ? "border-accent text-accent"
+        : "border-transparent text-ink-muted hover:text-ink",
+    ),
+  );
+  const ariaCurrent = useComputed(() => (activeId.value === id ? "location" : undefined));
+  return (
+    <a
+      href={`#${id}`}
+      class={linkClass}
+      aria-current={ariaCurrent}
+      onClick={() => {
+        activeId.value = id;
+      }}
+    >
+      {children}
+    </a>
   );
 }
 
@@ -390,9 +531,17 @@ function ModeCard({
   );
 }
 
-function Subsection({ title, children }: { title: string; children: ComponentChildren }) {
+function Subsection({
+  id,
+  title,
+  children,
+}: {
+  id?: string;
+  title: string;
+  children: ComponentChildren;
+}) {
   return (
-    <div class="flex flex-col gap-3.5">
+    <div id={id} class="flex flex-col gap-3.5 scroll-mt-6">
       <h3 class="text-base font-medium tracking-[-0.005em] text-ink m-0">{title}</h3>
       {children}
     </div>
