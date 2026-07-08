@@ -249,6 +249,8 @@ app.get("/api", (c) =>
       createScan: "POST /api/v1/scans { stageId }",
       scans: "GET /api/v1/scans",
       scanDetail: "GET /api/v1/scans/:id",
+      detonate:
+        "POST /api/v1/scans/:id/detonate (advisory dynamic analysis in a Cloudflare Container; flag-gated, default-off)",
       stagedPublishes: "POST /api/v1/staged-publishes/scan",
       npmConnection: "GET/POST/DELETE /api/v1/npm-connection; POST /api/v1/npm-connection/validate",
       organizations:

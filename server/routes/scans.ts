@@ -35,6 +35,13 @@ import {
 } from "../lib/compare-cache";
 import { rateLimitResponse } from "../lib/http";
 import {
+  bindingDispatcher,
+  detonationFindings,
+  detonationInputFromFiles,
+  isDetonationEnabled,
+  parseDetonationReport,
+} from "../lib/detonation";
+import {
   allowInsecureLocalRegistry,
   decryptNpmToken,
   getOrganizationNpmToken,
@@ -266,6 +273,119 @@ scansRoutes.post("/:id/decision", async (c) => {
 
   return c.json(updated);
 });
+
+// Dynamic analysis of a completed scan's package. The Worker never executes
+// package code (the isolate can't, and it's a core non-negotiable): it dispatches
+// the already-reviewed, credential-free file bytes to a separate Cloudflare
+// Container (the DETONATION binding), validates the returned report, and returns
+// advisory findings. Flag-gated per organization (default-off) and elevated to
+// owner/admin because it spends real compute. See docs/detonation.md.
+scansRoutes.post("/:id/detonate", async (c) => {
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
+  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
+  if (!(await isDetonationEnabled(c.env, organizationId))) {
+    return c.json({ error: "detonation is not enabled for this organization" }, 403);
+  }
+  if (!c.env.DETONATION) {
+    return c.json({ error: "detonation runtime is not configured" }, 503);
+  }
+
+  try {
+    await enforceRateLimit(db, {
+      key: `detonate:${organizationId}`,
+      limit: 10,
+      windowMs: 60 * 60 * 1000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return rateLimitResponse(c, "detonation rate limit exceeded", err);
+    }
+    throw err;
+  }
+
+  const detail = await getScan(
+    db,
+    c.req.param("id"),
+    organizationId,
+    scanArtifactReadBucket(c.env),
+  );
+  if (!detail) return c.json({ error: "not found" }, 404);
+  if (detail.scan.status !== "complete") {
+    return c.json({ error: "detonation is only available for completed scans" }, 409);
+  }
+
+  const input = detonationInputFromFiles(
+    {
+      name: detail.scan.packageName,
+      version: detail.scan.stagedVersion,
+      ecosystem: detonationEcosystem(detail.scan.summaryJson),
+    },
+    detail.files.map((file) => ({ path: file.path, textSample: file.textSample })),
+  );
+  if (!input) {
+    return c.json({ error: "the reviewed package has no manifest text to detonate" }, 422);
+  }
+
+  const startedAtMs = Date.now();
+  let raw: unknown;
+  try {
+    // Credential-free dispatch: only package bytes cross into the container.
+    raw = await bindingDispatcher(c.env.DETONATION).detonate(input);
+  } catch (err) {
+    emitOperationalEvent("error", "scan.detonation.dispatch_failed", {
+      scanId: detail.scan.id,
+      organizationId,
+      error: describeOperationalError(err),
+    });
+    return c.json({ error: "detonation runtime is unavailable" }, 502);
+  }
+
+  const report = parseDetonationReport(raw);
+  if (!report) {
+    emitOperationalEvent("error", "scan.detonation.invalid_report", {
+      scanId: detail.scan.id,
+      organizationId,
+    });
+    return c.json({ error: "detonation returned an unusable report" }, 502);
+  }
+
+  emitOperationalEvent("info", "scan.detonation.completed", {
+    scanId: detail.scan.id,
+    organizationId,
+    verdict: report.verdict,
+    behaviorCount: report.behaviorCount,
+    durationMs: Date.now() - startedAtMs,
+  });
+  await recordScanEvent(db, {
+    organizationId,
+    actorUserId: session.userId,
+    scanId: detail.scan.id,
+    type: "scan.detonated",
+    metadata: { verdict: report.verdict, behaviorCount: report.behaviorCount },
+  });
+
+  // Advisory only — returned as its own list, never folded into the
+  // deterministic risk decision.
+  return c.json({
+    detonation: { verdict: report.verdict, advisory: true, findings: detonationFindings(report) },
+  });
+});
+
+function detonationEcosystem(summaryJson: unknown): string {
+  if (summaryJson && typeof summaryJson === "object" && !Array.isArray(summaryJson)) {
+    const stagedPublish = (summaryJson as { stagedPublish?: unknown }).stagedPublish;
+    if (stagedPublish && typeof stagedPublish === "object" && !Array.isArray(stagedPublish)) {
+      const provenance = (stagedPublish as { provenance?: unknown }).provenance;
+      if (provenance && typeof provenance === "object" && !Array.isArray(provenance)) {
+        const ecosystem = (provenance as { ecosystem?: unknown }).ecosystem;
+        if (typeof ecosystem === "string") return ecosystem;
+      }
+    }
+  }
+  return "npm";
+}
 
 scansRoutes.delete("/:id", async (c) => {
   const db = createDb(c.env.DB);

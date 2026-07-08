@@ -17,6 +17,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`workflow-gates.md`](./workflow-gates.md) — GitHub Environment gate flow for PyPI, npm, and VS Code workflow-gated releases.
 - [`diff-baseline.md`](./diff-baseline.md) — default previous-version comparison strategy.
 - [`artifact-storage.md`](./artifact-storage.md) — D1/R2 report and artifact persistence.
+- [`detonation.md`](./detonation.md) — advisory dynamic analysis in a Cloudflare Container (default-off).
 
 ## Operations and setup
 

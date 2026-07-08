@@ -22,9 +22,10 @@ Drydock handles hostile package artifacts, private review evidence, and npm cred
 ## Non-negotiable boundaries
 
 - **No approval automation.** Drydock must not run `npm stage approve`, collect npm 2FA codes, publish packages, or represent AI output as release approval.
-- **No package execution.** Do not execute package code, install dependencies, run lifecycle scripts, import modules, run builds, invoke shells, or render package-provided active content.
+- **No package execution in the Worker or the parsing sandbox.** Do not execute package code, install dependencies, run lifecycle scripts, import modules, run builds, invoke shells, or render package-provided active content. The one place execution is allowed is the _optional, default-off_ detonation container — a separate Cloudflare Container, never the Worker or the parsing sandbox — which runs credential-free and produces advisory-only findings. See [`detonation.md`](./detonation.md).
 - **No npm token in the sandbox.** The Dynamic Worker must never receive npm token material. Only `NpmStageGateway` may attach npm authorization, and only for allowlisted npm registry endpoints.
 - **AI is advisory and on by default.** Workers AI runs behind the per-organization Flagship `ai-review` killswitch; set the flag to false to disable it for an organization or globally. Deterministic findings remain authoritative and cannot be downgraded by AI output.
+- **Detonation is advisory and default-off.** Dynamic analysis is gated by the per-organization Flagship `detonation` flag, runs in a separate credential-free Cloudflare Container, and its report is re-validated as untrusted input. Detonation findings are advisory and cannot downgrade deterministic findings.
 - **Fail closed.** Artifact acquisition, validation, parsing, report generation, workflow-gate callback, and credential checks must block/reject on uncertainty rather than silently approving.
 
 ## Credential posture

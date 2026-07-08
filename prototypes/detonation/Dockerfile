@@ -16,7 +16,12 @@ COPY src ./src
 
 USER detonation
 
-# The package under review is bind-mounted read-only at /pkg; the report is
-# written to the bind-mounted /out. Overridden by buildDockerArgs at run time.
-ENTRYPOINT ["node", "bin/detonate.mjs"]
-CMD ["--package", "/pkg", "--mode", "local", "--out", "/out/detonation-report.json"]
+# Two entrypoints:
+#   * As a service (the Cloudflare Container wiring): an HTTP server the Worker
+#     POSTs reviewed file bytes to. This is the default.
+#   * As a one-shot CLI: `docker run ... node bin/detonate.mjs --package /pkg`
+#     (see buildDockerArgs in src/harness.mjs).
+EXPOSE 8080
+ENV PORT=8080
+ENTRYPOINT ["node"]
+CMD ["src/server.mjs"]
