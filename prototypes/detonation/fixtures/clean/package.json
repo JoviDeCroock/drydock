@@ -1,0 +1,9 @@
+{
+  "name": "clean-package",
+  "version": "2.1.0",
+  "description": "A normal package whose postinstall only writes a build artifact inside its own directory. The harness must report it clean (no false positives).",
+  "private": true,
+  "scripts": {
+    "postinstall": "node build.js"
+  }
+}

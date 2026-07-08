@@ -1,0 +1,9 @@
+{
+  "name": "benign-suspicious",
+  "version": "1.0.0",
+  "description": "Harmless fixture that SIMULATES an install-time credential-theft attack against the detonation harness. Every action targets the local sink or fake canaries — nothing leaves the machine.",
+  "private": true,
+  "scripts": {
+    "postinstall": "node install.js"
+  }
+}

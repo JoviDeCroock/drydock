@@ -1,0 +1,19 @@
+{
+  "name": "@drydock/detonation-prototype",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Standalone dynamic-analysis prototype for Drydock proposal #7. NOT part of the Worker deploy target and never imported by it.",
+  "bin": {
+    "detonate": "./bin/detonate.mjs"
+  },
+  "scripts": {
+    "detonate": "node bin/detonate.mjs",
+    "demo": "node bin/detonate.mjs --fixture benign-suspicious",
+    "demo:clean": "node bin/detonate.mjs --fixture clean",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

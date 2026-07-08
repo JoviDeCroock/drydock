@@ -55,6 +55,7 @@
     "node_modules/**",
     "worker-configuration.d.ts",
     "**/*.d.ts",
-    "test/fixtures/oxlint-signals/**"
+    "test/fixtures/oxlint-signals/**",
+    "prototypes/**"
   ]
 }
