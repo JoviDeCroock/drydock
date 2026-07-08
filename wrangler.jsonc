@@ -52,13 +52,13 @@
 			"image": "./prototypes/detonation/Dockerfile",
 			"image_build_context": "./prototypes/detonation",
 			"max_instances": 3,
-			"instance_type": "standard"
+			"instance_type": "standard-1"
 		}
 	],
 	"durable_objects": {
 		"bindings": [
 			{
-				"binding": "DETONATION",
+				"name": "DETONATION",
 				"class_name": "DetonationContainer"
 			}
 		]
