@@ -56,38 +56,59 @@ provisioned), `409` (scan not complete), `422` (no manifest text to detonate),
 
 ## Deployment
 
-The wiring is in the repo:
+The wiring is in the repo and ready; the container is **not provisioned in the
+deployed `wrangler.jsonc`** because that requires Cloudflare Containers enabled
+on the account (a Docker image build in the deploy pipeline), which the
+production Workers build does not currently support. The Worker therefore
+deploys cleanly and the feature stays inert (route `503`) until it is provisioned.
 
-- **Container** — `prototypes/detonation` (its `Dockerfile` serves the harness
-  over HTTP at `/detonate` on port 8080). Declared as the `drydock-detonation`
-  container in `wrangler.jsonc`, built from that Dockerfile.
-- **Durable Object** — `DetonationContainer` (`server/detonation-container.ts`,
-  extending the `@cloudflare/containers` `Container` base) manages the container
-  instances and forwards `fetch` to port 8080. Exported from `server/index.ts`
-  and bound as `DETONATION` with a `new_sqlite_classes` migration.
-- **Worker** — `server/lib/detonation-binding.ts` resolves a container stub via
-  `getContainer` and drives it through the dispatcher; `server/lib/detonation.ts`
-  validates and maps the report.
+Present in the repo already:
 
-Operator steps to turn it on:
+- **Container image** — `prototypes/detonation` (its `Dockerfile` serves the
+  harness over HTTP at `/detonate` on port 8080).
+- **Durable Object class** — `DetonationContainer`
+  (`server/detonation-container.ts`, extending the `@cloudflare/containers`
+  `Container` base), forwarding `fetch` to port 8080.
+- **Worker orchestration** — `server/lib/detonation-binding.ts` resolves a
+  container stub via `getContainer`; `server/lib/detonation.ts` validates and
+  maps the report; the route in `server/routes/scans.ts`.
 
-1. Deploy with Cloudflare Containers enabled on the account (`wrangler deploy`
-   builds and pushes the image — Docker must be available).
-2. Enable the `detonation` Flagship flag for the organizations that should have it.
+To provision it (requires Cloudflare Containers on the account + Docker in the
+deploy pipeline):
 
-**Operational note:** because `wrangler.jsonc` now declares a `containers` app,
-`wrangler deploy` (and container-aware `wrangler dev`) require a running Docker
-daemon to build the image. If that disrupts an environment that doesn't need
-detonation, remove the `containers` block (and the `DETONATION` Durable Object
-binding) — the feature fails inert: `isDetonationEnabled` short-circuits and the
-route returns `503` when the binding is absent.
+1. Re-add the `DetonationContainer` export in `server/index.ts`.
+2. Add this block to `wrangler.jsonc` (note: DO bindings use `name`, and the
+   instance type is `standard-1`):
+
+   ```jsonc
+   {
+     "containers": [
+       {
+         "name": "drydock-detonation",
+         "class_name": "DetonationContainer",
+         "image": "./prototypes/detonation/Dockerfile",
+         "image_build_context": "./prototypes/detonation",
+         "max_instances": 3,
+         "instance_type": "standard-1",
+       },
+     ],
+     "durable_objects": {
+       "bindings": [{ "name": "DETONATION", "class_name": "DetonationContainer" }],
+     },
+     "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DetonationContainer"] }],
+   }
+   ```
+
+3. `wrangler deploy` (builds + pushes the image), then enable the `detonation`
+   Flagship flag for the organizations that should have it.
 
 ## Status
 
 The Worker-side orchestration, report validation, advisory mapping, route, flag
-gate, the Durable Object + container binding, and the containerized service are
-implemented and tested (`test/workers/detonation-route.test.ts`,
-`prototypes/detonation/test`). The detonation engine itself is the prototype in
-`prototypes/detonation` (see its README for the roadmap: real dependency install
-inside the container, micro-VM isolation, syscall-level capture, more
-ecosystems).
+gate, the Durable Object class + container-binding code, and the containerized
+service are implemented and tested (`test/workers/detonation-route.test.ts`,
+`prototypes/detonation/test`). The only step gated on the environment is
+provisioning the container in the deploy config (above). The detonation engine
+itself is the prototype in `prototypes/detonation` (see its README for the
+roadmap: real dependency install inside the container, micro-VM isolation,
+syscall-level capture, more ecosystems).

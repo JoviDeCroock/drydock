@@ -49,9 +49,12 @@ import type { Bindings, Variables } from "./types";
 
 export { NpmStageGateway } from "./lib/sandbox";
 export { NpmAdapterBroker } from "./lib/adapters/npm";
-// Durable Object that fronts the detonation Cloudflare Container. Exported so
-// the `DETONATION` binding + `containers` config in wrangler.jsonc resolve.
-export { DetonationContainer } from "./detonation-container";
+// NOTE: `DetonationContainer` (server/detonation-container.ts) is intentionally
+// NOT exported here. Exporting a container-backed Durable Object requires the
+// matching `containers` + `durable_objects` + migration config in
+// wrangler.jsonc, which needs Cloudflare Containers enabled on the account.
+// Re-add this export together with that config to provision detonation — see
+// docs/detonation.md. The feature stays inert (route 503) until then.
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 const CANONICAL_HOSTNAME = "drydock.org";

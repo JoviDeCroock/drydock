@@ -40,35 +40,13 @@
 			"migrations_dir": "drizzle"
 		}
 	],
-	// Detonation runs a package's install lifecycle in a container — the Worker
-	// never executes package code. Advisory + default-off behind the `detonation`
-	// Flagship flag. Requires Cloudflare Containers + Docker to build the image;
-	// see docs/detonation.md. The DETONATION binding is the DO namespace that
-	// manages the container instances.
-	"containers": [
-		{
-			"name": "drydock-detonation",
-			"class_name": "DetonationContainer",
-			"image": "./prototypes/detonation/Dockerfile",
-			"image_build_context": "./prototypes/detonation",
-			"max_instances": 3,
-			"instance_type": "standard-1"
-		}
-	],
-	"durable_objects": {
-		"bindings": [
-			{
-				"name": "DETONATION",
-				"class_name": "DetonationContainer"
-			}
-		]
-	},
-	"migrations": [
-		{
-			"tag": "v1",
-			"new_sqlite_classes": ["DetonationContainer"]
-		}
-	],
+	// Detonation (dynamic analysis) is wired in code but NOT provisioned here:
+	// its `containers` + Durable Object + migration config requires Cloudflare
+	// Containers enabled on the account (a Docker image build in the deploy
+	// pipeline), which the production Workers build does not currently support.
+	// The exact block to add once Containers is enabled lives in
+	// docs/detonation.md. Until then the feature is inert — the route returns 503
+	// because the DETONATION binding is absent — so the Worker deploys cleanly.
 	"kv_namespaces": [
 		{
 			"binding": "COMPARE_CACHE",
