@@ -25,6 +25,13 @@ function str(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
+function summarizePackageVersion(m: Record<string, unknown>): string | null {
+  const pkg = str(m.packageName);
+  const version = str(m.stagedVersion);
+  if (pkg && version) return `${pkg}@${version}`;
+  return pkg ?? version;
+}
+
 const REGISTRY: Record<string, AuditEventDef> = {
   // ── Release decisions ────────────────────────────────────────────────────
   "scan.decided": {
@@ -97,6 +104,18 @@ const REGISTRY: Record<string, AuditEventDef> = {
   },
 
   // ── Security / policy ────────────────────────────────────────────────────
+  "scan.share_enabled": {
+    category: "security",
+    label: "Public report link created",
+    severity: "security",
+    summarize: summarizePackageVersion,
+  },
+  "scan.share_revoked": {
+    category: "security",
+    label: "Public report link revoked",
+    severity: "notice",
+    summarize: summarizePackageVersion,
+  },
   "organization.release_two_factor_changed": {
     category: "security",
     label: "Release two-factor policy changed",

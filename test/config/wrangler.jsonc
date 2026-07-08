@@ -9,6 +9,8 @@
     "AI_CACHE_AFFINITY": "staged-publish-review-test",
     "NPM_REGISTRY": "https://registry.npmjs.org",
     "NPM_CONNECTIONS_ENCRYPTION_KEY": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    // Test-only Ed25519 key. Never reuse outside the test suite.
+    "ATTESTATION_SIGNING_KEY_JWK": "{\"key_ops\":[\"sign\"],\"ext\":true,\"crv\":\"Ed25519\",\"d\":\"J6YiVpORRbCs56rOCRX0uRp9GOeFdi5YQYkIFs54wsw\",\"x\":\"9nXUGhrSwQW5BU6JO0E7hWIDmsBCMnDcKgt72BnDLIQ\",\"kty\":\"OKP\"}",
     "SLACK_CLIENT_ID": "test-slack-client-id",
     "SLACK_CLIENT_SECRET": "test-slack-client-secret",
   },

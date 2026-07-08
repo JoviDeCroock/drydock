@@ -5,7 +5,7 @@ import type {
   FindingDiffStatus,
   PackageJsonSummary,
 } from "../../server/lib/review";
-import { apiFetch, apiJson, errorMessage } from "./api";
+import { ApiError, apiFetch, apiJson, errorMessage } from "./api";
 import {
   decideWorkflowGate,
   getWorkflowGateByScan,
@@ -89,6 +89,8 @@ export interface PersistedScanDetail {
     errorJson?: unknown;
     reportVersion?: number | null;
     reportDigest?: string | null;
+    publicShareToken?: string | null;
+    publicSharedAt?: string | number | Date | null;
     startedAt?: string | number | Date | null;
     completedAt?: string | number | Date | null;
   };
@@ -195,6 +197,30 @@ function getScanCompareFile(
   return apiFetch<ScanCompareFileResponse>(
     `/api/v1/scans/${encodeURIComponent(id)}/compare/file${query}`,
   );
+}
+
+export interface PublicShareInfo {
+  token: string;
+  url: string;
+  sharedAt: string | number | Date;
+}
+
+export function enableScanShare(id: string): Promise<{ share: PublicShareInfo }> {
+  return apiJson<{ share: PublicShareInfo }>(`/api/v1/scans/${encodeURIComponent(id)}/share`, {});
+}
+
+export function revokeScanShare(id: string): Promise<{ revoked: boolean }> {
+  return apiFetch<{ revoked: boolean }>(`/api/v1/scans/${encodeURIComponent(id)}/share`, {
+    method: "DELETE",
+  });
+}
+
+export function publicReportUrl(token: string): string {
+  return `${location.origin}/reports/${token}`;
+}
+
+export function publicReportAttestationUrl(token: string): string {
+  return `${location.origin}/public/reports/${encodeURIComponent(token)}/attestation`;
 }
 
 export type DecisionStatus = "idle" | "saving" | "error";
@@ -389,6 +415,13 @@ export const ScanDetailModel = createModel((id: string) => {
   const decisionError = signal<string | null>(null);
   const deleteStatus = signal<DeleteStatus>("idle");
   const deleteError = signal<string | null>(null);
+  // Public share link state lives in its own signal (not derived from `detail`)
+  // so the share dialog's enable/revoke round-trip re-renders only the dialog
+  // host — mutating `detail` re-renders the whole page, including the
+  // per-finding risk list (see the dialog-host comment in ScanDetail).
+  const share = signal<PublicShareInfo | null>(null);
+  const shareStatus = signal<DecisionStatus>("idle");
+  const shareError = signal<string | null>(null);
   const gate = signal<PublicWorkflowGate | null>(null);
   const gateLoaded = signal(false);
   const gateDecisionStatus = signal<DecisionStatus>("idle");
@@ -521,6 +554,9 @@ export const ScanDetailModel = createModel((id: string) => {
     decisionError,
     deleteStatus,
     deleteError,
+    share,
+    shareStatus,
+    shareError,
     gate,
     gateLoaded,
     gateDecisionStatus,
@@ -537,12 +573,49 @@ export const ScanDetailModel = createModel((id: string) => {
       const id = this.scanId.peek();
       try {
         const data = await getScan(id);
-        this.detail.value = data;
-        if (this.selectedPath.peek() === null) {
-          this.selectedPath.value = pickInitialPath(data);
-        }
+        batch(() => {
+          this.detail.value = data;
+          this.share.value = data.scan.publicShareToken
+            ? {
+                token: data.scan.publicShareToken,
+                url: publicReportUrl(data.scan.publicShareToken),
+                sharedAt: data.scan.publicSharedAt ?? data.scan.updatedAt,
+              }
+            : null;
+          if (this.selectedPath.peek() === null) {
+            this.selectedPath.value = pickInitialPath(data);
+          }
+        });
       } catch (err) {
         this.error.value = errorMessage(err);
+      }
+    },
+
+    async enableShare(): Promise<void> {
+      const id = this.scanId.peek();
+      this.shareStatus.value = "saving";
+      this.shareError.value = null;
+      try {
+        const { share } = await enableScanShare(id);
+        this.share.value = share;
+        this.shareStatus.value = "idle";
+      } catch (err) {
+        this.shareError.value = shareErrorMessage(err);
+        this.shareStatus.value = "error";
+      }
+    },
+
+    async revokeShare(): Promise<void> {
+      const id = this.scanId.peek();
+      this.shareStatus.value = "saving";
+      this.shareError.value = null;
+      try {
+        await revokeScanShare(id);
+        this.share.value = null;
+        this.shareStatus.value = "idle";
+      } catch (err) {
+        this.shareError.value = shareErrorMessage(err);
+        this.shareStatus.value = "error";
       }
     },
 
@@ -709,6 +782,15 @@ export const ScanDetailModel = createModel((id: string) => {
 });
 
 export type ScanDetailModelInstance = InstanceType<typeof ScanDetailModel>;
+
+// The server returns a bare 403 for non-owner/admin members; translate it into
+// the actionable sentence before it reaches the dialog.
+function shareErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.status === 403) {
+    return "Only organization owners and admins can manage public links.";
+  }
+  return errorMessage(err);
+}
 
 function pickInitialPath(data: PersistedScanDetail): string | null {
   return (

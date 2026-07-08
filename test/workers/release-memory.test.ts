@@ -439,7 +439,10 @@ describe("release memory exposure (API + report export)", () => {
     const res = await fetchWithSession(app, `/api/v1/scans/${withField.scanId}/report.json`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { releaseConsistency: unknown };
-    expect(body.releaseConsistency).toEqual(releaseConsistency);
+    // The export strips priorScanId — an org-internal reference the export's
+    // consumers (including public share links) have no use for.
+    const { priorScanId: _priorScanId, ...exportedShape } = releaseConsistency;
+    expect(body.releaseConsistency).toEqual(exportedShape);
 
     const legacy = await fetchWithSession(app, `/api/v1/scans/${withoutField.scanId}/report.json`);
     expect(legacy.status).toBe(200);

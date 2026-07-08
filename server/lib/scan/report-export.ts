@@ -18,7 +18,7 @@ interface ReportExportFilenameInput {
 
 // Schema tag for the exported report document. Bump the suffix when the export
 // shape changes in a way consumers must branch on.
-const REPORT_EXPORT_SCHEMA = "drydock.report.v1";
+export const REPORT_EXPORT_SCHEMA = "drydock.report.v1";
 
 // Build a self-contained, archivable view of a completed review from the data
 // already persisted for it: provenance metadata, package/baseline identity, the
@@ -65,7 +65,7 @@ export function buildReportExport(detail: ScanDetail) {
     riskSummary: detail.riskSummary ?? null,
     // Advisory release-memory signal. Additive + optional: scans that predate
     // the field (or persisted a malformed blob) export null.
-    releaseConsistency: normalizeReleaseConsistency(summary.releaseConsistency),
+    releaseConsistency: exportReleaseConsistency(summary.releaseConsistency),
     packageJsonDiff: summary.packageJsonDiff ?? null,
     diff: summary.diff ?? null,
     // Deterministic findings only. A completed AI review's findings are carried
@@ -140,6 +140,16 @@ function toIso(value: unknown): string | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// The export drops `priorScanId`: it is an org-internal dashboard affordance
+// referencing a scan the org never chose to share, and these bytes are served
+// verbatim on the public report route.
+function exportReleaseConsistency(raw: unknown) {
+  const consistency = normalizeReleaseConsistency(raw);
+  if (!consistency) return null;
+  const { priorScanId: _priorScanId, ...exported } = consistency;
+  return exported;
 }
 
 // Pull the provenance block out of the persisted, adapter-shaped staged details.

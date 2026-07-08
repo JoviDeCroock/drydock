@@ -43,6 +43,7 @@ import {
 import { auditRoutes } from "./routes/audit";
 import { githubAppRoutes } from "./routes/github-app";
 import { githubWebhookRoutes } from "./routes/github-webhooks";
+import { publicReportsRoutes } from "./routes/public-reports";
 import { npmConnectionRoutes } from "./routes/npm-connection";
 import { organizationMembersRoutes } from "./routes/organization-members";
 import { ogRoutes } from "./routes/og";
@@ -59,7 +60,7 @@ export { NpmAdapterBroker } from "./lib/ecosystems/npm";
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 const CANONICAL_HOSTNAME = "drydock.org";
 const LEGACY_HOSTNAME = "drydock.resynapse.dev";
-const SERVER_OWNED_PATH_PREFIXES = ["/api", "/webhooks", "/og"];
+const SERVER_OWNED_PATH_PREFIXES = ["/api", "/webhooks", "/og", "/public"];
 const DASHBOARD_STATIC_ASSET_PATHS = new Set([
   "/dashboard",
   "/dashboard/",
@@ -109,7 +110,10 @@ function applySecurityHeaders(c: { res: Response; req: { path: string } }) {
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
   // Worker-owned routes carry the locked-down API policy; static asset responses
   // fetched through the ASSETS binding keep the document policy.
-  headers.set("Content-Security-Policy", c.req.path.startsWith("/api/") ? API_CSP : DOCUMENT_CSP);
+  headers.set(
+    "Content-Security-Policy",
+    c.req.path.startsWith("/api/") || c.req.path.startsWith("/public/") ? API_CSP : DOCUMENT_CSP,
+  );
 
   c.res = new Response(c.res.body, {
     status: c.res.status,
@@ -148,6 +152,11 @@ app.route("/api/public/v1/package-diff", publicDiffRoutes);
 // crawlers fetch a plain image URL, and before the auth middleware for the same
 // reason the diff API is: an unfurl has no session and must not need one.
 app.route("/og", ogRoutes);
+
+// Publicly shared scan reports are capability-URLs: the unguessable share
+// token (opted into by an org owner/admin) is the trust boundary, so these
+// mount before the auth middleware too. Rate-limited per IP inside the routes.
+app.route("/public", publicReportsRoutes);
 
 app.use("/api/*", async (c, next) => {
   try {
@@ -271,6 +280,8 @@ app.get("/api", (c) =>
       githubWebhooks: "POST /webhooks/github (signed by GitHub App webhook secret)",
       publicPackageDiff:
         "GET /api/public/v1/package-diff?package&from&to[&ecosystem=npm|pypi]; GET /api/public/v1/package-diff/versions?package[&ecosystem]; GET /api/public/v1/package-diff/file?package&from&to&path[&ecosystem] (anonymous, IP rate-limited, public registry data only; on npm, from/to also accept pkg.pr.new preview URLs)",
+      publicReports:
+        "POST/DELETE /api/v1/scans/:id/share; GET /public/reports/:token; GET /public/reports/:token/attestation; GET /public/attestation-key (share token is the capability; no auth)",
       slack:
         "GET /api/v1/slack; POST /api/v1/slack/connect; GET /api/v1/slack/callback; GET /api/v1/slack/channels; PUT /api/v1/slack/channel; PATCH /api/v1/slack; DELETE /api/v1/slack; POST /api/v1/slack/test",
       health: "GET /api/health",
