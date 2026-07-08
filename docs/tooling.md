@@ -14,7 +14,7 @@
 | `pnpm run lint:fix`     | Apply oxlint autofixes.                                                                                                                                                                                           |
 | `pnpm run format`       | Rewrite files with oxfmt.                                                                                                                                                                                         |
 | `pnpm run format:check` | Report files that would change without writing.                                                                                                                                                                   |
-| `pnpm run test`         | Node logic tests (`test/**`) plus D1-backed worker tests (`test/workers/**`) via `scripts/test.mjs`; the node project and four isolated worker shards run in parallel.                                            |
+| `pnpm run test`         | Node logic tests (`test/**`) plus D1-backed worker tests (`test/workers/**`) via `scripts/test.mjs`; the node and workers projects run as two parallel Vitest processes.                                          |
 | `pnpm run test:node`    | Just the node logic suite (`vitest run --project node`).                                                                                                                                                          |
 | `pnpm run test:workers` | Just the worker suite (`vitest run --project workers`; Miniflare D1 from `wrangler.test.jsonc` + `drizzle/`).                                                                                                     |
 | `pnpm run e2e:fixtures` | Pack local E2E fixture packages and generate `.context/e2e-registry/registry.json`.                                                                                                                               |
@@ -32,15 +32,24 @@ observability coverage by change type.
 
 ## Worker-suite performance
 
-The `workers` Vitest project runs every test file in its own Miniflare isolate,
-so every per-file startup cost is multiplied across the suite. Two deliberate
-choices keep it fast:
+Importing the server module graph into a fresh workerd isolate costs ~5s per
+test file (every module is fetched individually over the pool's module-fallback
+socket), so the suite's wall time is dominated by how often that import is
+repeated — not by the tests themselves. Deliberate choices that keep it fast:
 
-- **`pnpm run test` shards worker files across four Vitest processes.** Each
-  shard keeps default per-file isolation, so cross-file mocks and D1 fixtures do
-  not leak, while the expensive Worker import/transform work overlaps across
-  CPU cores. `pnpm run test:workers` remains the unsharded single-project
-  command for focused debugging.
+- **Pool workers are reused across test files.** `vitest.workers.config.ts`
+  sets `isolate: false` with `maxWorkers: 3`, so the module graph is imported
+  once per pool worker instead of once per file. More workers means more
+  redundant imports, so raising `maxWorkers` makes the suite _slower_. To keep
+  the per-file clean-database semantics tests are written against,
+  `test/workers/setup.ts` wipes all D1 tables and R2 objects in a `beforeAll`
+  before re-applying migrations — files on a worker run sequentially, so the
+  reset cannot race another file. Consequence: a worker test must not assert
+  against state it did not create _within its own file_, and tests that sweep
+  globally (e.g. the discovery cron) rely on that per-file reset.
+- **The node project uses the `threads` pool** (per-file isolation kept, since
+  several files `vi.mock` the same modules) to skip the default forks pool's
+  per-file process spawn.
 - **`wrangler.test.jsonc` has no `main`.** The worker tests don't use `SELF` —
   they `import worker from "../../server/index"` and call `worker.fetch(req, env, ctx)`
   directly. Setting `main` makes Miniflare eagerly evaluate the whole app graph
