@@ -28,7 +28,13 @@ export async function resolveBundleArtifacts(
 ): Promise<ParsedGateArtifact[]> {
   return mapWithConcurrency(bundle.artifacts, GATE_ARTIFACT_PARSE_CONCURRENCY, async (file) => {
     const lowerPath = file.path.toLowerCase();
-    const format = lowerPath.endsWith(".whl") || lowerPath.endsWith(".vsix") ? "zip" : "tgz";
+    // Wheels stream through the zip reader; VSIX archives are yazl-packed
+    // with data-descriptor entries and must take the buffered CD-first path.
+    const format = lowerPath.endsWith(".vsix")
+      ? "vsix"
+      : lowerPath.endsWith(".whl")
+        ? "zip"
+        : "tgz";
     const parsed = await downloadInSandboxInline(env, ctx, { bytes: file.bytes, format });
     const contents = { files: parsed.files, packageJson: parsed.packageJson ?? null };
 

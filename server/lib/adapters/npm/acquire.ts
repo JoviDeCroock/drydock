@@ -89,9 +89,11 @@ export async function acquireBaselineNpm(
   } catch (err) {
     // A baseline the sandbox rejects on a safety limit degrades to a no-baseline
     // scan (the staged artifact still gets fully reviewed) instead of failing the
-    // whole scan — prepackaged-binary packages routinely publish multi-hundred-MB
-    // tarballs. The reason names the actual limit so operators are not told
-    // "too large" when the baseline instead had too many entries.
+    // whole scan. The baseline streams through the sandbox without parent
+    // buffering, so the size branch only fires past the decompressed stream cap
+    // (SANDBOX_MAX_STREAM_TAR_BYTES). The reason names the actual limit so
+    // operators are not told "too large" when the baseline instead had too many
+    // entries.
     const limit = baselineSafetyLimit(err);
     if (limit) {
       return {

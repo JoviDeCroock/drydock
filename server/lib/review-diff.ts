@@ -37,13 +37,12 @@ export function createPackageDiff(
         previousSha256: before.sha256,
         flags: before.flags,
       };
-    if (
-      before &&
-      after &&
-      (before.sha256 !== after.sha256 ||
-        hasUninspectableContent(before) ||
-        hasUninspectableContent(after))
-    ) {
+    // content-skipped bodies are hashed while being discarded, so a real,
+    // equal hash pair proves an uninspected file is byte-identical to the
+    // baseline and it can report as unchanged. A missing hash (legacy
+    // artifacts persisted before skip-hashing) can't prove anything, so it
+    // stays modified — fail visible, not silent.
+    if (before && after && (!bothHashesKnown(before, after) || before.sha256 !== after.sha256)) {
       return {
         path,
         status: "modified",
@@ -66,6 +65,6 @@ export function createPackageDiff(
   });
 }
 
-function hasUninspectableContent(file: FileRecord): boolean {
-  return file.flags.includes("content-skipped");
+function bothHashesKnown(before: FileRecord, after: FileRecord): boolean {
+  return before.sha256 !== "" && after.sha256 !== "";
 }

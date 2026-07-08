@@ -59,9 +59,31 @@ export function normalizeZipPath(rawPath: string | null | undefined): string | n
 export function parsePax(body: Uint8Array): Record<string, string>;
 export function describeNonRegularType(type: string): string;
 export function sha256Hex(bytes: Uint8Array): Promise<string>;
+
+export interface Sha256Digester {
+  update(chunk: Uint8Array): void | Promise<void>;
+  finalize(): Promise<string>;
+}
+export function createSha256Digester(): Sha256Digester;
+
+export interface StreamCursor {
+  fill(target: number): Promise<boolean>;
+  take(count: number): Uint8Array;
+  discard(
+    count: number,
+    sink?: (chunk: Uint8Array) => void | Promise<unknown>,
+  ): Promise<boolean>;
+  cancel(): void;
+  consumed(): number;
+}
+export function createStreamCursor(
+  body: ReadableStream<Uint8Array>,
+  maxStreamBytes: number,
+): StreamCursor;
+
 export function shouldSkipTextSample(path: string): boolean;
 export function summarizeFile(path: string, body: Uint8Array): Promise<ParsedFile>;
-export function summarizeSkippedFile(path: string, size: number): ParsedFile;
+export function summarizeSkippedFile(path: string, size: number, sha256?: string): ParsedFile;
 export function isRetainedManifestPath(path: string | null | undefined): boolean;
 export function isRootManifestPath(path: string | null | undefined): boolean;
 export function tarError(message: string): Error & { tarSafety: true };
@@ -85,6 +107,38 @@ export function readZipArchive(
   maxFiles: number,
   maxArchiveBytes: number,
 ): Promise<ParsedFile[]>;
+export function readZipArchiveBuffered(
+  buffer: ArrayBuffer | Uint8Array,
+  maxFiles: number,
+  maxArchiveBytes: number,
+): Promise<ParsedFile[]>;
+export function boundedByteStream(
+  body: ReadableStream<Uint8Array>,
+  maxBytes: number,
+): ReadableStream<Uint8Array>;
+export function pumpDeflatedZipEntry(
+  cursor: StreamCursor,
+  compressedSize: number,
+  uncompressedSize: number,
+  onChunk: (chunk: Uint8Array) => void | Promise<unknown>,
+): Promise<void>;
+export function digestSkippedZipEntry(
+  cursor: StreamCursor,
+  compressedSize: number,
+  uncompressedSize: number,
+  method: number,
+): Promise<string>;
+export function inflateRetainedZipEntry(
+  cursor: StreamCursor,
+  compressedSize: number,
+  uncompressedSize: number,
+): Promise<Uint8Array>;
+export function readZipStream(
+  body: ReadableStream<Uint8Array> | null,
+  maxFiles: number,
+  maxTarBytes: number,
+  maxStreamBytes: number,
+): Promise<ReadTarResult>;
 export function readStreamBounded(
   body: ReadableStream<Uint8Array> | null,
   maxBytes: number,

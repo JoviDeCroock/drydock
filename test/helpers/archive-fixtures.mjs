@@ -101,21 +101,42 @@ function concat(parts) {
 function zipEntry(entry, localOffset) {
   const name = encoder.encode(entry.path);
   const body = entry.body instanceof Uint8Array ? entry.body : encoder.encode(entry.body ?? "");
-  const compressed = entry.deflate ? new Uint8Array(deflateRawSync(body)) : body;
-  const method = entry.deflate ? 8 : 0;
+  // `rawDeflate` supplies a hand-crafted deflate payload for `body` (e.g. one
+  // padded with empty stored blocks) so adversarial compressed-vs-declared-size
+  // shapes can be built; sizes/method fields still describe `body`.
+  const compressed = entry.rawDeflate
+    ? entry.rawDeflate
+    : entry.deflate
+      ? new Uint8Array(deflateRawSync(body))
+      : body;
+  const method = entry.rawDeflate || entry.deflate ? 8 : 0;
 
-  const local = new Uint8Array(30 + name.length + compressed.length);
+  // `dataDescriptor` mimics yazl-style streamed entries (vsce/VSIX): general
+  // purpose bit 3 set, zeroed sizes in the local header, and a signed data
+  // descriptor after the entry data. The central directory still carries the
+  // real sizes, as in real archives.
+  const descriptor = entry.dataDescriptor ? new Uint8Array(16) : new Uint8Array(0);
+  if (entry.dataDescriptor) {
+    const descriptorView = new DataView(descriptor.buffer);
+    u32(descriptorView, 0, 0x08074b50);
+    u32(descriptorView, 4, 0); // crc (unchecked by the parser, as in buildZip)
+    u32(descriptorView, 8, compressed.length);
+    u32(descriptorView, 12, body.length);
+  }
+
+  const local = new Uint8Array(30 + name.length + compressed.length + descriptor.length);
   const localView = new DataView(local.buffer);
   u32(localView, 0, 0x04034b50);
   u16(localView, 4, 20);
-  u16(localView, 6, 0x0800);
+  u16(localView, 6, entry.dataDescriptor ? 0x0808 : 0x0800);
   u16(localView, 8, method);
   u32(localView, 14, 0);
-  u32(localView, 18, compressed.length);
-  u32(localView, 22, body.length);
+  u32(localView, 18, entry.dataDescriptor ? 0 : compressed.length);
+  u32(localView, 22, entry.dataDescriptor ? 0 : body.length);
   u16(localView, 26, name.length);
   local.set(name, 30);
   local.set(compressed, 30 + name.length);
+  local.set(descriptor, 30 + name.length + compressed.length);
 
   const central = new Uint8Array(46 + name.length);
   const centralView = new DataView(central.buffer);

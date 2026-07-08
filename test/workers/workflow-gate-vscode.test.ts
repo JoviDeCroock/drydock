@@ -119,7 +119,7 @@ describe("VS Code workflow-gate adapter", () => {
       buildCtxWithGateway(),
       bundle,
     );
-    expect(loader.calls).toEqual(["zip"]);
+    expect(loader.calls).toEqual(["vsix"]);
     expect(parsed[0].files.some((file) => file.path === "extension/package.json")).toBe(true);
     const [candidate] = vscodeWorkflowGateAdapter.prepareReleaseCandidates(parsed);
     expect(candidate).toMatchObject({
@@ -203,7 +203,7 @@ describe("prepareReleaseCandidatesForGate · vscode auto-detect", () => {
       runId: 7001,
     });
     stubGithubFetch(7001, ["dist/remote-text-fetcher-1.0.0.vsix"]);
-    const loader = buildFormatLoaderMock({ zip: vscodeSandboxResult() });
+    const loader = buildFormatLoaderMock({ vsix: vscodeSandboxResult() });
     const ctx = buildCtxWithGateway();
     const bindings = configBindings();
     const config = readGithubAppConfig(bindings);
@@ -227,7 +227,7 @@ describe("prepareReleaseCandidatesForGate · vscode auto-detect", () => {
       name: "example.remote-text-fetcher",
       version: "1.0.0",
     });
-    expect(loader.calls).toEqual(["zip"]);
+    expect(loader.calls).toEqual(["vsix"]);
     vi.unstubAllGlobals();
   });
 
@@ -251,7 +251,7 @@ describe("prepareReleaseCandidatesForGate · vscode auto-detect", () => {
         ],
         packageJson: { name: "@scope/alpha", version: "1.0.0" },
       },
-      zip: vscodeSandboxResult(),
+      vsix: vscodeSandboxResult(),
     });
     const ctx = buildCtxWithGateway();
     const bindings = configBindings();
@@ -285,7 +285,7 @@ describe("prepareReleaseCandidatesForGate · vscode auto-detect", () => {
         version: "1.0.0",
       },
     ]);
-    expect(loader.calls.sort()).toEqual(["tgz", "zip"]);
+    expect(loader.calls.sort()).toEqual(["tgz", "vsix"]);
     vi.unstubAllGlobals();
   });
 });
