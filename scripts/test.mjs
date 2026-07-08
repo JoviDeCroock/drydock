@@ -2,23 +2,16 @@ import { spawn } from "node:child_process";
 
 const forwardedArgs = process.argv.slice(2);
 const extraArgs = forwardedArgs[0] === "--" ? forwardedArgs.slice(1) : forwardedArgs;
-const workerShards = 4;
+// The workers project parallelizes internally (reused pool workers, see
+// vitest.workers.config.ts), so it needs no external sharding; running it in
+// one process keeps a single shared Vite transform cache. The node project
+// runs as a separate process so the two suites overlap fully.
 const checks =
   extraArgs.length > 0
     ? [{ name: "vitest", args: ["exec", "vitest", "run", ...extraArgs] }]
     : [
         { name: "node", args: ["exec", "vitest", "run", "--project", "node"] },
-        ...Array.from({ length: workerShards }, (_, index) => ({
-          name: `workers ${index + 1}/${workerShards}`,
-          args: [
-            "exec",
-            "vitest",
-            "run",
-            "--project",
-            "workers",
-            `--shard=${index + 1}/${workerShards}`,
-          ],
-        })),
+        { name: "workers", args: ["exec", "vitest", "run", "--project", "workers"] },
       ];
 
 function runCheck(check) {
