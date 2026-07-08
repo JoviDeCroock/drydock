@@ -1,15 +1,28 @@
 import { Hono, type Context } from "hono";
 import { createDb } from "../db/client";
 import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
-import { resolvePublicShareToken } from "../db/scan-share";
+import {
+  listBadgeCandidateScans,
+  listThreatFeedScans,
+  resolvePublicShareToken,
+} from "../db/scan-share";
 import { getScan } from "../db/scans";
+import {
+  buildBadgePayload,
+  buildThreatFeedEntry,
+  pickBadgeScan,
+  PUBLIC_ECOSYSTEMS,
+  scanEcosystem,
+  THREAT_FEED_SCHEMA,
+  type PublicEcosystem,
+} from "../lib/public-feed";
 import {
   buildAttestationStatement,
   loadAttestationKey,
   sha256Hex,
   signAttestation,
 } from "../lib/attestation";
-import { rateLimitResponse } from "../lib/platform/http";
+import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import {
   buildReportExport,
@@ -52,6 +65,50 @@ publicReportsRoutes.use("*", async (c, next) => {
   });
 });
 
+// The badge and feed are hot, anonymous, and staleness-tolerant (both already
+// declare max-age=300), so they read through the colo cache (caches.default) —
+// the same pattern as the published-tarball byte cache. Report/attestation
+// reads are deliberately NOT cached: revocation must be immediate. Runs before
+// the rate limiter so cache hits never cost a D1 round trip.
+const COLO_CACHED_PATHS = [/^\/badge\//, /^\/threat-feed\.json$/];
+
+// The Workers runtime exposes the colo cache as `caches.default`, but the DOM
+// lib wins the global CacheStorage type in this repo's single tsconfig and
+// doesn't know the property.
+function coloCache(): Cache {
+  return (caches as unknown as { default: Cache }).default;
+}
+
+publicReportsRoutes.use("*", async (c, next) => {
+  if (c.req.method !== "GET") return next();
+  const routePath = new URL(c.req.url).pathname.replace(/^\/public/, "");
+  if (!COLO_CACHED_PATHS.some((re) => re.test(routePath))) return next();
+  // The feed body embeds report URLs built from canonicalOrigin, which falls
+  // back to the request origin when BETTER_AUTH_URL is unset — a cached copy
+  // of a request-derived origin would be a Host-header poisoning vector, so
+  // only cache the feed when the origin is pinned by config.
+  if (routePath.startsWith("/threat-feed") && !c.env.BETTER_AUTH_URL) return next();
+  // Key on the path only: responses never vary by query, so a cache-busting
+  // query string can never force a D1 read-through.
+  const cacheKey = new Request(new URL(c.req.path, c.req.url).origin + c.req.path);
+  let cached: Response | undefined;
+  try {
+    cached = await coloCache().match(cacheKey);
+  } catch {
+    cached = undefined;
+  }
+  if (cached) return cached;
+  await next();
+  if (c.res?.status === 200) {
+    const copy = c.res.clone();
+    c.executionCtx.waitUntil(
+      coloCache()
+        .put(cacheKey, copy)
+        .catch(() => {}),
+    );
+  }
+});
+
 publicReportsRoutes.use("*", async (c, next) => {
   const ip =
     c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
@@ -83,6 +140,59 @@ publicReportsRoutes.get("/attestation-key", async (c) => {
     // (CORS comes from the route-wide middleware above.)
     { "cache-control": "public, max-age=3600" },
   );
+});
+
+// Discoverable index of reports whose org opted into feed listing on top of
+// sharing. Entries link back to the public report; nothing here is served that
+// isn't already reachable through those links.
+publicReportsRoutes.get("/threat-feed.json", async (c) => {
+  const db = createDb(c.env.DB);
+  const rows = await listThreatFeedScans(db);
+  const origin = canonicalOrigin(c);
+  return c.json(
+    {
+      schema: THREAT_FEED_SCHEMA,
+      generatedAt: new Date().toISOString(),
+      entries: rows.map((row) => buildThreatFeedEntry(row, origin)),
+    },
+    200,
+    { "cache-control": "public, max-age=300", "access-control-allow-origin": "*" },
+  );
+});
+
+// shields.io endpoint badge for a package's latest publicly shared review.
+// npm names contain slashes (@scope/name), so the route is a wildcard and the
+// name is everything after the ecosystem segment.
+publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
+  const ecosystem = c.req.param("ecosystem") as PublicEcosystem;
+  if (!PUBLIC_ECOSYSTEMS.includes(ecosystem)) {
+    return c.json({ error: "unknown ecosystem" }, 404);
+  }
+  const marker = `/badge/${ecosystem}/`;
+  const markerIndex = c.req.path.indexOf(marker);
+  const rawName = markerIndex >= 0 ? c.req.path.slice(markerIndex + marker.length) : "";
+  let packageName: string;
+  try {
+    packageName = decodeURIComponent(rawName);
+  } catch {
+    return c.json({ error: "invalid package name" }, 400);
+  }
+  if (!packageName || packageName.length > 214) {
+    return c.json({ error: "invalid package name" }, 400);
+  }
+
+  const db = createDb(c.env.DB);
+  // Feed-listed scans only (a share link alone never makes a scan
+  // name-queryable), the SQL pre-filter re-checked through scanEcosystem, and
+  // registry-verified identity preferred over manifest claims.
+  const rows = await listBadgeCandidateScans(db, packageName, ecosystem);
+  const match = pickBadgeScan(rows.filter((row) => scanEcosystem(row.summaryJson) === ecosystem));
+  // Always 200: shields renders the payload either way, and "not reviewed"
+  // must not read as an error to badge proxies.
+  return c.json(buildBadgePayload(match), 200, {
+    "cache-control": "public, max-age=300",
+    "access-control-allow-origin": "*",
+  });
 });
 
 publicReportsRoutes.get("/reports/:token", async (c) => {

@@ -33,9 +33,9 @@ import {
   stripTextSamples,
   writeCompareMetadataCache,
 } from "../lib/compare-cache";
-import { rateLimitResponse } from "../lib/platform/http";
+import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
 import { workerExecutionContext } from "../lib/platform/execution-context";
-import { enablePublicShare, revokePublicShare } from "../db/scan-share";
+import { enablePublicShare, revokePublicShare, setThreatFeedListing } from "../db/scan-share";
 import {
   allowInsecureLocalRegistry,
   decryptNpmToken,
@@ -315,12 +315,14 @@ scansRoutes.delete("/:id", async (c) => {
 // /public/reports/:token to anyone holding the link — an explicit, elevated
 // opt-in, so it takes owner/admin, not plain membership.
 scansRoutes.post("/:id/share", async (c) => {
+  // `?? {}` also covers a literal `null` body, which json() parses successfully.
+  const body = ((await c.req.json().catch(() => ({}))) ?? {}) as Partial<{ threatFeed: boolean }>;
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
   const { organizationId, role } = await requireActiveOrganizationContext(c, db);
   if (!roleCanManagePublicShares(role)) return c.json({ error: "forbidden" }, 403);
 
-  const share = await enablePublicShare(db, {
+  let share = await enablePublicShare(db, {
     scanId: c.req.param("id"),
     organizationId,
     actorUserId: session.userId,
@@ -329,6 +331,23 @@ scansRoutes.post("/:id/share", async (c) => {
     const existing = await getScanStatus(db, c.req.param("id"), organizationId);
     if (!existing) return c.json({ error: "not found" }, 404);
     return c.json({ error: "only completed scans can be shared publicly" }, 409);
+  }
+  // Threat-feed listing is a second opt-in layered on the link: only flip it
+  // when the caller states an intent, so a plain re-share never (un)lists.
+  if (typeof body.threatFeed === "boolean") {
+    const listedNow = share.publicFeedListedAt !== null;
+    if (body.threatFeed !== listedNow) {
+      const updated = await setThreatFeedListing(db, {
+        scanId: c.req.param("id"),
+        organizationId,
+        actorUserId: session.userId,
+        listed: body.threatFeed,
+      });
+      // A concurrent revoke can void the share between the enable and the
+      // toggle; the stale pre-revoke state must not be reported as current.
+      if (!updated) return c.json({ error: "the share link was just revoked" }, 409);
+      share = updated;
+    }
   }
   return c.json({ share: publicShareResponse(c, share) });
 });
@@ -353,21 +372,13 @@ scansRoutes.delete("/:id/share", async (c) => {
 
 function publicShareResponse(
   c: Context<{ Bindings: Bindings; Variables: Variables }>,
-  share: { publicShareToken: string; publicSharedAt: Date },
+  share: { publicShareToken: string; publicSharedAt: Date; publicFeedListedAt: Date | null },
 ) {
-  // Prefer the canonical origin so copied links don't pin a preview host.
-  const origin = (() => {
-    try {
-      return c.env.BETTER_AUTH_URL ? new URL(c.env.BETTER_AUTH_URL).origin : null;
-    } catch {
-      return null;
-    }
-  })();
-  const base = origin ?? new URL(c.req.url).origin;
   return {
     token: share.publicShareToken,
-    url: `${base}/reports/${share.publicShareToken}`,
+    url: `${canonicalOrigin(c)}/reports/${share.publicShareToken}`,
     sharedAt: share.publicSharedAt,
+    threatFeedListedAt: share.publicFeedListedAt,
   };
 }
 

@@ -454,6 +454,7 @@ export default function ScanDetailPage() {
           errorSignal={model.shareError}
           onEnable={() => void model.enableShare()}
           onRevoke={() => void model.revokeShare()}
+          onSetFeedListing={(listed) => void model.setFeedListing(listed)}
         />
       ) : null}
 

@@ -91,6 +91,7 @@ export interface PersistedScanDetail {
     reportDigest?: string | null;
     publicShareToken?: string | null;
     publicSharedAt?: string | number | Date | null;
+    publicFeedListedAt?: string | number | Date | null;
     startedAt?: string | number | Date | null;
     completedAt?: string | number | Date | null;
   };
@@ -203,10 +204,17 @@ export interface PublicShareInfo {
   token: string;
   url: string;
   sharedAt: string | number | Date;
+  threatFeedListedAt: string | number | Date | null;
 }
 
-function enableScanShare(id: string): Promise<{ share: PublicShareInfo }> {
-  return apiJson<{ share: PublicShareInfo }>(`/api/v1/scans/${encodeURIComponent(id)}/share`, {});
+function enableScanShare(
+  id: string,
+  options: { threatFeed?: boolean } = {},
+): Promise<{ share: PublicShareInfo }> {
+  return apiJson<{ share: PublicShareInfo }>(
+    `/api/v1/scans/${encodeURIComponent(id)}/share`,
+    options,
+  );
 }
 
 function revokeScanShare(id: string): Promise<{ revoked: boolean }> {
@@ -580,6 +588,7 @@ export const ScanDetailModel = createModel((id: string) => {
                 token: data.scan.publicShareToken,
                 url: publicReportUrl(data.scan.publicShareToken),
                 sharedAt: data.scan.publicSharedAt ?? data.scan.updatedAt,
+                threatFeedListedAt: data.scan.publicFeedListedAt ?? null,
               }
             : null;
           if (this.selectedPath.peek() === null) {
@@ -600,6 +609,23 @@ export const ScanDetailModel = createModel((id: string) => {
         this.share.value = share;
         this.shareStatus.value = "idle";
       } catch (err) {
+        this.shareError.value = shareErrorMessage(err);
+        this.shareStatus.value = "error";
+      }
+    },
+
+    async setFeedListing(listed: boolean): Promise<void> {
+      const id = this.scanId.peek();
+      this.shareStatus.value = "saving";
+      this.shareError.value = null;
+      try {
+        const { share } = await enableScanShare(id, { threatFeed: listed });
+        this.share.value = share;
+        this.shareStatus.value = "idle";
+      } catch (err) {
+        // 409 means the link was revoked while the toggle was in flight — drop
+        // the dead share state so the dialog falls back to "create link".
+        if (err instanceof ApiError && err.status === 409) this.share.value = null;
         this.shareError.value = shareErrorMessage(err);
         this.shareStatus.value = "error";
       }

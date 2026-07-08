@@ -1,8 +1,9 @@
-# Public report sharing and attestations
+# Public report sharing, attestations, badges, and the threat feed
 
 Completed scans can be shared outside the organization as a read-only public
 report, with an optional signed attestation that lets anyone verify the report
-bytes came from Drydock.
+bytes came from Drydock. Shared reports also power two discoverable surfaces:
+a shields.io badge per package and an opt-in public threat feed.
 
 ## Share flow
 
@@ -65,6 +66,66 @@ mutable field — `decision`, `riskSummary`, findings) means the digest covers a
 document the consumer never fetched, and verification fails. That is a race, not
 a forgery: re-fetch the report and compare again. An archived pair captured
 together always verifies, which is what matters for the archival use case.
+
+## Badge endpoint
+
+`GET /public/badge/:ecosystem/:package` (ecosystems: `npm`, `pypi`, `vscode`;
+npm names may contain `@scope/` slashes) returns a
+[shields.io endpoint-badge](https://shields.io/badges/endpoint-badge) payload
+for the package's most recent **feed-listed** review:
+
+- Not listed / unknown → `not reviewed` (lightgrey). Always `200` so badge
+  proxies never render an error.
+- Listed → `<version> reviewed · <release risk> risk`, colored green / yellow /
+  red by risk; a `no_publish` decision renders `<version> blocked` (red).
+
+The badge is a name-discoverable index, so it takes the same second opt-in as
+the threat feed — a report shared privately by link never becomes queryable by
+package name. Among listed candidates the newest **registry-verified** review
+wins (see package identity below), so a workflow-gate scan claiming someone
+else's npm name cannot override the real maintainer's badge.
+
+Embed via
+`https://img.shields.io/endpoint?url=<origin>/public/badge/npm/<package>`
+(URL-encode the badge URL).
+
+## Threat feed
+
+`GET /public/threat-feed.json` is a discoverable index (schema
+`drydock.threat-feed.v1`, capped at 100 entries, newest listings first) meant
+for security partners — Aikido and other ecosystem-intel consumers can poll it.
+Each entry carries package identity, ecosystem, release/artifact risk,
+decision, finding count, timestamps, and a `reportUrl` to the full public
+report.
+
+Listing is a **second explicit opt-in** on top of sharing (the checkbox in the
+share dialog, or `POST /api/v1/scans/:id/share { "threatFeed": true|false }`):
+holding a link is capability, appearing in an index is publication, and the two
+must never be conflated. Revoking the share link always unlists the report;
+re-sharing later starts unlisted. Listing changes are audited
+(`scan.feed_listed`, `scan.feed_unlisted`).
+
+### Package identity
+
+Each feed entry carries `packageIdentity`:
+
+- `registry-verified` — staged-publish reviews. The artifact was fetched from
+  the registry with the org's npm token, so the registry proved the org can
+  publish under that name.
+- `manifest-claimed` — workflow-gate reviews. The reviewed artifact is
+  repo-built and its manifest claims the name; nothing verifies ownership yet.
+  Consumers should weigh these accordingly. (Known limitation: post-publish
+  digest verification against the registry would upgrade gate claims; not
+  built yet.)
+
+### Caching
+
+Badge and feed responses read through the per-colo Workers cache
+(`caches.default`, keyed on the path with any query string ignored) and declare
+`max-age=300`, so listing or revocation changes can take up to ~5 minutes to
+propagate to these two surfaces. Report and attestation responses are
+deliberately uncached (`no-store`): revoking a share link takes effect
+immediately.
 
 ## Key management
 

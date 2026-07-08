@@ -16,6 +16,7 @@ export function ShareDialog({
   error,
   onEnable,
   onRevoke,
+  onSetFeedListing,
 }: {
   open: boolean;
   onClose: () => void;
@@ -24,6 +25,7 @@ export function ShareDialog({
   error: string | null;
   onEnable: () => void;
   onRevoke: () => void;
+  onSetFeedListing: (listed: boolean) => void;
 }) {
   const copied = useSignal(false);
   // Rendered directly as a signal child so the copy feedback re-renders only
@@ -95,6 +97,23 @@ export function ShareDialog({
           <EmptyLine>
             Anyone with the link can read the report; revoking invalidates it immediately.
           </EmptyLine>
+          <label class="flex items-start gap-2 text-[13px] text-ink-muted cursor-pointer">
+            <input
+              type="checkbox"
+              class="mt-0.5"
+              checked={share.threatFeedListedAt !== null}
+              disabled={saving}
+              onChange={(e) => onSetFeedListing((e.target as HTMLInputElement).checked)}
+            />
+            <span>
+              List publicly — the report appears in the discoverable{" "}
+              <a href="/public/threat-feed.json" class="text-ink-muted underline hover:text-ink">
+                threat-feed.json
+              </a>{" "}
+              index that security partners consume and powers the package&apos;s status badge, not
+              just behind this link.
+            </span>
+          </label>
         </>
       ) : (
         <EmptyLine>
