@@ -1,4 +1,6 @@
 import type { getScan } from "../db/scans";
+import { parsePersistedAiReview } from "./ai-review-contract";
+import { displayedAiResult } from "./ai-review-types";
 import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "./adapters/types";
 
 // A persisted scan detail, as returned by getScan (never null at the call site).
@@ -49,6 +51,7 @@ export function buildReportExport(detail: ScanDetail) {
     // wheel/sdist/tarball matches what Drydock reviewed. Workflow-gate reviews
     // only; null for staged-publish scans.
     provenance: extractProvenance(summary.stagedPublish),
+    aiReview: extractAiReview(scan.aiJson),
     riskSummary: detail.riskSummary ?? null,
     packageJsonDiff: summary.packageJsonDiff ?? null,
     diff: summary.diff ?? null,
@@ -146,6 +149,41 @@ function extractProvenance(stagedPublish: unknown): ReleaseProvenance | null {
   }
   if (!mapped.length) return null;
   return { ecosystem, mode, artifacts: mapped };
+}
+
+// Route through the display helper so invalid/unavailable fallbacks do not
+// leak the persisted `low` / `not_assessed` placeholders.
+function extractAiReview(aiJson: unknown) {
+  const review = parsePersistedAiReview(aiJson);
+  if (!review) return null;
+  const displayed = displayedAiResult(review);
+  if (!displayed) return null;
+  if (displayed.kind === "complete") {
+    return {
+      status: "complete",
+      model: displayed.model,
+      summary: displayed.summary,
+      risk: displayed.risk,
+      releaseAssessment: displayed.releaseAssessment,
+      requiresManualReview: displayed.requiresManualReview,
+      findings: displayed.findings.map((finding) => ({
+        severity: finding.severity,
+        file: finding.file,
+        evidence: finding.evidence,
+        reason: finding.reason,
+        recommendation: finding.recommendation,
+      })),
+    };
+  }
+  return {
+    status: displayed.status,
+    model: displayed.model,
+    summary: displayed.summary,
+    risk: null,
+    releaseAssessment: null,
+    requiresManualReview: false,
+    findings: [],
+  };
 }
 
 function filenameSegment(value: string | null | undefined): string | null {
