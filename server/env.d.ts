@@ -20,12 +20,13 @@ declare global {
       BETTER_AUTH_URL?: string;
       AUTH_REQUIRED?: string;
       FLAGS?: Flagship;
-      // Detonation container (Cloudflare Containers), reached as a Fetcher via
-      // its Durable Object stub. Optional: absent unless the detonation runtime
-      // is provisioned. The Worker never executes package code itself — it POSTs
-      // reviewed package bytes here and ingests an advisory report. See
-      // docs/detonation.md for the wrangler `containers` + Durable Object config.
-      DETONATION?: Fetcher;
+      // Detonation container (Cloudflare Containers), bound as the Durable
+      // Object namespace that manages the container instances. Resolved to a
+      // container stub via `getContainer` in detonation-binding.ts. Optional:
+      // absent unless the detonation runtime is provisioned. The Worker never
+      // executes package code itself — it POSTs reviewed package bytes to the
+      // container and ingests an advisory report. See docs/detonation.md.
+      DETONATION?: DurableObjectNamespace;
       SEND_EMAIL?: SendEmailBinding;
       EMAIL_FROM_ADDRESS?: string;
       EMAIL_FROM_NAME?: string;

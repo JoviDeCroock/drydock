@@ -34,15 +34,20 @@ async function seedUser(): Promise<SeededUser> {
   return { userId, organizationId };
 }
 
-// A stub detonation container: a Fetcher that returns a canned report, so the
-// route's dispatch/validate/ingest path is exercised without a real container.
-function stubDetonationBinding(handler: (input: unknown) => Response): Fetcher {
-  return {
+// A stub detonation binding: a DurableObjectNamespace whose resolved container
+// stub returns a canned report, so the route's getContainer -> fetch ->
+// validate -> ingest path is exercised without a real container.
+function stubDetonationBinding(handler: (input: unknown) => Response): DurableObjectNamespace {
+  const stub = {
     async fetch(_url: string | Request, init?: RequestInit) {
       const body = init?.body ? JSON.parse(String(init.body)) : null;
       return handler(body);
     },
-  } as unknown as Fetcher;
+  };
+  return {
+    idFromName: () => ({}),
+    get: () => stub,
+  } as unknown as DurableObjectNamespace;
 }
 
 function flag(enabled: boolean): Flagship {
@@ -55,7 +60,7 @@ function flag(enabled: boolean): Flagship {
 
 function buildTestApp(
   session: { userId: string },
-  overrides: { DETONATION?: Fetcher; FLAGS?: Flagship } = {},
+  overrides: { DETONATION?: DurableObjectNamespace; FLAGS?: Flagship } = {},
 ) {
   const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
   app.use("*", async (c, next) => {

@@ -15,8 +15,8 @@ findings are their own list; they never downgrade or gate deterministic findings
 The Worker **never executes package code**. The Workers isolate cannot spawn
 processes, and executing package code in the trusted control plane is a core
 non-negotiable. Detonation therefore runs in a **separate Cloudflare Container**
-(the sacrificial environment), reached from the Worker as a `Fetcher` binding
-(`DETONATION`) via its Durable Object stub:
+(the sacrificial environment). The Worker reaches it through the `DETONATION`
+Durable Object namespace, resolved to a container stub it `fetch`es:
 
 ```text
 Worker (control plane)                         Cloudflare Container (sacrificial)
@@ -56,41 +56,38 @@ provisioned), `409` (scan not complete), `422` (no manifest text to detonate),
 
 ## Deployment
 
-The container image is `prototypes/detonation` (its `Dockerfile` serves the
-harness over HTTP at `/detonate`). Provision it as a Cloudflare Container fronted
-by a Durable Object, and expose that DO to the Worker as the `DETONATION` binding.
-Add to `wrangler.jsonc`:
+The wiring is in the repo:
 
-```jsonc
-{
-  "containers": [
-    {
-      "class_name": "DetonationContainer",
-      "image": "./prototypes/detonation/Dockerfile",
-      "instances": 3,
-      "name": "drydock-detonation",
-    },
-  ],
-  "durable_objects": {
-    "bindings": [{ "class_name": "DetonationContainer", "name": "DETONATION" }],
-  },
-}
-```
+- **Container** — `prototypes/detonation` (its `Dockerfile` serves the harness
+  over HTTP at `/detonate` on port 8080). Declared as the `drydock-detonation`
+  container in `wrangler.jsonc`, built from that Dockerfile.
+- **Durable Object** — `DetonationContainer` (`server/detonation-container.ts`,
+  extending the `@cloudflare/containers` `Container` base) manages the container
+  instances and forwards `fetch` to port 8080. Exported from `server/index.ts`
+  and bound as `DETONATION` with a `new_sqlite_classes` migration.
+- **Worker** — `server/lib/detonation-binding.ts` resolves a container stub via
+  `getContainer` and drives it through the dispatcher; `server/lib/detonation.ts`
+  validates and maps the report.
 
-The Worker exports a thin `DetonationContainer` Durable Object (extending the
-`@cloudflare/containers` `Container` base) that forwards `fetch` to the container
-on port 8080; `server/lib/detonation.ts` calls it through the `Fetcher` interface.
-Enable the `detonation` Flagship flag for the organizations that should have it.
+Operator steps to turn it on:
 
-Without the binding the feature is inert: `isDetonationEnabled` short-circuits and
-the route returns `503`, so shipping this code is safe before the container is
-provisioned.
+1. Deploy with Cloudflare Containers enabled on the account (`wrangler deploy`
+   builds and pushes the image — Docker must be available).
+2. Enable the `detonation` Flagship flag for the organizations that should have it.
+
+**Operational note:** because `wrangler.jsonc` now declares a `containers` app,
+`wrangler deploy` (and container-aware `wrangler dev`) require a running Docker
+daemon to build the image. If that disrupts an environment that doesn't need
+detonation, remove the `containers` block (and the `DETONATION` Durable Object
+binding) — the feature fails inert: `isDetonationEnabled` short-circuits and the
+route returns `503` when the binding is absent.
 
 ## Status
 
 The Worker-side orchestration, report validation, advisory mapping, route, flag
-gate, and the containerized service are implemented and tested
-(`test/workers/detonation-route.test.ts`, `prototypes/detonation/test`). The
-detonation engine itself is the prototype in `prototypes/detonation` (see its
-README for the roadmap: real dependency install inside the container, micro-VM
-isolation, syscall-level capture, more ecosystems).
+gate, the Durable Object + container binding, and the containerized service are
+implemented and tested (`test/workers/detonation-route.test.ts`,
+`prototypes/detonation/test`). The detonation engine itself is the prototype in
+`prototypes/detonation` (see its README for the roadmap: real dependency install
+inside the container, micro-VM isolation, syscall-level capture, more
+ecosystems).

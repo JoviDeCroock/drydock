@@ -49,6 +49,9 @@ import type { Bindings, Variables } from "./types";
 
 export { NpmStageGateway } from "./lib/sandbox";
 export { NpmAdapterBroker } from "./lib/adapters/npm";
+// Durable Object that fronts the detonation Cloudflare Container. Exported so
+// the `DETONATION` binding + `containers` config in wrangler.jsonc resolve.
+export { DetonationContainer } from "./detonation-container";
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 const CANONICAL_HOSTNAME = "drydock.org";

@@ -35,12 +35,12 @@ import {
 } from "../lib/compare-cache";
 import { rateLimitResponse } from "../lib/http";
 import {
-  bindingDispatcher,
   detonationFindings,
   detonationInputFromFiles,
   isDetonationEnabled,
   parseDetonationReport,
 } from "../lib/detonation";
+import { containerDispatcher } from "../lib/detonation-binding";
 import {
   allowInsecureLocalRegistry,
   decryptNpmToken,
@@ -332,7 +332,7 @@ scansRoutes.post("/:id/detonate", async (c) => {
   let raw: unknown;
   try {
     // Credential-free dispatch: only package bytes cross into the container.
-    raw = await bindingDispatcher(c.env.DETONATION).detonate(input);
+    raw = await containerDispatcher(c.env.DETONATION).detonate(input);
   } catch (err) {
     emitOperationalEvent("error", "scan.detonation.dispatch_failed", {
       scanId: detail.scan.id,

@@ -40,6 +40,35 @@
 			"migrations_dir": "drizzle"
 		}
 	],
+	// Detonation runs a package's install lifecycle in a container — the Worker
+	// never executes package code. Advisory + default-off behind the `detonation`
+	// Flagship flag. Requires Cloudflare Containers + Docker to build the image;
+	// see docs/detonation.md. The DETONATION binding is the DO namespace that
+	// manages the container instances.
+	"containers": [
+		{
+			"name": "drydock-detonation",
+			"class_name": "DetonationContainer",
+			"image": "./prototypes/detonation/Dockerfile",
+			"image_build_context": "./prototypes/detonation",
+			"max_instances": 3,
+			"instance_type": "standard"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"binding": "DETONATION",
+				"class_name": "DetonationContainer"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": ["DetonationContainer"]
+		}
+	],
 	"kv_namespaces": [
 		{
 			"binding": "COMPARE_CACHE",
