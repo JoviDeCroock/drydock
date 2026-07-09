@@ -251,7 +251,7 @@ describe("renderSlackMessage", () => {
     expect(message.text).not.toContain("risk");
   });
 
-  test("adds an Open in Drydock action only when a dashboard URL is present", () => {
+  test("adds an Open in Drydock link only when a dashboard URL is present", () => {
     const message = renderSlackMessage({
       title: "Staged release scan complete",
       packageLabel: "demo-package",
@@ -259,8 +259,12 @@ describe("renderSlackMessage", () => {
       dashboardUrl: "https://drydock.test/dashboard/scans/scan_1",
     });
     const serialized = JSON.stringify(message.blocks);
-    expect(serialized).toContain("Open in Drydock");
-    expect(serialized).toContain("https://drydock.test/dashboard/scans/scan_1");
+    // Rendered as an mrkdwn link, not an interactive button. A button — even a
+    // `url` link button — would require the app to configure a Slack Interactivity
+    // Request URL, which Drydock does not have, surfacing a warning on the message.
+    expect(serialized).toContain("<https://drydock.test/dashboard/scans/scan_1|Open in Drydock>");
+    expect(serialized).not.toContain('"type":"actions"');
+    expect(serialized).not.toContain('"type":"button"');
   });
 });
 
