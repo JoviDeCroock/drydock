@@ -306,15 +306,14 @@ export function renderSlackMessage(payload: SlackNotificationPayload): SlackMess
   }
 
   if (payload.dashboardUrl) {
+    // Render as an mrkdwn link rather than an `actions` button. A button — even a
+    // pure `url` link button — is an interactive component to Slack, so it delivers
+    // a `block_actions` payload and requires the app to have an Interactivity
+    // Request URL configured. Drydock has no such endpoint, so a button would show
+    // a "not configured to handle interactive responses" warning in the message.
     blocks.push({
-      type: "actions",
-      elements: [
-        {
-          type: "button",
-          text: { type: "plain_text", text: "Open in Drydock", emoji: false },
-          url: payload.dashboardUrl,
-        },
-      ],
+      type: "section",
+      text: { type: "mrkdwn", text: `<${payload.dashboardUrl}|Open in Drydock>` },
     });
   }
 
