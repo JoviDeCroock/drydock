@@ -474,6 +474,52 @@ function hasFlag(side: DiffSide | null, flag: string): boolean {
   return Boolean(side?.flags?.includes(flag));
 }
 
+// Display labels for the parser's magic-byte flags (sniffNativeArtifact in
+// server/lib/tar-parser.js). Content-skipped binaries never get the "binary"
+// flag, so this badge is the only format cue for a skipped platform binary.
+const NATIVE_FLAG_BADGES: Record<string, string> = {
+  "native-elf": "elf binary",
+  "native-macho": "mach-o binary",
+  "native-pe": "pe binary",
+  "native-wasm": "wasm",
+};
+
+export function nativeBadge(side: DiffSide | null): string | null {
+  for (const flag of side?.flags ?? []) {
+    const label = NATIVE_FLAG_BADGES[flag];
+    if (label) return label;
+  }
+  return null;
+}
+
+// The sha256 identity lines rendered under the size row. Only surfaced when
+// there is no text body to review (binary / content-skipped / native): there
+// the hash is what a reviewer takes to the registry artifact to verify bytes.
+// Exported for tests.
+export function diffHashLines(
+  before: DiffSide | null,
+  after: DiffSide | null,
+  beforeLabel: string,
+  afterLabel: string,
+): string[] {
+  const noTextBody =
+    hasFlag(before, "binary") ||
+    hasFlag(after, "binary") ||
+    hasFlag(before, "content-skipped") ||
+    hasFlag(after, "content-skipped") ||
+    Boolean(nativeBadge(before) ?? nativeBadge(after));
+  if (!noTextBody) return [];
+  // Legacy artifacts persisted before skip-hashing carry no hash — omit
+  // rather than print an empty field.
+  const beforeSha = before?.sha256 || null;
+  const afterSha = after?.sha256 || null;
+  if (beforeSha && beforeSha === afterSha) return [`sha256 ${beforeSha}`];
+  const lines: string[] = [];
+  if (beforeSha) lines.push(`sha256 (${beforeLabel}): ${beforeSha}`);
+  if (afterSha) lines.push(`sha256 (${afterLabel}): ${afterSha}`);
+  return lines;
+}
+
 export function DiffView({
   path,
   status,
@@ -491,7 +537,9 @@ export function DiffView({
   const binary = hasFlag(before, "binary") || hasFlag(after, "binary");
   const contentSkipped = hasFlag(before, "content-skipped") || hasFlag(after, "content-skipped");
   const truncated = hasFlag(before, "truncated") || hasFlag(after, "truncated");
+  const native = nativeBadge(after) ?? nativeBadge(before);
   const showDiffOptions = !binary && !contentSkipped && Boolean(beforeSample && afterSample);
+  const hashLines = diffHashLines(before, after, beforeLabel, afterLabel);
 
   return (
     <div class="flex flex-col gap-3 min-h-0">
@@ -502,18 +550,26 @@ export function DiffView({
           {truncated ? <Badge tone="neutral">truncated</Badge> : null}
           {binary ? <Badge tone="neutral">binary</Badge> : null}
           {contentSkipped ? <Badge tone="neutral">content skipped</Badge> : null}
+          {native ? <Badge tone="neutral">{native}</Badge> : null}
         </div>
         {showDiffOptions ? (
           <DiffControls wordDiff={wordDiff} ignoreWhitespace={ignoreWhitespace} />
         ) : null}
       </div>
-      <div class="font-mono text-[11px] text-ink-subtle flex flex-wrap gap-3">
-        <span>
-          {beforeLabel}: {formatSize(before?.size ?? null)}
-        </span>
-        <span>
-          {afterLabel}: {formatSize(after?.size ?? null)}
-        </span>
+      <div class="font-mono text-[11px] text-ink-subtle flex flex-col gap-1">
+        <div class="flex flex-wrap gap-3">
+          <span>
+            {beforeLabel}: {formatSize(before?.size ?? null)}
+          </span>
+          <span>
+            {afterLabel}: {formatSize(after?.size ?? null)}
+          </span>
+        </div>
+        {hashLines.map((line) => (
+          <span key={line} class="break-all">
+            {line}
+          </span>
+        ))}
       </div>
       <DiffBody
         path={path}

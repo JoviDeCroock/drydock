@@ -37,6 +37,8 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.createSha256Digester,
   tarParser.createStreamCursor,
   tarParser.shouldSkipTextSample,
+  tarParser.sniffNativeArtifact,
+  tarParser.createHeadCapture,
   tarParser.summarizeFile,
   tarParser.summarizeSkippedFile,
   tarParser.isRetainedManifestPath,

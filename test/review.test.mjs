@@ -202,6 +202,91 @@ describe("review", () => {
     );
   });
 
+  test("flags extensionless native binaries via parser magic-byte flags with sha256 evidence", () => {
+    // The Windows-skew regression: the .exe matched the extension check, but
+    // the same release's extensionless Linux/macOS binaries were invisible.
+    const staged = [
+      {
+        path: "bin/cli-windows-x64.exe",
+        size: 23068672,
+        sha256: "windows-pe-hash",
+        flags: ["content-skipped", "native-pe"],
+      },
+      {
+        path: "bin/cli-linux-x64",
+        size: 22020096,
+        sha256: "linux-elf-hash",
+        flags: ["content-skipped", "native-elf"],
+      },
+      {
+        path: "bin/cli-darwin-arm64",
+        size: 20971520,
+        sha256: "darwin-macho-hash",
+        flags: ["content-skipped", "native-macho"],
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+    const native = findings.filter((finding) => finding.ruleId === "file.native-artifact");
+
+    expect(native).toHaveLength(3);
+    expect(native).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          file: "bin/cli-linux-x64",
+          evidence: "ELF executable (magic bytes); sha256 linux-elf-hash",
+        }),
+        expect.objectContaining({
+          severity: "high",
+          file: "bin/cli-darwin-arm64",
+          evidence: "Mach-O executable (magic bytes); sha256 darwin-macho-hash",
+        }),
+        expect.objectContaining({
+          severity: "high",
+          file: "bin/cli-windows-x64.exe",
+          evidence: "Windows PE/DOS executable (magic bytes); sha256 windows-pe-hash",
+        }),
+      ]),
+    );
+    // The oversized additions also raise diff.large-new-file with the staged hash.
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "diff.large-new-file",
+          severity: "medium",
+          file: "bin/cli-linux-x64",
+          evidence: "22020096 byte new file; sha256 linux-elf-hash",
+        }),
+      ]),
+    );
+  });
+
+  test("extension-matched native artifacts keep firing without magic flags and carry sha256", () => {
+    const staged = [
+      {
+        path: "prebuilds/linux-x64/addon.node",
+        size: 2048576,
+        sha256: "addon-hash",
+        flags: ["binary"],
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+    const native = findings.filter((finding) => finding.ruleId === "file.native-artifact");
+
+    expect(native).toHaveLength(1);
+    expect(native[0]).toMatchObject({
+      severity: "high",
+      file: "prebuilds/linux-x64/addon.node",
+      evidence: "native, wasm, or executable artifact; sha256 addon-hash",
+    });
+    // Extension + magic flag on the same file still yields a single finding.
+    const flagged = deterministicFindings(
+      [{ ...staged[0], flags: ["binary", "native-elf"] }],
+      createPackageDiff([], [{ ...staged[0], flags: ["binary", "native-elf"] }]),
+    );
+    expect(flagged.filter((finding) => finding.ruleId === "file.native-artifact")).toHaveLength(1);
+  });
+
   test("does not apply Python capability patterns to JavaScript packages", () => {
     const staged = [
       {

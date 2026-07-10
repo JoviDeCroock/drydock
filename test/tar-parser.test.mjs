@@ -855,6 +855,89 @@ describe("readTar limits and malformed archives", () => {
   });
 });
 
+describe("sniffNativeArtifact", () => {
+  const { sniffNativeArtifact } = tarParser;
+
+  function withMagic(bytes, length = 64) {
+    // Zero padding stands in for the header fields a real container carries.
+    const body = new Uint8Array(length);
+    body.set(bytes, 0);
+    return body;
+  }
+
+  test("identifies ELF, Mach-O, wasm, and PE containers by leading bytes", () => {
+    expect(sniffNativeArtifact(withMagic([0x7f, 0x45, 0x4c, 0x46]))).toBe("elf");
+    expect(sniffNativeArtifact(withMagic([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]))).toBe(
+      "wasm",
+    );
+    // 64-bit little-endian Mach-O as stored on disk (arm64/x86_64 binaries).
+    expect(sniffNativeArtifact(withMagic([0xcf, 0xfa, 0xed, 0xfe]))).toBe("macho");
+    expect(sniffNativeArtifact(withMagic([0xfe, 0xed, 0xfa, 0xce]))).toBe("macho");
+    // MZ plus the NUL-padded DOS header every real PE carries.
+    expect(sniffNativeArtifact(withMagic([0x4d, 0x5a, 0x90, 0x00]))).toBe("pe");
+  });
+
+  test("splits fat Mach-O from Java class files sharing 0xCAFEBABE", () => {
+    // Universal binary: two architectures.
+    expect(sniffNativeArtifact(withMagic([0xca, 0xfe, 0xba, 0xbe, 0x00, 0x00, 0x00, 0x02]))).toBe(
+      "macho",
+    );
+    // Java class file: version 52 (Java 8) occupies the same bytes.
+    expect(sniffNativeArtifact(withMagic([0xca, 0xfe, 0xba, 0xbe, 0x00, 0x00, 0x00, 0x34]))).toBe(
+      null,
+    );
+  });
+
+  test("does not flag text that merely starts with MZ", () => {
+    const prose = encoder.encode(
+      "MZ stands for Mark Zbikowski, who designed the DOS executable format header.",
+    );
+    expect(sniffNativeArtifact(prose)).toBe(null);
+    expect(sniffNativeArtifact(encoder.encode("MZ"))).toBe(null);
+    expect(sniffNativeArtifact(new Uint8Array(0))).toBe(null);
+    expect(sniffNativeArtifact(undefined)).toBe(null);
+  });
+});
+
+describe("createHeadCapture", () => {
+  test("retains the first bytes across chunk boundaries and ignores the rest", () => {
+    const capture = tarParser.createHeadCapture(8);
+    capture.update(new Uint8Array([1, 2, 3]));
+    capture.update(new Uint8Array([4, 5, 6, 7, 8, 9]));
+    capture.update(new Uint8Array([10]));
+    expect([...capture.bytes()]).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+});
+
+describe("native artifact flags on parsed files", () => {
+  test("flags a retained extensionless native binary via magic bytes", async () => {
+    const elf = new Uint8Array(256);
+    elf.set([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00], 0);
+    const tar = buildTar([{ name: "package/bin/cli-linux-x64", body: elf }]);
+    const files = await parse(tar);
+    expect(files[0].flags).toEqual(["native-elf", "binary"]);
+    expect(files[0].textSample).toBeUndefined();
+  });
+
+  test("flags an oversized content-skipped extensionless binary via its captured head", async () => {
+    // The regression behind this rule: a release ships win/linux/mac binaries,
+    // only the .exe matched the extension check, and the oversized ELF and
+    // Mach-O bodies were skipped before any content inspection could run.
+    const limits = { maxFiles: 100, maxTarBytes: 1024 };
+    const elf = new Uint8Array(4096);
+    elf.set([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00], 0);
+    const macho = new Uint8Array(4096);
+    macho.set([0xcf, 0xfa, 0xed, 0xfe], 0);
+    const tar = buildTar([
+      { name: "package/bin/cli-linux-x64", body: elf },
+      { name: "package/bin/cli-darwin-arm64", body: macho },
+    ]);
+    const { files } = await parseFull(tar, limits);
+    expect(files[0].flags).toEqual(["content-skipped", "native-elf"]);
+    expect(files[1].flags).toEqual(["content-skipped", "native-macho"]);
+  });
+});
+
 describe("parsePackageJson", () => {
   test("normalizes scripts and dependency maps", () => {
     const files = [
@@ -1032,6 +1115,8 @@ describe("rendered sandbox parser source", () => {
     "createSha256Digester",
     "createStreamCursor",
     "shouldSkipTextSample",
+    "sniffNativeArtifact",
+    "createHeadCapture",
     "summarizeFile",
     "summarizeSkippedFile",
     "isRetainedManifestPath",

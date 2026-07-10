@@ -17,6 +17,7 @@ import {
   type AiReviewSubmission,
 } from "./ai-review-contract";
 import type { DiffEntry, FileRecord } from "./review";
+import { nativeFormatLabel } from "./review-rules/binaries";
 import type { SelectiveAiReviewOptions } from "./ai-review-types";
 
 interface EvidenceIndex {
@@ -439,7 +440,9 @@ function fileSignals(path: string, index: EvidenceIndex): string[] {
   if ((file?.size ?? diff?.stagedSize ?? diff?.previousSize ?? 0) > LARGE_FILE_BYTES) {
     signals.add("large");
   }
-  if (isNativeOrExecutablePath(path)) signals.add("native-or-executable");
+  if (isNativeOrExecutablePath(path) || nativeFormatLabel(file?.flags ?? []) !== null) {
+    signals.add("native-or-executable");
+  }
   if (index.packageJsonPath === path) signals.add("package-json");
   if (index.findingPaths.has(path)) signals.add("deterministic-finding");
   if (index.entrypointPaths.has(path)) signals.add("package-entrypoint");
@@ -466,7 +469,11 @@ function listPaths(filter: ListFilesFilter, index: EvidenceIndex) {
       return [...index.allowedPaths]
         .filter((path) => {
           const file = index.stagedByPath.get(path) ?? index.previousByPath.get(path);
-          return Boolean(file?.flags.includes("binary") || isNativeOrExecutablePath(path));
+          return Boolean(
+            file?.flags.includes("binary") ||
+            isNativeOrExecutablePath(path) ||
+            nativeFormatLabel(file?.flags ?? []) !== null,
+          );
         })
         .sort();
     case "large":
