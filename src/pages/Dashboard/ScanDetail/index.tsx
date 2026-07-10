@@ -9,10 +9,15 @@ import {
 } from "@preact/signals";
 import { useLocation, useRoute } from "preact-iso";
 import { npmStagedPackagesUrlFor } from "../../../lib/npm-staged-url";
-import { useQuerySignal } from "../../../lib/query-state";
+import { getDashboardReturnUrl, useQuerySignal } from "../../../lib/query-state";
 import { sortFindingsBySeverity } from "../../../lib/findings";
 import { sessionModel } from "../../../models/auth";
-import { ScanDetailModel, type DecisionStatus, type ScanDecision } from "../../../models/scan";
+import {
+  ScanDetailModel,
+  type DecisionStatus,
+  type DeleteStatus,
+  type ScanDecision,
+} from "../../../models/scan";
 import type { WorkflowGateDecision } from "../../../models/github-app";
 import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review-types";
 import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
@@ -25,6 +30,7 @@ import { LoadingState } from "../../../components/Loading";
 import { PageShell } from "../../../components/PageShell";
 import { LoadingLine, SectionLabel } from "../../../components/Typography";
 import { VersionPicker } from "../../../components/VersionPicker";
+import { DeleteScanDialog } from "./DeleteScanDialog";
 import { DecisionDialog } from "./DecisionDialog";
 import { GateContextPanel, GateDecisionDialog, GatePackagesPanel } from "./GateDecisionDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
@@ -48,6 +54,7 @@ export default function ScanDetailPage() {
   const changedFilesOnly = useSignal(true);
   const decisionDialogOpen = useSignal(false);
   const gateDialogOpen = useSignal(false);
+  const deleteDialogOpen = useSignal(false);
   const npmStagedPackagesUrlSignal = useComputed(() => {
     const scan = model.detail.value?.scan;
     return scan ? npmStagedPackagesUrlFor(scan) : null;
@@ -224,6 +231,12 @@ export default function ScanDetailPage() {
     }
   };
 
+  const handleDelete = async () => {
+    const deleted = await model.deleteFailed();
+    if (deleted) location.route(getDashboardReturnUrl(), true);
+    return deleted;
+  };
+
   const gateReviewComplete = detail?.scan.status === "complete";
   const gateReviewFailed = detail?.scan.status === "failed";
 
@@ -241,7 +254,13 @@ export default function ScanDetailPage() {
 
   return (
     <PageShell>
-      <ScanDetailHeader detail={detail} onDecideClick={onDecideClick} />
+      <ScanDetailHeader
+        detail={detail}
+        onDecideClick={onDecideClick}
+        onDeleteClick={
+          detail?.scan.status === "failed" ? () => (deleteDialogOpen.value = true) : undefined
+        }
+      />
 
       {error ? <Alert tone="critical">{error}</Alert> : null}
       {pollingStalled ? (
@@ -420,6 +439,17 @@ export default function ScanDetailPage() {
           onSubmit={handleGateDecision}
         />
       ) : null}
+
+      {detail?.scan.status === "failed" ? (
+        <DeleteDialogHost
+          openSignal={deleteDialogOpen}
+          onClose={() => (deleteDialogOpen.value = false)}
+          packageName={detail.scan.packageName}
+          statusSignal={model.deleteStatus}
+          errorSignal={model.deleteError}
+          onConfirm={handleDelete}
+        />
+      ) : null}
     </PageShell>
   );
 }
@@ -453,6 +483,26 @@ function DecisionDialogHost({
       error={errorSignal.value}
       npmStagedPackagesUrl={npmStagedPackagesUrlSignal.value}
       {...props}
+    />
+  );
+}
+
+function DeleteDialogHost({
+  openSignal,
+  statusSignal,
+  errorSignal,
+  ...props
+}: Omit<ComponentProps<typeof DeleteScanDialog>, "open" | "status" | "error"> & {
+  openSignal: ReadonlySignal<boolean>;
+  statusSignal: ReadonlySignal<DeleteStatus>;
+  errorSignal: ReadonlySignal<string | null>;
+}) {
+  return (
+    <DeleteScanDialog
+      {...props}
+      open={openSignal.value}
+      status={statusSignal.value}
+      error={errorSignal.value}
     />
   );
 }

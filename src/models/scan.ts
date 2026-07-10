@@ -155,6 +155,12 @@ export function setScanDecision(
   });
 }
 
+export function deleteScan(id: string): Promise<{ ok: true; id: string }> {
+  return apiFetch<{ ok: true; id: string }>(`/api/v1/scans/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
 export function getScan(
   id: string,
   options: { poll?: boolean } = {},
@@ -193,6 +199,7 @@ export function getScanCompareFile(
 }
 
 export type DecisionStatus = "idle" | "saving" | "error";
+export type DeleteStatus = "idle" | "deleting" | "error";
 
 export function scanMatchesDecisionFilter(
   scan: Pick<ScanListItem, "decision">,
@@ -213,6 +220,8 @@ export const ScanListModel = createModel(() => {
   const error = signal<string | null>(null);
   const decisionStatus = signal<DecisionStatus>("idle");
   const decisionError = signal<string | null>(null);
+  const deleteStatus = signal<DeleteStatus>("idle");
+  const deleteError = signal<string | null>(null);
 
   async function refresh(): Promise<void> {
     const currentFilter = filter.peek();
@@ -249,6 +258,8 @@ export const ScanListModel = createModel(() => {
     error,
     decisionStatus,
     decisionError,
+    deleteStatus,
+    deleteError,
     refresh,
 
     async loadMore(): Promise<void> {
@@ -290,6 +301,21 @@ export const ScanListModel = createModel(() => {
         this.decisionStatus.value = "error";
       }
     },
+
+    async deleteFailed(id: string): Promise<boolean> {
+      this.deleteStatus.value = "deleting";
+      this.deleteError.value = null;
+      try {
+        await deleteScan(id);
+        this.scans.value = this.scans.value.filter((scan) => scan.id !== id);
+        this.deleteStatus.value = "idle";
+        return true;
+      } catch (err) {
+        this.deleteError.value = errorMessage(err);
+        this.deleteStatus.value = "error";
+        return false;
+      }
+    },
   };
 });
 
@@ -318,6 +344,8 @@ export const ScanDetailModel = createModel((id: string) => {
   const compareError = signal<string | null>(null);
   const decisionStatus = signal<DecisionStatus>("idle");
   const decisionError = signal<string | null>(null);
+  const deleteStatus = signal<DeleteStatus>("idle");
+  const deleteError = signal<string | null>(null);
   const gate = signal<PublicWorkflowGate | null>(null);
   const gateLoaded = signal(false);
   const gateDecisionStatus = signal<DecisionStatus>("idle");
@@ -448,6 +476,8 @@ export const ScanDetailModel = createModel((id: string) => {
     compareError,
     decisionStatus,
     decisionError,
+    deleteStatus,
+    deleteError,
     gate,
     gateLoaded,
     gateDecisionStatus,
@@ -517,6 +547,21 @@ export const ScanDetailModel = createModel((id: string) => {
       } catch (err) {
         this.decisionError.value = errorMessage(err);
         this.decisionStatus.value = "error";
+      }
+    },
+
+    async deleteFailed(): Promise<boolean> {
+      const id = this.scanId.peek();
+      this.deleteStatus.value = "deleting";
+      this.deleteError.value = null;
+      try {
+        await deleteScan(id);
+        this.deleteStatus.value = "idle";
+        return true;
+      } catch (err) {
+        this.deleteError.value = errorMessage(err);
+        this.deleteStatus.value = "error";
+        return false;
       }
     },
 

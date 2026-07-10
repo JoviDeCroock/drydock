@@ -107,6 +107,41 @@ export async function deletePendingScanJob(db: AppDb, scanId: string, organizati
     );
 }
 
+export type DeleteFailedScanResult =
+  | { outcome: "deleted"; source: string }
+  | { outcome: "not_found" }
+  | { outcome: "not_failed" };
+
+/**
+ * Delete one user-visible failed scan. The status predicate belongs on the
+ * mutation itself so a stale client can never delete a scan that is still
+ * running or has since completed.
+ */
+export async function deleteFailedScan(
+  db: AppDb,
+  scanId: string,
+  organizationId: string,
+): Promise<DeleteFailedScanResult> {
+  const deleted = await db
+    .delete(scans)
+    .where(
+      and(
+        eq(scans.id, scanId),
+        eq(scans.organizationId, organizationId),
+        eq(scans.status, "failed"),
+      ),
+    )
+    .returning({ source: scans.source });
+  if (deleted[0]) return { outcome: "deleted", source: deleted[0].source };
+
+  const [existing] = await db
+    .select({ id: scans.id })
+    .from(scans)
+    .where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)))
+    .limit(1);
+  return existing ? { outcome: "not_failed" } : { outcome: "not_found" };
+}
+
 export async function listExistingScanStageIds(
   db: AppDb,
   organizationId: string,

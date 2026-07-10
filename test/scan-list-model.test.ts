@@ -91,6 +91,54 @@ describe("ScanListModel decisions", () => {
   });
 });
 
+describe("ScanListModel deletion", () => {
+  afterEach(() => {
+    model?.[Symbol.dispose]();
+    model = null;
+    vi.unstubAllGlobals();
+  });
+
+  test("removes a failed scan after the delete request succeeds", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ ok: true, id: "scan-1" })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    model = new ScanListModel();
+    model.scans.value = [{ ...scanDetail(null).scan, status: "failed" }];
+
+    await expect(model.deleteFailed("scan-1")).resolves.toBe(true);
+
+    expect(model.deleteStatus.value).toBe("idle");
+    expect(model.scans.value).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/scans/scan-1",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
+  test("keeps the scan and exposes the server error when deletion is rejected", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: "only failed scans can be deleted" }), {
+            status: 409,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+      ),
+    );
+
+    model = new ScanListModel();
+    model.scans.value = [scanDetail(null).scan];
+
+    await expect(model.deleteFailed("scan-1")).resolves.toBe(false);
+
+    expect(model.deleteStatus.value).toBe("error");
+    expect(model.deleteError.value).toBe("only failed scans can be deleted");
+    expect(model.scans.value).toHaveLength(1);
+  });
+});
+
 describe("scanMatchesDecisionFilter", () => {
   test("matches dashboard decision filter semantics", () => {
     expect(scanMatchesDecisionFilter({ decision: null }, "undecided")).toBe(true);
