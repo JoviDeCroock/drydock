@@ -307,10 +307,79 @@ export function createStreamCursor(body, maxStreamBytes) {
   return { fill, take, discard, cancel, consumed };
 }
 
+// Identify a native/executable container from a file's leading bytes. Runs on
+// hostile evidence: it only reads fixed offsets and never interprets content.
+// Extension checks alone skew detection toward Windows (`.exe`/`.dll`) — Linux
+// ELF and macOS Mach-O binaries inside packages are conventionally
+// extensionless (`bin/foo-linux-x64`), so the native-artifact rule needs this
+// content signal. Must stay self-contained (no module-level constants): it is
+// serialized into the sandbox worker via renderTarParserSource.
+export function sniffNativeArtifact(bytes) {
+  if (!bytes || bytes.byteLength < 4) return null;
+  const b0 = bytes[0];
+  const b1 = bytes[1];
+  const b2 = bytes[2];
+  const b3 = bytes[3];
+  if (b0 === 0x7f && b1 === 0x45 && b2 === 0x4c && b3 === 0x46) return "elf";
+  if (b0 === 0x00 && b1 === 0x61 && b2 === 0x73 && b3 === 0x6d) return "wasm";
+  const magic = b0 * 0x1000000 + b1 * 0x10000 + b2 * 0x100 + b3;
+  // Thin Mach-O, both widths and endiannesses.
+  if (
+    magic === 0xfeedface ||
+    magic === 0xfeedfacf ||
+    magic === 0xcefaedfe ||
+    magic === 0xcffaedfe
+  ) {
+    return "macho";
+  }
+  // Fat/universal Mach-O shares 0xCAFEBABE with Java class files. Disambiguate
+  // like file(1): the next big-endian u32 is the architecture count for a fat
+  // binary (small), but the class-file version for Java (>= 45).
+  if ((magic === 0xcafebabe || magic === 0xbebafeca) && bytes.byteLength >= 8) {
+    const swapped = magic === 0xbebafeca;
+    const count = swapped
+      ? bytes[7] * 0x1000000 + bytes[6] * 0x10000 + bytes[5] * 0x100 + bytes[4]
+      : bytes[4] * 0x1000000 + bytes[5] * 0x10000 + bytes[6] * 0x100 + bytes[7];
+    return count > 0 && count < 20 ? "macho" : null;
+  }
+  // MZ (DOS/PE). The definitive PE check needs e_lfanew, which can point past
+  // a captured head, so accept the DOS header alone — but require the NUL
+  // bytes every real 64-byte DOS header contains so prose that merely starts
+  // with "MZ" is not flagged.
+  if (b0 === 0x4d && b1 === 0x5a && bytes.byteLength >= 64) {
+    for (let i = 2; i < 64; i++) {
+      if (bytes[i] === 0) return "pe";
+    }
+  }
+  return null;
+}
+
+// Retain the first `limit` bytes flowing through a discard sink so a
+// content-skipped body can still be magic-byte sniffed without buffering the
+// body. Must stay self-contained: serialized into the sandbox worker via
+// renderTarParserSource.
+export function createHeadCapture(limit) {
+  const head = new Uint8Array(limit);
+  let filled = 0;
+  return {
+    update(chunk) {
+      if (filled >= limit || !chunk || !chunk.byteLength) return;
+      const take = Math.min(limit - filled, chunk.byteLength);
+      head.set(chunk.subarray(0, take), filled);
+      filled += take;
+    },
+    bytes() {
+      return head.subarray(0, filled);
+    },
+  };
+}
+
 export async function summarizeFile(path, body) {
   const flags = [];
   const skipTextSample = shouldSkipTextSample(path);
   if (skipTextSample) flags.push("text-sample-skipped");
+  const native = sniffNativeArtifact(body);
+  if (native) flags.push("native-" + native);
   const hash = await sha256Hex(body);
   if (skipTextSample) {
     return {
@@ -354,12 +423,18 @@ export function shouldSkipTextSample(path) {
   return false;
 }
 
-export function summarizeSkippedFile(path, size, sha256) {
+export function summarizeSkippedFile(path, size, sha256, head) {
   // Record for an entry whose body exceeded the retention limit: the content
   // was never buffered (so there is no text sample), but it WAS hashed as it
   // streamed past, so the diff layer can still tell "byte-identical to the
-  // baseline" from "changed but never inspected".
-  return { path, size, sha256: sha256 || "", flags: ["content-skipped"] };
+  // baseline" from "changed but never inspected". The head bytes ride along
+  // from the discard sink so an uninspectable body still yields format
+  // evidence — a skipped 200 MB extensionless ELF is exactly the artifact the
+  // native rule must see.
+  const flags = ["content-skipped"];
+  const native = sniffNativeArtifact(head);
+  if (native) flags.push("native-" + native);
+  return { path, size, sha256: sha256 || "", flags };
 }
 
 // Manifests carry the identity/metadata every ecosystem review depends on
@@ -562,13 +637,27 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes)
         } else {
           // The body is dropped, but hashed on the way past: the digest costs
           // no memory and lets the diff layer prove a skipped binary is
-          // byte-identical to (or diverged from) the published baseline.
+          // byte-identical to (or diverged from) the published baseline. The
+          // first 64 bytes (the longest magic sniffNativeArtifact reads — a
+          // DOS header) are retained for native-artifact detection.
           const digester = path ? createSha256Digester() : null;
-          if (!(await discard(size, digester ? (chunk) => digester.update(chunk) : undefined))) {
+          const headCapture = path ? createHeadCapture(64) : null;
+          const sink = digester
+            ? (chunk) => {
+                headCapture.update(chunk);
+                return digester.update(chunk);
+              }
+            : undefined;
+          if (!(await discard(size, sink))) {
             throw tarError("truncated tar entry");
           }
           if (path && digester) {
-            summarized = summarizeSkippedFile(path, size, await digester.finalize());
+            summarized = summarizeSkippedFile(
+              path,
+              size,
+              await digester.finalize(),
+              headCapture.bytes(),
+            );
             // Distinguish a body too large to inspect on its own from a small
             // body skipped only because earlier files spent the shared budget —
             // the message is user-facing evidence and must be accurate.
@@ -859,19 +948,24 @@ export async function pumpDeflatedZipEntry(cursor, compressedSize, uncompressedS
 
 // Hash (and validate the declared size of) a zip entry body that is being
 // discarded rather than retained. Deflated bodies stream through native
-// inflate + digest, so a skipped entry costs CPU but no memory.
+// inflate + digest, so a skipped entry costs CPU but no memory. The first 64
+// decompressed bytes (the longest magic sniffNativeArtifact reads — a DOS
+// header) are retained for native-artifact detection.
 export async function digestSkippedZipEntry(cursor, compressedSize, uncompressedSize, method) {
   const digester = createSha256Digester();
+  const headCapture = createHeadCapture(64);
+  const sink = (chunk) => {
+    headCapture.update(chunk);
+    return digester.update(chunk);
+  };
   if (method === 0) {
-    if (!(await cursor.discard(compressedSize, (chunk) => digester.update(chunk)))) {
+    if (!(await cursor.discard(compressedSize, sink))) {
       throw tarError("truncated zip entry");
     }
-    return digester.finalize();
+    return { sha256: await digester.finalize(), head: headCapture.bytes() };
   }
-  await pumpDeflatedZipEntry(cursor, compressedSize, uncompressedSize, (chunk) =>
-    digester.update(chunk),
-  );
-  return digester.finalize();
+  await pumpDeflatedZipEntry(cursor, compressedSize, uncompressedSize, sink);
+  return { sha256: await digester.finalize(), head: headCapture.bytes() };
 }
 
 // Materialize a retained deflated entry via the streaming pump: only the
@@ -1043,13 +1137,13 @@ export async function readZipStream(body, maxFiles, maxTarBytes, maxStreamBytes)
           summarized = await summarizeFile(path, bodyBytes);
           contributed = uncompressedSize;
         } else {
-          const sha256 = await digestSkippedZipEntry(
+          const { sha256, head } = await digestSkippedZipEntry(
             cursor,
             compressedSize,
             uncompressedSize,
             method,
           );
-          summarized = summarizeSkippedFile(path, uncompressedSize, sha256);
+          summarized = summarizeSkippedFile(path, uncompressedSize, sha256, head);
           // Distinguish a body too large to inspect on its own from a small
           // body skipped only because earlier files spent the shared budget —
           // the message is user-facing evidence and must be accurate.

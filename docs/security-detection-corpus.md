@@ -60,7 +60,7 @@ The first corpus slice covers:
 - preinstall credential/environment collection with command and network capability;
 - credential file-path reads (`.aws/credentials`, `.ssh/id_`, `.netrc`) in addition to broad environment reads and known token names, matching the Python rule coverage while excluding common non-secret JS runtime flags;
 - the collect-and-exfiltrate sink: a single file that reads credentials and has a network egress path escalates `code.credential-access` to high even on a modified (not newly added) module;
-- implicit `node-gyp rebuild` from root `binding.gyp`, GYP command substitution that executes package JavaScript, and native artifact review;
+- implicit `node-gyp rebuild` from root `binding.gyp`, GYP command substitution that executes package JavaScript, and native artifact review — by extension and by magic-byte flags, so extensionless Linux/macOS platform binaries are held to the same bar as a Windows `.exe`;
 - base64/dynamic evaluation plus network-capable code, including the `WebAssembly.instantiateStreaming(fetch(...))` loader idiom (the whole `compile`/`compileStreaming`/`instantiate`/`instantiateStreaming` family counts as dynamic evaluation);
 - secret-looking file addition;
 - large opaque binary addition;
@@ -99,7 +99,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.2.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.12.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.14.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -148,7 +148,19 @@ same-file credential→network exfiltration chains all keep full severity. The r
 also gained finding-set baselining: when a modified-file finding has no line-level evidence (no
 recorded line or no usable text diff), it re-runs the deterministic rules over the baseline files and
 classifies the finding as package context when the same rule already fired on the same file in the
-baseline; without a baseline counterpart it still fails open to release delta.
+baseline; without a baseline counterpart it still fails open to release delta. `1.14.0` closes the
+Windows skew in `file.native-artifact`: detection previously relied on file extensions alone
+(`.node`/`.dll`/`.so`/`.dylib`/`.exe`/`.wasm`), so a release's `.exe` was flagged while the same
+release's extensionless Linux/macOS binaries (`bin/cli-linux-x64`) were invisible. The archive
+parsers now magic-byte sniff every body — including content-skipped bodies, whose first 64
+decompressed bytes are captured from the discard sink — and record
+`native-elf`/`native-macho`/`native-pe`/`native-wasm` flags (`sniffNativeArtifact` in
+`server/lib/tar-parser.js`; fat Mach-O is disambiguated from Java class files sharing `0xCAFEBABE`,
+and MZ requires the NUL-padded DOS header so prose starting with "MZ" does not match). The rule
+fires on extension or flag, and the binary-shaped findings (`file.native-artifact`,
+`file.large-binary`, `diff.large-new-file`) now carry the file's sha256 in evidence so a reviewer
+can verify the artifact against the registry out of band (the `prebuilt-platform-binaries` golden
+case).
 
 ### Fixture format
 

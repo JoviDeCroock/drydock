@@ -144,6 +144,20 @@ describe("readZipStream", () => {
     expect(files[0].flags).toEqual(["content-skipped"]);
   });
 
+  test("sniffs native magic from the decompressed head of skipped entries", async () => {
+    const elfStored = new Uint8Array(2048);
+    elfStored.set([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00], 0);
+    const elfDeflated = new Uint8Array(4096);
+    elfDeflated.set([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00], 0);
+    const zip = buildZip([
+      { path: "demo/bin/tool-linux-x64", body: elfStored },
+      { path: "demo/bin/tool-linux-arm64", body: elfDeflated, deflate: true },
+    ]);
+    const { files } = await parseStream(zip);
+    expect(files[0].flags).toEqual(["content-skipped", "native-elf"]);
+    expect(files[1].flags).toEqual(["content-skipped", "native-elf"]);
+  });
+
   test("skips entries once the cumulative retention budget is exhausted", async () => {
     const bodyA = new Uint8Array(600).fill(0x61);
     const bodyB = new Uint8Array(600).fill(0x62);

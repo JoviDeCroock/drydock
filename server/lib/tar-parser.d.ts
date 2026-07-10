@@ -82,8 +82,22 @@ export function createStreamCursor(
 ): StreamCursor;
 
 export function shouldSkipTextSample(path: string): boolean;
+export type NativeArtifactKind = "elf" | "macho" | "pe" | "wasm";
+export function sniffNativeArtifact(
+  bytes: Uint8Array | null | undefined,
+): NativeArtifactKind | null;
+export interface HeadCapture {
+  update(chunk: Uint8Array): void;
+  bytes(): Uint8Array;
+}
+export function createHeadCapture(limit: number): HeadCapture;
 export function summarizeFile(path: string, body: Uint8Array): Promise<ParsedFile>;
-export function summarizeSkippedFile(path: string, size: number, sha256?: string): ParsedFile;
+export function summarizeSkippedFile(
+  path: string,
+  size: number,
+  sha256?: string,
+  head?: Uint8Array,
+): ParsedFile;
 export function isRetainedManifestPath(path: string | null | undefined): boolean;
 export function isRootManifestPath(path: string | null | undefined): boolean;
 export function tarError(message: string): Error & { tarSafety: true };
@@ -127,7 +141,7 @@ export function digestSkippedZipEntry(
   compressedSize: number,
   uncompressedSize: number,
   method: number,
-): Promise<string>;
+): Promise<{ sha256: string; head: Uint8Array }>;
 export function inflateRetainedZipEntry(
   cursor: StreamCursor,
   compressedSize: number,

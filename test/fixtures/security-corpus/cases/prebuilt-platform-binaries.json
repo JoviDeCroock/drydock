@@ -1,0 +1,83 @@
+{
+  "id": "prebuilt-platform-binaries",
+  "title": "Extensionless Linux/macOS platform binaries are flagged like the Windows .exe",
+  "category": "binary-review",
+  "intent": "Native-artifact detection must not skew toward Windows. The .exe matches by extension, but the same release's Linux ELF and macOS Mach-O binaries ship extensionless and oversized (content-skipped), so they are only visible through the parser's magic-byte flags. All three platform binaries must raise file.native-artifact at high.",
+  "previousPackageJson": {
+    "name": "prebuilt-platform-binaries",
+    "version": "1.0.0"
+  },
+  "stagedPackageJson": {
+    "name": "prebuilt-platform-binaries",
+    "version": "1.0.1"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 58,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"prebuilt-platform-binaries\",\"version\":\"1.0.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 58,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"prebuilt-platform-binaries\",\"version\":\"1.0.1\"}"
+    },
+    {
+      "path": "bin/cli-windows-x64.exe",
+      "size": 23068672,
+      "sha256": "windows-pe-binary",
+      "flags": ["content-skipped", "native-pe"]
+    },
+    {
+      "path": "bin/cli-linux-x64",
+      "size": 22020096,
+      "sha256": "linux-elf-binary",
+      "flags": ["content-skipped", "native-elf"]
+    },
+    {
+      "path": "bin/cli-darwin-arm64",
+      "size": 20971520,
+      "sha256": "darwin-macho-binary",
+      "flags": ["content-skipped", "native-macho"]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "file.native-artifact",
+      "severity": "high",
+      "file": "bin/cli-windows-x64.exe"
+    },
+    {
+      "ruleId": "file.native-artifact",
+      "severity": "high",
+      "file": "bin/cli-linux-x64"
+    },
+    {
+      "ruleId": "file.native-artifact",
+      "severity": "high",
+      "file": "bin/cli-darwin-arm64"
+    },
+    {
+      "ruleId": "diff.large-new-file",
+      "severity": "medium",
+      "file": "bin/cli-windows-x64.exe"
+    },
+    {
+      "ruleId": "diff.large-new-file",
+      "severity": "medium",
+      "file": "bin/cli-linux-x64"
+    },
+    {
+      "ruleId": "diff.large-new-file",
+      "severity": "medium",
+      "file": "bin/cli-darwin-arm64"
+    }
+  ]
+}

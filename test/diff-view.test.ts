@@ -1,7 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
   buildRows,
+  diffHashLines,
   isDiffScrollTarget,
+  nativeBadge,
   shouldSeekInitialDiffTarget,
 } from "../src/components/DiffView.tsx";
 
@@ -110,6 +112,47 @@ describe("buildRows", () => {
     ]);
     expect(rows[0].wordParts).toContainEqual({ text: "1", tone: "removed" });
     expect(rows[1].wordParts).toContainEqual({ text: "2", tone: "added" });
+  });
+});
+
+describe("diffHashLines", () => {
+  test("surfaces the staged hash for a content-skipped binary", () => {
+    expect(
+      diffHashLines(
+        null,
+        { sha256: "abc123", flags: ["content-skipped", "native-elf"] },
+        "previous",
+        "staged (2.0.0)",
+      ),
+    ).toEqual(["sha256 (staged (2.0.0)): abc123"]);
+  });
+
+  test("collapses identical hashes to a single identity line", () => {
+    const side = { sha256: "same-hash", flags: ["binary"] };
+    expect(diffHashLines(side, { ...side }, "previous", "staged")).toEqual(["sha256 same-hash"]);
+  });
+
+  test("stays silent for text diffs and hashless legacy artifacts", () => {
+    expect(
+      diffHashLines(
+        { sha256: "a", flags: [], textSample: "x" },
+        { sha256: "b", flags: [], textSample: "y" },
+        "previous",
+        "staged",
+      ),
+    ).toEqual([]);
+    expect(diffHashLines(null, { sha256: "", flags: ["content-skipped"] }, "p", "s")).toEqual([]);
+  });
+});
+
+describe("nativeBadge", () => {
+  test("maps parser magic flags to badge labels", () => {
+    expect(nativeBadge({ flags: ["content-skipped", "native-elf"] })).toBe("elf binary");
+    expect(nativeBadge({ flags: ["native-macho"] })).toBe("mach-o binary");
+    expect(nativeBadge({ flags: ["native-pe"] })).toBe("pe binary");
+    expect(nativeBadge({ flags: ["native-wasm"] })).toBe("wasm");
+    expect(nativeBadge({ flags: ["binary"] })).toBe(null);
+    expect(nativeBadge(null)).toBe(null);
   });
 });
 
