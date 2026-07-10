@@ -1,6 +1,7 @@
 import type { getScan } from "../db/scans";
 import { parsePersistedAiReview } from "./ai-review-contract";
 import { displayedAiResult } from "./ai-review-types";
+import { normalizeIntentEnvelope } from "./intent-envelope";
 import { normalizeReleaseConsistency } from "./release-memory";
 import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "./adapters/types";
 
@@ -52,6 +53,9 @@ export function buildReportExport(detail: ScanDetail) {
     // wheel/sdist/tarball matches what Drydock reviewed. Workflow-gate reviews
     // only; null for staged-publish scans.
     provenance: extractProvenance(summary.stagedPublish),
+    // Advisory source-binding tier (attested / declared / absent). Additive and
+    // optional: scans persisted before the envelope existed export `null`.
+    intentEnvelope: normalizeIntentEnvelope(summary.intentEnvelope),
     aiReview: extractAiReview(scan.aiJson),
     riskSummary: detail.riskSummary ?? null,
     // Advisory release-memory signal. Additive + optional: scans that predate

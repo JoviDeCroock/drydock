@@ -6,6 +6,11 @@ import type {
   AdapterContext,
   PackageAdapter,
 } from "./adapters/types";
+import {
+  computeIntentEnvelope,
+  extractDeclaredRepository,
+  type WorkflowGateIntent,
+} from "./intent-envelope";
 import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
 import {
   computeDiff,
@@ -25,6 +30,13 @@ import type { ScanInput, ScanResult } from "../types";
 export interface ScanPipelineOptions extends ScanInput {
   scanId?: string;
   organizationId: string;
+  /**
+   * Gate-bound release context, set only by the workflow-gate job. Its
+   * presence marks the scan as attested in the intent envelope: the signed
+   * `deployment_protection_rule` webhook binds repository + run + environment,
+   * and the reviewed artifact bytes were downloaded from that run.
+   */
+  gateContext?: WorkflowGateIntent;
   // Adapters parse their own input shape off this object (e.g. the PyPI adapter
   // reads `manifest`/`artifacts`), so allow extra keys to flow through untyped.
   [key: string]: unknown;
@@ -88,6 +100,17 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       ruleFindings: findings.ruleFindings,
     });
 
+    // Advisory source-binding classification. Computed from the gate context
+    // (when the workflow-gate job placed this scan) and the staged manifest's
+    // repository declaration; it never influences risk or findings.
+    const intentEnvelope = computeIntentEnvelope({
+      workflowGate: input.gateContext ?? null,
+      declaredRepository: extractDeclaredRepository({
+        manifestText: diff.stagedManifestText,
+        files: resolved.staged.artifact.files,
+      }),
+    });
+
     const { result, persisted } = await persistResults({
       env,
       db,
@@ -102,6 +125,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       mergedAiFindings,
       riskSummary,
       releaseConsistency,
+      intentEnvelope,
     });
 
     await recordCompletion({

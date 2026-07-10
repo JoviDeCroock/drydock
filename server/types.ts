@@ -8,6 +8,7 @@ export type {
 } from "./lib/adapters/types";
 import type { AiReview } from "./lib/ai-review";
 import type { ReleaseConsistency } from "./lib/release-memory";
+import type { IntentEnvelope } from "./lib/intent-envelope";
 import type { ScanRiskBreakdown } from "./lib/risk";
 import type {
   DiffEntry,
@@ -18,6 +19,11 @@ import type {
 } from "./lib/review";
 
 export type { PackageJsonDiff } from "./lib/review";
+export type {
+  IntentEnvelope,
+  IntentEnvelopeSignal,
+  IntentEnvelopeTier,
+} from "./lib/intent-envelope";
 
 export type Bindings = Cloudflare.Env;
 
@@ -53,6 +59,8 @@ export interface ScanResult {
   // Advisory prior-release consistency signal (release memory). Display-only:
   // it never feeds risk or findings.
   releaseConsistency: ReleaseConsistency;
+  // Advisory source-binding classification; never feeds risk or findings.
+  intentEnvelope: IntentEnvelope;
   safety: {
     tokenExposedToSandbox: boolean;
     directSandboxNetwork: boolean;

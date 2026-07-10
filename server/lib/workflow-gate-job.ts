@@ -438,7 +438,20 @@ async function reviewGatePackages(
       const result = await runScanPipeline(
         { env, executionCtx, db, session: { userId: ownerUserId } },
         packageAdapter,
-        { scanId, stageId, organizationId, ...candidate.pipelineInput },
+        {
+          scanId,
+          stageId,
+          organizationId,
+          // Marks the scan as gate-attested in the intent envelope: the signed
+          // webhook bound repository + run + environment, and the reviewed
+          // bytes came from that run.
+          gateContext: {
+            repositoryFullName: gate.repositoryFullName,
+            runId: gate.runId,
+            environment: gate.environment,
+          },
+          ...candidate.pipelineInput,
+        },
       );
       return {
         scanId,
