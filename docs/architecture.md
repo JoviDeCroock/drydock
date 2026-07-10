@@ -52,6 +52,8 @@ Archive parsing is shared by the sandbox and tests rather than copied as strings
 
 `POST /api/v1/scans` creates a queued scan record. A Queue consumer in production, or local `waitUntil()` execution in development, runs the pipeline. The UI polls `GET /api/v1/scans/:id` for status and report data.
 
+The dependency-free `drydock` npm CLI is a client of that same API surface. With an organization token it can create an npm staged-publish scan, poll a staged or workflow-gate scan to a terminal state, and fetch the canonical report export. Workflow-gate scans still originate from the signed GitHub webhook; the CLI cannot create or decide gates. See [`cli.md`](./cli.md).
+
 Baseline selection is tag-aware rather than simply highest-semver; see [`diff-baseline.md`](./diff-baseline.md).
 
 ## Workflow gates

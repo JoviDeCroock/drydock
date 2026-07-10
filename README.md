@@ -14,6 +14,7 @@ Approval stays outside Drydock: maintainers approve in npm, npmjs.com, or GitHub
 Start with [`docs/README.md`](docs/README.md) to pick the smallest relevant reference. Common entry points:
 
 - [`docs/self-hosting.md`](docs/self-hosting.md) — local setup, Cloudflare resources, deployment, GitHub App, and Slack setup.
+- [`docs/cli.md`](docs/cli.md) — CI-native scans and canonical report output with organization API tokens.
 - [`docs/architecture.md`](docs/architecture.md) — runtime components, trust boundaries, adapters, storage, and API shape.
 - [`docs/security-model.md`](docs/security-model.md) — non-negotiable security posture.
 - [`docs/workflow-gates.md`](docs/workflow-gates.md) — GitHub Environment gate contract for PyPI, npm, and VS Code workflow-gated releases.
@@ -24,6 +25,7 @@ Start with [`docs/README.md`](docs/README.md) to pick the smallest relevant refe
 ```text
 server/       Hono Worker, scan pipeline, adapters, persistence, webhooks
 src/          Preact UI and typed API models
+packages/cli/ Dependency-free npm CLI for CI scan checks and report export
 drizzle/      D1 migrations
 docs/         Architecture, security, workflow, setup, and test references
 test/         Vitest, Worker-runtime, security corpus, and fake-registry e2e

@@ -1,0 +1,33 @@
+{
+  "name": "@resynapse/drydock",
+  "version": "0.1.0",
+  "description": "CI-native client for Drydock package scans",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JoviDeCroock/drydock.git",
+    "directory": "packages/cli"
+  },
+  "bin": {
+    "drydock": "./bin/drydock.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE.md"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/cli.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

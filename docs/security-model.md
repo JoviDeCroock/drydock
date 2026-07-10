@@ -82,6 +82,8 @@ Every non-auth `/api/*` endpoint requires authenticated organization resolution.
 
 Organization API tokens are the one non-cookie API auth path. They are scoped to exactly one organization, stored only as high-entropy SHA-256 hashes, returned only once at creation, and accepted only on the minimal programmatic scan surface (`scans:read` for scan reads/exports and `scans:write` for creating a scan). Tokens must not manage settings, rotate credentials, decide scans, decide workflow gates, or bypass any release-decision 2FA requirement. Each accepted token request is rate-limited per token and records a redacted `api_token.used` audit event.
 
+The npm CLI consumes those scopes as a thin API client. It accepts the secret only through `DRYDOCK_TOKEN`, never a command-line flag; sends it only in the authorization header; rejects redirects; and redacts it from surfaced failures. It requests scan/report JSON only and must never download, install, import, build, or execute package contents.
+
 ## Browser response headers
 
 Production responses should keep conservative security headers: no package-provided active content, no cross-origin credential leakage, and no relaxed CSP/CORS decisions for convenience.

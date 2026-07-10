@@ -7,6 +7,7 @@ const checks =
   extraArgs.length > 0
     ? [{ name: "vitest", args: ["exec", "vitest", "run", ...extraArgs] }]
     : [
+        { name: "cli", args: ["--filter", "@resynapse/drydock", "test"] },
         { name: "node", args: ["exec", "vitest", "run", "--project", "node"] },
         ...Array.from({ length: workerShards }, (_, index) => ({
           name: `workers ${index + 1}/${workerShards}`,

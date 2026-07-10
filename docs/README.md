@@ -19,6 +19,7 @@ Start here instead of reading every Markdown file. Pick the smallest set that ma
 ## Operations and setup
 
 - [`self-hosting.md`](./self-hosting.md) — local setup, Cloudflare resources, deploy, GitHub App, Slack.
+- [`cli.md`](./cli.md) — CI scan checks, organization-token auth, risk exit codes, and report output.
 - [`e2e-test-environment.md`](./e2e-test-environment.md) — fake registry and Playwright harness.
 - [`tooling.md`](./tooling.md) — oxlint/oxfmt/typecheck, signals lint rules, route/client helpers.
 - [`agent-tour.md`](./agent-tour.md) — portable product walkthrough artifacts.
