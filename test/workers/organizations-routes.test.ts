@@ -625,7 +625,7 @@ describe("organization deletion", () => {
       id: `event_${crypto.randomUUID()}`,
       organizationId: orgId,
       scanId,
-      type: "scan.completed",
+      type: "scan.decided",
       createdAt: now,
     });
 

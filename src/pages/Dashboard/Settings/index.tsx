@@ -7,6 +7,7 @@ import {
   useQuerySignal,
 } from "../../../lib/query-state";
 import { sessionModel } from "../../../models/auth";
+import { AuditLogModel } from "../../../models/audit-log";
 import { NpmConnectionModel } from "../../../models/npm-connection";
 import { NotificationRecipientsModel } from "../../../models/notification-recipients";
 import { SlackConnectionModel } from "../../../models/slack-connection";
@@ -31,7 +32,8 @@ import { NotificationRecipientsSection } from "./NotificationRecipientsSection";
 import { SlackConnectionSection } from "./SlackConnectionSection";
 import { NpmConnectionSection } from "./NpmConnectionSection";
 import { OrganizationMembersSection } from "./OrganizationMembersSection";
-import { SettingsNav, isSettingsTab, type SettingsTab } from "./SettingsNav";
+import { AuditLogSection } from "./AuditLogSection";
+import { SETTINGS_TABS, SettingsNav, isSettingsTab, type SettingsTab } from "./SettingsNav";
 
 export default function SettingsPage() {
   const location = useLocation();
@@ -41,6 +43,7 @@ export default function SettingsPage() {
   const members = useModel(MembersModel);
   const recipients = useModel(NotificationRecipientsModel);
   const slack = useModel(SlackConnectionModel);
+  const audit = useModel(AuditLogModel);
   const sessionChecked = useSignal(false);
   const activeTab = useSignal<SettingsTab>("general");
 
@@ -82,6 +85,7 @@ export default function SettingsPage() {
         members.load(canManageMembers(organizations)),
         recipients.load(organizations.active.peek()?.id ?? null),
         slack.load(organizations.active.peek()?.id ?? null),
+        audit.load(canManageMembers(organizations)),
       ]);
     })();
     return () => {
@@ -96,6 +100,7 @@ export default function SettingsPage() {
     loaders.push(githubApp.loadInstallations(), githubApp.loadReleaseTargets());
     loaders.push(recipients.load(organizations.active.peek()?.id ?? null));
     loaders.push(slack.load(organizations.active.peek()?.id ?? null));
+    loaders.push(audit.load(canManageMembers(organizations)));
     await Promise.all(loaders);
   };
 
@@ -130,7 +135,12 @@ export default function SettingsPage() {
   const githubAppLoaded = githubApp.loaded.value;
   const npmLoaded = npm.loaded.value;
   const workspaceLoaded = githubAppLoaded && npmLoaded;
-  const tab = activeTab.value;
+  // The audit log is owner/admin-only: hide the tab from members and fall back
+  // to General if a member deep-links to ?tab=audit (the endpoint 403s anyway).
+  const canViewAudit = canManageMembers(organizations);
+  const requestedTab = activeTab.value;
+  const tab = requestedTab === "audit" && !canViewAudit ? "general" : requestedTab;
+  const visibleTabs = SETTINGS_TABS.filter((entry) => entry.id !== "audit" || canViewAudit);
 
   return (
     <PageShell
@@ -152,7 +162,11 @@ export default function SettingsPage() {
 
       {workspaceLoaded ? (
         <div class="grid grid-cols-1 md:grid-cols-[200px_minmax(0,1fr)] gap-6 md:gap-8">
-          <SettingsNav active={tab} onSelect={(next) => (activeTab.value = next)} />
+          <SettingsNav
+            active={tab}
+            tabs={visibleTabs}
+            onSelect={(next) => (activeTab.value = next)}
+          />
 
           <div class="min-w-0 flex flex-col gap-6">
             {tab === "general" ? (
@@ -197,6 +211,7 @@ export default function SettingsPage() {
                 <GithubAppSection githubApp={githubApp} defaultOpen />
               </>
             ) : null}
+            {tab === "audit" && canViewAudit ? <AuditLogSection audit={audit} /> : null}
           </div>
         </div>
       ) : (

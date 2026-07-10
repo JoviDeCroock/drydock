@@ -1,6 +1,5 @@
 import { Hono, type Context } from "hono";
 import { createDb } from "../db/client";
-import { recordScanEvent } from "../db/events";
 import { getOrganizationRole } from "../db/invitations";
 import { getNpmConnection } from "../db/npm-connections";
 import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
@@ -124,14 +123,6 @@ scansRoutes.post("/", async (c) => {
       organizationId,
       actorUserId: session.userId,
     };
-
-    await recordScanEvent(db, {
-      organizationId,
-      actorUserId: session.userId,
-      scanId,
-      type: c.env.SCAN_QUEUE ? "scan.queued" : "scan.backgrounded",
-      metadata: { stageId: input.stageId },
-    });
 
     if (c.env.SCAN_QUEUE) {
       await c.env.SCAN_QUEUE.send(message);
@@ -276,21 +267,11 @@ scansRoutes.post("/:id/decision", async (c) => {
 
 scansRoutes.get("/:id", async (c) => {
   const db = createDb(c.env.DB);
-  const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
   const scan = await getScan(db, c.req.param("id"), organizationId, scanArtifactReadBucket(c.env), {
     includeFileSamples: false,
   });
   if (!scan) return c.json({ error: "not found" }, 404);
-  if (c.req.query("poll") !== "1") {
-    await recordScanEvent(db, {
-      organizationId,
-      actorUserId: session.userId,
-      scanId: scan.scan.id,
-      type: "scan.viewed",
-      metadata: { stageId: scan.scan.stageId },
-    });
-  }
   return c.json(scan);
 });
 

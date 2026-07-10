@@ -191,16 +191,8 @@ export async function discoverAndQueueStagedPublishes(
   input: DiscoverStagedPublishesInput,
   connection: TokenForDiscovery,
 ): Promise<DiscoverStagedPublishesResult> {
-  const {
-    db,
-    env,
-    executionCtx,
-    organizationId,
-    actorUserId,
-    source,
-    eventSource,
-    allowInsecureLocalhost,
-  } = input;
+  const { db, env, executionCtx, organizationId, actorUserId, source, allowInsecureLocalhost } =
+    input;
 
   const stagedItems = await listAllStagedPublishes(connection, {
     perPage: 50,
@@ -260,42 +252,11 @@ export async function discoverAndQueueStagedPublishes(
         await deletePendingScanJob(db, scanId, organizationId);
         throw err;
       }
-      await recordScanEvent(db, {
-        organizationId,
-        actorUserId,
-        scanId,
-        type: "scan.queued",
-        metadata: { stageId, source: eventSource },
-      });
     } else {
-      await recordScanEvent(db, {
-        organizationId,
-        actorUserId,
-        scanId,
-        type: "scan.backgrounded",
-        metadata: { stageId, source: eventSource },
-      });
       executionCtx.waitUntil(
         executeScanJob(env, executionCtx, message, db, { finalAttempt: true }),
       );
     }
-  }
-
-  // Only audit sweeps that start scans: the */15min cron emits one event per
-  // connected org per run, and no-op sweeps were ~97% of all scan_events rows.
-  // Sweep observability itself lives in Workers Logs (staged_publishes.cron.*).
-  if (startedScans.length > 0) {
-    await recordScanEvent(db, {
-      organizationId,
-      actorUserId,
-      type: "staged_publishes.scans_started",
-      metadata: {
-        found: stageIds.length,
-        created: startedScans.length,
-        skipped: stageIds.length - startedScans.length,
-        source: eventSource,
-      },
-    });
   }
 
   return {
