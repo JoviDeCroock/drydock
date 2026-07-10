@@ -28,6 +28,7 @@ Start here instead of reading every Markdown file. Pick the smallest set that ma
 
 - [`security-detection-corpus.md`](./security-detection-corpus.md) — rule/eval fixture layout and expected findings.
 - [`detection-eval.md`](./detection-eval.md) — eval harness, metrics, and gates.
+- [`release-memory.md`](./release-memory.md) — advisory prior-release finding-profile consistency; never changes risk.
 - [`organization-members.md`](./organization-members.md) — organization invitation/membership behavior.
 - [`audit-log.md`](./audit-log.md) — organization audit log surface, visible-event allowlist, and retention.
 - [`two-factor-auth.md`](./two-factor-auth.md) — step-up auth and sensitive actions.
