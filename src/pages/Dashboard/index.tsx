@@ -26,6 +26,7 @@ import { PageShell } from "../../components/PageShell";
 import { Select } from "../../components/Select";
 import { EmptyLine, Eyebrow, Muted, SectionLabel } from "../../components/Typography";
 import { UserMenu } from "../../components/UserMenu";
+import { DeleteScanDialog } from "./ScanDetail/DeleteScanDialog";
 import { DecisionDialog } from "./ScanDetail/DecisionDialog";
 
 export default function DashboardPage() {
@@ -181,6 +182,7 @@ function RecentReviewsSection({
   const discoveryError = stagedPublishes.error.value;
   const discoveryRefreshing = stagedPublishes.refreshing.value;
   const quickDecisionScan = useSignal<ScanListItem | null>(null);
+  const deleteScan = useSignal<ScanListItem | null>(null);
   const startedLabels = discovery?.scans.map(formatStartedScanLabel).filter(Boolean) ?? [];
   const onDiscover = async () => {
     await discoverStagedPublishes(stagedPublishes, scans);
@@ -194,6 +196,13 @@ function RecentReviewsSection({
       quickDecisionScan.value = null;
     }
     return saved;
+  };
+  const onDeleteConfirm = async () => {
+    const scan = deleteScan.peek();
+    if (!scan) return false;
+    const deleted = await scans.deleteFailed(scan.id);
+    if (deleted) deleteScan.value = null;
+    return deleted;
   };
 
   const discoveredAt = stagedPublishes.lastDiscoveryAt.value;
@@ -258,9 +267,14 @@ function RecentReviewsSection({
             scans={scans.scans.value}
             quickDecisionScanId={quickDecisionScan.value?.id ?? null}
             decisionSaving={scans.decisionStatus.value === "saving"}
+            deleteBusy={scans.deleteStatus.value === "deleting"}
             onQuickDecide={(scan) => {
               scans.decisionError.value = null;
               quickDecisionScan.value = scan;
+            }}
+            onDelete={(scan) => {
+              scans.deleteError.value = null;
+              deleteScan.value = scan;
             }}
           />
         ) : (
@@ -293,6 +307,18 @@ function RecentReviewsSection({
             error={scans.decisionError.value}
             npmStagedPackagesUrl={npmStagedPackagesUrlFor(scan)}
             onSubmit={onQuickDecisionSubmit}
+          />
+        )}
+      </Show>
+      <Show<ScanListItem | null> when={deleteScan}>
+        {(scan) => (
+          <DeleteScanDialog
+            open={true}
+            onClose={() => (deleteScan.value = null)}
+            packageName={scan.packageName}
+            status={scans.deleteStatus.value}
+            error={scans.deleteError.value}
+            onConfirm={onDeleteConfirm}
           />
         )}
       </Show>
@@ -389,12 +415,16 @@ function ScanTable({
   scans,
   quickDecisionScanId,
   decisionSaving,
+  deleteBusy,
   onQuickDecide,
+  onDelete,
 }: {
   scans: ScanListItem[];
   quickDecisionScanId: string | null;
   decisionSaving: boolean;
+  deleteBusy: boolean;
   onQuickDecide: (scan: ScanListItem) => void;
+  onDelete: (scan: ScanListItem) => void;
 }) {
   return (
     <div class="overflow-x-auto">
@@ -407,6 +437,7 @@ function ScanTable({
             <Th>Changed</Th>
             <Th>Status</Th>
             <Th>Decision</Th>
+            <Th>Actions</Th>
           </tr>
         </thead>
         <tbody>
@@ -451,6 +482,20 @@ function ScanTable({
                     </Button>
                   ) : null}
                 </div>
+              </Td>
+              <Td>
+                {scan.status === "failed" ? (
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() => onDelete(scan)}
+                    disabled={deleteBusy}
+                  >
+                    Delete
+                  </Button>
+                ) : (
+                  <span class="font-mono text-xs text-ink-subtle">—</span>
+                )}
               </Td>
             </tr>
           ))}

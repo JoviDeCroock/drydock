@@ -10,9 +10,11 @@ import { LoadingLine, MonoDetail } from "../../../components/Typography";
 export function ScanDetailHeader({
   detail,
   onDecideClick,
+  onDeleteClick,
 }: {
   detail?: PersistedScanDetail | null;
   onDecideClick?: () => void;
+  onDeleteClick?: () => void;
 } = {}) {
   const decision = detail?.scan.decision;
   const decidedAt = detail?.scan.decidedAt;
@@ -45,7 +47,7 @@ export function ScanDetailHeader({
           <LoadingLine size="inline">Loading saved review</LoadingLine>
         )}
       </div>
-      {decision || onDecideClick || (detail && isComplete) ? (
+      {decision || onDecideClick || onDeleteClick || (detail && isComplete) ? (
         <div class="flex flex-wrap items-start gap-3">
           {decision ? (
             <div class="flex flex-col items-end gap-1">
@@ -72,6 +74,11 @@ export function ScanDetailHeader({
           {onDecideClick ? (
             <Button variant={decision ? "secondary" : "primary"} onClick={onDecideClick}>
               {decision ? "Update decision" : "Decide"}
+            </Button>
+          ) : null}
+          {onDeleteClick ? (
+            <Button variant="danger" onClick={onDeleteClick}>
+              Delete review
             </Button>
           ) : null}
         </div>

@@ -136,6 +136,24 @@ for (const scenario of scenarios.filter((item) => item.stageId !== uiStageId)) {
         expect(String(detail.scan.errorJson?.message ?? ""), scenario.name).toContain(
           scenario.expected.errorIncludes,
         );
+
+        await page.goto(`/dashboard/scans/${scanId}`);
+        await expect(page.getByRole("heading", { name: scenario.packageName })).toBeVisible({
+          timeout: 30_000,
+        });
+        await page.getByRole("button", { name: "Delete review" }).click();
+        const dialog = page.getByRole("dialog");
+        await expect(dialog.getByRole("heading", { name: "Delete failed review?" })).toBeVisible();
+        await dialog.getByRole("button", { name: "Delete review" }).click();
+        await page.waitForURL(/\/dashboard(?:\?|$)/);
+
+        const deletedStatus = await evaluateOnStablePage(
+          page,
+          async (id) =>
+            fetch(`/api/v1/scans/${encodeURIComponent(id)}?poll=1`).then((res) => res.status),
+          String(scanId),
+        );
+        expect(deletedStatus, `${scenario.name}: deleted scan is gone`).toBe(404);
         return;
       }
 

@@ -12,6 +12,7 @@ import {
   type ScanDecision,
   type ScanDecisionFilter,
   createScanJob,
+  deleteFailedScan,
   getScan,
   getScanCompareData,
   getScanFile,
@@ -24,7 +25,7 @@ import {
   requireActiveOrganizationContext,
 } from "../lib/active-organization";
 import { backfillScanArtifactsBatch } from "../lib/scan-artifact-backfill";
-import { scanArtifactReadBucket } from "../lib/scan-artifacts";
+import { deleteScanArtifacts, scanArtifactReadBucket } from "../lib/scan-artifacts";
 import {
   computeCompareMetadataCacheKey,
   loadCompare,
@@ -272,6 +273,30 @@ scansRoutes.post("/:id/decision", async (c) => {
   }
 
   return c.json(updated);
+});
+
+scansRoutes.delete("/:id", async (c) => {
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = await requireActiveOrganization(c, db);
+  const scanId = c.req.param("id");
+
+  const result = await deleteFailedScan(db, scanId, organizationId);
+  if (result.outcome === "not_found") return c.json({ error: "not found" }, 404);
+  if (result.outcome === "not_failed") {
+    return c.json({ error: "only failed scans can be deleted" }, 409);
+  }
+
+  await Promise.all([
+    deleteScanArtifacts(c.env.ARTIFACTS, organizationId, scanId),
+    recordScanEvent(db, {
+      organizationId,
+      actorUserId: session.userId,
+      type: "scan.deleted",
+      metadata: { scanId, status: "failed", source: result.source },
+    }),
+  ]);
+  return c.json({ ok: true, id: scanId });
 });
 
 scansRoutes.get("/:id", async (c) => {
