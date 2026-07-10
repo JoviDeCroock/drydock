@@ -6,6 +6,7 @@ import type {
   AdapterContext,
   PackageAdapter,
 } from "../ecosystems/package-adapter";
+import { loadReleaseFingerprintHistory } from "../../db/release-fingerprint";
 import {
   computeIntentEnvelope,
   extractDeclaredRepository,
@@ -17,6 +18,8 @@ import {
   emitOperationalEvent,
 } from "../platform/observability";
 import { recordProductEvent } from "../platform/analytics";
+import { releaseFingerprintFindings } from "../release-fingerprint";
+import type { Finding } from "../review";
 import {
   computeDiff,
   mergeAiFindings,
@@ -29,6 +32,7 @@ import {
   type ComputedDiff,
   type DeterministicFindings,
   type PipelineIdentity,
+  type ResolvedArtifacts,
 } from "./pipeline-phases";
 import type { ScanInput, ScanResult } from "../../types";
 
@@ -71,13 +75,17 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
   try {
     const resolved = await resolveBaseline(adapter, adapterCtx, adapterInput, broker);
     const diff = computeDiff(resolved);
-    const findings = runDeterministicFindings(adapter, resolved, diff);
 
     const identity: PipelineIdentity = {
       scanId: input.scanId || crypto.randomUUID(),
       stageId: input.stageId,
       organizationId: input.organizationId,
     };
+    // Release-process fingerprint findings (release.*) compare this release's
+    // arrival against org/package history. Appended here so they flow through
+    // annotation, risk scoring, and persistence exactly like adapter findings.
+    const releaseProcessFindings = await collectReleaseFingerprintFindings(db, identity, resolved);
+    const findings = runDeterministicFindings(adapter, resolved, diff, releaseProcessFindings);
     const aiFindings = await maybeRunAiReview({
       env,
       identity,
@@ -173,6 +181,50 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
     throw err;
   } finally {
     await broker.dispose();
+  }
+}
+
+/**
+ * Load org/package scan history and derive the release-process fingerprint
+ * findings for the in-flight scan. The history lookup must never fail the
+ * scan: any error degrades to "no release-process findings" with a structured
+ * operational event, because the artifact findings stand on their own.
+ */
+async function collectReleaseFingerprintFindings(
+  db: ScanPipelineContext["db"],
+  identity: PipelineIdentity,
+  resolved: ResolvedArtifacts,
+): Promise<Finding[]> {
+  const now = new Date();
+  const packageName = resolved.staged.artifact.manifest?.name || null;
+  try {
+    const history = await loadReleaseFingerprintHistory(db, {
+      organizationId: identity.organizationId,
+      scanId: identity.scanId,
+      packageName,
+      now,
+    });
+    return releaseFingerprintFindings({
+      now,
+      current: {
+        scanId: identity.scanId,
+        packageName,
+        source: history.currentScan?.source ?? null,
+        gateRepositoryFullName: history.currentScan?.gateRepositoryFullName ?? null,
+        gateEnvironment: history.currentScan?.gateEnvironment ?? null,
+      },
+      orgHistory: history.orgHistory,
+      orgHistoryTruncated: history.orgHistoryTruncated,
+      packageHistory: history.packageHistory,
+    });
+  } catch (err) {
+    emitOperationalEvent("warn", "scan.release_fingerprint.failed", {
+      scanId: identity.scanId,
+      organizationId: identity.organizationId,
+      stageId: identity.stageId,
+      error: describeOperationalError(err),
+    });
+    return [];
   }
 }
 

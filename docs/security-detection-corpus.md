@@ -164,7 +164,14 @@ and MZ requires the NUL-padded DOS header so prose starting with "MZ" does not m
 fires on extension or flag, and the binary-shaped findings (`file.native-artifact`,
 `file.large-binary`, `diff.large-new-file`) now carry the file's sha256 in evidence so a reviewer
 can verify the artifact against the registry out of band (the `prebuilt-platform-binaries` golden
-case). `1.15.0` models the downloader shape from the AsyncAPI npm compromise without broadening
+case). The `1.14.0` rule set also added the history-based release-process fingerprint rules
+`release.burst-anomaly` and `release.source-drift` (see
+[`release-fingerprint.md`](./release-fingerprint.md)). They compare a scan against the
+organization's D1 scan history rather than package bytes, so they have no corpus fixtures — their
+matrix lives in `test/release-fingerprint.test.ts` and
+`test/workers/release-fingerprint.test.ts`.
+
+`1.15.0` models the downloader shape from the AsyncAPI npm compromise without broadening
 plain process-execution noise: literal `spawn`/`spawnSync` calls that launch `node -e` or
 `node --eval` also emit `code.dynamic-evaluation`, while a code capability inside a recognized
 javascript-obfuscator-style rotating string-table wrapper is marked `obfuscated`. The latter reuses

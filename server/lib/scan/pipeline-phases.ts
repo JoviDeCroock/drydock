@@ -109,11 +109,15 @@ export function computeDiff(resolved: ResolvedArtifacts): ComputedDiff {
 
 // Pure: run the adapter's deterministic rules, redact evidence, and annotate
 // each finding with its release-delta scope. Produces every redacted artifact
-// the persistence + AI phases consume.
+// the persistence + AI phases consume. `extraFindings` lets the pipeline append
+// non-adapter deterministic findings (the release-process fingerprint rules) so
+// they ride the same redaction, annotation, risk, and persistence path as any
+// other rule finding.
 export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
   adapter: PackageAdapter<TInput, TBroker>,
   resolved: ResolvedArtifacts,
   diff: ComputedDiff,
+  extraFindings: Finding[] = [],
 ): DeterministicFindings {
   const { staged, baseline } = resolved;
 
@@ -125,7 +129,7 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
     manifestDiff: diff.manifestDiff,
     stagedManifestText: diff.stagedManifestText,
   });
-  const ruleFindings = redactFindings(adapterFindings);
+  const ruleFindings = redactFindings([...adapterFindings, ...extraFindings]);
 
   const redactedStagedFiles = redactFileRecords(staged.artifact.files);
   const redactedPreviousFiles = baseline.artifact ? redactFileRecords(baseline.artifact.files) : [];

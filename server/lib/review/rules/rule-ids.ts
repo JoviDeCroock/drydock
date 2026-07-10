@@ -24,6 +24,8 @@ export const DETERMINISTIC_RULE_IDS = {
   stageMetadataMismatch: "stage.metadata-mismatch",
   stageTarballDigestMismatch: "stage.tarball-digest-mismatch",
   tarSuspiciousEntry: "tar.suspicious-entry",
+  releaseBurstAnomaly: "release.burst-anomaly",
+  releaseSourceDrift: "release.source-drift",
 } as const;
 
 export type DeterministicRuleKey = keyof typeof DETERMINISTIC_RULE_IDS;
