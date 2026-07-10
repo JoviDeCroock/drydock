@@ -467,10 +467,24 @@ async function reviewGatePackages(
       const result = await runScanPipeline(
         { env, executionCtx, db, session: { userId: ownerUserId } },
         packageAdapter,
-        // `source` matches the `workflow_gate` value the D1 row already
-        // carries; without it the product counter files every gated scan as
-        // "unknown" and the npm/gate split is unreadable.
-        { scanId, stageId, organizationId, source: "workflow_gate", ...candidate.pipelineInput },
+        {
+          scanId,
+          stageId,
+          organizationId,
+          // `source` matches the `workflow_gate` value the D1 row already
+          // carries; without it the product counter files every gated scan as
+          // "unknown" and the npm/gate split is unreadable.
+          source: "workflow_gate",
+          // Marks the scan as gate-attested in the intent envelope: the signed
+          // webhook bound repository + run + environment, and the reviewed
+          // bytes came from that run.
+          gateContext: {
+            repositoryFullName: gate.repositoryFullName,
+            runId: gate.runId,
+            environment: gate.environment,
+          },
+          ...candidate.pipelineInput,
+        },
       );
       return {
         scanId,

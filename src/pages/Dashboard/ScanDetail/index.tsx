@@ -20,6 +20,7 @@ import {
 } from "../../../models/scan";
 import type { WorkflowGateDecision } from "../../../models/github-app";
 import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review/types";
+import { normalizeIntentEnvelope } from "../../../../server/lib/intent-envelope";
 import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
 import { Alert } from "../../../components/Alert";
 import { Button } from "../../../components/Button";
@@ -35,6 +36,7 @@ import { DecisionDialog } from "./DecisionDialog";
 import { GateContextPanel, GateDecisionDialog, GatePackagesPanel } from "./GateDecisionDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
 import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection";
+import { IntentEnvelopeSection } from "./IntentEnvelopeSection";
 import { ReleaseConsistencyNotice } from "./ReleaseConsistencyNotice";
 import { ReleaseRecommendation } from "./ReleaseRecommendation";
 import { PersistedReportSections } from "./ReportSections";
@@ -122,6 +124,9 @@ export default function ScanDetailPage() {
 
   const summary = useComputed(() => asPersistedSummary(model.detail.value?.scan.summaryJson));
   const ai = useComputed(() => displayedAiResult(asAiReview(model.detail.value?.scan.aiJson)));
+  // Older scans have no envelope; the normalizer returns null and the section
+  // is simply not rendered.
+  const intentEnvelope = useComputed(() => normalizeIntentEnvelope(summary.value.intentEnvelope));
 
   const diffEntries = useComputed<DiffEntry[]>(() => {
     const detail = model.detail.value;
@@ -206,6 +211,7 @@ export default function ScanDetailPage() {
 
   const isWorkflowGate = model.isWorkflowGate.value;
   const gate = model.gate.value;
+  const envelope = intentEnvelope.value;
 
   const handleDecisionSubmit = async (decision: ScanDecision, reason: string | null) => {
     await model.setDecision(decision, reason);
@@ -316,6 +322,8 @@ export default function ScanDetailPage() {
               value={summary.value.releaseConsistency}
               approvedContextCount={detail.riskSummary?.priorApprovedContextFindingCount ?? 0}
             />
+
+            {envelope ? <IntentEnvelopeSection envelope={envelope} /> : null}
 
             {detail.scan.packageName ? (
               <div class="flex flex-col gap-2 border-t border-border pt-3">

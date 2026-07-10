@@ -10,6 +10,7 @@ import type {
   PackageAdapter,
   StagedDetails,
 } from "../ecosystems/package-adapter";
+import type { IntentEnvelope } from "../intent-envelope";
 import {
   describeOperationalError,
   durationMsSince,
@@ -258,6 +259,9 @@ export interface PersistResultsArgs<TInput, TBroker extends AdapterBroker> {
   mergedAiFindings?: MergedAiFindings;
   riskSummary: ScanRiskBreakdown;
   releaseConsistency: ReleaseConsistency;
+  // Advisory source-binding classification computed by the pipeline; persisted
+  // with the scan but never allowed to influence risk or findings.
+  intentEnvelope: IntentEnvelope;
 }
 
 export interface PersistedScanOutcome {
@@ -299,6 +303,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     risk,
     riskSummary: args.riskSummary,
     releaseConsistency: args.releaseConsistency,
+    intentEnvelope: args.intentEnvelope,
     safety,
   };
 
@@ -332,6 +337,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     aiFindings: args.aiFindings,
     risk: args.riskSummary,
     releaseConsistency: args.releaseConsistency,
+    intentEnvelope: args.intentEnvelope,
     safety,
   };
   const reportJson = stableJson(reportPayload);
@@ -370,6 +376,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
       stagedPublish: findings.redactedDetails,
       baseline: baseline.baseline,
       releaseConsistency: args.releaseConsistency,
+      intentEnvelope: args.intentEnvelope,
       safety: result.safety,
     },
     ai: args.aiFindings,
