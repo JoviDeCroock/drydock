@@ -104,7 +104,7 @@ export function ReleaseSecuritySection({
                 size="sm"
                 onClick={disable}
                 disabled={saving || blockedOnCode}
-                class="self-start"
+                class="self-end"
               >
                 {saving ? "Saving…" : "Stop requiring two-factor"}
               </Button>
@@ -116,7 +116,7 @@ export function ReleaseSecuritySection({
                 size="sm"
                 onClick={enable}
                 disabled={saving}
-                class="self-start"
+                class="self-end"
               >
                 {saving ? "Saving…" : "Require two-factor for releases"}
               </Button>
