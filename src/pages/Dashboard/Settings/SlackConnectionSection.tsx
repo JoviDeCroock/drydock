@@ -32,10 +32,6 @@ export function SlackConnectionSection({
     </Show>
   );
 
-  const onSelectChannel = (channelId: string) => {
-    if (channelId) void slack.selectChannel(channelId);
-  };
-
   const onTest = async () => {
     const result = await slack.test();
     if (result) pushToast(result.message, result.ok ? "ok" : "critical");
@@ -98,7 +94,6 @@ export function SlackConnectionSection({
                     slack={slack}
                     canManage={canManageSignal}
                     connection={connection}
-                    onSelectChannel={onSelectChannel}
                     onTest={onTest}
                   />
                 )}
@@ -127,16 +122,20 @@ function ConnectedSlackState({
   slack,
   canManage,
   connection,
-  onSelectChannel,
   onTest,
 }: {
   slack: SlackModel;
   canManage: Signal<boolean>;
   connection: SlackConnection;
-  onSelectChannel: (channelId: string) => void;
   onTest: () => Promise<void>;
 }) {
-  const manualChannelId = useSignal("");
+  const channelSelectionMode = useSignal<"picker" | "manual">(
+    connection.channelId && !connection.channelName ? "manual" : "picker",
+  );
+  const selectedChannelId = useSignal(connection.channelName ? (connection.channelId ?? "") : "");
+  const manualChannelId = useSignal(
+    connection.channelId && !connection.channelName ? connection.channelId : "",
+  );
   const canListChannels = useComputed(() => slack.connection.value?.canListChannels === true);
   const showChannelPicker = useComputed(
     () => canManage.value && canListChannels.value && slack.channelsError.value === null,
@@ -146,9 +145,6 @@ function ConnectedSlackState({
   );
   const channelPickerDisabled = useComputed(
     () => slack.busy.value || channelPickerLoading.value || slack.channels.value.length === 0,
-  );
-  const channelPickerValue = useComputed(() =>
-    channelPickerLoading.value ? "" : (slack.connection.value?.channelId ?? ""),
   );
   const channelPickerPlaceholder = useComputed(() => {
     const loading = channelPickerLoading.value;
@@ -162,19 +158,41 @@ function ConnectedSlackState({
     return current.channelName ? `#${current.channelName}` : current.channelId;
   });
   const savingChannel = useComputed(() => slack.status.value === "savingChannel");
+  const saveChannelLabel = useComputed(() =>
+    savingChannel.value ? "Saving channel…" : "Save channel",
+  );
   const testDisabled = useComputed(() => slack.busy.value || !slack.connection.value?.channelId);
   const testingLabel = useComputed(() => (slack.status.value === "testing" ? "Testing…" : "Test"));
   const disconnectLabel = useComputed(() =>
     slack.status.value === "disconnecting" ? "Disconnecting…" : "Disconnect",
   );
-  const manualChannelDisabled = useComputed(
-    () => slack.busy.value || manualChannelId.value.trim().length === 0,
-  );
-  const onSaveManualChannel = async (event: Event) => {
+  const effectiveSelectionMode = useComputed(() => {
+    const canUsePicker = showChannelPicker.value;
+    const requestedMode = channelSelectionMode.value;
+    return canUsePicker && requestedMode === "picker" ? "picker" : "manual";
+  });
+  const pickerModeSelected = useComputed(() => channelSelectionMode.value === "picker");
+  const manualModeSelected = useComputed(() => channelSelectionMode.value === "manual");
+  const saveChannelDisabled = useComputed(() => {
+    const busy = slack.busy.value;
+    const currentConnection = slack.connection.value;
+    const mode = effectiveSelectionMode.value;
+    const pickerChannelId = selectedChannelId.value;
+    const manualId = manualChannelId.value.trim();
+    const draftChannelId = mode === "picker" ? pickerChannelId : manualId;
+    const currentMethod = currentConnection?.channelName ? "picker" : "manual";
+    const unchanged =
+      draftChannelId === (currentConnection?.channelId ?? "") && mode === currentMethod;
+    return busy || !draftChannelId || unchanged;
+  });
+  const onSaveChannel = async (event: Event) => {
     event.preventDefault();
-    const channelId = manualChannelId.peek();
-    const saved = await slack.saveChannelId(channelId);
-    if (saved) manualChannelId.value = "";
+    if (effectiveSelectionMode.peek() === "picker") {
+      const channelId = selectedChannelId.peek();
+      if (channelId) await slack.selectChannel(channelId);
+      return;
+    }
+    await slack.saveChannelId(manualChannelId.peek());
   };
 
   return (
@@ -209,66 +227,107 @@ function ConnectedSlackState({
       </div>
 
       <Show
-        when={showChannelPicker}
+        when={canManage}
         fallback={<ReadOnlyChannelSelection channelLabel={selectedChannelLabel} />}
       >
-        <div class={slackFieldGridClass}>
-          <label for="slackChannel" class={slackFieldLabelClass}>
-            Channel
-          </label>
-          <div class={slackFieldControlClass}>
-            <Select
-              id="slackChannel"
-              value={channelPickerValue}
-              disabled={channelPickerDisabled}
-              onChange={onSelectChannel}
-            >
-              <option value="" disabled>
-                {channelPickerPlaceholder}
-              </option>
-              <For each={slack.channels}>
-                {(channel: SlackChannelOption) => (
-                  <option key={channel.id} value={channel.id}>
-                    #{channel.name}
-                  </option>
-                )}
-              </For>
-            </Select>
-          </div>
-          <Show when={savingChannel}>
-            <Muted class="text-[12px] m-0">Saving…</Muted>
+        <div class="flex flex-col gap-3">
+          <Show when={showChannelPicker}>
+            <fieldset class="flex flex-col gap-2">
+              <legend class={slackFieldLabelClass}>Channel selection</legend>
+              <div class="flex flex-wrap gap-x-5 gap-y-2 text-[13px] text-ink">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="slackChannelSelectionMode"
+                    value="picker"
+                    checked={pickerModeSelected}
+                    onChange={() => (channelSelectionMode.value = "picker")}
+                    disabled={slack.busy}
+                    class="accent-accent"
+                  />
+                  Pick from Slack
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="slackChannelSelectionMode"
+                    value="manual"
+                    checked={manualModeSelected}
+                    onChange={() => (channelSelectionMode.value = "manual")}
+                    disabled={slack.busy}
+                    class="accent-accent"
+                  />
+                  Enter a channel ID
+                </label>
+              </div>
+              <Muted class="text-[12px] m-0">
+                Choose one method. Only the visible destination will be saved.
+              </Muted>
+            </fieldset>
           </Show>
-        </div>
-      </Show>
 
-      <Show when={canManage}>
-        <form class={slackFieldGridClass} onSubmit={onSaveManualChannel}>
-          <label for="slackChannelId" class={slackFieldLabelClass}>
-            Channel ID
-          </label>
-          <div class={slackFieldControlClass}>
-            <Input
-              id="slackChannelId"
-              type="text"
-              value={manualChannelId}
-              placeholder="C0123ABCDEF"
-              onInput={(e) => (manualChannelId.value = (e.target as HTMLInputElement).value)}
-              disabled={slack.busy}
-              spellcheck={false}
-            />
-          </div>
-          <Button
-            type="submit"
-            variant="secondary"
-            disabled={manualChannelDisabled}
-            class="self-stretch"
-          >
-            Save
-          </Button>
-          <Muted class="col-start-2 col-span-2 text-[12px] m-0">
-            Paste a channel ID when the channel is not listed or list permission is unavailable.
-          </Muted>
-        </form>
+          <form class={slackFieldGridClass} onSubmit={onSaveChannel}>
+            <Show
+              when={() => effectiveSelectionMode.value === "picker"}
+              fallback={
+                <>
+                  <label for="slackChannelId" class={slackFieldLabelClass}>
+                    Channel ID
+                  </label>
+                  <div class={slackFieldControlClass}>
+                    <Input
+                      id="slackChannelId"
+                      type="text"
+                      value={manualChannelId}
+                      placeholder="C0123ABCDEF"
+                      onInput={(e) =>
+                        (manualChannelId.value = (e.target as HTMLInputElement).value)
+                      }
+                      disabled={slack.busy}
+                      spellcheck={false}
+                    />
+                  </div>
+                </>
+              }
+            >
+              <label for="slackChannel" class={slackFieldLabelClass}>
+                Channel
+              </label>
+              <div class={slackFieldControlClass}>
+                <Select
+                  id="slackChannel"
+                  value={selectedChannelId}
+                  disabled={channelPickerDisabled}
+                  onChange={(channelId) => (selectedChannelId.value = channelId)}
+                >
+                  <option value="" disabled>
+                    {channelPickerPlaceholder}
+                  </option>
+                  <For each={slack.channels}>
+                    {(channel: SlackChannelOption) => (
+                      <option key={channel.id} value={channel.id}>
+                        #{channel.name}
+                      </option>
+                    )}
+                  </For>
+                </Select>
+              </div>
+            </Show>
+            <Button
+              type="submit"
+              variant="secondary"
+              disabled={saveChannelDisabled}
+              class="self-stretch whitespace-nowrap"
+            >
+              {saveChannelLabel}
+            </Button>
+            <Show when={() => effectiveSelectionMode.value === "manual"}>
+              <Muted class="col-start-2 col-span-2 text-[12px] m-0">
+                Use this when the channel is not listed or list permission is unavailable.
+              </Muted>
+            </Show>
+          </form>
+        </div>
       </Show>
 
       <Show<string | null> when={slack.channelsError}>

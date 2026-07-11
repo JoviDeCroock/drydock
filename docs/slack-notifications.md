@@ -142,10 +142,12 @@ shown as the client 404 instead of reaching `GET /api/v1/slack/callback`.
 load/connect/loadChannels/selectChannel/disconnect/test and surfaces the OAuth
 callback notice. `SlackConnectionSection.tsx` renders the connection state — "Add
 to Slack" when disconnected, and when connected (owner/admin only) the
-public-channel picker loads up front and sits inline next to its label, with Test
-and Disconnect controls — under the Settings **notifications** tab next to the
-email recipients section. `test()` returns its result so the section reports it
-as a toast (`pushToast`) rather than an inline banner. The `enabled` flag stays a
+public-channel picker loads up front. The channel picker and manual channel-ID
+fallback are presented as mutually exclusive selection methods, and both require
+the same explicit **Save channel** action. Test and Disconnect controls sit in the
+connection header under the Settings **notifications** tab next to the email
+recipients section. `test()` returns its result so the section reports it as a
+toast (`pushToast`) rather than an inline banner. The `enabled` flag stays a
 server-side concept (a disabled row is skipped by the delivery fan-out), but the
 UI no longer exposes a pause/resume toggle, so the client model dropped
 `setEnabled`; the `PATCH /` route remains for completeness and is still covered by
