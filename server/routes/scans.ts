@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { createDb } from "../db/client";
+import { recordScanEvent } from "../db/events";
 import { getOrganizationRole } from "../db/invitations";
 import { getNpmConnection } from "../db/npm-connections";
 import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
