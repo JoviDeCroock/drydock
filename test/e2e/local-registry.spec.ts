@@ -258,10 +258,10 @@ async function createScan(page: Page, stageId: string): Promise<{ status: number
   );
 }
 
-// Poll the persisted detail route the way the dashboard does (?poll=1 skips
-// the scan.viewed audit event) until the background job reaches a terminal
-// status. The deadline stays inside the 90s Playwright test timeout so a stuck
-// scan fails with the last observed status instead of an opaque test timeout.
+// Poll the persisted detail route the way the dashboard does (with ?poll=1)
+// until the background job reaches a terminal status. The deadline stays inside
+// the 90s Playwright test timeout so a stuck scan fails with the last observed
+// status instead of an opaque test timeout.
 async function pollScanUntilTerminal(
   page: Page,
   scanId: string,

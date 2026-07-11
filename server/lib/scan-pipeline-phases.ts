@@ -1,5 +1,4 @@
 import { type AppDb, type WorkspaceSession } from "../db/client";
-import { recordScanEvent } from "../db/events";
 import { persistScan } from "../db/scans";
 import type { AiReview } from "./ai-review";
 import type {
@@ -288,34 +287,11 @@ export interface RecordCompletionArgs {
   pipelineStartedAtMs: number;
 }
 
-// Side-effecting: write the completion audit event (only when this attempt won
-// the persistence claim) and emit the structured completion observability
-// event.
+// Side-effecting: emit the structured completion observability event.
 export async function recordCompletion(args: RecordCompletionArgs): Promise<void> {
-  const { result, identity, baseline } = args;
+  const { result, identity } = args;
   const riskSummary = result.riskSummary;
   const risk = result.risk;
-
-  if (args.persisted) {
-    await recordScanEvent(args.db, {
-      organizationId: identity.organizationId,
-      actorUserId: args.session.userId,
-      scanId: identity.scanId,
-      type: "scan.completed",
-      metadata: {
-        stageId: identity.stageId,
-        packageName: result.package.name,
-        stagedVersion: result.package.stagedVersion,
-        stagedTag: result.package.stagedTag,
-        baseline,
-        risk,
-        releaseRisk: riskSummary.releaseRisk,
-        artifactRisk: risk,
-        contextRisk: riskSummary.contextRisk,
-        durationMs: durationMsSince(args.pipelineStartedAtMs),
-      },
-    });
-  }
 
   emitOperationalEvent("info", "scan.pipeline.completed", {
     scanId: identity.scanId,

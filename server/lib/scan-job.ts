@@ -1,5 +1,4 @@
 import { type AppDb, type WorkspaceSession, createDb } from "../db/client";
-import { recordScanEvent } from "../db/events";
 import { getNpmConnection, markNpmConnectionUsed } from "../db/npm-connections";
 import { type ScanSource, claimScanForRun, discardScanAttempt, markScanFailed } from "../db/scans";
 import { npmAdapter } from "./adapters/npm";
@@ -71,13 +70,6 @@ export async function executeScanJob(
     });
     return null;
   }
-  await recordScanEvent(db, {
-    organizationId: message.organizationId,
-    actorUserId: message.actorUserId,
-    scanId: message.scanId,
-    type: "scan.started",
-    metadata: { stageId: message.stageId, attempt },
-  });
 
   try {
     const npmConnection = await getNpmConnection(db, message.organizationId);
@@ -88,20 +80,7 @@ export async function executeScanJob(
       throw new Error("Validate the organization npm token before scanning staged publishes.");
     }
 
-    await Promise.all([
-      markNpmConnectionUsed(db, message.organizationId),
-      recordScanEvent(db, {
-        organizationId: message.organizationId,
-        actorUserId: message.actorUserId,
-        scanId: message.scanId,
-        type: "npm_connection.used",
-        metadata: {
-          stageId: message.stageId,
-          registryUrl: npmConnection.registryUrl,
-          tokenFingerprint: npmConnection.tokenFingerprint,
-        },
-      }),
-    ]);
+    await markNpmConnectionUsed(db, message.organizationId);
 
     const result = await runScanPipeline({ env, executionCtx, db, session }, npmAdapter, {
       scanId: message.scanId,
@@ -139,17 +118,6 @@ export async function executeScanJob(
       const skip =
         message.source === "auto_discovery" && safe.code === "staged_tarball_unavailable";
       if (skip) {
-        await recordScanEvent(db, {
-          organizationId: message.organizationId,
-          actorUserId: message.actorUserId,
-          type: "scan.skipped",
-          metadata: {
-            scanId: message.scanId,
-            stageId: message.stageId,
-            attempt,
-            error: safe,
-          },
-        });
         await discardScanAttempt(db, message.scanId, message.organizationId);
         emitOperationalEvent("warn", "scan.job.skipped", {
           scanId: message.scanId,
@@ -162,16 +130,7 @@ export async function executeScanJob(
           error: safe,
         });
       } else {
-        await Promise.all([
-          markScanFailed(db, message.scanId, message.organizationId, safe),
-          recordScanEvent(db, {
-            organizationId: message.organizationId,
-            actorUserId: message.actorUserId,
-            scanId: message.scanId,
-            type: "scan.failed",
-            metadata: { stageId: message.stageId, attempt, error: safe },
-          }),
-        ]);
+        await markScanFailed(db, message.scanId, message.organizationId, safe);
         emitOperationalEvent("error", "scan.job.failed", {
           scanId: message.scanId,
           organizationId: message.organizationId,
@@ -197,13 +156,6 @@ export async function executeScanJob(
         }
       }
     } else {
-      await recordScanEvent(db, {
-        organizationId: message.organizationId,
-        actorUserId: message.actorUserId,
-        scanId: message.scanId,
-        type: "scan.retryable_failed",
-        metadata: { stageId: message.stageId, attempt, error: safe },
-      });
       emitOperationalEvent("warn", "scan.job.retryable_failed", {
         scanId: message.scanId,
         organizationId: message.organizationId,

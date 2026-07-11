@@ -132,10 +132,5 @@ describe("scans route background fallback", () => {
       {},
       { finalAttempt: true },
     );
-
-    const backgroundedEvents = dbMock.recordScanEvent.mock.calls.filter(
-      ([, payload]) => payload?.type === "scan.backgrounded",
-    );
-    expect(backgroundedEvents).toHaveLength(1);
   });
 });

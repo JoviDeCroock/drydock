@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { createDb } from "./db/client";
+import { AUDIT_LOG_RETENTION_DAYS, pruneAuditEventsOlderThan } from "./db/audit-log";
 import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
 import { getOrganizationOwnerUserId } from "./db/organizations";
 import { RateLimitError, enforceRateLimit } from "./db/rate-limit";
@@ -33,6 +34,7 @@ import {
   recordExpiredNpmConnection,
   StagedPublishesFetchError,
 } from "./lib/staged-publishes-discovery";
+import { auditRoutes } from "./routes/audit";
 import { githubAppRoutes } from "./routes/github-app";
 import { githubWebhookRoutes } from "./routes/github-webhooks";
 import { npmConnectionRoutes } from "./routes/npm-connection";
@@ -264,6 +266,7 @@ app.route("/api/v1/organizations", organizationMembersRoutes);
 app.route("/api/v1/scans", scansRoutes);
 app.route("/api/v1/slack", slackRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
+app.route("/api/v1/audit-events", auditRoutes);
 
 app.notFound((c) => {
   if (!isServerOwnedPath(c.req.path) && c.env.ASSETS) {
@@ -397,10 +400,29 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
   });
 }
 
+// Flat-window retention for the organization audit log. Runs each tick; a
+// bounded DELETE keeps the sweep cheap. Never let pruning failures abort the
+// discovery cron.
+async function pruneStaleAuditEvents(env: Cloudflare.Env) {
+  const cutoff = new Date(Date.now() - AUDIT_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  try {
+    await pruneAuditEventsOlderThan(createDb(env.DB), cutoff);
+    emitOperationalEvent("info", "audit_events.pruned", {
+      retentionDays: AUDIT_LOG_RETENTION_DAYS,
+      cutoff: cutoff.toISOString(),
+    });
+  } catch (err) {
+    emitOperationalEvent("error", "audit_events.prune_failed", {
+      error: describeOperationalError(err),
+    });
+  }
+}
+
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
     await runStagedPublishesDiscoveryCron(env, ctx);
+    await pruneStaleAuditEvents(env);
   },
   async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
     for (const message of batch.messages) {

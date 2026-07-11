@@ -195,16 +195,13 @@ describe("executeScanJob idempotency", () => {
     expect(dbMock.markScanFailed).not.toHaveBeenCalled();
   });
 
-  test("emits scan.started exactly once after a successful claim", async () => {
+  test("runs the pipeline exactly once after a successful claim", async () => {
     dbMock.claimScanForRun.mockResolvedValue(true);
 
     await executeScanJob(env, ctx, message, {}, { attempt: 1 });
 
-    const started = dbMock.recordScanEvent.mock.calls.filter(
-      ([, payload]) => payload?.type === "scan.started",
-    );
-    expect(started).toHaveLength(1);
     expect(pipelineMock.runScanPipeline).toHaveBeenCalledTimes(1);
+    expect(dbMock.markNpmConnectionUsed).toHaveBeenCalledWith({}, message.organizationId);
   });
 
   test("emits a structured completion log without token material", async () => {
@@ -251,7 +248,7 @@ describe("executeScanJob idempotency", () => {
     );
   });
 
-  test("records scan.failed and marks the scan failed on a terminal error in the final attempt", async () => {
+  test("marks the scan failed on a terminal error in the final attempt", async () => {
     dbMock.claimScanForRun.mockResolvedValue(true);
     pipelineMock.runScanPipeline.mockRejectedValue(
       new SandboxError(JSON.stringify({ error: "denied", status: 403 })),
@@ -262,10 +259,6 @@ describe("executeScanJob idempotency", () => {
     ).rejects.toBeInstanceOf(SandboxError);
 
     expect(dbMock.markScanFailed).toHaveBeenCalledTimes(1);
-    const failed = dbMock.recordScanEvent.mock.calls.filter(
-      ([, payload]) => payload?.type === "scan.failed",
-    );
-    expect(failed).toHaveLength(1);
     expect(notifyMock.notifyScanCompletion).toHaveBeenCalledWith(
       expect.objectContaining({
         scanId: message.scanId,
@@ -325,19 +318,6 @@ describe("executeScanJob idempotency", () => {
       message.scanId,
       message.organizationId,
     );
-    const failed = dbMock.recordScanEvent.mock.calls.filter(
-      ([, payload]) => payload?.type === "scan.failed",
-    );
-    expect(failed).toHaveLength(0);
-    const skipped = dbMock.recordScanEvent.mock.calls.filter(
-      ([, payload]) => payload?.type === "scan.skipped",
-    );
-    expect(skipped).toHaveLength(1);
-    expect(skipped[0]?.[1]?.scanId).toBeUndefined();
-    expect(skipped[0]?.[1]?.metadata).toMatchObject({
-      scanId: message.scanId,
-      stageId: message.stageId,
-    });
     expect(notifyMock.notifyScanCompletion).not.toHaveBeenCalled();
   });
 
@@ -364,7 +344,7 @@ describe("executeScanJob idempotency", () => {
     );
   });
 
-  test("records scan.retryable_failed without marking failed when a retryable error fires before exhaustion", async () => {
+  test("does not mark failed when a retryable error fires before exhaustion", async () => {
     dbMock.claimScanForRun.mockResolvedValue(true);
     pipelineMock.runScanPipeline.mockRejectedValue(
       new SandboxError(JSON.stringify({ error: "blip", status: 503 })),
@@ -375,9 +355,6 @@ describe("executeScanJob idempotency", () => {
     ).rejects.toBeInstanceOf(SandboxError);
 
     expect(dbMock.markScanFailed).not.toHaveBeenCalled();
-    const retryable = dbMock.recordScanEvent.mock.calls.filter(
-      ([, payload]) => payload?.type === "scan.retryable_failed",
-    );
-    expect(retryable).toHaveLength(1);
+    expect(dbMock.discardScanAttempt).not.toHaveBeenCalled();
   });
 });

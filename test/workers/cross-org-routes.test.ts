@@ -502,7 +502,7 @@ describe("scans routes enforce organization boundaries", () => {
     expect(intruderRes.status).toBe(404);
   });
 
-  test("GET /scans/:id includes scan lifecycle events for the owning organization", async () => {
+  test("GET /scans/:id includes scan-scoped events for the owning organization", async () => {
     const owner = await seedUser();
     const scanId = await seedCompletedScan(owner, "@org/timeline-package");
     const db = createDb(env.DB);
@@ -513,8 +513,12 @@ describe("scans routes enforce organization boundaries", () => {
         organizationId: owner.organizationId,
         actorUserId: owner.userId,
         scanId,
-        type: "scan.started",
-        metadataJson: { stageId: "stage-timeline", attempt: 1 },
+        type: "scan.decided",
+        metadataJson: {
+          stageId: "stage-timeline",
+          decision: "publish",
+          tokenFingerprint: "secret-fingerprint",
+        },
         createdAt: new Date(1),
       },
       {
@@ -522,22 +526,9 @@ describe("scans routes enforce organization boundaries", () => {
         organizationId: owner.organizationId,
         actorUserId: owner.userId,
         scanId,
-        type: "npm_connection.used",
-        metadataJson: {
-          stageId: "stage-timeline",
-          registryUrl: "https://registry.npmjs.org/",
-          tokenFingerprint: "secret-fingerprint",
-        },
+        type: "scan.decided",
+        metadataJson: { stageId: "stage-timeline", decision: "no_publish" },
         createdAt: new Date(2),
-      },
-      {
-        id: crypto.randomUUID(),
-        organizationId: owner.organizationId,
-        actorUserId: owner.userId,
-        scanId,
-        type: "scan.completed",
-        metadataJson: { stageId: "stage-timeline", risk: "low" },
-        createdAt: new Date(3),
       },
     ]);
 
@@ -546,17 +537,14 @@ describe("scans routes enforce organization boundaries", () => {
     const body = (await res.json()) as {
       events: Array<{ type: string; metadataJson: Record<string, unknown> }>;
     };
-    expect(body.events.map((event) => event.type)).toEqual([
-      "scan.started",
-      "npm_connection.used",
-      "scan.completed",
-    ]);
-    expect(body.events[0].metadataJson).toMatchObject({ stageId: "stage-timeline", attempt: 1 });
-    expect(body.events[1].metadataJson).toMatchObject({
+    expect(body.events.map((event) => event.type)).toEqual(["scan.decided", "scan.decided"]);
+    expect(body.events[0].metadataJson).toMatchObject({
       stageId: "stage-timeline",
-      registryUrl: "https://registry.npmjs.org/",
+      decision: "publish",
     });
-    expect(body.events[1].metadataJson).not.toHaveProperty("tokenFingerprint");
+    // Sensitive metadata keys are redacted before the client sees them.
+    expect(body.events[0].metadataJson).not.toHaveProperty("tokenFingerprint");
+    expect(body.events[1].metadataJson).toMatchObject({ decision: "no_publish" });
   });
 
   test("GET /scans/:id/versions returns 404 for foreign scan ids", async () => {

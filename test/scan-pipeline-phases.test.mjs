@@ -325,7 +325,7 @@ describe("recordCompletion", () => {
   };
   const identity = { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" };
 
-  test("records the completion audit event when the scan was persisted", async () => {
+  test("completes without writing a scan audit event", async () => {
     await recordCompletion({
       db: {},
       session: { userId: "user-1" },
@@ -334,27 +334,6 @@ describe("recordCompletion", () => {
       result: completedResult,
       baseline: baselineInfo,
       persisted: true,
-      pipelineStartedAtMs: Date.now(),
-    });
-
-    expect(dbMock.recordScanEvent).toHaveBeenCalledTimes(1);
-    expect(dbMock.recordScanEvent.mock.calls[0][1]).toMatchObject({
-      type: "scan.completed",
-      scanId: "scan-1",
-      organizationId: "org-1",
-      metadata: { packageName: "pkg", artifactRisk: "high", contextRisk: "high" },
-    });
-  });
-
-  test("skips the audit event when the scan was not persisted", async () => {
-    await recordCompletion({
-      db: {},
-      session: { userId: "user-1" },
-      identity,
-      adapterId: "fake",
-      result: completedResult,
-      baseline: baselineInfo,
-      persisted: false,
       pipelineStartedAtMs: Date.now(),
     });
 

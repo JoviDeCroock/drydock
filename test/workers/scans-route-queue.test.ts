@@ -66,7 +66,7 @@ describe("scans route queue behavior", () => {
     vi.unstubAllGlobals();
   });
 
-  test("POST /scans enqueues a token-free scan message and records the queue event", async () => {
+  test("POST /scans enqueues a token-free scan message and persists the scan", async () => {
     const owner = await seedUser();
     const token = "npm_route_queue_secret_0123456789";
     await connectValidNpmToken(owner, token);
@@ -129,11 +129,9 @@ describe("scans route queue behavior", () => {
     expect(JSON.stringify(message)).not.toContain("authorization");
 
     const db = createDb(env.DB);
-    const events = await db
-      .select()
-      .from(schema.scanEvents)
-      .where(eq(schema.scanEvents.scanId, body.scan.id));
-    expect(events.map((event) => event.type)).toContain("scan.queued");
+    const scans = await db.select().from(schema.scans).where(eq(schema.scans.id, body.scan.id));
+    expect(scans).toHaveLength(1);
+    expect(scans[0]?.organizationId).toBe(owner.organizationId);
   });
 
   test("POST /scans rejects stage ids the organization token cannot access before persisting", async () => {

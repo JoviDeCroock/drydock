@@ -416,12 +416,9 @@ describe("discoverAndQueueStagedPublishes", () => {
 
     const createdScanId = dbMock.createScanJob.mock.calls[0]?.[1]?.id;
     expect(dbMock.deletePendingScanJob).toHaveBeenCalledWith(db, createdScanId, "org_a");
-    expect(
-      dbMock.recordScanEvent.mock.calls.some(([, payload]) => payload?.type === "scan.queued"),
-    ).toBe(false);
   });
 
-  test("does not record scans_started when the sweep starts nothing", async () => {
+  test("starts nothing when every discovered stage is already known", async () => {
     stagedPublishesMock.listStagedPublishes.mockResolvedValue({
       items: [{ id: "stage-known", packageName: "pkg-a", version: "1.0.0" }],
     });
@@ -441,21 +438,18 @@ describe("discoverAndQueueStagedPublishes", () => {
     );
 
     expect(result).toEqual(expect.objectContaining({ found: 1, created: 0, skipped: 1 }));
-    expect(
-      dbMock.recordScanEvent.mock.calls.some(
-        ([, payload]) => payload?.type === "staged_publishes.scans_started",
-      ),
-    ).toBe(false);
+    expect(dbMock.createScanJob).not.toHaveBeenCalled();
+    expect(env.SCAN_QUEUE.send).not.toHaveBeenCalled();
   });
 
-  test("records scans_started when the sweep starts scans", async () => {
+  test("starts a scan for each newly discovered stage", async () => {
     stagedPublishesMock.listStagedPublishes.mockResolvedValue({
       items: [{ id: "stage-new", packageName: "pkg-a", version: "1.0.0" }],
     });
     dbMock.listExistingScanStageIds.mockResolvedValue(new Set());
     dbMock.createScanJob.mockResolvedValue({ id: "scan-new" });
 
-    await discoverAndQueueStagedPublishes(
+    const result = await discoverAndQueueStagedPublishes(
       {
         db,
         env,
@@ -468,12 +462,18 @@ describe("discoverAndQueueStagedPublishes", () => {
       { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
     );
 
-    const startedEvents = dbMock.recordScanEvent.mock.calls.filter(
-      ([, payload]) => payload?.type === "staged_publishes.scans_started",
+    expect(result).toEqual(
+      expect.objectContaining({ found: 1, created: 1, skipped: 0, queued: true }),
     );
-    expect(startedEvents).toHaveLength(1);
-    expect(startedEvents[0]?.[1]?.metadata).toEqual(
-      expect.objectContaining({ found: 1, created: 1, skipped: 0 }),
+    expect(result.scans).toHaveLength(1);
+    expect(dbMock.createScanJob).toHaveBeenCalledTimes(1);
+    expect(dbMock.createScanJob).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ stageId: "stage-new" }),
+    );
+    expect(env.SCAN_QUEUE.send).toHaveBeenCalledTimes(1);
+    expect(env.SCAN_QUEUE.send).toHaveBeenCalledWith(
+      expect.objectContaining({ stageId: "stage-new" }),
     );
   });
 });
