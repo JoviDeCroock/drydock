@@ -16,6 +16,15 @@ export interface SlackChannelOption {
   name: string;
 }
 
+export function getMissingSlackChannelOption(
+  connection: SlackConnection | null,
+  channels: SlackChannelOption[],
+): SlackChannelOption | null {
+  if (!connection?.channelId || !connection.channelName) return null;
+  if (channels.some((channel) => channel.id === connection.channelId)) return null;
+  return { id: connection.channelId, name: connection.channelName };
+}
+
 interface StatusResponse {
   configured: boolean;
   connection: SlackConnection | null;
