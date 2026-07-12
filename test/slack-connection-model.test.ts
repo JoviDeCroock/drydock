@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { getMissingSlackChannelOption } from "../src/models/slack-connection";
+import { getSavedSlackChannelOption } from "../src/models/slack-connection";
 
 const connection = {
   teamId: "T123",
@@ -11,24 +11,15 @@ const connection = {
   createdAt: "2026-07-12T00:00:00.000Z",
 };
 
-describe("getMissingSlackChannelOption", () => {
+describe("getSavedSlackChannelOption", () => {
   test("keeps the saved channel available while the channel list loads", () => {
-    expect(getMissingSlackChannelOption(connection, [])).toEqual({
+    expect(getSavedSlackChannelOption(connection)).toEqual({
       id: "C_RELEASES",
       name: "package-releases",
     });
   });
 
-  test("does not duplicate the saved channel once Slack returns it", () => {
-    expect(
-      getMissingSlackChannelOption(connection, [
-        { id: "C_ANNOUNCEMENTS", name: "announcements" },
-        { id: "C_RELEASES", name: "package-releases" },
-      ]),
-    ).toBeNull();
-  });
-
   test("does not invent an option for a manually entered channel ID", () => {
-    expect(getMissingSlackChannelOption({ ...connection, channelName: null }, [])).toBeNull();
+    expect(getSavedSlackChannelOption({ ...connection, channelName: null })).toBeNull();
   });
 });

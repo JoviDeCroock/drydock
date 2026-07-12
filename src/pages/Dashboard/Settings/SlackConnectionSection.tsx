@@ -1,7 +1,7 @@
 import { useComputed, useModel, useSignal, useSignalEffect, type Signal } from "@preact/signals";
 import { For, Show, useLiveSignal } from "@preact/signals/utils";
 import {
-  getMissingSlackChannelOption,
+  getSavedSlackChannelOption,
   SlackConnectionModel,
   type SlackChannelOption,
   type SlackConnection,
@@ -153,12 +153,16 @@ function ConnectedSlackState({
     if (loading) return "Loading channels…";
     return channels.length === 0 ? "No public channels found" : "Choose a channel…";
   });
-  // A native select discards a value that has no matching option. Keep the
-  // persisted destination mounted while the asynchronous channel list loads,
-  // then let the matching Slack option replace it.
-  const savedChannelOption = useComputed(() =>
-    getMissingSlackChannelOption(slack.connection.value, slack.channels.value),
-  );
+  // Keep the persisted destination mounted even after the asynchronous list
+  // loads. Removing it before For inserts the matching option briefly leaves
+  // the select without its value and makes the browser choose the first item.
+  const savedChannelOption = useComputed(() => getSavedSlackChannelOption(slack.connection.value));
+  const selectableChannels = useComputed(() => {
+    const savedChannelId = savedChannelOption.value?.id;
+    return slack.channels.value.filter(
+      (channel: SlackChannelOption) => channel.id !== savedChannelId,
+    );
+  });
   const selectedChannelLabel = useComputed(() => {
     const current = slack.connection.value;
     if (!current?.channelId) return null;
@@ -313,7 +317,7 @@ function ConnectedSlackState({
                   <Show<SlackChannelOption | null> when={savedChannelOption}>
                     {(channel) => <option value={channel.id}>#{channel.name}</option>}
                   </Show>
-                  <For each={slack.channels}>
+                  <For each={selectableChannels}>
                     {(channel: SlackChannelOption) => (
                       <option key={channel.id} value={channel.id}>
                         #{channel.name}

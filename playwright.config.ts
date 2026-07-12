@@ -23,7 +23,12 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      testMatch: ["**/local-registry.spec.ts", "**/two-factor.spec.ts", "**/org-switcher.spec.ts"],
+      testMatch: [
+        "**/local-registry.spec.ts",
+        "**/two-factor.spec.ts",
+        "**/org-switcher.spec.ts",
+        "**/slack-selector.spec.ts",
+      ],
       use: { ...devices["Desktop Chrome"] },
     },
     {

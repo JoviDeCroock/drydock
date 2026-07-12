@@ -16,12 +16,10 @@ export interface SlackChannelOption {
   name: string;
 }
 
-export function getMissingSlackChannelOption(
+export function getSavedSlackChannelOption(
   connection: SlackConnection | null,
-  channels: SlackChannelOption[],
 ): SlackChannelOption | null {
   if (!connection?.channelId || !connection.channelName) return null;
-  if (channels.some((channel) => channel.id === connection.channelId)) return null;
   return { id: connection.channelId, name: connection.channelName };
 }
 
