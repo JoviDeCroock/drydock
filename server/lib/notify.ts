@@ -1,6 +1,10 @@
 import { type AppDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
-import { getOrganizationOwnerUserId, resolveNotificationEmails } from "../db/organizations";
+import {
+  getOrganizationName,
+  getOrganizationOwnerUserId,
+  resolveNotificationEmails,
+} from "../db/organizations";
 import { getScan } from "../db/scans";
 import { getSlackConnectionSecret } from "../db/slack-connection";
 import { sendNotificationEmail } from "./email";
@@ -28,14 +32,15 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
   const { env, db, scanId, organizationId, ownerUserId, outcome, error } = input;
   const notificationOwnerUserId =
     (await getOrganizationOwnerUserId(db, organizationId)) ?? ownerUserId;
-  const [recipients, detail] = await Promise.all([
+  const [recipients, detail, organizationName] = await Promise.all([
     resolveNotificationEmails(db, organizationId, notificationOwnerUserId),
     getScan(db, scanId, organizationId),
+    getOrganizationName(db, organizationId),
   ]);
 
   const scan = detail?.scan;
   const packageLabel = formatPackageLabel(scan?.packageName, scan?.stagedVersion);
-  const dashboardUrl = scanUrl(env, scanId);
+  const dashboardUrl = scanUrl(env, scanId, organizationId);
   const subject =
     outcome === "complete"
       ? `Staged release scan complete — ${packageLabel}`
@@ -47,6 +52,7 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
           "Hi there,",
           "",
           `We finished scanning the staged release ${packageLabel}.`,
+          organizationName ? `Organization: ${organizationName}` : null,
           scan?.risk ? `Overall risk: ${scan.risk}.` : null,
           dashboardUrl ? `Review the report: ${dashboardUrl}` : null,
           "",
@@ -56,6 +62,7 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
           "Hi there,",
           "",
           `We could not complete the staged release scan for ${packageLabel}.`,
+          organizationName ? `Organization: ${organizationName}` : null,
           error?.message ? `Reason: ${error.message}` : null,
           dashboardUrl ? `Review the scan: ${dashboardUrl}` : null,
           "",
@@ -146,7 +153,10 @@ export async function notifyNpmConnectionExpired(
   input: NotifyNpmConnectionExpiredInput,
 ): Promise<void> {
   const { env, db, organizationId, ownerUserId, registryUrl } = input;
-  const recipients = await resolveNotificationEmails(db, organizationId, ownerUserId);
+  const [recipients, organizationName] = await Promise.all([
+    resolveNotificationEmails(db, organizationId, ownerUserId),
+    getOrganizationName(db, organizationId),
+  ]);
   if (recipients.length === 0) {
     await recordScanEvent(db, {
       organizationId,
@@ -157,13 +167,19 @@ export async function notifyNpmConnectionExpired(
     return;
   }
 
-  const settingsLink = settingsUrl(env);
+  // A recipient can watch several organizations from one inbox, so name the org
+  // in both the body and the link — otherwise "your organization" leaves them
+  // guessing which token to replace and lands them on whatever org their browser
+  // last had active.
+  const orgLabel = organizationName ?? "your organization";
+  const settingsLink = settingsUrl(env, organizationId);
   const subject = "Your npm token can no longer reach the staging registry";
   const lines = [
     "Hi there,",
     "",
-    "Drydock can no longer reach the npm staging registry with your saved token, so staged-release reviews are paused for your organization.",
+    `Drydock can no longer reach the npm staging registry with the saved token for ${orgLabel}, so staged-release reviews are paused.`,
     "",
+    organizationName ? `Organization: ${organizationName}` : null,
     `Registry: ${registryUrl}`,
     "",
     settingsLink
@@ -238,10 +254,13 @@ export async function notifyWorkflowGateReview(
     packageCount,
   } = input;
 
-  const recipients = await resolveNotificationEmails(db, organizationId, ownerUserId);
+  const [recipients, organizationName] = await Promise.all([
+    resolveNotificationEmails(db, organizationId, ownerUserId),
+    getOrganizationName(db, organizationId),
+  ]);
 
   const packageLabel = formatPackageLabel(packageName, version);
-  const dashboardUrl = scanUrl(env, scanId);
+  const dashboardUrl = scanUrl(env, scanId, organizationId);
   const otherPackages = packageCount && packageCount > 1 ? packageCount - 1 : 0;
   // A monorepo release fans out into several per-package scans behind one gate;
   // the gate carries only its headline (highest-risk) package. Surface the bundle
@@ -257,6 +276,7 @@ export async function notifyWorkflowGateReview(
     "",
     `A staged release is held in ${repositoryFullName} and is waiting for a decision before it can publish.`,
     "",
+    organizationName ? `Organization: ${organizationName}` : null,
     packageLine,
     `Release risk: ${releaseRisk}`,
     `Repository: ${repositoryFullName}`,
@@ -366,7 +386,10 @@ export async function notifyWorkflowGateTimeout(
     version,
   } = input;
 
-  const recipients = await resolveNotificationEmails(db, organizationId, ownerUserId);
+  const [recipients, organizationName] = await Promise.all([
+    resolveNotificationEmails(db, organizationId, ownerUserId),
+    getOrganizationName(db, organizationId),
+  ]);
   if (recipients.length === 0) {
     await recordScanEvent(db, {
       organizationId,
@@ -379,7 +402,7 @@ export async function notifyWorkflowGateTimeout(
   }
 
   const packageLabel = formatPackageLabel(packageName, version);
-  const dashboardUrl = scanUrl(env, scanId);
+  const dashboardUrl = scanUrl(env, scanId, organizationId);
   const subject = `GitHub gate for ${packageLabel} timed out before scan completed`;
   const lines = [
     "Hi there,",
@@ -387,6 +410,7 @@ export async function notifyWorkflowGateTimeout(
     `The GitHub release gate for ${packageLabel} in ${repositoryFullName} timed out before Drydock finished scanning it.`,
     "GitHub may have already blocked the release because the review did not return inside its decision window.",
     "",
+    organizationName ? `Organization: ${organizationName}` : null,
     `Repository: ${repositoryFullName}`,
     `Environment: ${environment}`,
     "",
@@ -583,23 +607,25 @@ function formatPackageLabel(
   return packageName ?? "a staged release";
 }
 
-function scanUrl(env: Cloudflare.Env, scanId: string): string | null {
+function scanUrl(env: Cloudflare.Env, scanId: string, organizationId?: string): string | null {
   const base = env.BETTER_AUTH_URL;
   if (typeof base !== "string" || !base) return null;
   try {
     const url = new URL(`/dashboard/scans/${encodeURIComponent(scanId)}`, base);
+    if (organizationId) url.searchParams.set("org", organizationId);
     return url.toString();
   } catch {
     return null;
   }
 }
 
-function settingsUrl(env: Cloudflare.Env): string | null {
+function settingsUrl(env: Cloudflare.Env, organizationId?: string): string | null {
   const base = env.BETTER_AUTH_URL;
   if (typeof base !== "string" || !base) return null;
   try {
     const url = new URL("/dashboard/settings", base);
     url.searchParams.set("tab", "integrations");
+    if (organizationId) url.searchParams.set("org", organizationId);
     return url.toString();
   } catch {
     return null;

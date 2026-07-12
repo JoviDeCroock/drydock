@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const dbMock = vi.hoisted(() => ({
   getOrganizationOwnerUserId: vi.fn(),
+  getOrganizationName: vi.fn(),
   getScan: vi.fn(),
   resolveNotificationEmails: vi.fn(),
   getSlackConnectionSecret: vi.fn(),
@@ -94,6 +95,7 @@ function npmConnectionExpiredInput(overrides = {}) {
 
 beforeEach(() => {
   dbMock.getOrganizationOwnerUserId.mockResolvedValue("user_1");
+  dbMock.getOrganizationName.mockResolvedValue("Acme Corp");
   dbMock.resolveNotificationEmails.mockResolvedValue(["owner@example.com"]);
   dbMock.getSlackConnectionSecret.mockResolvedValue(null);
   dbMock.getScan.mockResolvedValue({
@@ -106,6 +108,7 @@ beforeEach(() => {
 
 afterEach(() => {
   dbMock.getOrganizationOwnerUserId.mockReset();
+  dbMock.getOrganizationName.mockReset();
   dbMock.resolveNotificationEmails.mockReset();
   dbMock.getSlackConnectionSecret.mockReset();
   dbMock.getScan.mockReset();
@@ -125,10 +128,11 @@ describe("notifyWorkflowGateReview", () => {
     expect(message.to).toBe("owner@example.com");
     expect(message.subject).toContain("demo-package@1.2.0");
     expect(message.text).toContain("demo-package@1.2.0");
+    expect(message.text).toContain("Organization: Acme Corp");
     expect(message.text).toContain("Release risk: high");
     expect(message.text).toContain("Repository: octo/example");
     expect(message.text).toContain("Environment: pypi");
-    expect(message.text).toContain("https://drydock.test/dashboard/scans/scan_1");
+    expect(message.text).toContain("https://drydock.test/dashboard/scans/scan_1?org=org_1");
 
     expect(dbMock.recordScanEvent).toHaveBeenCalledTimes(1);
     const [, event] = dbMock.recordScanEvent.mock.calls[0];
@@ -221,13 +225,17 @@ describe("notifyWorkflowGateReview", () => {
 });
 
 describe("notifyNpmConnectionExpired", () => {
-  test("emails the integrations tab link for replacing the npm token", async () => {
+  test("names the organization and deep-links the integrations tab to it", async () => {
     await notifyNpmConnectionExpired(npmConnectionExpiredInput());
 
     expect(emailMock.sendNotificationEmail).toHaveBeenCalledTimes(1);
     const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
     expect(message.subject).toBe("Your npm token can no longer reach the staging registry");
-    expect(message.text).toContain("https://drydock.test/dashboard/settings?tab=integrations");
+    expect(message.text).toContain("with the saved token for Acme Corp");
+    expect(message.text).toContain("Organization: Acme Corp");
+    expect(message.text).toContain(
+      "https://drydock.test/dashboard/settings?tab=integrations&org=org_1",
+    );
     expect(message.text).toContain("Registry: https://registry.npmjs.org");
 
     expect(dbMock.recordScanEvent).toHaveBeenCalledTimes(1);
@@ -242,6 +250,20 @@ describe("notifyNpmConnectionExpired", () => {
         recipient: "owner@example.com",
       },
     });
+  });
+
+  test("falls back to a generic phrasing without an Organization line when the org name is gone", async () => {
+    dbMock.getOrganizationName.mockResolvedValue(null);
+
+    await notifyNpmConnectionExpired(npmConnectionExpiredInput());
+
+    const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
+    expect(message.text).toContain("with the saved token for your organization");
+    expect(message.text).not.toContain("Organization:");
+    // The link stays org-scoped even when the display name is unavailable.
+    expect(message.text).toContain(
+      "https://drydock.test/dashboard/settings?tab=integrations&org=org_1",
+    );
   });
 });
 
@@ -264,8 +286,9 @@ describe("notifyScanCompletion", () => {
     expect(emailMock.sendNotificationEmail).toHaveBeenCalledTimes(2);
     const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
     expect(message.subject).toContain("demo-package@1.2.0");
+    expect(message.text).toContain("Organization: Acme Corp");
     expect(message.text).toContain("Overall risk: high");
-    expect(message.text).toContain("https://drydock.test/dashboard/scans/scan_1");
+    expect(message.text).toContain("https://drydock.test/dashboard/scans/scan_1?org=org_1");
 
     expect(dbMock.recordScanEvent).toHaveBeenCalledTimes(2);
     for (const [, event] of dbMock.recordScanEvent.mock.calls) {

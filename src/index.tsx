@@ -1,6 +1,7 @@
 import { hydrate, render } from "preact";
 import { ErrorBoundary, LocationProvider, Route, Router, lazy, prerender as ssr } from "preact-iso";
 import { Toaster } from "./components/Toast";
+import { applyActiveOrganizationFromUrl } from "./models/active-organization";
 import { extractPrerenderHead, getPageSeoMetadata } from "./lib/seo";
 import {
   isDashboardShellRoute,
@@ -61,6 +62,13 @@ function emptyAppShell() {
 if (typeof window !== "undefined") {
   const appElement = document.getElementById("app");
   if (!appElement) throw new Error("App element not found");
+  // Adopt an emailed `?org=<id>` deep-link before the router mounts so the first
+  // org-scoped request (which reads the active org from localStorage) targets the
+  // organization the link is about. Scoped to the dashboard, the only surface the
+  // param means anything on.
+  if (location.pathname.startsWith("/dashboard")) {
+    applyActiveOrganizationFromUrl();
+  }
   if (isPrerenderedRoute(location.pathname) && appElement.firstChild) {
     hydrate(<App />, appElement);
   } else {
