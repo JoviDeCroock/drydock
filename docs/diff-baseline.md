@@ -44,7 +44,7 @@ The pipeline cross-checks staged detail package name/version against the staged 
 
 ## AI evidence budget impact
 
-AI review is Flagship-gated and off by default, but when enabled for an organization it should remain diff-first:
+AI review is Flagship-gated and on by default (the `ai-review` flag is a killswitch), and while it runs for an organization it should remain diff-first:
 
 - deterministic findings stay authoritative and are computed before AI;
 - AI sees the ecosystem id, normalized manifest diff, release-delta deterministic findings, changed-file diff, and bounded samples for changed files only;

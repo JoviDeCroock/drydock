@@ -31,9 +31,10 @@
 	"ai": {
 		"binding": "AI"
 	},
-	// Optional: only needed if you use Cloudflare Flagship to gate the AI
-	// reviewer. Remove this block to keep AI review disabled, or set your own
-	// Flagship app id.
+	// Optional: wires the Cloudflare Flagship `ai-review` killswitch. With it
+	// present the AI reviewer is on by default per organization and can be
+	// switched off per org (or globally) via Flagship. Remove this block to
+	// keep AI review disabled, or set your own Flagship app id.
 	"flagship": [
 		{
 			"binding": "FLAGS",

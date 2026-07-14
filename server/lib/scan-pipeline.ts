@@ -132,8 +132,9 @@ interface AiReviewArgs {
 
 async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
   // AI review is gated by the Cloudflare Flagship `ai-review` flag in the
-  // `drydock` app, evaluated per-organization. Default-off until Flagship
-  // returns true for the organization placing the scan.
+  // `drydock` app, evaluated per-organization. The flag is a killswitch: the
+  // reviewer is on by default, and Flagship returning false for an organization
+  // (or globally) disables it. Without a Flagship binding the reviewer stays off.
   const disabled: AiReview = {
     status: "unavailable",
     risk: "low",
@@ -144,7 +145,7 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
     model: null,
   };
   const aiReviewEnabled = args.env.FLAGS
-    ? await args.env.FLAGS.getBooleanValue("ai-review", false, {
+    ? await args.env.FLAGS.getBooleanValue("ai-review", true, {
         targetingKey: args.identity.organizationId,
         organizationId: args.identity.organizationId,
       })
@@ -152,10 +153,11 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
   if (!aiReviewEnabled) return disabled;
 
   // Loaded lazily so the Vercel AI SDK + workers-ai-provider stay out of the
-  // Worker's boot graph: AI review is off by default, so pulling these heavy
-  // modules eagerly would tax every cold start (and every per-file test isolate)
-  // for a path most scans never take. AI_MODEL rides along — it lives in the same
-  // module, so importing it statically would defeat the point.
+  // Worker's boot graph: this path is skipped whenever the killswitch is off or
+  // no Flagship binding is wired, so pulling these heavy modules eagerly would tax
+  // every cold start (and every per-file test isolate) for a path many scans skip.
+  // AI_MODEL rides along — it lives in the same module, so importing it statically
+  // would defeat the point.
   const { runSelectiveAiReview, AI_MODEL } = await import("./ai-review");
 
   const startedAtMs = Date.now();
