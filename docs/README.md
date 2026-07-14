@@ -24,6 +24,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`e2e-test-environment.md`](./e2e-test-environment.md) — fake registry and Playwright harness.
 - [`tooling.md`](./tooling.md) — oxlint/oxfmt/typecheck, signals lint rules, route/client helpers.
 - [`agent-tour.md`](./agent-tour.md) — portable product walkthrough artifacts.
+- [`observability-proposal.md`](./observability-proposal.md) — proposed runtime, customer, adoption, journey, support, and LLM observability model.
 - [`test-package.md`](./test-package.md) — package fixture used for manual staged-publish checks.
 
 ## Domain docs
