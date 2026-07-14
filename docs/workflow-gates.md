@@ -72,7 +72,7 @@ The PyPI adapter (`server/lib/adapters/pypi/`):
 
 ## npm workflow-gate notes
 
-Use npm workflow gates when CI publishes from built artifacts instead of `npm publish --stage`, or when the release must be paused by GitHub rather than npm registry staging.
+Use npm workflow gates when CI publishes from built artifacts instead of `npm stage publish`, or when the release must be paused by GitHub rather than npm registry staging.
 
 The candidate is the uploaded npm pack artifact. Drydock detects npm candidates from `package.json` in the archive, normalizes package identity, and compares against the currently published baseline using the same npm adapter projection used by registry-staged scans.
 

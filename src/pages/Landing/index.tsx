@@ -29,9 +29,9 @@ export default function LandingPage() {
           Review the package that will ship.
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-          Drydock sees npm staged publishes and GitHub-gated releases, compares the artifact with
-          the last published version, and pins supply-chain findings to changed lines. You make the
-          final call.
+          Drydock sees packages in npm stage publish and GitHub-gated releases, compares the
+          artifact with the last published version, and pins supply-chain findings to changed lines.
+          You make the final call.
         </p>
         <div class="flex gap-3 mt-2">
           <Show
@@ -117,11 +117,10 @@ export default function LandingPage() {
       <section aria-label="How Drydock hooks in" class="flex flex-col gap-4">
         <SectionLabel>How it hooks in</SectionLabel>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <RegistryCard title="Staged publishing: npm">
-            A maintainer runs{" "}
-            <code class="font-mono text-[12px] text-ink">npm publish --stage</code> and the registry
-            parks a private candidate. Drydock reviews that tarball and pins risk signals to the
-            diff before the maintainer completes npm's 2FA confirmation.
+          <RegistryCard title="npm stage publish">
+            A maintainer runs <code class="font-mono text-[12px] text-ink">npm stage publish</code>{" "}
+            and the registry parks a private candidate. Drydock reviews that tarball and pins risk
+            signals to the diff before the maintainer completes npm's 2FA confirmation.
           </RegistryCard>
           <RegistryCard title="Workflow gating: PyPI, npm & VS Code" badge="Preview">
             For PyPI, VS Code extensions, or npm workflows that do not stage, a GitHub Environment
@@ -146,7 +145,7 @@ export default function LandingPage() {
             Reports keep redacted review evidence instead of raw release archives.
           </StatusStripItem>
           <StatusStripItem label="approval" status="human" tone="neutral">
-            Maintainers make the release decision: npm 2FA for staged publishes or the CI gate for
+            Maintainers make the release decision: npm 2FA for a stage publish or the CI gate for
             workflow releases.
           </StatusStripItem>
         </StatusStrip>

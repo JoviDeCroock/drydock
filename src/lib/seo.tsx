@@ -25,14 +25,14 @@ export interface PrerenderHead {
 export const homePageSeo: PageSeoMetadata = {
   title: "Drydock: pre-publish package review",
   description:
-    "Drydock lets npm, PyPI, and VS Code maintainers review the exact package artifact before a staged publish or gated release goes live.",
+    "Drydock lets npm, PyPI, and VS Code maintainers review the exact package artifact before an npm stage publish or gated release goes live.",
   path: "/",
 };
 
 export const docsPageSeo: PageSeoMetadata = {
-  title: "Drydock docs: staged publishing and workflow gates",
+  title: "Learn Drydock: artifact review before you publish",
   description:
-    "Set up npm staged publishing or GitHub workflow gates so Drydock can review release artifacts before publication.",
+    "Learn how Drydock reviews npm, PyPI, and VS Code release artifacts, then set up npm stage publish or a GitHub workflow gate.",
   path: "/docs",
 };
 
