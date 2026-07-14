@@ -38,7 +38,7 @@ test("agent tour: local Drydock release review walkthrough", async ({
   try {
     await page.goto("/");
     await expect(
-      page.getByRole("heading", { name: "Review the package that will ship." }),
+      page.getByRole("heading", { name: "Malware doesn't get committed. It gets published." }),
     ).toBeVisible();
     await tour.capture(page, "landing", "Marketing entry point and product promise.");
 
