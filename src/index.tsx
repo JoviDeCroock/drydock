@@ -22,6 +22,7 @@ const SettingsPage = lazy(() => import("./pages/Dashboard/Settings"));
 const AccountPage = lazy(() => import("./pages/Dashboard/Account"));
 const InvitePage = lazy(() => import("./pages/Dashboard/Invite"));
 const GithubAppCallbackPage = lazy(() => import("./pages/Dashboard/GithubAppCallback"));
+const PackageDiffPage = lazy(() => import("./pages/Diff"));
 const NotFoundPage = lazy(() => import("./pages/NotFound"));
 
 export function App() {
@@ -32,6 +33,8 @@ export function App() {
           <Route path="/" component={LandingPage} />
           <Route path="/docs" component={DocsPage} />
           <Route path="/privacy" component={PrivacyPage} />
+          <Route path="/diff" component={PackageDiffPage} />
+          <Route path="/diff/*" component={PackageDiffPage} />
           <Route path="/login" component={LoginPage} />
           <Route path="/register" component={RegisterPage} />
           <Route path="/verify-email" component={VerifyEmailPage} />

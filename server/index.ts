@@ -40,6 +40,7 @@ import { githubWebhookRoutes } from "./routes/github-webhooks";
 import { npmConnectionRoutes } from "./routes/npm-connection";
 import { organizationMembersRoutes } from "./routes/organization-members";
 import { organizationsRoutes } from "./routes/organizations";
+import { publicDiffRoutes } from "./routes/public-diff";
 import { slackRoutes } from "./routes/slack";
 import { scansRoutes } from "./routes/scans";
 import { stagedPublishesRoutes } from "./routes/staged-publishes";
@@ -122,6 +123,13 @@ app.use("*", async (c, next) => canonicalDomainRedirect(c.req.raw) ?? next());
 // CSRF middleware below — the signature verification inside the handler is the
 // trust boundary.
 app.route("/webhooks", githubWebhookRoutes);
+
+// The public package-diff endpoints are anonymous by design: they serve only
+// data derived from public registry artifacts, touch no organization
+// resources, and are abuse-controlled by per-IP rate limits plus the KV cache
+// for immutable version pairs. They must stay mounted before the auth
+// middleware below; every other /api/* endpoint keeps requiring a session.
+app.route("/api/public/v1/package-diff", publicDiffRoutes);
 
 app.use("/api/*", async (c, next) => {
   try {
@@ -243,11 +251,13 @@ app.get("/api", (c) =>
       githubApp:
         "GET /api/v1/github-app/config; POST /api/v1/github-app/install; POST /api/v1/github-app/install/callback; GET /api/v1/github-app/installations; GET/POST /api/v1/github-app/release-targets; DELETE /api/v1/github-app/release-targets/:id; GET /api/v1/github-app/workflow-gates/by-scan/:scanId; POST /api/v1/github-app/workflow-gates/:gateId/decision",
       githubWebhooks: "POST /webhooks/github (signed by GitHub App webhook secret)",
+      publicPackageDiff:
+        "GET /api/public/v1/package-diff?package&from&to; GET /api/public/v1/package-diff/versions?package; GET /api/public/v1/package-diff/file?package&from&to&path (anonymous, IP rate-limited, public registry data only)",
       slack:
         "GET /api/v1/slack; POST /api/v1/slack/connect; GET /api/v1/slack/callback; GET /api/v1/slack/channels; PUT /api/v1/slack/channel; PATCH /api/v1/slack; DELETE /api/v1/slack; POST /api/v1/slack/test",
       health: "GET /api/health",
     },
-    auth: "Better Auth is required for every non-auth API endpoint.",
+    auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints, which serve only public registry data.",
     note: "Cloudflare Workers cannot spawn the npm CLI. This service performs the npm stage download equivalent inside a Dynamic Worker by fetching the staged tarball through a locked-down gateway.",
   }),
 );

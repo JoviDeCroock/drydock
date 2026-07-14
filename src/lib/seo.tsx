@@ -8,7 +8,7 @@ const OG_IMAGE_ALT = "Drydock — pre-publish package review for npm, PyPI, and 
 export interface PageSeoMetadata {
   title: string;
   description: string;
-  path: "/" | "/docs" | "/privacy";
+  path: string;
 }
 
 export interface PrerenderHeadElement {
@@ -43,6 +43,33 @@ export const privacyPageSeo: PageSeoMetadata = {
   path: "/privacy",
 };
 
+// SEO for the public package-diff surface. Without arguments this is the /diff
+// landing form; with a version pair it produces the shareable per-diff head so
+// pasted links unfurl with the package and versions in the title.
+export function packageDiffSeo(
+  packageName?: string,
+  fromVersion?: string,
+  toVersion?: string,
+): PageSeoMetadata {
+  if (!packageName || !fromVersion || !toVersion) {
+    return {
+      title: "Diff any npm package | Drydock",
+      description:
+        "Compare two published versions of any npm package file by file, with deterministic supply-chain findings pinned to the diff. Free, no account needed.",
+      path: "/diff",
+    };
+  }
+  const encodedName = packageName
+    .split("/")
+    .map((segment) => encodeURIComponent(segment).replace(/^%40/, "@"))
+    .join("/");
+  return {
+    title: `${packageName} ${fromVersion} → ${toVersion} | Drydock package diff`,
+    description: `File-by-file diff of ${packageName} between ${fromVersion} and ${toVersion}, with deterministic supply-chain findings pinned to changed lines.`,
+    path: `/diff/${encodedName}/${encodeURIComponent(fromVersion)}/${encodeURIComponent(toVersion)}`,
+  };
+}
+
 export function getPageSeoMetadata(pathname: string): PageSeoMetadata | undefined {
   const canonicalPathname =
     pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
@@ -50,6 +77,7 @@ export function getPageSeoMetadata(pathname: string): PageSeoMetadata | undefine
   if (canonicalPathname === "/") return homePageSeo;
   if (canonicalPathname === "/docs") return docsPageSeo;
   if (canonicalPathname === "/privacy") return privacyPageSeo;
+  if (canonicalPathname === "/diff") return packageDiffSeo();
   return undefined;
 }
 

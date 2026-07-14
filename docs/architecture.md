@@ -71,7 +71,11 @@ Cron-triggered npm discovery finds staged publishes for organizations with valid
 
 ## Organization and auth model
 
-All non-auth `/api/*` endpoints require a Better Auth session and an active organization. Users may belong to multiple organizations; scan data, npm connections, workflow gates, release targets, Slack installs, and settings must be organization-scoped. Email verification and membership/invitation behavior are described in [`organization-members.md`](./organization-members.md).
+All non-auth `/api/*` endpoints require a Better Auth session and an active organization, with one deliberate exception: the anonymous public package-diff endpoints under `/api/public/v1/package-diff` (below). Users may belong to multiple organizations; scan data, npm connections, workflow gates, release targets, Slack installs, and settings must be organization-scoped. Email verification and membership/invitation behavior are described in [`organization-members.md`](./organization-members.md).
+
+## Public package diff
+
+`/diff` is an anonymous marketing/utility surface: it diffs any two published versions of an npm package and runs the deterministic rule set over the newer artifact, reusing the scan pipeline's pure phases (`server/lib/public-diff.ts`, routes in `server/routes/public-diff.ts`). The endpoints are mounted before the auth middleware, use no credentials (public registry only, fixed to `NPM_REGISTRY`), persist nothing to D1, and never run AI review. Abuse control is per-IP rate limiting (D1 `rate_limits`) plus a 30-day `COMPARE_CACHE` KV entry per immutable version pair; sandbox archive caps bound per-request work. Findings run on raw text samples before redaction — the same order as the scan pipeline — and only redacted evidence is cached or returned.
 
 ## npm connection model
 

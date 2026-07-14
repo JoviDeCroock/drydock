@@ -1,0 +1,103 @@
+import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
+import { describe, expect, test } from "vitest";
+import worker from "../../server/index";
+
+// The public package-diff endpoints are deliberately anonymous: they must be
+// reachable without a session (mounted before the auth middleware), validate
+// their inputs strictly, and rate-limit by IP before doing any work. None of
+// these tests reach the registry — rate limiting runs before validation and
+// validation failures return before any fetch.
+
+async function publicDiffFetch(path: string, ip?: string): Promise<Response> {
+  const ctx = createExecutionContext();
+  const headers = new Headers();
+  if (ip) headers.set("cf-connecting-ip", ip);
+  const res = await worker.fetch(new Request(`http://example.com${path}`, { headers }), env, ctx);
+  await waitOnExecutionContext(ctx);
+  return res;
+}
+
+describe("public package-diff routes", () => {
+  test("responds without a session instead of 401", async () => {
+    const res = await publicDiffFetch(
+      "/api/public/v1/package-diff?package=!invalid!&from=1.0.0&to=1.0.1",
+      "10.0.0.1",
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid package name" });
+  });
+
+  test("versions endpoint rejects an invalid package name", async () => {
+    const res = await publicDiffFetch(
+      "/api/public/v1/package-diff/versions?package=UPPER_CASE",
+      "10.0.0.2",
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid package name" });
+  });
+
+  test("diff endpoint rejects missing and malformed versions", async () => {
+    const missing = await publicDiffFetch(
+      "/api/public/v1/package-diff?package=left-pad&to=1.0.1",
+      "10.0.0.3",
+    );
+    expect(missing.status).toBe(400);
+    expect(await missing.json()).toEqual({ error: "invalid from version" });
+
+    const malformed = await publicDiffFetch(
+      `/api/public/v1/package-diff?package=left-pad&from=${encodeURIComponent("1.0.0 OR 1=1")}&to=1.0.1`,
+      "10.0.0.3",
+    );
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toEqual({ error: "invalid from version" });
+  });
+
+  test("diff endpoint rejects identical versions", async () => {
+    const res = await publicDiffFetch(
+      "/api/public/v1/package-diff?package=left-pad&from=1.0.1&to=1.0.1",
+      "10.0.0.4",
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "from and to must differ" });
+  });
+
+  test("file endpoint requires a path", async () => {
+    const res = await publicDiffFetch(
+      "/api/public/v1/package-diff/file?package=left-pad&from=1.0.0&to=1.0.1",
+      "10.0.0.5",
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "path is required" });
+  });
+
+  test("diff endpoint rate-limits by IP", async () => {
+    const ip = "10.99.0.1";
+    // Limit is 10/min; validation failures still consume the budget because the
+    // limiter runs first (invalid requests are the cheapest to abuse).
+    for (let i = 0; i < 10; i++) {
+      const res = await publicDiffFetch("/api/public/v1/package-diff?package=!x!", ip);
+      expect(res.status).toBe(400);
+    }
+    const limited = await publicDiffFetch("/api/public/v1/package-diff?package=!x!", ip);
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("retry-after")).toBeTruthy();
+
+    // A different IP keeps its own budget.
+    const other = await publicDiffFetch("/api/public/v1/package-diff?package=!x!", "10.99.0.2");
+    expect(other.status).toBe(400);
+  });
+
+  test("versions endpoint rate-limits by IP independently of the diff endpoint", async () => {
+    const ip = "10.99.1.1";
+    for (let i = 0; i < 30; i++) {
+      const res = await publicDiffFetch("/api/public/v1/package-diff/versions?package=!x!", ip);
+      expect(res.status).toBe(400);
+    }
+    const limited = await publicDiffFetch("/api/public/v1/package-diff/versions?package=!x!", ip);
+    expect(limited.status).toBe(429);
+
+    // The same IP is not blocked on the diff bucket by versions traffic.
+    const diff = await publicDiffFetch("/api/public/v1/package-diff?package=!x!", ip);
+    expect(diff.status).toBe(400);
+  });
+});

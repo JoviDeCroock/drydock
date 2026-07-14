@@ -6,12 +6,19 @@ import { FindingCard, FindingRow, GroupedFindingCard } from "../../../components
 import { EmptyLine, Muted, SectionLabel } from "../../../components/Typography";
 import type { FindingWithDiffStatus } from "./types";
 
+const DEFAULT_DESCRIPTION =
+  "Deterministic rules scan the full staged artifact. Changed-file signals are pinned to their " +
+  "line in the diff above. Open a file to read them in context; unchanged signals stay here as " +
+  "package context.";
+
 export function RiskSignalsSection({
   findings,
   onSelect,
+  description = DEFAULT_DESCRIPTION,
 }: {
   findings: FindingWithDiffStatus[];
   onSelect?: (file: string) => void;
+  description?: string;
 }) {
   const changedFindings = sortFindingItemsBySeverity(findings.filter((item) => item.releaseDelta));
   const contextualFindings = sortFindingItemsBySeverity(
@@ -36,11 +43,7 @@ export function RiskSignalsSection({
         </Badge>
         {contextualFindings.length ? <Badge tone="neutral">{contextLabel}</Badge> : null}
       </div>
-      <Muted class="m-0 text-[13px] leading-[1.55] max-w-[760px]">
-        Deterministic rules scan the full staged artifact. Changed-file signals are pinned to their
-        line in the diff above. Open a file to read them in context; unchanged signals stay here as
-        package context.
-      </Muted>
+      <Muted class="m-0 text-[13px] leading-[1.55] max-w-[760px]">{description}</Muted>
 
       {changedFindings.length ? (
         <FindingGrid findings={changedFindings} onSelect={onSelect} />
