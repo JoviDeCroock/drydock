@@ -38,9 +38,42 @@ test("agent tour: local Drydock release review walkthrough", async ({
   try {
     await page.goto("/");
     await expect(
-      page.getByRole("heading", { name: "Review the package that will ship." }),
+      page.getByRole("heading", { name: "Review what ships—not what was committed." }),
     ).toBeVisible();
     await tour.capture(page, "landing", "Marketing entry point and product promise.");
+
+    await page.getByRole("button", { name: /Pinned finding/ }).click();
+    await expect(page.getByText("code.credential-access")).toBeVisible();
+    await tour.capture(
+      page,
+      "landing-pinned-finding",
+      "Guided landing demo with a deterministic finding pinned to shipped code.",
+    );
+
+    await page.getByRole("button", { name: /Human decision/ }).click();
+    await expect(
+      page.getByRole("heading", {
+        name: "Do not publish until the new install path is explained.",
+      }),
+    ).toBeVisible();
+    await tour.capture(
+      page,
+      "landing-human-decision",
+      "Guided landing demo at the release recommendation and decision state.",
+    );
+
+    await page.getByRole("button", { name: /Release delta/ }).click();
+    await page.emulateMedia({ colorScheme: "dark" });
+    await tour.capture(page, "landing-dark", "Landing page and review evidence in dark mode.");
+    await page.emulateMedia({ colorScheme: "light" });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+    await expect(
+      page.getByRole("heading", { name: "Review what ships—not what was committed." }),
+    ).toBeVisible();
+    await tour.capture(page, "landing-mobile", "Stacked landing layout at a mobile viewport.");
+    await page.setViewportSize({ width: 1280, height: 720 });
 
     await page.goto("/docs");
     await expect(

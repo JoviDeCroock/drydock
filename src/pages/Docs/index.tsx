@@ -83,7 +83,7 @@ export default function DocsPage() {
   return (
     <PageShell
       class="gap-10 md:gap-14"
-      headerActions={<MarketingHeaderActions authed={authed} />}
+      headerActions={<MarketingHeaderActions authed={authed} page="docs" />}
       feedbackPosition="end"
     >
       <PageSeo metadata={docsPageSeo} />

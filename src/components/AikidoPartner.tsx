@@ -52,22 +52,33 @@ export function AikidoFootnote({ class: className }: { class?: string }) {
 export function AikidoPartnerStrip({ class: className }: { class?: string }) {
   return (
     <section aria-label="Sponsored by Aikido Security" class={cn("flex flex-col gap-4", className)}>
-      <SectionLabel>Sponsored by</SectionLabel>
-      <a
-        href={AIKIDO_URL}
-        target="_blank"
-        rel="noopener noreferrer"
-        class="group self-center inline-flex flex-col items-center gap-2"
-        aria-label="Visit Aikido Security"
-      >
-        <AikidoMark
-          size="lg"
-          class="opacity-80 transition-opacity duration-150 ease-out group-hover:opacity-100"
-        />
-        <span class="font-mono text-[10px] tracking-[0.05em] text-ink-subtle transition-colors duration-150 ease-out group-hover:text-ink-muted">
-          aikido.dev →
-        </span>
-      </a>
+      <SectionLabel>Supported by security builders</SectionLabel>
+      <div class="flex flex-col gap-5 rounded-lg border border-border bg-surface p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex max-w-[620px] flex-col gap-1.5">
+          <h2 class="m-0 text-base font-medium tracking-[-0.005em]">
+            Sponsored by Aikido Security
+          </h2>
+          <p class="m-0 text-[13px] leading-[1.55] text-ink-muted">
+            Aikido supports Drydock's work on practical, artifact-level supply-chain review for
+            package maintainers.
+          </p>
+        </div>
+        <a
+          href={AIKIDO_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="group inline-flex shrink-0 items-center gap-3 self-start sm:self-auto"
+          aria-label="Visit Aikido Security"
+        >
+          <AikidoMark
+            size="md"
+            class="opacity-80 transition-opacity duration-150 ease-out group-hover:opacity-100"
+          />
+          <span class="font-mono text-[11px] text-ink-subtle transition-colors duration-150 ease-out group-hover:text-ink-muted">
+            aikido.dev →
+          </span>
+        </a>
+      </div>
     </section>
   );
 }
