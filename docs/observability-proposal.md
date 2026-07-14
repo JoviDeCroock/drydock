@@ -373,15 +373,15 @@ Use it for exact activation, support, and lifecycle queries. Use Analytics Engin
 
 Telemetry must not flood D1. Every store this proposal adds declares a retention window and a pruning path up front; no telemetry table is allowed to grow unbounded. The existing precedent is `pruneAuditEventsOlderThan` running on each scheduled tick ([`docs/audit-log.md`](./audit-log.md)); new stores follow the same pattern.
 
-| Store | Growth shape | Retention | Wipe mechanism |
-| --- | --- | --- | --- |
-| D1 domain state (scans, gates, decisions) | Product data | Product lifecycle | Existing org/scan cascade and account deletion |
-| D1 `scan_events` (audit) | Append-only | 90 days (existing) | Existing scheduled prune |
-| D1 `organization_milestones` | One row per (organization, milestone) — bounded by design | Lifetime of the organization | Org cascade delete; no age prune needed |
-| D1 daily cohort/health rollups | One row per org/cohort per day | 13 months (one year of trends plus comparison margin) | Age prune on scheduled tick |
-| D1 support references / incident bundles | Append-only | 90 days, matching the audit window | Age prune on scheduled tick |
-| Workers Logs / traces | Platform-managed | Platform retention | None needed |
-| Analytics Engine | Platform-managed | 3 months, platform-enforced | None needed |
+| Store                                     | Growth shape                                              | Retention                                             | Wipe mechanism                                 |
+| ----------------------------------------- | --------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------- |
+| D1 domain state (scans, gates, decisions) | Product data                                              | Product lifecycle                                     | Existing org/scan cascade and account deletion |
+| D1 `scan_events` (audit)                  | Append-only                                               | 90 days (existing)                                    | Existing scheduled prune                       |
+| D1 `organization_milestones`              | One row per (organization, milestone) — bounded by design | Lifetime of the organization                          | Org cascade delete; no age prune needed        |
+| D1 daily cohort/health rollups            | One row per org/cohort per day                            | 13 months (one year of trends plus comparison margin) | Age prune on scheduled tick                    |
+| D1 support references / incident bundles  | Append-only                                               | 90 days, matching the audit window                    | Age prune on scheduled tick                    |
+| Workers Logs / traces                     | Platform-managed                                          | Platform retention                                    | None needed                                    |
+| Analytics Engine                          | Platform-managed                                          | 3 months, platform-enforced                           | None needed                                    |
 
 Rules:
 
