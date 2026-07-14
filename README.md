@@ -81,7 +81,7 @@ Consult route definitions under `server/routes/` for exact request/response shap
 - Package artifacts are untrusted evidence and are never executed.
 - npm credentials are encrypted at rest, decrypted only for registry access, and never passed into the Dynamic Worker sandbox.
 - The sandbox can fetch only through constrained brokers/gateways and returns bounded metadata/text evidence.
-- AI review is default-off, advisory, and cannot downgrade deterministic findings.
+- AI review is advisory and on by default behind the `ai-review` killswitch, and cannot downgrade deterministic findings.
 - Raw tarballs are not retained by default; persisted reports use redacted summaries and canonical report JSON.
 
 See [`docs/security-model.md`](docs/security-model.md) for the full contract.

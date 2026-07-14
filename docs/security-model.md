@@ -24,7 +24,7 @@ Drydock handles hostile package artifacts, private review evidence, and npm cred
 - **No approval automation.** Drydock must not run `npm stage approve`, collect npm 2FA codes, publish packages, or represent AI output as release approval.
 - **No package execution.** Do not execute package code, install dependencies, run lifecycle scripts, import modules, run builds, invoke shells, or render package-provided active content.
 - **No npm token in the sandbox.** The Dynamic Worker must never receive npm token material. Only `NpmStageGateway` may attach npm authorization, and only for allowlisted npm registry endpoints.
-- **AI is advisory and default-off.** Workers AI is gated by the per-organization Flagship `ai-review` flag. Deterministic findings remain authoritative and cannot be downgraded by AI output.
+- **AI is advisory and on by default.** Workers AI runs behind the per-organization Flagship `ai-review` killswitch; set the flag to false to disable it for an organization or globally. Deterministic findings remain authoritative and cannot be downgraded by AI output.
 - **Fail closed.** Artifact acquisition, validation, parsing, report generation, workflow-gate callback, and credential checks must block/reject on uncertainty rather than silently approving.
 
 ## Credential posture

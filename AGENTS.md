@@ -7,7 +7,7 @@
   - `routes/github-webhooks.ts` — public signed GitHub App webhook endpoint. Persists `deployment_protection_rule` deliveries into `github_workflow_gates`; see `docs/workflow-gates.md`, `docs/npm-workflow-gate.md`, `docs/pypi-workflow-gate.md`, and `docs/vscode-workflow-gate.md`.
   - `lib/sandbox.ts` — Dynamic Worker that downloads/parses package artifacts. `NpmStageGateway` is the only npm-token egress.
   - `lib/review.ts` — deterministic findings, package/package.json diffing, risk computation, and shared UI types.
-  - `lib/ai-review.ts` — Workers AI reviewer, wired via `scan-pipeline.ts` and default-off behind the `ai-review` Flagship flag.
+  - `lib/ai-review.ts` — Workers AI reviewer, wired via `scan-pipeline.ts` and on by default behind the `ai-review` Flagship killswitch.
   - `lib/adapters/` — ecosystem-specific registry/artifact behavior for npm, PyPI, VS Code, and workflow gates.
   - `db/` — Drizzle schema and persistence helpers for scans, findings, artifacts, workflow gates, and Better Auth.
 - `src/` — Preact UI. `index.tsx` mounts `preact-iso`; `models/` re-use `server/` types.
@@ -19,7 +19,7 @@
 
 - Package bytes are hostile evidence. Never execute package code, install dependencies, run lifecycle scripts, import modules, run builds, invoke shells, or render package-provided active content.
 - npm credentials stay outside the sandbox. Only `NpmStageGateway` may attach npm auth, only for allowed staged/metadata/tarball registry endpoints.
-- The AI reviewer is advisory and default-off behind the per-organization `ai-review` flag. It cannot downgrade deterministic findings.
+- The AI reviewer is advisory and on by default; the per-organization `ai-review` flag is a killswitch that disables it. It cannot downgrade deterministic findings.
 - D1/Better Auth are required for every non-auth `/api/*` endpoint; resource ownership must be organization-scoped.
 - Operational logs/events must be structured and secret-redacted. Never log raw tokens, headers, package contents, or unredacted errors.
 

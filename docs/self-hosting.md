@@ -74,8 +74,9 @@ edits in pull requests you send back upstream.
 - `d1_databases[].database_id` and `kv_namespaces[].id`;
 - custom `routes` with your own custom domain, or remove `routes` and use the
   generated `workers_dev` subdomain instead;
-- the `flagship` app id if you use Cloudflare Flagship for AI review, or remove
-  the `flagship` block to keep AI review disabled;
+- the `flagship` app id to wire the `ai-review` killswitch (with Flagship wired,
+  the AI reviewer is on by default per organization and can be switched off per
+  org or globally), or remove the `flagship` block to keep AI review disabled;
 - public integration vars such as `BETTER_AUTH_URL`, `EMAIL_FROM_ADDRESS`,
   `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`, and
   `SLACK_CLIENT_ID`.

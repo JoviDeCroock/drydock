@@ -1,6 +1,6 @@
 # Security detection corpus
 
-Drydock's deterministic findings are the authoritative review signal while AI review is unavailable behind the default-off feature gate. The detection corpus exists to make those findings measurable: every rule change should be checked against small, reviewable package scenarios with explicit expected rule IDs, severities, and risk.
+Drydock's deterministic findings are the authoritative review signal; AI review stays advisory behind the `ai-review` killswitch and cannot downgrade them. The detection corpus exists to make those findings measurable: every rule change should be checked against small, reviewable package scenarios with explicit expected rule IDs, severities, and risk.
 
 This is a **safe synthetic corpus**, not a malware zoo. It captures techniques observed in npm supply-chain research without vendoring live malicious packages, encrypted malware archives, real credentials, or private artifacts.
 

@@ -67,7 +67,7 @@ Cron-triggered npm discovery finds staged publishes for organizations with valid
 - **D1** — Better Auth tables, organizations, npm connections, scans, scan files/findings, workflow gates, release targets, summaries, and audit/event metadata. D1 remains the operational source of truth.
 - **R2** — canonical report JSON and redacted file/diff artifacts. D1 keeps compact metadata and historical fallback samples so list/detail pages remain cheap.
 - **KV** — session-related state where configured.
-- **Workers AI / AI Gateway** — optional advisory review path. The per-organization `ai-review` Flagship flag is off by default; deterministic findings remain authoritative.
+- **Workers AI / AI Gateway** — optional advisory review path. The per-organization `ai-review` Flagship flag is a killswitch that is on by default; deterministic findings remain authoritative.
 
 ## Organization and auth model
 

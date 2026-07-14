@@ -292,6 +292,70 @@ describe("scan pipeline baseline selection", () => {
     expect(dbMock.persistScan).toHaveBeenCalled();
   });
 
+  test("runs AI review by default when the killswitch is not disabled", async () => {
+    // Flagship with no explicit rule returns the default we pass. The `ai-review`
+    // flag is a killswitch, so that default is `true` and the reviewer runs.
+    const getBooleanValue = vi.fn(async (_flag, defaultValue) => defaultValue);
+    aiReviewMock.runSelectiveAiReview.mockResolvedValue({
+      review: {
+        status: "complete",
+        risk: "low",
+        releaseAssessment: "nothing_unusual",
+        summary: "Nothing unusual in the staged release.",
+        findings: [],
+        requiresManualReview: false,
+        model: "@cf/moonshotai/kimi-k2.7-code",
+      },
+      usage: null,
+    });
+    const context = {
+      ...baseContext,
+      env: { ...baseContext.env, FLAGS: { getBooleanValue } },
+    };
+
+    const result = await runScanPipeline(context, npmAdapter, {
+      scanId: "scan_ai_default_on",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
+
+    expect(getBooleanValue).toHaveBeenCalledWith(
+      "ai-review",
+      true,
+      expect.objectContaining({ organizationId: "org_1" }),
+    );
+    expect(aiReviewMock.runSelectiveAiReview).toHaveBeenCalled();
+    expect(result.aiFindings).toMatchObject({
+      status: "complete",
+      summary: "Nothing unusual in the staged release.",
+    });
+  });
+
+  test("skips AI review when the killswitch disables it", async () => {
+    const getBooleanValue = vi.fn(async () => false);
+    const context = {
+      ...baseContext,
+      env: { ...baseContext.env, FLAGS: { getBooleanValue } },
+    };
+
+    const result = await runScanPipeline(context, npmAdapter, {
+      scanId: "scan_ai_killswitch_off",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
+
+    expect(getBooleanValue).toHaveBeenCalledWith(
+      "ai-review",
+      true,
+      expect.objectContaining({ organizationId: "org_1" }),
+    );
+    expect(aiReviewMock.runSelectiveAiReview).not.toHaveBeenCalled();
+    expect(result.aiFindings).toMatchObject({
+      status: "unavailable",
+      summary: "AI review is disabled.",
+    });
+  });
+
   test("preserves diff-scoped deterministic findings from the npm adapter", async () => {
     stagedMock.fetchStagedPublishDetails.mockResolvedValue({
       id: "stage-diff123",
