@@ -150,9 +150,28 @@ publicDiffRoutes.get("/versions", async (c) => {
       suggested: latest && previous ? { from: previous, to: latest } : null,
     },
     200,
-    { "cache-control": "public, max-age=300" },
+    {
+      "cache-control": "public, max-age=300, stale-while-revalidate=600",
+      "cache-tag": publicDiffCacheTag(packageName),
+    },
   );
 });
+
+// Standard shared-cache headers for an immutable version pair, plus a
+// Cache-Tag so the Workers Cache pilot (PR #465's gateway pattern) can enroll
+// these routes and purge by package if a version is ever unpublished. Until
+// that tier fronts these paths the tag is inert and browsers/proxies just
+// honor the cache-control.
+function immutablePairHeaders(packageName: string): Record<string, string> {
+  return {
+    "cache-control": "public, max-age=86400, stale-while-revalidate=604800",
+    "cache-tag": publicDiffCacheTag(packageName),
+  };
+}
+
+function publicDiffCacheTag(packageName: string): string {
+  return `public-diff:${packageName}`;
+}
 
 publicDiffRoutes.get("/", async (c) => {
   const limited = await enforcePublicRateLimit(c, "fetch", 10);
@@ -176,8 +195,7 @@ publicDiffRoutes.get("/", async (c) => {
       cachedAt: payload.cachedAt,
     },
     200,
-    // Published version pairs are immutable, so shared caches may keep this.
-    { "cache-control": "public, max-age=86400" },
+    immutablePairHeaders(payload.packageName),
   );
 });
 
@@ -203,6 +221,6 @@ publicDiffRoutes.get("/file", async (c) => {
       textSamplesOmitted: payload.textSamplesOmitted ?? false,
     },
     200,
-    { "cache-control": "public, max-age=86400" },
+    immutablePairHeaders(payload.packageName),
   );
 });

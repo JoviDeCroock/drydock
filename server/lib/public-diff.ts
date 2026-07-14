@@ -230,7 +230,13 @@ async function readPublicDiffCache(
 ): Promise<PublicPackageDiff | null> {
   if (!env.COMPARE_CACHE) return null;
   try {
-    return await env.COMPARE_CACHE.get<PublicPackageDiff>(key, "json");
+    // The value is immutable per version pair, so let KV's colo cache serve
+    // repeat views (same convention as the compare-cache hot-path reads)
+    // instead of hitting KV's central stores on every file click.
+    return await env.COMPARE_CACHE.get<PublicPackageDiff>(key, {
+      type: "json",
+      cacheTtl: 3600,
+    });
   } catch {
     return null;
   }
