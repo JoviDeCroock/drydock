@@ -7,6 +7,7 @@ export type {
   ReleaseProvenanceArtifactKind,
 } from "./lib/adapters/types";
 import type { AiReview } from "./lib/ai-review";
+import type { ReleaseConsistency } from "./lib/release-memory";
 import type { ScanRiskBreakdown } from "./lib/risk";
 import type {
   DiffEntry,
@@ -49,6 +50,9 @@ export interface ScanResult {
   aiFindings: AiReview;
   risk: RiskLevel;
   riskSummary: ScanRiskBreakdown;
+  // Advisory prior-release consistency signal (release memory). Display-only:
+  // it never feeds risk or findings.
+  releaseConsistency: ReleaseConsistency;
   safety: {
     tokenExposedToSandbox: boolean;
     directSandboxNetwork: boolean;

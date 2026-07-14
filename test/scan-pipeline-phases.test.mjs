@@ -13,6 +13,7 @@ const {
   computeDiff,
   runDeterministicFindings,
   scoreRisk,
+  resolveReleaseConsistency,
   persistResults,
   recordCompletion,
 } = await import("../server/lib/scan-pipeline-phases.ts");
@@ -240,6 +241,41 @@ describe("scoreRisk", () => {
   });
 });
 
+const noneConsistency = {
+  status: "none",
+  priorScanId: null,
+  priorVersion: null,
+  decidedAt: null,
+  currentFindingCount: 1,
+  priorFindingCount: 0,
+  newFindingCount: 0,
+  newFindings: [],
+};
+
+describe("resolveReleaseConsistency", () => {
+  test("degrades to none (never throws) when the db lookup fails", async () => {
+    const out = await resolveReleaseConsistency({
+      db: {},
+      identity: { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" },
+      packageName: "pkg",
+      ruleFindings: [{ severity: "high", file: "index.js", evidence: "", reason: "" }],
+    });
+
+    expect(out).toEqual(noneConsistency);
+  });
+
+  test("returns none without a db read when the scan has no package name", async () => {
+    const out = await resolveReleaseConsistency({
+      db: {},
+      identity: { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" },
+      packageName: null,
+      ruleFindings: [{ severity: "high", file: "index.js", evidence: "", reason: "" }],
+    });
+
+    expect(out).toEqual(noneConsistency);
+  });
+});
+
 describe("persistResults", () => {
   test("assembles the scan result and persists a completed scan", async () => {
     const adapter = makeAdapter();
@@ -259,6 +295,7 @@ describe("persistResults", () => {
       findings,
       aiFindings: disabledAi,
       riskSummary,
+      releaseConsistency: noneConsistency,
     });
 
     expect(persisted).toBe(true);
@@ -286,6 +323,10 @@ describe("persistResults", () => {
     });
     expect(persistArg.summary.report.digest).toMatch(/^[0-9a-f]{64}$/);
     expect(persistArg.summary.report.rulesVersion).toBeDefined();
+
+    // Release memory rides the result + persisted summary, advisory only.
+    expect(result.releaseConsistency).toEqual(noneConsistency);
+    expect(persistArg.summary.releaseConsistency).toEqual(noneConsistency);
   });
 
   test("propagates a non-persisted outcome from persistScan", async () => {
@@ -306,6 +347,7 @@ describe("persistResults", () => {
       findings,
       aiFindings: disabledAi,
       riskSummary,
+      releaseConsistency: noneConsistency,
     });
 
     expect(persisted).toBe(false);

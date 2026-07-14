@@ -1,4 +1,5 @@
 import { type AppDb, type WorkspaceSession } from "../db/client";
+import { getPriorApprovedScanFindings } from "../db/release-memory";
 import { persistScan } from "../db/scans";
 import type { AiReview } from "./ai-review";
 import type {
@@ -9,7 +10,12 @@ import type {
   PackageAdapter,
   StagedDetails,
 } from "./adapters/types";
-import { durationMsSince, emitOperationalEvent } from "./observability";
+import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
+import {
+  computeReleaseConsistency,
+  noneReleaseConsistency,
+  type ReleaseConsistency,
+} from "./release-memory";
 import {
   annotateFindingsWithDiffStatus,
   createPackageDiff,
@@ -26,7 +32,7 @@ import {
   type PackageJsonSummary,
 } from "./review";
 import { computeScanRiskBreakdown, type ScanRiskBreakdown } from "./risk";
-import { maybeWriteScanArtifacts } from "./scan-artifacts";
+import { maybeWriteScanArtifacts, scanArtifactReadBucket } from "./scan-artifacts";
 import { sha256Hex, stableJson } from "./stable-json";
 import type { ScanResult } from "../types";
 
@@ -153,6 +159,47 @@ export function scoreRisk(
   return computeScanRiskBreakdown(annotatedFindings, aiFindings);
 }
 
+export interface ResolveReleaseConsistencyArgs {
+  db: AppDb;
+  env?: Cloudflare.Env;
+  identity: PipelineIdentity;
+  /** The staged manifest name — the same value persistScan records as `scans.packageName`. */
+  packageName: string | null;
+  /** The current scan's deterministic rule findings (redacted set that gets persisted). */
+  ruleFindings: Finding[];
+}
+
+// Side-effecting (db read): release memory. Compare the current deterministic
+// finding profile against the most recent completed scan of the same package,
+// in the same organization, that a maintainer decided "publish". Advisory only:
+// the outcome never feeds risk, the risk breakdown, or any finding — and a
+// lookup failure degrades to "none" instead of failing the scan.
+export async function resolveReleaseConsistency(
+  args: ResolveReleaseConsistencyArgs,
+): Promise<ReleaseConsistency> {
+  if (!args.packageName) return noneReleaseConsistency(args.ruleFindings.length);
+  try {
+    const prior = await getPriorApprovedScanFindings(
+      args.db,
+      {
+        organizationId: args.identity.organizationId,
+        packageName: args.packageName,
+        excludeScanId: args.identity.scanId,
+      },
+      args.env ? scanArtifactReadBucket(args.env) : undefined,
+    );
+    return computeReleaseConsistency(args.ruleFindings, prior);
+  } catch (err) {
+    emitOperationalEvent("warn", "scan.release_memory.lookup_failed", {
+      scanId: args.identity.scanId,
+      organizationId: args.identity.organizationId,
+      packageName: args.packageName,
+      error: describeOperationalError(err),
+    });
+    return noneReleaseConsistency(args.ruleFindings.length);
+  }
+}
+
 export interface PersistResultsArgs<TInput, TBroker extends AdapterBroker> {
   env?: Cloudflare.Env;
   db: AppDb;
@@ -165,6 +212,7 @@ export interface PersistResultsArgs<TInput, TBroker extends AdapterBroker> {
   findings: DeterministicFindings;
   aiFindings: AiReview;
   riskSummary: ScanRiskBreakdown;
+  releaseConsistency: ReleaseConsistency;
 }
 
 export interface PersistedScanOutcome {
@@ -204,6 +252,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     aiFindings: args.aiFindings,
     risk,
     riskSummary: args.riskSummary,
+    releaseConsistency: args.releaseConsistency,
     safety,
   };
 
@@ -223,6 +272,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     findingAnnotations: findings.findingAnnotations,
     aiFindings: args.aiFindings,
     risk: args.riskSummary,
+    releaseConsistency: args.releaseConsistency,
     safety,
   };
   const reportJson = stableJson(reportPayload);
@@ -260,6 +310,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
       risk: args.riskSummary,
       stagedPublish: findings.redactedDetails,
       baseline: baseline.baseline,
+      releaseConsistency: args.releaseConsistency,
       safety: result.safety,
     },
     ai: args.aiFindings,

@@ -1,6 +1,7 @@
 import type { getScan } from "../db/scans";
 import { parsePersistedAiReview } from "./ai-review-contract";
 import { displayedAiResult } from "./ai-review-types";
+import { normalizeReleaseConsistency } from "./release-memory";
 import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "./adapters/types";
 
 // A persisted scan detail, as returned by getScan (never null at the call site).
@@ -53,6 +54,9 @@ export function buildReportExport(detail: ScanDetail) {
     provenance: extractProvenance(summary.stagedPublish),
     aiReview: extractAiReview(scan.aiJson),
     riskSummary: detail.riskSummary ?? null,
+    // Advisory release-memory signal. Additive + optional: scans that predate
+    // the field (or persisted a malformed blob) export null.
+    releaseConsistency: normalizeReleaseConsistency(summary.releaseConsistency),
     packageJsonDiff: summary.packageJsonDiff ?? null,
     diff: summary.diff ?? null,
     findings: [...detail.findings].sort(compareFindings).map((finding) => ({

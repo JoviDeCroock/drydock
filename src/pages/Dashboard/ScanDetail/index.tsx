@@ -35,6 +35,7 @@ import { DecisionDialog } from "./DecisionDialog";
 import { GateContextPanel, GateDecisionDialog, GatePackagesPanel } from "./GateDecisionDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
 import { RiskSignalsSection } from "./FindingsSection";
+import { ReleaseConsistencyNotice } from "./ReleaseConsistencyNotice";
 import { ReleaseRecommendation } from "./ReleaseRecommendation";
 import { PersistedReportSections } from "./ReportSections";
 import { ScanDetailHeader, ScanFailureAlert, VersionPickerSkeleton } from "./ScanDetailChrome";
@@ -306,6 +307,8 @@ export default function ScanDetailPage() {
               usePersistedRiskSummary={model.isDefaultComparison.value || !compare}
               isWorkflowGate={isWorkflowGate}
             />
+
+            <ReleaseConsistencyNotice value={summary.value.releaseConsistency} />
 
             {detail.scan.packageName ? (
               <div class="flex flex-col gap-2 border-t border-border pt-3">

@@ -17,6 +17,9 @@ export interface PersistedSummary {
   stagedPublish?: {
     provenance?: ReleaseProvenance;
   };
+  // Advisory release-memory blob. Old scans lack it and its shape is only
+  // trusted after normalizeReleaseConsistency, so it stays unknown here.
+  releaseConsistency?: unknown;
 }
 
 export type PersistedFinding = PersistedScanDetail["findings"][number];

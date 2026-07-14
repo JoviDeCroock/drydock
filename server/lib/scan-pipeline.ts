@@ -12,6 +12,7 @@ import {
   persistResults,
   recordCompletion,
   resolveBaseline,
+  resolveReleaseConsistency,
   runDeterministicFindings,
   scoreRisk,
   type ComputedDiff,
@@ -67,6 +68,17 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
     });
     const riskSummary = scoreRisk(findings.annotatedFindings, aiFindings);
 
+    // Advisory release-memory lookup (db read) before persistence. It compares
+    // finding profiles only; it never touches risk or findings, and a lookup
+    // failure degrades to "none" inside the phase instead of failing the scan.
+    const releaseConsistency = await resolveReleaseConsistency({
+      db,
+      env,
+      identity,
+      packageName: findings.redactedStagedManifest?.name ?? null,
+      ruleFindings: findings.ruleFindings,
+    });
+
     const { result, persisted } = await persistResults({
       env,
       db,
@@ -79,6 +91,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       findings,
       aiFindings,
       riskSummary,
+      releaseConsistency,
     });
 
     await recordCompletion({
