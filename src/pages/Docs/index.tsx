@@ -317,7 +317,7 @@ export default function DocsPage() {
                   title="npm stage publish"
                   badge="npm only"
                   href="#staged-publishing"
-                  command="npm publish --stage"
+                  command="npm stage publish"
                   bestFor="Maintainers already using npm stage publish."
                   heldBy="npm holds the unpublished package."
                   decision="You finish or decline the publish in npm with 2FA."
@@ -333,9 +333,9 @@ export default function DocsPage() {
                 />
               </div>
               <Callout label="Quick decision">
-                If your release uses npm stage publish with <Code>npm publish --stage</Code>, start
-                there. If CI builds the artifact—or you publish to PyPI or the VS Code
-                Marketplace—use a GitHub workflow gate.
+                If your release uses <Code>npm stage publish</Code>, start there. If CI builds the
+                artifact—or you publish to PyPI or the VS Code Marketplace—use a GitHub workflow
+                gate.
               </Callout>
             </Subsection>
           </section>
@@ -387,9 +387,8 @@ export default function DocsPage() {
               <Steps
                 items={[
                   <>
-                    From the package directory, start an npm stage publish with{" "}
-                    <Code>npm publish --stage</Code>. npm uploads the candidate but does not make it
-                    public.
+                    From the package directory, run <Code>npm stage publish</Code>. npm uploads the
+                    candidate but does not make it public.
                   </>,
                   <>
                     Drydock discovers the stage and queues a scan. You can also trigger discovery

@@ -118,10 +118,9 @@ export default function LandingPage() {
         <SectionLabel>How it hooks in</SectionLabel>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <RegistryCard title="npm stage publish">
-            A maintainer runs{" "}
-            <code class="font-mono text-[12px] text-ink">npm publish --stage</code> and the registry
-            parks a private candidate. Drydock reviews that tarball and pins risk signals to the
-            diff before the maintainer completes npm's 2FA confirmation.
+            A maintainer runs <code class="font-mono text-[12px] text-ink">npm stage publish</code>{" "}
+            and the registry parks a private candidate. Drydock reviews that tarball and pins risk
+            signals to the diff before the maintainer completes npm's 2FA confirmation.
           </RegistryCard>
           <RegistryCard title="Workflow gating: PyPI, npm & VS Code" badge="Preview">
             For PyPI, VS Code extensions, or npm workflows that do not stage, a GitHub Environment
