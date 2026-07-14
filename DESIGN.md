@@ -192,7 +192,7 @@ The public docs are a learning path first and a configuration reference second. 
 
 - **Information order:** artifact gap → three-step review loop → report anatomy → safety model → release-path choice → setup. Do not lead with credentials or workflow YAML.
 - **Wayfinding:** keep the sticky `200px` desktop rail and native mobile `<details>` jump list. The hero may add a three-card numbered learning path, but it links into the same page instead of creating parallel navigation.
-- **Conceptual flow:** show `Hold → Review → Decide` as three restrained Cards separated by the allowed relation glyph. These are explanatory steps, not decorative feature tiles.
+- **Conceptual flow:** show `Hold → Review → Decide` inside one document-shaped Card with internal dividers. Follow it with compact label/question/evidence rows in the same shell; do not turn each step or answer into its own Card.
 - **Report anatomy:** teach with a compact document-shaped Card using label/value/evidence rows. Severity tones only communicate the example's actual risk state.
 - **Setup comparison:** present release paths as two equal Cards with the same labeled fields (`Best for`, `Held by`, `Decision`) so readers compare contracts rather than marketing claims.
 - **Long code:** workflow examples use native `<details>` disclosures. Keep one representative example open by default; secondary ecosystems stay collapsed so code does not dominate the reading path.

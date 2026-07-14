@@ -30,7 +30,7 @@ const TOC: Array<{ id: string; label: string; children: Array<{ id: string; labe
   },
   {
     id: "staged-publishing",
-    label: "npm staged publishing",
+    label: "npm stage publish",
     children: [
       { id: "staged-setup", label: "Connect npm" },
       { id: "staged-lifecycle", label: "Run a review" },
@@ -108,7 +108,7 @@ export default function DocsPage() {
             Learn what Drydock inspects and how a maintainer makes the call.
           </JourneyCard>
           <JourneyCard number="03" href="#choose-path" title="Choose your setup">
-            Pick npm staging or a GitHub workflow gate for your release.
+            Pick npm stage publish or a GitHub workflow gate for your release.
           </JourneyCard>
         </nav>
       </header>
@@ -199,33 +199,47 @@ export default function DocsPage() {
             </Subsection>
 
             <Subsection id="review-loop" title="The review loop">
-              <div class="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr_auto_1fr] gap-3 sm:items-stretch">
-                <FlowStep number="01" label="Hold">
-                  npm or GitHub pauses a built release candidate.
-                </FlowStep>
-                <FlowArrow />
-                <FlowStep number="02" label="Review">
-                  Drydock compares the artifact, explains findings, and records provenance.
-                </FlowStep>
-                <FlowArrow />
-                <FlowStep number="03" label="Decide">
-                  A maintainer approves or rejects. Drydock never publishes the package.
-                </FlowStep>
-              </div>
-              <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <AnswerCard title="What changed?">
-                  A file-by-file diff against the most relevant published version, focused on the
-                  release delta.
-                </AnswerCard>
-                <AnswerCard title="What needs attention?">
-                  Deterministic findings for install hooks, process execution, network access,
-                  credential reads, native code, and ecosystem-specific risks.
-                </AnswerCard>
-                <AnswerCard title="Are these the reviewed bytes?">
-                  Package identity, artifact hashes, baseline choice, and the evidence behind every
-                  recommendation.
-                </AnswerCard>
-              </div>
+              <Card padding="none" class="overflow-hidden">
+                <div class="px-5 py-3 border-b border-border flex flex-wrap items-center justify-between gap-2">
+                  <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+                    Release checkpoint
+                  </span>
+                  <span class="font-mono text-[11px] text-ink-subtle">
+                    candidate → evidence → decision
+                  </span>
+                </div>
+                <ol class="m-0 p-0 list-none grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-border">
+                  <ReviewStep number="01" label="Hold">
+                    npm or GitHub pauses a built release candidate.
+                  </ReviewStep>
+                  <ReviewStep number="02" label="Review">
+                    Drydock compares the artifact, explains findings, and records provenance.
+                  </ReviewStep>
+                  <ReviewStep number="03" label="Decide">
+                    A maintainer approves or rejects. Drydock never publishes the package.
+                  </ReviewStep>
+                </ol>
+                <div class="border-t border-border">
+                  <div class="px-5 py-3 bg-surface-2">
+                    <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+                      What the review tells you
+                    </span>
+                  </div>
+                  <dl class="m-0 divide-y divide-border">
+                    <ReviewAnswer label="Release delta" question="What changed?">
+                      A file-by-file diff against the most relevant published version.
+                    </ReviewAnswer>
+                    <ReviewAnswer label="Risk signals" question="What needs attention?">
+                      Install hooks, process execution, network access, credential reads, native
+                      code, and ecosystem-specific risks.
+                    </ReviewAnswer>
+                    <ReviewAnswer label="Provenance" question="Are these the reviewed bytes?">
+                      Package identity, artifact hashes, baseline choice, and the evidence behind
+                      every recommendation.
+                    </ReviewAnswer>
+                  </dl>
+                </div>
+              </Card>
             </Subsection>
 
             <Subsection id="inside-report" title="Inside a report">
@@ -300,11 +314,11 @@ export default function DocsPage() {
             <Subsection id="path-comparison" title="Compare the paths">
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <PathCard
-                  title="npm staged publishing"
+                  title="npm stage publish"
                   badge="npm only"
                   href="#staged-publishing"
                   command="npm publish --stage"
-                  bestFor="Maintainers already using npm's private staged-publish flow."
+                  bestFor="Maintainers already using npm stage publish."
                   heldBy="npm holds the unpublished package."
                   decision="You finish or decline the publish in npm with 2FA."
                 />
@@ -319,16 +333,16 @@ export default function DocsPage() {
                 />
               </div>
               <Callout label="Quick decision">
-                If your npm release already uses <Code>npm publish --stage</Code>, start there. If
-                CI builds the artifact—or you publish to PyPI or the VS Code Marketplace—use a
-                GitHub workflow gate.
+                If your release uses npm stage publish with <Code>npm publish --stage</Code>, start
+                there. If CI builds the artifact—or you publish to PyPI or the VS Code
+                Marketplace—use a GitHub workflow gate.
               </Callout>
             </Subsection>
           </section>
 
           <section id="staged-publishing" class="flex flex-col gap-8 scroll-mt-6">
             <div class="flex flex-col gap-3">
-              <SectionLabel>Path 1 · npm staged publishing</SectionLabel>
+              <SectionLabel>Path 1 · npm stage publish</SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
                 npm holds the candidate; you keep the approval.
               </h2>
@@ -339,7 +353,7 @@ export default function DocsPage() {
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Requirement label="Registry">npm staged publishing</Requirement>
+              <Requirement label="Registry">npm stage publish</Requirement>
               <Requirement label="Drydock connection">Read-scoped npm token</Requirement>
               <Requirement label="Final approval">npm 2FA</Requirement>
             </div>
@@ -350,13 +364,14 @@ export default function DocsPage() {
                   <>Create a Drydock organization for the team that publishes the package.</>,
                   <>
                     Open <Code>Organization settings → npm access</Code> and paste an automation or
-                    granular npm token that can read the org's packages and list staged publishes.
+                    granular npm token that can read the org's packages and list packages in npm
+                    stage publish.
                   </>,
                   <>
                     Save. Drydock encrypts the token and checks it against the registry right away.
                   </>,
                   <>
-                    Drydock now discovers new staged publishes automatically. Use{" "}
+                    Drydock now discovers packages in npm stage publish automatically. Use{" "}
                     <Code>Check npm</Code> on the dashboard when you want an immediate refresh.
                   </>,
                 ]}
@@ -372,8 +387,9 @@ export default function DocsPage() {
               <Steps
                 items={[
                   <>
-                    From the package directory, run <Code>npm publish --stage</Code>. npm uploads
-                    the candidate but does not make it public.
+                    From the package directory, start an npm stage publish with{" "}
+                    <Code>npm publish --stage</Code>. npm uploads the candidate but does not make it
+                    public.
                   </>,
                   <>
                     Drydock discovers the stage and queues a scan. You can also trigger discovery
@@ -481,7 +497,8 @@ export default function DocsPage() {
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.x" }
+        with:
+          python-version: "3.x"
       - run: python -m pip install build
       - run: python -m build
       - run: cd dist && sha256sum *.whl *.tar.gz > SHA256SUMS
@@ -497,7 +514,9 @@ export default function DocsPage() {
       id-token: write
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: release-candidate, path: dist }
+        with:
+          name: release-candidate
+          path: dist
       - run: cd dist && sha256sum --check --strict SHA256SUMS
       - run: rm dist/SHA256SUMS
       - uses: pypa/gh-action-pypi-publish@release/v1`}
@@ -524,7 +543,9 @@ export default function DocsPage() {
       contents: read
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: release-candidate, path: dist }
+        with:
+          name: release-candidate
+          path: dist
       - run: cd dist && sha256sum --check --strict SHA256SUMS
       - run: |
           for tgz in dist/*.tgz; do
@@ -550,7 +571,9 @@ export default function DocsPage() {
     environment: production
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: release-candidate, path: dist }
+        with:
+          name: release-candidate
+          path: dist
       - run: cd dist && sha256sum --check --strict SHA256SUMS
       - run: npx @vscode/vsce publish --packagePath dist/extension.vsix`}
               </WorkflowExample>
@@ -716,7 +739,7 @@ function Callout({ label, children }: { label: string; children: ComponentChildr
   );
 }
 
-function FlowStep({
+function ReviewStep({
   number,
   label,
   children,
@@ -726,33 +749,31 @@ function FlowStep({
   children: ComponentChildren;
 }) {
   return (
-    <Card as="article" padding="none" class="p-4 flex flex-col gap-2 min-w-0">
-      <div class="flex items-center gap-2">
+    <li class="p-5 flex flex-col gap-2 min-w-0">
+      <div class="flex items-baseline gap-2.5">
         <span class="font-mono text-[11px] text-accent">{number}</span>
-        <span class="font-medium text-[14px]">{label}</span>
+        <span class="font-medium text-[15px] tracking-[-0.005em]">{label}</span>
       </div>
-      <p class="m-0 text-[12px] leading-[1.55] text-ink-muted">{children}</p>
-    </Card>
+      <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{children}</p>
+    </li>
   );
 }
 
-function FlowArrow() {
+function ReviewAnswer({
+  label,
+  question,
+  children,
+}: {
+  label: string;
+  question: string;
+  children: ComponentChildren;
+}) {
   return (
-    <span
-      aria-hidden
-      class="hidden sm:flex items-center justify-center font-mono text-[13px] text-ink-subtle"
-    >
-      →
-    </span>
-  );
-}
-
-function AnswerCard({ title, children }: { title: string; children: ComponentChildren }) {
-  return (
-    <Card as="article" padding="none" class="p-4 flex flex-col gap-1.5">
-      <h4 class="m-0 text-[13px] font-medium tracking-[-0.005em]">{title}</h4>
-      <p class="m-0 text-[12px] leading-[1.55] text-ink-muted">{children}</p>
-    </Card>
+    <div class="px-5 py-3.5 grid grid-cols-1 sm:grid-cols-[120px_180px_minmax(0,1fr)] gap-1.5 sm:gap-4 sm:items-baseline">
+      <dt class="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-subtle">{label}</dt>
+      <dd class="m-0 text-[13px] font-medium text-ink">{question}</dd>
+      <dd class="m-0 text-[13px] leading-[1.55] text-ink-muted">{children}</dd>
+    </div>
   );
 }
 
