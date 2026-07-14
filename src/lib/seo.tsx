@@ -30,9 +30,9 @@ export const homePageSeo: PageSeoMetadata = {
 };
 
 export const docsPageSeo: PageSeoMetadata = {
-  title: "Drydock docs: staged publishing and workflow gates",
+  title: "Learn Drydock: artifact review before you publish",
   description:
-    "Set up npm staged publishing or GitHub workflow gates so Drydock can review release artifacts before publication.",
+    "Learn how Drydock reviews npm, PyPI, and VS Code release artifacts, then set up npm staged publishing or a GitHub workflow gate.",
   path: "/docs",
 };
 

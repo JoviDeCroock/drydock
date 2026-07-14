@@ -44,9 +44,9 @@ test("agent tour: local Drydock release review walkthrough", async ({
 
     await page.goto("/docs");
     await expect(
-      page.getByRole("heading", { name: "Pause releases where the real risk appears." }),
+      page.getByRole("heading", { name: "Review what ships, not just what changed." }),
     ).toBeVisible();
-    await tour.capture(page, "docs", "Setup documentation for staged publishing and gates.");
+    await tour.capture(page, "docs", "Learning guide and setup paths for artifact review.");
 
     await register(page);
     await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible();

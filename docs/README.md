@@ -2,6 +2,8 @@
 
 Start here instead of reading every Markdown file. Pick the smallest set that matches the change, then update the same layer when behavior changes.
 
+The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/Docs/index.tsx). Keep its product model and setup steps aligned with the canonical runtime docs below; the Markdown files remain the detailed engineering and operator reference.
+
 ## Always-use references
 
 - [`../AGENTS.md`](../AGENTS.md) — repo rules, commands, invariants, and test expectations for agents.
