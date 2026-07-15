@@ -144,6 +144,28 @@ describe("extractDeclaredRepository", () => {
     ).toBeNull();
     expect(extractDeclaredRepository({ manifestText: null, files: [] })).toBeNull();
   });
+
+  test("stays linear on a pathologically long comma-less Project-URL line (ReDoS guard)", () => {
+    // `textSample` is the whole decoded metadata file, so a hostile PKG-INFO can
+    // pack a header line with hundreds of KB of padding and no comma. The old
+    // `\s*([^,]+),` split backtracked quadratically on that (tens of seconds of
+    // Worker CPU per scan). Parsing must stay linear, the over-long line must be
+    // skipped, and it must not shadow a later valid header in the same file.
+    const padding = " ".repeat(200_000);
+    const textSample =
+      `Metadata-Version: 2.1\nName: demo\nProject-URL:${padding}no-comma-here\n` +
+      "Project-URL: Source, https://github.com/owner/repo\n";
+    const startedAt = performance.now();
+    const declared = extractDeclaredRepository({
+      manifestText: null,
+      files: [{ path: "demo-1.0.0/PKG-INFO", textSample }],
+    });
+    const elapsedMs = performance.now() - startedAt;
+    expect(declared).toBe("https://github.com/owner/repo");
+    // The quadratic version took ~60s on this input; linear parsing is single
+    // digit ms. A generous bound keeps the regression signal without flaking.
+    expect(elapsedMs).toBeLessThan(2000);
+  });
 });
 
 describe("computeIntentEnvelope", () => {
