@@ -70,6 +70,11 @@ const SHORTHAND_HOSTS: Record<string, string> = {
 };
 
 const MAX_REPOSITORY_INPUT_LENGTH = 512;
+// PyPI core-metadata header lines are short by construction (a label plus a
+// URL); a multi-kilobyte "line" is only ever hostile padding. Bounding line
+// length before any per-line regex runs keeps this parser linear even though
+// `textSample` is the whole decoded metadata file, not a fixed-size head.
+const MAX_METADATA_LINE_LENGTH = 2048;
 const REPO_SEGMENT_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
 const BARE_OWNER_REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const MAX_SIGNALS = 20;
@@ -168,6 +173,15 @@ export function extractDeclaredRepository(input: {
 // preference order. Comparison is case-insensitive on the trimmed label.
 const PYPI_REPOSITORY_LABELS = ["repository", "source", "source code", "code", "github"];
 
+// Case-insensitive header-prefix match without regex backtracking. Returns the
+// text after the header name (e.g. everything past `Project-URL:`), or null
+// when the line is not that header. Callers trim the remainder themselves.
+function matchHeader(line: string, header: string): string | null {
+  if (line.length < header.length) return null;
+  if (line.slice(0, header.length).toLowerCase() !== header.toLowerCase()) return null;
+  return line.slice(header.length);
+}
+
 function repositoryFromPyPiMetadata(text: string): string | null {
   const projectUrls = new Map<string, string>();
   let homePage: string | null = null;
@@ -175,13 +189,24 @@ function repositoryFromPyPiMetadata(text: string): string | null {
     // Core-metadata headers end at the first blank line; the description body
     // that follows is package-controlled prose and must not be scanned.
     if (line.trim() === "") break;
-    const projectUrl = /^Project-URL:\s*([^,]+),\s*(\S.*)$/i.exec(line);
-    if (projectUrl) {
-      projectUrls.set(projectUrl[1].trim().toLowerCase(), projectUrl[2].trim());
+    // Hostile padding guard: a header line this long is never legitimate, and
+    // skipping it keeps the parser bounded on adversarial metadata.
+    if (line.length > MAX_METADATA_LINE_LENGTH) continue;
+    const projectUrl = matchHeader(line, "Project-URL:");
+    if (projectUrl !== null) {
+      // Split on the first comma with `indexOf` rather than a regex: a pattern
+      // that lets `\s*` and the label class both match spaces backtracks
+      // quadratically on a comma-less padded line (ReDoS). `indexOf` is linear.
+      const comma = projectUrl.indexOf(",");
+      if (comma !== -1) {
+        const label = projectUrl.slice(0, comma).trim().toLowerCase();
+        const url = projectUrl.slice(comma + 1).trim();
+        if (label && url) projectUrls.set(label, url);
+      }
       continue;
     }
-    const home = /^Home-page:\s*(\S.*)$/i.exec(line);
-    if (home) homePage = home[1].trim();
+    const home = matchHeader(line, "Home-page:");
+    if (home !== null && home.trim()) homePage = home.trim();
   }
   for (const label of PYPI_REPOSITORY_LABELS) {
     const url = projectUrls.get(label);
