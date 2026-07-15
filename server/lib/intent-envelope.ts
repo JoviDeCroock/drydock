@@ -57,11 +57,9 @@ const INTENT_ENVELOPE_TIERS: ReadonlySet<string> = new Set(["attested", "declare
 
 // Hosts whose canonical repository identity is exactly `owner/repo`; extra
 // path segments (tree/…, monorepo directories) are trimmed to that identity.
-const OWNER_REPO_HOSTS: ReadonlySet<string> = new Set([
-  "github.com",
-  "gitlab.com",
-  "bitbucket.org",
-]);
+// GitLab is handled separately because nested groups are part of a project's
+// canonical identity (`group/subgroup/project`).
+const OWNER_REPO_HOSTS: ReadonlySet<string> = new Set(["github.com", "bitbucket.org"]);
 
 const SHORTHAND_HOSTS: Record<string, string> = {
   github: "github.com",
@@ -120,20 +118,20 @@ export function normalizeRepositoryUrl(raw: unknown): string | null {
 function hostPathToUrl(host: string, path: string): string | null {
   const normalizedHost = host.trim().toLowerCase();
   if (!normalizedHost || !normalizedHost.includes(".")) return null;
-  const segments = path
-    .replace(/^\/+/, "")
-    .replace(/\/+$/, "")
-    .split("/")
-    .map((segment) => segment.replace(/\.git$/i, ""))
-    .filter(Boolean);
-  if (segments.length < 2) return null;
-  const [owner, repo] = segments;
-  if (!REPO_SEGMENT_RE.test(owner) || !REPO_SEGMENT_RE.test(repo)) return null;
+  let segments = path.replace(/^\/+/, "").replace(/\/+$/, "").split("/").filter(Boolean);
   if (OWNER_REPO_HOSTS.has(normalizedHost)) {
-    return `https://${normalizedHost}/${owner}/${repo}`;
+    segments = segments.slice(0, 2);
+  } else if (normalizedHost === "gitlab.com") {
+    // GitLab browser URLs put revision/file paths after `/-/`; everything
+    // before that marker is the namespace + project identity.
+    const browserSuffix = segments.indexOf("-");
+    if (browserSuffix !== -1) segments = segments.slice(0, browserSuffix);
   }
-  // Unknown hosts keep their full (sanitized) path so self-hosted forges with
-  // group nesting (e.g. GitLab subgroups) are not truncated to two segments.
+
+  if (segments.length < 2) return null;
+  segments[segments.length - 1] = segments.at(-1)!.replace(/\.git$/i, "");
+  // GitLab and unknown hosts keep their full (sanitized) namespace path so
+  // subgroup projects are not collapsed to the wrong repository.
   if (!segments.every((segment) => REPO_SEGMENT_RE.test(segment))) return null;
   return `https://${normalizedHost}/${segments.join("/")}`;
 }
@@ -274,10 +272,7 @@ export function normalizeIntentEnvelope(value: unknown): IntentEnvelope | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const item = value as Partial<Record<keyof IntentEnvelope, unknown>>;
   if (typeof item.tier !== "string" || !INTENT_ENVELOPE_TIERS.has(item.tier)) return null;
-  const repository =
-    typeof item.repository === "string" && item.repository.length <= MAX_REPOSITORY_INPUT_LENGTH
-      ? item.repository
-      : null;
+  const repository = normalizeRepositoryUrl(item.repository);
   const signals: IntentEnvelopeSignal[] = [];
   if (Array.isArray(item.signals)) {
     for (const signal of item.signals.slice(0, MAX_SIGNALS)) {
@@ -290,5 +285,27 @@ export function normalizeIntentEnvelope(value: unknown): IntentEnvelope | null {
       });
     }
   }
+
+  // Do not let a persisted tier outlive the evidence that justified it. In
+  // particular, an object containing only `{ tier: "attested" }` must not be
+  // rendered or exported as a machine-verified source binding.
+  if (item.tier === "attested") {
+    if (
+      !repository?.startsWith("https://github.com/") ||
+      !signals.some((signal) => signal.kind === "workflow-gate" && signal.detail.trim())
+    ) {
+      return null;
+    }
+  } else if (item.tier === "declared") {
+    if (
+      !repository ||
+      !signals.some((signal) => signal.kind === "manifest-repository" && signal.detail.trim())
+    ) {
+      return null;
+    }
+  } else if (repository || signals.length) {
+    return null;
+  }
+
   return { tier: item.tier as IntentEnvelopeTier, repository, signals };
 }
