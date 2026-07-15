@@ -14,6 +14,7 @@ export function ShareDialog({
   share,
   status,
   error,
+  attestationAvailable,
   onEnable,
   onRevoke,
   onSetFeedListing,
@@ -23,6 +24,7 @@ export function ShareDialog({
   share: PublicShareInfo | null;
   status: DecisionStatus;
   error: string | null;
+  attestationAvailable: boolean | null;
   onEnable: () => void;
   onRevoke: () => void;
   onSetFeedListing: (listed: boolean) => void;
@@ -84,16 +86,21 @@ export function ShareDialog({
           <MonoDetail
             parts={[
               <span key="shared">shared {formatDateTime(share.sharedAt)}</span>,
-              <a
-                key="attestation"
-                href={publicReportAttestationUrl(share.token)}
-                class="text-ink-muted hover:text-ink"
-                download
-              >
-                signed attestation
-              </a>,
+              attestationAvailable ? (
+                <a
+                  key="attestation"
+                  href={publicReportAttestationUrl(share.token)}
+                  class="text-ink-muted hover:text-ink"
+                  download
+                >
+                  signed attestation
+                </a>
+              ) : null,
             ]}
           />
+          {attestationAvailable === false ? (
+            <EmptyLine>Signed attestations are not configured for this deployment.</EmptyLine>
+          ) : null}
           <EmptyLine>
             Anyone with the link can read the report; revoking invalidates it immediately.
           </EmptyLine>

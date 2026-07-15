@@ -125,7 +125,10 @@ Badge and feed responses read through the per-colo Workers cache
 `max-age=300`, so listing or revocation changes can take up to ~5 minutes to
 propagate to these two surfaces. Report and attestation responses are
 deliberately uncached (`no-store`): revoking a share link takes effect
-immediately.
+immediately. Badge cache misses use a rate-limit bucket separate from report
+reads; a throttled badge still returns an uncached valid shields.io payload so
+shared badge-proxy traffic cannot produce an error badge or exhaust report
+access.
 
 ## Key management
 

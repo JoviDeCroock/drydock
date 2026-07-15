@@ -161,9 +161,9 @@ describe("account deletion", () => {
     // ...and a scan they triggered inside that surviving org.
     const scanId = `scan-${crypto.randomUUID()}`;
     await env.DB.prepare(
-      "INSERT INTO scans (id, stage_id, organization_id, owner_user_id, risk, status, source, created_at, updated_at) VALUES (?, ?, ?, ?, 'unknown', 'completed', 'manual', ?, ?)",
+      "INSERT INTO scans (id, stage_id, organization_id, owner_user_id, public_shared_by_user_id, risk, status, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'unknown', 'completed', 'manual', ?, ?)",
     )
-      .bind(scanId, "stage-1", orgId, member.userId, now, now)
+      .bind(scanId, "stage-1", orgId, member.userId, member.userId, now, now)
       .run();
 
     const del = await call("POST", "/api/auth/delete-user", {
@@ -192,7 +192,7 @@ describe("account deletion", () => {
     expect(await countRows("SELECT count(*) AS n FROM scans WHERE id = ?", scanId)).toBe(1);
     expect(
       await countRows(
-        "SELECT count(*) AS n FROM scans WHERE id = ? AND owner_user_id IS NULL",
+        "SELECT count(*) AS n FROM scans WHERE id = ? AND owner_user_id IS NULL AND public_shared_by_user_id IS NULL",
         scanId,
       ),
     ).toBe(1);

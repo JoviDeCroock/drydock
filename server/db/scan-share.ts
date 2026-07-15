@@ -165,6 +165,8 @@ export async function setThreatFeedListing(
       publicShareToken: scans.publicShareToken,
       publicSharedAt: scans.publicSharedAt,
       publicFeedListedAt: scans.publicFeedListedAt,
+      packageName: scans.packageName,
+      stagedVersion: scans.stagedVersion,
     });
   const row = updated[0];
   if (!row?.publicShareToken || !row.publicSharedAt) return null;
@@ -174,6 +176,7 @@ export async function setThreatFeedListing(
     actorUserId: input.actorUserId,
     scanId: input.scanId,
     type: input.listed ? "scan.feed_listed" : "scan.feed_unlisted",
+    metadata: { packageName: row.packageName, stagedVersion: row.stagedVersion },
   });
   return {
     publicShareToken: row.publicShareToken,
@@ -257,6 +260,10 @@ export async function listBadgeCandidateScans(
     ecosystem === "npm"
       ? or(sql`${provenanceEcosystem} = 'npm'`, sql`${provenanceEcosystem} IS NULL`)
       : sql`${provenanceEcosystem} = ${ecosystem}`;
+  // Rank registry-backed scans before applying the bounded page. Otherwise a
+  // burst of newer manifest-claimed gate scans could crowd the verified review
+  // out of the result set before pickBadgeScan gets a chance to prefer it.
+  const packageIdentityPriority = sql<number>`CASE WHEN ${scans.source} = 'workflow_gate' THEN 1 ELSE 0 END`;
   return db
     .select(SHARED_SCAN_COLUMNS)
     .from(scans)
@@ -269,7 +276,7 @@ export async function listBadgeCandidateScans(
         ecosystemMatches,
       ),
     )
-    .orderBy(desc(scans.completedAt), desc(scans.id))
+    .orderBy(packageIdentityPriority, desc(scans.completedAt), desc(scans.id))
     .limit(limit);
 }
 

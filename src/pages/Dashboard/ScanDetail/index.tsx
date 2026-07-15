@@ -266,7 +266,12 @@ export default function ScanDetailPage() {
       : undefined;
 
   const onShareClick =
-    detail?.scan.status === "complete" ? () => (shareDialogOpen.value = true) : undefined;
+    detail?.scan.status === "complete"
+      ? () => {
+          shareDialogOpen.value = true;
+          void model.loadAttestationAvailability();
+        }
+      : undefined;
 
   return (
     <PageShell>
@@ -452,6 +457,7 @@ export default function ScanDetailPage() {
           shareSignal={model.share}
           statusSignal={model.shareStatus}
           errorSignal={model.shareError}
+          attestationAvailableSignal={model.attestationAvailable}
           onEnable={() => void model.enableShare()}
           onRevoke={() => void model.revokeShare()}
           onSetFeedListing={(listed) => void model.setFeedListing(listed)}
@@ -554,12 +560,17 @@ function ShareDialogHost({
   shareSignal,
   statusSignal,
   errorSignal,
+  attestationAvailableSignal,
   ...props
-}: Omit<ComponentProps<typeof ShareDialog>, "open" | "share" | "status" | "error"> & {
+}: Omit<
+  ComponentProps<typeof ShareDialog>,
+  "open" | "share" | "status" | "error" | "attestationAvailable"
+> & {
   openSignal: ReadonlySignal<boolean>;
   shareSignal: ReadonlySignal<PublicShareInfo | null>;
   statusSignal: ReadonlySignal<DecisionStatus>;
   errorSignal: ReadonlySignal<string | null>;
+  attestationAvailableSignal: ReadonlySignal<boolean | null>;
 }) {
   return (
     <ShareDialog
@@ -567,6 +578,7 @@ function ShareDialogHost({
       share={shareSignal.value}
       status={statusSignal.value}
       error={errorSignal.value}
+      attestationAvailable={attestationAvailableSignal.value}
       {...props}
     />
   );

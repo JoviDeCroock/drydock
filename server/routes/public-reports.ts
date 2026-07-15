@@ -41,9 +41,11 @@ import type { Bindings, Variables } from "../types";
 // events, or org/user identifiers beyond what the export itself carries.
 export const publicReportsRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-// One bucket for all public report reads from one address. Generous enough for
-// a report page plus its attestation fetch, tight enough to blunt enumeration.
-const PUBLIC_READ_RATE = { limit: 120, windowMs: 60 * 1000 };
+// Report/key reads share a bucket per address. Badge misses use a separate
+// bucket because shields.io multiplexes unrelated packages through its egress.
+// Both remain tight enough to blunt enumeration and cache-busting traffic.
+const PUBLIC_READ_RATE = { bucket: "public-report", limit: 120, windowMs: 60 * 1000 };
+const PUBLIC_BADGE_READ_RATE = { bucket: "public-badge", limit: 120, windowMs: 60 * 1000 };
 
 const SHARE_TOKEN_RE = /^[A-Za-z0-9_-]{40,64}$/;
 
@@ -99,7 +101,7 @@ publicReportsRoutes.use("*", async (c, next) => {
   }
   if (cached) return cached;
   await next();
-  if (c.res?.status === 200) {
+  if (c.res?.status === 200 && !c.res.headers.get("cache-control")?.includes("no-store")) {
     const copy = c.res.clone();
     c.executionCtx.waitUntil(
       coloCache()
@@ -116,13 +118,27 @@ publicReportsRoutes.use("*", async (c, next) => {
   // always sets cf-connecting-ip, so this only relaxes non-Cloudflare deploys
   // (unsupported per docs/self-hosting.md).
   if (!ip) return next();
+  const routePath = new URL(c.req.url).pathname.replace(/^\/public/, "");
+  const isBadgeRequest = routePath.startsWith("/badge/");
+  const rate = isBadgeRequest ? PUBLIC_BADGE_READ_RATE : PUBLIC_READ_RATE;
   try {
     await enforceRateLimit(createDb(c.env.DB), {
-      key: `public-report:${ip}`,
-      ...PUBLIC_READ_RATE,
+      key: `${rate.bucket}:${ip}`,
+      limit: rate.limit,
+      windowMs: rate.windowMs,
     });
   } catch (err) {
     if (err instanceof RateLimitError) {
+      // Shields proxies many unrelated package badges through shared egress
+      // addresses. Preserve the endpoint-badge contract under throttling and
+      // keep this fallback out of the colo cache so it cannot mask a real review.
+      if (isBadgeRequest) {
+        return c.json(buildBadgePayload(null), 200, {
+          "cache-control": "no-store",
+          "access-control-allow-origin": "*",
+          "retry-after": String(err.retryAfterSeconds),
+        });
+      }
       return rateLimitResponse(c, "too many public report requests", err);
     }
     throw err;

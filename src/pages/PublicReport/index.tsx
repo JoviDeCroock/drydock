@@ -52,6 +52,11 @@ interface PublicReport {
   }>;
 }
 
+interface LoadedPublicReport {
+  data: PublicReport;
+  attestationAvailable: boolean;
+}
+
 const CHANGED_STATUSES = new Set(["added", "removed", "modified"]);
 const MAX_LISTED_CHANGES = 200;
 
@@ -59,12 +64,17 @@ export default function PublicReportPage() {
   const route = useRoute();
   const token = route.params.token ?? "";
   const authed = useAuthedSession();
-  const report = useSignal<PublicReport | null>(null);
+  const report = useSignal<LoadedPublicReport | null>(null);
   const errorState = useSignal<"none" | "not_found" | "failed">("none");
 
   useEffect(() => {
     let cancelled = false;
+    report.value = null;
+    errorState.value = "none";
     void (async () => {
+      const keyRequest = fetch("/public/attestation-key", {
+        headers: { accept: "application/json" },
+      }).catch(() => null);
       try {
         const res = await fetch(`/public/reports/${encodeURIComponent(token)}`, {
           headers: { accept: "application/json" },
@@ -78,7 +88,11 @@ export default function PublicReportPage() {
           errorState.value = "failed";
           return;
         }
-        report.value = (await res.json()) as PublicReport;
+        const data = (await res.json()) as PublicReport;
+        const keyResponse = await keyRequest;
+        if (!cancelled) {
+          report.value = { data, attestationAvailable: keyResponse?.ok ?? false };
+        }
       } catch {
         if (!cancelled) errorState.value = "failed";
       }
@@ -89,7 +103,7 @@ export default function PublicReportPage() {
   }, [token]);
 
   useEffect(() => {
-    const data = report.value;
+    const data = report.value?.data;
     if (data?.package.name) {
       document.title = `${data.package.name} ${data.package.stagedVersion ?? ""} · Drydock review`;
     }
@@ -98,10 +112,10 @@ export default function PublicReportPage() {
   }, [report.value]);
 
   const sortedFindings = useComputed(() =>
-    report.value ? sortFindingsBySeverity(report.value.findings) : [],
+    report.value ? sortFindingsBySeverity(report.value.data.findings) : [],
   );
   const changedFiles = useComputed(
-    () => report.value?.diff?.filter((entry) => CHANGED_STATUSES.has(entry.status)) ?? [],
+    () => report.value?.data.diff?.filter((entry) => CHANGED_STATUSES.has(entry.status)) ?? [],
   );
 
   if (errorState.value === "not_found") {
@@ -121,14 +135,16 @@ export default function PublicReportPage() {
     );
   }
 
-  const data = report.value;
-  if (!data) {
+  const loaded = report.value;
+  if (!loaded) {
     return (
       <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
         <LoadingState title="Loading public review" detail="fetching report" />
       </PageShell>
     );
   }
+
+  const { data, attestationAvailable } = loaded;
 
   const releaseRisk = data.riskSummary?.releaseRisk ?? data.scan.risk;
   const decision = data.scan.decision;
@@ -242,19 +258,25 @@ export default function PublicReportPage() {
 
       <section class="flex flex-col gap-3">
         <SectionLabel as="h2">Verify this report</SectionLabel>
-        <EmptyLine>
-          The signed attestation covers the exact JSON served for this link: its subject digest is
-          the SHA-256 of the report bytes, signed with Drydock's Ed25519 key (DSSE envelope, key
-          published at{" "}
-          <a href="/public/attestation-key" class="text-ink-muted underline hover:text-ink">
-            /public/attestation-key
-          </a>
-          ).
-        </EmptyLine>
+        {attestationAvailable ? (
+          <EmptyLine>
+            The signed attestation covers the exact JSON served for this link: its subject digest is
+            the SHA-256 of the report bytes, signed with Drydock's Ed25519 key (DSSE envelope, key
+            published at{" "}
+            <a href="/public/attestation-key" class="text-ink-muted underline hover:text-ink">
+              /public/attestation-key
+            </a>
+            ).
+          </EmptyLine>
+        ) : (
+          <EmptyLine>Signed attestations are not configured for this deployment.</EmptyLine>
+        )}
         <div class="flex flex-wrap gap-2">
-          <LinkButton variant="secondary" size="sm" href={attestationHref} download>
-            Download attestation
-          </LinkButton>
+          {attestationAvailable ? (
+            <LinkButton variant="secondary" size="sm" href={attestationHref} download>
+              Download attestation
+            </LinkButton>
+          ) : null}
           <LinkButton
             variant="ghost"
             size="sm"

@@ -231,6 +231,18 @@ export function publicReportAttestationUrl(token: string): string {
   return `${location.origin}/public/reports/${encodeURIComponent(token)}/attestation`;
 }
 
+export async function publicAttestationAvailable(): Promise<boolean> {
+  try {
+    const response = await fetch("/public/attestation-key", {
+      credentials: "same-origin",
+      headers: { accept: "application/json" },
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 export type DecisionStatus = "idle" | "saving" | "error";
 export type DeleteStatus = "idle" | "deleting" | "error";
 
@@ -430,6 +442,7 @@ export const ScanDetailModel = createModel((id: string) => {
   const share = signal<PublicShareInfo | null>(null);
   const shareStatus = signal<DecisionStatus>("idle");
   const shareError = signal<string | null>(null);
+  const attestationAvailable = signal<boolean | null>(null);
   const gate = signal<PublicWorkflowGate | null>(null);
   const gateLoaded = signal(false);
   const gateDecisionStatus = signal<DecisionStatus>("idle");
@@ -565,6 +578,7 @@ export const ScanDetailModel = createModel((id: string) => {
     share,
     shareStatus,
     shareError,
+    attestationAvailable,
     gate,
     gateLoaded,
     gateDecisionStatus,
@@ -612,6 +626,11 @@ export const ScanDetailModel = createModel((id: string) => {
         this.shareError.value = shareErrorMessage(err);
         this.shareStatus.value = "error";
       }
+    },
+
+    async loadAttestationAvailability(): Promise<void> {
+      this.attestationAvailable.value = null;
+      this.attestationAvailable.value = await publicAttestationAvailable();
     },
 
     async setFeedListing(listed: boolean): Promise<void> {

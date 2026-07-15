@@ -1,10 +1,12 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
+import { listOrganizationAuditEvents } from "../../server/db/audit-log";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
+import { describeAuditEvent } from "../../server/lib/audit-events";
 import { publicReportsRoutes } from "../../server/routes/public-reports";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
@@ -274,6 +276,30 @@ describe("shields badge endpoint", () => {
     );
   });
 
+  test("manifest-claimed scans cannot crowd a verified review out of the candidate page", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const staged = await seedCompletedScan(owner, { packageName, version: "1.0.0", risk: "low" });
+    await share(app, staged, { threatFeed: true });
+    await env.DB.prepare("UPDATE scans SET completed_at = 1 WHERE id = ?").bind(staged).run();
+
+    const spoofer = await seedUser();
+    const spooferApp = buildTestApp(spoofer);
+    for (let index = 0; index < 21; index += 1) {
+      const gate = await seedCompletedScan(spoofer, {
+        packageName,
+        version: `9.9.${index}`,
+        risk: "high",
+        source: "workflow_gate",
+      });
+      await share(spooferApp, gate, { threatFeed: true });
+    }
+
+    const badge = await fetchBadge(app, "npm", packageName);
+    expect(badge.body.message).toBe("1.0.0 reviewed · low risk");
+  });
+
   test("badge and feed responses are served from the colo cache", async () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);
@@ -370,22 +396,24 @@ describe("shields badge endpoint", () => {
     expect((await request(app, `/public/badge/npm/${"a".repeat(300)}`)).status).toBe(400);
   });
 
-  test("badge cache misses are rate limited per IP", async () => {
+  test("badge throttling preserves the shields payload contract", async () => {
     const app = buildTestApp(null);
     const ip = `10.1.0.${Math.floor(Math.random() * 200) + 1}`;
     const headers = { "cf-connecting-ip": ip };
-    let limited = false;
+    let throttled = false;
     // Distinct package names so every request misses the colo cache and pays
     // the D1 lookup the limiter protects.
     for (let i = 0; i < 125; i += 1) {
       const res = await request(app, `/public/badge/npm/miss-${i}`, { headers });
-      if (res.status === 429) {
-        limited = true;
+      expect(res.status).toBe(200);
+      if (res.headers.has("retry-after")) {
+        throttled = true;
+        expect(res.headers.get("cache-control")).toBe("no-store");
+        expect(((await res.json()) as BadgeBody).message).toBe("not reviewed");
         break;
       }
-      expect(res.status).toBe(200);
     }
-    expect(limited).toBe(true);
+    expect(throttled).toBe(true);
   });
 });
 
@@ -473,6 +501,18 @@ describe("public threat feed", () => {
     const types = detail.events.map((event) => event.type);
     expect(types).toContain("scan.feed_listed");
     expect(types).toContain("scan.feed_unlisted");
+
+    const { events } = await listOrganizationAuditEvents(createDb(env.DB), owner.organizationId);
+    const feedEvents = events.filter((event) => event.type.startsWith("scan.feed_"));
+    expect(feedEvents.map((event) => event.type).sort()).toEqual([
+      "scan.feed_listed",
+      "scan.feed_unlisted",
+    ]);
+    for (const event of feedEvents) {
+      const descriptor = describeAuditEvent(event.type, event.metadataJson);
+      expect(descriptor?.category).toBe("security");
+      expect(descriptor?.detail).toMatch(/^feed-.+@1\.1\.0$/);
+    }
   });
 
   test("gate scans are labeled manifest-claimed and the feed orders newest listing first", async () => {
