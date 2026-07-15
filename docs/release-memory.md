@@ -40,6 +40,13 @@ renders it as a positive banner (`match`/`subset`) or a quiet "N findings are
 new since the last approved release" line (`diverged`) next to the
 recommendation; `none` renders nothing.
 
+A `match`/`subset` with **zero current findings** is a vacuous comparison
+(empty profile vs. empty-or-any prior profile), so the banner switches to
+dedicated "No deterministic findings" wording that says only deterministic
+checks are compared. The banner is not suppressed — the prior-approval context
+is still useful — but it must not read as reassurance about the diff or the AI
+review, which remain specific to the new release.
+
 ## Failure and compatibility behavior
 
 - The lookup is wrapped: a database or artifact-read error degrades to `none`
