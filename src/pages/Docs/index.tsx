@@ -98,7 +98,7 @@ export default function DocsPage() {
           gives a human the final decision.
         </p>
         <p class="m-0 font-mono text-[11px] text-ink-subtle tracking-[0.02em]">
-          About 5 minutes · No security background required · npm, PyPI, and VS Code
+          About 5 minutes · No security background required · npm, PyPI, VS Code, and RubyGems
         </p>
         <nav class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2" aria-label="Learning path">
           <JourneyCard number="01" href="#artifact-gap" title="Understand the gap">
@@ -328,15 +328,15 @@ export default function DocsPage() {
                   badge="Preview"
                   href="#workflow-gating"
                   command="environment: production"
-                  bestFor="PyPI, npm, VS Code, monorepos, and CI-first releases."
+                  bestFor="PyPI, npm, VS Code, RubyGems, monorepos, and CI-first releases."
                   heldBy="A GitHub Environment holds the publish job."
                   decision="You approve or reject the job from Drydock."
                 />
               </div>
               <Callout label="Quick decision">
                 If your release uses <Code>npm stage publish</Code>, start there. If CI builds the
-                artifact—or you publish to PyPI or the VS Code Marketplace—use a GitHub workflow
-                gate.
+                artifact—or you publish to PyPI, the VS Code Marketplace, or RubyGems—use a GitHub
+                workflow gate.
               </Callout>
             </Subsection>
           </section>
@@ -431,7 +431,7 @@ export default function DocsPage() {
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Requirement label="Supported artifacts">whl, tar.gz, tgz, vsix</Requirement>
+              <Requirement label="Supported artifacts">whl, tar.gz, tgz, vsix, gem</Requirement>
               <Requirement label="Release hold">GitHub Environment</Requirement>
               <Requirement label="Publish credential">Stays in GitHub Actions</Requirement>
             </div>
@@ -468,9 +468,9 @@ export default function DocsPage() {
             <Subsection id="gate-bundle" title="Prepare the release artifacts">
               <Prose>
                 There is no Drydock manifest to maintain. Upload built <Code>.whl</Code>,{" "}
-                <Code>.tar.gz</Code>, <Code>.tgz</Code>, or <Code>.vsix</Code> files before the
-                protected job starts. Drydock derives the ecosystem, package name, and version from
-                metadata inside each archive.
+                <Code>.tar.gz</Code>, <Code>.tgz</Code>, <Code>.vsix</Code>, or <Code>.gem</Code>{" "}
+                files before the protected job starts. Drydock derives the ecosystem, package name,
+                and version from metadata inside each archive.
               </Prose>
               <Prose>
                 Generate <Code>SHA256SUMS</Code> beside the artifacts during the build, upload it
@@ -577,10 +577,45 @@ export default function DocsPage() {
       - run: cd dist && sha256sum --check --strict SHA256SUMS
       - run: npx @vscode/vsce publish --packagePath dist/extension.vsix`}
               </WorkflowExample>
+              <WorkflowExample title="RubyGems with Trusted Publishing">
+                {`jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+      - run: mkdir -p dist && gem build *.gemspec -o dist/
+      - run: cd dist && sha256sum *.gem > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate
+          path: dist/
+
+  publish:
+    needs: build
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-candidate
+          path: dist
+      - run: cd dist && sha256sum --check --strict SHA256SUMS
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+      - uses: rubygems/configure-rubygems-credentials@v1
+      - run: for gem in dist/*.gem; do gem push "$gem"; done`}
+              </WorkflowExample>
               <Callout label="Authentication stays in the publish job">
                 Add the registry authentication your release already uses—for example PyPI Trusted
-                Publishing, npm trusted publishing or a scoped token, or a VS Code Marketplace
-                token—to the protected publish job. Drydock does not receive those credentials.
+                Publishing, npm trusted publishing or a scoped token, a VS Code Marketplace token,
+                or RubyGems Trusted Publishing—to the protected publish job. Drydock does not
+                receive those credentials.
               </Callout>
             </Subsection>
 
