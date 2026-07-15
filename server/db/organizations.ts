@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { personalOrganizationId } from "../lib/ownership";
 import { deleteOrganizationArtifacts } from "../lib/scan-artifacts";
 import type { AppDb, WorkspaceSession } from "./client";
+import { recordOrganizationMilestone } from "./organization-milestones";
 import {
   githubAppInstallations,
   githubReleaseTargets,
@@ -59,6 +60,8 @@ export async function ensurePersonalOrganization(db: AppDb, session: WorkspaceSe
       updatedAt: now,
     })
     .onConflictDoNothing();
+
+  await recordOrganizationMilestone(db, organizationId, "organization_created", now);
 
   return organizationId;
 }
@@ -169,6 +172,7 @@ export async function createOrganization(db: AppDb, input: CreateOrganizationInp
       updatedAt: now,
     }),
   ]);
+  await recordOrganizationMilestone(db, id, "organization_created", now);
   return id;
 }
 

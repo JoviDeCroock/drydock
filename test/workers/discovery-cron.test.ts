@@ -214,8 +214,8 @@ describe("staged publishes discovery cron", () => {
     expect(sentMeta).not.toMatchObject({ recipient: orgB.connectionCreatorEmail });
     const genericFailureForOrgB = errorSpy.mock.calls.find(
       (call) =>
-        call[0] === "staged_publishes.cron.org_failed" &&
-        (call[1] as { organizationId?: string })?.organizationId === orgB.organizationId,
+        call[0]?.event?.name === "staged_publishes.cron.org_failed" &&
+        call[0]?.tenant?.organization_id === orgB.organizationId,
     );
     expect(genericFailureForOrgB).toBeUndefined();
 
@@ -226,9 +226,11 @@ describe("staged publishes discovery cron", () => {
     expect(await eventTypesForOrg(orgC.organizationId)).toHaveLength(0);
 
     // Sweep finished cleanly over the two eligible orgs.
-    const sweptCall = logSpy.mock.calls.find((call) => call[0] === "staged_publishes.cron.swept");
+    const sweptCall = logSpy.mock.calls.find(
+      (call) => call[0]?.event?.name === "staged_publishes.cron.swept",
+    );
     expect(sweptCall).toBeDefined();
-    expect(sweptCall![1]).toMatchObject({ orgsProcessed: 2 });
+    expect(sweptCall![0]?.measurements).toMatchObject({ orgs_processed: 2 });
   });
 
   test("logs a generic per-org failure for a non-auth registry error without alerting", async () => {
@@ -256,13 +258,19 @@ describe("staged publishes discovery cron", () => {
     await waitOnExecutionContext(ctx);
 
     const failureCall = errorSpy.mock.calls.find(
-      (call) => call[0] === "staged_publishes.cron.org_failed",
+      (call) => call[0]?.event?.name === "staged_publishes.cron.org_failed",
     );
     expect(failureCall).toBeDefined();
-    expect(failureCall![1]).toMatchObject({
-      event: "staged_publishes.cron.org_failed",
-      organizationId: org.organizationId,
-      error: { status: 500 },
+    expect(failureCall![0]).toMatchObject({
+      event: { name: "staged_publishes.cron.org_failed", version: 1 },
+      tenant: { organization_id: org.organizationId },
+      outcome: {
+        error: {
+          code: "registry.metadata_fetch_failed",
+          class: "external_dependency",
+          retryable: true,
+        },
+      },
     });
 
     const connection = await getNpmConnection(createDb(env.DB), org.organizationId);

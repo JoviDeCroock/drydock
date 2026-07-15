@@ -23,6 +23,7 @@ import {
   type ScanArtifactMetadata,
 } from "../lib/scan-artifacts";
 import type { AppDb } from "./client";
+import { recordOrganizationMilestone } from "./organization-milestones";
 import { recordScanEvent, redactScanEventForClient } from "./events";
 import { githubWorkflowGates, scanEvents, scanFiles, scanFindings, scans } from "./schema";
 
@@ -408,6 +409,12 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
   if (Array.isArray(claimed) && claimed.length === 0) {
     return { persisted: false, reason: "already_terminal" as const };
   }
+  if (isComplete) {
+    await Promise.all([
+      recordOrganizationMilestone(db, input.organizationId, "artifact_observed", now),
+      recordOrganizationMilestone(db, input.organizationId, "review_completed", now),
+    ]);
+  }
   return { persisted: true as const };
 }
 
@@ -741,6 +748,11 @@ export async function recordScanDecision(
 ) {
   const now = new Date();
   const reason = input.reason?.trim() ? input.reason.trim() : null;
+  const [previous] = await db
+    .select({ decision: scans.decision })
+    .from(scans)
+    .where(and(eq(scans.id, input.scanId), eq(scans.organizationId, input.organizationId)))
+    .limit(1);
   const updated = await db
     .update(scans)
     .set({
@@ -757,7 +769,7 @@ export async function recordScanDecision(
         eq(scans.status, "complete"),
       ),
     )
-    .returning({ id: scans.id });
+    .returning({ id: scans.id, source: scans.source });
 
   if (updated.length === 0) return null;
 
@@ -768,6 +780,28 @@ export async function recordScanDecision(
     type: "scan.decided",
     metadata: { decision: input.decision, reason },
   });
+
+  if (updated[0]?.source !== "workflow_gate" && !previous?.decision) {
+    const recorded = await db
+      .update(scans)
+      .set({ protectedReleaseRecordedAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(scans.id, input.scanId),
+          eq(scans.organizationId, input.organizationId),
+          isNull(scans.protectedReleaseRecordedAt),
+        ),
+      )
+      .returning({ id: scans.id });
+    if (recorded.length > 0) {
+      await recordOrganizationMilestone(
+        db,
+        input.organizationId,
+        "protected_release_completed",
+        now,
+      );
+    }
+  }
 
   return getScan(db, input.scanId, input.organizationId, artifactBucket);
 }

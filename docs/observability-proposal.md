@@ -1,6 +1,6 @@
 # Drydock observability proposal
 
-**Status:** proposal  
+**Status:** Phase 0 and core Phase 1 implemented; later phases remain a roadmap
 **Date:** 2026-07-14  
 **Scope:** runtime reliability, customer pain, adoption, user journeys, support, and safe LLM access
 

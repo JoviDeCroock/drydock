@@ -62,11 +62,15 @@ describe("discovery cron concurrency", () => {
     await waitOnExecutionContext(ctx);
 
     expect(fetchMock).not.toHaveBeenCalled();
-    const sweptCall = logSpy.mock.calls.find((call) => call[0] === "staged_publishes.cron.swept");
+    const sweptCall = logSpy.mock.calls.find(
+      (call) => call[0]?.event?.name === "staged_publishes.cron.swept",
+    );
     expect(sweptCall).toBeDefined();
-    expect(sweptCall![1]).toMatchObject({
-      orgsProcessed: 0,
-      concurrencyLimit: CONCURRENCY_LIMIT,
+    expect(sweptCall![0]).toMatchObject({
+      measurements: {
+        orgs_processed: 0,
+        concurrency_limit: CONCURRENCY_LIMIT,
+      },
     });
   });
 
@@ -108,17 +112,19 @@ describe("discovery cron concurrency", () => {
     expect(maxInFlight).toBeLessThanOrEqual(CONCURRENCY_LIMIT);
     expect(maxInFlight).toBe(CONCURRENCY_LIMIT);
 
-    const sweptCall = logSpy.mock.calls.find((call) => call[0] === "staged_publishes.cron.swept");
+    const sweptCall = logSpy.mock.calls.find(
+      (call) => call[0]?.event?.name === "staged_publishes.cron.swept",
+    );
     expect(sweptCall).toBeDefined();
-    const sweptFields = sweptCall![1] as {
-      orgsProcessed: number;
-      durationMs: number;
-      concurrencyLimit: number;
+    const sweptFields = sweptCall![0]?.measurements as {
+      orgs_processed: number;
+      duration_ms: number;
+      concurrency_limit: number;
     };
     expect(sweptFields).toMatchObject({
-      orgsProcessed: orgCount,
-      concurrencyLimit: CONCURRENCY_LIMIT,
+      orgs_processed: orgCount,
+      concurrency_limit: CONCURRENCY_LIMIT,
     });
-    expect(sweptFields.durationMs).toBeGreaterThanOrEqual(0);
+    expect(sweptFields.duration_ms).toBeGreaterThanOrEqual(0);
   });
 });

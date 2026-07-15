@@ -45,9 +45,10 @@ for the lifecycle behavior behind it.
 ## Operational observability
 
 Runtime paths should emit structured events through
-`server/lib/observability.ts`. The helper redacts sensitive key names and bearer
-tokens before calling `console`, which keeps Cloudflare logs useful without
-turning them into a credential sink.
+`server/lib/observability.ts`. The typed, versioned contract projects one
+allowlisted JSON object per console call and rejects free-form or package-derived
+fields before the final recursive sanitizer runs. See
+[`observability.md`](./observability.md).
 
 Current structured events cover:
 
@@ -77,4 +78,6 @@ Before merging server-risk changes:
    changed.
 5. Confirm operational events exist for new failure modes and do not include
    sensitive material.
-6. Update the relevant docs in the same change.
+6. For a new telemetry table, define bounded growth or a retention window,
+   organization deletion behavior, a pruning/reconciliation path, and tests.
+7. Update the relevant docs in the same change.

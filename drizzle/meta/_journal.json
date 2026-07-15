@@ -169,6 +169,20 @@
       "when": 1783170819713,
       "tag": "0023_clammy_loki",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1784095544981,
+      "tag": "0024_cloudy_ares",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1784095871352,
+      "tag": "0025_talented_sway",
+      "breakpoints": true
     }
   ]
 }

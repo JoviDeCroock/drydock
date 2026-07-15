@@ -1,5 +1,5 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
@@ -445,6 +445,30 @@ describe("scans routes enforce organization boundaries", () => {
     };
     expect(body.scan.decision).toBe("publish");
     expect(body.scan.decisionReason).toBe("minor patch");
+
+    const updateCtx = createExecutionContext();
+    const updateRes = await buildTestApp(owner).fetch(
+      new Request(`http://test.local/api/v1/scans/${scanId}/decision`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: "no_publish", reason: "reviewed again" }),
+      }),
+      env,
+      updateCtx,
+    );
+    await waitOnExecutionContext(updateCtx);
+    expect(updateRes.status).toBe(200);
+
+    const [milestone] = await createDb(env.DB)
+      .select({ count: schema.organizationMilestones.count })
+      .from(schema.organizationMilestones)
+      .where(
+        and(
+          eq(schema.organizationMilestones.organizationId, owner.organizationId),
+          eq(schema.organizationMilestones.milestone, "protected_release_completed"),
+        ),
+      );
+    expect(milestone?.count).toBe(1);
   });
 
   test("POST /scans/:id/decision rejects invalid decision values", async () => {

@@ -588,8 +588,14 @@ describe("executeWorkflowGateJob", () => {
         expect.arrayContaining([expect.objectContaining({ state: "rejected" })]),
       );
       expect(errorSpy).toHaveBeenCalledWith(
-        "github_workflow_gate.decision_callback_failed",
-        expect.objectContaining({ gateId: seeded.gateId, decision: "rejected" }),
+        expect.objectContaining({
+          event: expect.objectContaining({
+            name: "github_workflow_gate.decision_callback_failed",
+            version: 1,
+          }),
+          correlation: expect.objectContaining({ gate_id: seeded.gateId }),
+          dimensions: expect.objectContaining({ decision: "rejected" }),
+        }),
       );
     } finally {
       errorSpy.mockRestore();

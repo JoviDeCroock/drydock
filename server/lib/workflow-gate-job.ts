@@ -1,9 +1,10 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { type AppDb, createDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
+import { recordOrganizationMilestone } from "../db/organization-milestones";
 import { getOrganizationOwnerUserId } from "../db/organizations";
 import { createScanJob, discardGateScans, markScanFailed } from "../db/scans";
-import { githubAppInstallations } from "../db/schema";
+import { githubAppInstallations, githubWorkflowGates } from "../db/schema";
 import { WorkflowArtifactError } from "./github-app/artifacts";
 import {
   type GithubAppConfig,
@@ -21,6 +22,7 @@ import {
 } from "./github-app/webhook-gates";
 import { notifyWorkflowGateReview, notifyWorkflowGateTimeout } from "./notify";
 import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
+import { enterTelemetrySpan } from "./telemetry/tracing";
 import {
   type PreparedGatePackage,
   type PreparedGateRelease,
@@ -119,7 +121,12 @@ export async function executeWorkflowGateJob(
     return;
   }
 
-  const gate = await getGateForOrganization(db, organizationId, gateId);
+  const gate = await enterTelemetrySpan(
+    executionCtx,
+    "workflow_gate.load_gate",
+    { "drydock.organization.id": organizationId, "drydock.gate.id": gateId },
+    () => getGateForOrganization(db, organizationId, gateId),
+  );
   if (!gate) {
     emitOperationalEvent("warn", "github_workflow_gate.job_skipped", {
       organizationId,
@@ -170,11 +177,17 @@ export async function executeWorkflowGateJob(
 
   let prepared: PreparedGateRelease;
   try {
-    prepared = await prepareReleaseCandidatesForGate(env, executionCtx, db, {
-      config,
-      organizationId,
-      gateId,
-    });
+    prepared = await enterTelemetrySpan(
+      executionCtx,
+      "workflow_gate.prepare_release_candidates",
+      { "drydock.organization.id": organizationId, "drydock.gate.id": gateId },
+      () =>
+        prepareReleaseCandidatesForGate(env, executionCtx, db, {
+          config,
+          organizationId,
+          gateId,
+        }),
+    );
   } catch (err) {
     if (err instanceof WorkflowArtifactError) {
       // The published artifacts could not be verified against the reviewed
@@ -242,9 +255,19 @@ export async function executeWorkflowGateJob(
     // the half-finished scans first so the gate's package set is exactly this
     // batch.
     await discardGateScans(db, gate.id, organizationId, env.ARTIFACTS);
-    reviewed = await reviewGatePackages(
-      { env, executionCtx, db },
-      { gate, ownerUserId, packages: prepared.packages },
+    reviewed = await enterTelemetrySpan(
+      executionCtx,
+      "workflow_gate.review_packages",
+      {
+        "drydock.organization.id": organizationId,
+        "drydock.gate.id": gateId,
+        "drydock.package.count": prepared.packages.length,
+      },
+      () =>
+        reviewGatePackages(
+          { env, executionCtx, db },
+          { gate, ownerUserId, packages: prepared.packages },
+        ),
     );
   } catch (err) {
     // A per-package scan failed. Release the claim so a retry re-runs the whole
@@ -563,6 +586,22 @@ async function deliverGateDecision(
     state: gate.decision,
     comment: gate.decisionComment ?? "",
   });
+  const deliveredAt = new Date();
+  const recorded = await db
+    .update(githubWorkflowGates)
+    .set({ callbackDeliveredAt: deliveredAt, updatedAt: deliveredAt })
+    .where(
+      and(eq(githubWorkflowGates.id, gate.id), isNull(githubWorkflowGates.callbackDeliveredAt)),
+    )
+    .returning({ id: githubWorkflowGates.id });
+  if (recorded.length > 0) {
+    await recordOrganizationMilestone(
+      db,
+      gate.organizationId,
+      "protected_release_completed",
+      deliveredAt,
+    );
+  }
 }
 
 async function getInstallationExternalId(

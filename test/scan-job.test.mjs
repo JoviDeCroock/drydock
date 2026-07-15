@@ -82,10 +82,15 @@ describe("scan job retry classification", () => {
       retryable: true,
     });
     expect(JSON.stringify(safe)).not.toContain("D1_ERROR");
-    expect(errorSpy).toHaveBeenCalledWith("scan.error.unclassified", {
-      event: "scan.error.unclassified",
-      error: { name: "Error", message: "D1_ERROR: column not found" },
-    });
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({ name: "scan.error.unclassified", version: 1 }),
+        outcome: expect.objectContaining({
+          error: expect.objectContaining({ code: "internal.unclassified" }),
+        }),
+      }),
+    );
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain("D1_ERROR");
     errorSpy.mockRestore();
   });
 
@@ -216,20 +221,17 @@ describe("executeScanJob idempotency", () => {
     await executeScanJob(env, ctx, message, {}, { attempt: 1 });
 
     expect(console.log).toHaveBeenCalledWith(
-      "scan.job.completed",
       expect.objectContaining({
-        event: "scan.job.completed",
-        scanId: message.scanId,
-        organizationId: message.organizationId,
-        stageId: message.stageId,
-        source: "manual",
-        attempt: 1,
-        packageName: "@scope/pkg",
-        releaseRisk: "low",
-        artifactRisk: "high",
-        durationMs: expect.any(Number),
+        event: expect.objectContaining({ name: "scan.job.completed", version: 1 }),
+        correlation: expect.objectContaining({ scan_id: message.scanId }),
+        tenant: { organization_id: message.organizationId },
+        product: expect.objectContaining({ surface: "manual" }),
+        outcome: expect.objectContaining({ status: "success" }),
+        measurements: expect.objectContaining({ attempt: 1, duration_ms: expect.any(Number) }),
+        dimensions: expect.objectContaining({ release_risk: "low", artifact_risk: "high" }),
       }),
     );
+    expect(JSON.stringify(console.log.mock.calls)).not.toContain("@scope/pkg");
     expect(JSON.stringify(console.log.mock.calls)).not.toContain("npm_token");
   });
 
@@ -265,11 +267,12 @@ describe("executeScanJob idempotency", () => {
         organizationId: message.organizationId,
         ownerUserId: message.actorUserId,
         outcome: "failed",
-        error: {
+        error: expect.objectContaining({
           code: "staged_tarball_unavailable",
           message: "The staged tarball could not be accessed with this organization's npm token.",
           retryable: false,
-        },
+          referenceId: expect.stringMatching(/^ref_/),
+        }),
       }),
     );
   });
@@ -289,11 +292,17 @@ describe("executeScanJob idempotency", () => {
     expect(npmConnectionMock.decryptNpmToken).not.toHaveBeenCalled();
     expect(dbMock.markNpmConnectionUsed).not.toHaveBeenCalled();
     expect(pipelineMock.runScanPipeline).not.toHaveBeenCalled();
-    expect(dbMock.markScanFailed).toHaveBeenCalledWith({}, message.scanId, message.organizationId, {
-      code: "npm_connection_unvalidated",
-      message: "Validate the organization npm token before scanning staged publishes.",
-      retryable: false,
-    });
+    expect(dbMock.markScanFailed).toHaveBeenCalledWith(
+      {},
+      message.scanId,
+      message.organizationId,
+      expect.objectContaining({
+        code: "npm_connection_unvalidated",
+        message: "Validate the organization npm token before scanning staged publishes.",
+        retryable: false,
+        referenceId: expect.stringMatching(/^ref_/),
+      }),
+    );
   });
 
   test("discards auto-discovered scans when the org's token cannot access the tarball", async () => {

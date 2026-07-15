@@ -3,6 +3,7 @@ import { createDb } from "./db/client";
 import { AUDIT_LOG_RETENTION_DAYS, pruneAuditEventsOlderThan } from "./db/audit-log";
 import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
 import { getOrganizationOwnerUserId } from "./db/organizations";
+import { reconcileOrganizationMilestones } from "./db/organization-milestones";
 import { RateLimitError, enforceRateLimit } from "./db/rate-limit";
 import { createAuth, getAuthSession } from "./lib/auth";
 import { rateLimitResponse } from "./lib/http";
@@ -19,6 +20,7 @@ import {
   durationMsSince,
   emitOperationalEvent,
 } from "./lib/observability";
+import { newTelemetryId, readJourneyId, withTelemetryContext } from "./lib/telemetry/context";
 import {
   classifyScanError,
   executeScanJob,
@@ -293,12 +295,18 @@ app.notFound(async (c) => {
 });
 
 app.onError((err, c) => {
-  emitOperationalEvent("error", "request.unhandled_error", {
+  const telemetry = emitOperationalEvent("error", "request.unhandled_error", {
     method: c.req.method,
     path: c.req.path,
-    error: describeOperationalError(err),
+    error: { ...describeOperationalError(err), customerVisible: true },
   });
-  return c.json({ error: "internal error" }, 500);
+  const referenceId = telemetry.outcome.reference_id;
+  const response = c.json(
+    { error: "internal error", code: "internal.unclassified", referenceId },
+    500,
+  );
+  if (referenceId) response.headers.set("x-drydock-support-reference", referenceId);
+  return response;
 });
 
 // A scheduled invocation gets a bounded CPU budget. Sweeping organizations
@@ -396,7 +404,12 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
         }
         const detail =
           err instanceof StagedPublishesFetchError
-            ? { status: err.status, detail: err.detail }
+            ? {
+                code: "registry.metadata_fetch_failed",
+                status: err.status,
+                detail: err.detail,
+                retryable: err.status === 429 || err.status >= 500,
+              }
             : describeOperationalError(err);
         emitOperationalEvent("error", "staged_publishes.cron.org_failed", {
           organizationId: connection.organizationId,
@@ -436,89 +449,126 @@ async function pruneStaleAuditEvents(env: Cloudflare.Env) {
 }
 
 export default {
-  fetch: app.fetch,
-  async scheduled(_event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
-    await runStagedPublishesDiscoveryCron(env, ctx);
-    await pruneStaleAuditEvents(env);
+  fetch(request: Request, env: Cloudflare.Env, ctx: ExecutionContext) {
+    return withTelemetryContext(
+      telemetryInvocationContext(env, ctx, {
+        requestId: newTelemetryId("req"),
+        journeyId: readJourneyId(request.headers.get("x-drydock-journey-id")),
+      }),
+      () => app.fetch(request, env, ctx),
+    );
+  },
+  async scheduled(event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
+    await withTelemetryContext(
+      telemetryInvocationContext(env, ctx, { requestId: newTelemetryId("req") }),
+      async () => {
+        await runStagedPublishesDiscoveryCron(env, ctx);
+        await pruneStaleAuditEvents(env);
+        const scheduledAt = new Date(event.scheduledTime);
+        if (scheduledAt.getUTCHours() === 0 && scheduledAt.getUTCMinutes() === 0) {
+          await reconcileOrganizationMilestones(createDb(env.DB));
+        }
+      },
+    );
   },
   async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
-    for (const message of batch.messages) {
-      const messageStartedAtMs = Date.now();
-      if (isWorkflowGateMessage(message.body)) {
-        const gateMessage = message.body;
-        try {
-          await executeWorkflowGateJob(env, ctx, gateMessage);
-          emitOperationalEvent("info", "workflow_gate.queue.message.completed", {
-            organizationId: gateMessage.organizationId,
-            gateId: gateMessage.gateId,
-            attempt: message.attempts,
-            durationMs: durationMsSince(messageStartedAtMs),
-          });
-        } catch (err) {
-          if (message.attempts < MAX_SCAN_JOB_ATTEMPTS) {
-            message.retry({ delaySeconds: retryDelaySeconds(message.attempts) });
-            emitOperationalEvent("warn", "workflow_gate.queue.retry_scheduled", {
-              organizationId: gateMessage.organizationId,
-              gateId: gateMessage.gateId,
+    await withTelemetryContext(
+      telemetryInvocationContext(env, ctx, { requestId: newTelemetryId("req") }),
+      async () => {
+        for (const message of batch.messages) {
+          const messageStartedAtMs = Date.now();
+          if (isWorkflowGateMessage(message.body)) {
+            const gateMessage = message.body;
+            try {
+              await executeWorkflowGateJob(env, ctx, gateMessage);
+              emitOperationalEvent("info", "workflow_gate.queue.message.completed", {
+                organizationId: gateMessage.organizationId,
+                gateId: gateMessage.gateId,
+                attempt: message.attempts,
+                durationMs: durationMsSince(messageStartedAtMs),
+              });
+            } catch (err) {
+              if (message.attempts < MAX_SCAN_JOB_ATTEMPTS) {
+                message.retry({ delaySeconds: retryDelaySeconds(message.attempts) });
+                emitOperationalEvent("warn", "workflow_gate.queue.retry_scheduled", {
+                  organizationId: gateMessage.organizationId,
+                  gateId: gateMessage.gateId,
+                  attempt: message.attempts,
+                  nextDelaySeconds: retryDelaySeconds(message.attempts),
+                  durationMs: durationMsSince(messageStartedAtMs),
+                  error: describeOperationalError(err),
+                });
+              } else {
+                emitOperationalEvent("error", "workflow_gate.queue.message_failed", {
+                  organizationId: gateMessage.organizationId,
+                  gateId: gateMessage.gateId,
+                  attempt: message.attempts,
+                  durationMs: durationMsSince(messageStartedAtMs),
+                  error: describeOperationalError(err),
+                });
+                throw err;
+              }
+            }
+            continue;
+          }
+          try {
+            await executeScanJob(env, ctx, message.body, undefined, {
               attempt: message.attempts,
-              nextDelaySeconds: retryDelaySeconds(message.attempts),
-              durationMs: durationMsSince(messageStartedAtMs),
-              error: describeOperationalError(err),
+              finalAttempt: message.attempts >= MAX_SCAN_JOB_ATTEMPTS,
             });
-          } else {
-            emitOperationalEvent("error", "workflow_gate.queue.message_failed", {
-              organizationId: gateMessage.organizationId,
-              gateId: gateMessage.gateId,
+            emitOperationalEvent("info", "scan.queue.message.completed", {
+              scanId: message.body.scanId,
+              organizationId: message.body.organizationId,
+              stageId: message.body.stageId,
+              source: message.body.source ?? "manual",
               attempt: message.attempts,
               durationMs: durationMsSince(messageStartedAtMs),
-              error: describeOperationalError(err),
             });
-            throw err;
+          } catch (err) {
+            const safe = classifyScanError(err);
+            if (safe.retryable && message.attempts < MAX_SCAN_JOB_ATTEMPTS) {
+              message.retry({ delaySeconds: retryDelaySeconds(message.attempts) });
+              emitOperationalEvent("warn", "scan.queue.retry_scheduled", {
+                scanId: message.body.scanId,
+                organizationId: message.body.organizationId,
+                stageId: message.body.stageId,
+                source: message.body.source ?? "manual",
+                attempt: message.attempts,
+                nextDelaySeconds: retryDelaySeconds(message.attempts),
+                durationMs: durationMsSince(messageStartedAtMs),
+                error: safe,
+              });
+            } else {
+              emitOperationalEvent("error", "scan.queue.message_failed", {
+                scanId: message.body.scanId,
+                organizationId: message.body.organizationId,
+                stageId: message.body.stageId,
+                source: message.body.source ?? "manual",
+                attempt: message.attempts,
+                exhausted: safe.retryable,
+                durationMs: durationMsSince(messageStartedAtMs),
+                error: safe,
+              });
+              if (safe.retryable) throw err;
+            }
           }
         }
-        continue;
-      }
-      try {
-        await executeScanJob(env, ctx, message.body, undefined, {
-          attempt: message.attempts,
-          finalAttempt: message.attempts >= MAX_SCAN_JOB_ATTEMPTS,
-        });
-        emitOperationalEvent("info", "scan.queue.message.completed", {
-          scanId: message.body.scanId,
-          organizationId: message.body.organizationId,
-          stageId: message.body.stageId,
-          source: message.body.source ?? "manual",
-          attempt: message.attempts,
-          durationMs: durationMsSince(messageStartedAtMs),
-        });
-      } catch (err) {
-        const safe = classifyScanError(err);
-        if (safe.retryable && message.attempts < MAX_SCAN_JOB_ATTEMPTS) {
-          message.retry({ delaySeconds: retryDelaySeconds(message.attempts) });
-          emitOperationalEvent("warn", "scan.queue.retry_scheduled", {
-            scanId: message.body.scanId,
-            organizationId: message.body.organizationId,
-            stageId: message.body.stageId,
-            source: message.body.source ?? "manual",
-            attempt: message.attempts,
-            nextDelaySeconds: retryDelaySeconds(message.attempts),
-            durationMs: durationMsSince(messageStartedAtMs),
-            error: safe,
-          });
-        } else {
-          emitOperationalEvent("error", "scan.queue.message_failed", {
-            scanId: message.body.scanId,
-            organizationId: message.body.organizationId,
-            stageId: message.body.stageId,
-            source: message.body.source ?? "manual",
-            attempt: message.attempts,
-            exhausted: safe.retryable,
-            durationMs: durationMsSince(messageStartedAtMs),
-            error: safe,
-          });
-          if (safe.retryable) throw err;
-        }
-      }
-    }
+      },
+    );
   },
 };
+
+function telemetryInvocationContext(
+  env: Cloudflare.Env,
+  executionCtx: ExecutionContext,
+  correlation: { requestId: string; journeyId?: string | null },
+) {
+  return {
+    ...correlation,
+    serviceVersion: env.CF_VERSION_METADATA?.tag || env.CF_VERSION_METADATA?.id || "local",
+    environment: env.ENVIRONMENT || (env.CF_VERSION_METADATA ? "production" : "development"),
+    analytics: env.TELEMETRY_ANALYTICS,
+    analyticsHashKey: env.TELEMETRY_HASH_KEY,
+    executionCtx,
+  };
+}

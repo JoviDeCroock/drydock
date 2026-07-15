@@ -43,6 +43,32 @@ export const organizations = sqliteTable(
   }),
 );
 
+// Rebuildable exact projection of the first/last occurrence and lifetime count
+// for a bounded set of organization value milestones. This is deliberately not
+// an audit or event table: one organization can own only one row per milestone.
+export const organizationMilestones = sqliteTable(
+  "organization_milestones",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    milestone: text("milestone").notNull(),
+    firstAt: integer("first_at", { mode: "timestamp_ms" }).notNull(),
+    lastAt: integer("last_at", { mode: "timestamp_ms" }).notNull(),
+    count: integer("count").notNull().default(1),
+  },
+  (table) => ({
+    orgMilestoneUniqueIdx: uniqueIndex("organization_milestones_org_milestone_unique_idx").on(
+      table.organizationId,
+      table.milestone,
+    ),
+    milestoneLastIdx: index("organization_milestones_milestone_last_idx").on(
+      table.milestone,
+      table.lastAt,
+    ),
+  }),
+);
+
 export const organizationMembers = sqliteTable(
   "organization_members",
   {
@@ -149,6 +175,9 @@ export const scans = sqliteTable(
       onDelete: "set null",
     }),
     decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
+    protectedReleaseRecordedAt: integer("protected_release_recorded_at", {
+      mode: "timestamp_ms",
+    }),
     summaryJson: text("summary_json", { mode: "json" }),
     aiJson: text("ai_json", { mode: "json" }),
     errorJson: text("error_json", { mode: "json" }),
@@ -421,6 +450,7 @@ export const githubWorkflowGates = sqliteTable(
     failureReason: text("failure_reason"),
     requestedAt: integer("requested_at", { mode: "timestamp_ms" }).notNull(),
     decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
+    callbackDeliveredAt: integer("callback_delivered_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },

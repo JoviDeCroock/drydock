@@ -10,6 +10,14 @@ declare global {
       SCAN_ARTIFACT_READS_DISABLED?: string;
       COMPARE_CACHE?: KVNamespace;
       SCAN_QUEUE?: Queue<import("./lib/scan-job").QueueMessage>;
+      TELEMETRY_ANALYTICS?: AnalyticsEngineDataset;
+      TELEMETRY_HASH_KEY?: string;
+      CF_VERSION_METADATA?: {
+        id: string;
+        tag?: string;
+        timestamp?: string;
+      };
+      ENVIRONMENT?: string;
       NPM_REGISTRY: string;
       ALLOW_INSECURE_LOCAL_REGISTRY?: string;
       // `.dev.vars`-only escape hatch (see securityHeadersDisabled). Never set in

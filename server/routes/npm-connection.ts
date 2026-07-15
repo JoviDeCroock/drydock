@@ -8,6 +8,7 @@ import {
   upsertNpmConnection,
 } from "../db/npm-connections";
 import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
+import { recordOrganizationMilestone } from "../db/organization-milestones";
 import {
   requireActiveOrganization,
   requireActiveOrganizationContext,
@@ -146,6 +147,9 @@ npmConnectionRoutes.post("/validate", async (c) => {
           capabilities: validation.capabilities,
         },
       }),
+      validation.ok
+        ? recordOrganizationMilestone(db, organizationId, "integration_validated")
+        : Promise.resolve(),
     ]);
 
     return c.json({ validation, connection: publicNpmConnection(updated) });

@@ -97,6 +97,7 @@ Set required secrets with Wrangler:
 ```sh
 pnpm exec wrangler secret put BETTER_AUTH_SECRET
 pnpm exec wrangler secret put NPM_CONNECTIONS_ENCRYPTION_KEY
+openssl rand -base64 32 | pnpm exec wrangler secret put TELEMETRY_HASH_KEY
 ```
 
 Required non-secret vars:
@@ -105,6 +106,7 @@ Required non-secret vars:
 - `NPM_REGISTRY` — defaults to `https://registry.npmjs.org`
 - `AI_CACHE_AFFINITY` — stable prefix-cache affinity string for Workers AI
 - `PNPM_VERSION` — used by the runtime where npm tooling parity matters
+- `ENVIRONMENT` — bounded deployment environment attached to telemetry
 
 Optional integrations:
 
@@ -132,6 +134,8 @@ After deploying:
 5. Run a test staged-publish review.
 6. Check Worker logs for structured events without raw package contents or
    secrets.
+7. Confirm traces carry the deployed Worker version and Analytics Engine receives
+   pseudonymous events. See [`observability.md`](observability.md).
 
 ## GitHub workflow gates
 

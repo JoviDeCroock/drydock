@@ -130,8 +130,7 @@ export async function executeScanJob(
           error: safe,
         });
       } else {
-        await markScanFailed(db, message.scanId, message.organizationId, safe);
-        emitOperationalEvent("error", "scan.job.failed", {
+        const telemetry = emitOperationalEvent("error", "scan.job.failed", {
           scanId: message.scanId,
           organizationId: message.organizationId,
           stageId: message.stageId,
@@ -139,8 +138,13 @@ export async function executeScanJob(
           attempt,
           finalAttempt: Boolean(options.finalAttempt),
           durationMs: durationMsSince(startedAtMs),
-          error: safe,
+          error: { ...safe, customerVisible: true },
         });
+        const persistedError = {
+          ...safe,
+          referenceId: telemetry.outcome.reference_id ?? undefined,
+        };
+        await markScanFailed(db, message.scanId, message.organizationId, persistedError);
         if (message.source !== "workflow_gate") {
           executionCtx.waitUntil(
             notifyScanCompletion({
@@ -150,7 +154,7 @@ export async function executeScanJob(
               organizationId: message.organizationId,
               ownerUserId: message.actorUserId,
               outcome: "failed",
-              error: safe,
+              error: persistedError,
             }),
           );
         }

@@ -120,7 +120,7 @@ const FAILURE_GUIDANCE: Record<string, { hint: string; action: string }> = {
 export function ScanFailureAlert({ errorJson }: { errorJson: unknown }) {
   const error =
     errorJson && typeof errorJson === "object"
-      ? (errorJson as { message?: unknown; code?: unknown })
+      ? (errorJson as { message?: unknown; code?: unknown; referenceId?: unknown })
       : null;
   const guidance = typeof error?.code === "string" ? FAILURE_GUIDANCE[error.code] : undefined;
   return (
@@ -134,6 +134,9 @@ export function ScanFailureAlert({ errorJson }: { errorJson: unknown }) {
         ) : null}
         {typeof error?.code === "string" ? (
           <span class="font-mono text-xs">code: {error.code}</span>
+        ) : null}
+        {typeof error?.referenceId === "string" ? (
+          <span class="font-mono text-xs">support: {error.referenceId}</span>
         ) : null}
       </div>
     </Alert>

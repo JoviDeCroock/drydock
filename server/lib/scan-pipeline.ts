@@ -7,6 +7,7 @@ import type {
   PackageAdapter,
 } from "./adapters/types";
 import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
+import { enterTelemetrySpan } from "./telemetry/tracing";
 import {
   computeDiff,
   persistResults,
@@ -47,52 +48,87 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
   const connectionRef: AdapterConnectionRef = { organizationId: input.organizationId };
   const broker = adapter.createBroker(adapterCtx, connectionRef);
   const pipelineStartedAtMs = Date.now();
+  const spanAttributes = {
+    "drydock.scan.id": input.scanId,
+    "drydock.organization.id": input.organizationId,
+    "drydock.ecosystem": adapter.id,
+  };
 
   try {
-    const resolved = await resolveBaseline(adapter, adapterCtx, adapterInput, broker);
-    const diff = computeDiff(resolved);
-    const findings = runDeterministicFindings(adapter, resolved, diff);
+    const resolved = await enterTelemetrySpan(
+      executionCtx,
+      "scan.resolve_baseline",
+      spanAttributes,
+      () => resolveBaseline(adapter, adapterCtx, adapterInput, broker),
+    );
+    const diff = enterTelemetrySpan(executionCtx, "scan.compute_diff", spanAttributes, () =>
+      computeDiff(resolved),
+    );
+    const findings = enterTelemetrySpan(
+      executionCtx,
+      "scan.deterministic_review",
+      spanAttributes,
+      () => runDeterministicFindings(adapter, resolved, diff),
+    );
 
     const identity: PipelineIdentity = {
       scanId: input.scanId || crypto.randomUUID(),
       stageId: input.stageId,
       organizationId: input.organizationId,
     };
-    const aiFindings = await maybeRunAiReview({
-      env,
-      identity,
-      ecosystem: adapter.id,
-      previousVersionAvailable: resolved.baseline.artifact !== null,
-      findings,
-      diff,
-    });
+    const aiFindings = await enterTelemetrySpan(
+      executionCtx,
+      "scan.ai_review",
+      spanAttributes,
+      () =>
+        maybeRunAiReview({
+          env,
+          identity,
+          ecosystem: adapter.id,
+          previousVersionAvailable: resolved.baseline.artifact !== null,
+          findings,
+          diff,
+        }),
+    );
     const riskSummary = scoreRisk(findings.annotatedFindings, aiFindings);
 
     // Advisory release-memory lookup (db read) before persistence. It compares
     // finding profiles only; it never touches risk or findings, and a lookup
     // failure degrades to "none" inside the phase instead of failing the scan.
-    const releaseConsistency = await resolveReleaseConsistency({
-      db,
-      env,
-      identity,
-      packageName: findings.redactedStagedManifest?.name ?? null,
-      ruleFindings: findings.ruleFindings,
-    });
+    const releaseConsistency = await enterTelemetrySpan(
+      executionCtx,
+      "scan.release_memory_lookup",
+      spanAttributes,
+      () =>
+        resolveReleaseConsistency({
+          db,
+          env,
+          identity,
+          packageName: findings.redactedStagedManifest?.name ?? null,
+          ruleFindings: findings.ruleFindings,
+        }),
+    );
 
-    const { result, persisted } = await persistResults({
-      env,
-      db,
-      session,
-      adapter,
-      adapterInput,
-      identity,
-      resolved,
-      diff,
-      findings,
-      aiFindings,
-      riskSummary,
-      releaseConsistency,
-    });
+    const { result, persisted } = await enterTelemetrySpan(
+      executionCtx,
+      "scan.persist_report",
+      spanAttributes,
+      () =>
+        persistResults({
+          env,
+          db,
+          session,
+          adapter,
+          adapterInput,
+          identity,
+          resolved,
+          diff,
+          findings,
+          aiFindings,
+          riskSummary,
+          releaseConsistency,
+        }),
+    );
 
     await recordCompletion({
       db,

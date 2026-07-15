@@ -12,17 +12,31 @@
 	// work unchanged. Rename both together if you prefer a different name.
 	"name": "staged-publish-review",
 	"main": "./server/index.ts",
-	"compatibility_date": "2026-05-20",
+	"compatibility_date": "2026-07-15",
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
 	"workers_dev": true,
+	"upload_source_maps": true,
 	"observability": {
 		"logs": {
 			"enabled": true,
 			"invocation_logs": true
+		},
+		"traces": {
+			"enabled": true,
+			"head_sampling_rate": 0.1
 		}
 	},
+	"version_metadata": {
+		"binding": "CF_VERSION_METADATA"
+	},
+	"analytics_engine_datasets": [
+		{
+			"binding": "TELEMETRY_ANALYTICS",
+			"dataset": "drydock_telemetry"
+		}
+	],
 	"assets": {
 		"not_found_handling": "single-page-application",
 		"binding": "ASSETS",
@@ -105,6 +119,7 @@
 		}
 	],
 	"vars": {
+		"ENVIRONMENT": "production",
 		// Must match your deployed origin (custom domain or *.workers.dev URL).
 		"BETTER_AUTH_URL": "https://REPLACE_WITH_YOUR_ORIGIN",
 		"AI_CACHE_AFFINITY": "drydock-release-reviewer-v1",

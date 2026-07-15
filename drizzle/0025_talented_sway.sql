@@ -1,0 +1,1 @@
+ALTER TABLE `scans` ADD `protected_release_recorded_at` integer;
