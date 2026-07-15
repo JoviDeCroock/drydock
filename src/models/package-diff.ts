@@ -92,11 +92,13 @@ export const PackageDiffModel = createModel(
       async load() {
         loading.value = true;
         error.value = null;
-        try {
-          const [diffData, versionsData] = await Promise.all([
-            getPublicDiff(packageName, fromVersion, toVersion),
-            getPublicDiffVersions(packageName).catch(() => null),
-          ]);
+        const [diffResult, versionsResult] = await Promise.allSettled([
+          getPublicDiff(packageName, fromVersion, toVersion),
+          getPublicDiffVersions(packageName),
+        ]);
+        const versionsData = versionsResult.status === "fulfilled" ? versionsResult.value : null;
+        if (diffResult.status === "fulfilled") {
+          const diffData = diffResult.value;
           batch(() => {
             diff.value = diffData;
             versions.value = versionsData;
@@ -104,9 +106,10 @@ export const PackageDiffModel = createModel(
           });
           const initial = pickInitialPath(diffData.diff);
           if (initial) void this.selectPath(initial);
-        } catch (err) {
+        } else {
           batch(() => {
-            error.value = errorMessage(err);
+            versions.value = versionsData;
+            error.value = errorMessage(diffResult.reason);
             loading.value = false;
           });
         }

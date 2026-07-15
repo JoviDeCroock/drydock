@@ -2,11 +2,12 @@ import { Hono, type Context } from "hono";
 import { createDb } from "../db/client";
 import { enforceRateLimit, RateLimitError } from "../db/rate-limit";
 import { rateLimitResponse } from "../lib/http";
-import { allowInsecureLocalRegistry } from "../lib/npm-connection";
 import {
+  computePublicDiffCacheKey,
   fetchPublicPackageMetadata,
   loadPublicPackageDiff,
   PublicDiffError,
+  readPublicDiffCache,
   type PublicPackageDiff,
 } from "../lib/public-diff";
 import { compareSemver, isValidNpmPackageName } from "../lib/registry";
@@ -21,8 +22,17 @@ import type { Bindings, Variables } from "../types";
 export const publicDiffRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
+const PUBLIC_NPM_REGISTRY = "https://registry.npmjs.org";
 
 type PublicDiffContext = Context<{ Bindings: Bindings; Variables: Variables }>;
+
+publicDiffRoutes.use("*", async (c, next) => {
+  const configuredRegistry = (c.env.NPM_REGISTRY || PUBLIC_NPM_REGISTRY).replace(/\/+$/, "");
+  if (configuredRegistry !== PUBLIC_NPM_REGISTRY) {
+    return c.json({ error: "public package diff is disabled for custom registries" }, 404);
+  }
+  await next();
+});
 
 function clientIp(c: PublicDiffContext): string {
   return (
@@ -77,6 +87,7 @@ function publicDiffErrorResponse(c: PublicDiffContext, err: unknown): Response {
 
 async function loadRequestedDiff(
   c: PublicDiffContext,
+  options: { limitColdComputation?: boolean } = {},
 ): Promise<{ payload: PublicPackageDiff } | { error: Response }> {
   const packageName = requestedPackageName(c);
   if (packageName instanceof Response) return { error: packageName };
@@ -88,14 +99,24 @@ async function loadRequestedDiff(
     return { error: c.json({ error: "from and to must differ" }, 400) };
   }
 
+  const input = {
+    packageName,
+    fromVersion,
+    toVersion,
+    registryUrl: PUBLIC_NPM_REGISTRY,
+  };
+
   try {
-    const payload = await loadPublicPackageDiff(c.env, c.executionCtx, {
-      packageName,
-      fromVersion,
-      toVersion,
-      registryUrl: c.env.NPM_REGISTRY || "https://registry.npmjs.org",
-      allowInsecureLocalhost: allowInsecureLocalRegistry(c.env),
-    });
+    if (options.limitColdComputation) {
+      const cacheKey = await computePublicDiffCacheKey(input);
+      const cached = await readPublicDiffCache(c.env, cacheKey);
+      if (cached) return { payload: cached };
+
+      const limited = await enforcePublicRateLimit(c, "fetch", 10);
+      if (limited) return { error: limited };
+    }
+
+    const payload = await loadPublicPackageDiff(c.env, c.executionCtx, input);
     return { payload };
   } catch (err) {
     return { error: publicDiffErrorResponse(c, err) };
@@ -114,7 +135,7 @@ publicDiffRoutes.get("/versions", async (c) => {
       c.env,
       c.executionCtx,
       packageName,
-      c.env.NPM_REGISTRY || "https://registry.npmjs.org",
+      PUBLIC_NPM_REGISTRY,
     );
   } catch (err) {
     return publicDiffErrorResponse(c, err);
@@ -203,7 +224,7 @@ publicDiffRoutes.get("/file", async (c) => {
   const path = c.req.query("path") ?? "";
   if (!path) return c.json({ error: "path is required" }, 400);
 
-  const loaded = await loadRequestedDiff(c);
+  const loaded = await loadRequestedDiff(c, { limitColdComputation: true });
   if ("error" in loaded) return loaded.error;
   const { payload } = loaded;
 

@@ -9,15 +9,44 @@ import worker from "../../server/index";
 // validation failures return before any fetch.
 
 async function publicDiffFetch(path: string, ip?: string): Promise<Response> {
+  return publicDiffFetchWithEnv(path, env, ip);
+}
+
+async function publicDiffFetchWithEnv(
+  path: string,
+  requestEnv: Cloudflare.Env,
+  ip?: string,
+): Promise<Response> {
   const ctx = createExecutionContext();
   const headers = new Headers();
   if (ip) headers.set("cf-connecting-ip", ip);
-  const res = await worker.fetch(new Request(`http://example.com${path}`, { headers }), env, ctx);
+  const res = await worker.fetch(
+    new Request(`http://example.com${path}`, { headers }),
+    requestEnv,
+    ctx,
+  );
   await waitOnExecutionContext(ctx);
   return res;
 }
 
 describe("public package-diff routes", () => {
+  test("is disabled when the deployment uses a custom registry", async () => {
+    const customRegistryEnv = {
+      ...env,
+      NPM_REGISTRY: "https://registry.example.test",
+    } satisfies Cloudflare.Env;
+    const res = await publicDiffFetchWithEnv(
+      "/api/public/v1/package-diff/versions?package=left-pad",
+      customRegistryEnv,
+      "10.0.0.9",
+    );
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      error: "public package diff is disabled for custom registries",
+    });
+  });
+
   test("responds without a session instead of 401", async () => {
     const res = await publicDiffFetch(
       "/api/public/v1/package-diff?package=!invalid!&from=1.0.0&to=1.0.1",
@@ -99,5 +128,19 @@ describe("public package-diff routes", () => {
     // The same IP is not blocked on the diff bucket by versions traffic.
     const diff = await publicDiffFetch("/api/public/v1/package-diff?package=!x!", ip);
     expect(diff.status).toBe(400);
+  });
+
+  test("file cache misses share the expensive diff computation budget", async () => {
+    const ip = "10.99.2.1";
+    for (let i = 0; i < 10; i++) {
+      const res = await publicDiffFetch("/api/public/v1/package-diff?package=!x!", ip);
+      expect(res.status).toBe(400);
+    }
+
+    const limited = await publicDiffFetch(
+      "/api/public/v1/package-diff/file?package=left-pad&from=1.0.0&to=1.0.1&path=index.js",
+      ip,
+    );
+    expect(limited.status).toBe(429);
   });
 });

@@ -451,6 +451,7 @@ function VersionPairPicker({
         label="From version"
         versions={versions}
         selected={fromVersion}
+        disabledVersion={toVersion}
         onChange={(version) => onChange(version, toVersion)}
       />
       <span class="font-mono text-[11px] text-ink-muted" aria-hidden>
@@ -460,6 +461,7 @@ function VersionPairPicker({
         label="To version"
         versions={versions}
         selected={toVersion}
+        disabledVersion={fromVersion}
         onChange={(version) => onChange(fromVersion, version)}
       />
     </div>
@@ -470,11 +472,13 @@ function VersionSelect({
   label,
   versions,
   selected,
+  disabledVersion,
   onChange,
 }: {
   label: string;
   versions: Array<{ version: string; distTags: string[] }>;
   selected: string;
+  disabledVersion: string;
   onChange: (version: string) => void;
 }) {
   return (
@@ -488,7 +492,11 @@ function VersionSelect({
         }}
       >
         {versions.map((option) => (
-          <option key={option.version} value={option.version}>
+          <option
+            key={option.version}
+            value={option.version}
+            disabled={option.version === disabledVersion}
+          >
             {option.version}
             {option.distTags.length ? ` [${option.distTags.join(", ")}]` : ""}
           </option>
