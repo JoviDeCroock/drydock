@@ -7,6 +7,7 @@ import { RateLimitError, enforceRateLimit } from "./db/rate-limit";
 import { createAuth, getAuthSession } from "./lib/auth";
 import { rateLimitResponse } from "./lib/http";
 import { allowInsecureLocalRegistry } from "./lib/npm-connection";
+import { isPackageDiffDetailPath, rewritePackageDiffMetadata } from "./lib/public-diff-page";
 import {
   API_CSP,
   DOCUMENT_CSP,
@@ -81,6 +82,11 @@ function isServerOwnedPath(path: string): boolean {
 
 function assetFallbackRequest(request: Request): Request {
   const url = new URL(request.url);
+  if (isPackageDiffDetailPath(url.pathname)) {
+    url.pathname = "/diff/";
+    url.search = "";
+    return new Request(url, request);
+  }
   if (
     (url.pathname === "/dashboard" || url.pathname.startsWith("/dashboard/")) &&
     !DASHBOARD_STATIC_ASSET_PATHS.has(url.pathname)
@@ -278,9 +284,10 @@ app.route("/api/v1/slack", slackRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
 app.route("/api/v1/audit-events", auditRoutes);
 
-app.notFound((c) => {
+app.notFound(async (c) => {
   if (!isServerOwnedPath(c.req.path) && c.env.ASSETS) {
-    return c.env.ASSETS.fetch(assetFallbackRequest(c.req.raw));
+    const response = await c.env.ASSETS.fetch(assetFallbackRequest(c.req.raw));
+    return rewritePackageDiffMetadata(response, c.req.path);
   }
   return c.json({ error: "not found" }, 404);
 });

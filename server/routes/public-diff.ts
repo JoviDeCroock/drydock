@@ -157,14 +157,12 @@ publicDiffRoutes.get("/versions", async (c) => {
   );
 });
 
-// Standard shared-cache headers for an immutable version pair, plus a
-// Cache-Tag so the Workers Cache pilot (PR #465's gateway pattern) can enroll
-// these routes and purge by package if a version is ever unpublished. Until
-// that tier fronts these paths the tag is inert and browsers/proxies just
-// honor the cache-control.
-function immutablePairHeaders(packageName: string): Record<string, string> {
+// Package bytes are immutable, but findings and risk change with the deployed
+// analysis version. Revalidate response payloads at the origin; the versioned
+// colo/KV result cache keeps that revalidation cheap.
+function analyzedPairHeaders(packageName: string): Record<string, string> {
   return {
-    "cache-control": "public, max-age=86400, stale-while-revalidate=604800",
+    "cache-control": "public, max-age=0, must-revalidate",
     "cache-tag": publicDiffCacheTag(packageName),
   };
 }
@@ -195,7 +193,7 @@ publicDiffRoutes.get("/", async (c) => {
       cachedAt: payload.cachedAt,
     },
     200,
-    immutablePairHeaders(payload.packageName),
+    analyzedPairHeaders(payload.packageName),
   );
 });
 
@@ -221,6 +219,6 @@ publicDiffRoutes.get("/file", async (c) => {
       textSamplesOmitted: payload.textSamplesOmitted ?? false,
     },
     200,
-    immutablePairHeaders(payload.packageName),
+    analyzedPairHeaders(payload.packageName),
   );
 });

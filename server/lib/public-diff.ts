@@ -14,6 +14,7 @@ import {
   redactFindings,
   redactJson,
   summarizePackageJsonDiff,
+  DETERMINISTIC_RULES_VERSION,
   type DiffEntry,
   type FileRecord,
   type Finding,
@@ -58,13 +59,17 @@ export class PublicDiffError extends Error {
   }
 }
 
-const CACHE_PREFIX = "public-diff:v1:";
-// Both versions are immutable once published, so the computed diff never
-// changes; the TTL only bounds storage.
+// Bump this when risk aggregation changes without a deterministic-rules bump.
+const PUBLIC_DIFF_RISK_VERSION = "1";
+const CACHE_PREFIX = `public-diff:v2:rules=${DETERMINISTIC_RULES_VERSION}:risk=${PUBLIC_DIFF_RISK_VERSION}:`;
+// Package bytes are immutable, while the analysis version is encoded above.
+// The TTL therefore bounds storage rather than correctness.
 const CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
+const CACHE_READ_COLO_TTL_SECONDS = 60;
 // KV values cap at 25 MiB; leave headroom for metadata around the samples.
 const CACHE_MAX_PAYLOAD_BYTES = 20 * 1024 * 1024;
 const PUBLIC_CACHE_SCOPE = "public";
+const COLO_CACHE_ORIGIN = "https://drydock.org/__cache/public-diff/";
 
 // The public path never evaluates AI review; this mirrors the pipeline's
 // disabled value (model: null keeps risk scoring neutral).
@@ -186,7 +191,7 @@ export async function loadPublicPackageDiff(
     risk,
     cachedAt: new Date().toISOString(),
   };
-  writePublicDiffCache(env, ctx, cacheKey, payload);
+  await writePublicDiffCache(env, cacheKey, payload);
   return payload;
 }
 
@@ -210,7 +215,7 @@ async function downloadArchive(
   }
 }
 
-async function computePublicDiffCacheKey(input: {
+export async function computePublicDiffCacheKey(input: {
   packageName: string;
   fromVersion: string;
   toVersion: string;
@@ -224,47 +229,93 @@ async function computePublicDiffCacheKey(input: {
   return `${CACHE_PREFIX}${hex}`;
 }
 
-async function readPublicDiffCache(
+export async function readPublicDiffCache(
   env: Cloudflare.Env,
   key: string,
 ): Promise<PublicPackageDiff | null> {
+  const coloCached = await readPublicDiffColoCache(key);
+  if (coloCached) return coloCached;
   if (!env.COMPARE_CACHE) return null;
   try {
-    // The value is immutable per version pair, so let KV's colo cache serve
-    // repeat views (same convention as the compare-cache hot-path reads)
-    // instead of hitting KV's central stores on every file click.
-    return await env.COMPARE_CACHE.get<PublicPackageDiff>(key, {
+    const cached = await env.COMPARE_CACHE.get<PublicPackageDiff>(key, {
       type: "json",
-      cacheTtl: 3600,
+      cacheTtl: CACHE_READ_COLO_TTL_SECONDS,
     });
+    if (cached) await writePublicDiffColoCache(key, JSON.stringify(cached));
+    return cached;
   } catch {
     return null;
   }
 }
 
-function writePublicDiffCache(
+export async function writePublicDiffCache(
   env: Cloudflare.Env,
-  ctx: ExecutionContext,
   key: string,
   payload: PublicPackageDiff,
-) {
-  if (!env.COMPARE_CACHE) return;
-  let serialized = JSON.stringify(payload);
-  if (serialized.length > CACHE_MAX_PAYLOAD_BYTES) {
-    // Rare oversized pair: cache without samples so repeat views stay cheap.
-    // The per-file endpoint then reports samples as unavailable instead of
-    // recomputing two downloads per file view.
-    serialized = JSON.stringify({
-      ...payload,
-      fromFiles: stripSamples(payload.fromFiles),
-      toFiles: stripSamples(payload.toFiles),
-      textSamplesOmitted: true,
-    } satisfies PublicPackageDiff);
+): Promise<void> {
+  const serialized = serializePublicDiffCachePayload(payload);
+  const writes: Promise<unknown>[] = [writePublicDiffColoCache(key, serialized)];
+  if (env.COMPARE_CACHE && utf8ByteLength(serialized) <= CACHE_MAX_PAYLOAD_BYTES) {
+    writes.push(
+      env.COMPARE_CACHE.put(key, serialized, {
+        expirationTtl: CACHE_TTL_SECONDS,
+      }),
+    );
   }
-  const write = env.COMPARE_CACHE.put(key, serialized, {
-    expirationTtl: CACHE_TTL_SECONDS,
-  }).catch(() => undefined);
-  ctx.waitUntil(write);
+  await Promise.allSettled(writes);
+}
+
+export function serializePublicDiffCachePayload(
+  payload: PublicPackageDiff,
+  maxPayloadBytes = CACHE_MAX_PAYLOAD_BYTES,
+): string {
+  let serialized = JSON.stringify(payload);
+  if (utf8ByteLength(serialized) <= maxPayloadBytes) return serialized;
+
+  // Rare oversized pair: cache without samples so repeat views stay cheap.
+  // The per-file endpoint then reports samples as unavailable instead of
+  // recomputing two archive parses per file view.
+  serialized = JSON.stringify({
+    ...payload,
+    fromFiles: stripSamples(payload.fromFiles),
+    toFiles: stripSamples(payload.toFiles),
+    textSamplesOmitted: true,
+  } satisfies PublicPackageDiff);
+  return serialized;
+}
+
+function publicDiffColoCacheRequest(key: string): Request {
+  return new Request(`${COLO_CACHE_ORIGIN}${encodeURIComponent(key)}`);
+}
+
+function coloCache(): Cache {
+  return (caches as unknown as { default: Cache }).default;
+}
+
+async function readPublicDiffColoCache(key: string): Promise<PublicPackageDiff | null> {
+  try {
+    const response = await coloCache().match(publicDiffColoCacheRequest(key));
+    if (!response) return null;
+    return (await response.json()) as PublicPackageDiff;
+  } catch {
+    return null;
+  }
+}
+
+async function writePublicDiffColoCache(key: string, serialized: string): Promise<void> {
+  await coloCache().put(
+    publicDiffColoCacheRequest(key),
+    new Response(serialized, {
+      headers: {
+        "cache-control": `public, max-age=${CACHE_TTL_SECONDS}, immutable`,
+        "content-type": "application/json",
+      },
+    }),
+  );
+}
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
 }
 
 function stripSamples(files: FileRecord[]): FileRecord[] {
