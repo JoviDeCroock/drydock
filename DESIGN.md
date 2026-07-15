@@ -174,6 +174,22 @@ Three short Card panels in a row, each containing:
 
 This pattern is used both on the dashboard (above the scan form) _and_ as the headline-supporting unit on marketing pages. Visitors landing on the dashboard feel oriented because the same primitive carries.
 
+### The interactive review preview (landing)
+
+The landing's "What a review looks like" Card is a condensed, hand-authored scan report that sits directly under the hero — the diff is the product, so it is the first thing under the headline. Rules:
+
+- The release-tree rows for changed files are real `<button>`s (`aria-pressed`) that swap the diff pane and its pinned finding. Interaction mirrors the workbench exactly; no behavior is invented for marketing.
+- Content stays truthful to the report model: findings use the same left-bar annotation as `DiffView` (soft fill at `~60%` opacity, saturated `border-l-2`), severity Badges carry counts in the tree, and one selectable file has **no** finding so the preview demonstrates signal-vs-noise instead of theater.
+- A one-line `13px / --fg-muted` hint above the Card ("Select a file…") is the only affordance copy. No tooltips, no pulsing highlights.
+
+### The incident log (landing)
+
+The "Why review a publish" section grounds the pitch in real, named supply-chain incidents (event-stream, ua-parser-js, node-ipc, chalk & debug) rendered as a document-shaped `Card padding="none"` with `border-b` divided rows: mono `13px` package name + `MonoDetail` (`year · vector`) on the left, one sentence of `13px / --fg-muted` consequence copy on the right (`220px / 1fr` grid, stacking on mobile). Incidents are history, not report state, so rows stay on the ink scale — **no severity colors** (color = signal). The card closes with a single `13px / --fg` (full-ink) takeaway line. Keep entries factual and verifiable; never invent or embellish an incident.
+
+### The closing CTA (landing)
+
+The page ends with a `Get started` section (the marketing page's only Display 2 heading outside the hero): `border-t` rule, `SectionLabel`, `32px / 600 / -0.02em` heading, one `14px / --fg-muted` sentence, the same primary/secondary button pair as the hero, and a `MonoDetail` trust line (`free for open-source maintainers · read-only tokens · you keep the final approval`). No banner treatment, no background fill — it is a typographic section like every other.
+
 ### Canonical widths
 
 | Surface                       | Max width |
