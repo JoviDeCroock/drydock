@@ -174,6 +174,22 @@ Three short Card panels in a row, each containing:
 
 This pattern is used both on the dashboard (above the scan form) _and_ as the headline-supporting unit on marketing pages. Visitors landing on the dashboard feel oriented because the same primitive carries.
 
+### The interactive review preview (landing)
+
+The landing's "What a review looks like" Card is a condensed, hand-authored scan report that sits directly under the hero — the diff is the product, so it is the first thing under the headline. Rules:
+
+- The release-tree rows for changed files are real `<button>`s (`aria-pressed`) that swap the diff pane and its pinned finding. Interaction mirrors the workbench exactly; no behavior is invented for marketing.
+- Content stays truthful to the report model: findings use the same left-bar annotation as `DiffView` (soft fill at `~60%` opacity, saturated `border-l-2`), severity Badges carry counts in the tree, and one selectable file has **no** finding so the preview demonstrates signal-vs-noise instead of theater.
+- A one-line `13px / --fg-muted` hint above the Card ("Select a file…") is the only affordance copy. No tooltips, no pulsing highlights.
+
+### The incident log (landing)
+
+The "Why review a publish" section grounds the pitch in real, named supply-chain incidents (event-stream, ua-parser-js, node-ipc, chalk & debug) rendered as a document-shaped `Card padding="none"` with `border-b` divided rows: mono `13px` package name + `MonoDetail` (`year · vector`) on the left, one sentence of `13px / --fg-muted` consequence copy on the right (`220px / 1fr` grid, stacking on mobile). Incidents are history, not report state, so rows stay on the ink scale — **no severity colors** (color = signal). The card closes with a single `13px / --fg` (full-ink) takeaway line. Keep entries factual and verifiable; never invent or embellish an incident.
+
+### The closing CTA (landing)
+
+The page ends with a `Get started` section (the marketing page's only Display 2 heading outside the hero): `SectionLabel`, `32px / 600 / -0.02em` heading, one `14px / --fg-muted` sentence, the same primary/secondary button pair as the hero, and a `MonoDetail` trust line (`free for open-source maintainers · read-only tokens · you keep the final approval`). No banner treatment, no background fill, no extra `border-t` — the `SectionLabel` rule is the divider, like every other section.
+
 ### Canonical widths
 
 | Surface                       | Max width |
@@ -302,7 +318,7 @@ No spinners anywhere in the system. Long-running operations show a pulsing mono 
 - **Badges:** Squarish (3px radius), uppercase Geist Mono 10-11px, weight 600, letter-spacing 0.08–0.1em. Severity variants use the soft fill + saturated text color combo. Pill badges (`border-radius: 999px`) are deprecated in this repo.
 - **Buttons:** 6px radius, 8–12px vertical / 14–18px horizontal padding. Primary uses `--accent`; secondary uses `--bg-elev-2` with a border; ghost is text-only on hover; danger uses `--danger` (only for destructive actions like Reject publish).
 - **Inputs:** 6px radius, `--bg` background (intentionally lighter than the card it sits on for affordance), focus ring is a 3px `--accent-soft` halo + accent border. No inner shadow, no glow.
-- **Section labels:** A small mono uppercase label with a trailing rule. Replaces the generic H1/H2 stack with something more document-shaped.
+- **Section labels:** A small mono uppercase label with a trailing rule. Replaces the generic H1/H2 stack with something more document-shaped. The trailing rule **is** the section divider: never add a `border-t`, `border-b`, or `<hr>` on the same boundary as a `SectionLabel` (or a summary/header that contains one) — it stacks a second hairline and reads as a double border. This has regressed repeatedly; when a section needs more separation, use spacing, not another rule.
 - **Primary vs. supplementary sections:** Most report sections share the flat `SectionLabel` altitude on the page background — that's the supplementary tier (Risk signals, Manifest changes, Reviewer notes). The report's _verdict_ (the scan-detail Recommendation) is the one primary section: it is elevated into a `Card` and leads with a headline-scale verdict (`18px / 600`, severity `-text` color) under its `SectionLabel`. Elevation + scale make it out-rank the bare sections. Use this sparingly — one primary "answer" block per report, never a page of competing cards. The diff workbench cards count as primary evidence and sit at the same elevated tier.
 - **Mono detail line:** Many surfaces have a one-line mono caption directly under the title (`scan_01HXY... · 2026-05-21 · 17 files`). This is the system's signature treatment — treat it like a generated metadata line, not a subtitle.
 - **Alerts:** 6px radius, 1px colored border, soft background fill, the indicator is a 16px filled disc in the alert's color (a _colored disc_, not an icon — see Iconography). Inline strong-tag retains body color.

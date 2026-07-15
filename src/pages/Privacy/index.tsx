@@ -156,7 +156,7 @@ export default function PrivacyPage() {
           </Prose>
         </Section>
 
-        <section class="flex flex-col gap-4 border-t border-border pt-10">
+        <section class="flex flex-col gap-4">
           <SectionLabel>Contact us</SectionLabel>
           <Prose>
             Questions about this policy or a request about your data? Email us and we will respond.
