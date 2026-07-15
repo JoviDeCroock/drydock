@@ -31,6 +31,102 @@ export interface PublishedTarballFetchOptions {
   npmToken?: string;
   allowInsecureLocalhost?: boolean;
   maxBytes?: number;
+  waitUntil?: (promise: Promise<unknown>) => void;
+}
+
+// Published tarball URLs are version-pinned and immutable, so the TTL bounds
+// colo cache occupancy, not staleness.
+const TARBALL_CACHE_CONTROL = "public, max-age=604800, immutable";
+
+// Hosts where anonymous and authenticated fetches of the same tarball URL are
+// guaranteed to return the same bytes, so a token-bearing request may consume
+// the shared anonymous cache. Custom registries stay off this list: if one
+// varied tarball bytes by auth, a cached anonymous copy would corrupt the
+// scan evidence.
+const PUBLIC_NPM_HOSTS = new Set(["registry.npmjs.org"]);
+
+/**
+ * Colo-level byte cache for published tarballs. Two invariants keep the
+ * shared (cross-organization) cache safe:
+ *
+ * 1. Entries are only ever written by {@link warmPublishedTarballCache},
+ *    which re-fetches WITHOUT credentials — the cache can only ever hold
+ *    bytes any anonymous client could fetch. Private tarballs 404 the
+ *    anonymous warm fetch and are never stored.
+ * 2. Token-bearing requests may only read the cache for PUBLIC_NPM_HOSTS,
+ *    where anonymous and authenticated bytes are identical.
+ *
+ * The warm fetch is a second download rather than a tee of the serving
+ * stream: tee buffers whichever branch lags, which would break this module's
+ * "never buffered in the parent" memory invariant.
+ */
+function publishedTarballCacheEligible(
+  tarballUrl: string,
+  options: PublishedTarballFetchOptions,
+): boolean {
+  if (options.allowInsecureLocalhost) return false;
+  try {
+    const url = new URL(tarballUrl);
+    if (url.protocol !== "https:") return false;
+    if (!options.npmToken) return true;
+    return PUBLIC_NPM_HOSTS.has(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+// The Workers runtime exposes the colo cache as `caches.default`, but the DOM
+// lib wins the global CacheStorage type in this repo's single tsconfig and
+// doesn't know the property.
+function coloCache(): Cache {
+  return (caches as unknown as { default: Cache }).default;
+}
+
+async function matchPublishedTarballCache(
+  tarballUrl: string,
+  maxBytes: number,
+): Promise<ReadableStream<Uint8Array> | null> {
+  try {
+    const cached = await coloCache().match(tarballUrl);
+    if (!cached?.body) return null;
+    const contentLength = Number(cached.headers.get("content-length") || "0");
+    if (contentLength > maxBytes) {
+      await cached.body.cancel();
+      return null;
+    }
+    return cached.body;
+  } catch {
+    return null;
+  }
+}
+
+async function warmPublishedTarballCache(tarballUrl: string): Promise<void> {
+  try {
+    const response = await reliableFetch(tarballUrl, {
+      headers: tarballRequestHeaders(),
+      timeoutMs: 60_000,
+    });
+    if (!response.ok || !response.body) {
+      await response.body?.cancel();
+      return;
+    }
+    const headers = new Headers({ "cache-control": TARBALL_CACHE_CONTROL });
+    for (const name of ["content-type", "content-length"]) {
+      const value = response.headers.get(name);
+      if (value) headers.set(name, value);
+    }
+    await coloCache().put(tarballUrl, new Response(response.body, { status: 200, headers }));
+  } catch {
+    // Warming is best-effort: the serving fetch already succeeded, and a cold
+    // cache only costs the next request a registry round trip.
+  }
+}
+
+function tarballRequestHeaders(): Headers {
+  return new Headers({
+    accept: "application/octet-stream",
+    "user-agent": "staged-publish-review/0.3",
+  });
 }
 
 /**
@@ -66,10 +162,13 @@ export async function fetchPublishedTarballStream(
     );
   }
 
-  const headers = new Headers({
-    accept: "application/octet-stream",
-    "user-agent": "staged-publish-review/0.3",
-  });
+  const cacheEligible = publishedTarballCacheEligible(tarballUrl, options);
+  if (cacheEligible) {
+    const cachedBody = await matchPublishedTarballCache(tarballUrl, maxBytes);
+    if (cachedBody) return capByteStream(cachedBody, maxBytes);
+  }
+
+  const headers = tarballRequestHeaders();
   if (options.npmToken) headers.set("authorization", `Bearer ${options.npmToken}`);
 
   let response: Response;
@@ -88,6 +187,7 @@ export async function fetchPublishedTarballStream(
   if (!response.body) {
     throw new SandboxError(JSON.stringify({ error: "archive download failed", status: 502 }));
   }
+  if (cacheEligible) options.waitUntil?.(warmPublishedTarballCache(tarballUrl));
   return capByteStream(response.body, maxBytes);
 }
 
@@ -135,7 +235,10 @@ export async function downloadPublishedTarball(
   tarballUrl: string,
   options: DownloadPublishedTarballOptions,
 ): Promise<DownloadResult> {
-  const body = await fetchPublishedTarballStream(tarballUrl, options);
+  const body = await fetchPublishedTarballStream(tarballUrl, {
+    ...options,
+    waitUntil: (promise) => ctx.waitUntil(promise),
+  });
   return downloadInSandboxStream(env, ctx, {
     body,
     format: "tgz",

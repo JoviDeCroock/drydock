@@ -11,6 +11,14 @@ export interface CachedCompare {
 
 const CACHE_PREFIX = "compare:v3:";
 const CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
+// Compare payloads are immutable once written (the key is content-addressed
+// by scope + registry + tarball URL), so repeat reads — browsing a diff issues
+// one read of the same key per file view — can be served from KV's colo cache
+// instead of a round trip to its central stores. KV caches negative lookups
+// for the same duration, which is safe here because the only writer runs in
+// the request that observed the miss, and KV writes revalidate its caching
+// tiers.
+const CACHE_READ_COLO_TTL_SECONDS = 60 * 60;
 const METADATA_CACHE_PREFIX = "compare-metadata:v1:";
 const METADATA_CACHE_TTL_SECONDS = 5 * 60;
 
@@ -31,7 +39,10 @@ export async function readCompareCache(
 ): Promise<CachedCompare | null> {
   if (!env.COMPARE_CACHE) return null;
   try {
-    return await env.COMPARE_CACHE.get<CachedCompare>(key, "json");
+    return await env.COMPARE_CACHE.get<CachedCompare>(key, {
+      type: "json",
+      cacheTtl: CACHE_READ_COLO_TTL_SECONDS,
+    });
   } catch {
     return null;
   }

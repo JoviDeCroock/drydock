@@ -4,7 +4,7 @@ vi.mock("cloudflare:workers", () => ({
   WorkerEntrypoint: class {},
 }));
 
-const { computeCompareCacheKey } = await import("../server/lib/compare-cache.ts");
+const { computeCompareCacheKey, readCompareCache } = await import("../server/lib/compare-cache.ts");
 
 describe("compare cache key", () => {
   test("differs between registries even for the same package@version", async () => {
@@ -56,5 +56,23 @@ describe("compare cache key", () => {
       "org:a",
     );
     expect(key.startsWith("compare:v3:")).toBe(true);
+  });
+});
+
+describe("compare cache reads", () => {
+  test("reads through KV's colo cache so repeat diff browsing skips the central stores", async () => {
+    const calls = [];
+    const env = {
+      COMPARE_CACHE: {
+        get: async (key, options) => {
+          calls.push({ key, options });
+          return null;
+        },
+      },
+    };
+    await readCompareCache(env, "compare:v3:abc");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].options.type).toBe("json");
+    expect(calls[0].options.cacheTtl).toBeGreaterThanOrEqual(60);
   });
 });
