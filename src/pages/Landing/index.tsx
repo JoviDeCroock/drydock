@@ -156,7 +156,7 @@ export default function LandingPage() {
         </StatusStrip>
       </section>
 
-      <section aria-label="Get started" class="border-t border-border pt-10 flex flex-col gap-4">
+      <section aria-label="Get started" class="flex flex-col gap-4">
         <SectionLabel>Get started</SectionLabel>
         <h2 class="text-[32px] font-semibold tracking-[-0.02em] leading-[1.15] m-0 max-w-[680px]">
           Put your next release in the dock.
