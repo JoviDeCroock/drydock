@@ -159,4 +159,16 @@ describe("scan intent envelope persistence and readers", () => {
     const body = (await report.json()) as { intentEnvelope: unknown };
     expect(body.intentEnvelope).toBeNull();
   });
+
+  test("an evidence-free persisted attested tier exports as null", async () => {
+    const owner = await seedUser();
+    const scanId = await seedCompletedScan(owner, {
+      tier: "attested",
+    } as unknown as IntentEnvelope);
+
+    const report = await fetchJson(buildTestApp(owner), `/api/v1/scans/${scanId}/report.json`);
+    expect(report.status).toBe(200);
+    const body = (await report.json()) as { intentEnvelope: unknown };
+    expect(body.intentEnvelope).toBeNull();
+  });
 });

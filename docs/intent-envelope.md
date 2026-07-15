@@ -31,9 +31,10 @@ interface IntentEnvelope {
 | `declared` | Not attested, but the staged manifest (package.json / PyPI core metadata / VSIX manifest) declares a parseable repository URL (`repository` as string or `{url}`, `git+https://`, `github:owner/repo`, …). Claimed, not verified. |
 | `absent`   | No repository binding at all — the artifact cannot be tied to reviewed source.                                                                                                                                                    |
 
-Repository URLs are normalized to `https://host/owner/repo` for the known
-forges (GitHub, GitLab, Bitbucket); unknown hosts keep their sanitized full
-path. Garbage never partially parses — it reads as `absent`.
+Repository URLs are normalized to `https://host/owner/repo` for GitHub and
+Bitbucket. GitLab keeps nested group namespaces
+(`https://gitlab.com/group/subgroup/project`), and unknown hosts keep their
+sanitized full path. Garbage never partially parses — it reads as `absent`.
 
 ## Claim ceiling
 

@@ -25,6 +25,18 @@ describe("normalizeRepositoryUrl", () => {
     );
   });
 
+  test("preserves GitLab subgroup paths and trims browser suffixes", () => {
+    expect(normalizeRepositoryUrl("https://gitlab.com/group/subgroup/project.git")).toBe(
+      "https://gitlab.com/group/subgroup/project",
+    );
+    expect(normalizeRepositoryUrl("gitlab:group/subgroup/project")).toBe(
+      "https://gitlab.com/group/subgroup/project",
+    );
+    expect(normalizeRepositoryUrl("https://gitlab.com/group/subgroup/project/-/tree/main")).toBe(
+      "https://gitlab.com/group/subgroup/project",
+    );
+  });
+
   test("keeps the full path for unknown hosts (self-hosted forges)", () => {
     expect(normalizeRepositoryUrl("https://git.example.com/group/subgroup/repo")).toBe(
       "https://git.example.com/group/subgroup/repo",
@@ -249,7 +261,7 @@ describe("normalizeIntentEnvelope", () => {
     expect(normalizeIntentEnvelope({ tier: "verified" })).toBeNull();
   });
 
-  test("drops malformed repository values and signal entries", () => {
+  test("rejects a declared tier after its repository evidence becomes malformed", () => {
     expect(
       normalizeIntentEnvelope({
         tier: "declared",
@@ -261,14 +273,28 @@ describe("normalizeIntentEnvelope", () => {
           { kind: "missing-detail" },
         ],
       }),
-    ).toEqual({
-      tier: "declared",
-      repository: null,
-      signals: [{ kind: "manifest-repository", detail: "ok" }],
-    });
+    ).toBeNull();
   });
 
-  test("tolerates absent signals and caps oversized arrays", () => {
+  test("rejects evidence-free attested tiers", () => {
+    expect(normalizeIntentEnvelope({ tier: "attested" })).toBeNull();
+    expect(
+      normalizeIntentEnvelope({
+        tier: "attested",
+        repository: "https://github.com/owner/repo",
+        signals: [],
+      }),
+    ).toBeNull();
+    expect(
+      normalizeIntentEnvelope({
+        tier: "attested",
+        repository: "javascript:alert(1)",
+        signals: [{ kind: "workflow-gate", detail: "repo owner/repo, run 1" }],
+      }),
+    ).toBeNull();
+  });
+
+  test("tolerates absent signals and caps oversized valid arrays", () => {
     expect(normalizeIntentEnvelope({ tier: "absent" })).toEqual({
       tier: "absent",
       repository: null,
@@ -277,7 +303,10 @@ describe("normalizeIntentEnvelope", () => {
     const flooded = normalizeIntentEnvelope({
       tier: "attested",
       repository: "https://github.com/owner/repo",
-      signals: Array.from({ length: 100 }, (_, i) => ({ kind: "k", detail: `d${i}` })),
+      signals: [
+        { kind: "workflow-gate", detail: "repo owner/repo, run 1" },
+        ...Array.from({ length: 99 }, (_, i) => ({ kind: "k", detail: `d${i}` })),
+      ],
     });
     expect(flooded?.signals).toHaveLength(20);
   });
