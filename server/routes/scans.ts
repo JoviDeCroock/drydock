@@ -389,7 +389,15 @@ scansRoutes.get("/:id", async (c) => {
     files: "list",
   });
   if (!scan) return c.json({ error: "not found" }, 404);
-  return c.json(scan);
+  return c.json({
+    ...scan,
+    scan: {
+      ...scan.scan,
+      publicShareUrl: scan.scan.publicShareToken
+        ? `${canonicalOrigin(c)}/reports/${scan.scan.publicShareToken}`
+        : null,
+    },
+  });
 });
 
 scansRoutes.get("/:id/status", async (c) => {

@@ -1,5 +1,6 @@
 import { and, desc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { base64UrlEncode } from "../lib/platform/crypto-utils";
+import { publicPackageLookupKey, scanEcosystem } from "../lib/public-feed";
 import type { AppDb } from "./client";
 import { recordScanEvent } from "./events";
 import { scans } from "./schema";
@@ -114,6 +115,7 @@ export async function revokePublicShare(
       publicSharedAt: null,
       publicSharedByUserId: null,
       publicFeedListedAt: null,
+      publicPackageKey: null,
       updatedAt: now,
     })
     .where(
@@ -157,9 +159,23 @@ export async function setThreatFeedListing(
     eq(scans.status, "complete"),
     isNotNull(scans.publicShareToken),
   );
+  const [candidate] = await db
+    .select({ packageName: scans.packageName, summaryJson: scans.summaryJson })
+    .from(scans)
+    .where(scoped)
+    .limit(1);
+  if (!candidate) return null;
+  const publicPackageKey =
+    input.listed && candidate.packageName
+      ? publicPackageLookupKey(scanEcosystem(candidate.summaryJson), candidate.packageName)
+      : null;
   const updated = await db
     .update(scans)
-    .set({ publicFeedListedAt: input.listed ? now : null, updatedAt: now })
+    .set({
+      publicFeedListedAt: input.listed ? now : null,
+      publicPackageKey,
+      updatedAt: now,
+    })
     .where(scoped)
     .returning({
       publicShareToken: scans.publicShareToken,
@@ -255,6 +271,7 @@ export async function listBadgeCandidateScans(
   ecosystem: "npm" | "pypi" | "vscode",
   limit = 20,
 ): Promise<SharedScanRow[]> {
+  const packageKey = publicPackageLookupKey(ecosystem, packageName);
   const provenanceEcosystem = sql`json_extract(${scans.summaryJson}, '$.stagedPublish.provenance.ecosystem')`;
   const ecosystemMatches =
     ecosystem === "npm"
@@ -269,7 +286,7 @@ export async function listBadgeCandidateScans(
     .from(scans)
     .where(
       and(
-        eq(scans.packageName, packageName),
+        eq(scans.publicPackageKey, packageKey),
         isNotNull(scans.publicShareToken),
         isNotNull(scans.publicFeedListedAt),
         eq(scans.status, "complete"),

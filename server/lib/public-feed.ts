@@ -10,6 +10,27 @@ export const THREAT_FEED_SCHEMA = "drydock.threat-feed.v1";
 export const PUBLIC_ECOSYSTEMS = ["npm", "pypi", "vscode"] as const;
 export type PublicEcosystem = (typeof PUBLIC_ECOSYSTEMS)[number];
 
+const PUBLIC_PACKAGE_NAME_MAX: Record<PublicEcosystem, number> = {
+  npm: 214,
+  pypi: 214,
+  // publisher (128) + "." + extension name (128).
+  vscode: 257,
+};
+
+export function publicPackageNameMax(ecosystem: PublicEcosystem): number {
+  return PUBLIC_PACKAGE_NAME_MAX[ecosystem];
+}
+
+export function publicPackageLookupKey(ecosystem: PublicEcosystem, packageName: string): string {
+  const normalized =
+    ecosystem === "pypi"
+      ? packageName.toLowerCase().replace(/[-_.]+/g, "-")
+      : ecosystem === "vscode"
+        ? packageName.toLowerCase()
+        : packageName;
+  return `${ecosystem}:${normalized}`;
+}
+
 /**
  * The reviewed ecosystem lives in the persisted adapter snapshot
  * (`summaryJson.stagedPublish.provenance.ecosystem`) for workflow-gate scans;

@@ -390,6 +390,41 @@ describe("shields badge endpoint", () => {
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
   });
 
+  test("canonical ecosystem aliases resolve to the same public badge", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+
+    const pypiScan = await seedCompletedScan(owner, {
+      packageName: "Demo_Package.Name",
+      ecosystem: "pypi",
+    });
+    await share(app, pypiScan, { threatFeed: true });
+    expect((await fetchBadge(app, "pypi", "demo-package-name")).body.message).toContain("reviewed");
+
+    const vscodeScan = await seedCompletedScan(owner, {
+      packageName: "Publisher.PowerShell",
+      ecosystem: "vscode",
+    });
+    await share(app, vscodeScan, { threatFeed: true });
+    expect((await fetchBadge(app, "vscode", "publisher.powershell")).body.message).toContain(
+      "reviewed",
+    );
+  });
+
+  test("accepts valid VS Code identities beyond the npm and PyPI length limit", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `${"p".repeat(120)}.${"e".repeat(120)}`;
+    expect(packageName.length).toBeGreaterThan(214);
+
+    const scanId = await seedCompletedScan(owner, { packageName, ecosystem: "vscode" });
+    await share(app, scanId, { threatFeed: true });
+
+    const badge = await fetchBadge(app, "vscode", packageName);
+    expect(badge.status).toBe(200);
+    expect(badge.body.message).toContain("reviewed");
+  });
+
   test("rejects unknown ecosystems and malformed names", async () => {
     const app = buildTestApp(null);
     expect((await request(app, "/public/badge/cargo/serde")).status).toBe(404);

@@ -178,6 +178,10 @@ export const scans = sqliteTable(
     // but only feed-listed scans appear in the discoverable
     // /public/threat-feed.json index. Cleared whenever the share is revoked.
     publicFeedListedAt: integer("public_feed_listed_at", { mode: "timestamp_ms" }),
+    // Ecosystem-prefixed canonical package identity used by the public badge.
+    // Populated only while feed-listed, so private shares stay unqueryable by
+    // package name and PyPI/VS Code aliases resolve through one indexed key.
+    publicPackageKey: text("public_package_key"),
     startedAt: integer("started_at", { mode: "timestamp_ms" }),
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
@@ -221,6 +225,7 @@ export const scans = sqliteTable(
       table.publicShareToken,
     ),
     publicFeedListedIdx: index("scans_public_feed_listed_idx").on(table.publicFeedListedAt),
+    publicPackageKeyIdx: index("scans_public_package_key_idx").on(table.publicPackageKey),
   }),
 );
 

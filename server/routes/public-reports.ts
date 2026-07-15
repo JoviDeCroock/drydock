@@ -12,6 +12,7 @@ import {
   buildThreatFeedEntry,
   pickBadgeScan,
   PUBLIC_ECOSYSTEMS,
+  publicPackageNameMax,
   scanEcosystem,
   THREAT_FEED_SCHEMA,
   type PublicEcosystem,
@@ -193,7 +194,7 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
   } catch {
     return c.json({ error: "invalid package name" }, 400);
   }
-  if (!packageName || packageName.length > 214) {
+  if (!packageName || packageName.length > publicPackageNameMax(ecosystem)) {
     return c.json({ error: "invalid package name" }, 400);
   }
 

@@ -90,6 +90,7 @@ export interface PersistedScanDetail {
     reportVersion?: number | null;
     reportDigest?: string | null;
     publicShareToken?: string | null;
+    publicShareUrl?: string | null;
     publicSharedAt?: string | number | Date | null;
     publicFeedListedAt?: string | number | Date | null;
     startedAt?: string | number | Date | null;
@@ -600,7 +601,7 @@ export const ScanDetailModel = createModel((id: string) => {
           this.share.value = data.scan.publicShareToken
             ? {
                 token: data.scan.publicShareToken,
-                url: publicReportUrl(data.scan.publicShareToken),
+                url: data.scan.publicShareUrl ?? publicReportUrl(data.scan.publicShareToken),
                 sharedAt: data.scan.publicSharedAt ?? data.scan.updatedAt,
                 threatFeedListedAt: data.scan.publicFeedListedAt ?? null,
               }
