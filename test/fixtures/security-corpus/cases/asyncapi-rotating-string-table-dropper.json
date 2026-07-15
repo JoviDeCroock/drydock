@@ -1,0 +1,57 @@
+{
+  "id": "asyncapi-rotating-string-table-dropper",
+  "title": "Packed string-table child-process dropper keeps high risk",
+  "category": "obfuscation-assembly",
+  "intent": "A defanged reproduction of the AsyncAPI npm compromise shape: a modified consumer module contains a javascript-obfuscator-style rotating string table around a child-process launch. The lookup table keeps interpreter and payload strings opaque, but the packed wrapper makes the process capability an obfuscated high-risk finding. No live endpoint, credential, or executable payload is present.",
+  "provenance": "https://www.aikido.dev/blog/asyncapi-npm-packages-backdoored-via-github-actions",
+  "previousPackageJson": {
+    "name": "synthetic-schema-validator",
+    "version": "1.0.0",
+    "main": "lib/validator.js"
+  },
+  "stagedPackageJson": {
+    "name": "synthetic-schema-validator",
+    "version": "1.0.1",
+    "main": "lib/validator.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 85,
+      "sha256": "previous-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"synthetic-schema-validator\",\"version\":\"1.0.0\",\"main\":\"lib/validator.js\"}"
+    },
+    {
+      "path": "lib/validator.js",
+      "size": 48,
+      "sha256": "previous-validator",
+      "flags": [],
+      "textSample": "module.exports = (value) => Boolean(value);\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 85,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"synthetic-schema-validator\",\"version\":\"1.0.1\",\"main\":\"lib/validator.js\"}"
+    },
+    {
+      "path": "lib/validator.js",
+      "size": 620,
+      "sha256": "staged-validator",
+      "flags": [],
+      "textSample": "const _0x8f31 = _0x2aa1;\n(function (_0x41aa, _0x55bb) {\n  const _0x77cc = _0x2aa1;\n  const _0x99dd = _0x41aa();\n  while (!![]) {\n    try {\n      const _0x1234 = parseInt(_0x77cc(0x1));\n      if (_0x1234 === _0x55bb) break;\n      _0x99dd['push'](_0x99dd['shift']());\n    } catch (_0xabcd) {\n      _0x99dd['push'](_0x99dd['shift']());\n    }\n  }\n})(_0x4e21, 0x1);\nfunction _0x2aa1(_0x1111) { return _0x4e21()[_0x1111]; }\nfunction _0x4e21() { return ['node', '-e', '[defanged payload]', 'unref']; }\nif (false) {\n  const { spawn } = require(_0x8f31(0x4));\n  spawn(_0x8f31(0x0), [_0x8f31(0x1), _0x8f31(0x2)], { detached: true, stdio: 'ignore' })[_0x8f31(0x3)]();\n}\nmodule.exports = (value) => Boolean(value);\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.process-execution",
+      "severity": "high",
+      "file": "lib/validator.js"
+    }
+  ]
+}

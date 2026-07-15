@@ -43,6 +43,9 @@ const PYTHON_NETWORK_ACCESS_PATTERNS = [
 const JS_DYNAMIC_EVALUATION_PATTERNS = [
   /\beval\s*\(/,
   /\bnew\s+Function\s*\(/,
+  // `node -e` is an interpreter-backed eval even when launched through the
+  // child-process API instead of JavaScript's in-process eval primitives.
+  /\bspawn(?:Sync)?\s*\(\s*["'`]node(?:js)?["'`]\s*,\s*\[\s*["'`](?:-e|--eval)["'`]/,
   // The whole compile/instantiate family: instantiate(Streaming) — not bare
   // compile — is the loader idiom packed wasm payloads actually use (typically
   // `WebAssembly.instantiateStreaming(fetch(...))`).

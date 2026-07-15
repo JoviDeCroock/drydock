@@ -44,6 +44,20 @@ const COMMON_IMPORT_META_ENV_BRACKET_ACCESS = new RegExp(
   `\\bimport\\s*\\.\\s*meta\\s*\\.\\s*env\\s*\\[\\s*(['"\`])(?:${COMMON_JS_ENV_NAME_PATTERN})\\1\\s*\\]`,
   "g",
 );
+// javascript-obfuscator-style output commonly wraps a hexadecimal identifier
+// lookup in a self-rotating string table. Individual names can remain opaque to
+// the bounded constant folder, but the wrapper itself is a strong evasion
+// signal. Require the whole shape so ordinary minified identifiers, loops, or
+// queue rotation do not mark otherwise plain code as obfuscated.
+const ROTATING_STRING_TABLE_SIGNALS = [
+  /\b_0x[\da-f]{4,}\b/i,
+  /\bfunction\s+_0x[\da-f]{3,}\s*\(/i,
+  /\bwhile\s*\(\s*!!\[\]\s*\)/,
+  /\bparseInt\s*\(\s*_0x[\da-f]+\s*\(/i,
+  /\[['"]push['"]\]\s*\(/,
+  /\[['"]shift['"]\]\s*\(\s*\)/,
+];
+const ROTATING_STRING_TABLE_SIGNAL_THRESHOLD = 5;
 
 // Install lifecycle hooks and in-file code-execution capability: the scripts and
 // code paths that run on, or are pulled in by, a registry tarball install.
@@ -108,6 +122,8 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     // drop one a literal scan already finds. JavaScript only for now; the
     // normalizer is JS-flavored and Python evasion is out of scope.
     const normalized = ctx.codePatternSet === "python" ? sample : normalizeCodeForScanning(sample);
+    const packedObfuscation =
+      ctx.codePatternSet !== "python" && hasRotatingStringTableObfuscation(sample);
     const prefix = changedPrefix(ctx, file.path);
     const changed = ctx.diffByPath.get(file.path)?.status;
     const lifecycleScriptFile = isLifecycleScriptFile(ctx, file.path);
@@ -115,9 +131,24 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     // test/ — an install hook pointing into the test tree is itself suspicious.
     const testScoped = !lifecycleScriptFile && isUnreachableTestFile(ctx, file.path);
 
-    const processExecution = matchCategory(ctx.patterns.processExecution, sample, normalized);
-    const networkAccess = matchCategory(ctx.patterns.networkAccess, sample, normalized);
-    const dynamicEvaluation = matchCategory(ctx.patterns.dynamicEvaluation, sample, normalized);
+    const processExecution = matchCategory(
+      ctx.patterns.processExecution,
+      sample,
+      normalized,
+      packedObfuscation,
+    );
+    const networkAccess = matchCategory(
+      ctx.patterns.networkAccess,
+      sample,
+      normalized,
+      packedObfuscation,
+    );
+    const dynamicEvaluation = matchCategory(
+      ctx.patterns.dynamicEvaluation,
+      sample,
+      normalized,
+      packedObfuscation,
+    );
     const credentialSample =
       ctx.codePatternSet === "python" ? sample : omitCommonEnvironmentAccesses(sample);
     const credentialNormalized =
@@ -126,6 +157,7 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       ctx.patterns.credentialAccess,
       credentialSample,
       credentialNormalized,
+      packedObfuscation,
     );
     const adjacentExecutionRisk =
       processExecution.matched || dynamicEvaluation.matched || credentialAccess.matched;
@@ -240,22 +272,31 @@ function testScope(testScoped: boolean, obfuscated: boolean, finding: Finding): 
 // the constant-folded text. Prefers the raw line so evidence keeps pointing at
 // the literal match when one exists; folding preserves line numbers, so the
 // normalized line still maps to the real source line. `obfuscated` is set when
-// the match came only from the folded text — i.e. the identifier was assembled
-// (`['chi','ld_pro','cess'].join('')`) — which the risk roll-up treats as a
-// co-occurring malice signal.
+// the match came only from folded text or its containing file has a recognized
+// packed string-table wrapper. Either evasion technique is a co-occurring
+// malice signal in the risk roll-up.
 function matchCategory(
   patterns: RegExp[],
   sample: string,
   normalized: string,
+  sourceObfuscated = false,
 ): { matched: boolean; line: number | undefined; obfuscated: boolean } {
   const line = firstMatchingLine(sample, patterns);
-  if (line !== undefined) return { matched: true, line, obfuscated: false };
+  if (line !== undefined) return { matched: true, line, obfuscated: sourceObfuscated };
   if (normalized !== sample) {
     const normalizedLine = firstMatchingLine(normalized, patterns);
     if (normalizedLine !== undefined)
       return { matched: true, line: normalizedLine, obfuscated: true };
   }
   return { matched: false, line: undefined, obfuscated: false };
+}
+
+function hasRotatingStringTableObfuscation(source: string): boolean {
+  let matches = 0;
+  for (const signal of ROTATING_STRING_TABLE_SIGNALS) {
+    if (signal.test(source)) matches += 1;
+  }
+  return matches >= ROTATING_STRING_TABLE_SIGNAL_THRESHOLD;
 }
 
 function omitCommonEnvironmentAccesses(source: string): string {
