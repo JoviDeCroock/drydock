@@ -35,8 +35,9 @@ import {
 } from "../lib/compare-cache";
 import { rateLimitResponse } from "../lib/http";
 import {
+  detonationArchiveMatches,
+  detonationArtifactMatches,
   detonationFindings,
-  detonationInputFromFiles,
   isDetonationEnabled,
   parseDetonationReport,
 } from "../lib/detonation";
@@ -47,6 +48,7 @@ import {
   getOrganizationNpmToken,
 } from "../lib/npm-connection";
 import { isPublishedTarballUrlAllowed } from "../lib/published-tarball";
+import { downloadInSandboxInline, fetchStagedTarballBytes } from "../lib/sandbox";
 import {
   compareSemver,
   fetchPackageMetadata,
@@ -315,18 +317,50 @@ scansRoutes.post("/:id/detonate", async (c) => {
   if (detail.scan.status !== "complete") {
     return c.json({ error: "detonation is only available for completed scans" }, 409);
   }
-
-  const input = detonationInputFromFiles(
-    {
-      name: detail.scan.packageName,
-      version: detail.scan.stagedVersion,
-      ecosystem: detonationEcosystem(detail.scan.summaryJson),
-    },
-    detail.files.map((file) => ({ path: file.path, textSample: file.textSample })),
-  );
-  if (!input) {
-    return c.json({ error: "the reviewed package has no manifest text to detonate" }, 422);
+  if (
+    detail.scan.source === "workflow_gate" ||
+    detonationEcosystem(detail.scan.summaryJson) !== "npm"
+  ) {
+    return c.json(
+      { error: "exact package reacquisition is not available for this scan source" },
+      422,
+    );
   }
+
+  const npmConnection = await getNpmConnection(db, organizationId);
+  if (!npmConnection || npmConnection.validationStatus !== "valid") {
+    return c.json({ error: "a valid npm connection is required to reacquire the package" }, 409);
+  }
+
+  let archive: Uint8Array;
+  try {
+    const token = await decryptNpmToken(c.env, npmConnection);
+    archive = await fetchStagedTarballBytes(c.executionCtx, {
+      stageId: detail.scan.stageId,
+      npmToken: token,
+      npmRegistry: npmConnection.registryUrl,
+    });
+    const reacquired = await downloadInSandboxInline(c.env, c.executionCtx, {
+      bytes: archive,
+      format: "tgz",
+    });
+    if (
+      !(await detonationArchiveMatches(detonationShasum(detail.scan.summaryJson), archive)) ||
+      (reacquired.suspiciousEntries?.length ?? 0) > 0 ||
+      !detonationArtifactMatches(detail.files, reacquired.files)
+    ) {
+      return c.json({ error: "the staged package no longer matches the reviewed scan" }, 409);
+    }
+  } catch (err) {
+    emitOperationalEvent("error", "scan.detonation.reacquire_failed", {
+      scanId: detail.scan.id,
+      organizationId,
+      error: describeOperationalError(err),
+    });
+    return c.json({ error: "the reviewed package could not be reacquired safely" }, 502);
+  }
+
+  const input = { package: { archive } };
 
   const startedAtMs = Date.now();
   let raw: unknown;
@@ -385,6 +419,16 @@ function detonationEcosystem(summaryJson: unknown): string {
     }
   }
   return "npm";
+}
+
+function detonationShasum(summaryJson: unknown): string | null {
+  if (!summaryJson || typeof summaryJson !== "object" || Array.isArray(summaryJson)) return null;
+  const stagedPublish = (summaryJson as { stagedPublish?: unknown }).stagedPublish;
+  if (!stagedPublish || typeof stagedPublish !== "object" || Array.isArray(stagedPublish)) {
+    return null;
+  }
+  const shasum = (stagedPublish as { shasum?: unknown }).shasum;
+  return typeof shasum === "string" ? shasum : null;
 }
 
 scansRoutes.delete("/:id", async (c) => {

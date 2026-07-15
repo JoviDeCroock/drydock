@@ -2,6 +2,7 @@ import http from "node:http";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { x as extractTar } from "tar";
 import { detonateLocal } from "./harness.mjs";
 
 // HTTP entrypoint for the detonation container. This is what runs inside a
@@ -13,13 +14,14 @@ import { detonateLocal } from "./harness.mjs";
 //
 // Contract:
 //   GET  /health           -> { ok: true }
-//   POST /detonate         -> body { package: { name, version, files: {path: contents} } }
+//   POST /detonate         -> exact, identity-checked npm .tgz bytes
 //                             returns a drydock.detonation.v1 report
 //
 // The request carries package file bytes ONLY. It must never receive registry
 // credentials, tokens, or org identifiers — detonation runs credential-free.
-const MAX_BODY_BYTES = 8 * 1024 * 1024;
-const MAX_FILES = 5000;
+const MAX_BODY_BYTES = 25 * 1024 * 1024;
+const MAX_FILES = 2500;
+const MAX_EXTRACTED_BYTES = 250 * 1024 * 1024;
 
 export function createDetonationServer() {
   return http.createServer((req, res) => {
@@ -45,42 +47,44 @@ export function createDetonationServer() {
     });
     req.on("end", () => {
       if (aborted) return;
-      void handleDetonate(Buffer.concat(chunks).toString("utf8"), res);
+      void handleDetonate(Buffer.concat(chunks), res);
     });
   });
 }
 
-async function handleDetonate(rawBody, res) {
-  let input;
-  try {
-    input = JSON.parse(rawBody);
-  } catch {
-    return json(res, 400, { error: "invalid JSON body" });
-  }
-  const pkg = input && typeof input === "object" ? input.package : null;
-  const files = pkg && typeof pkg === "object" ? pkg.files : null;
-  if (!files || typeof files !== "object" || Array.isArray(files)) {
-    return json(res, 400, { error: "package.files map is required" });
-  }
-  const entries = Object.entries(files).filter(
-    ([, contents]) => typeof contents === "string",
-  );
-  if (entries.length === 0 || entries.length > MAX_FILES) {
-    return json(res, 400, { error: "package.files must have 1..5000 string entries" });
-  }
-  if (!entries.some(([relPath]) => relPath === "package.json")) {
-    return json(res, 400, { error: "package.files must include package.json" });
-  }
-
+async function handleDetonate(archive, res) {
+  if (archive.length === 0) return json(res, 400, { error: "package archive is required" });
   const root = await mkdtemp(path.join(os.tmpdir(), "detonation-input-"));
   try {
-    for (const [relPath, contents] of entries) {
-      if (!isSafeRelPath(relPath)) continue; // never let a path escape the input dir
-      const absolute = path.join(root, relPath);
-      await mkdir(path.dirname(absolute), { recursive: true });
-      await writeFile(absolute, contents);
-    }
-    const report = await detonateLocal({ packageDir: root });
+    const archivePath = path.join(root, "package.tgz");
+    const packageDir = path.join(root, "package");
+    await mkdir(packageDir);
+    await writeFile(archivePath, archive);
+    let fileCount = 0;
+    let extractedBytes = 0;
+    await extractTar({
+      cwd: packageDir,
+      file: archivePath,
+      gzip: true,
+      preserveOwner: false,
+      strict: true,
+      strip: 1,
+      filter(entryPath, entry) {
+        if (!isSafePackagePath(entryPath)) throw new Error("unsafe package archive path");
+        if (!new Set(["File", "OldFile", "ContiguousFile", "Directory"]).has(entry.type)) {
+          throw new Error("unsupported package archive entry");
+        }
+        if (entry.type !== "Directory") {
+          fileCount += 1;
+          extractedBytes += entry.size;
+          if (fileCount > MAX_FILES || extractedBytes > MAX_EXTRACTED_BYTES) {
+            throw new Error("package archive exceeds extraction limits");
+          }
+        }
+        return true;
+      },
+    });
+    const report = await detonateLocal({ packageDir });
     return json(res, 200, report);
   } catch (err) {
     return json(res, 500, { error: "detonation failed", detail: String(err?.message || err) });
@@ -89,13 +93,11 @@ async function handleDetonate(rawBody, res) {
   }
 }
 
-// Reject absolute paths and any `..` traversal so a hostile file map cannot
-// write outside the extraction dir.
-function isSafeRelPath(relPath) {
-  if (typeof relPath !== "string" || relPath.length === 0) return false;
-  if (path.isAbsolute(relPath)) return false;
-  const normalized = path.normalize(relPath);
-  return !normalized.startsWith("..") && !normalized.includes(`..${path.sep}`);
+function isSafePackagePath(entryPath) {
+  if (typeof entryPath !== "string" || !entryPath.startsWith("package/")) return false;
+  if (entryPath.includes("\\") || entryPath.includes("\0")) return false;
+  const relative = entryPath.slice("package/".length);
+  return relative.length > 0 && relative.split("/").every((part) => part && part !== "." && part !== "..");
 }
 
 function json(res, status, body) {

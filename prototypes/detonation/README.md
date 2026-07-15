@@ -16,19 +16,21 @@ Drydock's core boundary is **never execute package code** — the Worker treats
 package bytes as hostile evidence and only ever parses them. This prototype
 deliberately does the opposite, so it must live entirely outside that boundary:
 
-- It is **not** under `server/` or `src/`, is **not** referenced by
-  `wrangler.jsonc`, and is **never imported** by the Worker.
+- It is **not** under `server/` or `src`, and package code is never imported by
+  the Worker. The optional Cloudflare Container image runs this service; the
+  Worker communicates with it only over the `/detonate` HTTP contract.
 - It has its own `package.json` and its own test runner (`node --test`); the
   root `pnpm run verify` does not build, lint, or run it.
-- Its only contract with Drydock is the **report format** (`src/report.mjs`,
-  schema `drydock.detonation.v1`) — the Worker would consume a report produced
-  by this service running elsewhere, never call the harness in-process.
+- Its contracts with Drydock are exact npm `.tgz` input and the **report format**
+  (`src/report.mjs`, schema `drydock.detonation.v1`). The Worker never calls the
+  harness in-process.
 
 ## Isolation model
 
 | Mode | Isolation | Use |
 | ---- | --------- | --- |
-| `docker` (default target) | Container: `--network none`, `--read-only` rootfs, `--cap-drop=ALL`, `--security-opt no-new-privileges`, non-root user, pids/memory/cpu limits, tmpfs workdir. The sink runs *inside* the container on loopback, so the container needs no external network at all. | The real trust boundary. What a production detonation service would use (micro-VM / Firecracker for the hardened version). |
+| `docker` (standalone target) | Container: `--network none`, `--read-only` rootfs, `--cap-drop=ALL`, `--security-opt no-new-privileges`, non-root user, pids/memory/cpu limits, tmpfs workdir. The sink runs *inside* the container on loopback, so the container needs no external network at all. | Local isolated runs and development. |
+| Cloudflare service | One uniquely named non-root container per request, `enableInternet = false`, instance resource limits, and unconditional destroy after the report or error. Input is an exact staged `.tgz` whose file hashes were matched to the completed scan. | The optional production service boundary. |
 | `local` (dev/demo) | Best-effort, in-process instrumentation: scrubbed env, throwaway `HOME`, PATH shims for common exfil tools, a `--require` preload that instruments `child_process`/`net`/`dns`/`http`/`fs`, and **loopback-only egress** (non-loopback TCP is logged and blocked). | Fast, offline demonstration of the instrumentation and report. **Not** sufficient containment for real malware — use `docker` for anything untrusted. |
 
 `local` mode fails closed on network egress (it blocks non-loopback

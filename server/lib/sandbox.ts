@@ -69,6 +69,13 @@ interface NpmStageGatewayProps {
   publicArtifactUrls?: string[];
 }
 
+export interface StagedTarballFetchOptions {
+  stageId: string;
+  npmToken: string;
+  npmRegistry: string;
+  maxBytes?: number;
+}
+
 export interface NpmStageGatewayPolicy {
   allowed: boolean;
   credentialed: boolean;
@@ -124,6 +131,51 @@ export class NpmStageGateway extends WorkerEntrypoint<Cloudflare.Env, NpmStageGa
     forwarded.headers.set("user-agent", "staged-publish-review/0.3");
 
     return fetch(forwarded);
+  }
+}
+
+/**
+ * Reacquire exact staged tarball bytes through the only component allowed to
+ * attach npm credentials. Callers must parse and identity-check the bytes before
+ * using them as the package reviewed by an earlier scan.
+ */
+export async function fetchStagedTarballBytes(
+  ctx: ExecutionContext,
+  options: StagedTarballFetchOptions,
+): Promise<Uint8Array> {
+  const maxBytes = options.maxBytes ?? SANDBOX_MAX_TAR_BYTES;
+  const gateway = (
+    ctx as unknown as {
+      exports: {
+        NpmStageGateway(options: { props: NpmStageGatewayProps }): Fetcher;
+      };
+    }
+  ).exports.NpmStageGateway({
+    props: { npmToken: options.npmToken, npmRegistry: options.npmRegistry },
+  });
+  const registry = options.npmRegistry.replace(/\/$/, "");
+  const response = await gateway.fetch(
+    new Request(`${registry}/-/stage/${encodeURIComponent(options.stageId)}/tarball`, {
+      headers: { accept: "application/octet-stream" },
+    }),
+  );
+  if (!response.ok) {
+    throw new SandboxError(JSON.stringify({ error: "download failed", status: response.status }));
+  }
+  const contentLength = Number(response.headers.get("content-length") || "0");
+  if (contentLength > maxBytes) {
+    throw new SandboxError(JSON.stringify({ error: "tarball too large", status: 413 }));
+  }
+  try {
+    return await tarParser.readStreamBounded(response.body, maxBytes);
+  } catch (err) {
+    const tooLarge = err instanceof Error && err.message === "archive too large";
+    throw new SandboxError(
+      JSON.stringify({
+        error: tooLarge ? "tarball too large" : "archive download failed",
+        status: tooLarge ? 413 : 502,
+      }),
+    );
   }
 }
 

@@ -11,7 +11,10 @@ import { Container } from "@cloudflare/containers";
 export class DetonationContainer extends Container<Cloudflare.Env> {
   // The detonation service listens here (Dockerfile EXPOSE 8080 / PORT=8080).
   defaultPort = 8080;
-  // A detonation is a short burst; let an idle instance sleep quickly so we are
-  // not paying for a warm container between reviews.
-  sleepAfter = "5m";
+  // Hostile lifecycle code must not reach the public internet. The container
+  // SDK defaults this to true, so keep the boundary explicit here.
+  enableInternet = false;
+  // Dispatchers destroy every one-shot instance after its request. This is only
+  // a fallback for an interrupted caller that never reaches its finally block.
+  sleepAfter = "30s";
 }

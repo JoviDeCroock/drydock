@@ -3,20 +3,27 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, test } from "node:test";
+import { c as createTar } from "tar";
 import { createDetonationServer } from "../src/server.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
-function fixtureFiles(name) {
+async function fixtureArchive(name, entries) {
   const dir = path.join(HERE, "..", "fixtures", name);
-  const files = { "package.json": readFileSync(path.join(dir, "package.json"), "utf8") };
-  const manifest = JSON.parse(files["package.json"]);
-  // Pull the lifecycle script file(s) referenced by the manifest.
-  for (const script of Object.values(manifest.scripts || {})) {
-    const match = /node\s+([\w.-]+\.js)/.exec(script);
-    if (match) files[match[1]] = readFileSync(path.join(dir, match[1]), "utf8");
-  }
-  return files;
+  const stream = createTar(
+    { cwd: dir, gzip: true, portable: true, prefix: "package/" },
+    entries || ["package.json", ...lifecycleFiles(dir)],
+  );
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  return Buffer.concat(chunks);
+}
+
+function lifecycleFiles(dir) {
+  const manifest = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8"));
+  return Object.values(manifest.scripts || {})
+    .map((script) => /node\s+([\w.-]+\.js)/.exec(script)?.[1])
+    .filter(Boolean);
 }
 
 let server;
@@ -28,11 +35,11 @@ before(async () => {
 });
 after(() => server.close());
 
-async function postDetonate(body) {
+async function postDetonate(archive) {
   const res = await fetch(`${base}/detonate`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    headers: { "content-type": "application/gzip" },
+    body: archive,
   });
   return { status: res.status, body: await res.json() };
 }
@@ -44,9 +51,7 @@ test("GET /health returns ok", async () => {
 });
 
 test("POST /detonate runs the suspicious fixture and returns a critical report", async () => {
-  const { status, body } = await postDetonate({
-    package: { name: "benign-suspicious", files: fixtureFiles("benign-suspicious") },
-  });
+  const { status, body } = await postDetonate(await fixtureArchive("benign-suspicious"));
   assert.equal(status, 200);
   assert.equal(body.schema, "drydock.detonation.v1");
   assert.equal(body.verdict, "critical");
@@ -55,41 +60,17 @@ test("POST /detonate runs the suspicious fixture and returns a critical report",
 });
 
 test("POST /detonate reports the clean fixture as clean", async () => {
-  const { status, body } = await postDetonate({
-    package: { name: "clean", files: fixtureFiles("clean") },
-  });
+  const { status, body } = await postDetonate(await fixtureArchive("clean"));
   assert.equal(status, 200);
   assert.equal(body.verdict, "clean");
 });
 
-test("rejects a body without package.json", async () => {
-  const { status } = await postDetonate({ package: { files: { "index.js": "1" } } });
-  assert.equal(status, 400);
+test("rejects an archive without package.json", async () => {
+  const { status } = await postDetonate(await fixtureArchive("clean", ["build.js"]));
+  assert.equal(status, 500);
 });
 
-test("path-traversal entries in the file map are dropped, not written", async () => {
-  // The escaping entry must be ignored; package.json still present so it runs.
-  const { status, body } = await postDetonate({
-    package: {
-      files: {
-        "package.json": JSON.stringify({ name: "trav", version: "1.0.0" }),
-        "../escape.js": "require('fs').writeFileSync('/tmp/DETONATION_ESCAPE','x')",
-      },
-    },
-  });
-  assert.equal(status, 200);
-  assert.equal(body.verdict, "clean");
-  assert.equal(
-    readFileSyncSafe("/tmp/DETONATION_ESCAPE"),
-    null,
-    "traversal file must not have been written outside the input dir",
-  );
+test("rejects a malformed package archive", async () => {
+  const { status } = await postDetonate(Buffer.from("not a tarball"));
+  assert.equal(status, 500);
 });
-
-function readFileSyncSafe(p) {
-  try {
-    return readFileSync(p, "utf8");
-  } catch {
-    return null;
-  }
-}

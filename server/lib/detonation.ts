@@ -38,11 +38,9 @@ export interface DetonationReport {
 }
 
 export interface DetonationPackageInput {
-  name: string | null;
-  version: string | null;
-  ecosystem: string;
-  // path -> reviewed file contents. Package bytes only; no credentials.
-  files: Record<string, string>;
+  // Exact compressed package bytes reacquired from the staged registry and
+  // verified against the completed scan. Never contains registry credentials.
+  archive: Uint8Array;
 }
 
 export interface DetonationInput {
@@ -64,8 +62,8 @@ export function bindingDispatcher(binding: Fetcher): DetonationDispatcher {
     async detonate(input) {
       const response = await binding.fetch(DISPATCH_URL, {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(input),
+        headers: { "content-type": "application/gzip" },
+        body: input.package.archive as BodyInit,
         signal: AbortSignal.timeout(DISPATCH_TIMEOUT_MS),
       });
       if (!response.ok) {
@@ -169,17 +167,45 @@ function normalizeSeverity(value: string): Finding["severity"] {
   return VALID_SEVERITIES.has(value) ? (value as Finding["severity"]) : "info";
 }
 
-// Build the credential-free dispatch payload from a scan's reviewed file
-// samples. Returns null when no package.json text is available (the container
-// needs a manifest to know which lifecycle scripts to run).
-export function detonationInputFromFiles(
-  packageInfo: { name: string | null; version: string | null; ecosystem: string },
-  files: Array<{ path: string; textSample: string | null }>,
-): DetonationInput | null {
-  const map: Record<string, string> = {};
-  for (const file of files) {
-    if (typeof file.textSample === "string") map[file.path] = file.textSample;
-  }
-  if (!map["package.json"]) return null;
-  return { package: { ...packageInfo, files: map } };
+interface ArtifactIdentityFile {
+  path: string;
+  size: number | null;
+  sha256: string | null;
+}
+
+// A staged registry entry can change after a scan completes. Compare every
+// reacquired file hash with the reviewed manifest before executing those bytes.
+// Files whose bodies were skipped during review have no hash and therefore
+// cannot be safely detonated.
+export function detonationArtifactMatches(
+  reviewed: ArtifactIdentityFile[],
+  reacquired: ArtifactIdentityFile[],
+): boolean {
+  if (reviewed.length === 0 || reviewed.length !== reacquired.length) return false;
+  const byPath = new Map(reacquired.map((file) => [file.path, file]));
+  if (byPath.size !== reacquired.length) return false;
+  return reviewed.every((file) => {
+    const candidate = byPath.get(file.path);
+    return (
+      typeof file.sha256 === "string" &&
+      /^[0-9a-f]{64}$/.test(file.sha256) &&
+      candidate?.sha256 === file.sha256 &&
+      candidate.size === file.size
+    );
+  });
+}
+
+// npm staged metadata includes the SHA-1 of the packed tarball. Matching it in
+// addition to per-file SHA-256 values covers archive semantics such as modes and
+// ordering that are intentionally absent from the display-file records.
+export async function detonationArchiveMatches(
+  expectedShasum: string | null,
+  archive: Uint8Array,
+): Promise<boolean> {
+  if (!expectedShasum || !/^[0-9a-f]{40}$/i.test(expectedShasum)) return false;
+  const digest = await crypto.subtle.digest("SHA-1", archive as BufferSource);
+  const actual = [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return actual === expectedShasum.toLowerCase();
 }

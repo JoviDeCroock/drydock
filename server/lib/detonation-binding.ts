@@ -14,10 +14,18 @@ export function containerDispatcher(namespace: DurableObjectNamespace): Detonati
   return {
     async detonate(input) {
       const { getContainer } = await import("@cloudflare/containers");
-      // getContainer resolves a singleton container stub (idFromName + get);
-      // the stub is a Fetcher, which bindingDispatcher drives.
-      const stub = getContainer(namespace as never);
-      return bindingDispatcher(stub as unknown as Fetcher).detonate(input);
+      // Never reuse a container across packages or organizations. Lifecycle
+      // scripts may daemonize descendants, so only destroying the whole instance
+      // reliably clears processes and its filesystem after a detonation.
+      const stub = getContainer(
+        namespace as never,
+        `detonation-${crypto.randomUUID()}`,
+      ) as unknown as Fetcher & { destroy(): Promise<void> };
+      try {
+        return await bindingDispatcher(stub).detonate(input);
+      } finally {
+        await stub.destroy();
+      }
     },
   };
 }

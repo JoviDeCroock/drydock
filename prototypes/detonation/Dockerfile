@@ -1,9 +1,6 @@
-# Hardened container for detonation `--mode docker`. This is the real isolation
-# boundary the prototype points at: the harness runs inside here with no network
-# (the sink is intra-container loopback), a read-only rootfs, dropped
-# capabilities, and a non-root user. `docker run` flags in src/harness.mjs
-# (buildDockerArgs) enforce the runtime restrictions; this image just carries
-# node + the harness.
+# Container image for standalone Docker and the optional Cloudflare service.
+# Standalone restrictions come from buildDockerArgs; Cloudflare disables internet
+# in DetonationContainer and destroys the unique instance after every request.
 FROM node:20-alpine
 
 # Non-root user the container runs as (matches buildDockerArgs --user 1000:1000).
@@ -11,6 +8,8 @@ RUN addgroup -g 1000 detonation && adduser -u 1000 -G detonation -D detonation
 
 WORKDIR /app
 COPY package.json ./
+COPY package-lock.json ./
+RUN npm ci --omit=dev
 COPY bin ./bin
 COPY src ./src
 

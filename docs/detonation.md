@@ -22,7 +22,9 @@ Durable Object namespace, resolved to a container stub it `fetch`es:
 Worker (control plane)                         Cloudflare Container (sacrificial)
   POST /api/v1/scans/:id/detonate
     ├─ flag + owner/admin + rate-limit
-    ├─ load the scan's reviewed file bytes   ── package bytes only, no creds ──▶  run lifecycle scripts
+    ├─ reacquire staged .tgz through NpmStageGateway
+    ├─ parse in sandbox + match every file hash to the completed scan
+    │                                         ── exact .tgz bytes, no creds ──▶  run lifecycle scripts
     │                                                                             observe + record behavior
     ├─ validate drydock.detonation.v1 report ◀──────── behavior report ─────────  return report
     └─ return advisory findings
@@ -30,29 +32,39 @@ Worker (control plane)                         Cloudflare Container (sacrificial
 
 Boundary invariants:
 
-- **Package bytes only cross into the container** — never npm/registry
-  credentials, tokens, or org identifiers. Detonation runs credential-free, so a
-  hostile package cannot reach a protected resource through it.
+- **Exact reviewed bytes cross into the container** — for ordinary npm staged
+  scans, the Worker reacquires the `.tgz` through `NpmStageGateway`, parses it in
+  the credential-free sandbox, and requires the persisted npm archive shasum and
+  every path, size, and SHA-256 to match the completed scan. Persisted display
+  samples are never executed; structurally suspicious archives are rejected.
+- **Credentials and organization identifiers never cross into the container.**
+  The container runs with `enableInternet = false`, so package code cannot use
+  native tools to bypass the JavaScript instrumentation and reach the internet.
+- **Every detonation gets a unique container instance.** The dispatcher destroys
+  it after the request, including on errors, so daemonized descendants and
+  temporary files cannot survive into another organization's run.
 - **The container's output is untrusted input.** The Worker re-validates the
   report against the `drydock.detonation.v1` schema before using any of it; a
   malformed report is a `502`, never trusted.
-- **Container isolation is the real containment**: no network, read-only rootfs,
-  dropped capabilities, non-root, resource limits (see the run flags below and
-  `prototypes/detonation`). The prototype's `local` mode is a demo of the
-  instrumentation, not a boundary.
+- **Container isolation is the real containment**: no internet, non-root,
+  resource-bounded, and one-shot per request. The standalone Docker mode adds a
+  read-only rootfs and dropped capabilities (see `prototypes/detonation`). The
+  prototype's bare `local` mode is instrumentation only, not a boundary.
 
 ## API
 
 `POST /api/v1/scans/:id/detonate` — owner/admin, flag-gated, rate-limited
-(10/hour/org). Returns:
+(10/hour/org). Currently supported for ordinary npm staged scans whose exact
+bytes can be reacquired and matched to the completed scan. Returns:
 
 ```json
 { "detonation": { "verdict": "critical", "advisory": true, "findings": [ ... ] } }
 ```
 
 Responses: `403` (flag off or insufficient role), `503` (flag on but no runtime
-provisioned), `409` (scan not complete), `422` (no manifest text to detonate),
-`502` (container unavailable or returned an unusable report).
+provisioned), `409` (scan not complete, no valid npm connection, or reacquired
+artifact identity changed), `422` (scan source has no exact reacquisition path),
+`502` (reacquisition/container unavailable or returned an unusable report).
 
 ## Deployment
 
@@ -69,9 +81,10 @@ Present in the repo already:
 - **Durable Object class** — `DetonationContainer`
   (`server/detonation-container.ts`, extending the `@cloudflare/containers`
   `Container` base), forwarding `fetch` to port 8080.
-- **Worker orchestration** — `server/lib/detonation-binding.ts` resolves a
-  container stub via `getContainer`; `server/lib/detonation.ts` validates and
-  maps the report; the route in `server/routes/scans.ts`.
+- **Worker orchestration** — `server/lib/detonation-binding.ts` resolves a unique
+  one-shot container stub via `getContainer`; `server/lib/detonation.ts` checks
+  artifact identity, validates, and maps the report; the route in
+  `server/routes/scans.ts` reacquires exact bytes through `NpmStageGateway`.
 
 To provision it (requires Cloudflare Containers on the account + Docker in the
 deploy pipeline):
