@@ -1421,6 +1421,28 @@ describe("packed downloader capability detection", () => {
     expect(computeRisk(findings)).toBe("high");
   });
 
+  test("detects a literal node eval child process split across lines", () => {
+    const staged = [
+      pkg,
+      file(
+        "const { spawn } = require('node:child_process');\nspawn(\n  'node',\n  [\n    '-e',\n    '[defanged payload]',\n  ],\n  { detached: true },\n);\n",
+      ),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ruleId: "code.process-execution", severity: "high" }),
+        expect.objectContaining({
+          ruleId: "code.dynamic-evaluation",
+          severity: "high",
+          line: 2,
+        }),
+      ]),
+    );
+    expect(computeRisk(findings)).toBe("high");
+  });
+
   test("marks a process capability inside a rotating string-table wrapper as obfuscated", () => {
     const staged = [
       pkg,

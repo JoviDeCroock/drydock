@@ -1,5 +1,5 @@
 import { hasImplicitNodeGypInstall, isRootGypPath } from "../tar-parser.js";
-import { firstMatchingLine } from "../text-utils";
+import { firstMatchingLine, firstMatchingSourceLine } from "../text-utils";
 import type { Finding } from "../review";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 import { firstJsonPropertyLine, tag } from "./helpers";
@@ -148,6 +148,7 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       sample,
       normalized,
       packedObfuscation,
+      true,
     );
     const credentialSample =
       ctx.codePatternSet === "python" ? sample : omitCommonEnvironmentAccesses(sample);
@@ -280,11 +281,13 @@ function matchCategory(
   sample: string,
   normalized: string,
   sourceObfuscated = false,
+  matchAcrossLines = false,
 ): { matched: boolean; line: number | undefined; obfuscated: boolean } {
-  const line = firstMatchingLine(sample, patterns);
+  const findLine = matchAcrossLines ? firstMatchingSourceLine : firstMatchingLine;
+  const line = findLine(sample, patterns);
   if (line !== undefined) return { matched: true, line, obfuscated: sourceObfuscated };
   if (normalized !== sample) {
-    const normalizedLine = firstMatchingLine(normalized, patterns);
+    const normalizedLine = findLine(normalized, patterns);
     if (normalizedLine !== undefined)
       return { matched: true, line: normalizedLine, obfuscated: true };
   }
