@@ -16,6 +16,7 @@ import { normalizeScanRiskBreakdown, type ScanRiskBreakdown } from "../lib/risk"
 import {
   deleteScanArtifacts,
   loadScanArtifactFile,
+  loadScanArtifactMetadata,
   loadScanArtifacts,
   scanFileRowsForArtifacts,
   type ScanArtifactFileRow,
@@ -234,9 +235,6 @@ export async function discardGateScans(
 export async function persistScan(db: AppDb, input: PersistedScanInput) {
   const now = new Date();
   const artifactFileRows = scanFileRowsForArtifacts(input.files, input.diff);
-  // These rows are only persisted on the degraded path (no R2 artifacts), so
-  // they carry the full redacted sample — R2-backed scans skip the insert
-  // entirely below and serve samples from files.json instead.
   const fileRows = artifactFileRows.map((file) => {
     return {
       id: crypto.randomUUID(),
@@ -853,15 +851,15 @@ export async function getScan(
   ]);
   const scan = scanRows[0];
   if (!scan) return null;
-  const artifactDetail = await loadScanArtifacts(artifactBucket, scan);
+  const includeFileSamples = options.includeFileSamples ?? true;
+  const artifactDetail = includeFileSamples
+    ? await loadScanArtifacts(artifactBucket, scan)
+    : needsArtifactMetadataFallback(scan, files, findings)
+      ? await loadScanArtifactMetadata(artifactBucket, scan)
+      : null;
   const detailFiles = artifactDetail ? mergeArtifactFiles(files, artifactDetail.files, id) : files;
-  const responseFiles =
-    (options.includeFileSamples ?? true) ? detailFiles : detailFiles.map(stripFileSampleForList);
+  const responseFiles = includeFileSamples ? detailFiles : detailFiles.map(stripFileSampleForList);
   const diff = artifactDetail?.diff ?? diffForFindingAnnotations(scan.summaryJson, detailFiles);
-  // Artifact-backed scans no longer duplicate their findings into `scan_findings`
-  // (see persistScan); read them, with annotations, from the digest-verified
-  // report.json. The D1 rows + summary-embedded annotations stay the source for
-  // legacy/degraded scans that were never R2-backed.
   const findingRows = artifactDetail ? artifactDetail.findings : findings;
   const annotatedFindings = annotateFindingsWithDiffStatus(findingRows, diff, {
     persistedAnnotations: artifactDetail
@@ -939,13 +937,34 @@ export async function getScanCompareData(
   ]);
   const scan = scanRows[0];
   if (!scan) return null;
-  // Compare annotations need this scan's file metadata + findings. For
-  // artifact-backed scans those no longer live in D1, so source them from R2
-  // (samples are stripped either way — compare diffs at file granularity).
-  const artifactDetail = await loadScanArtifacts(artifactBucket, scan);
+  const artifactDetail = needsArtifactMetadataFallback(scan, files, findings)
+    ? await loadScanArtifactMetadata(artifactBucket, scan)
+    : null;
   const detailFiles = artifactDetail ? mergeArtifactFiles(files, artifactDetail.files, id) : files;
   const findingRows = artifactDetail ? artifactDetail.findings : findings;
   return { scan, files: detailFiles.map(stripFileSampleForList), findings: findingRows };
+}
+
+function needsArtifactMetadataFallback(
+  scan: typeof scans.$inferSelect,
+  files: Array<typeof scanFiles.$inferSelect>,
+  findings: Array<typeof scanFindings.$inferSelect>,
+): boolean {
+  if (!hasArtifactReferences(scan)) return false;
+  if (files.length === 0) return true;
+  return typeof scan.findingCount === "number" && findings.length < scan.findingCount;
+}
+
+function hasArtifactReferences(scan: typeof scans.$inferSelect): boolean {
+  return (
+    scan.artifactStorageVersion !== null &&
+    scan.artifactManifestKey !== null &&
+    scan.artifactManifestDigest !== null &&
+    scan.artifactManifestSize !== null &&
+    scan.reportArtifactKey !== null &&
+    scan.fileSamplesArtifactKey !== null &&
+    scan.diffArtifactKey !== null
+  );
 }
 
 function stripFileSampleForList<T extends { textSample: string | null }>(file: T): T {
