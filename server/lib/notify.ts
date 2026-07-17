@@ -8,6 +8,7 @@ import {
 import { getScan } from "../db/scans";
 import { getSlackConnectionSecret } from "../db/slack-connection";
 import { sendNotificationEmail } from "./email";
+import { normalizeReleaseConsistency, type ReleaseConsistency } from "./release-memory";
 import type { RiskLevel } from "./review";
 import type { OrganizationRole } from "./roles";
 import { decryptSlackBotToken } from "./secret-box";
@@ -41,6 +42,8 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
   const scan = detail?.scan;
   const packageLabel = formatPackageLabel(scan?.packageName, scan?.stagedVersion);
   const dashboardUrl = scanUrl(env, scanId, organizationId);
+  const releaseRisk = detail?.riskSummary?.releaseRisk ?? scan?.risk ?? null;
+  const releaseMemory = formatReleaseMemory(scan?.summaryJson);
   const subject =
     outcome === "complete"
       ? `Staged release scan complete — ${packageLabel}`
@@ -53,7 +56,8 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
           "",
           `We finished scanning the staged release ${packageLabel}.`,
           organizationName ? `Organization: ${organizationName}` : null,
-          scan?.risk ? `Overall risk: ${scan.risk}.` : null,
+          releaseRisk ? `Release risk: ${releaseRisk}.` : null,
+          releaseMemory ? `Release memory: ${releaseMemory}` : null,
           dashboardUrl ? `Review the report: ${dashboardUrl}` : null,
           "",
           "— Drydock",
@@ -74,8 +78,9 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
     title: outcome === "complete" ? "Staged release scan complete" : "Staged release scan failed",
     packageLabel,
     source: "npm staged publish",
-    risk: scan?.risk ?? null,
+    risk: releaseRisk,
     findingsSummary: formatFindingsSummary(detail?.riskSummary),
+    releaseMemory,
     statusLine:
       outcome === "failed"
         ? error?.message
@@ -125,6 +130,31 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
   );
 
   await Promise.all([emailDelivery, slackDelivery]);
+}
+
+function formatReleaseMemory(summaryJson: unknown): string | null {
+  if (!summaryJson || typeof summaryJson !== "object" || Array.isArray(summaryJson)) return null;
+  const consistency = normalizeReleaseConsistency(
+    (summaryJson as { releaseConsistency?: unknown }).releaseConsistency,
+  );
+  if (!consistency || consistency.status === "none") return null;
+
+  const prior = priorReleaseLabel(consistency);
+  if (consistency.status === "diverged") {
+    const count = consistency.newFindingCount;
+    return `${count} new deterministic ${count === 1 ? "finding" : "findings"} since ${prior}.`;
+  }
+  if (consistency.currentFindingCount === 0) {
+    return `No deterministic findings; compared with ${prior}, which was already reviewed and published.`;
+  }
+  if (consistency.status === "subset") {
+    return `No new deterministic findings since ${prior}; every current finding was already reviewed and published.`;
+  }
+  return `Finding profile matches ${prior}; the same deterministic findings were already reviewed and published.`;
+}
+
+function priorReleaseLabel(consistency: ReleaseConsistency): string {
+  return consistency.priorVersion ? `v${consistency.priorVersion}` : "the last approved release";
 }
 
 export interface NotifyNpmConnectionExpiredInput {

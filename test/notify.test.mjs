@@ -275,7 +275,7 @@ describe("notifyScanCompletion", () => {
     expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith({}, "org_1", "user_1");
   });
 
-  test("emails the resolved recipients on success with package and risk", async () => {
+  test("emails the resolved recipients on success with package and release risk", async () => {
     dbMock.resolveNotificationEmails.mockResolvedValue([
       "security@example.com",
       "lead@example.com",
@@ -287,7 +287,7 @@ describe("notifyScanCompletion", () => {
     const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
     expect(message.subject).toContain("demo-package@1.2.0");
     expect(message.text).toContain("Organization: Acme Corp");
-    expect(message.text).toContain("Overall risk: high");
+    expect(message.text).toContain("Release risk: high");
     expect(message.text).toContain("https://drydock.test/dashboard/scans/scan_1?org=org_1");
 
     expect(dbMock.recordScanEvent).toHaveBeenCalledTimes(2);
@@ -295,6 +295,54 @@ describe("notifyScanCompletion", () => {
       expect(event.type).toBe("scan.notification_sent");
       expect(event.metadata).toMatchObject({ outcome: "complete", channel: "email" });
     }
+  });
+
+  test("surfaces approved release memory and the release-delta risk", async () => {
+    dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+    dbMock.getScan.mockResolvedValue({
+      scan: {
+        packageName: "tape",
+        stagedVersion: "5.9.0",
+        risk: "high",
+        summaryJson: {
+          releaseConsistency: {
+            status: "match",
+            priorScanId: "scan_prior",
+            priorVersion: "5.8.1",
+            decidedAt: "2026-07-15T10:00:00.000Z",
+            currentFindingCount: 2,
+            priorFindingCount: 2,
+            newFindingCount: 0,
+            newFindings: [],
+          },
+        },
+      },
+      riskSummary: {
+        artifactRisk: "high",
+        releaseRisk: "low",
+        contextRisk: "high",
+        releaseFindingCount: 0,
+        contextFindingCount: 2,
+        unknownFindingCount: 0,
+      },
+    });
+
+    await notifyScanCompletion(scanInput());
+
+    const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
+    expect(message.text).toContain("Release risk: low");
+    expect(message.text).toContain(
+      "Release memory: Finding profile matches v5.8.1; the same deterministic findings were already reviewed and published.",
+    );
+    expect(message.text).not.toContain("Overall risk: high");
+
+    expect(slackMock.renderSlackMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        risk: "low",
+        releaseMemory:
+          "Finding profile matches v5.8.1; the same deterministic findings were already reviewed and published.",
+      }),
+    );
   });
 
   test("reports the failure reason on a failed scan", async () => {

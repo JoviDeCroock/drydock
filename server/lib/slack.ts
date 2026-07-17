@@ -253,6 +253,7 @@ export interface SlackNotificationPayload {
   risk?: string | null;
   recommendation?: string | null;
   findingsSummary?: string | null;
+  releaseMemory?: string | null;
   repository?: string | null;
   environment?: string | null;
   statusLine?: string | null;
@@ -285,6 +286,7 @@ export function renderSlackMessage(payload: SlackNotificationPayload): SlackMess
     field("Source", payload.source),
     field("Risk", payload.risk ?? undefined),
     field("Findings", payload.findingsSummary ?? undefined),
+    field("Release memory", payload.releaseMemory ?? undefined),
     field("Repository", payload.repository ?? undefined),
     field("Environment", payload.environment ?? undefined),
     field("Recommendation", payload.recommendation ?? undefined),
