@@ -52,9 +52,10 @@ export default function DiffPage() {
 
 // Version pairs must exist on the public registry: npm unpublishes malicious
 // releases, so the compromised bytes themselves usually cannot be diffed after
-// an incident. These are adjacent surviving releases of incident packages (plus
-// our own demo package) that still render the shape of the attack. Verify both
-// versions still resolve before adding a row.
+// an incident (ua-parser-js's cryptominer, event-stream, coa/rc, and the
+// colors sabotage are all gone). Before adding a row, verify both versions
+// still resolve AND that the pair surfaces findings — a card that opens a
+// clean report undersells the review.
 const INCIDENT_DIFFS: Array<DiffSpec & { note: string }> = [
   {
     packageName: "node-ipc",
@@ -69,10 +70,10 @@ const INCIDENT_DIFFS: Array<DiffSpec & { note: string }> = [
     note: "a postinstall script appears — demo of the install-script rule",
   },
   {
-    packageName: "ua-parser-js",
-    fromVersion: "0.7.28",
-    toVersion: "0.7.30",
-    note: "the cryptominer release npm pulled sat between these two",
+    packageName: "es5-ext",
+    fromVersion: "0.10.53",
+    toVersion: "0.10.54",
+    note: "real protestware: a postinstall hook lands in a routine patch, still live on npm",
   },
 ];
 
@@ -172,15 +173,15 @@ function DiffLanding() {
         </div>
       </section>
 
-      <section class="flex flex-col gap-3 max-w-[680px]">
+      <section class="flex flex-col gap-3">
         <SectionLabel>Why diff the artifact</SectionLabel>
-        <Muted class="m-0 text-[14px] leading-[1.65]">
+        <Muted class="m-0 text-[14px] leading-[1.65] max-w-[680px]">
           Registry tarballs can differ from the repository: build output, install scripts, and files
           that never saw a pull request all ship in the artifact. Diffing the published bytes is how
           compromised releases like axios and node-ipc were spotted — after they shipped. Drydock
           runs the same review before a release goes live.
         </Muted>
-        <Muted class="m-0 text-[13px] leading-[1.6]">
+        <Muted class="m-0 text-[13px] leading-[1.6] max-w-[680px]">
           Every finding on this page comes from Drydock's deterministic rules — the package code is
           never executed and no AI reviews this surface, so the same versions always produce the
           same report.
