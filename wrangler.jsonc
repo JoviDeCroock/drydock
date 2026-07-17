@@ -6,6 +6,14 @@
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
+	"exports": {
+		"PublicDiffReads": {
+			"type": "worker",
+			"cache": {
+				"enabled": true
+			}
+		}
+	},
 	"workers_dev": true,
 	"observability": {
 		"logs": {

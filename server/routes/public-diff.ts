@@ -10,6 +10,14 @@ import {
   readPublicDiffCache,
   type PublicPackageDiff,
 } from "../lib/public-diff";
+import {
+  canonicalPublicDiffPairRequest,
+  parsePublicDiffPairInput,
+  PUBLIC_NPM_REGISTRY,
+  publicDiffCacheTag,
+  servePublicDiffPair,
+  type PublicDiffPairInput,
+} from "../lib/public-diff-read";
 import { compareSemver, isValidNpmPackageName } from "../lib/registry";
 import type { Bindings, Variables } from "../types";
 
@@ -22,7 +30,16 @@ import type { Bindings, Variables } from "../types";
 export const publicDiffRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
-const PUBLIC_NPM_REGISTRY = "https://registry.npmjs.org";
+
+interface PublicDiffReadsFetcher {
+  fetch(request: Request): Promise<Response>;
+}
+
+interface ExecutionContextWithPublicDiffExport {
+  exports?: {
+    PublicDiffReads?: PublicDiffReadsFetcher;
+  };
+}
 
 type PublicDiffContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 
@@ -123,6 +140,30 @@ async function loadRequestedDiff(
   }
 }
 
+function requestedDiffPairInput(c: PublicDiffContext): PublicDiffPairInput | Response {
+  const parsed = parsePublicDiffPairInput(new URL(c.req.url).searchParams);
+  if ("error" in parsed) return c.json({ error: parsed.error }, parsed.status);
+  return parsed.input;
+}
+
+function publicDiffWorkersCacheEnabled(env: Cloudflare.Env): boolean {
+  return env.PUBLIC_DIFF_WORKERS_CACHE_PILOT === "1";
+}
+
+async function fetchRequestedDiffPair(
+  c: PublicDiffContext,
+  input: PublicDiffPairInput,
+): Promise<Response> {
+  if (publicDiffWorkersCacheEnabled(c.env)) {
+    const ctx = c.executionCtx as unknown as ExecutionContextWithPublicDiffExport;
+    const cachedEntrypoint = ctx.exports?.PublicDiffReads;
+    if (cachedEntrypoint?.fetch) {
+      return cachedEntrypoint.fetch(canonicalPublicDiffPairRequest(c.req.raw, input));
+    }
+  }
+  return servePublicDiffPair(c.env, c.executionCtx, input);
+}
+
 publicDiffRoutes.get("/versions", async (c) => {
   const limited = await enforcePublicRateLimit(c, "versions", 30);
   if (limited) return limited;
@@ -188,34 +229,12 @@ function analyzedPairHeaders(packageName: string): Record<string, string> {
   };
 }
 
-function publicDiffCacheTag(packageName: string): string {
-  return `public-diff:${packageName}`;
-}
-
 publicDiffRoutes.get("/", async (c) => {
   const limited = await enforcePublicRateLimit(c, "fetch", 10);
   if (limited) return limited;
-  const loaded = await loadRequestedDiff(c);
-  if ("error" in loaded) return loaded.error;
-  const { payload } = loaded;
-
-  return c.json(
-    {
-      packageName: payload.packageName,
-      fromVersion: payload.fromVersion,
-      toVersion: payload.toVersion,
-      fromPackageJson: payload.fromPackageJson,
-      toPackageJson: payload.toPackageJson,
-      diff: payload.diff,
-      packageJsonDiff: payload.packageJsonDiff,
-      findings: payload.findings,
-      risk: payload.risk,
-      textSamplesOmitted: payload.textSamplesOmitted ?? false,
-      cachedAt: payload.cachedAt,
-    },
-    200,
-    analyzedPairHeaders(payload.packageName),
-  );
+  const input = requestedDiffPairInput(c);
+  if (input instanceof Response) return input;
+  return fetchRequestedDiffPair(c, input);
 });
 
 publicDiffRoutes.get("/file", async (c) => {

@@ -19,6 +19,7 @@ declare global {
       BETTER_AUTH_SECRET: string;
       BETTER_AUTH_URL?: string;
       AUTH_REQUIRED?: string;
+      PUBLIC_DIFF_WORKERS_CACHE_PILOT?: string;
       FLAGS?: Flagship;
       SEND_EMAIL?: SendEmailBinding;
       EMAIL_FROM_ADDRESS?: string;

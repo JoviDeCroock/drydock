@@ -106,6 +106,13 @@ Required non-secret vars:
 - `AI_CACHE_AFFINITY` — stable prefix-cache affinity string for Workers AI
 - `PNPM_VERSION` — used by the runtime where npm tooling parity matters
 
+Optional runtime pilots:
+
+- `PUBLIC_DIFF_WORKERS_CACHE_PILOT=1` — delegates only the canonical main public
+  package-diff JSON read through the cached `PublicDiffReads` entrypoint. Leave
+  unset until a deployed canary confirms cache-hit, request-count, CPU, and KV
+  economics; static assets and the default Worker must remain cache-disabled.
+
 Optional integrations:
 
 - Email: `SEND_EMAIL` binding plus `EMAIL_FROM_ADDRESS` and `EMAIL_FROM_NAME`

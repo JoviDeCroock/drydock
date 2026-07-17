@@ -1,4 +1,4 @@
-import { env } from "cloudflare:test";
+import { createExecutionContext, env } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 import {
   computePublicDiffCacheKey,
@@ -7,6 +7,11 @@ import {
   writePublicDiffCache,
   type PublicPackageDiff,
 } from "../../server/lib/public-diff";
+import {
+  PUBLIC_DIFF_PATH,
+  PUBLIC_NPM_REGISTRY,
+  PublicDiffReads,
+} from "../../server/lib/public-diff-read";
 import { DETERMINISTIC_RULES_VERSION } from "../../server/lib/review";
 
 function payload(textSample = "export const value = 1;\n"): PublicPackageDiff {
@@ -33,6 +38,16 @@ function payload(textSample = "export const value = 1;\n"): PublicPackageDiff {
     },
     cachedAt: "2026-07-15T00:00:00.000Z",
   };
+}
+
+function buildEntrypoint(entrypointEnv: Cloudflare.Env) {
+  const entrypoint = Object.create(PublicDiffReads.prototype) as PublicDiffReads & {
+    env: Cloudflare.Env;
+    ctx: ExecutionContext;
+  };
+  entrypoint.env = entrypointEnv;
+  entrypoint.ctx = createExecutionContext();
+  return entrypoint;
 }
 
 describe("public diff cache", () => {
@@ -76,5 +91,49 @@ describe("public diff cache", () => {
     expect(cached.textSamplesOmitted).toBe(true);
     expect(cached.fromFiles[0]).not.toHaveProperty("textSample");
     expect(cached.toFiles[0]).not.toHaveProperty("textSample");
+  });
+
+  test("serves a cached pair with separate edge and browser policies", async () => {
+    const input = {
+      registryUrl: PUBLIC_NPM_REGISTRY,
+      packageName: "cache-test-package",
+      fromVersion: "1.0.0",
+      toVersion: "1.0.1",
+    } as const;
+    const key = await computePublicDiffCacheKey(input);
+    await writePublicDiffCache(env, key, payload());
+
+    const response = await buildEntrypoint(env).fetch(
+      new Request(
+        `https://drydock.org${PUBLIC_DIFF_PATH}?package=cache-test-package&from=1.0.0&to=1.0.1`,
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("public, max-age=0, must-revalidate");
+    expect(response.headers.get("cloudflare-cdn-cache-control")).toBe(
+      "public, max-age=86400, stale-while-revalidate=604800",
+    );
+    expect(response.headers.get("cache-tag")).toBe("public-diff:cache-test-package");
+    expect(await response.json()).toMatchObject({
+      packageName: "cache-test-package",
+      fromVersion: "1.0.0",
+      toVersion: "1.0.1",
+    });
+  });
+
+  test("never caches invalid or unsupported entrypoint requests", async () => {
+    const entrypoint = buildEntrypoint(env);
+    const invalid = await entrypoint.fetch(
+      new Request(`https://drydock.org${PUBLIC_DIFF_PATH}?package=!invalid!`),
+    );
+    const unsupported = await entrypoint.fetch(
+      new Request(`https://drydock.org${PUBLIC_DIFF_PATH}`, { method: "POST" }),
+    );
+
+    expect(invalid.status).toBe(400);
+    expect(invalid.headers.get("cache-control")).toBe("private, no-store");
+    expect(unsupported.status).toBe(404);
+    expect(unsupported.headers.get("cache-control")).toBe("private, no-store");
   });
 });

@@ -1,5 +1,5 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import worker from "../../server/index";
 
 // The public package-diff endpoints are deliberately anonymous: they must be
@@ -97,6 +97,48 @@ describe("public package-diff routes", () => {
     );
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "path is required" });
+  });
+
+  test("delegates a canonical credential-free pair request only when the pilot is enabled", async () => {
+    const ctx = createExecutionContext() as ExecutionContext & {
+      exports: {
+        PublicDiffReads: { fetch: ReturnType<typeof vi.fn> };
+      };
+    };
+    const cachedResponse = Response.json({ source: "workers-cache" }, { status: 200 });
+    const fetch = vi.fn(async () => cachedResponse);
+    ctx.exports = { PublicDiffReads: { fetch } };
+    const pilotEnv = {
+      ...env,
+      PUBLIC_DIFF_WORKERS_CACHE_PILOT: "1",
+    } satisfies Cloudflare.Env;
+
+    const res = await worker.fetch(
+      new Request(
+        "http://example.com/api/public/v1/package-diff?to=1.0.1&ignored=1&package=left-pad&from=1.0.0",
+        {
+          headers: {
+            authorization: "Bearer secret",
+            cookie: "session=secret",
+            "cf-connecting-ip": "10.0.0.10",
+          },
+        },
+      ),
+      pilotEnv,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ source: "workers-cache" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const delegated = fetch.mock.calls[0]?.[0] as Request;
+    expect(delegated.url).toBe(
+      "http://example.com/api/public/v1/package-diff?package=left-pad&from=1.0.0&to=1.0.1",
+    );
+    expect(delegated.headers.get("authorization")).toBeNull();
+    expect(delegated.headers.get("cookie")).toBeNull();
+    expect(delegated.headers.get("accept")).toBe("application/json");
   });
 
   test("diff endpoint rate-limits by IP", async () => {
