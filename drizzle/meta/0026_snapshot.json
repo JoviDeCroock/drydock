@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "bde138e4-f987-45b9-bfd1-a2459f7e0af0",
-  "prevId": "ad493616-10bf-429c-8e90-fd492730628c",
+  "id": "82b955aa-1e43-4038-95c1-8ac7482e1a17",
+  "prevId": "00f11faf-874e-4641-97bf-3def02727b1c",
   "tables": {
     "account": {
       "name": "account",
@@ -1507,6 +1507,20 @@
             "scan_id"
           ],
           "isUnique": false
+        },
+        "scan_events_created_idx": {
+          "name": "scan_events_created_idx",
+          "columns": [
+            "created_at"
+          ],
+          "isUnique": false
+        },
+        "scan_events_actor_idx": {
+          "name": "scan_events_actor_idx",
+          "columns": [
+            "actor_user_id"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {
@@ -2100,6 +2114,13 @@
           ],
           "isUnique": false
         },
+        "scans_decided_by_idx": {
+          "name": "scans_decided_by_idx",
+          "columns": [
+            "decided_by_user_id"
+          ],
+          "isUnique": false
+        },
         "scans_public_share_token_unique_idx": {
           "name": "scans_public_share_token_unique_idx",
           "columns": [
@@ -2491,7 +2512,15 @@
           "autoincrement": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "verification_identifier_idx": {
+          "name": "verification_identifier_idx",
+          "columns": [
+            "identifier"
+          ],
+          "isUnique": false
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
