@@ -12,3 +12,20 @@ export function firstMatchingLine(
   }
   return undefined;
 }
+
+export function firstMatchingSourceLine(
+  text: string | undefined | null,
+  patterns: RegExp[],
+): number | undefined {
+  if (!text) return undefined;
+  let firstIndex: number | undefined;
+  for (const pattern of patterns) {
+    pattern.lastIndex = 0;
+    const match = pattern.exec(text);
+    if (match && (firstIndex === undefined || match.index < firstIndex)) {
+      firstIndex = match.index;
+    }
+  }
+  if (firstIndex === undefined) return undefined;
+  return text.slice(0, firstIndex).split("\n").length;
+}

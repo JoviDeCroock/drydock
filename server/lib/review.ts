@@ -21,9 +21,10 @@ export interface Finding {
   ruleId?: string;
   ruleVersion?: string;
   // True when a code.* capability matched only after constant-folding (the
-  // identifier was assembled/obfuscated, e.g. `['chi','ld_pro','cess'].join('')`).
-  // Obfuscating a capability is itself a malice signal, so the risk roll-up does
-  // not de-escalate a lone obfuscated capability the way it does a plain one.
+  // identifier was assembled, e.g. `['chi','ld_pro','cess'].join('')`) or its
+  // file uses a recognized packed string-table wrapper. Obfuscating a capability
+  // is itself a malice signal, so the risk roll-up does not de-escalate a lone
+  // obfuscated capability the way it does a plain one.
   obfuscated?: boolean;
   // True when a code.* capability matched inside a test-suite file that no
   // consumer-facing entrypoint can statically reach. The finding is emitted at

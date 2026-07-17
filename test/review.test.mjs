@@ -1387,6 +1387,79 @@ describe("computeRisk weighted multi-signal roll-up (issue #193)", () => {
   });
 });
 
+describe("packed downloader capability detection", () => {
+  const pkg = {
+    path: "package.json",
+    size: 80,
+    sha256: "pkg",
+    flags: [],
+    textSample: JSON.stringify({ name: "pkg", version: "1.0.1", main: "index.js" }),
+  };
+  const file = (textSample) => ({
+    path: "index.js",
+    size: textSample.length,
+    sha256: "index",
+    flags: [],
+    textSample,
+  });
+
+  test("treats a literal node eval child process as process plus dynamic execution", () => {
+    const staged = [
+      pkg,
+      file(
+        "const { spawn } = require('node:child_process');\nspawn('node', ['-e', '[defanged payload]'], { detached: true });\n",
+      ),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ruleId: "code.process-execution", severity: "high" }),
+        expect.objectContaining({ ruleId: "code.dynamic-evaluation", severity: "high" }),
+      ]),
+    );
+    expect(computeRisk(findings)).toBe("high");
+  });
+
+  test("detects a literal node eval child process split across lines", () => {
+    const staged = [
+      pkg,
+      file(
+        "const { spawn } = require('node:child_process');\nspawn(\n  'node',\n  [\n    '-e',\n    '[defanged payload]',\n  ],\n  { detached: true },\n);\n",
+      ),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ruleId: "code.process-execution", severity: "high" }),
+        expect.objectContaining({
+          ruleId: "code.dynamic-evaluation",
+          severity: "high",
+          line: 2,
+        }),
+      ]),
+    );
+    expect(computeRisk(findings)).toBe("high");
+  });
+
+  test("marks a process capability inside a rotating string-table wrapper as obfuscated", () => {
+    const staged = [
+      pkg,
+      file(
+        "const _0x8f31 = _0x2aa1;\n(function (_0x41aa, _0x55bb) { const _0x77cc = _0x2aa1; const _0x99dd = _0x41aa(); while (!![]) { try { const _0x1234 = parseInt(_0x77cc(0x1)); if (_0x1234 === _0x55bb) break; _0x99dd['push'](_0x99dd['shift']()); } catch (_0xabcd) { _0x99dd['push'](_0x99dd['shift']()); } } })(_0x4e21, 0x1);\nfunction _0x2aa1(_0x1111) { return _0x4e21()[_0x1111]; }\nfunction _0x4e21() { return ['node', '-e', '[defanged payload]']; }\nif (false) spawn(_0x8f31(0x0), [_0x8f31(0x1), _0x8f31(0x2)]);\n",
+      ),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+    const processExecution = findings.find(
+      (finding) => finding.ruleId === "code.process-execution",
+    );
+
+    expect(processExecution).toMatchObject({ severity: "high", obfuscated: true });
+    expect(computeRisk(findings)).toBe("high");
+  });
+});
+
 describe("test-scoped capability findings", () => {
   const pkg = (main = "index.js") => ({
     path: "package.json",

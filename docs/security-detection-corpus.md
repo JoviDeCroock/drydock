@@ -12,6 +12,7 @@ The fixture taxonomy is based on the current Drydock rule surface plus public np
 - [OpenSSF Package Analysis](https://github.com/ossf/package-analysis) tracks package behavior by asking what files packages access, what addresses they connect to, and what commands they run. Its public case studies are useful for behavior taxonomy, but Drydock should not execute packages.
 - [Datadog's malicious-software-packages-dataset](https://github.com/DataDog/malicious-software-packages-dataset/) is human-triaged and useful for taxonomy validation, but its samples are actively malicious and distributed as encrypted `infected` archives. Do not copy those samples into this repository.
 - Recent npm detection benchmark research reports a curated dataset of 6,420 malicious and 7,288 benign npm packages, with 11 behavior categories and 8 evasion categories. The most common behaviors were command execution, data collection, and data exfiltration; install scripts were used by about 72% of malicious packages in that study, and preinstall hooks were the dominant install-time entry point.
+- [Aikido's AsyncAPI incident report](https://www.aikido.dev/blog/asyncapi-npm-packages-backdoored-via-github-actions) documents a compromised GitHub Actions publishing path that injected a rotating string-table wrapper around a detached `node -e` child process in shipped JavaScript. The safe `asyncapi-rotating-string-table-dropper` fixture preserves that detection shape without retaining its endpoint, identifier, or payload.
 - The same benchmark shows the central detection trade-off: benign and malicious packages often call the same APIs. Broad environment reads and secret-like environment names are capability evidence, while common runtime flags such as `process.env.NODE_ENV` or `import.meta.env.DEV` are not credential sources. Chains such as collect → serialize → exfiltrate are stronger intent evidence.
 - Network-only code follows that trade-off: unchanged network-only files are suppressed as package context, added network-only files remain medium-severity contextual evidence, and added network access escalates to high when it is tied to lifecycle scripts, process execution, dynamic evaluation, or credential access.
 - Documentation and prose files remain available as package evidence, but deterministic `code.*` rules do not treat them as executable capability evidence. Secret checks in documentation use only high-confidence token formats; generic key/value examples such as `token = localStorage.getItem("token")` are not `file.secret-content` findings.
@@ -61,7 +62,8 @@ The first corpus slice covers:
 - credential file-path reads (`.aws/credentials`, `.ssh/id_`, `.netrc`) in addition to broad environment reads and known token names, matching the Python rule coverage while excluding common non-secret JS runtime flags;
 - the collect-and-exfiltrate sink: a single file that reads credentials and has a network egress path escalates `code.credential-access` to high even on a modified (not newly added) module;
 - implicit `node-gyp rebuild` from root `binding.gyp`, GYP command substitution that executes package JavaScript, and native artifact review — by extension and by magic-byte flags, so extensionless Linux/macOS platform binaries are held to the same bar as a Windows `.exe`;
-- base64/dynamic evaluation plus network-capable code, including the `WebAssembly.instantiateStreaming(fetch(...))` loader idiom (the whole `compile`/`compileStreaming`/`instantiate`/`instantiateStreaming` family counts as dynamic evaluation);
+- base64/dynamic evaluation plus network-capable code, including the `WebAssembly.instantiateStreaming(fetch(...))` loader idiom (the whole `compile`/`compileStreaming`/`instantiate`/`instantiateStreaming` family counts as dynamic evaluation) and literal `node -e`/`node --eval` child-process launches;
+- javascript-obfuscator-style rotating string tables around code capabilities, recognized from the combined hexadecimal lookup, `while (!![])`, `parseInt`, and `push(shift())` wrapper shape rather than any one minifier-like token;
 - secret-looking file addition;
 - large opaque binary addition;
 - files that appear in the tarball outside a declared `package.json.files` allowlist;
@@ -99,7 +101,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.2.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.14.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.15.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -160,7 +162,14 @@ and MZ requires the NUL-padded DOS header so prose starting with "MZ" does not m
 fires on extension or flag, and the binary-shaped findings (`file.native-artifact`,
 `file.large-binary`, `diff.large-new-file`) now carry the file's sha256 in evidence so a reviewer
 can verify the artifact against the registry out of band (the `prebuilt-platform-binaries` golden
-case).
+case). `1.15.0` models the downloader shape from the AsyncAPI npm compromise without broadening
+plain process-execution noise: literal `spawn`/`spawnSync` calls that launch `node -e` or
+`node --eval` also emit `code.dynamic-evaluation`, while a code capability inside a recognized
+javascript-obfuscator-style rotating string-table wrapper is marked `obfuscated`. The latter reuses
+the existing risk rule that keeps a lone hidden process capability at high instead of applying the
+benign build-helper de-escalation. The wrapper requires five independent structural signals
+(hexadecimal lookup identifiers and function, `while (!![])`, lookup-fed `parseInt`, and bracketed
+`push`/`shift`) to avoid treating ordinary minified names or queue rotation as malice.
 
 ### Fixture format
 
