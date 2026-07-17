@@ -384,6 +384,7 @@ describe("scan pipeline baseline selection", () => {
         refs: [
           { kind: "git-head", value: gitHead },
           { kind: "version-tag", value: "v2.0.0-beta.3" },
+          { kind: "version-tag", value: "@scope/pkg@2.0.0-beta.3" },
           { kind: "version-tag", value: "2.0.0-beta.3" },
         ],
         expectedShasum: "4f7f5f1d5bcf2f72f6e4d6c4f3b2812d8a2f6c19",

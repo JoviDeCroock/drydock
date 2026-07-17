@@ -66,7 +66,6 @@ export async function runRebuildSteps(
   };
 
   const repoDir = `${WORKDIR}/repo`;
-  const pkgDir = plan.directory ? `${repoDir}/${plan.directory}` : repoDir;
 
   await run("prepare", `rm -rf ${shq(WORKDIR)} && mkdir -p ${shq(WORKDIR)}`, 30_000);
 
@@ -100,16 +99,54 @@ export async function runRebuildSteps(
   }
   if (!ref) return { ok: false, failure: "checkout-failed", steps };
 
-  // Read the repository manifest Worker-side and decide the strategy here;
-  // the container never interprets its own contents beyond running commands.
-  const manifestRead = await run(
+  // Read the repository root manifest Worker-side and decide the strategy
+  // here; the container never interprets its own contents beyond running
+  // commands. Package-manager evidence (packageManager field, lockfiles)
+  // lives at the repository root — in a monorepo the package directory has
+  // neither.
+  const rootRead = await run(
     "read manifest",
-    `cat ${shq(`${pkgDir}/package.json`)} && echo && ls -1 ${shq(pkgDir)}`,
+    `cat ${shq(`${repoDir}/package.json`)} && echo && ls -1 ${shq(repoDir)}`,
     30_000,
   );
-  if (!manifestRead.success) return { ok: false, failure: "manifest-missing", steps };
-  const strategy = detectStrategy(manifestRead.stdout);
+  if (!rootRead.success) return { ok: false, failure: "manifest-missing", steps };
+  const root = splitManifestListing(rootRead.stdout);
+  const rootManifest = root ? parseManifest(root.manifestText) : null;
+  if (!rootManifest) return { ok: false, failure: "manifest-missing", steps };
+  const strategy = detectPackageManager(rootManifest, root!.listing);
   if (!strategy) return { ok: false, failure: "unsupported-package-manager", steps };
+
+  // Resolve the package directory: an explicit `repository.directory` wins;
+  // otherwise, when the staged package name is not the root package, locate
+  // it in the workspace by manifest name.
+  let pkgDir = repoDir;
+  let pkgManifest = rootManifest;
+  if (plan.directory) {
+    pkgDir = `${repoDir}/${plan.directory}`;
+  } else if (plan.packageName && manifestName(rootManifest) !== plan.packageName) {
+    const located = await run(
+      "locate package",
+      locatePackageCommand(repoDir, plan.packageName),
+      60_000,
+    );
+    const relative = located.success ? parseLocatedPackageDir(located.stdout) : null;
+    if (!relative) return { ok: false, failure: "package-not-located", steps };
+    pkgDir = `${repoDir}/${relative}`;
+  }
+  if (pkgDir !== repoDir) {
+    const pkgRead = await run(
+      "read package manifest",
+      `cat ${shq(`${pkgDir}/package.json`)}`,
+      30_000,
+    );
+    const parsed = pkgRead.success ? parseManifest(pkgRead.stdout) : null;
+    if (!parsed) return { ok: false, failure: "manifest-missing", steps };
+    if (plan.packageName && manifestName(parsed) !== plan.packageName) {
+      return { ok: false, failure: "package-not-located", steps };
+    }
+    pkgManifest = parsed;
+  }
+  const hasBuildScript = manifestHasBuildScript(pkgManifest);
 
   if (strategy.corepackSpec) {
     const prepared = await run(
@@ -137,7 +174,7 @@ export async function runRebuildSteps(
   const install = await run("install", installCommand(strategy, repoDir), INSTALL_TIMEOUT_MS);
   if (!install.success) return { ok: false, failure: "install-failed", steps };
 
-  if (strategy.hasBuildScript) {
+  if (hasBuildScript) {
     const build = await run(
       "build",
       `cd ${shq(pkgDir)} && ${strategy.packageManager} run build`,
@@ -190,55 +227,87 @@ export async function runRebuildSteps(
 interface RebuildStrategy {
   packageManager: "npm" | "pnpm";
   corepackSpec: string | null;
-  hasBuildScript: boolean;
 }
 
-// `stdout` is `cat package.json`, a blank line, then `ls -1` of the package
-// directory. Hostile input: parsed defensively, unknown managers rejected.
-function detectStrategy(stdout: string): RebuildStrategy | null {
+// `stdout` is `cat package.json`, a blank line, then `ls -1`. The manifest
+// itself never contains a blank line when pretty-printed, so the last blank
+// line separates the two. Hostile input either way.
+function splitManifestListing(stdout: string): { manifestText: string; listing: string } | null {
   const separator = stdout.lastIndexOf("\n\n");
-  const manifestText = separator === -1 ? stdout : stdout.slice(0, separator);
-  const listing = separator === -1 ? "" : stdout.slice(separator + 2);
+  if (separator === -1) return { manifestText: stdout, listing: "" };
+  return { manifestText: stdout.slice(0, separator), listing: stdout.slice(separator + 2) };
+}
 
-  let manifest: Record<string, unknown> = {};
+function parseManifest(text: string): Record<string, unknown> | null {
   try {
-    const parsed = JSON.parse(manifestText) as unknown;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      manifest = parsed as Record<string, unknown>;
-    }
+    const parsed = JSON.parse(text) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
   } catch {
     return null;
   }
+}
 
-  let packageManager: "npm" | "pnpm" | null = null;
-  let corepackSpec: string | null = null;
+function manifestName(manifest: Record<string, unknown>): string | null {
+  return typeof manifest.name === "string" ? manifest.name : null;
+}
+
+function manifestHasBuildScript(manifest: Record<string, unknown>): boolean {
+  const scripts = manifest.scripts;
+  return (
+    !!scripts &&
+    typeof scripts === "object" &&
+    !Array.isArray(scripts) &&
+    typeof (scripts as Record<string, unknown>).build === "string"
+  );
+}
+
+// Package-manager detection from the repository root: the `packageManager`
+// pin wins, then lockfile heuristics. Unknown managers are rejected rather
+// than guessed.
+function detectPackageManager(
+  manifest: Record<string, unknown>,
+  listing: string,
+): RebuildStrategy | null {
   const declared =
     typeof manifest.packageManager === "string" ? manifest.packageManager.trim() : "";
   const declaredMatch = /^(npm|pnpm|yarn)@\d+[\w.+-]*$/.exec(declared);
   if (declaredMatch) {
     if (!SUPPORTED_PACKAGE_MANAGERS.has(declaredMatch[1])) return null;
-    packageManager = declaredMatch[1] as "npm" | "pnpm";
-    corepackSpec = declared;
-  } else {
-    const files = new Set(listing.split("\n").map((line) => line.trim()));
-    if (files.has("pnpm-lock.yaml")) {
-      packageManager = "pnpm";
-      corepackSpec = "pnpm@latest";
-    } else if (files.has("yarn.lock")) {
-      return null;
-    } else {
-      packageManager = "npm";
+    return { packageManager: declaredMatch[1] as "npm" | "pnpm", corepackSpec: declared };
+  }
+  const files = new Set(listing.split("\n").map((line) => line.trim()));
+  if (files.has("pnpm-lock.yaml")) return { packageManager: "pnpm", corepackSpec: "pnpm@latest" };
+  if (files.has("yarn.lock")) return null;
+  return { packageManager: "npm", corepackSpec: null };
+}
+
+// Find the workspace directory whose package.json declares the staged package
+// name. grep uses a fixed, Worker-built ERE (the name is regex-escaped), and
+// a no-match exits non-zero, which the caller reports as package-not-located.
+function locatePackageCommand(repoDir: string, packageName: string): string {
+  const escaped = packageName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = `"name"[[:space:]]*:[[:space:]]*"${escaped}"`;
+  return [
+    `cd ${shq(repoDir)}`,
+    `find . -maxdepth 5 -name package.json -not -path '*/node_modules/*' -print0 | xargs -0 grep -lE ${shq(pattern)} | head -n 5`,
+  ].join(" && ");
+}
+
+// The locate output is container stdout (hostile): accept only the first line
+// shaped exactly like `./<safe segments>/package.json`.
+function parseLocatedPackageDir(stdout: string): string | null {
+  for (const line of stdout.split("\n").slice(0, 5)) {
+    const match = /^\.\/(.+)\/package\.json$/.exec(line.trim());
+    if (!match) continue;
+    const segments = match[1].split("/");
+    if (segments.length > 8) continue;
+    if (segments.every((segment) => /^[A-Za-z0-9_.@-]+$/.test(segment) && segment !== "..")) {
+      return segments.join("/");
     }
   }
-
-  const scripts = manifest.scripts;
-  const hasBuildScript =
-    !!scripts &&
-    typeof scripts === "object" &&
-    !Array.isArray(scripts) &&
-    typeof (scripts as Record<string, unknown>).build === "string";
-
-  return { packageManager, corepackSpec, hasBuildScript };
+  return null;
 }
 
 function installCommand(strategy: RebuildStrategy, rootDir: string): string {

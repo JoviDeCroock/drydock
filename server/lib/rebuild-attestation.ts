@@ -95,7 +95,9 @@ const REF_KINDS: ReadonlySet<string> = new Set(["git-head", "version-tag"]);
 const GIT_OBJECT_ID_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 // Conservative tag/directory charset: these values are interpolated into
 // container commands (always shell-quoted, but defense in depth is free).
-const TAG_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
+// `@` is allowed (not leading `@{`, which git refnames forbid) so
+// changesets-style monorepo tags like `@scope/pkg@2.0.0` validate.
+const TAG_RE = /^[A-Za-z0-9@][A-Za-z0-9._/@-]{0,127}$/;
 const DIRECTORY_SEGMENT_RE = /^[A-Za-z0-9_.@-]+$/;
 const MAX_REFS = 4;
 const MAX_PATH_LIST = 50;
@@ -133,6 +135,11 @@ export function computeRebuildPlan(input: RebuildPlanInput): RebuildPlan | null 
   const version = typeof input.version === "string" ? input.version.trim() : "";
   if (version && TAG_RE.test(version)) {
     refs.push({ kind: "version-tag", value: `v${version}` });
+    // Changesets-style monorepo release tags (`@scope/pkg@2.0.0`).
+    const packageTag = input.packageName ? `${input.packageName}@${version}` : null;
+    if (packageTag && TAG_RE.test(packageTag)) {
+      refs.push({ kind: "version-tag", value: packageTag });
+    }
     refs.push({ kind: "version-tag", value: version });
   }
   if (!refs.length) return null;

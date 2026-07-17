@@ -31,6 +31,7 @@ describe("computeRebuildPlan", () => {
       refs: [
         { kind: "git-head", value: GIT_HEAD },
         { kind: "version-tag", value: "v2.0.0" },
+        { kind: "version-tag", value: "@scope/pkg@2.0.0" },
         { kind: "version-tag", value: "2.0.0" },
       ],
       directory: null,
@@ -50,6 +51,7 @@ describe("computeRebuildPlan", () => {
     const plan = computeRebuildPlan(basePlanInput({ gitHead: "main; rm -rf /" }));
     expect(plan?.refs).toEqual([
       { kind: "version-tag", value: "v2.0.0" },
+      { kind: "version-tag", value: "@scope/pkg@2.0.0" },
       { kind: "version-tag", value: "2.0.0" },
     ]);
   });
@@ -440,11 +442,65 @@ describe("runRebuildSteps", () => {
     expect(sandbox.commands.join("\n")).not.toContain("npm pack");
   });
 
+  test("locates a workspace package by name when no directory is declared", async () => {
+    const sandbox = scriptedSandbox([
+      // Root manifest belongs to the workspace root, not the staged package.
+      [
+        "cat '/workspace/rebuild/repo/package.json'",
+        ok(
+          manifestStdout({ name: "monorepo-root", private: true }, "package.json\npnpm-lock.yaml"),
+        ),
+      ],
+      ["grep -lE", ok("./packages/core/package.json\n")],
+      [
+        "cat '/workspace/rebuild/repo/packages/core/package.json'",
+        ok(JSON.stringify({ name: "@scope/pkg", scripts: { build: "tsc" } })),
+      ],
+      ["--version", ok("v22.11.0\n11.1.1")],
+      ["sha1sum", ok(hashStdout)],
+    ]);
+    const execution = await runRebuildSteps(sandbox, plan);
+    expect(execution.ok).toBe(true);
+    const joined = sandbox.commands.join("\n");
+    // pnpm detected from the ROOT lockfile even though the package dir has none.
+    expect(joined).toContain("pnpm install --ignore-scripts");
+    expect(joined).toContain("cd '/workspace/rebuild/repo/packages/core' && pnpm run build");
+    expect(joined).toContain('"name"[[:space:]]*:[[:space:]]*"@scope/pkg"');
+  });
+
+  test("fails as package-not-located when the workspace has no matching manifest", async () => {
+    const sandbox = scriptedSandbox([
+      [
+        "cat '/workspace/rebuild/repo/package.json'",
+        ok(manifestStdout({ name: "monorepo-root" }, "package.json")),
+      ],
+      ["grep -lE", fail("")],
+    ]);
+    const execution = await runRebuildSteps(sandbox, plan);
+    expect(execution).toMatchObject({ ok: false, failure: "package-not-located" });
+  });
+
+  test("hostile locate output is rejected instead of trusted as a path", async () => {
+    const sandbox = scriptedSandbox([
+      [
+        "cat '/workspace/rebuild/repo/package.json'",
+        ok(manifestStdout({ name: "monorepo-root" }, "package.json")),
+      ],
+      ["grep -lE", ok("./../../../etc/package.json\n./a/$(evil)/package.json\n")],
+    ]);
+    const execution = await runRebuildSteps(sandbox, plan);
+    expect(execution).toMatchObject({ ok: false, failure: "package-not-located" });
+  });
+
   test("monorepo directory scopes build and pack, not install", async () => {
     const sandbox = scriptedSandbox([
       [
-        "cat ",
-        ok(manifestStdout({ name: "@scope/pkg", scripts: { build: "tsc" } }, "package.json")),
+        "cat '/workspace/rebuild/repo/packages/core/package.json'",
+        ok(JSON.stringify({ name: "@scope/pkg", scripts: { build: "tsc" } })),
+      ],
+      [
+        "cat '/workspace/rebuild/repo/package.json'",
+        ok(manifestStdout({ name: "monorepo-root", private: true }, "package.json")),
       ],
       ["--version", ok("v22.11.0\n10.9.0")],
       ["sha1sum", ok(hashStdout)],

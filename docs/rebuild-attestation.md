@@ -28,8 +28,9 @@ staged shasum); PyPI and VS Code have no rebuild strategy yet.
    rebuildable, `computeRebuildPlan` (`server/lib/rebuild-attestation.ts`)
    derives a plan — the envelope's normalized repository URL, checkout
    candidates (`gitHead` from the staged version manifest first, then
-   `v{version}`/`{version}` tags), the manifest's `repository.directory` for
-   monorepos, and the staged tarball's SHA-1 `shasum`. The plan is persisted as
+   `v{version}`, changesets-style `{name}@{version}`, and `{version}` tags),
+   the manifest's `repository.directory` for monorepos, and the staged
+   tarball's SHA-1 `shasum`. The plan is persisted as
    `summary.rebuildAttestation` with `status: "pending"` (summary blob only —
    never the frozen `report.json` artifact, because the record is mutable).
 2. **Deferred job** (`rebuild-job.ts`): scan completion enqueues a
@@ -37,11 +38,28 @@ staged shasum); PyPI and VS Code have no rebuild strategy yet.
    dev). Container rebuilds take minutes and never hold up scan completion.
 3. **Rebuild** (`rebuild-sandbox.ts` + `rebuild-steps.ts`): a disposable
    Cloudflare container clones the repo at the first resolvable ref, detects
-   the strategy (`packageManager` field via corepack, else lockfile heuristics;
-   npm and pnpm supported, yarn reports unsupported), installs with
-   `--ignore-scripts`, runs the `build` script if declared, packs, and emits a
-   hash manifest: the tarball SHA-1 plus per-file sha256 of the unpacked
-   contents.
+   the strategy from the repository root (`packageManager` field via corepack,
+   else lockfile heuristics; npm and pnpm supported, yarn reports
+   unsupported), installs with `--ignore-scripts`, runs the `build` script if
+   declared, packs, and emits a hash manifest: the tarball SHA-1 plus per-file
+   sha256 of the unpacked contents.
+
+   **Monorepos**: install runs at the repository root (so the workspace graph
+   resolves); build and pack run in the package directory. That directory is
+   `repository.directory` when the manifest declares it; otherwise, when the
+   staged package name differs from the root manifest's name, the container
+   greps the workspace (depth ≤ 5, `node_modules` excluded) for the
+   package.json declaring that name, and the Worker validates both the located
+   path shape and that the located manifest's `name` matches before using it.
+   No unambiguous location → `inconclusive` with a `package-not-located`
+   signal, never a guess.
+
+   **What gets compared** is decided by `pack` itself, not by Drydock: `npm
+pack`/`pnpm pack` apply the same `files`-field/`.npmignore` rules the
+   publisher's client did, so the rebuilt file set is exactly "what this
+   commit would publish" — dist/ output included, sources excluded when the
+   manifest excludes them.
+
 4. **Comparison** (`compareRebuildOutput`): runs in the Worker against the
    scan's persisted artifact hashes (R2 `files.json`) and the staged `shasum`.
    The staged bytes are never re-fetched and never enter the container.
@@ -107,3 +125,12 @@ the row. The report export carries `"rebuildAttestation": null` for those scans.
 the `@cloudflare/sandbox` dependency). Environments without the binding degrade
 gracefully: the job records `inconclusive` with a "sandbox not configured"
 signal instead of failing.
+
+**First deploy**: this feature introduces the Worker's first Durable Object
+migration (`new_sqlite_classes: ["RebuildSandbox"]`). DO migrations cannot ride
+a versioned upload — `wrangler versions upload` (which Workers Builds uses for
+preview branches) fails with error 10211 until the migration has been applied
+once by a full, non-versioned `wrangler deploy`. Expect preview builds of the
+introducing branch to fail; the production deploy applies the migration and
+subsequent version uploads (which then carry no _new_ migration) succeed.
+Building the container image also requires Docker in the deploy environment.
