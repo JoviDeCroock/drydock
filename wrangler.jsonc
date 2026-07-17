@@ -32,30 +32,13 @@
 			"binding": "LOADER"
 		}
 	],
-	// Rebuild-attestation container (opt-in via the `rebuild-attestation`
-	// Flagship flag). Disposable, credential-free, deny-by-default egress; see
-	// server/lib/rebuild-sandbox.ts and docs/rebuild-attestation.md.
-	"containers": [
-		{
-			"class_name": "RebuildSandbox",
-			"image": "./container/Dockerfile",
-			"max_instances": 5
-		}
-	],
-	"durable_objects": {
-		"bindings": [
-			{
-				"name": "REBUILD_SANDBOX",
-				"class_name": "RebuildSandbox"
-			}
-		]
-	},
-	"migrations": [
-		{
-			"tag": "v1",
-			"new_sqlite_classes": ["RebuildSandbox"]
-		}
-	],
+	// The rebuild-attestation container config (containers + REBUILD_SANDBOX
+	// Durable Object binding + its migration) is intentionally NOT here yet:
+	// a Durable Object migration cannot ride the versioned uploads Workers
+	// Builds performs, so it lands in a separate infra change applied by a
+	// one-time non-versioned `wrangler deploy` (with Docker available for the
+	// image build). Until then the binding is absent and rebuild jobs resolve
+	// to `inconclusive`. See docs/rebuild-attestation.md.
 	"d1_databases": [
 		{
 			"binding": "DB",

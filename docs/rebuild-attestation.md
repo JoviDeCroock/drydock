@@ -120,17 +120,37 @@ the row. The report export carries `"rebuildAttestation": null` for those scans.
 
 ## Deployment
 
-`wrangler.jsonc` defines the `RebuildSandbox` container (Durable Object binding
-`REBUILD_SANDBOX`, image `container/Dockerfile` pinned to the same version as
-the `@cloudflare/sandbox` dependency). Environments without the binding degrade
-gracefully: the job records `inconclusive` with a "sandbox not configured"
-signal instead of failing.
+The feature ships in two stages because a container needs a Durable Object
+class as its control plane, and DO migrations cannot ride the versioned
+uploads Workers Builds performs (`wrangler versions upload` fails with error
+10211 for any version that carries an unapplied migration):
 
-**First deploy**: this feature introduces the Worker's first Durable Object
-migration (`new_sqlite_classes: ["RebuildSandbox"]`). DO migrations cannot ride
-a versioned upload — `wrangler versions upload` (which Workers Builds uses for
-preview branches) fails with error 10211 until the migration has been applied
-once by a full, non-versioned `wrangler deploy`. Expect preview builds of the
-introducing branch to fail; the production deploy applies the migration and
-subsequent version uploads (which then carry no _new_ migration) succeed.
-Building the container image also requires Docker in the deploy environment.
+1. **Feature code** (this layer): everything including the `RebuildSandbox`
+   class export, with **no** container/DO config in `wrangler.jsonc`.
+   Versioned uploads stay green. `env.REBUILD_SANDBOX` is absent, so if the
+   flag is turned on early the job records `inconclusive` with a "sandbox not
+   configured" signal instead of failing.
+2. **Container infra** (config-only follow-up): the exact block to add to
+   `wrangler.jsonc` (same convention as the detonation prototype, PR #472):
+
+   ```jsonc
+   "containers": [
+     {
+       "class_name": "RebuildSandbox",
+       "image": "./container/Dockerfile",
+       "max_instances": 5
+     }
+   ],
+   "durable_objects": {
+     "bindings": [{ "name": "REBUILD_SANDBOX", "class_name": "RebuildSandbox" }]
+   },
+   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RebuildSandbox"] }],
+   ```
+
+   This change must be applied by a one-time non-versioned `wrangler deploy`
+   run with Docker available — the image (`container/Dockerfile`, pinned to
+   the same version as the `@cloudflare/sandbox` dependency) is built at
+   deploy time, which the Workers Builds pipeline does not support. Once the
+   migration is applied, subsequent versioned uploads carry no _new_ migration
+   and succeed again. If the detonation prototype's container lands too, one
+   deploy can provision both under the same migration tag.
