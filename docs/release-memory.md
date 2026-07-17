@@ -31,6 +31,12 @@ migration; it lives in `summaryJson`), returned on `ScanResult`, included in
 the digested report payload, and exported by `report.json` as an additive
 optional field (`null` for scans that predate it).
 
+Completion email and Slack notifications surface the same context. They lead
+with release-delta risk (rather than whole-package artifact risk) and say when
+the profile matches, is a subset of, or has diverged from the prior approved
+release. This keeps recurring package-context findings from arriving as an
+unexplained high-risk alert while preserving the recorded risk and findings.
+
 ## It never changes risk
 
 Release memory is **advisory display context only**. It does not modify

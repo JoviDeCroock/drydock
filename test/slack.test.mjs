@@ -213,6 +213,8 @@ describe("renderSlackMessage", () => {
       source: "npm staged publish",
       risk: "high",
       findingsSummary: "3 findings (2 on the release diff)",
+      releaseMemory:
+        "Finding profile matches v1.1.0; the same deterministic findings were already reviewed and published.",
       dashboardUrl: "https://drydock.test/dashboard/scans/scan_1",
     });
 
@@ -224,6 +226,8 @@ describe("renderSlackMessage", () => {
     expect(serialized).toContain("npm staged publish");
     expect(serialized).toContain("high");
     expect(serialized).toContain("3 findings (2 on the release diff)");
+    expect(serialized).toContain("Release memory");
+    expect(serialized).toContain("Finding profile matches v1.1.0");
     expect(serialized).toContain("https://drydock.test/dashboard/scans/scan_1");
   });
 

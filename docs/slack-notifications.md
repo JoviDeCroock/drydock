@@ -99,7 +99,10 @@ renders one Block Kit message (`renderSlackMessage`), and POSTs it with
 `chat.postMessage`. It is isolated from email: a missing connection or a failing
 post only records a `notification_failed` event and **never throws**, so it
 cannot block scan completion or gate processing. Slack delivery is decoupled from
-email recipients — it still fires when no email recipients resolve.
+email recipients — it still fires when no email recipients resolve. Completed
+staged-publish notifications report release-delta risk and include release-memory
+context when a prior approved profile exists; the underlying artifact risk and
+deterministic findings remain unchanged.
 
 `postSlackMessage` (`server/lib/slack.ts`) is self-contained and best-effort:
 Slack returns HTTP 200 with `{ ok: false, error }` for app errors (keyed off
