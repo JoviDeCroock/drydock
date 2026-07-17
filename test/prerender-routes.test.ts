@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { isGeneratedIndexRoute, isPrerenderedRoute, prerender } from "../src";
-import { docsPageSeo, getPageSeoMetadata, homePageSeo, privacyPageSeo } from "../src/lib/seo";
+import {
+  docsPageSeo,
+  getPageSeoMetadata,
+  homePageSeo,
+  packageDiffSeo,
+  privacyPageSeo,
+} from "../src/lib/seo";
 
 describe("isPrerenderedRoute", () => {
   it("matches generated public prerender pages with or without canonical trailing slashes", () => {
@@ -44,7 +50,15 @@ describe("page SEO metadata", () => {
     expect(getPageSeoMetadata("/docs/")).toBe(docsPageSeo);
     expect(getPageSeoMetadata("/privacy")).toBe(privacyPageSeo);
     expect(getPageSeoMetadata("/privacy/")).toBe(privacyPageSeo);
+    expect(getPageSeoMetadata("/diff")).toEqual(packageDiffSeo());
     expect(getPageSeoMetadata("/login")).toBeUndefined();
     expect(getPageSeoMetadata("/register")).toBeUndefined();
+  });
+
+  it("builds canonical metadata for a package diff detail page", () => {
+    expect(packageDiffSeo("@preact/signals", "1.0.0", "2.0.0")).toMatchObject({
+      title: "@preact/signals 1.0.0 → 2.0.0 | Drydock package diff",
+      path: "/diff/@preact/signals/1.0.0/2.0.0",
+    });
   });
 });

@@ -80,6 +80,8 @@ For npm registry tarballs, consumer install lifecycle hooks are `preinstall`, `i
 
 Every non-auth `/api/*` endpoint requires a Better Auth session and organization resolution. Reads and writes for scans, reports, npm connections, Slack installs, release targets, workflow gates, and settings must check organization ownership. UI state is not an authority; server routes make all access-control decisions.
 
+One deliberate exception: the `/api/public/v1/package-diff` endpoints are anonymous by design. They serve only data derived from the canonical public npm registry (never organization resources), attach no credentials to any fetch, return 404 when `NPM_REGISTRY` is configured to a custom origin, persist no review data to D1, and never run AI review. Their abuse controls are expiring per-IP D1 rate-limit buckets enforced before any validation or fetch, a shared computation budget for cold diff and file requests, anonymous colo caching of published tarball bytes, versioned colo/KV caching of computed results, and the sandbox's archive caps. Any new public endpoint must document the same properties here or require a session.
+
 ## Browser response headers
 
 Production responses should keep conservative security headers: no package-provided active content, no cross-origin credential leakage, and no relaxed CSP/CORS decisions for convenience.
