@@ -10,6 +10,12 @@ declare global {
       SCAN_ARTIFACT_READS_DISABLED?: string;
       COMPARE_CACHE?: KVNamespace;
       SCAN_QUEUE?: Queue<import("./lib/scan-job").QueueMessage>;
+      // Rebuild-attestation container namespace. Absent in tests and in
+      // environments without containers; the rebuild job then resolves to an
+      // inconclusive attestation instead of failing the scan.
+      REBUILD_SANDBOX?: DurableObjectNamespace<
+        import("./lib/rebuild-sandbox").RebuildSandbox
+      >;
       NPM_REGISTRY: string;
       ALLOW_INSECURE_LOCAL_REGISTRY?: string;
       // `.dev.vars`-only escape hatch (see securityHeadersDisabled). Never set in

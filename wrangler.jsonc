@@ -32,6 +32,30 @@
 			"binding": "LOADER"
 		}
 	],
+	// Rebuild-attestation container (opt-in via the `rebuild-attestation`
+	// Flagship flag). Disposable, credential-free, deny-by-default egress; see
+	// server/lib/rebuild-sandbox.ts and docs/rebuild-attestation.md.
+	"containers": [
+		{
+			"class_name": "RebuildSandbox",
+			"image": "./container/Dockerfile",
+			"max_instances": 5
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "REBUILD_SANDBOX",
+				"class_name": "RebuildSandbox"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": ["RebuildSandbox"]
+		}
+	],
 	"d1_databases": [
 		{
 			"binding": "DB",

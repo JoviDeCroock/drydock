@@ -11,6 +11,7 @@ import type {
   StagedDetails,
 } from "./adapters/types";
 import type { IntentEnvelope } from "./intent-envelope";
+import type { RebuildAttestation } from "./rebuild-attestation";
 import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
 import {
   computeReleaseConsistency,
@@ -248,6 +249,10 @@ export interface PersistResultsArgs<TInput, TBroker extends AdapterBroker> {
   // Advisory source-binding classification computed by the pipeline; persisted
   // with the scan but never allowed to influence risk or findings.
   intentEnvelope: IntentEnvelope;
+  // Opt-in rebuild attestation, persisted as a pending plan the deferred
+  // rebuild job later resolves. Null when the flag is off or the scan is not
+  // rebuildable. Advisory only, like the envelope.
+  rebuildAttestation: RebuildAttestation | null;
 }
 
 export interface PersistedScanOutcome {
@@ -290,6 +295,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     riskSummary: args.riskSummary,
     releaseConsistency: args.releaseConsistency,
     intentEnvelope: args.intentEnvelope,
+    rebuildAttestation: args.rebuildAttestation,
     safety,
   };
 
@@ -363,6 +369,10 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
       baseline: baseline.baseline,
       releaseConsistency: args.releaseConsistency,
       intentEnvelope: args.intentEnvelope,
+      // Unlike the envelope this is mutable state: the deferred rebuild job
+      // replaces the pending record with its outcome. It therefore lives only
+      // in the summary blob, not in the frozen report.json artifact.
+      rebuildAttestation: args.rebuildAttestation,
       safety: result.safety,
     },
     ai: args.aiFindings,

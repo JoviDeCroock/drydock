@@ -24,6 +24,9 @@ export interface PersistedSummary {
   // predate the feature or may be malformed; readers re-validate through
   // `normalizeIntentEnvelope`.
   intentEnvelope?: unknown;
+  // Opt-in rebuild-attestation record; same untyped-then-normalize contract
+  // via `normalizeRebuildAttestation`.
+  rebuildAttestation?: unknown;
 }
 
 export type PersistedFinding = PersistedScanDetail["findings"][number];

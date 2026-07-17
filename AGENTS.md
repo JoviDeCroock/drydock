@@ -6,6 +6,7 @@
   - `routes/scans.ts` — `POST /api/v1/scans { stageId }`, `GET /api/v1/scans`, `GET /api/v1/scans/:id`.
   - `routes/github-webhooks.ts` — public signed GitHub App webhook endpoint. Persists `deployment_protection_rule` deliveries into `github_workflow_gates`; see `docs/workflow-gates.md`, `docs/npm-workflow-gate.md`, `docs/pypi-workflow-gate.md`, and `docs/vscode-workflow-gate.md`.
   - `lib/sandbox.ts` — Dynamic Worker that downloads/parses package artifacts. `NpmStageGateway` is the only npm-token egress.
+  - `lib/rebuild-sandbox.ts` / `lib/rebuild-steps.ts` / `lib/rebuild-job.ts` — opt-in rebuild attestation: disposable container rebuild + byte comparison; see `docs/rebuild-attestation.md`.
   - `lib/review.ts` — deterministic findings, package/package.json diffing, risk computation, and shared UI types.
   - `lib/ai-review.ts` — Workers AI reviewer, wired via `scan-pipeline.ts` and on by default behind the `ai-review` Flagship killswitch.
   - `lib/adapters/` — ecosystem-specific registry/artifact behavior for npm, PyPI, VS Code, and workflow gates.
@@ -17,7 +18,7 @@
 
 ## Non-negotiable boundaries
 
-- Package bytes are hostile evidence. Never execute package code, install dependencies, run lifecycle scripts, import modules, run builds, invoke shells, or render package-provided active content.
+- Package bytes are hostile evidence. Never execute package code, install dependencies, run lifecycle scripts, import modules, run builds, invoke shells, or render package-provided active content. Sole exception: the opt-in rebuild attestation executes repository build code inside the disposable, credential-free `RebuildSandbox` container only (see `docs/rebuild-attestation.md`); never in the Worker or the parse sandbox.
 - npm credentials stay outside the sandbox. Only `NpmStageGateway` may attach npm auth, only for allowed staged/metadata/tarball registry endpoints.
 - The AI reviewer is advisory and on by default; the per-organization `ai-review` flag is a killswitch that disables it. It cannot downgrade deterministic findings.
 - D1/Better Auth are required for every non-auth `/api/*` endpoint; resource ownership must be organization-scoped. Sole exception: the anonymous `/api/public/v1/package-diff` endpoints, which serve only public-registry and pkg.pr.new preview data, attach no credentials, and are IP rate-limited (see `docs/security-model.md`).

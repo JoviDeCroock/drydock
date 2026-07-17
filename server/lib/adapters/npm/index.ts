@@ -67,6 +67,7 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
       actorType: d.actorType,
       createdAt: d.createdAt,
       shasum: d.shasum,
+      gitHead: d.gitHead,
     };
   },
 };

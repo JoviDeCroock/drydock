@@ -21,6 +21,7 @@ import {
 import type { WorkflowGateDecision } from "../../../models/github-app";
 import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review-types";
 import { normalizeIntentEnvelope } from "../../../../server/lib/intent-envelope";
+import { normalizeRebuildAttestation } from "../../../../server/lib/rebuild-attestation";
 import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
 import { Alert } from "../../../components/Alert";
 import { Button } from "../../../components/Button";
@@ -125,6 +126,9 @@ export default function ScanDetailPage() {
   // Older scans have no envelope; the normalizer returns null and the section
   // is simply not rendered.
   const intentEnvelope = useComputed(() => normalizeIntentEnvelope(summary.value.intentEnvelope));
+  const rebuildAttestation = useComputed(() =>
+    normalizeRebuildAttestation(summary.value.rebuildAttestation),
+  );
 
   const diffEntries = useComputed<DiffEntry[]>(() => {
     const detail = model.detail.value;
@@ -316,7 +320,9 @@ export default function ScanDetailPage() {
 
             <ReleaseConsistencyNotice value={summary.value.releaseConsistency} />
 
-            {envelope ? <IntentEnvelopeSection envelope={envelope} /> : null}
+            {envelope ? (
+              <IntentEnvelopeSection envelope={envelope} rebuild={rebuildAttestation.value} />
+            ) : null}
 
             {detail.scan.packageName ? (
               <div class="flex flex-col gap-2 border-t border-border pt-3">

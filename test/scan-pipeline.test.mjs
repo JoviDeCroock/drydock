@@ -328,6 +328,116 @@ describe("scan pipeline baseline selection", () => {
     expect(result.intentEnvelope).toEqual({ tier: "absent", repository: null, signals: [] });
   });
 
+  test("persists a pending rebuild plan when the opt-in flag is enabled", async () => {
+    const gitHead = "b".repeat(40);
+    stagedMock.fetchStagedPublishDetails.mockResolvedValue({
+      id: "stage-beta-123",
+      packageName: "@scope/pkg",
+      version: "2.0.0-beta.3",
+      tag: "beta",
+      access: "public",
+      actor: "octocat",
+      actorType: "user",
+      createdAt: "2026-03-16T09:00:00.000Z",
+      shasum: "4f7f5f1d5bcf2f72f6e4d6c4f3b2812d8a2f6c19",
+      packageJson: null,
+      gitHead,
+    });
+    sandboxMock.downloadInSandbox.mockResolvedValue({
+      files: [
+        {
+          path: "package.json",
+          size: 96,
+          sha256: "staged-pkg",
+          flags: [],
+          textSample: JSON.stringify({
+            name: "@scope/pkg",
+            version: "2.0.0-beta.3",
+            repository: { type: "git", url: "git+https://github.com/scope/pkg.git" },
+          }),
+        },
+      ],
+      packageJson: { name: "@scope/pkg", version: "2.0.0-beta.3" },
+    });
+    // Opt-in: the default is false, so only an explicit organization rule
+    // (Flagship returning true) enables the rebuild.
+    const getBooleanValue = vi.fn(async (flag, defaultValue) =>
+      flag === "rebuild-attestation" ? true : defaultValue,
+    );
+    const context = { ...baseContext, env: { ...baseContext.env, FLAGS: { getBooleanValue } } };
+
+    const result = await runScanPipeline(context, npmAdapter, {
+      scanId: "scan_rebuild_pending",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
+
+    expect(getBooleanValue).toHaveBeenCalledWith(
+      "rebuild-attestation",
+      false,
+      expect.objectContaining({ organizationId: "org_1" }),
+    );
+    expect(result.rebuildAttestation).toMatchObject({
+      status: "pending",
+      plan: {
+        repository: "https://github.com/scope/pkg",
+        refs: [
+          { kind: "git-head", value: gitHead },
+          { kind: "version-tag", value: "v2.0.0-beta.3" },
+          { kind: "version-tag", value: "2.0.0-beta.3" },
+        ],
+        expectedShasum: "4f7f5f1d5bcf2f72f6e4d6c4f3b2812d8a2f6c19",
+      },
+    });
+    expect(dbMock.persistScan.mock.calls[0]?.[1].summary.rebuildAttestation).toEqual(
+      result.rebuildAttestation,
+    );
+  });
+
+  test("rebuild attestation stays off without the opt-in flag", async () => {
+    sandboxMock.downloadInSandbox.mockResolvedValue({
+      files: [
+        {
+          path: "package.json",
+          size: 96,
+          sha256: "staged-pkg",
+          flags: [],
+          textSample: JSON.stringify({
+            name: "@scope/pkg",
+            version: "2.0.0-beta.3",
+            repository: "github:scope/pkg",
+          }),
+        },
+      ],
+      packageJson: { name: "@scope/pkg", version: "2.0.0-beta.3" },
+    });
+    // Flagship present but returning the default (false) — and the AI killswitch
+    // stays on its own default.
+    const getBooleanValue = vi.fn(async (_flag, defaultValue) => defaultValue);
+    aiReviewMock.runSelectiveAiReview.mockResolvedValue({
+      review: {
+        status: "complete",
+        risk: "low",
+        releaseAssessment: "nothing_unusual",
+        summary: "Nothing unusual in the staged release.",
+        findings: [],
+        requiresManualReview: false,
+        model: "@cf/moonshotai/kimi-k2.7-code",
+      },
+      usage: null,
+    });
+    const context = { ...baseContext, env: { ...baseContext.env, FLAGS: { getBooleanValue } } };
+
+    const result = await runScanPipeline(context, npmAdapter, {
+      scanId: "scan_rebuild_default_off",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
+
+    expect(result.rebuildAttestation).toBeNull();
+    expect(dbMock.persistScan.mock.calls[0]?.[1].summary.rebuildAttestation).toBeNull();
+  });
+
   test("persists deterministic results when enabled AI review fails", async () => {
     aiReviewMock.runSelectiveAiReview.mockRejectedValue(new Error("workers ai unavailable"));
     const context = {

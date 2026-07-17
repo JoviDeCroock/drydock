@@ -9,6 +9,7 @@ export type {
 import type { AiReview } from "./lib/ai-review";
 import type { ReleaseConsistency } from "./lib/release-memory";
 import type { IntentEnvelope } from "./lib/intent-envelope";
+import type { RebuildAttestation } from "./lib/rebuild-attestation";
 import type { ScanRiskBreakdown } from "./lib/risk";
 import type {
   DiffEntry,
@@ -24,6 +25,13 @@ export type {
   IntentEnvelopeSignal,
   IntentEnvelopeTier,
 } from "./lib/intent-envelope";
+export type {
+  RebuildAttestation,
+  RebuildAttestationStatus,
+  RebuildComparison,
+  RebuildPlan,
+  RebuildRef,
+} from "./lib/rebuild-attestation";
 
 export type Bindings = Cloudflare.Env;
 
@@ -61,6 +69,9 @@ export interface ScanResult {
   releaseConsistency: ReleaseConsistency;
   // Advisory source-binding classification; never feeds risk or findings.
   intentEnvelope: IntentEnvelope;
+  // Opt-in rebuild attestation; pending at scan completion, resolved by the
+  // deferred rebuild job. Null when disabled or not rebuildable. Advisory only.
+  rebuildAttestation: RebuildAttestation | null;
   safety: {
     tokenExposedToSandbox: boolean;
     directSandboxNetwork: boolean;

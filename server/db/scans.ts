@@ -223,6 +223,41 @@ export async function discardScanAttempt(db: AppDb, scanId: string, organization
 }
 
 /**
+ * Replace `summary.rebuildAttestation` on a completed scan. The rebuild job is
+ * the only writer after scan completion, so a read-merge-write on the summary
+ * blob is safe; every other summary key is preserved as persisted.
+ */
+export async function updateScanRebuildAttestation(
+  db: AppDb,
+  scanId: string,
+  organizationId: string,
+  rebuildAttestation: unknown,
+) {
+  const rows = await db
+    .select({ summaryJson: scans.summaryJson })
+    .from(scans)
+    .where(
+      and(
+        eq(scans.id, scanId),
+        eq(scans.organizationId, organizationId),
+        eq(scans.status, "complete"),
+      ),
+    )
+    .limit(1);
+  if (!rows.length) return false;
+  const summary = rows[0].summaryJson;
+  const merged =
+    summary && typeof summary === "object" && !Array.isArray(summary)
+      ? { ...(summary as Record<string, unknown>), rebuildAttestation }
+      : { rebuildAttestation };
+  await db
+    .update(scans)
+    .set({ summaryJson: merged, updatedAt: new Date() })
+    .where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)));
+  return true;
+}
+
+/**
  * Remove every scan attached to a gate. Used to discard a partially-completed
  * review batch before it is re-run, so a retry does not leave orphaned
  * per-package scans behind (cascades to scan_files / scan_findings). Safe only

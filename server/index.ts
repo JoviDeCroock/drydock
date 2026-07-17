@@ -19,9 +19,11 @@ import {
   durationMsSince,
   emitOperationalEvent,
 } from "./lib/observability";
+import { executeRebuildAttestationJob } from "./lib/rebuild-job";
 import {
   classifyScanError,
   executeScanJob,
+  isRebuildAttestationMessage,
   isWorkflowGateMessage,
   MAX_SCAN_JOB_ATTEMPTS,
   retryDelaySeconds,
@@ -436,6 +438,13 @@ async function pruneStaleAuditEvents(env: Cloudflare.Env) {
   }
 }
 
+// Rebuild-attestation container plumbing. The Durable Object class backing the
+// `REBUILD_SANDBOX` binding must be exported from the deploy entrypoint, and
+// the Sandbox SDK requires its ContainerProxy WorkerEntrypoint alongside it
+// (it powers the egress interception that enforces `allowedHosts`).
+export { RebuildSandbox } from "./lib/rebuild-sandbox";
+export { ContainerProxy } from "@cloudflare/sandbox";
+
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
@@ -455,6 +464,23 @@ export default {
   async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
     for (const message of batch.messages) {
       const messageStartedAtMs = Date.now();
+      if (isRebuildAttestationMessage(message.body)) {
+        // Single-shot: the job persists every outcome (including failures) as
+        // an inconclusive attestation, so there is nothing useful to retry.
+        const rebuildMessage = message.body;
+        try {
+          await executeRebuildAttestationJob(env, rebuildMessage);
+        } catch (err) {
+          emitOperationalEvent("error", "rebuild.queue.message_failed", {
+            scanId: rebuildMessage.scanId,
+            organizationId: rebuildMessage.organizationId,
+            attempt: message.attempts,
+            durationMs: durationMsSince(messageStartedAtMs),
+            error: describeOperationalError(err),
+          });
+        }
+        continue;
+      }
       if (isWorkflowGateMessage(message.body)) {
         const gateMessage = message.body;
         try {

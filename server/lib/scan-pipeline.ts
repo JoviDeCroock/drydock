@@ -12,6 +12,7 @@ import {
   type WorkflowGateIntent,
 } from "./intent-envelope";
 import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
+import { computeRebuildPlan, type RebuildAttestation } from "./rebuild-attestation";
 import {
   computeDiff,
   mergeAiFindings,
@@ -111,6 +112,19 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       }),
     });
 
+    // Opt-in rebuild attestation: persist a pending plan when the organization
+    // enabled the flag and the scan is rebuildable. The actual rebuild runs as
+    // a deferred queue job (`rebuild-job.ts`) after the scan completes.
+    const rebuildAttestation = await maybeComputeRebuildAttestation({
+      env,
+      identity,
+      ecosystem: adapter.id,
+      gateScan: Boolean(input.gateContext),
+      repository: intentEnvelope.repository,
+      details: resolved.staged.details,
+      manifestText: diff.stagedManifestText,
+    });
+
     const { result, persisted } = await persistResults({
       env,
       db,
@@ -126,6 +140,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       riskSummary,
       releaseConsistency,
       intentEnvelope,
+      rebuildAttestation,
     });
 
     await recordCompletion({
@@ -153,6 +168,61 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
   } finally {
     await broker.dispose();
   }
+}
+
+interface RebuildAttestationArgs {
+  env: Cloudflare.Env;
+  identity: PipelineIdentity;
+  ecosystem: string;
+  gateScan: boolean;
+  repository: string | null;
+  details: unknown;
+  manifestText: string | null;
+}
+
+// Rebuild attestation is opt-in per organization via the Cloudflare Flagship
+// `rebuild-attestation` flag (default off — the inverse of the `ai-review`
+// killswitch). v1 covers staged npm scans only: gate scans already bind the
+// artifact to a workflow run, and their acquisition path has no staged shasum.
+async function maybeComputeRebuildAttestation(
+  args: RebuildAttestationArgs,
+): Promise<RebuildAttestation | null> {
+  if (args.gateScan || args.ecosystem !== "npm") return null;
+  const enabled = args.env.FLAGS
+    ? await args.env.FLAGS.getBooleanValue("rebuild-attestation", false, {
+        targetingKey: args.identity.organizationId,
+        organizationId: args.identity.organizationId,
+      })
+    : false;
+  if (!enabled) return null;
+
+  // `details` is the adapter's staged metadata; for npm this is
+  // StagedPublishDetails. Read defensively — the plan validates every field.
+  const details = (args.details ?? null) as {
+    gitHead?: unknown;
+    shasum?: unknown;
+    packageName?: unknown;
+    version?: unknown;
+  } | null;
+  const plan = computeRebuildPlan({
+    ecosystem: args.ecosystem,
+    repository: args.repository,
+    gitHead: typeof details?.gitHead === "string" ? details.gitHead : null,
+    packageName: typeof details?.packageName === "string" ? details.packageName : null,
+    version: typeof details?.version === "string" ? details.version : null,
+    shasum: typeof details?.shasum === "string" ? details.shasum : null,
+    manifestText: args.manifestText,
+  });
+  if (!plan) return null;
+  return {
+    status: "pending",
+    plan,
+    ref: null,
+    toolchain: null,
+    comparison: null,
+    signals: [],
+    completedAt: null,
+  };
 }
 
 interface AiReviewArgs {

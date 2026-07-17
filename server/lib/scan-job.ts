@@ -5,6 +5,7 @@ import { npmAdapter } from "./adapters/npm";
 import { errorMessage } from "./errors";
 import { notifyScanCompletion } from "./notify";
 import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
+import { executeRebuildAttestationJob, type RebuildAttestationQueueMessage } from "./rebuild-job";
 import { runScanPipeline } from "./scan-pipeline";
 import { sandboxErrorDetail } from "./sandbox";
 import type { ScanInput } from "../types";
@@ -28,10 +29,19 @@ export interface WorkflowGateQueueMessage {
   gateId: string;
 }
 
-export type QueueMessage = ScanQueueMessage | WorkflowGateQueueMessage;
+export type QueueMessage =
+  | ScanQueueMessage
+  | WorkflowGateQueueMessage
+  | RebuildAttestationQueueMessage;
 
 export function isWorkflowGateMessage(message: QueueMessage): message is WorkflowGateQueueMessage {
   return "kind" in message && message.kind === "workflow_gate";
+}
+
+export function isRebuildAttestationMessage(
+  message: QueueMessage,
+): message is RebuildAttestationQueueMessage {
+  return "kind" in message && message.kind === "rebuild_attestation";
 }
 
 export const MAX_SCAN_JOB_ATTEMPTS = 3;
@@ -110,6 +120,23 @@ export async function executeScanJob(
           outcome: "complete",
         }),
       );
+    }
+    // Opt-in rebuild attestation runs as its own deferred job: container
+    // rebuilds take minutes and must never hold up scan completion. The queue
+    // path gets retries + DLQ; the waitUntil fallback covers local dev.
+    if (result.rebuildAttestation?.status === "pending") {
+      const rebuildMessage: RebuildAttestationQueueMessage = {
+        kind: "rebuild_attestation",
+        organizationId: message.organizationId,
+        scanId: message.scanId,
+      };
+      if (env.SCAN_QUEUE) {
+        await env.SCAN_QUEUE.send(rebuildMessage);
+      } else {
+        executionCtx.waitUntil(
+          executeRebuildAttestationJob(env, rebuildMessage, db).then(() => {}),
+        );
+      }
     }
     return result;
   } catch (err) {

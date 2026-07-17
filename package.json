@@ -33,6 +33,7 @@
     "verify": "node scripts/verify.mjs"
   },
   "dependencies": {
+    "@cloudflare/sandbox": "^0.12.3",
     "@fontsource-variable/geist": "^5.2.9",
     "@fontsource-variable/geist-mono": "^5.2.8",
     "@preact/signals": "^2.9.2",

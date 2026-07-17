@@ -19,6 +19,12 @@ export interface StagedPublishItem {
 
 export interface StagedPublishDetails extends StagedPublishItem {
   packageJson: PackageJsonSummary | null;
+  /**
+   * Commit SHA the npm CLI recorded at publish time (`gitHead` on the staged
+   * version manifest), when the publisher ran from a git checkout. This is the
+   * rebuild-attestation anchor; it is package-claimed metadata, not verified.
+   */
+  gitHead: string | null;
 }
 
 export interface StagedPublishesPage {
@@ -182,6 +188,7 @@ export function parseStagedPublishDetails(
   return {
     ...item,
     packageJson: extractPackageJsonSummary(root, item),
+    gitHead: extractGitHead(root, item),
   };
 }
 
@@ -257,6 +264,30 @@ function extractPackageJsonSummary(
 function readVersionManifest(root: Record<string, unknown>, version: string | null) {
   if (!version || !isRecord(root.versions)) return null;
   return root.versions[version];
+}
+
+// A git object id: 40-hex (SHA-1) or 64-hex (SHA-256 repositories). Anything
+// else — branch names, refs, hostile strings — is dropped rather than carried.
+const GIT_HEAD_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+
+function extractGitHead(root: Record<string, unknown>, item: StagedPublishItem): string | null {
+  const byVersion = readVersionManifest(root, item.version);
+  const candidates = [
+    root.manifest,
+    root.packageJson,
+    root.package_json,
+    root.versionManifest,
+    byVersion,
+    isRecord(root.metadata) ? readVersionManifest(root.metadata, item.version) : null,
+    isRecord(root.packument) ? readVersionManifest(root.packument, item.version) : null,
+    root,
+  ];
+  for (const candidate of candidates) {
+    if (!isRecord(candidate)) continue;
+    const gitHead = readString(candidate.gitHead)?.trim().toLowerCase();
+    if (gitHead && GIT_HEAD_RE.test(gitHead)) return gitHead;
+  }
+  return null;
 }
 
 function readPackageJsonSummary(
