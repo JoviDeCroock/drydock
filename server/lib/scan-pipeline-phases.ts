@@ -288,6 +288,16 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     generatedAt,
   });
 
+  const completedAiFindings =
+    args.aiFindings.status === "complete" ? args.aiFindings.findings : [];
+
+  // AI findings count as context (no releaseDelta) in the persisted summary so
+  // the list view shows the true total rather than showing 0 when AI-only.
+  const riskSummaryWithAi: ScanRiskBreakdown = {
+    ...args.riskSummary,
+    contextFindingCount: args.riskSummary.contextFindingCount + completedAiFindings.length,
+  };
+
   const persisted = await persistScan(db, {
     id: identity.scanId,
     stageId: identity.stageId,
@@ -307,7 +317,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
       },
       packageJsonDiff: diff.manifestDiff,
       diff: diff.fileDiff,
-      risk: args.riskSummary,
+      risk: riskSummaryWithAi,
       stagedPublish: findings.redactedDetails,
       baseline: baseline.baseline,
       releaseConsistency: args.releaseConsistency,
@@ -318,8 +328,9 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     previousFiles: findings.redactedPreviousFiles,
     diff: diff.fileDiff,
     findings: findings.ruleFindings,
+    aiFindings: completedAiFindings,
     codePatternSet: adapter.codePatternSet,
-    riskSummary: args.riskSummary,
+    riskSummary: riskSummaryWithAi,
     report: { version: reportPayload.version, digest: reportDigest },
     artifacts,
   });

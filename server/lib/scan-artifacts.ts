@@ -811,6 +811,39 @@ function parseReportFindingsObject(
     }
   }
 
+  // AI findings live in aiFindings.findings inside the same report. Parse them
+  // after rule findings so their IDs continue the index sequence and are stable
+  // across re-reads. AI findings carry no diff annotation (releaseDelta = false,
+  // diffStatus falls back to live computation in annotateFindingsWithDiffStatus).
+  const rawAiFindings = (parsed?.aiFindings as { findings?: unknown } | null)?.findings;
+  if (Array.isArray(rawAiFindings)) {
+    for (let i = 0; i < rawAiFindings.length; i += 1) {
+      const entry = rawAiFindings[i];
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+      const item = entry as Record<string, unknown>;
+      if (
+        typeof item.severity !== "string" ||
+        typeof item.file !== "string" ||
+        typeof item.evidence !== "string" ||
+        typeof item.reason !== "string"
+      ) {
+        continue;
+      }
+      findings.push({
+        id: artifactFindingId(scanId, findings.length),
+        scanId,
+        severity: item.severity,
+        file: item.file,
+        evidence: item.evidence,
+        reason: item.reason,
+        line: null,
+        source: "ai",
+        ruleId: null,
+        ruleVersion: null,
+      });
+    }
+  }
+
   return { findings, annotations };
 }
 

@@ -59,7 +59,7 @@ export function buildReportExport(detail: ScanDetail) {
     releaseConsistency: normalizeReleaseConsistency(summary.releaseConsistency),
     packageJsonDiff: summary.packageJsonDiff ?? null,
     diff: summary.diff ?? null,
-    findings: [...detail.findings].sort(compareFindings).map((finding) => ({
+    findings: [...detail.findings].filter((f) => f.source !== "ai").sort(compareFindings).map((finding) => ({
       severity: finding.severity,
       file: finding.file,
       line: finding.line ?? null,

@@ -22,6 +22,7 @@ import {
   type ScanArtifactFileRow,
   type ScanArtifactMetadata,
 } from "../lib/scan-artifacts";
+import type { AiFinding } from "../lib/ai-review-types";
 import type { AppDb } from "./client";
 import { recordScanEvent, redactScanEventForClient } from "./events";
 import { githubWorkflowGates, scanEvents, scanFiles, scanFindings, scans } from "./schema";
@@ -41,6 +42,8 @@ export interface PersistedScanInput {
   previousFiles?: FileRecord[];
   diff: DiffEntry[];
   findings: Finding[];
+  /** AI-sourced findings to persist alongside deterministic rule findings. */
+  aiFindings?: AiFinding[];
   codePatternSet?: CodePatternSet;
   riskSummary?: ScanRiskBreakdown;
   report?: { version: number; digest: string };
@@ -247,7 +250,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
       textSample: file.textSample,
     };
   });
-  const findingRows = input.findings.map((finding) => ({
+  const ruleRows = input.findings.map((finding) => ({
     id: crypto.randomUUID(),
     scanId: input.id,
     severity: finding.severity,
@@ -259,6 +262,19 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     ruleId: finding.ruleId ?? null,
     ruleVersion: finding.ruleVersion ?? null,
   }));
+  const aiRows = (input.aiFindings ?? []).map((finding) => ({
+    id: crypto.randomUUID(),
+    scanId: input.id,
+    severity: finding.severity,
+    file: finding.file,
+    evidence: finding.evidence,
+    reason: finding.reason,
+    line: null as number | null,
+    source: "ai",
+    ruleId: null as string | null,
+    ruleVersion: null as string | null,
+  }));
+  const findingRows = [...ruleRows, ...aiRows];
   const annotatedFindings = annotateFindingsWithDiffStatus(findingRows, input.diff, {
     previousFiles: input.previousFiles ?? [],
     stagedFiles: input.files,

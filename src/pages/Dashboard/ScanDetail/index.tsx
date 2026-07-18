@@ -153,8 +153,18 @@ export default function ScanDetailPage() {
     filterDiffEntries(diffEntries.value, fileFilter.value, changedFilesOnly.value),
   );
 
+  // AI findings are rendered by the AI review section (from scan.aiJson) and
+  // must not appear again in the rule-findings workbench. Filter them out here
+  // so the risk-signals index, file-tree counts, and diff annotations only show
+  // deterministic rule findings.
+  const ruleDetail = useComputed(() => {
+    const d = model.detail.value;
+    if (!d) return null;
+    return { ...d, findings: d.findings.filter((f) => f.source !== "ai") };
+  });
+
   const findingsWithDiffStatus = useFindingsWithDiff(
-    model.detail,
+    ruleDetail,
     model.compare,
     diffEntries,
     model.isDefaultComparison,
@@ -199,7 +209,7 @@ export default function ScanDetailPage() {
   const compareError = model.compareError.value;
   const selectedVersion = model.selectedVersion.value;
   const compare = model.compare.value;
-  const hasRuleFindings = Boolean(detail?.findings.length);
+  const hasRuleFindings = Boolean(ruleDetail.value?.findings.length);
   const workbenchGridClass = "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-4";
 
   const isWorkflowGate = model.isWorkflowGate.value;
