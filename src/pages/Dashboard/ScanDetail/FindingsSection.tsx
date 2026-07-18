@@ -7,9 +7,10 @@ import { EmptyLine, Muted, SectionLabel } from "../../../components/Typography";
 import type { FindingWithDiffStatus } from "./types";
 
 const DEFAULT_DESCRIPTION =
-  "Deterministic rules scan the full staged artifact. Changed-file signals are pinned to their " +
-  "line in the diff above. Open a file to read them in context; unchanged signals stay here as " +
-  "package context.";
+  "Deterministic rules scan the full staged artifact; assistant-labeled signals are advisory " +
+  "additions from the AI reviewer and never replace them. Changed-file signals are pinned to " +
+  "their line in the diff above. Open a file to read them in context; unchanged signals stay " +
+  "here as package context.";
 
 export function RiskSignalsSection({
   findings,
@@ -99,6 +100,7 @@ function FindingGrid({
               diffStatus={diffStatus === "unknown" ? null : diffStatus}
               diffLabel={findingDiffStatusLabel(diffStatus)}
               ruleId={finding.ruleId}
+              source={finding.source}
               onSelect={onSelect ? () => onSelect(finding.file) : undefined}
             >
               <FindingRow label="evidence" value={finding.evidence} />

@@ -40,6 +40,7 @@ export function FindingCard({
   diffStatus,
   diffLabel,
   ruleId,
+  source,
   onSelect,
   children,
   class: className,
@@ -50,6 +51,9 @@ export function FindingCard({
   diffStatus?: string | null;
   diffLabel?: string | null;
   ruleId?: string | null;
+  // Finding provenance ("rule" | "ai"). Assistant findings carry a badge so
+  // advisory signals stay visually distinct from deterministic rules.
+  source?: string | null;
   // When provided, the filename becomes a button that opens this file in the
   // diff workbench, turning the signal list into an index into the diff.
   onSelect?: () => void;
@@ -68,6 +72,11 @@ export function FindingCard({
           <Badge tone={severityTone(severity)} dot>
             {severity}
           </Badge>
+          {source === "ai" ? (
+            <Badge tone="neutral" class="flex-shrink-0">
+              assistant
+            </Badge>
+          ) : null}
           <FileRef file={file} onSelect={onSelect} />
           {diffStatus ? (
             <Badge tone={statusTone(diffStatus)} class="flex-shrink-0">

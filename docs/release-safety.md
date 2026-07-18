@@ -36,7 +36,11 @@ for the lifecycle behavior behind it.
 - Archive parsing fails closed on traversal, symlinks/hardlinks, malformed
   archives, excessive files, and excessive expanded size.
 - Deterministic findings are authoritative while AI review is unavailable, and AI
-  cannot downgrade deterministic findings when it runs.
+  cannot downgrade deterministic findings when it runs. A completed review's
+  findings persist additively as `scan_findings` rows with `source: "ai"` (and
+  count into `finding_count` / the risk summary), but they never replace, mutate,
+  or re-score a rule finding, and they fold into risk through `combineRisk` — a
+  max — so they can only escalate.
 - AI review fails safe: an enabled review that was attempted but could not complete
   escalates the scan to manual-review risk rather than reading as clean, and a
   near-miss submission is clamped to bounds instead of discarded. See

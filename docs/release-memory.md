@@ -60,7 +60,10 @@ review, which remain specific to the new release.
   instead of failing the scan.
 - The prior scan's rule findings are read from the digest-verified R2
   `report.json` for artifact-backed scans (they are no longer duplicated into
-  `scan_findings`); legacy/degraded scans fall back to the D1 rows.
+  `scan_findings`); legacy/degraded scans fall back to the D1 rows. Both paths
+  keep the profile deterministic-only: AI finding rows (`source: "ai"`) are
+  filtered out so the advisory reviewer's non-deterministic output can never
+  make a routine release read as `diverged`.
 - Old scans lack the field entirely; every reader goes through
   `normalizeReleaseConsistency`, which tolerates absence and malformed blobs.
 - The query is organization-scoped (`scans_org_decision_created_idx` covers

@@ -2,6 +2,7 @@ import { type AppDb, type WorkspaceSession } from "../db/client";
 import { getPriorApprovedScanFindings } from "../db/release-memory";
 import { persistScan } from "../db/scans";
 import type { AiReview } from "./ai-review";
+import { displayedAiResult } from "./ai-review-types";
 import type {
   AcquiredArtifact,
   AdapterBroker,
@@ -24,6 +25,7 @@ import {
   redactJson,
   summarizePackageJsonDiff,
   DETERMINISTIC_RULES_VERSION,
+  type CodePatternSet,
   type DiffEntry,
   type FileRecord,
   type Finding,
@@ -159,6 +161,48 @@ export function scoreRisk(
   return computeScanRiskBreakdown(annotatedFindings, aiFindings);
 }
 
+export interface MergedAiFindings {
+  /** Redacted Finding-shaped records for the completed review's findings. */
+  records: Finding[];
+  /** The same records annotated with diff status + release-delta scope. */
+  annotatedRecords: Array<Finding & FindingDiffAnnotation>;
+}
+
+// Pure: project a completed AI review's findings into the same Finding shape
+// deterministic rules emit, so they persist as `scan_findings` rows (source
+// "ai"), count into `finding_count` / the risk breakdown, and carry diff
+// annotations. Additive only — deterministic findings are never replaced or
+// re-scored by this phase, and a review that did not complete contributes
+// nothing (its fail-safe risk handling lives in computeScanRisk).
+export function mergeAiFindings(
+  aiReview: AiReview,
+  findings: DeterministicFindings,
+  diff: ComputedDiff,
+  codePatternSet?: CodePatternSet,
+): MergedAiFindings {
+  const displayed = displayedAiResult(aiReview);
+  if (displayed?.kind !== "complete" || displayed.findings.length === 0) {
+    return { records: [], annotatedRecords: [] };
+  }
+  // Evidence quoted by the reviewer originates from already-redacted file
+  // samples, but re-redact as a belt-and-braces invariant: nothing persisted
+  // from the AI path may carry secret material.
+  const records = redactFindings(
+    displayed.findings.map((finding) => ({
+      severity: finding.severity,
+      file: finding.file,
+      evidence: finding.evidence,
+      reason: finding.reason,
+    })),
+  );
+  const annotatedRecords = annotateFindingsWithDiffStatus(records, diff.fileDiff, {
+    previousFiles: findings.redactedPreviousFiles,
+    stagedFiles: findings.redactedStagedFiles,
+    codePatternSet,
+  });
+  return { records, annotatedRecords };
+}
+
 export interface ResolveReleaseConsistencyArgs {
   db: AppDb;
   env?: Cloudflare.Env;
@@ -211,6 +255,8 @@ export interface PersistResultsArgs<TInput, TBroker extends AdapterBroker> {
   diff: ComputedDiff;
   findings: DeterministicFindings;
   aiFindings: AiReview;
+  /** Output of mergeAiFindings for `aiFindings`; empty when the review did not complete. */
+  mergedAiFindings?: MergedAiFindings;
   riskSummary: ScanRiskBreakdown;
   releaseConsistency: ReleaseConsistency;
 }
@@ -227,6 +273,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
 ): Promise<PersistedScanOutcome> {
   const { db, session, adapter, adapterInput, identity, resolved, diff, findings } = args;
   const { staged, baseline } = resolved;
+  const mergedAi = args.mergedAiFindings ?? { records: [], annotatedRecords: [] };
   const risk = args.riskSummary.artifactRisk;
 
   const safety = pipelineSafety();
@@ -256,6 +303,19 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     safety,
   };
 
+  // Annotations span `ruleFindings` followed by the AI finding records (in
+  // aiFindings.findings order): the report read path re-derives the same
+  // combined row list, so `findingIndex` addresses rule findings first and AI
+  // findings after them.
+  const findingAnnotations: FindingAnnotationRecord[] = [
+    ...findings.annotatedFindings,
+    ...mergedAi.annotatedRecords,
+  ].map((finding, index) => ({
+    findingIndex: index,
+    diffStatus: finding.diffStatus,
+    releaseDelta: finding.releaseDelta,
+  }));
+
   const reportPayload = {
     version: 1,
     rulesVersion: DETERMINISTIC_RULES_VERSION,
@@ -269,7 +329,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     packageJsonDiff: diff.manifestDiff,
     diff: diff.fileDiff,
     ruleFindings: findings.ruleFindings,
-    findingAnnotations: findings.findingAnnotations,
+    findingAnnotations,
     aiFindings: args.aiFindings,
     risk: args.riskSummary,
     releaseConsistency: args.releaseConsistency,
@@ -318,6 +378,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     previousFiles: findings.redactedPreviousFiles,
     diff: diff.fileDiff,
     findings: findings.ruleFindings,
+    aiFindingRecords: mergedAi.records,
     codePatternSet: adapter.codePatternSet,
     riskSummary: args.riskSummary,
     report: { version: reportPayload.version, digest: reportDigest },

@@ -65,8 +65,12 @@ export async function getPriorApprovedScanFindings(
   if (!prior) return null;
 
   const artifactDetail = await loadScanArtifacts(artifactBucket, prior);
+  // Release memory compares deterministic profiles only: artifact-backed
+  // details also carry the prior review's AI rows (source "ai"), which are
+  // advisory and non-deterministic, so they must not enter the profile —
+  // mirroring the D1 fallback's `source = 'rule'` predicate below.
   const findingRows = artifactDetail
-    ? artifactDetail.findings
+    ? artifactDetail.findings.filter((finding) => finding.source === "rule")
     : await db
         .select({
           ruleId: scanFindings.ruleId,

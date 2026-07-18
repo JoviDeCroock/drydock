@@ -41,6 +41,13 @@ export interface PersistedScanInput {
   previousFiles?: FileRecord[];
   diff: DiffEntry[];
   findings: Finding[];
+  /**
+   * Findings a completed AI review contributed, already projected into the
+   * deterministic Finding shape (see mergeAiFindings). Persisted as
+   * `scan_findings` rows with source "ai" so they count into `finding_count`
+   * and the risk summary; the full review stays in `ai_json`.
+   */
+  aiFindingRecords?: Finding[];
   codePatternSet?: CodePatternSet;
   riskSummary?: ScanRiskBreakdown;
   report?: { version: number; digest: string };
@@ -255,7 +262,12 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
       textSample: file.textSample,
     };
   });
-  const findingRows = input.findings.map((finding) => ({
+  // Rule rows first, AI rows after them — the same order the report artifact's
+  // findingAnnotations index over, so both stores agree on finding identity.
+  const findingRows = [
+    ...input.findings.map((finding) => ({ finding, source: "rule" })),
+    ...(input.aiFindingRecords ?? []).map((finding) => ({ finding, source: "ai" })),
+  ].map(({ finding, source }) => ({
     id: crypto.randomUUID(),
     scanId: input.id,
     severity: finding.severity,
@@ -263,7 +275,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     evidence: finding.evidence,
     reason: finding.reason,
     line: finding.line ?? null,
-    source: "rule",
+    source,
     ruleId: finding.ruleId ?? null,
     ruleVersion: finding.ruleVersion ?? null,
   }));

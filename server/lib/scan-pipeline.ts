@@ -9,6 +9,7 @@ import type {
 import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
 import {
   computeDiff,
+  mergeAiFindings,
   persistResults,
   recordCompletion,
   resolveBaseline,
@@ -66,7 +67,15 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       findings,
       diff,
     });
-    const riskSummary = scoreRisk(findings.annotatedFindings, aiFindings);
+    // AI findings persist alongside rule findings (as `source: "ai"` rows) and
+    // count into the risk breakdown. Additive only: computeScanRisk folds them
+    // in through combineRisk (a max), so they can escalate the deterministic
+    // grade but never lower it.
+    const mergedAiFindings = mergeAiFindings(aiFindings, findings, diff, adapter.codePatternSet);
+    const riskSummary = scoreRisk(
+      [...findings.annotatedFindings, ...mergedAiFindings.annotatedRecords],
+      aiFindings,
+    );
 
     // Advisory release-memory lookup (db read) before persistence. It compares
     // finding profiles only; it never touches risk or findings, and a lookup
@@ -90,6 +99,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       diff,
       findings,
       aiFindings,
+      mergedAiFindings,
       riskSummary,
       releaseConsistency,
     });
