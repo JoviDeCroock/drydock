@@ -149,16 +149,24 @@ export async function listExistingScanStageIds(
   stageIds: string[],
 ) {
   if (!stageIds.length) return new Set<string>();
-  const rows = await db
-    .select({ stageId: scans.stageId })
-    .from(scans)
-    .where(
-      and(
-        inArray(scans.stageId, stageIds),
-        or(eq(scans.organizationId, organizationId), eq(scans.status, "complete")),
-      ),
-    );
-  return new Set(rows.map((row) => row.stageId));
+  // Discovery passes every staged publish it saw, which is unbounded; each id
+  // is one bound parameter, so chunk below D1's cap (reserving slots for the
+  // organizationId and status parameters) or the sweep throws
+  // "too many SQL variables" once an org stages ~100 items.
+  const known = new Set<string>();
+  for (const chunk of chunkForD1([...new Set(stageIds)], 1, 2)) {
+    const rows = await db
+      .select({ stageId: scans.stageId })
+      .from(scans)
+      .where(
+        and(
+          inArray(scans.stageId, chunk),
+          or(eq(scans.organizationId, organizationId), eq(scans.status, "complete")),
+        ),
+      );
+    for (const row of rows) known.add(row.stageId);
+  }
+  return known;
 }
 
 const NON_TERMINAL_STATUSES = ["pending", "running"] as const;
@@ -493,9 +501,12 @@ function withFindingAnnotations(
 
 const D1_MAX_BOUND_PARAMETERS = 100;
 
-export function chunkForD1<T>(rows: T[], columnsPerRow: number): T[][] {
+export function chunkForD1<T>(rows: T[], columnsPerRow: number, reservedParameters = 0): T[][] {
   if (!rows.length) return [];
-  const chunkSize = Math.max(1, Math.floor(D1_MAX_BOUND_PARAMETERS / columnsPerRow));
+  const chunkSize = Math.max(
+    1,
+    Math.floor((D1_MAX_BOUND_PARAMETERS - reservedParameters) / columnsPerRow),
+  );
   const chunks: T[][] = [];
   for (let i = 0; i < rows.length; i += chunkSize) {
     chunks.push(rows.slice(i, i + chunkSize));

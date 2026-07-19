@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import {
+  chunkForD1,
   claimScanForRun,
   createScanJob,
   getScan,
@@ -265,6 +266,37 @@ describe("scan persistence idempotency", () => {
     expect(known.has(orgBOnlyStageId)).toBe(true);
     expect(known.has(inProgressStageId)).toBe(false);
     expect(known.has(untouchedStageId)).toBe(false);
+  });
+
+  // Regression: discovery passes every staged publish the registry lists, and
+  // D1 caps bound parameters at 100 per query. Before chunking, a sweep of
+  // ~100 staged items threw "too many SQL variables" on every cron tick.
+  test("listExistingScanStageIds handles more stage ids than D1's parameter cap", async () => {
+    const owner = await seedUserAndOrg();
+    const knownStageId = `stage-${crypto.randomUUID()}`;
+    await createScanJob(owner.db, {
+      id: `scan_${crypto.randomUUID()}`,
+      stageId: knownStageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+    });
+
+    const stageIds = Array.from({ length: 250 }, (_, i) => `stage-bulk-${i}`);
+    // Place the known id past the first chunk so the union across chunks is
+    // exercised, not just the first query.
+    stageIds.splice(180, 0, knownStageId);
+
+    const known = await listExistingScanStageIds(owner.db, owner.organizationId, stageIds);
+    expect(known.has(knownStageId)).toBe(true);
+    expect(known.size).toBe(1);
+  });
+
+  test("chunkForD1 reserves fixed parameters when sizing chunks", () => {
+    const rows = Array.from({ length: 250 }, (_, i) => i);
+    const chunks = chunkForD1(rows, 1, 2);
+    expect(chunks.every((chunk) => chunk.length <= 98)).toBe(true);
+    expect(chunks.flat()).toEqual(rows);
+    expect(chunkForD1([], 1, 2)).toEqual([]);
   });
 
   test("cross-organization claims and mutations are rejected", async () => {
