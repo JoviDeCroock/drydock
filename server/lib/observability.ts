@@ -37,9 +37,12 @@ export interface OperationalErrorSummary {
 // Drizzle wraps D1 failures in "Failed query: <sql>\nparams: <bound values>".
 // The bound values can carry anything a query touches (tokens, emails), so
 // they never reach the logs; the SQL text itself is static application code.
+// Keyed on the "\nparams:" delimiter rather than the "Failed query" prose
+// prefix so a drizzle wording change (or a wrapper that prefixes the message)
+// cannot silently disable the redaction. Over-matching an unrelated multiline
+// message is acceptable; leaking bound values is not.
 function redactFailedQueryParams(message: string): string {
-  if (!message.startsWith("Failed query")) return message;
-  return message.replace(/\bparams:[\s\S]*$/, "params: [redacted]");
+  return message.replace(/\nparams:[\s\S]*$/, "\nparams: [redacted]");
 }
 
 const ERROR_CAUSE_MAX_DEPTH = 3;

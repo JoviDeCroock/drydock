@@ -95,6 +95,13 @@ describe("operational observability helpers", () => {
     expect(describeOperationalError(new Error("invalid params: foo")).message).toBe(
       "invalid params: foo",
     );
+    // The redaction keys on the "\nparams:" delimiter, not drizzle's prose
+    // prefix, so reworded or re-wrapped query errors stay redacted.
+    expect(
+      describeOperationalError(
+        new Error("Failed to execute query: select 1\nparams: npm_secret,jovi@example.com"),
+      ).message,
+    ).toBe("Failed to execute query: select 1\nparams: [redacted]");
   });
 
   test("sanitizes error messages and causes inside logged fields", () => {
