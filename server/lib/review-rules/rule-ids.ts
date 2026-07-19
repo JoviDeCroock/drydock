@@ -17,6 +17,8 @@ export const DETERMINISTIC_RULE_IDS = {
   diffBinAdded: "diff.bin-added",
   dependencyUnusualSpec: "dependency.unusual-spec",
   dependencyOptionalAdded: "dependency.optional-added",
+  dependencyAdded: "dependency.added",
+  dependencyMajorBump: "dependency.major-bump",
   stageMetadataMismatch: "stage.metadata-mismatch",
   tarSuspiciousEntry: "tar.suspicious-entry",
 } as const;

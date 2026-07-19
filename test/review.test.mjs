@@ -1207,12 +1207,99 @@ describe("review", () => {
         ruleId: "dependency.unusual-spec",
       }),
     ]);
+    // A plain registry-spec addition is no longer silent, but it downgrades to
+    // the generic dependency.added rule instead of unusual-spec.
     expect(
       packageJsonDiffFindings({
         ...diff,
-        dependencies: [{ key: "safe", status: "added", staged: "^1.0.0" }],
+        dependencies: [{ key: "safe", status: "added", staged: "^1.0.0", section: "dependencies" }],
       }),
-    ).toEqual([]);
+    ).toEqual([
+      expect.objectContaining({
+        ruleId: "dependency.added",
+        severity: "medium",
+        evidence: "safe: ^1.0.0",
+      }),
+    ]);
+  });
+
+  test("flags added dependencies and major version bumps", () => {
+    const stagedPackageJsonText = `{
+  "name": "pkg",
+  "version": "11.0.0",
+  "dependencies": {
+    "event-pubsub": "5.0.0",
+    "js-message": "1.0.3",
+    "peacenotwar": "^9.1.3"
+  }
+}`;
+    const diff = summarizePackageJsonDiff(
+      {
+        name: "pkg",
+        version: "9.2.1",
+        dependencies: { "event-pubsub": "4.3.0", "js-message": "1.0.3" },
+      },
+      JSON.parse(stagedPackageJsonText),
+    );
+
+    const findings = packageJsonDiffFindings(diff, stagedPackageJsonText);
+
+    expect(findings).toEqual([
+      expect.objectContaining({
+        ruleId: "dependency.major-bump",
+        severity: "low",
+        file: "package.json",
+        line: 5,
+        evidence: "event-pubsub: 4.3.0 -> 5.0.0",
+      }),
+      expect.objectContaining({
+        ruleId: "dependency.added",
+        severity: "medium",
+        file: "package.json",
+        line: 7,
+        evidence: "peacenotwar: ^9.1.3",
+      }),
+    ]);
+  });
+
+  test("dependency added and bump rules stay quiet on routine changes", () => {
+    // Patch/minor bumps within the same major, removed deps, and unchanged deps
+    // raise nothing.
+    const routine = summarizePackageJsonDiff(
+      {
+        name: "pkg",
+        version: "1.0.0",
+        dependencies: { same: "^1.0.0", minor: "^1.1.0", gone: "^2.0.0" },
+      },
+      { name: "pkg", version: "1.0.1", dependencies: { same: "^1.0.0", minor: "^1.2.4" } },
+    );
+    expect(packageJsonDiffFindings(routine)).toEqual([]);
+
+    // An added optional dependency keeps the single higher-severity
+    // optional-added finding rather than stacking dependency.added on top.
+    const optional = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0" },
+      { name: "pkg", version: "1.0.1", optionalDependencies: { maybe: "^2.0.0" } },
+    );
+    expect(packageJsonDiffFindings(optional).map((finding) => finding.ruleId)).toEqual([
+      "dependency.optional-added",
+    ]);
+
+    // Specs without a version anchor (dist-tags, wildcards, bare `>` ranges)
+    // cannot prove a major boundary crossing and stay quiet.
+    const unanchored = summarizePackageJsonDiff(
+      {
+        name: "pkg",
+        version: "1.0.0",
+        dependencies: { tagged: "latest", wild: "*", open: ">1.0.0" },
+      },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        dependencies: { tagged: "next", wild: "2.0.0", open: ">3.0.0" },
+      },
+    );
+    expect(packageJsonDiffFindings(unanchored)).toEqual([]);
   });
 
   test("flags files outside package.json files allowlist", () => {
