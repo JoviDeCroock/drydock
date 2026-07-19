@@ -27,7 +27,23 @@ const COMMON_JS_ENV_NAMES = [
   "SSR",
   "TZ",
 ];
-const COMMON_JS_ENV_NAME_PATTERN = COMMON_JS_ENV_NAMES.map(escapeRegex).join("|");
+// npm exports these onto every lifecycle-script process; they only describe the
+// running npm invocation and the package's own manifest, never secrets.
+// npm_config_* is deliberately excluded: it can carry live registry auth
+// (npm_config__authToken) and stays covered by the credential patterns.
+const NPM_LIFECYCLE_ENV_NAMES = [
+  "npm_command",
+  "npm_execpath",
+  "npm_lifecycle_event",
+  "npm_lifecycle_script",
+  "npm_node_execpath",
+  "npm_package_json",
+  "npm_package_name",
+  "npm_package_version",
+];
+const COMMON_JS_ENV_NAME_PATTERN = [...COMMON_JS_ENV_NAMES, ...NPM_LIFECYCLE_ENV_NAMES]
+  .map(escapeRegex)
+  .join("|");
 const COMMON_PROCESS_ENV_DOT_ACCESS = new RegExp(
   `\\bprocess\\.env\\s*\\.\\s*(?:${COMMON_JS_ENV_NAME_PATTERN})\\b`,
   "g",
