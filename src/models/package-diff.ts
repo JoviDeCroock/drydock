@@ -125,7 +125,7 @@ export const PackageDiffModel = createModel(
             versions.value = versionsData;
             loading.value = false;
           });
-          const initial = pickInitialPath(diffData.diff);
+          const initial = pickInitialPath(diffData.diff, ecosystem);
           if (initial) void this.selectPath(initial);
         } else {
           batch(() => {
@@ -185,19 +185,21 @@ const INITIAL_STATUS_RANK: Record<string, number> = {
   removed: 2,
 };
 
-// Open the workbench on the most review-worthy file: the manifest when it
-// changed, otherwise the first changed file in tree-sort order. PyPI diff
-// trees carry their manifests as PKG-INFO (sdist) or .dist-info/METADATA
-// (wheel) instead of package.json.
-function pickInitialPath(entries: DiffEntry[]): string | null {
+// Open the workbench on the most review-worthy file: the ecosystem's manifest
+// when it changed, otherwise the first changed file in tree-sort order. The
+// match is per-ecosystem — an npm package vendoring a PKG-INFO must not
+// auto-open the vendored Python metadata instead of package.json.
+function isManifestPath(path: string, ecosystem: DiffEcosystem): boolean {
+  if (ecosystem === "pypi") {
+    return /(^|\/)PKG-INFO$/.test(path) || path.endsWith(".dist-info/METADATA");
+  }
+  return path === "package.json";
+}
+
+function pickInitialPath(entries: DiffEntry[], ecosystem: DiffEcosystem): string | null {
   const changed = entries.filter((entry) => entry.status !== "unchanged");
   if (!changed.length) return null;
-  const manifest = changed.find(
-    (entry) =>
-      entry.path === "package.json" ||
-      /(^|\/)PKG-INFO$/.test(entry.path) ||
-      entry.path.endsWith(".dist-info/METADATA"),
-  );
+  const manifest = changed.find((entry) => isManifestPath(entry.path, ecosystem));
   if (manifest) return manifest.path;
   return changed.slice().sort((a, b) => {
     const rank = (INITIAL_STATUS_RANK[a.status] ?? 3) - (INITIAL_STATUS_RANK[b.status] ?? 3);

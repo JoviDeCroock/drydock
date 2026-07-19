@@ -2,12 +2,14 @@ import {
   filenameArtifactNamespace,
   flattenPyPiArtifactFiles,
   isAllowedPyPiArtifactUrl,
+  newestUploadTimestamp,
+  packageJsonSummaryFor,
   preparePyPiArtifact,
   pyPiArtifactDiffPath,
   selectPyPiReleaseArtifacts,
 } from "./adapters/pypi/acquire";
 import { pyPiReleaseFindings } from "./adapters/pypi/findings";
-import { normalizePyPiProjectName } from "./adapters/pypi/manifest";
+import { inferPyPiArtifactKind, normalizePyPiProjectName } from "./adapters/pypi/manifest";
 import {
   PYPI_RELEASE_MANIFEST_SCHEMA,
   type PyPiArtifactInput,
@@ -17,22 +19,25 @@ import {
   type PyPiReleaseManifest,
   type PyPiRemoteArtifact,
 } from "./adapters/pypi/types";
+import { compareParsedPyPiVersions, parsePyPiVersion } from "./adapters/pypi/version";
 import {
   computeCompareMetadataCacheKey,
   readCompareMetadataCache,
   writeCompareMetadataCache,
 } from "./compare-cache";
+import { publicDiffDownloadError } from "./public-diff-download";
 import { PublicDiffError } from "./public-diff-error";
 import { reliableFetch } from "./reliable-fetch";
 import {
   deterministicFindings,
+  type CodePatternSet,
   type DiffEntry,
   type Finding,
   type FileRecord,
   type PackageJsonDiff,
   type PackageJsonSummary,
 } from "./review";
-import { downloadInSandbox, parseSandboxErrorDetail } from "./sandbox";
+import { downloadInSandbox } from "./sandbox";
 
 // PyPI side of the anonymous public package diff. Like the npm path it only
 // touches public-registry data: project metadata comes from the canonical
@@ -53,6 +58,10 @@ export interface PublicDiffAcquiredSide {
 export interface PublicDiffAcquiredSources {
   from: PublicDiffAcquiredSide;
   to: PublicDiffAcquiredSide;
+  // Pattern family for diff-status annotation; the baseline fingerprint pass
+  // re-runs the deterministic rules and must use the same set the findings
+  // were built with, or unchanged capabilities get marked as release deltas.
+  codePatternSet?: CodePatternSet;
   buildFindings(fileDiff: DiffEntry[], manifestDiff: PackageJsonDiff): Finding[];
 }
 
@@ -86,12 +95,41 @@ export async function fetchPublicPyPiProjectMetadata(
 
   let metadata: PyPiProjectMetadata;
   try {
-    metadata = (await response.json()) as PyPiProjectMetadata;
+    metadata = prunePyPiProjectMetadata((await response.json()) as PyPiProjectMetadata);
   } catch {
     throw new PublicDiffError("registry metadata fetch failed", 502);
   }
   await writeCompareMetadataCache(env, ctx, key, metadata);
   return metadata;
+}
+
+// The raw project JSON carries the full description and unused per-file
+// fields; multi-MB blobs for release-heavy projects would blow KV's value cap
+// (a silently swallowed put) and make every repeat read expensive. Prune to
+// the fields this module consumes before caching or returning.
+function prunePyPiProjectMetadata(metadata: PyPiProjectMetadata): PyPiProjectMetadata {
+  const releases: Record<string, PyPiReleaseFile[]> = {};
+  for (const [version, files] of Object.entries(metadata.releases ?? {})) {
+    if (!version || !Array.isArray(files)) continue;
+    releases[version] = files.map((file) => ({
+      ...(file.filename !== undefined ? { filename: file.filename } : {}),
+      ...(file.packagetype !== undefined ? { packagetype: file.packagetype } : {}),
+      ...(file.url !== undefined ? { url: file.url } : {}),
+      ...(typeof file.size === "number" ? { size: file.size } : {}),
+      ...(file.upload_time_iso_8601 !== undefined
+        ? { upload_time_iso_8601: file.upload_time_iso_8601 }
+        : {}),
+      ...(file.digests?.sha256 ? { digests: { sha256: file.digests.sha256 } } : {}),
+      ...(file.yanked !== undefined ? { yanked: file.yanked } : {}),
+    }));
+  }
+  return {
+    info: {
+      ...(metadata.info?.name !== undefined ? { name: metadata.info.name } : {}),
+      ...(metadata.info?.version !== undefined ? { version: metadata.info.version } : {}),
+    },
+    releases,
+  };
 }
 
 export interface PublicPyPiVersionEntry {
@@ -100,10 +138,14 @@ export interface PublicPyPiVersionEntry {
   publishedAt?: string;
 }
 
-// PyPI has no dist-tags and no total version order comparable to semver, so
-// versions are listed newest-first by upload time with `info.version` surfaced
-// as a synthetic "latest" tag. Only versions the diff can actually serve (at
-// least one non-yanked wheel/sdist hosted on files.pythonhosted.org) appear.
+// PyPI has no dist-tags, so `info.version` is surfaced as a synthetic
+// "latest" tag. Versions are ordered newest-first by PEP 440 (mirroring the
+// npm route's semver ordering) so a backport upload on an old branch — e.g. a
+// 1.26.x patch shipped after 2.x — neither scrambles the picker nor becomes
+// the suggested baseline; unparseable legacy versions sort below parseable
+// ones by upload time. Only versions the diff can actually serve (at least
+// one non-yanked wheel/sdist hosted on files.pythonhosted.org) appear, and
+// the suggested pair is `latest` against its immediate version predecessor.
 export function listPublicPyPiVersions(metadata: PyPiProjectMetadata): {
   versions: PublicPyPiVersionEntry[];
   suggested: { from: string; to: string } | null;
@@ -111,24 +153,52 @@ export function listPublicPyPiVersions(metadata: PyPiProjectMetadata): {
   const latest = metadata.info?.version ?? null;
   const versions = Object.entries(metadata.releases ?? {})
     .filter(
-      ([version]) =>
-        version &&
-        selectPyPiReleaseArtifacts(metadata, version).some((artifact) =>
-          isAllowedPyPiArtifactUrl(artifact.url),
-        ),
+      ([version, files]) => version && Array.isArray(files) && hasDiffablePublicArtifact(files),
     )
-    .map(([version, files]) => ({ version, uploadedAt: newestUploadTimestamp(files) }))
-    .sort((a, b) => b.uploadedAt - a.uploadedAt || b.version.localeCompare(a.version))
+    .map(([version, files]) => ({
+      version,
+      uploadedAt: newestUploadTimestamp(files),
+      parsed: parsePyPiVersion(version),
+    }))
+    .sort((a, b) => {
+      if (a.parsed && b.parsed) {
+        return (
+          compareParsedPyPiVersions(b.parsed, a.parsed) ||
+          b.uploadedAt - a.uploadedAt ||
+          b.version.localeCompare(a.version)
+        );
+      }
+      if (a.parsed) return -1;
+      if (b.parsed) return 1;
+      return b.uploadedAt - a.uploadedAt || b.version.localeCompare(a.version);
+    })
     .map(({ version, uploadedAt }) => ({
       version,
       distTags: version === latest ? ["latest"] : [],
       ...(uploadedAt > 0 ? { publishedAt: new Date(uploadedAt).toISOString() } : {}),
     }));
 
-  const to = versions.find((entry) => entry.version === latest)?.version ?? versions[0]?.version;
-  const toIndex = versions.findIndex((entry) => entry.version === to);
-  const from = toIndex >= 0 ? versions[toIndex + 1]?.version : undefined;
+  const toIndex = Math.max(
+    versions.findIndex((entry) => entry.version === latest),
+    0,
+  );
+  const to = versions[toIndex]?.version;
+  const from = versions[toIndex + 1]?.version;
   return { versions, suggested: to && from ? { from, to } : null };
+}
+
+// Cheap per-release predicate: no artifact-object allocation, and short-
+// circuits on the first servable file. Must stay in sync with what
+// usablePublicArtifacts accepts (kind inferable + allowed host).
+function hasDiffablePublicArtifact(files: PyPiReleaseFile[]): boolean {
+  return files.some(
+    (file) =>
+      !file.yanked &&
+      !!file.filename &&
+      !!file.url &&
+      inferPyPiArtifactKind(file.filename) !== null &&
+      isAllowedPyPiArtifactUrl(file.url),
+  );
 }
 
 const PREFERRED_WHEEL_NAMESPACE = "wheel/py3-none-any";
@@ -155,7 +225,10 @@ function usablePublicArtifacts(
   metadata: PyPiProjectMetadata,
   version: string,
 ): PyPiRemoteArtifact[] {
-  if (!metadata.releases || !(version in metadata.releases)) {
+  // Object.hasOwn, not `in`: releases is JSON.parse'd, and `in` would accept
+  // prototype-named versions ("constructor", "toString"), turning the 404
+  // below into a TypeError-driven 500 further down.
+  if (!metadata.releases || !Object.hasOwn(metadata.releases, version)) {
     throw new PublicDiffError("unknown version", 404);
   }
   const artifacts = selectPyPiReleaseArtifacts(metadata, version).filter((artifact) =>
@@ -219,6 +292,10 @@ export async function downloadPublicPyPiArtifacts(
       try {
         // No credentials exist on this path: the gateway sees only this single
         // pinned public-artifact URL and forwards the request uncredentialed.
+        // Mirrors createPyPiBroker.downloadPublicArtifact (adapters/pypi/
+        // broker.ts) — keep the sandbox options in lockstep with it; the
+        // broker cannot be reused directly because its AdapterContext requires
+        // an authenticated db/session this anonymous path never has.
         const result = await downloadInSandbox(env, ctx, {
           tarballUrl: artifact.url,
           archiveFormat: artifact.kind === "wheel" ? "zip" : "tgz",
@@ -230,11 +307,7 @@ export async function downloadPublicPyPiArtifacts(
           ...(result.suspiciousEntries ? { suspiciousEntries: result.suspiciousEntries } : {}),
         };
       } catch (err) {
-        const detail = parseSandboxErrorDetail(err);
-        if (detail?.status === 413) {
-          throw new PublicDiffError("package is too large to diff", 413);
-        }
-        throw new PublicDiffError("package download failed", 502);
+        throw publicDiffDownloadError(err);
       }
     }),
   );
@@ -270,13 +343,22 @@ export function buildPublicPyPiDiffSources(input: {
     })),
   };
 
+  const toFiles = flattenPyPiArtifactFiles(toPrepared);
   return {
     from: pyPiDiffSide(fromPrepared, input.packageName, input.fromVersion),
-    to: pyPiDiffSide(toPrepared, input.packageName, input.toVersion),
+    to: {
+      files: toFiles,
+      packageJson: packageJsonSummaryFor(
+        { package: input.packageName, version: input.toVersion },
+        toPrepared,
+      ),
+    },
+    codePatternSet: "python",
+    // Same recipe as pypiAdapter.runFindings (deterministic python rules +
+    // release findings) — keep the two in lockstep; delegating would require
+    // fabricating a full AdapterRunFindingsArgs this path doesn't have.
     buildFindings: (fileDiff) => [
-      ...deterministicFindings(flattenPyPiArtifactFiles(toPrepared), fileDiff, null, {
-        codePatternSet: "python",
-      }),
+      ...deterministicFindings(toFiles, fileDiff, null, { codePatternSet: "python" }),
       ...remapPyPiFindingPaths(pyPiReleaseFindings(manifest, toPrepared), toPrepared),
     ],
   };
@@ -308,15 +390,9 @@ function pyPiDiffSide(
   packageName: string,
   version: string,
 ): PublicDiffAcquiredSide {
-  const summary = prepared.find(
-    (artifact) => artifact.summary.name && artifact.summary.version,
-  )?.summary;
   return {
     files: flattenPyPiArtifactFiles(prepared),
-    packageJson: {
-      name: summary?.name ?? packageName,
-      version: summary?.version ?? version,
-    },
+    packageJson: packageJsonSummaryFor({ package: packageName, version }, prepared),
   };
 }
 
@@ -332,14 +408,4 @@ function remapPyPiFindingPaths(findings: Finding[], prepared: PyPiPreparedArtifa
       file: pyPiArtifactDiffPath(artifact, finding.file.slice(artifact.path.length + 1)),
     };
   });
-}
-
-function newestUploadTimestamp(files: PyPiReleaseFile[]): number {
-  return Math.max(
-    0,
-    ...files
-      .filter((file) => !file.yanked)
-      .map((file) => Date.parse(file.upload_time_iso_8601 ?? ""))
-      .filter((time) => Number.isFinite(time)),
-  );
 }

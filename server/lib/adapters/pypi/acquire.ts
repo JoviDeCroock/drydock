@@ -2,7 +2,7 @@ import type { FileRecord, PackageJsonSummary } from "../../review";
 import type { AcquiredArtifact, AdapterContext, BaselineInfo, StagedDetails } from "../types";
 import type { PyPiBroker } from "./broker";
 import { summarizePyPiArtifact, namespacedPath } from "./findings";
-import { inferPyPiArtifactKind } from "./manifest";
+import { inferPyPiArtifactKind, normalizePyPiProjectName } from "./manifest";
 import {
   type PyPiAdapterDetails,
   type PyPiAdapterInput,
@@ -20,13 +20,25 @@ import {
 export function preparePyPiArtifact(input: PyPiArtifactInput): PyPiPreparedArtifact {
   const kind = inferPyPiArtifactKind(input.path);
   if (!kind) throw new Error("PyPI artifact must be a wheel or sdist");
-  const files = kind === "sdist" ? stripCommonArchiveRoot(input.files) : input.files;
+  const root = kind === "sdist" ? commonArchiveRoot(input.files) : null;
+  const files = root ? stripArchiveRoot(input.files, root) : input.files;
+  // Tar-parser evidence records raw archive paths; strip the same sdist root
+  // so findings built from these entries line up with the stripped file list
+  // (entries outside the root — themselves suspicious — stay untouched).
+  const suspiciousEntries =
+    root && input.suspiciousEntries
+      ? input.suspiciousEntries.map((entry) =>
+          entry.path.startsWith(`${root}/`)
+            ? { ...entry, path: entry.path.slice(root.length + 1) }
+            : entry,
+        )
+      : input.suspiciousEntries;
   return {
     path: input.path,
     kind,
     files,
     summary: summarizePyPiArtifact(input.path, kind, files),
-    ...(input.suspiciousEntries ? { suspiciousEntries: input.suspiciousEntries } : {}),
+    ...(suspiciousEntries ? { suspiciousEntries } : {}),
   };
 }
 
@@ -147,8 +159,9 @@ function emptyPyPiBaseline(
 // Download selection runs before any bytes are fetched, so it can only key off
 // the public filename. Both the staged artifact paths and the candidate
 // baseline filenames are reduced to the same filename-derived namespace, which
-// bounds downloads to the wheel/sdist shapes that are actually staged. The diff
-// itself re-derives namespaces from parsed WHEEL tags via artifactDiffNamespace.
+// bounds downloads to the wheel/sdist shapes that are actually staged. The
+// diff tree uses the same filename-derived namespace (artifactDiffNamespace),
+// so selection and diff pairing can never disagree.
 function stagedArtifactNamespaces(details: StagedDetails): Set<string> {
   const d = details as PyPiAdapterDetails;
   return new Set(
@@ -214,7 +227,14 @@ export function selectPyPiReleaseArtifacts(
   metadata: PyPiProjectMetadata,
   version: string,
 ): PyPiRemoteArtifact[] {
-  return (metadata.releases?.[version] ?? [])
+  // Own-property check: `releases` is JSON.parse'd, so a bare index would
+  // resolve prototype-named versions ("constructor", "toString") to
+  // Object.prototype members instead of release arrays.
+  const files =
+    metadata.releases && Object.hasOwn(metadata.releases, version)
+      ? metadata.releases[version]
+      : undefined;
+  return (Array.isArray(files) ? files : [])
     .filter((file) => !file.yanked)
     .map((file) => {
       const filename = file.filename ?? "";
@@ -277,10 +297,14 @@ export function pyPiArtifactDiffPath(artifact: PyPiPreparedArtifact, filePath: s
   return namespacedPath(artifactDiffNamespace(artifact), normalizePyPiDiffFilePath(filePath));
 }
 
+// Derived from the artifact FILENAME, never from the parsed WHEEL `Tag:`
+// headers: the filename is validated by the registry/manifest while the WHEEL
+// file is hostile package bytes — tag headers that lie (or merely differ in
+// spelling, e.g. "py2.py3" expanding to two Tag lines) would put the two
+// versions of the same wheel shape under different tree namespaces and
+// degrade the whole diff to removed+added noise.
 function artifactDiffNamespace(artifact: PyPiPreparedArtifact): string {
   if (artifact.kind === "sdist") return "sdist";
-  const tags = artifact.summary.wheel?.tags ?? [];
-  if (tags.length) return `wheel/${tags.slice().sort().map(safeDiffPathPart).join("+")}`;
   return wheelFilenameNamespace(artifact.path);
 }
 
@@ -309,7 +333,7 @@ function safeDiffPathPart(value: string): string {
 }
 
 export function pickPackageIdentity(
-  manifest: PyPiReleaseManifest,
+  manifest: Pick<PyPiReleaseManifest, "package" | "version">,
   artifacts: PyPiPreparedArtifact[],
 ) {
   const summary = artifacts.find(
@@ -321,33 +345,63 @@ export function pickPackageIdentity(
   };
 }
 
-function packageJsonSummaryFor(
-  manifest: PyPiReleaseManifest,
+// Ecosystem-neutral manifest summary for a set of prepared artifacts. Mapping
+// Requires-Dist into `dependencies` lets summarizePackageJsonDiff surface a
+// new Python dependency between versions — the headline supply-chain signal —
+// instead of always reporting an empty dependency diff for PyPI.
+export function packageJsonSummaryFor(
+  manifest: Pick<PyPiReleaseManifest, "package" | "version">,
   artifacts: PyPiPreparedArtifact[],
 ): PackageJsonSummary {
   const identity = pickPackageIdentity(manifest, artifacts);
+  const dependencies = pyPiDependenciesFromArtifacts(artifacts);
   return {
     name: identity.name ?? undefined,
     version: identity.version ?? undefined,
+    ...(dependencies ? { dependencies } : {}),
   };
 }
 
-function stripCommonArchiveRoot(files: FileRecord[]): FileRecord[] {
+// PEP 508 requirement strings ("requests[socks] (>=2.0) ; extra == 'x'")
+// keyed by PEP 503-normalized project name; the remainder of the requirement
+// string stands in for the version-range value.
+function pyPiDependenciesFromArtifacts(
+  artifacts: PyPiPreparedArtifact[],
+): Record<string, string> | undefined {
+  const dependencies: Record<string, string> = {};
+  for (const artifact of artifacts) {
+    for (const requirement of artifact.summary.requiresDist) {
+      const match = /^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(.*)$/.exec(requirement);
+      if (!match) continue;
+      const name = normalizePyPiProjectName(match[1]);
+      if (!Object.hasOwn(dependencies, name)) {
+        dependencies[name] = match[2].trim() || "*";
+      }
+    }
+  }
+  return Object.keys(dependencies).length ? dependencies : undefined;
+}
+
+function commonArchiveRoot(files: FileRecord[]): string | null {
   const pathParts = files.map((file) => file.path.split("/"));
-  if (!pathParts.length || pathParts.some((parts) => parts.length < 2)) return files;
+  if (!pathParts.length || pathParts.some((parts) => parts.length < 2)) return null;
   const root = pathParts[0][0];
-  if (!root || pathParts.some((parts) => parts[0] !== root)) return files;
+  if (!root || pathParts.some((parts) => parts[0] !== root)) return null;
+  return root;
+}
+
+function stripArchiveRoot(files: FileRecord[], root: string): FileRecord[] {
   return files.map((file) => ({
     ...file,
-    path: file.path.split("/").slice(1).join("/"),
+    path: file.path.startsWith(`${root}/`) ? file.path.slice(root.length + 1) : file.path,
   }));
 }
 
 function hasUsableReleaseFiles(files: PyPiReleaseFile[] | undefined): boolean {
-  return Boolean(files?.some((file) => file.url && !file.yanked));
+  return Array.isArray(files) && files.some((file) => file.url && !file.yanked);
 }
 
-function newestUploadTimestamp(files: PyPiReleaseFile[]): number {
+export function newestUploadTimestamp(files: PyPiReleaseFile[]): number {
   return Math.max(
     0,
     ...files

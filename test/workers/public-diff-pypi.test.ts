@@ -74,6 +74,24 @@ describe("listPublicPyPiVersions", () => {
     };
     expect(listPublicPyPiVersions(single).suggested).toBeNull();
   });
+
+  test("orders by PEP 440 so a backport upload cannot become the suggested baseline", () => {
+    // 1.26.9 is uploaded AFTER the 2.x releases (an LTS backport, the
+    // urllib3/Django pattern); upload-recency ordering would suggest the
+    // misleading cross-major pair {from: 1.26.9, to: 2.5.0}.
+    const backport: PyPiProjectMetadata = {
+      info: { name: "demo-pkg", version: "2.5.0" },
+      releases: {
+        "2.4.0": [releaseFile("demo_pkg-2.4.0.tar.gz", { uploaded: "2026-01-01T00:00:00.000Z" })],
+        "2.5.0": [releaseFile("demo_pkg-2.5.0.tar.gz", { uploaded: "2026-02-01T00:00:00.000Z" })],
+        "1.26.9": [releaseFile("demo_pkg-1.26.9.tar.gz", { uploaded: "2026-03-01T00:00:00.000Z" })],
+      },
+    };
+    const { versions, suggested } = listPublicPyPiVersions(backport);
+
+    expect(versions.map((entry) => entry.version)).toEqual(["2.5.0", "2.4.0", "1.26.9"]);
+    expect(suggested).toEqual({ from: "2.4.0", to: "2.5.0" });
+  });
 });
 
 describe("selectPublicPyPiDiffArtifacts", () => {
@@ -97,6 +115,17 @@ describe("selectPublicPyPiDiffArtifacts", () => {
     expect(() => selectPublicPyPiDiffArtifacts(metadata, "0.8.0", "1.1.0")).toThrowError(
       "version has no diffable wheel or sdist artifacts",
     );
+  });
+
+  test("404s prototype-named versions instead of walking the prototype chain", () => {
+    // `"constructor" in releases` is true for any JSON.parse'd object; a bare
+    // `in`/index lookup would surface Object.prototype members and crash with
+    // a TypeError-driven 500 on this anonymous endpoint.
+    for (const version of ["constructor", "toString", "hasOwnProperty"]) {
+      expect(() => selectPublicPyPiDiffArtifacts(metadata, version, "1.1.0")).toThrowError(
+        "unknown version",
+      );
+    }
   });
 });
 
@@ -195,6 +224,15 @@ describe("buildPublicPyPiDiffSources", () => {
             "1.1.0",
             "from setuptools.command.install import install\ncmdclass = {'install': install}\n",
           ),
+          // Raw tar path, as the sandbox records it — the finding must land on
+          // the root-stripped diff-tree path.
+          suspiciousEntries: [
+            {
+              kind: "content-skipped",
+              path: "demo_pkg-1.1.0/setup.py",
+              detail: "file body exceeds the per-file inspection limit",
+            },
+          ],
         },
       ],
       toRemoteArtifacts: [
@@ -215,5 +253,41 @@ describe("buildPublicPyPiDiffSources", () => {
     const findings = sources.buildFindings(fileDiff, {});
     const setup = findings.find((finding) => finding.ruleId === "pypi.setup-install-command");
     expect(setup?.file).toBe("sdist/setup.py");
+    const suspicious = findings.find((finding) => finding.ruleId === "tar.suspicious-entry");
+    expect(suspicious?.file).toBe("sdist/setup.py");
+  });
+
+  test("surfaces Requires-Dist changes as a structured dependency summary", () => {
+    const wheel = (version: string, requires: string[]): FileRecord[] => [
+      record(
+        `demo_pkg-${version}.dist-info/METADATA`,
+        `Metadata-Version: 2.1\nName: demo-pkg\nVersion: ${version}\n${requires
+          .map((line) => `Requires-Dist: ${line}`)
+          .join("\n")}\n`,
+      ),
+      record(`demo_pkg-${version}.dist-info/WHEEL`, "Wheel-Version: 1.0\nTag: py3-none-any\n"),
+    ];
+    const sources = buildPublicPyPiDiffSources({
+      packageName: "demo-pkg",
+      fromVersion: "1.0.0",
+      toVersion: "1.1.0",
+      from: [{ path: "demo_pkg-1.0.0-py3-none-any.whl", files: wheel("1.0.0", ["requests>=2"]) }],
+      to: [
+        {
+          path: "demo_pkg-1.1.0-py3-none-any.whl",
+          files: wheel("1.1.0", ["requests>=2", "Evil_Dep (>=1.0)"]),
+        },
+      ],
+      toRemoteArtifacts: [remoteWheel("demo_pkg-1.1.0-py3-none-any.whl")],
+    });
+
+    expect(sources.from.packageJson?.dependencies).toEqual({ requests: ">=2" });
+    // The new dependency appears keyed by its PEP 503-normalized name, so
+    // summarizePackageJsonDiff reports it as an added dependency.
+    expect(sources.to.packageJson?.dependencies).toEqual({
+      requests: ">=2",
+      "evil-dep": "(>=1.0)",
+    });
+    expect(sources.codePatternSet).toBe("python");
   });
 });

@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { createDb } from "../db/client";
 import { enforceRateLimit, RateLimitError } from "../db/rate-limit";
-import { isValidPyPiProjectName } from "../lib/adapters/pypi/manifest";
+import { isValidPyPiProjectName, normalizePyPiProjectName } from "../lib/adapters/pypi/manifest";
 import { SAFE_VERSION_RE } from "../lib/adapters/pypi/types";
 import { rateLimitResponse } from "../lib/http";
 import {
@@ -93,7 +93,10 @@ function requestedPackageName(
   if (!valid) {
     return c.json({ error: "invalid package name" }, 400);
   }
-  return packageName;
+  // PyPI names are case/separator-insensitive (PEP 503); canonicalize once at
+  // the request boundary so the cache key, cache-tag, and payload identity
+  // all agree — "Django" and "django" must share one entry AND one purge tag.
+  return ecosystem === "pypi" ? normalizePyPiProjectName(packageName) : packageName;
 }
 
 // An npm version side is either a published registry version or a pkg.pr.new

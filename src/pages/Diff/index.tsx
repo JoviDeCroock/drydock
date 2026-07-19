@@ -93,6 +93,14 @@ function DiffLanding() {
   const packageName = useSignal("");
   const busy = useSignal(false);
   const error = useSignal<string | null>(null);
+  const namePlaceholder = useComputed(() =>
+    ecosystem.value === "pypi"
+      ? "project name, e.g. requests or numpy"
+      : "package name or pkg.pr.new URL, e.g. react",
+  );
+  const nameLabel = useComputed(() =>
+    ecosystem.value === "pypi" ? "PyPI project name" : "npm package name or pkg.pr.new URL",
+  );
 
   const open = async (input: string) => {
     if (!input || busy.peek()) return;
@@ -152,7 +160,7 @@ function DiffLanding() {
         >
           <div class="w-auto min-w-[100px]" aria-label="Package ecosystem">
             <Select
-              value={ecosystem.value}
+              value={ecosystem}
               onChange={(value) => (ecosystem.value = value === "pypi" ? "pypi" : "npm")}
             >
               <option value="npm">npm</option>
@@ -162,16 +170,8 @@ function DiffLanding() {
           <Input
             type="text"
             value={packageName}
-            placeholder={
-              ecosystem.value === "pypi"
-                ? "project name, e.g. requests or numpy"
-                : "package name or pkg.pr.new URL, e.g. react"
-            }
-            aria-label={
-              ecosystem.value === "pypi"
-                ? "PyPI project name"
-                : "npm package name or pkg.pr.new URL"
-            }
+            placeholder={namePlaceholder}
+            aria-label={nameLabel}
             autoComplete="off"
             spellcheck={false}
             class="flex-1 min-w-[240px]"

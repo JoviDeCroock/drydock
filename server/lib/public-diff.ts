@@ -8,6 +8,7 @@ import {
   writeCompareMetadataCache,
 } from "./compare-cache";
 import { parsePkgPrNewUrl, type PkgPrNewSpec } from "../../src/lib/pkg-pr-new";
+import { publicDiffDownloadError } from "./public-diff-download";
 import { PublicDiffError } from "./public-diff-error";
 import { acquirePublicPyPiDiff, type PublicDiffAcquiredSources } from "./public-diff-pypi";
 import {
@@ -173,6 +174,10 @@ export async function loadPublicPackageDiff(
   const findings = annotateFindingsWithDiffStatus(ruleFindings, fileDiff, {
     previousFiles: redactedFromFiles,
     stagedFiles: redactedToFiles,
+    // Baseline fingerprints re-run the deterministic rules over the previous
+    // files; they must use the ecosystem's pattern set (python for PyPI) or
+    // unchanged capabilities read as release deltas.
+    codePatternSet: sources.codePatternSet,
   });
   const risk = computeScanRiskBreakdown(findings, AI_REVIEW_DISABLED);
 
@@ -277,11 +282,7 @@ async function downloadArchive(
       allowInsecureLocalhost: input.allowInsecureLocalhost,
     });
   } catch (err) {
-    const detail = parseSandboxErrorDetail(err);
-    if (detail?.status === 413) {
-      throw new PublicDiffError("package is too large to diff", 413);
-    }
-    throw new PublicDiffError("package download failed", 502);
+    throw publicDiffDownloadError(err);
   }
 }
 
@@ -289,14 +290,13 @@ async function downloadPreviewArchive(env: Cloudflare.Env, ctx: ExecutionContext
   try {
     return await downloadPkgPrNewTarball(env, ctx, url);
   } catch (err) {
-    const detail = parseSandboxErrorDetail(err);
-    if (detail?.status === 404) {
+    // A preview ref that no longer resolves is the one failure the shared
+    // mapping cannot name, because published tarball URLs come from registry
+    // metadata and never 404 on their own.
+    if (parseSandboxErrorDetail(err)?.status === 404) {
       throw new PublicDiffError("preview not found on pkg.pr.new", 404);
     }
-    if (detail?.status === 413) {
-      throw new PublicDiffError("package is too large to diff", 413);
-    }
-    throw new PublicDiffError("preview download failed", 502);
+    throw publicDiffDownloadError(err);
   }
 }
 
