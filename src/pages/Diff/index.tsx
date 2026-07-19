@@ -32,6 +32,7 @@ import {
   SectionLabel,
 } from "../../components/Typography";
 import { packageDiffPath, parseDiffSpec, type DiffSpec } from "../../lib/package-diff-path";
+import { diffRefLabel, parsePkgPrNewUrl } from "../../lib/pkg-pr-new";
 import { filterDiffEntries, findingCountsByPath } from "../Dashboard/ScanDetail/diff-helpers";
 import { RiskSignalsSection } from "../Dashboard/ScanDetail/FindingsSection";
 import type { FindingWithDiffStatus } from "../Dashboard/ScanDetail/types";
@@ -84,12 +85,25 @@ function DiffLanding() {
   const busy = useSignal(false);
   const error = useSignal<string | null>(null);
 
-  const open = async (name: string) => {
-    if (!name || busy.peek()) return;
+  const open = async (input: string) => {
+    if (!input || busy.peek()) return;
     busy.value = true;
     error.value = null;
     try {
-      const versions = await getPublicDiffVersions(name);
+      // A pasted pkg.pr.new URL diffs the preview build against the latest
+      // published release of the same package.
+      const preview = parsePkgPrNewUrl(input);
+      if (preview) {
+        const versions = await getPublicDiffVersions(preview.packageName);
+        const published = versions.suggested?.to ?? versions.versions[0]?.version;
+        if (!published) {
+          error.value = "This package has no published npm release to compare the preview against.";
+          return;
+        }
+        location.route(packageDiffPath(versions.packageName, published, preview.url));
+        return;
+      }
+      const versions = await getPublicDiffVersions(input);
       if (!versions.suggested) {
         error.value = "This package needs at least two published versions to diff.";
         return;
@@ -114,8 +128,9 @@ function DiffLanding() {
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
           See exactly what changed between two published versions — every file, line by line, with
-          the same deterministic supply-chain checks Drydock runs on staged releases. No account
-          needed.
+          the same deterministic supply-chain checks Drydock runs on staged releases. Paste a{" "}
+          <span class="font-mono text-[15px]">pkg.pr.new</span> URL to review a pull-request preview
+          build before it ships. No account needed.
         </p>
         <form
           class="flex flex-wrap gap-3 items-center max-w-[620px]"
@@ -127,8 +142,8 @@ function DiffLanding() {
           <Input
             type="text"
             value={packageName}
-            placeholder="package name, e.g. react or @preact/signals"
-            aria-label="npm package name"
+            placeholder="package name or pkg.pr.new URL, e.g. react"
+            aria-label="npm package name or pkg.pr.new URL"
             autoComplete="off"
             spellcheck={false}
             class="flex-1 min-w-[240px]"
@@ -241,6 +256,19 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
   const versions = model.versions.value;
   const changedCount = diff ? diff.diff.filter((entry) => entry.status !== "unchanged").length : 0;
   const hasFindings = Boolean(diff?.findings.length);
+  // Preview sides (pkg.pr.new URLs) get short labels; registry versions pass
+  // through unchanged.
+  const fromLabel = diffRefLabel(fromVersion);
+  const toLabel = diffRefLabel(toVersion);
+  const hasPreview = fromLabel !== fromVersion || toLabel !== toVersion;
+  const pickerVersions = versions
+    ? [
+        ...[fromVersion, toVersion]
+          .filter((value) => diffRefLabel(value) !== value)
+          .map((value) => ({ version: value, distTags: [], label: diffRefLabel(value) })),
+        ...versions.versions,
+      ]
+    : null;
 
   return (
     <PageShell headerActions={<MarketingHeaderActions authed={authed} />} feedbackPosition="end">
@@ -253,7 +281,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
         <MonoDetail
           parts={[
             <span key="versions">
-              {fromVersion} → {toVersion}
+              {fromLabel} → {toLabel}
             </span>,
             ...(diff
               ? [
@@ -280,9 +308,9 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
           Deterministic findings only: package code is never executed and AI review does not run on
           this public surface, so the same version pair always produces the same report.
         </Muted>
-        {versions ? (
+        {pickerVersions ? (
           <VersionPairPicker
-            versions={versions.versions}
+            versions={pickerVersions}
             fromVersion={fromVersion}
             toVersion={toVersion}
             onChange={(nextFrom, nextTo) =>
@@ -343,8 +371,8 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
               <PublicDiffWorkbench
                 entry={selectedEntry.value}
                 model={model}
-                fromVersion={fromVersion}
-                toVersion={toVersion}
+                fromVersion={fromLabel}
+                toVersion={toLabel}
                 findings={selectedFindings.value}
               />
             </Card>
@@ -355,7 +383,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
               findings={findingItems.value}
               onSelect={(file) => void model.selectPath(file)}
               description={
-                `Deterministic rules scan the full ${toVersion} artifact. Changed-file signals ` +
+                `Deterministic rules scan the full ${toLabel} artifact. Changed-file signals ` +
                 "are pinned to their line in the diff above; unchanged signals stay here as " +
                 "package context. No AI is involved on this surface."
               }
@@ -365,12 +393,17 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
           <section class="flex flex-col gap-3 pt-3">
             <SectionLabel>Before it ships</SectionLabel>
             <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0">
-              This diff is after the fact.
+              {hasPreview ? "This is the review that matters." : "This diff is after the fact."}
             </h2>
             <Muted class="m-0 text-[14px] leading-[1.65] max-w-[680px]">
-              Both of these versions are already public. Drydock runs this same review on the
-              release candidate — an npm staged publish or a GitHub-gated release — while there is
-              still time to say no. Free for maintainers.
+              {hasPreview
+                ? "One side of this diff is a pkg.pr.new preview build that has not been " +
+                  "published yet. Drydock runs this same review automatically on staged npm " +
+                  "publishes and GitHub-gated releases — while there is still time to say no. " +
+                  "Free for maintainers."
+                : "Both of these versions are already public. Drydock runs this same review on " +
+                  "the release candidate — an npm staged publish or a GitHub-gated release — " +
+                  "while there is still time to say no. Free for maintainers."}
             </Muted>
             <div class="flex gap-3 mt-1">
               <LinkButton href="/register">Create account</LinkButton>
@@ -434,13 +467,20 @@ function PublicDiffWorkbench({
   );
 }
 
+interface VersionOption {
+  version: string;
+  distTags: string[];
+  /** Display override for preview entries whose value is a pkg.pr.new URL. */
+  label?: string;
+}
+
 function VersionPairPicker({
   versions,
   fromVersion,
   toVersion,
   onChange,
 }: {
-  versions: Array<{ version: string; distTags: string[] }>;
+  versions: VersionOption[];
   fromVersion: string;
   toVersion: string;
   onChange: (fromVersion: string, toVersion: string) => void;
@@ -477,7 +517,7 @@ function VersionSelect({
   onChange,
 }: {
   label: string;
-  versions: Array<{ version: string; distTags: string[] }>;
+  versions: VersionOption[];
   selected: string;
   disabledVersion: string;
   onChange: (version: string) => void;
@@ -498,7 +538,7 @@ function VersionSelect({
             value={option.version}
             disabled={option.version === disabledVersion}
           >
-            {option.version}
+            {option.label ?? option.version}
             {option.distTags.length ? ` [${option.distTags.join(", ")}]` : ""}
           </option>
         ))}

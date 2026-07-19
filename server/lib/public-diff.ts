@@ -5,7 +5,12 @@ import {
   readCompareMetadataCache,
   writeCompareMetadataCache,
 } from "./compare-cache";
-import { downloadPublishedTarball, isPublishedTarballUrlAllowed } from "./published-tarball";
+import { parsePkgPrNewUrl } from "../../src/lib/pkg-pr-new";
+import {
+  downloadPkgPrNewTarball,
+  downloadPublishedTarball,
+  isPublishedTarballUrlAllowed,
+} from "./published-tarball";
 import { fetchPackageMetadata, type RegistryMetadata } from "./registry";
 import {
   annotateFindingsWithDiffStatus,
@@ -25,7 +30,9 @@ import {
 import { computeScanRiskBreakdown, type ScanRiskBreakdown } from "./risk";
 import { parseSandboxErrorDetail } from "./sandbox";
 
-// Anonymous, credential-free diff of two published npm versions. Reuses the
+// Anonymous, credential-free diff of two published npm versions — or of a
+// pkg.pr.new preview tarball against a published version (fromVersion /
+// toVersion may each be a validated pkg.pr.new URL). Reuses the
 // scan pipeline's pure phases (package diff, deterministic rules, diff-status
 // annotation, risk breakdown) over two published tarballs instead of
 // staged-vs-published. Findings run on raw text samples before redaction, like
@@ -65,6 +72,11 @@ const CACHE_PREFIX = `public-diff:v2:rules=${DETERMINISTIC_RULES_VERSION}:risk=$
 // Package bytes are immutable, while the analysis version is encoded above.
 // The TTL therefore bounds storage rather than correctness.
 const CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
+// pkg.pr.new preview refs are mutable (a pull-request ref advances with every
+// commit, and a re-run workflow can rebuild the same sha), so pairs that
+// involve a preview keep a short TTL: repeat views stay cheap while staleness
+// is bounded.
+const PREVIEW_CACHE_TTL_SECONDS = 60 * 15;
 const CACHE_READ_COLO_TTL_SECONDS = 60;
 // KV values cap at 25 MiB; leave headroom for metadata around the samples.
 const CACHE_MAX_PAYLOAD_BYTES = 20 * 1024 * 1024;
@@ -121,31 +133,60 @@ export async function loadPublicPackageDiff(
     allowInsecureLocalhost?: boolean;
   },
 ): Promise<PublicPackageDiff> {
+  // Preview-side validation is fetch-free and runs before any cache or
+  // registry work: a preview URL must name the same package as the request.
+  const fromPreview = parsePkgPrNewUrl(input.fromVersion);
+  const toPreview = parsePkgPrNewUrl(input.toVersion);
+  for (const preview of [fromPreview, toPreview]) {
+    if (preview && preview.packageName !== input.packageName) {
+      throw new PublicDiffError("preview URL is for a different package", 400);
+    }
+  }
+
   const cacheKey = await computePublicDiffCacheKey(input);
   const cached = await readPublicDiffCache(env, cacheKey);
   if (cached) return cached;
 
-  const metadata = await fetchPublicPackageMetadata(env, ctx, input.packageName, input.registryUrl);
-  const fromTarballUrl = metadata.versions?.[input.fromVersion]?.dist?.tarball;
-  const toTarballUrl = metadata.versions?.[input.toVersion]?.dist?.tarball;
+  // Registry metadata is only needed for registry-version sides; a
+  // preview-vs-preview pair may not be published on npm at all yet.
+  let fromTarballUrl = fromPreview?.url;
+  let toTarballUrl = toPreview?.url;
   if (!fromTarballUrl || !toTarballUrl) {
-    throw new PublicDiffError("unknown version", 404);
-  }
-  for (const tarballUrl of [fromTarballUrl, toTarballUrl]) {
-    if (
-      !isPublishedTarballUrlAllowed(
-        tarballUrl,
-        input.registryUrl,
-        input.allowInsecureLocalhost ?? false,
-      )
-    ) {
-      throw new PublicDiffError("registry returned an unexpected tarball URL", 502);
+    const metadata = await fetchPublicPackageMetadata(
+      env,
+      ctx,
+      input.packageName,
+      input.registryUrl,
+    );
+    fromTarballUrl ??= metadata.versions?.[input.fromVersion]?.dist?.tarball;
+    toTarballUrl ??= metadata.versions?.[input.toVersion]?.dist?.tarball;
+    if (!fromTarballUrl || !toTarballUrl) {
+      throw new PublicDiffError("unknown version", 404);
+    }
+    for (const [tarballUrl, preview] of [
+      [fromTarballUrl, fromPreview],
+      [toTarballUrl, toPreview],
+    ] as const) {
+      if (
+        !preview &&
+        !isPublishedTarballUrlAllowed(
+          tarballUrl,
+          input.registryUrl,
+          input.allowInsecureLocalhost ?? false,
+        )
+      ) {
+        throw new PublicDiffError("registry returned an unexpected tarball URL", 502);
+      }
     }
   }
 
   const [fromArchive, toArchive] = await Promise.all([
-    downloadArchive(env, ctx, fromTarballUrl, input),
-    downloadArchive(env, ctx, toTarballUrl, input),
+    fromPreview
+      ? downloadPreviewArchive(env, ctx, fromPreview.url)
+      : downloadArchive(env, ctx, fromTarballUrl, input),
+    toPreview
+      ? downloadPreviewArchive(env, ctx, toPreview.url)
+      : downloadArchive(env, ctx, toTarballUrl, input),
   ]);
 
   const fileDiff = createPackageDiff(fromArchive.files, toArchive.files);
@@ -191,7 +232,9 @@ export async function loadPublicPackageDiff(
     risk,
     cachedAt: new Date().toISOString(),
   };
-  await writePublicDiffCache(env, cacheKey, payload);
+  await writePublicDiffCache(env, cacheKey, payload, {
+    ttlSeconds: fromPreview || toPreview ? PREVIEW_CACHE_TTL_SECONDS : CACHE_TTL_SECONDS,
+  });
   return payload;
 }
 
@@ -212,6 +255,21 @@ async function downloadArchive(
       throw new PublicDiffError("package is too large to diff", 413);
     }
     throw new PublicDiffError("package download failed", 502);
+  }
+}
+
+async function downloadPreviewArchive(env: Cloudflare.Env, ctx: ExecutionContext, url: string) {
+  try {
+    return await downloadPkgPrNewTarball(env, ctx, url);
+  } catch (err) {
+    const detail = parseSandboxErrorDetail(err);
+    if (detail?.status === 404) {
+      throw new PublicDiffError("preview not found on pkg.pr.new", 404);
+    }
+    if (detail?.status === 413) {
+      throw new PublicDiffError("package is too large to diff", 413);
+    }
+    throw new PublicDiffError("preview download failed", 502);
   }
 }
 
@@ -241,7 +299,9 @@ export async function readPublicDiffCache(
       type: "json",
       cacheTtl: CACHE_READ_COLO_TTL_SECONDS,
     });
-    if (cached) await writePublicDiffColoCache(key, JSON.stringify(cached));
+    if (cached) {
+      await writePublicDiffColoCache(key, JSON.stringify(cached), payloadCacheTtlSeconds(cached));
+    }
     return cached;
   } catch {
     return null;
@@ -252,13 +312,15 @@ export async function writePublicDiffCache(
   env: Cloudflare.Env,
   key: string,
   payload: PublicPackageDiff,
+  options: { ttlSeconds?: number } = {},
 ): Promise<void> {
+  const ttlSeconds = options.ttlSeconds ?? CACHE_TTL_SECONDS;
   const serialized = serializePublicDiffCachePayload(payload);
-  const writes: Promise<unknown>[] = [writePublicDiffColoCache(key, serialized)];
+  const writes: Promise<unknown>[] = [writePublicDiffColoCache(key, serialized, ttlSeconds)];
   if (env.COMPARE_CACHE && utf8ByteLength(serialized) <= CACHE_MAX_PAYLOAD_BYTES) {
     writes.push(
       env.COMPARE_CACHE.put(key, serialized, {
-        expirationTtl: CACHE_TTL_SECONDS,
+        expirationTtl: ttlSeconds,
       }),
     );
   }
@@ -302,16 +364,28 @@ async function readPublicDiffColoCache(key: string): Promise<PublicPackageDiff |
   }
 }
 
-async function writePublicDiffColoCache(key: string, serialized: string): Promise<void> {
+async function writePublicDiffColoCache(
+  key: string,
+  serialized: string,
+  ttlSeconds: number = CACHE_TTL_SECONDS,
+): Promise<void> {
   await coloCache().put(
     publicDiffColoCacheRequest(key),
     new Response(serialized, {
       headers: {
-        "cache-control": `public, max-age=${CACHE_TTL_SECONDS}, immutable`,
+        "cache-control": `public, max-age=${ttlSeconds}, immutable`,
         "content-type": "application/json",
       },
     }),
   );
+}
+
+// Re-warms of the colo cache must not outlive the KV entry's own bound for
+// mutable preview pairs.
+function payloadCacheTtlSeconds(payload: PublicPackageDiff): number {
+  return parsePkgPrNewUrl(payload.fromVersion) || parsePkgPrNewUrl(payload.toVersion)
+    ? PREVIEW_CACHE_TTL_SECONDS
+    : CACHE_TTL_SECONDS;
 }
 
 function utf8ByteLength(value: string): number {

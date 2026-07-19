@@ -4,7 +4,7 @@ vi.mock("cloudflare:workers", () => ({
   WorkerEntrypoint: class {},
 }));
 
-const { fetchPublishedTarballStream, isPublishedTarballUrlAllowed } =
+const { fetchPkgPrNewTarballStream, fetchPublishedTarballStream, isPublishedTarballUrlAllowed } =
   await import("../server/lib/published-tarball.ts");
 
 const REGISTRY = "https://registry.npmjs.org";
@@ -173,5 +173,55 @@ describe("fetchPublishedTarballStream credential + origin guard", () => {
       fetchPublishedTarballStream(ALLOWED_URL, { registryUrl: REGISTRY }),
     );
     expect(detail.status).toBe(404);
+  });
+});
+
+// pkg.pr.new preview fetches are structurally anonymous: the function takes no
+// token option, so the only things to verify are the URL gate and that no
+// Authorization header is ever attached.
+describe("fetchPkgPrNewTarballStream", () => {
+  const PREVIEW_URL = "https://pkg.pr.new/tinylibs/tinybench/tinybench@a832a55";
+
+  test("streams an allowed preview URL without credentials", async () => {
+    const { captured } = stubFetch(() => streamResponse(new Uint8Array([7, 8, 9])));
+
+    const stream = await fetchPkgPrNewTarballStream(PREVIEW_URL);
+    const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+
+    expect(Array.from(bytes)).toEqual([7, 8, 9]);
+    expect(captured).toHaveLength(1);
+    expect(captured[0].url).toBe(PREVIEW_URL);
+    expect(captured[0].authorization).toBeNull();
+  });
+
+  test("never fetches a non-pkg.pr.new or non-canonical URL", async () => {
+    const { fetchSpy } = stubFetch(() => streamResponse(new Uint8Array([1])));
+
+    for (const url of [
+      "https://evil.example.com/tinybench@a832a55",
+      "https://pkg.pr.new.evil.example.com/tinybench@a832a55",
+      "http://pkg.pr.new/tinybench@a832a55",
+      "https://pkg.pr.new/tinybench@a832a55?x=1",
+      "https://pkg.pr.new/tinybench@a832a55/", // trailing slash: not canonical
+      "https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz",
+    ]) {
+      const detail = await rejectionDetail(fetchPkgPrNewTarballStream(url));
+      expect(detail.status).toBe(400);
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  test("propagates upstream status for a missing preview", async () => {
+    stubFetch(() => new Response("nope", { status: 404 }));
+
+    const detail = await rejectionDetail(fetchPkgPrNewTarballStream(PREVIEW_URL));
+    expect(detail.status).toBe(404);
+  });
+
+  test("rejects an oversized advertised content-length", async () => {
+    stubFetch(() => streamResponse(new Uint8Array([1]), { contentLength: 64 }));
+
+    const detail = await rejectionDetail(fetchPkgPrNewTarballStream(PREVIEW_URL, { maxBytes: 16 }));
+    expect(detail.status).toBe(413);
   });
 });

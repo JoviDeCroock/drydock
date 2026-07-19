@@ -131,10 +131,11 @@ app.use("*", async (c, next) => canonicalDomainRedirect(c.req.raw) ?? next());
 app.route("/webhooks", githubWebhookRoutes);
 
 // The public package-diff endpoints are anonymous by design: they serve only
-// data derived from public registry artifacts, touch no organization
-// resources, and are abuse-controlled by per-IP rate limits plus the KV cache
-// for immutable version pairs. They must stay mounted before the auth
-// middleware below; every other /api/* endpoint keeps requiring a session.
+// data derived from public registry artifacts and public pkg.pr.new preview
+// tarballs, touch no organization resources, and are abuse-controlled by
+// per-IP rate limits plus the KV cache for version pairs. They must stay
+// mounted before the auth middleware below; every other /api/* endpoint keeps
+// requiring a session.
 app.route("/api/public/v1/package-diff", publicDiffRoutes);
 
 app.use("/api/*", async (c, next) => {
@@ -258,7 +259,7 @@ app.get("/api", (c) =>
         "GET /api/v1/github-app/config; POST /api/v1/github-app/install; POST /api/v1/github-app/install/callback; GET /api/v1/github-app/installations; GET/POST /api/v1/github-app/release-targets; DELETE /api/v1/github-app/release-targets/:id; GET /api/v1/github-app/workflow-gates/by-scan/:scanId; POST /api/v1/github-app/workflow-gates/:gateId/decision",
       githubWebhooks: "POST /webhooks/github (signed by GitHub App webhook secret)",
       publicPackageDiff:
-        "GET /api/public/v1/package-diff?package&from&to; GET /api/public/v1/package-diff/versions?package; GET /api/public/v1/package-diff/file?package&from&to&path (anonymous, IP rate-limited, public registry data only)",
+        "GET /api/public/v1/package-diff?package&from&to; GET /api/public/v1/package-diff/versions?package; GET /api/public/v1/package-diff/file?package&from&to&path (anonymous, IP rate-limited, public registry data only; from/to also accept pkg.pr.new preview URLs)",
       slack:
         "GET /api/v1/slack; POST /api/v1/slack/connect; GET /api/v1/slack/callback; GET /api/v1/slack/channels; PUT /api/v1/slack/channel; PATCH /api/v1/slack; DELETE /api/v1/slack; POST /api/v1/slack/test",
       health: "GET /api/health",

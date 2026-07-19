@@ -90,6 +90,39 @@ describe("public package-diff routes", () => {
     expect(await res.json()).toEqual({ error: "from and to must differ" });
   });
 
+  test("diff endpoint accepts a pkg.pr.new preview URL but rejects a package mismatch", async () => {
+    // The mismatch check is fetch-free and runs before any cache or registry
+    // work, so this exercises the full preview-URL validation path without
+    // reaching the network.
+    const previewUrl = encodeURIComponent("https://pkg.pr.new/other-pkg@a832a55");
+    const res = await publicDiffFetch(
+      `/api/public/v1/package-diff?package=left-pad&from=1.0.0&to=${previewUrl}`,
+      "10.0.0.6",
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "preview URL is for a different package" });
+  });
+
+  test("diff endpoint rejects preview URLs on foreign hosts", async () => {
+    const foreign = encodeURIComponent("https://pkg.pr.new.evil.example.com/left-pad@a832a55");
+    const res = await publicDiffFetch(
+      `/api/public/v1/package-diff?package=left-pad&from=1.0.0&to=${foreign}`,
+      "10.0.0.7",
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid to version" });
+  });
+
+  test("diff endpoint rejects identical preview URLs", async () => {
+    const previewUrl = encodeURIComponent("https://pkg.pr.new/left-pad@a832a55");
+    const res = await publicDiffFetch(
+      `/api/public/v1/package-diff?package=left-pad&from=${previewUrl}&to=${previewUrl}`,
+      "10.0.0.8",
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "from and to must differ" });
+  });
+
   test("file endpoint requires a path", async () => {
     const res = await publicDiffFetch(
       "/api/public/v1/package-diff/file?package=left-pad&from=1.0.0&to=1.0.1",
