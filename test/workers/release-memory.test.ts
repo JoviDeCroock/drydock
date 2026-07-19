@@ -292,6 +292,85 @@ describe("release memory (prior-release consistency)", () => {
     expect(out.priorFindingCount).toBe(1);
   });
 
+  test("degrades to none when an artifact-backed prior's report cannot be read", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const scanId = `scan_${crypto.randomUUID()}`;
+    const stageId = `stage-${scanId.slice(-12)}`;
+    const ruleFindings = [spawnFinding("test/spawn.js")];
+    const reportPayload = {
+      version: 1,
+      stageId,
+      ruleFindings,
+      findingAnnotations: [{ findingIndex: 0, diffStatus: "modified", releaseDelta: true }],
+    };
+    const reportJson = stableJson(reportPayload);
+    const reportDigest = await sha256Hex(reportJson);
+    const artifacts = await writeScanArtifacts(env.ARTIFACTS, {
+      organizationId: owner.organizationId,
+      scanId,
+      reportJson,
+      reportDigest,
+      files: [{ path: "index.js", size: 10, sha256: "a", flags: [], textSample: "x" }],
+      diff: [{ path: "index.js", status: "modified", flags: [] }],
+      generatedAt: "2026-07-01T00:00:00.000Z",
+    });
+    await createScanJob(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+    });
+    await persistScan(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+      packageJson: { name: "tape", version: "5.7.4" },
+      risk: "high",
+      status: "complete",
+      summary: {},
+      ai: null,
+      files: [{ path: "index.js", size: 10, sha256: "a", flags: [], textSample: "x" }],
+      diff: [{ path: "index.js", status: "modified", flags: [] }],
+      findings: ruleFindings,
+      report: { version: 1, digest: reportDigest },
+      artifacts,
+    });
+    await recordScanDecision(db, {
+      scanId,
+      organizationId: owner.organizationId,
+      actorUserId: owner.userId,
+      decision: "publish",
+    });
+
+    // Prior is artifact-backed (its findings live only in R2, never in D1). With
+    // no artifact bucket the report can't be read, so the profile is unknown —
+    // the helper must return null (caller degrades to "none") rather than
+    // fabricating an empty prior profile that marks every current finding "new".
+    const withoutBucket = await getPriorApprovedScanFindings(db, {
+      organizationId: owner.organizationId,
+      packageName: "tape",
+      excludeScanId: "scan_current",
+    });
+    expect(withoutBucket).toBeNull();
+
+    // With the bucket, the same prior resolves normally.
+    const withBucket = await getPriorApprovedScanFindings(
+      db,
+      {
+        organizationId: owner.organizationId,
+        packageName: "tape",
+        excludeScanId: "scan_current",
+      },
+      env.ARTIFACTS,
+    );
+    expect(withBucket?.scanId).toBe(scanId);
+    expect(withBucket?.findings).toEqual([
+      { ruleId: "code.child-process", severity: "high", file: "test/spawn.js" },
+    ]);
+  });
+
   test("db helper is org-scoped and feeds computeReleaseConsistency", async () => {
     const owner = await seedUser();
     const prior = await seedCompletedScan(owner, { decision: "publish" });

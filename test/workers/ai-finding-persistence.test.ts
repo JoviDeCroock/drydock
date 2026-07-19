@@ -6,6 +6,7 @@ import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { getPriorApprovedScanFindings } from "../../server/db/release-memory";
 import { createScanJob, getScan, persistScan, recordScanDecision } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
+import { buildReportExport } from "../../server/lib/report-export";
 import { writeScanArtifacts } from "../../server/lib/scan-artifacts";
 import { sha256Hex, stableJson } from "../../server/lib/stable-json";
 import type { Finding } from "../../server/lib/review";
@@ -134,6 +135,14 @@ describe("AI finding persistence (D1 degraded path)", () => {
     const annotations = (detail!.scan.summaryJson as { findingAnnotations: Array<{ id: string }> })
       .findingAnnotations;
     expect(annotations.map((annotation) => annotation.id)).toContain(aiRow!.id);
+
+    // The report export keeps findings[] deterministic-only (AI findings are
+    // carried by aiReview.findings), so they are never double-counted across the
+    // two fields and every findings[] entry keeps a ruleId.
+    const exported = buildReportExport(detail!);
+    expect(exported.findings.every((finding) => finding.source === "rule")).toBe(true);
+    expect(exported.findings).toHaveLength(1);
+    expect(exported.aiReview?.findings.map((finding) => finding.file)).toEqual(["setup.js"]);
   });
 });
 

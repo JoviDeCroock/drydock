@@ -1,9 +1,7 @@
 import type { ComponentChildren } from "preact";
-import { sortFindingsBySeverity } from "../../../lib/findings";
-import type { AiFinding, DisplayedAiResult } from "../../../../server/lib/ai-review-types";
+import type { DisplayedAiResult } from "../../../../server/lib/ai-review-types";
 import type { PackageJsonDiff, ReleaseProvenance } from "../../../../server/types";
 import { Badge, severityTone, statusTone } from "../../../components/Badge";
-import { FindingCard, FindingRow } from "../../../components/FindingCard";
 import { EmptyLine, SectionLabel } from "../../../components/Typography";
 import type { PersistedSummary } from "./types";
 
@@ -41,14 +39,14 @@ export function PersistedReportSections({
                 </Badge>
                 <Badge tone="neutral">{ai.releaseAssessment.replaceAll("_", " ")}</Badge>
               </div>
+              {/* The reviewer's findings render once, as assistant-badged cards
+                  in the Risk signals section (they persist as scan_findings
+                  rows). This panel carries only the narrative verdict — summary
+                  plus the assessment badges above — so a finding is never shown
+                  twice on the page. */}
               {ai.summary ? (
                 <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{ai.summary}</p>
               ) : null}
-              {ai.findings.length ? (
-                <AiFindingList findings={ai.findings} />
-              ) : (
-                <EmptyLine>No assistant findings.</EmptyLine>
-              )}
             </>
           ) : (
             <>
@@ -80,24 +78,6 @@ function ReportSection({
       <SectionLabel>{title}</SectionLabel>
       {children}
     </section>
-  );
-}
-
-function AiFindingList({ findings }: { findings: AiFinding[] }) {
-  return (
-    <ul class="list-none p-0 m-0 grid grid-cols-1 md:grid-cols-2 gap-2">
-      {sortFindingsBySeverity(findings).map((finding, index) => (
-        <FindingCard
-          key={`${finding.file}-${index}`}
-          severity={finding.severity}
-          file={finding.file}
-        >
-          <FindingRow label="evidence" value={finding.evidence} />
-          <FindingRow label="reason" value={finding.reason} />
-          <FindingRow label="recommendation" value={finding.recommendation} />
-        </FindingCard>
-      ))}
-    </ul>
   );
 }
 

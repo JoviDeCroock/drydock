@@ -56,7 +56,9 @@ turning them into a credential sink.
 Current structured events cover:
 
 - `scan.pipeline.completed` / `scan.pipeline.failed` with adapter, duration,
-  file counts, finding count, and risk.
+  file counts, finding count, and risk. `findingCount` counts rule rows plus a
+  completed AI review's rows (matching persisted `scans.finding_count`), with
+  `ruleFindingCount` / `aiFindingCount` emitted alongside for the split.
 - `scan.ai_review.completed` / `scan.ai_review.failed` when AI review is enabled.
 - `scan.job.completed`, `scan.job.failed`, `scan.job.retryable_failed`, and
   `scan.job.skipped` with scan ID, organization ID, source, attempt, duration,

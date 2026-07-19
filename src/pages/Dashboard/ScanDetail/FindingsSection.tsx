@@ -91,6 +91,11 @@ function FindingGrid({
       {groups.map(({ key, items }) => {
         if (items.length === 1) {
           const { finding, diffStatus } = items[0].item;
+          // AI findings carry a model-authored file path that may not resolve to
+          // a diff entry (prefixed, truncated, or hallucinated), so they are not
+          // wired to open the diff workbench — clicking would dead-end on an
+          // empty state. Deterministic findings always cite a canonical path.
+          const canOpen = onSelect && finding.source !== "ai";
           return (
             <FindingCard
               key={finding.id}
@@ -101,7 +106,7 @@ function FindingGrid({
               diffLabel={findingDiffStatusLabel(diffStatus)}
               ruleId={finding.ruleId}
               source={finding.source}
-              onSelect={onSelect ? () => onSelect(finding.file) : undefined}
+              onSelect={canOpen ? () => onSelect(finding.file) : undefined}
             >
               <FindingRow label="evidence" value={finding.evidence} />
               <FindingRow label="reason" value={finding.reason} />

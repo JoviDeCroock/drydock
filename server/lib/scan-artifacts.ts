@@ -7,7 +7,7 @@ import {
   type FindingDiffAnnotation,
 } from "./review";
 import { parsePersistedAiReview } from "./ai-review-contract";
-import { displayedAiResult } from "./ai-review-types";
+import { displayedAiResult, type AiReview } from "./ai-review-types";
 import { describeOperationalError, emitOperationalEvent } from "./observability";
 import { sha256Hex, stableJson, utf8Size } from "./stable-json";
 
@@ -839,11 +839,15 @@ function parseReportFindingsObject(
   return { findings, annotations };
 }
 
-// Mirror mergeAiFindings' write-path projection (including the belt-and-braces
-// redaction pass) so an R2-derived AI row matches the D1 row the degraded path
-// would have written for the same review.
-function aiFindingRowsFromReport(value: unknown): Finding[] {
-  const displayed = displayedAiResult(parsePersistedAiReview(value));
+// Project a completed AI review's findings into the deterministic Finding
+// shape, re-redacting as a belt-and-braces invariant (nothing persisted or
+// re-derived from the AI path may carry secret material). Shared by the write
+// path (mergeAiFindings persists these as `source: "ai"` rows) and the R2 read
+// path (aiFindingRowsFromReport re-derives them) so both stores hand back
+// byte-identical rows for the same review. An incomplete/invalid/disabled
+// review contributes nothing.
+export function projectAiReviewFindings(review: AiReview | null | undefined): Finding[] {
+  const displayed = displayedAiResult(review ?? null);
   if (displayed?.kind !== "complete" || displayed.findings.length === 0) return [];
   return redactFindings(
     displayed.findings.map((finding) => ({
@@ -853,6 +857,10 @@ function aiFindingRowsFromReport(value: unknown): Finding[] {
       reason: finding.reason,
     })),
   );
+}
+
+function aiFindingRowsFromReport(value: unknown): Finding[] {
+  return projectAiReviewFindings(parsePersistedAiReview(value));
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | null {

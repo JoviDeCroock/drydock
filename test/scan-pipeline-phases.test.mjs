@@ -188,10 +188,6 @@ describe("runDeterministicFindings", () => {
     expect(out.releaseRuleFindings[0]).not.toHaveProperty("diffStatus");
     expect(out.releaseRuleFindings[0]).not.toHaveProperty("releaseDelta");
 
-    expect(out.findingAnnotations).toEqual([
-      { findingIndex: 0, diffStatus: "modified", releaseDelta: true },
-    ]);
-
     expect(adapter.summarizeDetails).toHaveBeenCalledWith(resolved.staged.details);
     expect(out.redactedDetails).toEqual({ stageId: "stage-1" });
   });

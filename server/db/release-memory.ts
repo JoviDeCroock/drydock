@@ -65,6 +65,13 @@ export async function getPriorApprovedScanFindings(
   if (!prior) return null;
 
   const artifactDetail = await loadScanArtifacts(artifactBucket, prior);
+  // An artifact-backed prior keeps NO scan_findings rows in D1, so if its report
+  // could not be read (missing binding, digest mismatch, transient R2 error —
+  // loadScanArtifacts returns null rather than throwing) the D1 fallback query
+  // below would return zero rows and we would report a fabricated empty profile,
+  // marking every current finding "new" (a false "diverged"). Return null so the
+  // caller degrades to "none" instead of trusting a corrupt-empty profile.
+  if (prior.artifactStorageVersion !== null && !artifactDetail) return null;
   // Release memory compares deterministic profiles only: artifact-backed
   // details also carry the prior review's AI rows (source "ai"), which are
   // advisory and non-deterministic, so they must not enter the profile —

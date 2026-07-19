@@ -2,7 +2,6 @@ import { type AppDb, type WorkspaceSession } from "../db/client";
 import { getPriorApprovedScanFindings } from "../db/release-memory";
 import { persistScan } from "../db/scans";
 import type { AiReview } from "./ai-review";
-import { displayedAiResult } from "./ai-review-types";
 import type {
   AcquiredArtifact,
   AdapterBroker,
@@ -34,7 +33,11 @@ import {
   type PackageJsonSummary,
 } from "./review";
 import { computeScanRiskBreakdown, type ScanRiskBreakdown } from "./risk";
-import { maybeWriteScanArtifacts, scanArtifactReadBucket } from "./scan-artifacts";
+import {
+  maybeWriteScanArtifacts,
+  projectAiReviewFindings,
+  scanArtifactReadBucket,
+} from "./scan-artifacts";
 import { sha256Hex, stableJson } from "./stable-json";
 import type { ScanResult } from "../types";
 
@@ -70,7 +73,6 @@ export interface DeterministicFindings {
   redactedDetails: Record<string, unknown> | null;
   annotatedFindings: Array<Finding & FindingDiffAnnotation>;
   releaseRuleFindings: Finding[];
-  findingAnnotations: FindingAnnotationRecord[];
 }
 
 // Acquire the staged artifact, then resolve + fetch the baseline it diffs
@@ -133,11 +135,6 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
   const releaseRuleFindings = stripFindingAnnotations(
     annotatedFindings.filter((finding) => finding.releaseDelta),
   );
-  const findingAnnotations = annotatedFindings.map((finding, index) => ({
-    findingIndex: index,
-    diffStatus: finding.diffStatus,
-    releaseDelta: finding.releaseDelta,
-  }));
 
   return {
     ruleFindings,
@@ -148,7 +145,6 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
     redactedDetails,
     annotatedFindings,
     releaseRuleFindings,
-    findingAnnotations,
   };
 }
 
@@ -180,21 +176,10 @@ export function mergeAiFindings(
   diff: ComputedDiff,
   codePatternSet?: CodePatternSet,
 ): MergedAiFindings {
-  const displayed = displayedAiResult(aiReview);
-  if (displayed?.kind !== "complete" || displayed.findings.length === 0) {
-    return { records: [], annotatedRecords: [] };
-  }
-  // Evidence quoted by the reviewer originates from already-redacted file
-  // samples, but re-redact as a belt-and-braces invariant: nothing persisted
-  // from the AI path may carry secret material.
-  const records = redactFindings(
-    displayed.findings.map((finding) => ({
-      severity: finding.severity,
-      file: finding.file,
-      evidence: finding.evidence,
-      reason: finding.reason,
-    })),
-  );
+  // projectAiReviewFindings is shared with the R2 read path so both stores
+  // hold byte-identical rows; it returns [] for a review that did not complete.
+  const records = projectAiReviewFindings(aiReview);
+  if (records.length === 0) return { records: [], annotatedRecords: [] };
   const annotatedRecords = annotateFindingsWithDiffStatus(records, diff.fileDiff, {
     previousFiles: findings.redactedPreviousFiles,
     stagedFiles: findings.redactedStagedFiles,
@@ -405,6 +390,12 @@ export async function recordCompletion(args: RecordCompletionArgs): Promise<void
   const riskSummary = result.riskSummary;
   const risk = result.risk;
 
+  // `findingCount` must match the persisted `scans.finding_count`, which counts
+  // rule rows plus a completed AI review's rows. Emit the breakdown too so an
+  // operator can see how many were advisory.
+  const ruleFindingCount = result.ruleFindings.length;
+  const aiFindingCount = projectAiReviewFindings(result.aiFindings).length;
+
   emitOperationalEvent("info", "scan.pipeline.completed", {
     scanId: identity.scanId,
     organizationId: identity.organizationId,
@@ -417,7 +408,9 @@ export async function recordCompletion(args: RecordCompletionArgs): Promise<void
     contextRisk: riskSummary.contextRisk,
     fileCount: result.fileCount,
     previousFileCount: result.previousFileCount,
-    findingCount: result.ruleFindings.length,
+    findingCount: ruleFindingCount + aiFindingCount,
+    ruleFindingCount,
+    aiFindingCount,
   });
 }
 
