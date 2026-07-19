@@ -56,4 +56,59 @@ describe("operational observability helpers", () => {
       message: "D1_ERROR: column not found",
     });
   });
+
+  test("surfaces the cause chain so wrapped D1 errors stay diagnosable", () => {
+    // Drizzle wraps the real D1 failure: without the cause, the log only says
+    // "Failed query" and the outage on the other end is invisible.
+    const wrapped = new Error('Failed query: select "id" from "npm_connections"', {
+      cause: new Error("D1_ERROR: Network connection lost."),
+    });
+    expect(describeOperationalError(wrapped)).toEqual({
+      name: "Error",
+      message: 'Failed query: select "id" from "npm_connections"',
+      cause: { name: "Error", message: "D1_ERROR: Network connection lost." },
+    });
+  });
+
+  test("bounds the described cause chain depth", () => {
+    let err = new Error("level-5");
+    for (let level = 4; level >= 0; level -= 1) {
+      err = new Error(`level-${level}`, { cause: err });
+    }
+    let described = describeOperationalError(err);
+    let depth = 0;
+    while (described.cause) {
+      described = described.cause;
+      depth += 1;
+    }
+    expect(depth).toBe(3);
+  });
+
+  test("redacts bound parameters from failed-query messages", () => {
+    const wrapped = new Error(
+      'Failed query: update "npm_connections" set "last_used_at" = ? where "organization_id" = ?\nparams: 1784219455018,personal:abc123',
+    );
+    expect(describeOperationalError(wrapped).message).toBe(
+      'Failed query: update "npm_connections" set "last_used_at" = ? where "organization_id" = ?\nparams: [redacted]',
+    );
+    // Non-query messages that merely mention params are left alone.
+    expect(describeOperationalError(new Error("invalid params: foo")).message).toBe(
+      "invalid params: foo",
+    );
+  });
+
+  test("sanitizes error messages and causes inside logged fields", () => {
+    const sanitized = sanitizeOperationalFields({
+      error: new Error("upstream said Bearer abc123secret", {
+        cause: new Error("also Bearer abc123secret"),
+      }),
+    });
+    expect(sanitized).toEqual({
+      error: {
+        name: "Error",
+        message: "upstream said Bearer [redacted]",
+        cause: { name: "Error", message: "also Bearer [redacted]" },
+      },
+    });
+  });
 });

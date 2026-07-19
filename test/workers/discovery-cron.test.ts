@@ -322,4 +322,32 @@ describe("staged publishes discovery cron", () => {
     });
     expect(orgA.email).toContain("@example.com");
   });
+
+  // Regression: on 2026-07-16 a transient D1 outage made the sweep's first
+  // read (listAutoDiscoveryNpmConnections) throw before the per-organization
+  // try/catch, which surfaced as an uncaught exception on the scheduled
+  // invocation and skipped audit pruning. The tick must log and complete.
+  test("a D1 failure during the sweep does not crash the scheduled invocation", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const brokenDb = {
+      prepare(): never {
+        throw new Error("D1_ERROR: simulated outage");
+      },
+    } as unknown as D1Database;
+
+    const ctx = createExecutionContext();
+    await worker.scheduled(
+      scheduledController(),
+      { ...env, DB: brokenDb } as unknown as Cloudflare.Env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    const events = errorSpy.mock.calls.map((call) => call[0]);
+    expect(events).toContain("staged_publishes.cron.failed");
+    // Pruning still ran (and failed against the same broken binding) instead
+    // of being skipped by an uncaught sweep exception.
+    expect(events).toContain("audit_events.prune_failed");
+  });
 });

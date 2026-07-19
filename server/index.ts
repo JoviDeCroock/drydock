@@ -438,7 +438,17 @@ async function pruneStaleAuditEvents(env: Cloudflare.Env) {
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
-    await runStagedPublishesDiscoveryCron(env, ctx);
+    // The discovery sweep's first D1 read runs before the per-organization
+    // try/catch, so a transient D1 failure here used to surface as an uncaught
+    // exception and skip audit pruning. The sweep is idempotent and the next
+    // tick is 15 minutes away — log and move on instead of throwing.
+    try {
+      await runStagedPublishesDiscoveryCron(env, ctx);
+    } catch (err) {
+      emitOperationalEvent("error", "staged_publishes.cron.failed", {
+        error: describeOperationalError(err),
+      });
+    }
     await pruneStaleAuditEvents(env);
   },
   async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
