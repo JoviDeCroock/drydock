@@ -101,7 +101,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.2.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.15.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.16.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -169,7 +169,16 @@ javascript-obfuscator-style rotating string-table wrapper is marked `obfuscated`
 the existing risk rule that keeps a lone hidden process capability at high instead of applying the
 benign build-helper de-escalation. The wrapper requires five independent structural signals
 (hexadecimal lookup identifiers and function, `while (!![])`, lookup-fed `parseInt`, and bracketed
-`push`/`shift`) to avoid treating ordinary minified names or queue rotation as malice.
+`push`/`shift`) to avoid treating ordinary minified names or queue rotation as malice. `1.16.0`
+allowlists npm's own lifecycle variables (`npm_command`, `npm_execpath`, `npm_lifecycle_event`,
+`npm_lifecycle_script`, `npm_node_execpath`, `npm_package_json`, `npm_package_name`,
+`npm_package_version`) in the environment-access pre-strip that runs before JavaScript
+`code.credential-access` matching: npm exports them onto every lifecycle-script process and they
+describe only the npm invocation and the package's own manifest, so reading them was a pure false
+positive (observed on dt-clean 1.2.1 and salita 2.0.0). `npm_config_*` is deliberately not
+allowlisted because it can carry live registry auth (`npm_config__authToken`). The strip also now
+preserves newlines when erasing a match, so a multiline access can no longer shift later findings'
+line numbers.
 
 ### Fixture format
 

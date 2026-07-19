@@ -16,7 +16,7 @@
   "previousFiles": [
     {
       "path": "package.json",
-      "size": 74,
+      "size": 73,
       "sha256": "prev-package-json",
       "flags": [],
       "textSample": "{\"name\":\"npm-config-auth-token-read\",\"version\":\"1.0.0\",\"main\":\"index.js\"}"
@@ -25,14 +25,14 @@
   "stagedFiles": [
     {
       "path": "package.json",
-      "size": 74,
+      "size": 73,
       "sha256": "staged-package-json",
       "flags": [],
       "textSample": "{\"name\":\"npm-config-auth-token-read\",\"version\":\"1.0.1\",\"main\":\"index.js\"}"
     },
     {
       "path": "collect.js",
-      "size": 130,
+      "size": 145,
       "sha256": "collect-js",
       "flags": [],
       "textSample": "const event = process.env.npm_lifecycle_event;\nconst registryAuth = process.env.npm_config__authToken;\nmodule.exports = { event, registryAuth };\n"

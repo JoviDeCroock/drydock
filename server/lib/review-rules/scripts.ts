@@ -320,10 +320,18 @@ function hasRotatingStringTableObfuscation(source: string): boolean {
 
 function omitCommonEnvironmentAccesses(source: string): string {
   return source
-    .replace(COMMON_PROCESS_ENV_DOT_ACCESS, "")
-    .replace(COMMON_PROCESS_ENV_BRACKET_ACCESS, "")
-    .replace(COMMON_IMPORT_META_ENV_DOT_ACCESS, "")
-    .replace(COMMON_IMPORT_META_ENV_BRACKET_ACCESS, "");
+    .replace(COMMON_PROCESS_ENV_DOT_ACCESS, eraseKeepingNewlines)
+    .replace(COMMON_PROCESS_ENV_BRACKET_ACCESS, eraseKeepingNewlines)
+    .replace(COMMON_IMPORT_META_ENV_DOT_ACCESS, eraseKeepingNewlines)
+    .replace(COMMON_IMPORT_META_ENV_BRACKET_ACCESS, eraseKeepingNewlines);
+}
+
+// The access regexes' \s* can span newlines (`process.env\n  .npm_command`), so
+// erasing a match outright would shrink the line count and point every later
+// finding — and the release-delta changed-line check that consumes finding.line
+// — one line early. Keep the match's newlines so line numbers stay stable.
+function eraseKeepingNewlines(match: string): string {
+  return match.replace(/[^\n]+/g, "");
 }
 
 function escapeRegex(value: string): string {

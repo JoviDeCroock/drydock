@@ -530,6 +530,29 @@ describe("review", () => {
     );
   });
 
+  test("keeps credential finding lines stable when a multiline env access is stripped", () => {
+    // The allowlist strip erases `process.env\n  .npm_command` across the line
+    // break; if it also swallowed the newline, the authToken read below would be
+    // reported at line 2 instead of its real line 3.
+    const staged = [
+      {
+        path: "index.js",
+        size: 92,
+        sha256: "multiline-env",
+        flags: [],
+        textSample:
+          "const a = process.env\n  .npm_command;\nconst b = process.env.npm_config__authToken;\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings.find((finding) => finding.ruleId === "code.credential-access")).toMatchObject({
+      severity: "high",
+      file: "index.js",
+      line: 3,
+    });
+  });
+
   test("still flags token reads next to common env flags", () => {
     const staged = [
       {

@@ -16,7 +16,7 @@
   "previousFiles": [
     {
       "path": "package.json",
-      "size": 71,
+      "size": 69,
       "sha256": "prev-package-json",
       "flags": [],
       "textSample": "{\"name\":\"npm-lifecycle-env-read\",\"version\":\"1.0.0\",\"main\":\"index.js\"}"
@@ -25,14 +25,14 @@
   "stagedFiles": [
     {
       "path": "package.json",
-      "size": 71,
+      "size": 69,
       "sha256": "staged-package-json",
       "flags": [],
       "textSample": "{\"name\":\"npm-lifecycle-env-read\",\"version\":\"1.0.1\",\"main\":\"index.js\"}"
     },
     {
       "path": "setup.mjs",
-      "size": 260,
+      "size": 352,
       "sha256": "setup-mjs",
       "flags": [],
       "textSample": "const command = process.env.npm_command;\nconst event = process.env.npm_lifecycle_event;\nconst script = process.env['npm_lifecycle_script'];\nconst name = process.env.npm_package_name;\nconst version = process.env['npm_package_version'];\nif (event !== 'prepare') process.exit(0);\nconsole.log(`${name}@${version} running ${command}:${event} (${script})`);\n"
