@@ -8,6 +8,7 @@ import { packageDiffSeo, PageSeo } from "../../lib/seo";
 import {
   getPublicDiffVersions,
   PackageDiffModel,
+  resolveSuggestedDiffPath,
   type PublicDiffResponse,
 } from "../../models/package-diff";
 import { errorMessage } from "../../models/api";
@@ -73,27 +74,11 @@ function DiffPackageResolver({ packageName }: { packageName: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      try {
-        const versions = await getPublicDiffVersions("npm", packageName);
-        if (cancelled) return;
-        if (!versions.suggested) {
-          error.value = "This package needs at least two published versions to diff.";
-          return;
-        }
-        location.route(
-          packageDiffPath(
-            "npm",
-            versions.packageName,
-            versions.suggested.from,
-            versions.suggested.to,
-          ),
-          true,
-        );
-      } catch (err) {
-        if (!cancelled) error.value = errorMessage(err);
-      }
-    })();
+    void resolveSuggestedDiffPath("npm", packageName).then((resolved) => {
+      if (cancelled) return;
+      if ("error" in resolved) error.value = resolved.error;
+      else location.route(resolved.path, true);
+    });
     return () => {
       cancelled = true;
     };
@@ -189,14 +174,9 @@ function DiffLanding() {
         location.route(packageDiffPath("npm", versions.packageName, published, preview.url));
         return;
       }
-      const versions = await getPublicDiffVersions(eco, input);
-      if (!versions.suggested) {
-        error.value = "This package needs at least two published versions to diff.";
-        return;
-      }
-      location.route(
-        packageDiffPath(eco, versions.packageName, versions.suggested.from, versions.suggested.to),
-      );
+      const resolved = await resolveSuggestedDiffPath(eco, input);
+      if ("error" in resolved) error.value = resolved.error;
+      else location.route(resolved.path);
     } catch (err) {
       error.value = errorMessage(err);
     } finally {

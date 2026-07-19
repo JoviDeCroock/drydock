@@ -206,12 +206,19 @@ or Unicode-confusable directory records remain findings, and the remaining
 non-regular/suspicious-entry reasons use PyPI wording instead of npm's.
 `1.18.0` closes the plain-dependency-addition gap: a newly added runtime or peer
 dependency with an ordinary registry spec raises `dependency.added` (medium), and a modified spec
-whose floor version crosses a major boundary (`4.3.0` → `5.0.0`, `^1` → `^2`) raises
-`dependency.major-bump` (low), both anchoring the risk roll-up like the other metadata rules.
-Entries already flagged by `dependency.unusual-spec` or `dependency.optional-added` are not
-double-flagged, within-major bumps stay silent, and specs without a leading version anchor
-(`latest`, `*`, bare `>` ranges) never produce a major-bump because the floor cannot be proven
-without registry resolution (the `dependency-added-major-bump` golden case).
+whose floor version crosses a major
+boundary (`4.3.0` → `5.0.0`, `^1` → `^2`) raises `dependency.major-bump` (low), both anchoring the
+risk roll-up like the other metadata rules. The delta rules require a baseline manifest: a first-ever
+publish (or a degraded baseline fetch) diffs every dependency as added, so without a previous release
+they stay silent instead of flooring every first release at medium (`dependency.optional-added` and
+`dependency.unusual-spec` still fire — they describe the staged manifest, not the delta). Entries
+already flagged by `dependency.unusual-spec` or `dependency.optional-added` are not double-flagged, a
+key moved between sections is compared as a modification rather than reported as new code,
+within-major bumps stay silent, `||` unions floor at the minimum across branches (spec parsing lives
+in `server/lib/dependency-specs.ts`, shared with the UI's dependency diff links so finding and link
+never disagree), an empty spec is treated like `*` rather than skipped, and specs without a leading
+version anchor (`latest`, `*`, bare `>` ranges) never produce a major-bump because the floor cannot
+be proven without registry resolution (the `dependency-added-major-bump` golden case).
 
 ### Fixture format
 

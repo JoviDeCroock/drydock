@@ -1,8 +1,11 @@
-import { parseDiffSpec } from "../../src/lib/package-diff-path";
+import { parseDiffPackage, parseDiffSpec } from "../../src/lib/package-diff-path";
 import { packageDiffSeo, SITE_URL } from "../../src/lib/seo-metadata";
 
+// Covers both the full spec (/diff/<name>/<from>/<to>) and the package-only
+// form (/diff/<name>) that dependency "view diff" links open in a new tab —
+// both must be served the /diff/ shell, not the homepage prerender.
 export function isPackageDiffDetailPath(pathname: string): boolean {
-  return parseDiffSpec(pathname) !== null;
+  return parseDiffSpec(pathname) !== null || parseDiffPackage(pathname) !== null;
 }
 
 export function rewritePackageDiffMetadata(response: Response, pathname: string): Response {

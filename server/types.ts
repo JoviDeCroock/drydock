@@ -13,7 +13,7 @@ import type {
   RiskLevel,
 } from "./lib/review";
 
-export type { PackageJsonDiff } from "./lib/review";
+export type { PackageJsonDiff, PackageJsonDiffEntry } from "./lib/review";
 
 export type Bindings = Cloudflare.Env;
 

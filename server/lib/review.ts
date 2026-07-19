@@ -53,7 +53,7 @@ export interface FindingAnnotationOptions {
 export { createPackageDiff } from "./review-diff";
 export type { DiffEntry } from "./review-diff";
 export { summarizePackageJsonDiff } from "./review-serialize";
-export type { PackageJsonDiff, PackageJsonSummary } from "./review-serialize";
+export type { PackageJsonDiff, PackageJsonDiffEntry, PackageJsonSummary } from "./review-serialize";
 export {
   DETERMINISTIC_RULE_IDS,
   DETERMINISTIC_RULES_VERSION,

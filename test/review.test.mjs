@@ -1302,6 +1302,75 @@ describe("review", () => {
     expect(packageJsonDiffFindings(unanchored)).toEqual([]);
   });
 
+  test("dependency delta rules stay silent without a baseline manifest", () => {
+    // A first-ever publish (or a degraded baseline fetch) diffs every dep as
+    // "added"; that is not the added-dependency vector, and flagging the whole
+    // list would floor every first release at medium risk.
+    const firstPublish = summarizePackageJsonDiff(undefined, {
+      name: "pkg",
+      version: "1.0.0",
+      dependencies: { "left-pad": "^1.3.0", "event-pubsub": "4.3.0" },
+      peerDependencies: { preact: "^10.0.0" },
+      optionalDependencies: { fsevents: "^2.0.0" },
+    });
+
+    const ruleIds = packageJsonDiffFindings(firstPublish).map((finding) => finding.ruleId);
+
+    // optional-added still fires: it describes the staged manifest itself,
+    // not the delta against a previous release.
+    expect(ruleIds).toEqual(["dependency.optional-added"]);
+  });
+
+  test("treats a section move as a modification, not a new dependency", () => {
+    // Same spec moved optionalDependencies -> dependencies: nothing new ships.
+    const pureMove = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", optionalDependencies: { fsevents: "^2.0.0" } },
+      { name: "pkg", version: "1.0.1", dependencies: { fsevents: "^2.0.0" } },
+    );
+    expect(packageJsonDiffFindings(pureMove)).toEqual([]);
+
+    // A move that also crosses a major boundary reports the bump, with the
+    // removed section's spec as the previous side.
+    const moveWithBump = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", optionalDependencies: { fsevents: "^1.0.0" } },
+      { name: "pkg", version: "1.0.1", dependencies: { fsevents: "^2.0.0" } },
+    );
+    expect(packageJsonDiffFindings(moveWithBump)).toEqual([
+      expect.objectContaining({
+        ruleId: "dependency.major-bump",
+        evidence: "fsevents: ^1.0.0 -> ^2.0.0",
+      }),
+    ]);
+  });
+
+  test("floors || unions at the minimum branch and treats empty specs as real", () => {
+    // "^2.0.0 || ^1.0.0" still floors at 1.x, so no major boundary is crossed.
+    const unionKeepsFloor = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { dep: "^1.0.0" } },
+      { name: "pkg", version: "1.0.1", dependencies: { dep: "^2.0.0 || ^1.0.0" } },
+    );
+    expect(packageJsonDiffFindings(unionKeepsFloor)).toEqual([]);
+
+    // A union whose lowest branch crossed the boundary does report the bump.
+    const unionCrosses = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { dep: "^1.0.0" } },
+      { name: "pkg", version: "1.0.1", dependencies: { dep: "^2.0.0 || ^3.0.0" } },
+    );
+    expect(packageJsonDiffFindings(unionCrosses)).toEqual([
+      expect.objectContaining({ ruleId: "dependency.major-bump" }),
+    ]);
+
+    // npm treats an empty spec like "*" — the loosest range must not be the
+    // one silent path through the added rule.
+    const emptySpec = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { anchor: "1.0.0" } },
+      { name: "pkg", version: "1.0.1", dependencies: { anchor: "1.0.0", loose: "" } },
+    );
+    expect(packageJsonDiffFindings(emptySpec)).toEqual([
+      expect.objectContaining({ ruleId: "dependency.added", evidence: "loose: " }),
+    ]);
+  });
+
   test("flags files outside package.json files allowlist", () => {
     const staged = [
       {

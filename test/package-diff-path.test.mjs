@@ -131,16 +131,64 @@ describe("dependencyDiffHref", () => {
     );
   });
 
-  test("falls back to the package-only form when specs have no version anchor", () => {
+  test("floors || unions at the minimum branch, matching the server rule", () => {
+    // "^2.0.0 || ^1.0.0" still floors at 1.0.0: same floor as before, no link
+    // (and no dependency.major-bump finding server-side to follow).
+    expect(
+      dependencyDiffHref({
+        key: "dep",
+        status: "modified",
+        previous: "^1.0.0",
+        staged: "^2.0.0 || ^1.0.0",
+      }),
+    ).toBeNull();
+    expect(
+      dependencyDiffHref({
+        key: "dep",
+        status: "modified",
+        previous: "^1.0.0",
+        staged: "^2.0.0 || ^3.0.0",
+      }),
+    ).toBe("/diff/dep/1.0.0/2.0.0");
+    // Build metadata is not part of the published version identifier.
+    expect(
+      dependencyDiffHref({
+        key: "dep",
+        status: "modified",
+        previous: "1.2.3+build",
+        staged: "2.0.0",
+      }),
+    ).toBe("/diff/dep/1.2.3/2.0.0");
+  });
+
+  test("aliased, git-hosted, and URL specs get no link", () => {
+    // The installed code is not the npm package named by the row key, so a
+    // link would present a same-named (possibly squatted) package's diff as
+    // the dependency under review.
+    for (const staged of [
+      "npm:lodash@^4",
+      "github:someone/dep#main",
+      "git+https://example.invalid/dep.git",
+      "https://example.invalid/dep.tgz",
+      "file:../local.tgz",
+    ]) {
+      expect(dependencyDiffHref({ key: "dep", status: "added", staged })).toBeNull();
+      expect(
+        dependencyDiffHref({ key: "dep", status: "modified", previous: "1.0.0", staged }),
+      ).toBeNull();
+    }
+  });
+
+  test("modified rows without anchoring floors get no link", () => {
+    // A package-only fallback would land on the latest published pair — a
+    // diff unrelated to the change in the row — so no link is rendered.
     for (const row of [
       { key: "dep", status: "modified", previous: "latest", staged: "next" },
       { key: "dep", status: "modified", previous: "*", staged: "2.0.0" },
-      { key: "dep", status: "modified", previous: "1.0.0", staged: "github:someone/dep#main" },
-      // Equal floors (a range widened from caret to tilde) leave no concrete
-      // pair to link, so the package-only form is the safe target.
+      // Equal floors: a range widened from caret to tilde anchors no pair.
       { key: "dep", status: "modified", previous: "^1.0.0", staged: "~1.0.0" },
     ]) {
-      expect(dependencyDiffHref(row)).toBe("/diff/dep");
+      expect(dependencyDiffHref(row)).toBeNull();
     }
   });
 

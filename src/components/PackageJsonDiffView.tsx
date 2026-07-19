@@ -78,7 +78,10 @@ function ChangeList({
             const href = linkFor ? linkFor(row) : null;
             return (
               <div
-                key={`${title}-${row.key}`}
+                // A key changed in two dependency sections at once yields two
+                // rows for the same package name, so the section is part of
+                // the identity.
+                key={`${title}-${row.section ?? ""}-${row.key}`}
                 class="flex flex-col gap-1.5 px-3 py-2.5 text-[13px] min-w-0"
               >
                 <div class="flex flex-wrap items-center gap-2 min-w-0">

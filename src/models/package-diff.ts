@@ -8,7 +8,7 @@ import type {
   PackageJsonSummary,
 } from "../../server/lib/review";
 import type { ScanRiskBreakdown } from "../../server/lib/risk";
-import type { DiffEcosystem } from "../lib/package-diff-path";
+import { packageDiffPath, type DiffEcosystem } from "../lib/package-diff-path";
 import { apiFetch, errorMessage } from "./api";
 
 export interface PublicDiffVersionsResponse {
@@ -43,13 +43,53 @@ export interface PublicDiffFileResponse {
   textSamplesOmitted: boolean;
 }
 
+// Short-lived per-package cache: the package-only /diff/<name> route fetches
+// versions to resolve a pair and then redirects to the full-spec page, whose
+// model fetches versions again — without the cache every added-dependency
+// "view diff" click charges the anonymous IP rate limit twice for the same
+// payload. Failed fetches are evicted so a retry hits the network.
+const versionsCache = new Map<string, { at: number; value: Promise<PublicDiffVersionsResponse> }>();
+const VERSIONS_CACHE_TTL_MS = 60_000;
+
 export function getPublicDiffVersions(
   ecosystem: DiffEcosystem,
   packageName: string,
 ): Promise<PublicDiffVersionsResponse> {
-  return apiFetch(
+  const cacheKey = `${ecosystem}:${packageName}`;
+  const cached = versionsCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < VERSIONS_CACHE_TTL_MS) return cached.value;
+  const value: Promise<PublicDiffVersionsResponse> = apiFetch(
     `/api/public/v1/package-diff/versions?package=${encodeURIComponent(packageName)}${ecosystemQuery(ecosystem)}`,
   );
+  versionsCache.set(cacheKey, { at: Date.now(), value });
+  value.catch(() => versionsCache.delete(cacheKey));
+  return value;
+}
+
+// One resolution path for turning a bare package name into a diff route,
+// shared by the diff landing form and the package-only /diff/<name> route
+// (the target of added-dependency "view diff" links), so both entry points
+// always agree on the suggested pair and the error copy.
+export async function resolveSuggestedDiffPath(
+  ecosystem: DiffEcosystem,
+  packageName: string,
+): Promise<{ path: string } | { error: string }> {
+  try {
+    const versions = await getPublicDiffVersions(ecosystem, packageName);
+    if (!versions.suggested) {
+      return { error: "This package needs at least two published versions to diff." };
+    }
+    return {
+      path: packageDiffPath(
+        ecosystem,
+        versions.packageName,
+        versions.suggested.from,
+        versions.suggested.to,
+      ),
+    };
+  } catch (err) {
+    return { error: errorMessage(err) };
+  }
 }
 
 function getPublicDiff(

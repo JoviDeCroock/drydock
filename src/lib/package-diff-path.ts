@@ -1,3 +1,6 @@
+import type { PackageJsonDiffEntry } from "../../server/types";
+import { specFloorVersion, unusualDependencySpecKind } from "../../server/lib/dependency-specs";
+
 export type DiffEcosystem = "npm" | "pypi";
 
 export interface DiffSpec {
@@ -89,44 +92,27 @@ export function parseDiffPackage(path: string): string | null {
   return segments.join("/");
 }
 
-export interface DependencyDiffRow {
-  key: string;
-  status: "added" | "removed" | "modified";
-  previous?: string;
-  staged?: string;
-}
+export type DependencyDiffRow = PackageJsonDiffEntry;
 
 // Best-effort diff-view target for a changed dependency, so a reviewer can
 // inspect the dependency's own releases (the node-ipc/peacenotwar shape) from
-// the manifest diff. A bump whose specs both anchor to a concrete floor
-// version links the floor-to-floor pair directly; an added dependency has no
-// previous version to anchor, so it links the package-only form and lets the
-// page resolve the latest published pair. Removed dependencies pull no new
-// code and get no link.
+// the manifest diff. A bump whose specs both anchor to distinct floor
+// versions links the floor-to-floor pair; an added dependency has no previous
+// version to anchor, so it links the package-only form and lets the page
+// resolve the latest published pair. No link is safer than a confidently
+// wrong one, so nothing is linked for: removed dependencies (they pull no new
+// code); aliased/git/URL/file specs (the installed code is not the npm
+// package named by the row key — linking that name could present a same-named
+// squatter's diff as the dependency under review); and modified rows whose
+// floors are equal or unanchored (a package-level fallback would land on the
+// latest published pair, a diff unrelated to this row's change).
 export function dependencyDiffHref(row: DependencyDiffRow): string | null {
   if (row.status === "removed") return null;
+  if (row.staged !== undefined && unusualDependencySpecKind(row.staged)) return null;
   if (row.status === "modified") {
     const from = specFloorVersion(row.previous);
     const to = specFloorVersion(row.staged);
-    if (from && to && from !== to) return packageDiffPath("npm", row.key, from, to);
+    return from && to && from !== to ? packageDiffPath("npm", row.key, from, to) : null;
   }
   return packageOnlyDiffPath(row.key);
-}
-
-// The lowest concrete version a plain registry semver spec can resolve to
-// ("^9.1.3" → "9.1.3", "~1.2" → "1.2.0", "2" → "2.0.0"). Null when the spec
-// has no leading version anchor (dist-tags like "latest", "*", bare ">"
-// ranges, git/URL specs), mirroring the server-side dependency.major-bump
-// floor rule — an unanchored spec cannot be resolved without the registry.
-function specFloorVersion(spec: string | undefined): string | null {
-  if (!spec) return null;
-  const match = spec
-    .trim()
-    .match(
-      /^(?:[~^=]|>=)?\s*v?(\d+)(?:\.(\d+|x|\*))?(?:\.(\d+|x|\*))?(-[0-9A-Za-z.+-]+)?(?=$|[\s|])/,
-    );
-  if (!match) return null;
-  const [, major, minor, patch, prerelease] = match;
-  const part = (value: string | undefined) => (value && /^\d+$/.test(value) ? value : "0");
-  return `${major}.${part(minor)}.${part(patch)}${prerelease ?? ""}`;
 }
