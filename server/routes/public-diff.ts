@@ -1,6 +1,8 @@
 import { Hono, type Context } from "hono";
 import { createDb } from "../db/client";
 import { enforceRateLimit, RateLimitError } from "../db/rate-limit";
+import { isValidPyPiProjectName } from "../lib/adapters/pypi/manifest";
+import { SAFE_VERSION_RE } from "../lib/adapters/pypi/types";
 import { rateLimitResponse } from "../lib/http";
 import {
   computePublicDiffCacheKey,
@@ -8,26 +10,35 @@ import {
   loadPublicPackageDiff,
   PublicDiffError,
   readPublicDiffCache,
+  type PublicDiffEcosystem,
   type PublicPackageDiff,
 } from "../lib/public-diff";
 import { isPkgPrNewUrl } from "../../src/lib/pkg-pr-new";
+import {
+  fetchPublicPyPiProjectMetadata,
+  listPublicPyPiVersions,
+  PYPI_PUBLIC_REGISTRY,
+} from "../lib/public-diff-pypi";
 import { compareSemver, isValidNpmPackageName } from "../lib/registry";
 import type { Bindings, Variables } from "../types";
 
 // Anonymous by design: these endpoints serve only data derived from public
 // registry artifacts and public pkg.pr.new preview tarballs (no organization
 // resources, no credentials, no D1 persistence) and are the marketing-facing
-// "diff any npm package" surface.
-// Abuse control is per-IP rate limiting plus the KV cache for immutable
-// version pairs; the sandbox's archive caps bound the work a request can ask
-// for. Everything else under /api/* keeps requiring a Better Auth session.
+// "diff any npm or PyPI package" surface. Abuse control is per-IP rate limiting
+// plus the KV cache for immutable version pairs; the sandbox's archive caps
+// bound the work a request can ask for. Everything else under /api/* keeps
+// requiring a Better Auth session.
 export const publicDiffRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
+const NPM_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
 const PUBLIC_NPM_REGISTRY = "https://registry.npmjs.org";
 
 type PublicDiffContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 
+// A custom NPM_REGISTRY signals a private/self-hosted deployment, so the whole
+// anonymous surface stays off there — including PyPI, which would otherwise
+// still reach out to the public internet from a private install.
 publicDiffRoutes.use("*", async (c, next) => {
   const configuredRegistry = (c.env.NPM_REGISTRY || PUBLIC_NPM_REGISTRY).replace(/\/+$/, "");
   if (configuredRegistry !== PUBLIC_NPM_REGISTRY) {
@@ -64,19 +75,39 @@ async function enforcePublicRateLimit(
   }
 }
 
-function requestedPackageName(c: PublicDiffContext): string | Response {
+function requestedEcosystem(c: PublicDiffContext): PublicDiffEcosystem | Response {
+  const ecosystem = c.req.query("ecosystem")?.trim() || "npm";
+  if (ecosystem !== "npm" && ecosystem !== "pypi") {
+    return c.json({ error: "invalid ecosystem" }, 400);
+  }
+  return ecosystem;
+}
+
+function requestedPackageName(
+  c: PublicDiffContext,
+  ecosystem: PublicDiffEcosystem,
+): string | Response {
   const packageName = c.req.query("package")?.trim() ?? "";
-  if (!isValidNpmPackageName(packageName)) {
+  const valid =
+    ecosystem === "pypi" ? isValidPyPiProjectName(packageName) : isValidNpmPackageName(packageName);
+  if (!valid) {
     return c.json({ error: "invalid package name" }, 400);
   }
   return packageName;
 }
 
-// A version side is either a published registry version or a pkg.pr.new
-// preview URL (validated and origin-pinned by the shared parser).
-function requestedVersion(c: PublicDiffContext, param: string): string | Response {
+// An npm version side is either a published registry version or a pkg.pr.new
+// preview URL (validated and origin-pinned by the shared parser). PyPI has no
+// preview form, and its versions additionally allow PEP 440 epoch markers
+// ("1!2.0").
+function requestedVersion(
+  c: PublicDiffContext,
+  ecosystem: PublicDiffEcosystem,
+  param: string,
+): string | Response {
   const version = c.req.query(param)?.trim() ?? "";
-  if (!VERSION_RE.test(version) && !isPkgPrNewUrl(version)) {
+  const versionRe = ecosystem === "pypi" ? SAFE_VERSION_RE : NPM_VERSION_RE;
+  if (!versionRe.test(version) && !(ecosystem === "npm" && isPkgPrNewUrl(version))) {
     return c.json({ error: `invalid ${param} version` }, 400);
   }
   return version;
@@ -89,25 +120,32 @@ function publicDiffErrorResponse(c: PublicDiffContext, err: unknown): Response {
   throw err;
 }
 
+function publicRegistryUrl(ecosystem: PublicDiffEcosystem): string {
+  return ecosystem === "pypi" ? PYPI_PUBLIC_REGISTRY : PUBLIC_NPM_REGISTRY;
+}
+
 async function loadRequestedDiff(
   c: PublicDiffContext,
   options: { limitColdComputation?: boolean } = {},
 ): Promise<{ payload: PublicPackageDiff } | { error: Response }> {
-  const packageName = requestedPackageName(c);
+  const ecosystem = requestedEcosystem(c);
+  if (ecosystem instanceof Response) return { error: ecosystem };
+  const packageName = requestedPackageName(c, ecosystem);
   if (packageName instanceof Response) return { error: packageName };
-  const fromVersion = requestedVersion(c, "from");
+  const fromVersion = requestedVersion(c, ecosystem, "from");
   if (fromVersion instanceof Response) return { error: fromVersion };
-  const toVersion = requestedVersion(c, "to");
+  const toVersion = requestedVersion(c, ecosystem, "to");
   if (toVersion instanceof Response) return { error: toVersion };
   if (fromVersion === toVersion) {
     return { error: c.json({ error: "from and to must differ" }, 400) };
   }
 
   const input = {
+    ecosystem,
     packageName,
     fromVersion,
     toVersion,
-    registryUrl: PUBLIC_NPM_REGISTRY,
+    registryUrl: publicRegistryUrl(ecosystem),
   };
 
   try {
@@ -130,8 +168,33 @@ async function loadRequestedDiff(
 publicDiffRoutes.get("/versions", async (c) => {
   const limited = await enforcePublicRateLimit(c, "versions", 30);
   if (limited) return limited;
-  const packageName = requestedPackageName(c);
+  const ecosystem = requestedEcosystem(c);
+  if (ecosystem instanceof Response) return ecosystem;
+  const packageName = requestedPackageName(c, ecosystem);
   if (packageName instanceof Response) return packageName;
+
+  if (ecosystem === "pypi") {
+    let metadata;
+    try {
+      metadata = await fetchPublicPyPiProjectMetadata(c.env, c.executionCtx, packageName);
+    } catch (err) {
+      return publicDiffErrorResponse(c, err);
+    }
+    const { versions, suggested } = listPublicPyPiVersions(metadata);
+    return c.json(
+      {
+        ecosystem,
+        packageName: metadata.info?.name ?? packageName,
+        versions,
+        suggested,
+      },
+      200,
+      {
+        "cache-control": "public, max-age=300, stale-while-revalidate=600",
+        "cache-tag": publicDiffCacheTag(ecosystem, packageName),
+      },
+    );
+  }
 
   let metadata;
   try {
@@ -170,6 +233,7 @@ publicDiffRoutes.get("/versions", async (c) => {
 
   return c.json(
     {
+      ecosystem,
       packageName,
       versions,
       suggested: latest && previous ? { from: previous, to: latest } : null,
@@ -177,7 +241,7 @@ publicDiffRoutes.get("/versions", async (c) => {
     200,
     {
       "cache-control": "public, max-age=300, stale-while-revalidate=600",
-      "cache-tag": publicDiffCacheTag(packageName),
+      "cache-tag": publicDiffCacheTag(ecosystem, packageName),
     },
   );
 });
@@ -185,15 +249,19 @@ publicDiffRoutes.get("/versions", async (c) => {
 // Package bytes are immutable, but findings and risk change with the deployed
 // analysis version. Revalidate response payloads at the origin; the versioned
 // colo/KV result cache keeps that revalidation cheap.
-function analyzedPairHeaders(packageName: string): Record<string, string> {
+function analyzedPairHeaders(
+  ecosystem: PublicDiffEcosystem,
+  packageName: string,
+): Record<string, string> {
   return {
     "cache-control": "public, max-age=0, must-revalidate",
-    "cache-tag": publicDiffCacheTag(packageName),
+    "cache-tag": publicDiffCacheTag(ecosystem, packageName),
   };
 }
 
-function publicDiffCacheTag(packageName: string): string {
-  return `public-diff:${packageName}`;
+function publicDiffCacheTag(ecosystem: PublicDiffEcosystem, packageName: string): string {
+  // npm keeps the historical un-prefixed tag so existing purge tooling works.
+  return ecosystem === "pypi" ? `public-diff:pypi:${packageName}` : `public-diff:${packageName}`;
 }
 
 publicDiffRoutes.get("/", async (c) => {
@@ -205,6 +273,7 @@ publicDiffRoutes.get("/", async (c) => {
 
   return c.json(
     {
+      ecosystem: payload.ecosystem,
       packageName: payload.packageName,
       fromVersion: payload.fromVersion,
       toVersion: payload.toVersion,
@@ -218,7 +287,7 @@ publicDiffRoutes.get("/", async (c) => {
       cachedAt: payload.cachedAt,
     },
     200,
-    analyzedPairHeaders(payload.packageName),
+    analyzedPairHeaders(payload.ecosystem, payload.packageName),
   );
 });
 
@@ -244,6 +313,6 @@ publicDiffRoutes.get("/file", async (c) => {
       textSamplesOmitted: payload.textSamplesOmitted ?? false,
     },
     200,
-    analyzedPairHeaders(payload.packageName),
+    analyzedPairHeaders(payload.ecosystem, payload.packageName),
   );
 });

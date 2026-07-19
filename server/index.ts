@@ -259,7 +259,7 @@ app.get("/api", (c) =>
         "GET /api/v1/github-app/config; POST /api/v1/github-app/install; POST /api/v1/github-app/install/callback; GET /api/v1/github-app/installations; GET/POST /api/v1/github-app/release-targets; DELETE /api/v1/github-app/release-targets/:id; GET /api/v1/github-app/workflow-gates/by-scan/:scanId; POST /api/v1/github-app/workflow-gates/:gateId/decision",
       githubWebhooks: "POST /webhooks/github (signed by GitHub App webhook secret)",
       publicPackageDiff:
-        "GET /api/public/v1/package-diff?package&from&to; GET /api/public/v1/package-diff/versions?package; GET /api/public/v1/package-diff/file?package&from&to&path (anonymous, IP rate-limited, public registry data only; from/to also accept pkg.pr.new preview URLs)",
+        "GET /api/public/v1/package-diff?package&from&to[&ecosystem=npm|pypi]; GET /api/public/v1/package-diff/versions?package[&ecosystem]; GET /api/public/v1/package-diff/file?package&from&to&path[&ecosystem] (anonymous, IP rate-limited, public registry data only; on npm, from/to also accept pkg.pr.new preview URLs)",
       slack:
         "GET /api/v1/slack; POST /api/v1/slack/connect; GET /api/v1/slack/callback; GET /api/v1/slack/channels; PUT /api/v1/slack/channel; PATCH /api/v1/slack; DELETE /api/v1/slack; POST /api/v1/slack/test",
       health: "GET /api/health",

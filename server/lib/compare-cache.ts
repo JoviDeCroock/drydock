@@ -61,23 +61,23 @@ export async function computeCompareMetadataCacheKey(input: {
   return `${METADATA_CACHE_PREFIX}${hex}`;
 }
 
-export async function readCompareMetadataCache(
+export async function readCompareMetadataCache<T = RegistryMetadata>(
   env: Cloudflare.Env,
   key: string,
-): Promise<RegistryMetadata | null> {
+): Promise<T | null> {
   if (!env.COMPARE_CACHE) return null;
   try {
-    return await env.COMPARE_CACHE.get<RegistryMetadata>(key, "json");
+    return await env.COMPARE_CACHE.get<T>(key, "json");
   } catch {
     return null;
   }
 }
 
-export async function writeCompareMetadataCache(
+export async function writeCompareMetadataCache<T = RegistryMetadata>(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
   key: string,
-  payload: RegistryMetadata,
+  payload: T,
 ) {
   if (!env.COMPARE_CACHE) return;
   const write = env.COMPARE_CACHE.put(key, JSON.stringify(payload), {

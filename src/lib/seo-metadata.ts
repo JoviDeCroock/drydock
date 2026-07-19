@@ -1,3 +1,4 @@
+import { packageDiffPath, type DiffEcosystem } from "./package-diff-path";
 import { diffRefLabel } from "./pkg-pr-new";
 
 export const SITE_NAME = "Drydock";
@@ -37,19 +38,16 @@ export function packageDiffSeo(
   packageName?: string,
   fromVersion?: string,
   toVersion?: string,
+  ecosystem: DiffEcosystem = "npm",
 ): PageSeoMetadata {
   if (!packageName || !fromVersion || !toVersion) {
     return {
-      title: "Diff any npm package | Drydock",
+      title: "Diff any npm or PyPI package | Drydock",
       description:
-        "Compare two published versions of any npm package file by file, with deterministic supply-chain findings pinned to the diff. Free, no account needed.",
+        "Compare two published versions of any npm package or PyPI project file by file, with deterministic supply-chain findings pinned to the diff. Free, no account needed.",
       path: "/diff",
     };
   }
-  const encodedName = packageName
-    .split("/")
-    .map((segment) => encodeURIComponent(segment).replace(/^%40/, "@"))
-    .join("/");
   // Preview sides (pkg.pr.new URLs) render as short labels; the canonical path
   // keeps the raw spec values.
   const fromLabel = diffRefLabel(fromVersion);
@@ -57,7 +55,7 @@ export function packageDiffSeo(
   return {
     title: `${packageName} ${fromLabel} → ${toLabel} | Drydock package diff`,
     description: `File-by-file diff of ${packageName} between ${fromLabel} and ${toLabel}, with deterministic supply-chain findings pinned to changed lines.`,
-    path: `/diff/${encodedName}/${encodeURIComponent(fromVersion)}/${encodeURIComponent(toVersion)}`,
+    path: packageDiffPath(ecosystem, packageName, fromVersion, toVersion),
   };
 }
 

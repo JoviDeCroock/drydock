@@ -31,7 +31,12 @@ import {
   Muted,
   SectionLabel,
 } from "../../components/Typography";
-import { packageDiffPath, parseDiffSpec, type DiffSpec } from "../../lib/package-diff-path";
+import {
+  packageDiffPath,
+  parseDiffSpec,
+  type DiffEcosystem,
+  type DiffSpec,
+} from "../../lib/package-diff-path";
 import { diffRefLabel, parsePkgPrNewUrl } from "../../lib/pkg-pr-new";
 import { filterDiffEntries, findingCountsByPath } from "../Dashboard/ScanDetail/diff-helpers";
 import { RiskSignalsSection } from "../Dashboard/ScanDetail/FindingsSection";
@@ -45,7 +50,7 @@ export default function DiffPage() {
   if (!spec) return <DiffLanding />;
   return (
     <PackageDiffView
-      key={`${spec.packageName}@${spec.fromVersion}..${spec.toVersion}`}
+      key={`${spec.ecosystem}:${spec.packageName}@${spec.fromVersion}..${spec.toVersion}`}
       spec={spec}
     />
   );
@@ -59,18 +64,21 @@ export default function DiffPage() {
 // clean report undersells the review.
 const INCIDENT_DIFFS: Array<DiffSpec & { note: string }> = [
   {
+    ecosystem: "npm",
     packageName: "node-ipc",
     fromVersion: "9.2.1",
     toVersion: "11.0.0",
     note: "protestware arrives as a new dependency (peacenotwar)",
   },
   {
+    ecosystem: "npm",
     packageName: "semversyphus",
     fromVersion: "1.0.5",
     toVersion: "1.0.6",
     note: "a postinstall script appears — demo of the install-script rule",
   },
   {
+    ecosystem: "npm",
     packageName: "es5-ext",
     fromVersion: "0.10.53",
     toVersion: "0.10.54",
@@ -81,35 +89,38 @@ const INCIDENT_DIFFS: Array<DiffSpec & { note: string }> = [
 function DiffLanding() {
   const authed = useAuthedSession();
   const location = useLocation();
+  const ecosystem = useSignal<DiffEcosystem>("npm");
   const packageName = useSignal("");
   const busy = useSignal(false);
   const error = useSignal<string | null>(null);
 
   const open = async (input: string) => {
     if (!input || busy.peek()) return;
+    const eco = ecosystem.peek();
     busy.value = true;
     error.value = null;
     try {
       // A pasted pkg.pr.new URL diffs the preview build against the latest
-      // published release of the same package.
+      // published release of the same package. Previews are npm-only, so the
+      // ecosystem selector is ignored for them.
       const preview = parsePkgPrNewUrl(input);
       if (preview) {
-        const versions = await getPublicDiffVersions(preview.packageName);
+        const versions = await getPublicDiffVersions("npm", preview.packageName);
         const published = versions.suggested?.to ?? versions.versions[0]?.version;
         if (!published) {
           error.value = "This package has no published npm release to compare the preview against.";
           return;
         }
-        location.route(packageDiffPath(versions.packageName, published, preview.url));
+        location.route(packageDiffPath("npm", versions.packageName, published, preview.url));
         return;
       }
-      const versions = await getPublicDiffVersions(input);
+      const versions = await getPublicDiffVersions(eco, input);
       if (!versions.suggested) {
         error.value = "This package needs at least two published versions to diff.";
         return;
       }
       location.route(
-        packageDiffPath(versions.packageName, versions.suggested.from, versions.suggested.to),
+        packageDiffPath(eco, versions.packageName, versions.suggested.from, versions.suggested.to),
       );
     } catch (err) {
       error.value = errorMessage(err);
@@ -124,7 +135,7 @@ function DiffLanding() {
       <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
         <Eyebrow tone="accent">Public package diff</Eyebrow>
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
-          Diff any npm package.
+          Diff any npm or PyPI package.
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
           See exactly what changed between two published versions — every file, line by line, with
@@ -139,11 +150,28 @@ function DiffLanding() {
             void open(packageName.peek().trim());
           }}
         >
+          <div class="w-auto min-w-[100px]" aria-label="Package ecosystem">
+            <Select
+              value={ecosystem.value}
+              onChange={(value) => (ecosystem.value = value === "pypi" ? "pypi" : "npm")}
+            >
+              <option value="npm">npm</option>
+              <option value="pypi">PyPI</option>
+            </Select>
+          </div>
           <Input
             type="text"
             value={packageName}
-            placeholder="package name or pkg.pr.new URL, e.g. react"
-            aria-label="npm package name or pkg.pr.new URL"
+            placeholder={
+              ecosystem.value === "pypi"
+                ? "project name, e.g. requests or numpy"
+                : "package name or pkg.pr.new URL, e.g. react"
+            }
+            aria-label={
+              ecosystem.value === "pypi"
+                ? "PyPI project name"
+                : "npm package name or pkg.pr.new URL"
+            }
             autoComplete="off"
             spellcheck={false}
             class="flex-1 min-w-[240px]"
@@ -169,6 +197,7 @@ function DiffLanding() {
             >
               <a
                 href={packageDiffPath(
+                  incident.ecosystem,
                   incident.packageName,
                   incident.fromVersion,
                   incident.toVersion,
@@ -209,10 +238,12 @@ function DiffLanding() {
 }
 
 function PackageDiffView({ spec }: { spec: DiffSpec }) {
-  const { packageName, fromVersion, toVersion } = spec;
+  const { ecosystem, packageName, fromVersion, toVersion } = spec;
   const authed = useAuthedSession();
   const location = useLocation();
-  const model = useModel(() => new PackageDiffModel(packageName, fromVersion, toVersion));
+  const model = useModel(
+    () => new PackageDiffModel(ecosystem, packageName, fromVersion, toVersion),
+  );
   const fileFilter = useSignal("");
   const changedFilesOnly = useSignal(true);
 
@@ -272,7 +303,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
 
   return (
     <PageShell headerActions={<MarketingHeaderActions authed={authed} />} feedbackPosition="end">
-      <PageSeo metadata={packageDiffSeo(packageName, fromVersion, toVersion)} />
+      <PageSeo metadata={packageDiffSeo(packageName, fromVersion, toVersion, ecosystem)} />
       <section class="flex flex-col gap-3 border-t border-border pt-6">
         <Eyebrow tone="accent">Public package diff</Eyebrow>
         <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 break-all">
@@ -280,6 +311,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
         </h1>
         <MonoDetail
           parts={[
+            <span key="ecosystem">{ecosystem === "pypi" ? "PyPI" : "npm"}</span>,
             <span key="versions">
               {fromLabel} → {toLabel}
             </span>,
@@ -314,7 +346,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
             fromVersion={fromVersion}
             toVersion={toVersion}
             onChange={(nextFrom, nextTo) =>
-              location.route(packageDiffPath(packageName, nextFrom, nextTo))
+              location.route(packageDiffPath(ecosystem, packageName, nextFrom, nextTo))
             }
           />
         ) : null}
@@ -324,7 +356,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
       {loading ? (
         <LoadingState
           title="Comparing releases"
-          detail="fetching both tarballs · parsing in the sandbox · computing the diff"
+          detail="fetching published artifacts · parsing in the sandbox · computing the diff"
         />
       ) : null}
 

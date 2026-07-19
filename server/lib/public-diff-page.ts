@@ -9,7 +9,12 @@ export function rewritePackageDiffMetadata(response: Response, pathname: string)
   const spec = parseDiffSpec(pathname);
   if (!spec || !response.headers.get("content-type")?.includes("text/html")) return response;
 
-  const metadata = packageDiffSeo(spec.packageName, spec.fromVersion, spec.toVersion);
+  const metadata = packageDiffSeo(
+    spec.packageName,
+    spec.fromVersion,
+    spec.toVersion,
+    spec.ecosystem,
+  );
   const canonicalUrl = `${SITE_URL}${metadata.path}`;
 
   return new HTMLRewriter()

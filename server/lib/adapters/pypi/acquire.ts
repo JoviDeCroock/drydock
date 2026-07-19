@@ -241,7 +241,7 @@ export function isAllowedPyPiArtifactUrl(url: string): boolean {
   }
 }
 
-function flattenPyPiArtifactFiles(artifacts: PyPiPreparedArtifact[]): FileRecord[] {
+export function flattenPyPiArtifactFiles(artifacts: PyPiPreparedArtifact[]): FileRecord[] {
   return artifacts.flatMap((artifact) =>
     artifact.files.map((file) => ({
       ...file,
@@ -270,6 +270,13 @@ function sortedUnique(values: string[]): string[] {
   return [...new Set(values)].sort();
 }
 
+// Maps an artifact-relative file path to the namespaced path used by
+// flattenPyPiArtifactFiles, so findings that reference files by artifact path
+// can be re-pinned onto the flattened diff tree.
+export function pyPiArtifactDiffPath(artifact: PyPiPreparedArtifact, filePath: string): string {
+  return namespacedPath(artifactDiffNamespace(artifact), normalizePyPiDiffFilePath(filePath));
+}
+
 function artifactDiffNamespace(artifact: PyPiPreparedArtifact): string {
   if (artifact.kind === "sdist") return "sdist";
   const tags = artifact.summary.wheel?.tags ?? [];
@@ -277,7 +284,7 @@ function artifactDiffNamespace(artifact: PyPiPreparedArtifact): string {
   return wheelFilenameNamespace(artifact.path);
 }
 
-function filenameArtifactNamespace(pathOrFilename: string, kind: PyPiArtifactKind): string {
+export function filenameArtifactNamespace(pathOrFilename: string, kind: PyPiArtifactKind): string {
   return kind === "sdist" ? "sdist" : wheelFilenameNamespace(pathOrFilename);
 }
 
