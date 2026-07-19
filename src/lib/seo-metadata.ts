@@ -1,3 +1,5 @@
+import { diffRefLabel } from "./pkg-pr-new";
+
 export const SITE_NAME = "Drydock";
 export const SITE_URL = "https://drydock.org";
 export const OG_IMAGE_URL = `${SITE_URL}/og-image.png`;
@@ -48,9 +50,13 @@ export function packageDiffSeo(
     .split("/")
     .map((segment) => encodeURIComponent(segment).replace(/^%40/, "@"))
     .join("/");
+  // Preview sides (pkg.pr.new URLs) render as short labels; the canonical path
+  // keeps the raw spec values.
+  const fromLabel = diffRefLabel(fromVersion);
+  const toLabel = diffRefLabel(toVersion);
   return {
-    title: `${packageName} ${fromVersion} → ${toVersion} | Drydock package diff`,
-    description: `File-by-file diff of ${packageName} between ${fromVersion} and ${toVersion}, with deterministic supply-chain findings pinned to changed lines.`,
+    title: `${packageName} ${fromLabel} → ${toLabel} | Drydock package diff`,
+    description: `File-by-file diff of ${packageName} between ${fromLabel} and ${toLabel}, with deterministic supply-chain findings pinned to changed lines.`,
     path: `/diff/${encodedName}/${encodeURIComponent(fromVersion)}/${encodeURIComponent(toVersion)}`,
   };
 }

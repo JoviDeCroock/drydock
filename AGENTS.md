@@ -20,7 +20,7 @@
 - Package bytes are hostile evidence. Never execute package code, install dependencies, run lifecycle scripts, import modules, run builds, invoke shells, or render package-provided active content.
 - npm credentials stay outside the sandbox. Only `NpmStageGateway` may attach npm auth, only for allowed staged/metadata/tarball registry endpoints.
 - The AI reviewer is advisory and on by default; the per-organization `ai-review` flag is a killswitch that disables it. It cannot downgrade deterministic findings.
-- D1/Better Auth are required for every non-auth `/api/*` endpoint; resource ownership must be organization-scoped. Sole exception: the anonymous `/api/public/v1/package-diff` endpoints, which serve only public-registry data, attach no credentials, and are IP rate-limited (see `docs/security-model.md`).
+- D1/Better Auth are required for every non-auth `/api/*` endpoint; resource ownership must be organization-scoped. Sole exception: the anonymous `/api/public/v1/package-diff` endpoints, which serve only public-registry and pkg.pr.new preview data, attach no credentials, and are IP rate-limited (see `docs/security-model.md`).
 - Operational logs/events must be structured and secret-redacted. Never log raw tokens, headers, package contents, or unredacted errors.
 
 ## UI and frontend conventions

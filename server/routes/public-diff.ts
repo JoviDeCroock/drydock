@@ -10,12 +10,14 @@ import {
   readPublicDiffCache,
   type PublicPackageDiff,
 } from "../lib/public-diff";
+import { isPkgPrNewUrl } from "../../src/lib/pkg-pr-new";
 import { compareSemver, isValidNpmPackageName } from "../lib/registry";
 import type { Bindings, Variables } from "../types";
 
 // Anonymous by design: these endpoints serve only data derived from public
-// registry artifacts (no organization resources, no credentials, no D1
-// persistence) and are the marketing-facing "diff any npm package" surface.
+// registry artifacts and public pkg.pr.new preview tarballs (no organization
+// resources, no credentials, no D1 persistence) and are the marketing-facing
+// "diff any npm package" surface.
 // Abuse control is per-IP rate limiting plus the KV cache for immutable
 // version pairs; the sandbox's archive caps bound the work a request can ask
 // for. Everything else under /api/* keeps requiring a Better Auth session.
@@ -70,9 +72,11 @@ function requestedPackageName(c: PublicDiffContext): string | Response {
   return packageName;
 }
 
+// A version side is either a published registry version or a pkg.pr.new
+// preview URL (validated and origin-pinned by the shared parser).
 function requestedVersion(c: PublicDiffContext, param: string): string | Response {
   const version = c.req.query(param)?.trim() ?? "";
-  if (!VERSION_RE.test(version)) {
+  if (!VERSION_RE.test(version) && !isPkgPrNewUrl(version)) {
     return c.json({ error: `invalid ${param} version` }, 400);
   }
   return version;

@@ -1,3 +1,4 @@
+import { parsePkgPrNewUrl } from "../../src/lib/pkg-pr-new";
 import { registryProtocolAllowed } from "./npm-connection";
 import { reliableFetch } from "./reliable-fetch";
 import {
@@ -218,6 +219,71 @@ function capByteStream(
       },
     }),
   );
+}
+
+/**
+ * Opens a pkg.pr.new preview tarball stream. Separate from
+ * {@link fetchPublishedTarballStream} on purpose: this path is structurally
+ * anonymous — it takes no token option and never attaches credentials — so
+ * adding preview support cannot widen where npm auth can travel. The URL must
+ * re-validate as a canonical pkg.pr.new package URL here, not just at the
+ * route layer. Preview refs (pull-request numbers, re-run commit builds) are
+ * mutable, so the bytes are never written to the shared colo tarball cache.
+ */
+export async function fetchPkgPrNewTarballStream(
+  tarballUrl: string,
+  options: { maxBytes?: number } = {},
+): Promise<ReadableStream<Uint8Array>> {
+  const maxBytes = options.maxBytes ?? SANDBOX_MAX_STREAM_TAR_BYTES;
+  const spec = parsePkgPrNewUrl(tarballUrl);
+  if (!spec || spec.url !== tarballUrl) {
+    throw new SandboxError(
+      JSON.stringify({
+        error: "tarball URL is not an allowed pkg.pr.new package URL",
+        status: 400,
+      }),
+    );
+  }
+
+  let response: Response;
+  try {
+    response = await reliableFetch(spec.url, {
+      headers: tarballRequestHeaders(),
+      timeoutMs: 60_000,
+    });
+  } catch {
+    throw new SandboxError(JSON.stringify({ error: "download failed", status: 502 }));
+  }
+  if (!response.ok) {
+    throw new SandboxError(JSON.stringify({ error: "download failed", status: response.status }));
+  }
+  const contentLength = Number(response.headers.get("content-length") || "0");
+  if (contentLength > maxBytes) {
+    throw new SandboxError(JSON.stringify({ error: "tarball too large", status: 413 }));
+  }
+  if (!response.body) {
+    throw new SandboxError(JSON.stringify({ error: "archive download failed", status: 502 }));
+  }
+  return capByteStream(response.body, maxBytes);
+}
+
+/**
+ * Anonymous fetch + credentials-free streaming parse of a pkg.pr.new preview
+ * tarball. Like {@link downloadPublishedTarball}, the archive is never
+ * materialized in the parent worker.
+ */
+export async function downloadPkgPrNewTarball(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  tarballUrl: string,
+  options: { maxBytes?: number; maxFiles?: number } = {},
+): Promise<DownloadResult> {
+  const body = await fetchPkgPrNewTarballStream(tarballUrl, { maxBytes: options.maxBytes });
+  return downloadInSandboxStream(env, ctx, {
+    body,
+    format: "tgz",
+    maxFiles: options.maxFiles,
+  });
 }
 
 export interface DownloadPublishedTarballOptions extends PublishedTarballFetchOptions {
