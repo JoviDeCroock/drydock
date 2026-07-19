@@ -5,15 +5,9 @@ import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { claimScanForRun, createScanJob, getScan, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
-import {
-  DETERMINISTIC_RULES_VERSION,
-  createPackageDiff,
-} from "../../server/lib/review";
+import { DETERMINISTIC_RULES_VERSION, createPackageDiff } from "../../server/lib/review";
 import type { ScanRiskBreakdown } from "../../server/lib/risk";
-import {
-  loadScanArtifacts,
-  writeScanArtifacts,
-} from "../../server/lib/scan-artifacts";
+import { loadScanArtifacts, writeScanArtifacts } from "../../server/lib/scan-artifacts";
 import { sha256Hex, stableJson } from "../../server/lib/stable-json";
 
 async function seedUserAndOrg() {
@@ -363,11 +357,7 @@ describe("AI findings persistence — R2 artifact path", () => {
     });
 
     const scanRow = (
-      await db
-        .select()
-        .from(schema.scans)
-        .where(eq(schema.scans.id, scanId))
-        .limit(1)
+      await db.select().from(schema.scans).where(eq(schema.scans.id, scanId)).limit(1)
     )[0]!;
 
     const detail = await loadScanArtifacts(env.ARTIFACTS, scanRow);
@@ -458,11 +448,7 @@ describe("AI findings persistence — R2 artifact path", () => {
     });
 
     const scanRow = (
-      await db
-        .select()
-        .from(schema.scans)
-        .where(eq(schema.scans.id, scanId))
-        .limit(1)
+      await db.select().from(schema.scans).where(eq(schema.scans.id, scanId)).limit(1)
     )[0]!;
 
     const detail = await loadScanArtifacts(env.ARTIFACTS, scanRow);

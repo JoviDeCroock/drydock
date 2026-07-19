@@ -59,18 +59,21 @@ export function buildReportExport(detail: ScanDetail) {
     releaseConsistency: normalizeReleaseConsistency(summary.releaseConsistency),
     packageJsonDiff: summary.packageJsonDiff ?? null,
     diff: summary.diff ?? null,
-    findings: [...detail.findings].filter((f) => f.source !== "ai").sort(compareFindings).map((finding) => ({
-      severity: finding.severity,
-      file: finding.file,
-      line: finding.line ?? null,
-      ruleId: finding.ruleId ?? null,
-      ruleVersion: finding.ruleVersion ?? null,
-      source: finding.source,
-      diffStatus: finding.diffStatus ?? null,
-      releaseDelta: finding.releaseDelta ?? null,
-      evidence: finding.evidence,
-      reason: finding.reason,
-    })),
+    findings: [...detail.findings]
+      .filter((f) => f.source !== "ai")
+      .sort(compareFindings)
+      .map((finding) => ({
+        severity: finding.severity,
+        file: finding.file,
+        line: finding.line ?? null,
+        ruleId: finding.ruleId ?? null,
+        ruleVersion: finding.ruleVersion ?? null,
+        source: finding.source,
+        diffStatus: finding.diffStatus ?? null,
+        releaseDelta: finding.releaseDelta ?? null,
+        evidence: finding.evidence,
+        reason: finding.reason,
+      })),
   };
 }
 

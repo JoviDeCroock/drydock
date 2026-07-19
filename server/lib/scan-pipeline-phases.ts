@@ -288,8 +288,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     generatedAt,
   });
 
-  const completedAiFindings =
-    args.aiFindings.status === "complete" ? args.aiFindings.findings : [];
+  const completedAiFindings = args.aiFindings.status === "complete" ? args.aiFindings.findings : [];
 
   // AI findings count as context (no releaseDelta) in the persisted summary so
   // the list view shows the true total rather than showing 0 when AI-only.
