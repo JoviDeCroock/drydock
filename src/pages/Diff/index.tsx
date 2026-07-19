@@ -21,6 +21,7 @@ import { FileTree } from "../../components/FileTree";
 import { Input } from "../../components/Input";
 import { LoadingState } from "../../components/Loading";
 import { PageShell } from "../../components/PageShell";
+import { hasManifestChanges, PackageJsonDiffView } from "../../components/PackageJsonDiffView";
 import { Select } from "../../components/Select";
 import { SeverityBar } from "../../components/SeverityBar";
 import {
@@ -33,6 +34,7 @@ import {
 } from "../../components/Typography";
 import {
   packageDiffPath,
+  parseDiffPackage,
   parseDiffSpec,
   type DiffEcosystem,
   type DiffSpec,
@@ -47,12 +49,77 @@ import { useAuthedSession } from "../useAuthedSession";
 export default function DiffPage() {
   const location = useLocation();
   const spec = parseDiffSpec(location.path);
-  if (!spec) return <DiffLanding />;
+  if (spec) {
+    return (
+      <PackageDiffView
+        key={`${spec.ecosystem}:${spec.packageName}@${spec.fromVersion}..${spec.toVersion}`}
+        spec={spec}
+      />
+    );
+  }
+  // Package-only form (/diff/<name>): the target of added-dependency links,
+  // where there is no version pair to link directly. Resolve the latest
+  // published pair and redirect. npm-only — dependency links are suppressed
+  // for ecosystems whose dependencies are not npm packages.
+  const packageName = parseDiffPackage(location.path);
+  if (packageName) return <DiffPackageResolver key={packageName} packageName={packageName} />;
+  return <DiffLanding />;
+}
+
+function DiffPackageResolver({ packageName }: { packageName: string }) {
+  const authed = useAuthedSession();
+  const location = useLocation();
+  const error = useSignal<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const versions = await getPublicDiffVersions("npm", packageName);
+        if (cancelled) return;
+        if (!versions.suggested) {
+          error.value = "This package needs at least two published versions to diff.";
+          return;
+        }
+        location.route(
+          packageDiffPath(
+            "npm",
+            versions.packageName,
+            versions.suggested.from,
+            versions.suggested.to,
+          ),
+          true,
+        );
+      } catch (err) {
+        if (!cancelled) error.value = errorMessage(err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [packageName]);
+
   return (
-    <PackageDiffView
-      key={`${spec.ecosystem}:${spec.packageName}@${spec.fromVersion}..${spec.toVersion}`}
-      spec={spec}
-    />
+    <PageShell headerActions={<MarketingHeaderActions authed={authed} />} feedbackPosition="end">
+      <PageSeo metadata={packageDiffSeo()} />
+      <section class="flex flex-col gap-4 border-t border-border pt-6">
+        <Eyebrow tone="accent">Public package diff</Eyebrow>
+        <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 break-all">
+          {packageName}
+        </h1>
+        <Show
+          when={error}
+          fallback={
+            <LoadingState
+              title="Finding versions"
+              detail="resolving the latest published version pair"
+            />
+          }
+        >
+          {(message) => <Alert tone="critical">{message}</Alert>}
+        </Show>
+      </section>
+    </PageShell>
   );
 }
 
@@ -419,6 +486,13 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
               />
             </Card>
           </section>
+
+          {hasManifestChanges(diff.packageJsonDiff) ? (
+            <section class="flex flex-col gap-3">
+              <SectionLabel>Manifest changes</SectionLabel>
+              <PackageJsonDiffView diff={diff.packageJsonDiff} linkDependencyDiffs />
+            </section>
+          ) : null}
 
           {hasFindings ? (
             <RiskSignalsSection

@@ -95,6 +95,21 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
     // file (#188 surface 2); the fixture has a single finding on binding.gyp.
     await expect(page.getByLabel("1 finding").first()).toBeVisible();
 
+    // The manifest diff links added/bumped dependencies to their own public
+    // diff view in a new tab: the added dep resolves through the package-only
+    // form, the major bump links its floor-to-floor version pair directly.
+    const addedDepLink = page.getByRole("link", {
+      name: "Open the peace-banner package diff in a new tab",
+    });
+    await expect(addedDepLink).toBeVisible();
+    await expect(addedDepLink).toHaveAttribute("href", "/diff/peace-banner");
+    await expect(addedDepLink).toHaveAttribute("target", "_blank");
+    const bumpedDepLink = page.getByRole("link", {
+      name: "Open the event-pubsub package diff in a new tab",
+    });
+    await expect(bumpedDepLink).toHaveAttribute("href", "/diff/event-pubsub/4.3.0/5.0.0");
+    await expect(bumpedDepLink).toHaveAttribute("target", "_blank");
+
     await page.screenshot({
       path: path.join(artifactsDir, "implicit-node-gyp-report.png"),
       fullPage: true,

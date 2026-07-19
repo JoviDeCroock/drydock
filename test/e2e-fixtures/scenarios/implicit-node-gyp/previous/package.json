@@ -8,5 +8,8 @@
     "README.md"
   ],
   "type": "module",
-  "main": "index.js"
+  "main": "index.js",
+  "dependencies": {
+    "event-pubsub": "4.3.0"
+  }
 }
