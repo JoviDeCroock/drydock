@@ -28,15 +28,46 @@ export function emitOperationalEvent(
   }
 }
 
-export function describeOperationalError(err: unknown) {
+export interface OperationalErrorSummary {
+  name: string;
+  message?: string;
+  cause?: OperationalErrorSummary;
+}
+
+// Drizzle wraps D1 failures in "Failed query: <sql>\nparams: <bound values>".
+// The bound values can carry anything a query touches (tokens, emails), so
+// they never reach the logs; the SQL text itself is static application code.
+// Keyed on the "\nparams:" delimiter rather than the "Failed query" prose
+// prefix so a drizzle wording change (or a wrapper that prefixes the message)
+// cannot silently disable the redaction. Over-matching an unrelated multiline
+// message is acceptable; leaking bound values is not.
+function redactFailedQueryParams(message: string): string {
+  return message.replace(/\nparams:[\s\S]*$/, "\nparams: [redacted]");
+}
+
+const ERROR_CAUSE_MAX_DEPTH = 3;
+
+export function describeOperationalError(err: unknown, depth = 0): OperationalErrorSummary {
   if (err instanceof Error) {
-    return { name: err.name, message: err.message };
+    const summary: OperationalErrorSummary = {
+      name: err.name,
+      message: redactFailedQueryParams(err.message),
+    };
+    // Drizzle (and undici) surface the real failure — e.g. the underlying
+    // D1_ERROR — only on `cause`; without it the log says "Failed query" and
+    // nothing else, which is undiagnosable after the fact.
+    const cause = (err as { cause?: unknown }).cause;
+    if (cause !== undefined && cause !== null && depth < ERROR_CAUSE_MAX_DEPTH) {
+      summary.cause = describeOperationalError(cause, depth + 1);
+    }
+    return summary;
   }
   if (err && typeof err === "object") {
     const value = err as Record<string, unknown>;
     return {
       name: typeof value.name === "string" ? value.name : "UnknownError",
-      message: typeof value.message === "string" ? value.message : undefined,
+      message:
+        typeof value.message === "string" ? redactFailedQueryParams(value.message) : undefined,
     };
   }
   return { name: typeof err };
@@ -55,7 +86,11 @@ function sanitizeValue(
   if (key && SENSITIVE_KEY_RE.test(key)) return "[redacted]";
   if (typeof value === "string") return value.replace(BEARER_RE, "Bearer [redacted]");
   if (value === null || typeof value !== "object") return value;
-  if (value instanceof Error) return describeOperationalError(value);
+  // Re-sanitize the described error so its message strings (and cause chain)
+  // still get the Bearer-token redaction applied to every other string.
+  if (value instanceof Error) {
+    return sanitizeValue(describeOperationalError(value), seen, depth + 1, null);
+  }
   if (depth > 5) return "[truncated]";
   if (seen.has(value)) return "[circular]";
   seen.add(value);
