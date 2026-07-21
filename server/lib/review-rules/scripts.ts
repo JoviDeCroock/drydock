@@ -27,7 +27,23 @@ const COMMON_JS_ENV_NAMES = [
   "SSR",
   "TZ",
 ];
-const COMMON_JS_ENV_NAME_PATTERN = COMMON_JS_ENV_NAMES.map(escapeRegex).join("|");
+// npm exports these onto every lifecycle-script process; they only describe the
+// running npm invocation and the package's own manifest, never secrets.
+// npm_config_* is deliberately excluded: it can carry live registry auth
+// (npm_config__authToken) and stays covered by the credential patterns.
+const NPM_LIFECYCLE_ENV_NAMES = [
+  "npm_command",
+  "npm_execpath",
+  "npm_lifecycle_event",
+  "npm_lifecycle_script",
+  "npm_node_execpath",
+  "npm_package_json",
+  "npm_package_name",
+  "npm_package_version",
+];
+const COMMON_JS_ENV_NAME_PATTERN = [...COMMON_JS_ENV_NAMES, ...NPM_LIFECYCLE_ENV_NAMES]
+  .map(escapeRegex)
+  .join("|");
 const COMMON_PROCESS_ENV_DOT_ACCESS = new RegExp(
   `\\bprocess\\.env\\s*\\.\\s*(?:${COMMON_JS_ENV_NAME_PATTERN})\\b`,
   "g",
@@ -304,10 +320,18 @@ function hasRotatingStringTableObfuscation(source: string): boolean {
 
 function omitCommonEnvironmentAccesses(source: string): string {
   return source
-    .replace(COMMON_PROCESS_ENV_DOT_ACCESS, "")
-    .replace(COMMON_PROCESS_ENV_BRACKET_ACCESS, "")
-    .replace(COMMON_IMPORT_META_ENV_DOT_ACCESS, "")
-    .replace(COMMON_IMPORT_META_ENV_BRACKET_ACCESS, "");
+    .replace(COMMON_PROCESS_ENV_DOT_ACCESS, eraseKeepingNewlines)
+    .replace(COMMON_PROCESS_ENV_BRACKET_ACCESS, eraseKeepingNewlines)
+    .replace(COMMON_IMPORT_META_ENV_DOT_ACCESS, eraseKeepingNewlines)
+    .replace(COMMON_IMPORT_META_ENV_BRACKET_ACCESS, eraseKeepingNewlines);
+}
+
+// The access regexes' \s* can span newlines (`process.env\n  .npm_command`), so
+// erasing a match outright would shrink the line count and point every later
+// finding — and the release-delta changed-line check that consumes finding.line
+// — one line early. Keep the match's newlines so line numbers stay stable.
+function eraseKeepingNewlines(match: string): string {
+  return match.replace(/[^\n]+/g, "");
 }
 
 function escapeRegex(value: string): string {

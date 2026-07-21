@@ -1,0 +1,49 @@
+{
+  "id": "npm-config-auth-token-read",
+  "title": "Added script reads npm registry auth from npm_config__authToken",
+  "category": "credential-access",
+  "intent": "npm_config_* variables can carry live registry auth (npm_config__authToken), so they stay outside the npm lifecycle-variable allowlist and must keep raising code.credential-access.",
+  "previousPackageJson": {
+    "name": "npm-config-auth-token-read",
+    "version": "1.0.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "npm-config-auth-token-read",
+    "version": "1.0.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 73,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"npm-config-auth-token-read\",\"version\":\"1.0.0\",\"main\":\"index.js\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 73,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"npm-config-auth-token-read\",\"version\":\"1.0.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "collect.js",
+      "size": 145,
+      "sha256": "collect-js",
+      "flags": [],
+      "textSample": "const event = process.env.npm_lifecycle_event;\nconst registryAuth = process.env.npm_config__authToken;\nmodule.exports = { event, registryAuth };\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "collect.js"
+    }
+  ]
+}

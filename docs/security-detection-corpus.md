@@ -59,7 +59,7 @@ The first corpus slice covers:
 
 - benign version bump control;
 - preinstall credential/environment collection with command and network capability;
-- credential file-path reads (`.aws/credentials`, `.ssh/id_`, `.netrc`) in addition to broad environment reads and known token names, matching the Python rule coverage while excluding common non-secret JS runtime flags;
+- credential file-path reads (`.aws/credentials`, `.ssh/id_`, `.netrc`) in addition to broad environment reads and known token names, matching the Python rule coverage while excluding common non-secret JS runtime flags and npm's own lifecycle variables (`npm_command`, `npm_lifecycle_event`, `npm_package_name`, …) — but not `npm_config_*`, which can carry live registry auth such as `npm_config__authToken`;
 - the collect-and-exfiltrate sink: a single file that reads credentials and has a network egress path escalates `code.credential-access` to high even on a modified (not newly added) module;
 - implicit `node-gyp rebuild` from root `binding.gyp`, GYP command substitution that executes package JavaScript, and native artifact review — by extension and by magic-byte flags, so extensionless Linux/macOS platform binaries are held to the same bar as a Windows `.exe`;
 - base64/dynamic evaluation plus network-capable code, including the `WebAssembly.instantiateStreaming(fetch(...))` loader idiom (the whole `compile`/`compileStreaming`/`instantiate`/`instantiateStreaming` family counts as dynamic evaluation) and literal `node -e`/`node --eval` child-process launches;
@@ -101,7 +101,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.2.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.15.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.16.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -169,7 +169,16 @@ javascript-obfuscator-style rotating string-table wrapper is marked `obfuscated`
 the existing risk rule that keeps a lone hidden process capability at high instead of applying the
 benign build-helper de-escalation. The wrapper requires five independent structural signals
 (hexadecimal lookup identifiers and function, `while (!![])`, lookup-fed `parseInt`, and bracketed
-`push`/`shift`) to avoid treating ordinary minified names or queue rotation as malice.
+`push`/`shift`) to avoid treating ordinary minified names or queue rotation as malice. `1.16.0`
+allowlists npm's own lifecycle variables (`npm_command`, `npm_execpath`, `npm_lifecycle_event`,
+`npm_lifecycle_script`, `npm_node_execpath`, `npm_package_json`, `npm_package_name`,
+`npm_package_version`) in the environment-access pre-strip that runs before JavaScript
+`code.credential-access` matching: npm exports them onto every lifecycle-script process and they
+describe only the npm invocation and the package's own manifest, so reading them was a pure false
+positive (observed on dt-clean 1.2.1 and salita 2.0.0). `npm_config_*` is deliberately not
+allowlisted because it can carry live registry auth (`npm_config__authToken`). The strip also now
+preserves newlines when erasing a match, so a multiline access can no longer shift later findings'
+line numbers.
 
 ### Fixture format
 
