@@ -965,6 +965,23 @@ describe("review", () => {
     });
   });
 
+  test("classifies manifest-diff dependency findings as release delta regardless of line", () => {
+    // These rules are derived from the previous-vs-staged manifest diff, so they
+    // are release-scoped by construction; they must not fall through to the
+    // line-diff heuristic where an unchanged duplicate key would misclassify
+    // them as package context.
+    const annotated = annotateFindingsWithDiffStatus(
+      [
+        { id: "added", severity: "medium", file: "package.json", ruleId: "dependency.added" },
+        { id: "bump", severity: "low", file: "package.json", ruleId: "dependency.major-bump" },
+      ],
+      [{ path: "package.json", status: "modified" }],
+      {},
+    );
+
+    expect(annotated.every((finding) => finding.releaseDelta)).toBe(true);
+  });
+
   test("keeps modified-file findings release scoped when a later matching line changed", () => {
     const previous = [
       {
@@ -1341,24 +1358,102 @@ describe("review", () => {
         evidence: "fsevents: ^1.0.0 -> ^2.0.0",
       }),
     ]);
+
+    // Moving a dependency into optionalDependencies is still a relocation, so
+    // the high optional-added finding does not fire on already-shipped code.
+    const moveIntoOptional = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { fsevents: "^2.0.0" } },
+      { name: "pkg", version: "1.0.1", optionalDependencies: { fsevents: "^2.0.0" } },
+    );
+    expect(packageJsonDiffFindings(moveIntoOptional)).toEqual([]);
+
+    // peerDependencies do not install, so moving a peer requirement into
+    // dependencies genuinely starts shipping code and is a real addition.
+    const peerToRuntime = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", peerDependencies: { lodash: "^4.0.0" } },
+      { name: "pkg", version: "1.0.1", dependencies: { lodash: "^4.0.0" } },
+    );
+    expect(packageJsonDiffFindings(peerToRuntime)).toEqual([
+      expect.objectContaining({ ruleId: "dependency.added", evidence: "lodash: ^4.0.0" }),
+    ]);
   });
 
-  test("floors || unions at the minimum branch and treats empty specs as real", () => {
-    // "^2.0.0 || ^1.0.0" still floors at 1.x, so no major boundary is crossed.
-    const unionKeepsFloor = summarizePackageJsonDiff(
+  test("emits one finding per dependency key across sections", () => {
+    // The common dependencies + peerDependencies pairing must not double-flag.
+    const bothSections = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0" },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        dependencies: { react: "^18.0.0" },
+        peerDependencies: { react: "^18.0.0" },
+      },
+    );
+    expect(packageJsonDiffFindings(bothSections)).toEqual([
+      expect.objectContaining({ ruleId: "dependency.added", evidence: "react: ^18.0.0" }),
+    ]);
+
+    // A genuinely new optional+runtime listing keeps only the higher-severity
+    // optional-added finding.
+    const optionalAndRuntime = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0" },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        dependencies: { sharp: "^0.33.0" },
+        optionalDependencies: { sharp: "^0.33.0" },
+      },
+    );
+    expect(packageJsonDiffFindings(optionalAndRuntime)).toEqual([
+      expect.objectContaining({ ruleId: "dependency.optional-added", evidence: "sharp: ^0.33.0" }),
+    ]);
+  });
+
+  test("gates delta rules on baseline-manifest presence, not its version string", () => {
+    // A prior release whose manifest parsed but declared no version must not be
+    // able to switch off the next release's added/major-bump checks.
+    const prevWithoutVersion = summarizePackageJsonDiff(
+      { name: "pkg", dependencies: { existing: "^1.0.0" } },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        dependencies: { existing: "^2.0.0", "evil-dep": "^1.0.0" },
+      },
+    );
+    const ruleIds = packageJsonDiffFindings(prevWithoutVersion)
+      .map((finding) => finding.ruleId)
+      .sort();
+    expect(ruleIds).toEqual(["dependency.added", "dependency.major-bump"]);
+  });
+
+  test("major-bump follows the highest major a union admits, not its floor", () => {
+    // npm installs the highest published version a spec admits, so widening
+    // "^1.0.0" to a union that now admits 2.x ships 2.x to consumers even
+    // though 1.x is still in range — that is a major change worth flagging.
+    const unionAdmitsNewMajor = summarizePackageJsonDiff(
       { name: "pkg", version: "1.0.0", dependencies: { dep: "^1.0.0" } },
       { name: "pkg", version: "1.0.1", dependencies: { dep: "^2.0.0 || ^1.0.0" } },
     );
-    expect(packageJsonDiffFindings(unionKeepsFloor)).toEqual([]);
-
-    // A union whose lowest branch crossed the boundary does report the bump.
-    const unionCrosses = summarizePackageJsonDiff(
-      { name: "pkg", version: "1.0.0", dependencies: { dep: "^1.0.0" } },
-      { name: "pkg", version: "1.0.1", dependencies: { dep: "^2.0.0 || ^3.0.0" } },
-    );
-    expect(packageJsonDiffFindings(unionCrosses)).toEqual([
+    expect(packageJsonDiffFindings(unionAdmitsNewMajor)).toEqual([
       expect.objectContaining({ ruleId: "dependency.major-bump" }),
     ]);
+
+    // A no-op "|| " suffix (or an unparseable leading branch) must not suppress
+    // the comparison: the parseable branch still admits major 9.
+    const unionEvasion = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { dep: "^1.0.0" } },
+      { name: "pkg", version: "1.0.1", dependencies: { dep: "^9.0.0 || " } },
+    );
+    expect(packageJsonDiffFindings(unionEvasion)).toEqual([
+      expect.objectContaining({ ruleId: "dependency.major-bump" }),
+    ]);
+
+    // A union whose highest admitted major is unchanged raises nothing.
+    const unionSameMajor = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { dep: "^1.0.0" } },
+      { name: "pkg", version: "1.0.1", dependencies: { dep: "~1.2.0 || ^1.5.0" } },
+    );
+    expect(packageJsonDiffFindings(unionSameMajor)).toEqual([]);
 
     // npm treats an empty spec like "*" — the loosest range must not be the
     // one silent path through the added rule.

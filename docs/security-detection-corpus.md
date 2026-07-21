@@ -206,19 +206,28 @@ or Unicode-confusable directory records remain findings, and the remaining
 non-regular/suspicious-entry reasons use PyPI wording instead of npm's.
 `1.18.0` closes the plain-dependency-addition gap: a newly added runtime or peer
 dependency with an ordinary registry spec raises `dependency.added` (medium), and a modified spec
-whose floor version crosses a major
-boundary (`4.3.0` → `5.0.0`, `^1` → `^2`) raises `dependency.major-bump` (low), both anchoring the
-risk roll-up like the other metadata rules. The delta rules require a baseline manifest: a first-ever
-publish (or a degraded baseline fetch) diffs every dependency as added, so without a previous release
-they stay silent instead of flooring every first release at medium (`dependency.optional-added` and
-`dependency.unusual-spec` still fire — they describe the staged manifest, not the delta). Entries
-already flagged by `dependency.unusual-spec` or `dependency.optional-added` are not double-flagged, a
-key moved between sections is compared as a modification rather than reported as new code,
-within-major bumps stay silent, `||` unions floor at the minimum across branches (spec parsing lives
-in `server/lib/dependency-specs.ts`, shared with the UI's dependency diff links so finding and link
-never disagree), an empty spec is treated like `*` rather than skipped, and specs without a leading
-version anchor (`latest`, `*`, bare `>` ranges) never produce a major-bump because the floor cannot
-be proven without registry resolution (the `dependency-added-major-bump` golden case).
+whose resolvable major version changed
+(`4.3.0` → `5.0.0`, `^1` → `^2`) raises `dependency.major-bump` (low), both anchoring the risk roll-up
+like the other metadata rules. Findings resolve one-per-key by precedence
+(unusual-spec > optional-added > added > major-bump), so a dependency listed in both `dependencies`
+and `peerDependencies` — the common pairing — cannot double-flag. The delta rules require a baseline
+manifest, gated on baseline-manifest presence rather than its version string (so a prior release that
+shipped a version-less manifest cannot switch the next release's checks off): a first-ever publish
+diffs every dependency as added, so without a previous release the delta rules stay silent instead of
+flooring every first release at medium, while `dependency.optional-added` and `dependency.unusual-spec`
+still fire because they describe the staged manifest, not the delta (the
+`dependency-first-publish-no-baseline` golden case). A key relocated between installing sections
+(`dependencies` ↔ `optionalDependencies`) with an unchanged spec is treated as already-shipped code
+and raises nothing, but a peer requirement moved into `dependencies` genuinely starts shipping and is a
+real addition. Major-bump follows the highest major a spec admits, matching npm's install of the
+highest published version: widening `^1.0.0` to `^1.0.0 || ^2.0.0` ships 2.x and fires, and a no-op
+`|| ` suffix or an unparseable leading branch cannot suppress the comparison. An empty spec is treated
+like `*` rather than skipped, and `workspace:`/`catalog:`/`link:`/`portal:` protocols join
+`git:`/`https:`/`file:`/`npm:` as unusual specs (they name no published package). Spec parsing lives in
+`server/lib/dependency-specs.ts`, shared with the UI's dependency diff links: the link uses each spec's
+concrete minimum floor to build a published version pair and renders nothing when it cannot (unusual
+spec, unanchored range, or equal floors), so a link is never confidently wrong even when the finding
+still fires (the `dependency-added-major-bump` golden case).
 
 ### Fixture format
 

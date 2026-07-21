@@ -28,6 +28,11 @@ interface PackageJsonDiffEntry {
 
 export interface PackageJsonDiff {
   name: string | null;
+  // Whether a baseline manifest was diffed against, independent of whether that
+  // manifest declared a version. The dependency delta rules gate on this rather
+  // than previousVersion so a prior release that shipped a version-less manifest
+  // cannot switch off the next release's added/major-bump checks.
+  hasPreviousManifest: boolean;
   previousVersion: string | null;
   stagedVersion: string | null;
   scripts: PackageJsonDiffEntry[];
@@ -47,6 +52,7 @@ export function summarizePackageJsonDiff(
   const changedDependencies = diffDependencySections(previousPkg, stagedPkg);
   return {
     name: stagedPkg?.name || previousPkg?.name || null,
+    hasPreviousManifest: Boolean(previousPkg),
     previousVersion: previousPkg?.version || null,
     stagedVersion: stagedPkg?.version || null,
     scripts: changedScripts,

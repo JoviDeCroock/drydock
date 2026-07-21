@@ -47,8 +47,12 @@ describe("resolveSuggestedDiffPath", () => {
 });
 
 describe("getPublicDiffVersions cache", () => {
-  test("serves the redirect target from cache instead of refetching", async () => {
-    apiFetch.mockResolvedValue({ packageName: "cached", versions: [], suggested: null });
+  test("serves a diffable response from cache instead of refetching", async () => {
+    apiFetch.mockResolvedValue({
+      packageName: "cached",
+      versions: [],
+      suggested: { from: "1.0.0", to: "2.0.0" },
+    });
 
     await getPublicDiffVersions("cache-hit");
     await getPublicDiffVersions("cache-hit");
@@ -56,10 +60,32 @@ describe("getPublicDiffVersions cache", () => {
     expect(apiFetch).toHaveBeenCalledTimes(1);
   });
 
-  test("evicts failed fetches so a retry hits the network", async () => {
+  test("does not cache an unusable response so a retry after publish refetches", async () => {
+    // A "needs two versions" answer must not replay for the whole TTL once the
+    // package publishes its second version.
     apiFetch
-      .mockRejectedValueOnce(new Error("registry hiccup"))
-      .mockResolvedValueOnce({ packageName: "flaky", versions: [], suggested: null });
+      .mockResolvedValueOnce({ packageName: "pending", versions: [], suggested: null })
+      .mockResolvedValueOnce({
+        packageName: "pending",
+        versions: [],
+        suggested: { from: "1.0.0", to: "1.1.0" },
+      });
+
+    await expect(getPublicDiffVersions("cache-pending")).resolves.toMatchObject({
+      suggested: null,
+    });
+    await expect(getPublicDiffVersions("cache-pending")).resolves.toMatchObject({
+      suggested: { from: "1.0.0", to: "1.1.0" },
+    });
+    expect(apiFetch).toHaveBeenCalledTimes(2);
+  });
+
+  test("evicts failed fetches so a retry hits the network", async () => {
+    apiFetch.mockRejectedValueOnce(new Error("registry hiccup")).mockResolvedValueOnce({
+      packageName: "flaky",
+      versions: [],
+      suggested: { from: "1.0.0", to: "2.0.0" },
+    });
 
     await expect(getPublicDiffVersions("cache-retry")).rejects.toThrow("registry hiccup");
     await expect(getPublicDiffVersions("cache-retry")).resolves.toMatchObject({

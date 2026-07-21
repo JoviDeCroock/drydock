@@ -131,9 +131,11 @@ describe("dependencyDiffHref", () => {
     );
   });
 
-  test("floors || unions at the minimum branch, matching the server rule", () => {
-    // "^2.0.0 || ^1.0.0" still floors at 1.0.0: same floor as before, no link
-    // (and no dependency.major-bump finding server-side to follow).
+  test("links the concrete floor-to-floor pair for a union", () => {
+    // The link needs a concrete published pair, so it uses each spec's minimum
+    // floor: "^2.0.0 || ^1.0.0" floors at 1.0.0, equal to the previous floor,
+    // so no distinct pair to link — even though the server major-bump finding
+    // (which follows npm's highest-admitted major) does fire on this widening.
     expect(
       dependencyDiffHref({
         key: "dep",
@@ -171,6 +173,11 @@ describe("dependencyDiffHref", () => {
       "git+https://example.invalid/dep.git",
       "https://example.invalid/dep.tgz",
       "file:../local.tgz",
+      // Monorepo-local protocols name no published npm package.
+      "workspace:^",
+      "catalog:",
+      "link:../sibling",
+      "portal:../sibling",
     ]) {
       expect(dependencyDiffHref({ key: "dep", status: "added", staged })).toBeNull();
       expect(
@@ -190,6 +197,17 @@ describe("dependencyDiffHref", () => {
     ]) {
       expect(dependencyDiffHref(row)).toBeNull();
     }
+  });
+
+  test("normalizes leading-zero version segments so links target real versions", () => {
+    // "01.0.0" must not reach a diff link as a version segment no registry
+    // published, and it must compare equal to "1.0.0" so no bogus pair links.
+    expect(
+      dependencyDiffHref({ key: "dep", status: "modified", previous: "1.0.0", staged: "=01.0.0" }),
+    ).toBeNull();
+    expect(
+      dependencyDiffHref({ key: "dep", status: "modified", previous: "01.0.0", staged: "2.0.0" }),
+    ).toBe("/diff/dep/1.0.0/2.0.0");
   });
 
   test("removed dependencies get no link", () => {

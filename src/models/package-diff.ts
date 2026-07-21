@@ -47,8 +47,15 @@ export interface PublicDiffFileResponse {
 // versions to resolve a pair and then redirects to the full-spec page, whose
 // model fetches versions again — without the cache every added-dependency
 // "view diff" click charges the anonymous IP rate limit twice for the same
-// payload. Failed fetches are evicted so a retry hits the network.
-const versionsCache = new Map<string, { at: number; value: Promise<PublicDiffVersionsResponse> }>();
+// payload. Only fully diffable responses (a suggested pair) are cached: a
+// "needs two versions" or failed response is evicted so a retry after the
+// package publishes its second version hits the network instead of replaying
+// the stale answer for the whole TTL.
+interface VersionsCacheEntry {
+  at: number;
+  value: Promise<PublicDiffVersionsResponse>;
+}
+const versionsCache = new Map<string, VersionsCacheEntry>();
 const VERSIONS_CACHE_TTL_MS = 60_000;
 
 export function getPublicDiffVersions(
@@ -61,8 +68,16 @@ export function getPublicDiffVersions(
   const value: Promise<PublicDiffVersionsResponse> = apiFetch(
     `/api/public/v1/package-diff/versions?package=${encodeURIComponent(packageName)}${ecosystemQuery(ecosystem)}`,
   );
-  versionsCache.set(cacheKey, { at: Date.now(), value });
-  value.catch(() => versionsCache.delete(cacheKey));
+  const entry: VersionsCacheEntry = { at: Date.now(), value };
+  versionsCache.set(cacheKey, entry);
+  // Evict by identity so a slow request that resolves after a newer fetch has
+  // replaced this entry cannot delete the fresher one.
+  const evictIfCurrent = () => {
+    if (versionsCache.get(cacheKey) === entry) versionsCache.delete(cacheKey);
+  };
+  value.then((result) => {
+    if (!result.suggested) evictIfCurrent();
+  }, evictIfCurrent);
   return value;
 }
 

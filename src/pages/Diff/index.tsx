@@ -180,6 +180,8 @@ function DiffLanding() {
     } catch (err) {
       error.value = errorMessage(err);
     } finally {
+      // Guarantee the submit button re-enables even if routing throws, so the
+      // form can never wedge on a stuck busy flag.
       busy.value = false;
     }
   };
