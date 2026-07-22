@@ -54,4 +54,15 @@ describe("buildTree finding counts", () => {
     expect(lib?.findingCount).toBe(0);
     expect(lib?.findingSeverity).toBeNull();
   });
+
+  test("keeps a path that is both a file and a directory prefix as distinct siblings", () => {
+    // tar permits a name to exist as a file and as a directory prefix; hostile
+    // archives control these paths, so the model must not merge or drop either.
+    const tree = buildTree([entry("a", "added"), entry("a/b", "modified")]);
+    const file = tree.find((node) => node.kind === "file" && node.path === "a");
+    const folder = tree.find((node) => node.kind === "folder" && node.path === "a");
+    expect(file).toBeDefined();
+    expect(folder).toBeDefined();
+    expect((folder as FolderNode).children.map((child) => child.path)).toEqual(["a/b"]);
+  });
 });
