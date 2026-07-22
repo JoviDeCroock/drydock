@@ -169,10 +169,6 @@
     color: var(--sh-token-link);
   }
 
-  .severity-bar-segment {
-    fill: currentColor;
-  }
-
   html,
   body {
     margin: 0;

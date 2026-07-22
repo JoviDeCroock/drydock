@@ -9,21 +9,11 @@ interface Segment {
   count: number;
   x: number;
   width: number;
-  className: string;
   swatchClass: string;
   label: string;
 }
 
 const ORDER: SeverityKey[] = ["critical", "high", "medium", "low", "info", "ok"];
-
-const segmentClass: Record<SeverityKey, string> = {
-  critical: "text-danger",
-  high: "text-danger opacity-[0.78]",
-  medium: "text-warn",
-  low: "text-info",
-  info: "text-info opacity-50",
-  ok: "text-ok",
-};
 
 const swatchClass: Record<SeverityKey, string> = {
   critical: "bg-danger",
@@ -51,7 +41,9 @@ export function SeverityBar({
     return (
       <div class={cn("flex flex-col gap-3", className)}>
         <div class="flex flex-wrap items-center gap-3">
-          <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+          {/* 11px: this names the chart the user reads — the 10px allowance
+              covers only the legend below. */}
+          <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
             {label}
           </span>
           <span class="font-mono text-[11px] text-ink-subtle">{emptyLabel}</span>
@@ -71,7 +63,6 @@ export function SeverityBar({
       count,
       x,
       width,
-      className: segmentClass[key],
       swatchClass: swatchClass[key],
       label: key,
     };
@@ -85,30 +76,29 @@ export function SeverityBar({
   return (
     <div class={cn("flex flex-col gap-3", className)}>
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+        <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
           {label}
         </span>
         <span class="font-mono text-[11px] text-ink-subtle">{total} total</span>
       </div>
-      <svg
-        class="h-2 w-full rounded overflow-hidden bg-surface-2 block"
-        viewBox="0 0 100 4"
-        preserveAspectRatio="none"
+      {/* A plain flex stack, not an SVG — DESIGN.md's chart spec is a single
+          horizontal element with percentage-width segments, and SVG is
+          reserved for nothing in this system. The last segment's width is
+          pre-corrected against float drift so the widths sum to exactly 100. */}
+      <div
+        class="h-2 w-full rounded overflow-hidden bg-surface-2 flex"
         role="img"
         aria-label={`${total} findings: ${segments.map((s) => `${s.count} ${s.label}`).join(", ")}`}
       >
         {segments.map((segment) => (
-          <rect
+          <span
             key={segment.key}
-            x={segment.x}
-            y="0"
-            width={segment.width}
-            height="4"
-            class={cn("severity-bar-segment", segment.className)}
+            style={{ width: `${segment.width}%` }}
+            class={cn("h-full shrink-0", segment.swatchClass)}
             aria-hidden
           />
         ))}
-      </svg>
+      </div>
       <ul class="list-none p-0 m-0 flex flex-wrap gap-x-4 gap-y-1.5">
         {segments.map((segment) => (
           <li
