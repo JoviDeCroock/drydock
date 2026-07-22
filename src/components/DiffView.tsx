@@ -922,7 +922,7 @@ function GapRow({
           type="button"
           onClick={onExpand}
           aria-label={`Show more of ${hiddenCount} hidden ${noun}`}
-          class="w-full cursor-pointer border-y border-border bg-surface-2 px-3 py-1 text-center font-mono text-[11px] text-ink-subtle transition-colors hover:bg-accent-soft hover:text-ink"
+          class="w-full cursor-pointer border-y border-border bg-surface-2 px-3 py-1 text-left font-mono text-[11px] text-ink-subtle transition-colors hover:bg-accent-soft hover:text-ink"
         >
           ⋯ {hiddenCount.toLocaleString()} {noun} · show more
         </button>
