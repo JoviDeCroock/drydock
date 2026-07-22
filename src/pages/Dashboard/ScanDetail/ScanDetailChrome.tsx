@@ -96,10 +96,11 @@ function reportExportHref(detail: PersistedScanDetail): string {
 export function VersionPickerSkeleton({ stagedVersion }: { stagedVersion: string | null }) {
   // The sanctioned inline loading line, not a faked disabled select — that
   // reimplemented LoadingLine without its aria-live and edged into the
-  // "skeleton bone" shape DESIGN.md bans. min-h matches the md Select so the
+  // "skeleton bone" shape DESIGN.md bans. min-h matches the md Select's
+  // rendered height (13px × 1.55 + 2×8px padding + 2px border ≈ 38px) so the
   // header doesn't shift when the real picker mounts.
   return (
-    <div class="flex flex-wrap items-center gap-3 min-h-[34px]" aria-busy="true">
+    <div class="flex flex-wrap items-center gap-3 min-h-[38px]" aria-busy="true">
       <MonoLabel>Compare against</MonoLabel>
       <LoadingLine size="inline">loading versions</LoadingLine>
       <span class="font-mono text-[11px] text-ink-muted">→ staged {stagedVersion || "—"}</span>

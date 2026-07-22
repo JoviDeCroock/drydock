@@ -391,7 +391,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
           ) : null}
 
           <section class="flex flex-col gap-3 pt-3">
-            <SectionLabel>Before it ships</SectionLabel>
+            <SectionLabel as="p">Before it ships</SectionLabel>
             <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0">
               {hasPreview ? "This is the review that matters." : "This diff is after the fact."}
             </h2>

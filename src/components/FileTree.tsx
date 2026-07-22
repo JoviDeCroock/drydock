@@ -65,8 +65,10 @@ export function FileTree({
   onSelect: (path: string) => void;
   findingCounts?: FindingCountMap;
 }) {
-  // Two localeCompare sorts over every entry — memoized so selection changes
-  // and filter keystrokes don't re-sort a megabyte-scale package's tree.
+  // Two localeCompare sorts over every entry — memoized so rerenders that
+  // keep the same entries array (selection changes, finding arrivals) don't
+  // re-sort a megabyte-scale package's tree. Filtering produces a fresh
+  // array, so filter keystrokes still rebuild — that's inherent to the input.
   const tree = useMemo(() => buildTree(entries, findingCounts), [entries, findingCounts]);
   if (!tree.length) {
     return (
@@ -148,7 +150,11 @@ function FolderTreeNode({
   // Frozen at mount: re-applying a recomputed value as a live `open` prop
   // would clobber the user's manual folder toggles whenever the aggregate
   // status changes (e.g. switching compare versions while the tree stays
-  // mounted).
+  // mounted). Deliberate cost: a folder that only becomes "changed" in a
+  // later comparison keeps its first frozen default — the accent name color
+  // and finding badge still flag it on the collapsed row, and surfaces that
+  // want fresh defaults remount the tree (the /diff page keys per version
+  // pair).
   const initiallyOpen = useRef(node.status !== "unchanged" && depth < 2).current;
   return (
     <li class="m-0">

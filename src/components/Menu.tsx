@@ -143,8 +143,16 @@ export function Menu({
     if (!open.value) return;
     const node = rootRef.current;
     const next = event.relatedTarget;
-    if (node && next instanceof Node && node.contains(next)) return;
+    // A null relatedTarget is ambiguous: focus left the document, or (Safari /
+    // Firefox-macOS) a mousedown on a button blurred without focusing.
+    // Closing on null would unmount the panel before an in-panel click fires,
+    // silently swallowing the activation — and click-outside is already
+    // handled by the document pointerdown listener. Only close when focus
+    // verifiably moved to an element outside the menu.
+    if (!(next instanceof Node)) return;
+    if (node && node.contains(next)) return;
     open.value = false;
+    focusFirstOnOpen.value = false;
   };
 
   return (

@@ -33,6 +33,7 @@ export function dismissToast(id: number): void {
   const timer = timers.get(id);
   if (timer !== undefined) clearTimeout(timer);
   timers.delete(id);
+  holds.delete(id);
   items.value = items.value.filter((item) => item.id !== id);
 }
 
@@ -44,9 +45,15 @@ function scheduleToastDismiss(id: number): void {
 }
 
 // Hover/focus pause: while a user is reading (pointer over the toast) or
-// interacting (focus on its dismiss button), the clock stops; leaving restarts
-// a full TTL. Exported for tests. Critical toasts have no timer to hold.
+// interacting (focus on its dismiss button), the clock stops; the last release
+// restarts a full TTL. Holds are refcounted because hover and focus overlap —
+// un-counted, mouse-leave would restart the timer while keyboard focus was
+// still inside the toast (and dismissal would then strand focus on <body>).
+// Exported for tests.
+const holds = new Map<number, number>();
+
 export function holdToast(id: number): void {
+  holds.set(id, (holds.get(id) ?? 0) + 1);
   const timer = timers.get(id);
   if (timer === undefined) return;
   clearTimeout(timer);
@@ -54,6 +61,12 @@ export function holdToast(id: number): void {
 }
 
 export function releaseToast(id: number): void {
+  const count = holds.get(id) ?? 0;
+  if (count > 1) {
+    holds.set(id, count - 1);
+    return;
+  }
+  holds.delete(id);
   const item = items.value.find((entry) => entry.id === id);
   if (!item || item.tone === "critical") return;
   if (timers.has(id)) return;
@@ -102,6 +115,7 @@ export function Toaster() {
 export function clearToastsForTest(): void {
   for (const timer of timers.values()) clearTimeout(timer);
   timers.clear();
+  holds.clear();
   items.value = [];
 }
 

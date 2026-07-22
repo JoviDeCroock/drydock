@@ -48,6 +48,23 @@ describe("toast store", () => {
     expect(toastItemsForTest()).toHaveLength(0);
   });
 
+  test("overlapping hover and focus holds are refcounted", () => {
+    pushToast("copied", "info");
+    const id = toastItemsForTest()[0].id;
+    // Hover, then keyboard focus lands on the dismiss button.
+    holdToast(id);
+    holdToast(id);
+    // Mouse leaves while focus is still inside: the clock must stay stopped —
+    // dismissing here would strand keyboard focus on <body>.
+    releaseToast(id);
+    vi.advanceTimersByTime(60_000);
+    expect(toastItemsForTest()).toHaveLength(1);
+    // Focus leaves too: last release restarts a full TTL.
+    releaseToast(id);
+    vi.advanceTimersByTime(4000);
+    expect(toastItemsForTest()).toHaveLength(0);
+  });
+
   test("release is a no-op for critical and already-scheduled toasts", () => {
     pushToast("boom", "critical");
     const id = toastItemsForTest()[0].id;

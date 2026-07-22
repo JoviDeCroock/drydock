@@ -65,7 +65,7 @@ export default function LandingPage() {
       <AikidoPartnerStrip />
 
       <section aria-label="Why review a publish" class="flex flex-col gap-4">
-        <SectionLabel>Why review a publish</SectionLabel>
+        <SectionLabel as="p">Why review a publish</SectionLabel>
         <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
           The attacks that matter ship in the artifact.
         </h2>
@@ -157,7 +157,7 @@ export default function LandingPage() {
       </section>
 
       <section aria-label="Get started" class="flex flex-col gap-4">
-        <SectionLabel>Get started</SectionLabel>
+        <SectionLabel as="p">Get started</SectionLabel>
         <h2 class="text-[32px] font-semibold tracking-[-0.02em] leading-[1.15] m-0 max-w-[680px]">
           Put your next release in the dock.
         </h2>

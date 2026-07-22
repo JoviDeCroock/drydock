@@ -54,7 +54,7 @@ export function AikidoFootnote({ class: className }: { class?: string }) {
 export function AikidoPartnerStrip({ class: className }: { class?: string }) {
   return (
     <section aria-label="Sponsored by Aikido Security" class={cn("flex flex-col gap-4", className)}>
-      <SectionLabel>Sponsored by</SectionLabel>
+      <SectionLabel as="p">Sponsored by</SectionLabel>
       <a
         href={AIKIDO_URL}
         target="_blank"
