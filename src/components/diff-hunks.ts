@@ -10,6 +10,10 @@ export const GAP_MIN_HIDDEN = 10;
 // Rows revealed per edge per "show more" click, so one click grows context
 // from both ends of the gap by this amount.
 export const GAP_EXPAND_STEP = 100;
+// Largest gap that offers a one-click "show all". Beyond this the reveal
+// itself would rebuild the megabyte-scale-render problem the collapse exists
+// to avoid, so larger gaps only step.
+export const GAP_SHOW_ALL_MAX = 5000;
 
 export interface HunkRowLike {
   tone: "added" | "removed" | "unchanged";

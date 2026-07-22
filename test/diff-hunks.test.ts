@@ -91,6 +91,23 @@ describe("buildDisplaySegments", () => {
     expect(rowIndexes(segments)).toHaveLength(rows.length);
   });
 
+  test("expanding by the gap's hidden count reveals the whole run (show all)", () => {
+    const rows: HunkRowLike[] = [{ tone: "added", afterLine: 1 }, ...unchangedRows(500, 2)];
+    const collapsed = buildDisplaySegments(rows, new Set(), {}, "k");
+    const gapKey = gaps(collapsed)[0].key;
+    // Partially expanded first, then "show all" adds the remaining hidden
+    // count on top of the existing expansion — exactly what the UI does.
+    const partial = buildDisplaySegments(rows, new Set(), { [gapKey]: GAP_EXPAND_STEP }, "k");
+    const segments = buildDisplaySegments(
+      rows,
+      new Set(),
+      { [gapKey]: GAP_EXPAND_STEP + gaps(partial)[0].hiddenCount },
+      "k",
+    );
+    expect(gaps(segments)).toHaveLength(0);
+    expect(rowIndexes(segments)).toHaveLength(rows.length);
+  });
+
   test("over-expansion clamps instead of producing negative gaps", () => {
     const rows = unchangedRows(30);
     const segments = buildDisplaySegments(rows, new Set(), { "k:0": 10_000 }, "k");

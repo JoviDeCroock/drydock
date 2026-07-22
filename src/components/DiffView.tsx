@@ -10,7 +10,7 @@ import {
   type DiffFinding,
   type SeverityGroup,
 } from "./diff-annotations";
-import { buildDisplaySegments, GAP_EXPAND_STEP } from "./diff-hunks";
+import { buildDisplaySegments, GAP_EXPAND_STEP, GAP_SHOW_ALL_MAX } from "./diff-hunks";
 import { diffOverviewMarkers, displayOverviewRows, type DiffOverviewMarker } from "./diff-overview";
 import {
   canHighlight,
@@ -884,10 +884,10 @@ function TwoSidedView({
     expansions.value,
     gapKeyPrefix,
   );
-  const expandGap = (key: string) => {
+  const expandGap = (key: string, count: number) => {
     expansions.value = {
       ...expansions.value,
-      [key]: (expansions.value[key] ?? 0) + GAP_EXPAND_STEP,
+      [key]: (expansions.value[key] ?? 0) + count,
     };
   };
   const scrollState = useSignal<DiffScrollState | null>(null);
@@ -913,7 +913,8 @@ function TwoSidedView({
                       hiddenCount={segment.hiddenCount}
                       noun="unchanged lines"
                       colSpan={4}
-                      onExpand={() => expandGap(segment.key)}
+                      step={GAP_EXPAND_STEP}
+                      onExpand={(count) => expandGap(segment.key, count)}
                     />
                   );
                 }
@@ -944,31 +945,50 @@ function TwoSidedView({
   );
 }
 
-// A collapsed run of rows, rendered as a full-width expander. Clicking reveals
-// GAP_EXPAND_STEP rows from each edge of the gap so context grows around the
-// changes above and below it.
+// A collapsed run of rows, rendered as a full-width expander. "Show more"
+// reveals `step` rows per edge so context grows around the changes above and
+// below the gap; gaps up to GAP_SHOW_ALL_MAX also offer a one-click
+// "show all" (larger gaps only step, so a bulk reveal can never rebuild the
+// megabyte-scale render the collapse exists to avoid).
+const GAP_BUTTON_CLASS =
+  "cursor-pointer border-y border-border bg-surface-2 px-3 py-1 font-mono text-[11px] text-ink-subtle transition-colors hover:bg-accent-soft hover:text-ink";
+
 function GapRow({
   hiddenCount,
   noun,
   colSpan,
+  step,
   onExpand,
 }: {
   hiddenCount: number;
   noun: string;
   colSpan: number;
-  onExpand: () => void;
+  step: number;
+  onExpand: (count: number) => void;
 }) {
   return (
     <tr>
       <td colSpan={colSpan} class="p-0">
-        <button
-          type="button"
-          onClick={onExpand}
-          aria-label={`Show more of ${hiddenCount} hidden ${noun}`}
-          class="w-full cursor-pointer border-y border-border bg-surface-2 px-3 py-1 text-left font-mono text-[11px] text-ink-subtle transition-colors hover:bg-accent-soft hover:text-ink"
-        >
-          ⋯ {hiddenCount.toLocaleString()} {noun} · show more
-        </button>
+        <div class="flex">
+          <button
+            type="button"
+            onClick={() => onExpand(step)}
+            aria-label={`Show more of ${hiddenCount} hidden ${noun}`}
+            class={cn(GAP_BUTTON_CLASS, "grow text-left")}
+          >
+            ⋯ {hiddenCount.toLocaleString()} {noun} · show more
+          </button>
+          {hiddenCount <= GAP_SHOW_ALL_MAX ? (
+            <button
+              type="button"
+              onClick={() => onExpand(hiddenCount)}
+              aria-label={`Show all ${hiddenCount} hidden ${noun}`}
+              class={cn(GAP_BUTTON_CLASS, "border-l")}
+            >
+              show all
+            </button>
+          ) : null}
+        </div>
       </td>
     </tr>
   );
@@ -1082,10 +1102,11 @@ function SingleSidedView({
                   hiddenCount={lines.length - visibleCount}
                   noun="more lines"
                   colSpan={2}
-                  onExpand={() =>
+                  step={SINGLE_SIDED_LINE_STEP}
+                  onExpand={(count) =>
                     (visibleStore.value = {
                       key: resetKey,
-                      count: visibleCount + SINGLE_SIDED_LINE_STEP,
+                      count: visibleCount + count,
                     })
                   }
                 />
