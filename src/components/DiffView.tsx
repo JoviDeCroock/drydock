@@ -414,10 +414,12 @@ interface DiffScrollState {
 function DiffScrollViewport({
   resetKey,
   scrollState,
+  label,
   children,
 }: {
   resetKey: string;
   scrollState: Signal<DiffScrollState | null>;
+  label: string;
   children: ComponentChildren;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -456,10 +458,18 @@ function DiffScrollViewport({
     // viewport top) and jump the scroll past the newly revealed rows; Safari
     // has no anchoring at all. Disabling it makes every browser behave the
     // same.
+    // tabIndex + region role: an overflow div is otherwise unreachable by
+    // keyboard, making the 560px pane unscrollable without a mouse. The focus
+    // ring is inset because the border shell clips an outer halo;
+    // overscroll-contain keeps wheel momentum at the pane's edges from
+    // scrolling the page underneath.
     <div
       ref={ref}
       onScroll={syncScrollState}
-      class="overflow-auto h-full pr-5 [overflow-anchor:none]"
+      tabIndex={0}
+      role="region"
+      aria-label={label}
+      class="overflow-auto h-full pr-5 [overflow-anchor:none] overscroll-contain outline-none focus-visible:shadow-[inset_0_0_0_3px_var(--color-accent-soft)]"
     >
       {children}
     </div>
@@ -745,6 +755,7 @@ function DiffBody({
     }
     return (
       <SingleSidedView
+        path={path}
         label={afterLabel}
         tone="added"
         text={afterSample}
@@ -763,6 +774,7 @@ function DiffBody({
     }
     return (
       <SingleSidedView
+        path={path}
         label={beforeLabel}
         tone="removed"
         text={beforeSample}
@@ -779,6 +791,7 @@ function DiffBody({
     }
     return (
       <SingleSidedView
+        path={path}
         label={afterLabel || beforeLabel}
         tone="unchanged"
         text={afterSample || beforeSample}
@@ -795,6 +808,7 @@ function DiffBody({
   if (!beforeSample) {
     return (
       <SingleSidedView
+        path={path}
         label={afterLabel}
         tone="added"
         text={afterSample}
@@ -808,6 +822,7 @@ function DiffBody({
   if (!afterSample) {
     return (
       <SingleSidedView
+        path={path}
         label={beforeLabel}
         tone="removed"
         text={beforeSample}
@@ -902,6 +917,7 @@ function TwoSidedView({
         <DiffScrollViewport
           resetKey={initialScrollResetKey(path, status, beforeSample, afterSample, findings)}
           scrollState={scrollState}
+          label={`Diff of ${path}`}
         >
           <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
             <tbody>
@@ -1023,6 +1039,7 @@ const SINGLE_SIDED_INITIAL_LINES = 1000;
 const SINGLE_SIDED_LINE_STEP = 1000;
 
 function SingleSidedView({
+  path,
   label,
   tone,
   text,
@@ -1031,6 +1048,7 @@ function SingleSidedView({
   resetKey,
   seekFirstChange,
 }: {
+  path: string;
   label: string;
   tone: "added" | "removed" | "unchanged";
   text: string;
@@ -1069,7 +1087,11 @@ function SingleSidedView({
       </div>
       {unpinned.length ? <AnnotationBanner findings={unpinned} /> : null}
       <div class="relative h-[560px]">
-        <DiffScrollViewport resetKey={resetKey} scrollState={scrollState}>
+        <DiffScrollViewport
+          resetKey={resetKey}
+          scrollState={scrollState}
+          label={`Contents of ${path} (${label})`}
+        >
           <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
             <tbody>
               {visibleLines.map((line, index) => {
