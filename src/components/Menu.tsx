@@ -148,7 +148,12 @@ export function Menu({
   };
 
   return (
-    <div ref={rootRef} onKeyDown={onRootKeyDown} onFocusOut={onFocusOut} class="relative inline-block">
+    <div
+      ref={rootRef}
+      onKeyDown={onRootKeyDown}
+      onFocusOut={onFocusOut}
+      class="relative inline-block"
+    >
       <button
         ref={triggerRef}
         type="button"

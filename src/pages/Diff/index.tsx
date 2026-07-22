@@ -523,11 +523,12 @@ function VersionSelect({
   onChange: (version: string) => void;
 }) {
   return (
-    <div class="inline-block w-auto min-w-[160px]" aria-label={label}>
+    <div class="inline-block w-auto min-w-[160px]">
       <Select
         value={selected}
         size="sm"
         class="font-mono"
+        aria-label={label}
         onChange={(value) => {
           if (value && value !== selected) onChange(value);
         }}

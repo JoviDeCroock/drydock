@@ -1,4 +1,4 @@
-import type { ComponentChildren } from "preact";
+import type { ComponentChildren, JSX } from "preact";
 import type { Signal } from "@preact/signals";
 import { cn } from "./cn";
 
@@ -14,6 +14,21 @@ const arrowStyles: Record<SelectSize, string> = {
   md: "right-3",
 };
 
+// Rest props (aria-label and friends) forward to the native <select> — the
+// wrapper div is purely presentational, so accessibility attributes must not
+// end up on it.
+type SelectProps = Omit<
+  JSX.SelectHTMLAttributes<HTMLSelectElement>,
+  "class" | "size" | "value" | "disabled" | "onChange"
+> & {
+  value: string | Signal<string>;
+  disabled?: boolean | Signal<boolean>;
+  onChange: (value: string) => void;
+  children: ComponentChildren;
+  size?: SelectSize;
+  class?: string;
+};
+
 export function Select({
   id,
   value,
@@ -22,18 +37,12 @@ export function Select({
   children,
   size = "md",
   class: className,
-}: {
-  id?: string;
-  value: string | Signal<string>;
-  disabled?: boolean | Signal<boolean>;
-  onChange: (value: string) => void;
-  children: ComponentChildren;
-  size?: SelectSize;
-  class?: string;
-}) {
+  ...rest
+}: SelectProps) {
   return (
     <div class="relative inline-block w-full">
       <select
+        {...rest}
         id={id}
         value={value}
         disabled={disabled}
