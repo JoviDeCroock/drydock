@@ -25,9 +25,17 @@ const variantStyles: Record<ButtonVariant, string> = {
 };
 
 const sizeStyles: Record<ButtonSize, string> = {
-  sm: "text-xs px-2.5 py-1.5",
-  md: "text-[13px] px-3.5 py-2",
+  sm: "px-2.5 py-1.5",
+  md: "px-3.5 py-2",
 };
+
+// White-on-accent (and white-on-danger) requires 13px/500 minimum per
+// DESIGN.md's contrast rules, so small primary/danger buttons keep the md
+// text size; the quieter variants may drop to 12px at size sm.
+function textSize(variant: ButtonVariant, size: ButtonSize): string {
+  if (size === "md") return "text-[13px]";
+  return variant === "primary" || variant === "danger" ? "text-[13px]" : "text-xs";
+}
 
 export function Button({
   variant = "primary",
@@ -40,7 +48,7 @@ export function Button({
   return (
     <button
       type={type}
-      class={cn(base, variantStyles[variant], sizeStyles[size], className)}
+      class={cn(base, variantStyles[variant], sizeStyles[size], textSize(variant, size), className)}
       {...props}
     >
       {children}
@@ -57,7 +65,14 @@ export function LinkButton({
 }: AnchorProps) {
   return (
     <a
-      class={cn(base, "no-underline", variantStyles[variant], sizeStyles[size], className)}
+      class={cn(
+        base,
+        "no-underline",
+        variantStyles[variant],
+        sizeStyles[size],
+        textSize(variant, size),
+        className,
+      )}
       {...props}
     >
       {children}
