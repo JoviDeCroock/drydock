@@ -10,12 +10,8 @@ import {
   type DiffFinding,
   type SeverityGroup,
 } from "./diff-annotations";
-import { buildDisplaySegments, GAP_EXPAND_STEP } from "./diff-hunks";
-import {
-  diffOverviewMarkers,
-  type DiffOverviewMarker,
-  type DiffOverviewRow,
-} from "./diff-overview";
+import { buildDisplaySegments, GAP_EXPAND_STEP, GAP_SHOW_ALL_MAX } from "./diff-hunks";
+import { diffOverviewMarkers, displayOverviewRows, type DiffOverviewMarker } from "./diff-overview";
 import {
   canHighlight,
   ensureHighlighter,
@@ -388,14 +384,16 @@ function useLineTokens(text: string, lang: string | undefined): TokenLine[] | nu
   );
 }
 
-function initialScrollResetKey(
+// Keyed on the file identity and content only — deliberately not on findings.
+// Findings arriving after the diff is on screen must not yank the scroll back
+// to the first change (or reset the single-sided render window) mid-read.
+// Exported for tests.
+export function initialScrollResetKey(
   path: string,
   status: string,
   beforeSample: string,
   afterSample: string,
-  findings: readonly DiffFinding[],
 ): string {
-  const findingKey = findings.map((finding) => `${finding.id}:${finding.line ?? ""}`).join("|");
   return [
     path,
     status,
@@ -403,26 +401,77 @@ function initialScrollResetKey(
     afterSample.length,
     beforeSample.slice(0, 64),
     afterSample.slice(0, 64),
-    findingKey,
   ].join("\0");
+}
+
+// Scroll geometry mirrored into a signal so the overview thumb can track the
+// viewport without rerendering the diff table on every scroll frame.
+interface DiffScrollState {
+  top: number;
+  viewport: number;
+  content: number;
 }
 
 function DiffScrollViewport({
   resetKey,
+  scrollState,
+  label,
   children,
 }: {
   resetKey: string;
+  scrollState: Signal<DiffScrollState | null>;
+  label: string;
   children: ComponentChildren;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const syncScrollState = () => {
+    const container = ref.current;
+    if (!container) return;
+    scrollState.value = {
+      top: container.scrollTop,
+      viewport: container.clientHeight,
+      content: container.scrollHeight,
+    };
+  };
   useEffect(() => {
     const container = ref.current;
     if (!container) return;
-    const frame = window.requestAnimationFrame(() => resetDiffScroll(container));
+    const frame = window.requestAnimationFrame(() => {
+      resetDiffScroll(container);
+      syncScrollState();
+    });
     return () => window.cancelAnimationFrame(frame);
   }, [resetKey]);
+  useEffect(() => {
+    const container = ref.current;
+    if (!container) return;
+    // Content height changes without a scroll event (gap expansion, lazy
+    // syntax highlighting), so observe the table as well as the viewport.
+    const observer = new ResizeObserver(syncScrollState);
+    observer.observe(container);
+    if (container.firstElementChild) observer.observe(container.firstElementChild);
+    return () => observer.disconnect();
+  }, []);
   return (
-    <div ref={ref} class="overflow-auto h-full pr-5">
+    // overflow-anchor off: expanding a gap inserts rows at/below the clicked
+    // button, which is stable with an untouched scrollTop. Browser scroll
+    // anchoring can pick the button itself as anchor (when it sits at the
+    // viewport top) and jump the scroll past the newly revealed rows; Safari
+    // has no anchoring at all. Disabling it makes every browser behave the
+    // same.
+    // tabIndex + region role: an overflow div is otherwise unreachable by
+    // keyboard, making the 560px pane unscrollable without a mouse. The focus
+    // ring is inset because the border shell clips an outer halo;
+    // overscroll-contain keeps wheel momentum at the pane's edges from
+    // scrolling the page underneath.
+    <div
+      ref={ref}
+      onScroll={syncScrollState}
+      tabIndex={0}
+      role="region"
+      aria-label={label}
+      class="overflow-auto h-full pr-5 [overflow-anchor:none] overscroll-contain outline-none focus-visible:shadow-[inset_0_0_0_3px_var(--color-accent-soft)]"
+    >
       {children}
     </div>
   );
@@ -707,12 +756,13 @@ function DiffBody({
     }
     return (
       <SingleSidedView
+        path={path}
         label={afterLabel}
         tone="added"
         text={afterSample}
         tokens={afterTokens}
         findings={findings}
-        resetKey={initialScrollResetKey(path, status, "", afterSample, findings)}
+        resetKey={initialScrollResetKey(path, status, "", afterSample)}
         seekFirstChange={shouldSeekInitialDiffTarget(status)}
       />
     );
@@ -725,12 +775,13 @@ function DiffBody({
     }
     return (
       <SingleSidedView
+        path={path}
         label={beforeLabel}
         tone="removed"
         text={beforeSample}
         tokens={beforeTokens}
         findings={findings}
-        resetKey={initialScrollResetKey(path, status, beforeSample, "", findings)}
+        resetKey={initialScrollResetKey(path, status, beforeSample, "")}
         seekFirstChange={shouldSeekInitialDiffTarget(status)}
       />
     );
@@ -741,12 +792,13 @@ function DiffBody({
     }
     return (
       <SingleSidedView
+        path={path}
         label={afterLabel || beforeLabel}
         tone="unchanged"
         text={afterSample || beforeSample}
         tokens={afterSample ? afterTokens : beforeTokens}
         findings={findings}
-        resetKey={initialScrollResetKey(path, status, beforeSample, afterSample, findings)}
+        resetKey={initialScrollResetKey(path, status, beforeSample, afterSample)}
         seekFirstChange={shouldSeekInitialDiffTarget(status)}
       />
     );
@@ -757,12 +809,13 @@ function DiffBody({
   if (!beforeSample) {
     return (
       <SingleSidedView
+        path={path}
         label={afterLabel}
         tone="added"
         text={afterSample}
         tokens={afterTokens}
         findings={findings}
-        resetKey={initialScrollResetKey(path, status, "", afterSample, findings)}
+        resetKey={initialScrollResetKey(path, status, "", afterSample)}
         seekFirstChange={shouldSeekInitialDiffTarget(status)}
       />
     );
@@ -770,12 +823,13 @@ function DiffBody({
   if (!afterSample) {
     return (
       <SingleSidedView
+        path={path}
         label={beforeLabel}
         tone="removed"
         text={beforeSample}
         tokens={beforeTokens}
         findings={findings}
-        resetKey={initialScrollResetKey(path, status, beforeSample, "", findings)}
+        resetKey={initialScrollResetKey(path, status, beforeSample, "")}
         seekFirstChange={shouldSeekInitialDiffTarget(status)}
       />
     );
@@ -832,26 +886,40 @@ function TwoSidedView({
       }),
     [beforeSample, afterSample, beforeTokens, afterTokens, wordDiff, ignoreWhitespace],
   );
-  const presentLines = new Set<number>();
-  for (const row of rows) if (row.afterLine !== null) presentLines.add(row.afterLine);
-  const { pinned, unpinned } = partitionFindingsByLine(findings, presentLines);
+  // Partitioning, segment collapse, and overview markers are all O(rows);
+  // memoized so scroll-adjacent rerenders never re-walk a 36k-row table.
+  const { pinned, unpinned } = useMemo(() => {
+    const presentLines = new Set<number>();
+    for (const row of rows) if (row.afterLine !== null) presentLines.add(row.afterLine);
+    return partitionFindingsByLine(findings, presentLines);
+  }, [rows, findings]);
   // Gap keys embed the file identity and the whitespace mode (which reshapes
   // row indexes), so expansion state from a previously viewed file can never
   // apply to the wrong gap.
+  // Known tradeoff: findings that arrive after first render add keepLines
+  // anchors that reshape segments in place — a split gap re-keys its right
+  // half (dropping its expansion) and revealed rows above the viewport shift
+  // content without scroll compensation. Accepted because findings ship with
+  // the diff payload in practice, and the alternative — keying the scroll
+  // reset on findings — lost the reader's place entirely on every change.
   const gapKeyPrefix = [path, beforeSample.length, afterSample.length, ignoreWhitespace].join("\0");
   const expansions = useSignal<Record<string, number>>({});
-  const segments = buildDisplaySegments(
-    rows,
-    new Set(pinned.keys()),
-    expansions.value,
-    gapKeyPrefix,
+  const expansionState = expansions.value;
+  const segments = useMemo(
+    () => buildDisplaySegments(rows, new Set(pinned.keys()), expansionState, gapKeyPrefix),
+    [rows, pinned, expansionState, gapKeyPrefix],
   );
-  const expandGap = (key: string) => {
+  const markers = useMemo(
+    () => diffOverviewMarkers(displayOverviewRows(segments, rows), pinned),
+    [segments, rows, pinned],
+  );
+  const expandGap = (key: string, count: number) => {
     expansions.value = {
       ...expansions.value,
-      [key]: (expansions.value[key] ?? 0) + GAP_EXPAND_STEP,
+      [key]: (expansions.value[key] ?? 0) + count,
     };
   };
+  const scrollState = useSignal<DiffScrollState | null>(null);
   return (
     <div class="border border-border rounded-md overflow-hidden">
       <div class="bg-surface-2 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle flex justify-between">
@@ -861,7 +929,9 @@ function TwoSidedView({
       {unpinned.length ? <AnnotationBanner findings={unpinned} /> : null}
       <div class="relative h-[560px]">
         <DiffScrollViewport
-          resetKey={initialScrollResetKey(path, status, beforeSample, afterSample, findings)}
+          resetKey={initialScrollResetKey(path, status, beforeSample, afterSample)}
+          scrollState={scrollState}
+          label={`Diff of ${path}`}
         >
           <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
             <tbody>
@@ -873,7 +943,8 @@ function TwoSidedView({
                       hiddenCount={segment.hiddenCount}
                       noun="unchanged lines"
                       colSpan={4}
-                      onExpand={() => expandGap(segment.key)}
+                      step={GAP_EXPAND_STEP}
+                      onExpand={(count) => expandGap(segment.key, count)}
                     />
                   );
                 }
@@ -895,37 +966,62 @@ function TwoSidedView({
             </tbody>
           </table>
         </DiffScrollViewport>
-        <DiffOverview markers={diffOverviewMarkers(toOverviewRows(rows), pinned)} />
+        <DiffOverview markers={markers} scrollState={scrollState} />
       </div>
     </div>
   );
 }
 
-// A collapsed run of rows, rendered as a full-width expander. Clicking reveals
-// GAP_EXPAND_STEP rows from each edge of the gap so context grows around the
-// changes above and below it.
+// A collapsed run of rows, rendered as a full-width expander. "Show more"
+// reveals `step` rows per edge so context grows around the changes above and
+// below the gap; gaps up to GAP_SHOW_ALL_MAX also offer a one-click
+// "show all" (larger gaps only step, so a bulk reveal can never rebuild the
+// megabyte-scale render the collapse exists to avoid).
+const GAP_BUTTON_CLASS =
+  "cursor-pointer border-y border-border bg-surface-2 px-3 py-1 font-mono text-[11px] text-ink-subtle transition-colors hover:bg-accent-soft hover:text-ink";
+
 function GapRow({
   hiddenCount,
   noun,
   colSpan,
+  step,
   onExpand,
 }: {
   hiddenCount: number;
   noun: string;
   colSpan: number;
-  onExpand: () => void;
+  step: number;
+  onExpand: (count: number) => void;
 }) {
   return (
     <tr>
       <td colSpan={colSpan} class="p-0">
-        <button
-          type="button"
-          onClick={onExpand}
-          aria-label={`Show more of ${hiddenCount} hidden ${noun}`}
-          class="w-full cursor-pointer border-y border-border bg-surface-2 px-3 py-1 text-left font-mono text-[11px] text-ink-subtle transition-colors hover:bg-accent-soft hover:text-ink"
-        >
-          ⋯ {hiddenCount.toLocaleString()} {noun} · show more
-        </button>
+        <div class="flex">
+          <button
+            type="button"
+            onClick={() => onExpand(step)}
+            aria-label={`Show more of ${hiddenCount} hidden ${noun}`}
+            class={cn(GAP_BUTTON_CLASS, "grow text-left")}
+          >
+            ⋯ {hiddenCount.toLocaleString()} {noun} · show more
+          </button>
+          {hiddenCount <= GAP_SHOW_ALL_MAX ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                // The full reveal unmounts this row; park focus on the scroll
+                // region first so keyboard users aren't dropped back to the
+                // document body.
+                event.currentTarget.closest<HTMLElement>("[role='region']")?.focus();
+                onExpand(hiddenCount);
+              }}
+              aria-label={`Show all ${hiddenCount} hidden ${noun}`}
+              class={cn(GAP_BUTTON_CLASS, "border-l")}
+            >
+              show all
+            </button>
+          ) : null}
+        </div>
       </td>
     </tr>
   );
@@ -960,6 +1056,7 @@ const SINGLE_SIDED_INITIAL_LINES = 1000;
 const SINGLE_SIDED_LINE_STEP = 1000;
 
 function SingleSidedView({
+  path,
   label,
   tone,
   text,
@@ -968,6 +1065,7 @@ function SingleSidedView({
   resetKey,
   seekFirstChange,
 }: {
+  path: string;
   label: string;
   tone: "added" | "removed" | "unchanged";
   text: string;
@@ -988,11 +1086,30 @@ function SingleSidedView({
     lines.length,
     stored.key === resetKey ? stored.count : SINGLE_SIDED_INITIAL_LINES,
   );
-  const visibleLines = visibleCount < lines.length ? lines.slice(0, visibleCount) : lines;
+  const visibleLines = useMemo(
+    () => (visibleCount < lines.length ? lines.slice(0, visibleCount) : lines),
+    [lines, visibleCount],
+  );
   // Findings pinned past the rendered window fall back to the banner above the
   // diff (same as truncated samples), so capping rendering never hides one.
-  const presentLines = new Set<number>(visibleLines.map((_, index) => index + 1));
-  const { pinned, unpinned } = partitionFindingsByLine(findings, presentLines);
+  const { pinned, unpinned } = useMemo(() => {
+    const presentLines = new Set<number>(visibleLines.map((_, index) => index + 1));
+    return partitionFindingsByLine(findings, presentLines);
+  }, [visibleLines, findings]);
+  const markers = useMemo(
+    () =>
+      diffOverviewMarkers(
+        // Only rendered lines count toward the strip, plus one slot for the
+        // trailing expander row, so the strip maps the scrollbar.
+        [
+          ...visibleLines.map((_, index) => ({ tone, line: index + 1 })),
+          ...(visibleCount < lines.length ? [{ tone: "unchanged" as const, line: null }] : []),
+        ],
+        pinned,
+      ),
+    [visibleLines, visibleCount, lines, tone, pinned],
+  );
+  const scrollState = useSignal<DiffScrollState | null>(null);
   return (
     <div class="border border-border rounded-md overflow-hidden">
       <div
@@ -1005,7 +1122,11 @@ function SingleSidedView({
       </div>
       {unpinned.length ? <AnnotationBanner findings={unpinned} /> : null}
       <div class="relative h-[560px]">
-        <DiffScrollViewport resetKey={resetKey}>
+        <DiffScrollViewport
+          resetKey={resetKey}
+          scrollState={scrollState}
+          label={`Contents of ${path} (${label})`}
+        >
           <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
             <tbody>
               {visibleLines.map((line, index) => {
@@ -1038,10 +1159,11 @@ function SingleSidedView({
                   hiddenCount={lines.length - visibleCount}
                   noun="more lines"
                   colSpan={2}
-                  onExpand={() =>
+                  step={SINGLE_SIDED_LINE_STEP}
+                  onExpand={(count) =>
                     (visibleStore.value = {
                       key: resetKey,
-                      count: visibleCount + SINGLE_SIDED_LINE_STEP,
+                      count: visibleCount + count,
                     })
                   }
                 />
@@ -1049,22 +1171,19 @@ function SingleSidedView({
             </tbody>
           </table>
         </DiffScrollViewport>
-        <DiffOverview
-          markers={diffOverviewMarkers(
-            lines.map((_, index) => ({ tone, line: index + 1 })),
-            pinned,
-          )}
-        />
+        <DiffOverview markers={markers} scrollState={scrollState} />
       </div>
     </div>
   );
 }
 
-function toOverviewRows(rows: readonly Row[]): DiffOverviewRow[] {
-  return rows.map((row) => ({ tone: row.tone, line: row.afterLine }));
-}
-
-function DiffOverview({ markers }: { markers: DiffOverviewMarker[] }) {
+function DiffOverview({
+  markers,
+  scrollState,
+}: {
+  markers: DiffOverviewMarker[];
+  scrollState: Signal<DiffScrollState | null>;
+}) {
   if (!markers.length) return null;
   return (
     <div
@@ -1085,7 +1204,26 @@ function DiffOverview({ markers }: { markers: DiffOverviewMarker[] }) {
           }}
         />
       ))}
+      <DiffOverviewThumb scrollState={scrollState} />
     </div>
+  );
+}
+
+// The viewport's position over the strip, in the same neutral ink used for
+// structure (never a severity hue — color = signal). Reads the scroll signal
+// in its own component so scrolling rerenders only this span, never the diff
+// table.
+function DiffOverviewThumb({ scrollState }: { scrollState: Signal<DiffScrollState | null> }) {
+  const state = scrollState.value;
+  if (!state || state.content <= state.viewport) return null;
+  return (
+    <span
+      class="absolute left-[-1px] right-[-1px] z-20 rounded-full bg-ink/15"
+      style={{
+        top: `${(state.top / state.content) * 100}%`,
+        height: `${(state.viewport / state.content) * 100}%`,
+      }}
+    />
   );
 }
 
