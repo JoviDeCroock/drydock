@@ -214,4 +214,10 @@
     outline: 2px solid var(--color-accent);
     outline-offset: 2px;
   }
+
+  /* showModal() makes the background inert but does not stop it scrolling;
+     without this, long pages wheel-scroll behind the open dialog. */
+  body:has(dialog[open]) {
+    overflow: hidden;
+  }
 }
