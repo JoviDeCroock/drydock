@@ -886,19 +886,26 @@ function TwoSidedView({
       }),
     [beforeSample, afterSample, beforeTokens, afterTokens, wordDiff, ignoreWhitespace],
   );
-  const presentLines = new Set<number>();
-  for (const row of rows) if (row.afterLine !== null) presentLines.add(row.afterLine);
-  const { pinned, unpinned } = partitionFindingsByLine(findings, presentLines);
+  // Partitioning, segment collapse, and overview markers are all O(rows);
+  // memoized so scroll-adjacent rerenders never re-walk a 36k-row table.
+  const { pinned, unpinned } = useMemo(() => {
+    const presentLines = new Set<number>();
+    for (const row of rows) if (row.afterLine !== null) presentLines.add(row.afterLine);
+    return partitionFindingsByLine(findings, presentLines);
+  }, [rows, findings]);
   // Gap keys embed the file identity and the whitespace mode (which reshapes
   // row indexes), so expansion state from a previously viewed file can never
   // apply to the wrong gap.
   const gapKeyPrefix = [path, beforeSample.length, afterSample.length, ignoreWhitespace].join("\0");
   const expansions = useSignal<Record<string, number>>({});
-  const segments = buildDisplaySegments(
-    rows,
-    new Set(pinned.keys()),
-    expansions.value,
-    gapKeyPrefix,
+  const expansionState = expansions.value;
+  const segments = useMemo(
+    () => buildDisplaySegments(rows, new Set(pinned.keys()), expansionState, gapKeyPrefix),
+    [rows, pinned, expansionState, gapKeyPrefix],
+  );
+  const markers = useMemo(
+    () => diffOverviewMarkers(displayOverviewRows(segments, rows), pinned),
+    [segments, rows, pinned],
   );
   const expandGap = (key: string, count: number) => {
     expansions.value = {
@@ -953,10 +960,7 @@ function TwoSidedView({
             </tbody>
           </table>
         </DiffScrollViewport>
-        <DiffOverview
-          markers={diffOverviewMarkers(displayOverviewRows(segments, rows), pinned)}
-          scrollState={scrollState}
-        />
+        <DiffOverview markers={markers} scrollState={scrollState} />
       </div>
     </div>
   );
@@ -1070,11 +1074,29 @@ function SingleSidedView({
     lines.length,
     stored.key === resetKey ? stored.count : SINGLE_SIDED_INITIAL_LINES,
   );
-  const visibleLines = visibleCount < lines.length ? lines.slice(0, visibleCount) : lines;
+  const visibleLines = useMemo(
+    () => (visibleCount < lines.length ? lines.slice(0, visibleCount) : lines),
+    [lines, visibleCount],
+  );
   // Findings pinned past the rendered window fall back to the banner above the
   // diff (same as truncated samples), so capping rendering never hides one.
-  const presentLines = new Set<number>(visibleLines.map((_, index) => index + 1));
-  const { pinned, unpinned } = partitionFindingsByLine(findings, presentLines);
+  const { pinned, unpinned } = useMemo(() => {
+    const presentLines = new Set<number>(visibleLines.map((_, index) => index + 1));
+    return partitionFindingsByLine(findings, presentLines);
+  }, [visibleLines, findings]);
+  const markers = useMemo(
+    () =>
+      diffOverviewMarkers(
+        // Only rendered lines count toward the strip, plus one slot for the
+        // trailing expander row, so the strip maps the scrollbar.
+        [
+          ...visibleLines.map((_, index) => ({ tone, line: index + 1 })),
+          ...(visibleCount < lines.length ? [{ tone: "unchanged" as const, line: null }] : []),
+        ],
+        pinned,
+      ),
+    [visibleLines, visibleCount, lines, tone, pinned],
+  );
   const scrollState = useSignal<DiffScrollState | null>(null);
   return (
     <div class="border border-border rounded-md overflow-hidden">
@@ -1137,18 +1159,7 @@ function SingleSidedView({
             </tbody>
           </table>
         </DiffScrollViewport>
-        <DiffOverview
-          markers={diffOverviewMarkers(
-            // Only rendered lines count toward the strip, plus one slot for
-            // the trailing expander row, so the strip maps the scrollbar.
-            [
-              ...visibleLines.map((_, index) => ({ tone, line: index + 1 })),
-              ...(visibleCount < lines.length ? [{ tone: "unchanged" as const, line: null }] : []),
-            ],
-            pinned,
-          )}
-          scrollState={scrollState}
-        />
+        <DiffOverview markers={markers} scrollState={scrollState} />
       </div>
     </div>
   );
