@@ -6,8 +6,11 @@ type CloseButtonProps = Omit<JSX.ButtonHTMLAttributes<HTMLButtonElement>, "class
   ariaLabel?: string;
 };
 
+// No focus suppression here: the global `:focus-visible` accent outline
+// (src/style.css) is the system focus indicator, and removing it left keyboard
+// users with no visible focus on toast/dialog dismiss buttons.
 const base =
-  "inline-flex items-center justify-center rounded-md leading-none text-ink-subtle transition-colors duration-150 ease-out cursor-pointer focus:outline-none disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex items-center justify-center rounded-md leading-none text-ink-subtle transition-colors duration-150 ease-out cursor-pointer disabled:cursor-not-allowed disabled:opacity-50";
 
 export function CloseButton({
   class: className,
