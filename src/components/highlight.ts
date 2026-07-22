@@ -43,6 +43,30 @@ const BASE_TO_LANG: Record<string, string> = {
   Dockerfile: "docker",
 };
 
+// Tokenization runs synchronously on the main thread and its cost tracks line
+// count (~1.7s for 3,000 lines of bundled JavaScript per side, measured on
+// vite's dist chunks), so samples beyond this cap render as plain text instead
+// of freezing the tab.
+export const HIGHLIGHT_MAX_LINES = 3000;
+// Line count alone misses the few-enormous-lines shape (minified one-liners):
+// a single 512 KiB line already costs ~0.9s, so total size stays bounded too.
+export const HIGHLIGHT_MAX_CHARS = 256 * 1024;
+
+export function canHighlight(text: string): boolean {
+  return text.length <= HIGHLIGHT_MAX_CHARS && !exceedsLineCount(text, HIGHLIGHT_MAX_LINES);
+}
+
+function exceedsLineCount(text: string, limit: number): boolean {
+  let count = 1;
+  let index = text.indexOf("\n");
+  while (index !== -1) {
+    count += 1;
+    if (count > limit) return true;
+    index = text.indexOf("\n", index + 1);
+  }
+  return false;
+}
+
 export function langForPath(path: string): string | undefined {
   const base = path.split("/").pop() ?? path;
   const basenameLang = BASE_TO_LANG[base];

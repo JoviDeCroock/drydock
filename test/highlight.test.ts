@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
+  canHighlight,
   ensureHighlighter,
+  HIGHLIGHT_MAX_CHARS,
+  HIGHLIGHT_MAX_LINES,
   highlighterReady,
   langForPath,
   tokenizeLines,
@@ -36,6 +39,25 @@ describe("langForPath", () => {
   test("returns undefined for unsupported, extension-less, and dotfile paths", () => {
     expect(langForPath("LICENSE")).toBeUndefined();
     expect(langForPath(".gitignore")).toBeUndefined();
+  });
+});
+
+describe("canHighlight", () => {
+  test("caps synchronous tokenization by line count", () => {
+    // Tokenizing costs ~0.6ms per line of bundled JS on the main thread; a
+    // 36k-line sample would freeze the tab for ~25s (issue observed on vite's
+    // dist/node/chunks/node.js).
+    expect(canHighlight("x\n".repeat(HIGHLIGHT_MAX_LINES - 1))).toBe(true);
+    // repeat(N) yields N newlines → N+1 lines, one over the cap.
+    expect(canHighlight("x\n".repeat(HIGHLIGHT_MAX_LINES))).toBe(false);
+    expect(canHighlight("")).toBe(true);
+  });
+
+  test("still rejects few-enormous-lines samples the line cap would miss", () => {
+    // A minified one-liner is "1 line" but tokenizes in ~0.9s per 512 KiB, so
+    // total size stays bounded independently of line count.
+    expect(canHighlight("x".repeat(HIGHLIGHT_MAX_CHARS))).toBe(true);
+    expect(canHighlight("x".repeat(HIGHLIGHT_MAX_CHARS + 1))).toBe(false);
   });
 });
 

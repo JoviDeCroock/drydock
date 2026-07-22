@@ -27,6 +27,15 @@ Prefer existing primitives in `src/components/` before adding one-off classes:
 - Use severity stacked bars for risk distribution; avoid decorative charts.
 - Icons are text glyphs only; no SVG icon libraries.
 
+## Large diffs
+
+`DiffView` must stay responsive on megabyte-scale bundled artifacts (e.g. vite's 1.3 MiB `dist/node/chunks/node.js`):
+
+- Syntax highlighting is skipped per side above `HIGHLIGHT_MAX_LINES` (3,000 lines, ~1.7s of main-thread tokenization for bundled JS) or `HIGHLIGHT_MAX_CHARS` (256 KiB, guards minified few-enormous-lines samples) in `src/components/highlight.ts`. The meta row notes "syntax highlighting off (large file)".
+- Two-sided diffs collapse long unchanged runs into expandable gap rows (`src/components/diff-hunks.ts`, 3 context lines); rows carrying pinned findings never collapse.
+- Single-sided views render 1,000 lines initially with a "show more" expander; findings pinned past the rendered window fall back to the banner above the diff.
+- Word-diff pairing bails out for changed blocks beyond 10,000 line-pair combinations to avoid quadratic scoring.
+
 ## Signals reminder
 
 Render signals directly or derive with `useComputed`; do not eagerly unwrap `.value` in component bodies for conditional JSX. See `docs/tooling.md` and `.claude/skills/preact-signals-*` for the detailed rules.
