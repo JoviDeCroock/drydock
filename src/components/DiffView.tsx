@@ -11,11 +11,7 @@ import {
   type SeverityGroup,
 } from "./diff-annotations";
 import { buildDisplaySegments, GAP_EXPAND_STEP } from "./diff-hunks";
-import {
-  diffOverviewMarkers,
-  type DiffOverviewMarker,
-  type DiffOverviewRow,
-} from "./diff-overview";
+import { diffOverviewMarkers, displayOverviewRows, type DiffOverviewMarker } from "./diff-overview";
 import {
   canHighlight,
   ensureHighlighter,
@@ -407,20 +403,52 @@ function initialScrollResetKey(
   ].join("\0");
 }
 
+// Scroll geometry mirrored into a signal so the overview thumb can track the
+// viewport without rerendering the diff table on every scroll frame.
+interface DiffScrollState {
+  top: number;
+  viewport: number;
+  content: number;
+}
+
 function DiffScrollViewport({
   resetKey,
+  scrollState,
   children,
 }: {
   resetKey: string;
+  scrollState: Signal<DiffScrollState | null>;
   children: ComponentChildren;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const syncScrollState = () => {
+    const container = ref.current;
+    if (!container) return;
+    scrollState.value = {
+      top: container.scrollTop,
+      viewport: container.clientHeight,
+      content: container.scrollHeight,
+    };
+  };
   useEffect(() => {
     const container = ref.current;
     if (!container) return;
-    const frame = window.requestAnimationFrame(() => resetDiffScroll(container));
+    const frame = window.requestAnimationFrame(() => {
+      resetDiffScroll(container);
+      syncScrollState();
+    });
     return () => window.cancelAnimationFrame(frame);
   }, [resetKey]);
+  useEffect(() => {
+    const container = ref.current;
+    if (!container) return;
+    // Content height changes without a scroll event (gap expansion, lazy
+    // syntax highlighting), so observe the table as well as the viewport.
+    const observer = new ResizeObserver(syncScrollState);
+    observer.observe(container);
+    if (container.firstElementChild) observer.observe(container.firstElementChild);
+    return () => observer.disconnect();
+  }, []);
   return (
     // overflow-anchor off: expanding a gap inserts rows at/below the clicked
     // button, which is stable with an untouched scrollTop. Browser scroll
@@ -428,7 +456,11 @@ function DiffScrollViewport({
     // viewport top) and jump the scroll past the newly revealed rows; Safari
     // has no anchoring at all. Disabling it makes every browser behave the
     // same.
-    <div ref={ref} class="overflow-auto h-full pr-5 [overflow-anchor:none]">
+    <div
+      ref={ref}
+      onScroll={syncScrollState}
+      class="overflow-auto h-full pr-5 [overflow-anchor:none]"
+    >
       {children}
     </div>
   );
@@ -858,6 +890,7 @@ function TwoSidedView({
       [key]: (expansions.value[key] ?? 0) + GAP_EXPAND_STEP,
     };
   };
+  const scrollState = useSignal<DiffScrollState | null>(null);
   return (
     <div class="border border-border rounded-md overflow-hidden">
       <div class="bg-surface-2 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle flex justify-between">
@@ -868,6 +901,7 @@ function TwoSidedView({
       <div class="relative h-[560px]">
         <DiffScrollViewport
           resetKey={initialScrollResetKey(path, status, beforeSample, afterSample, findings)}
+          scrollState={scrollState}
         >
           <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
             <tbody>
@@ -901,7 +935,10 @@ function TwoSidedView({
             </tbody>
           </table>
         </DiffScrollViewport>
-        <DiffOverview markers={diffOverviewMarkers(toOverviewRows(rows), pinned)} />
+        <DiffOverview
+          markers={diffOverviewMarkers(displayOverviewRows(segments, rows), pinned)}
+          scrollState={scrollState}
+        />
       </div>
     </div>
   );
@@ -999,6 +1036,7 @@ function SingleSidedView({
   // diff (same as truncated samples), so capping rendering never hides one.
   const presentLines = new Set<number>(visibleLines.map((_, index) => index + 1));
   const { pinned, unpinned } = partitionFindingsByLine(findings, presentLines);
+  const scrollState = useSignal<DiffScrollState | null>(null);
   return (
     <div class="border border-border rounded-md overflow-hidden">
       <div
@@ -1011,7 +1049,7 @@ function SingleSidedView({
       </div>
       {unpinned.length ? <AnnotationBanner findings={unpinned} /> : null}
       <div class="relative h-[560px]">
-        <DiffScrollViewport resetKey={resetKey}>
+        <DiffScrollViewport resetKey={resetKey} scrollState={scrollState}>
           <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
             <tbody>
               {visibleLines.map((line, index) => {
@@ -1057,20 +1095,28 @@ function SingleSidedView({
         </DiffScrollViewport>
         <DiffOverview
           markers={diffOverviewMarkers(
-            lines.map((_, index) => ({ tone, line: index + 1 })),
+            // Only rendered lines count toward the strip, plus one slot for
+            // the trailing expander row, so the strip maps the scrollbar.
+            [
+              ...visibleLines.map((_, index) => ({ tone, line: index + 1 })),
+              ...(visibleCount < lines.length ? [{ tone: "unchanged" as const, line: null }] : []),
+            ],
             pinned,
           )}
+          scrollState={scrollState}
         />
       </div>
     </div>
   );
 }
 
-function toOverviewRows(rows: readonly Row[]): DiffOverviewRow[] {
-  return rows.map((row) => ({ tone: row.tone, line: row.afterLine }));
-}
-
-function DiffOverview({ markers }: { markers: DiffOverviewMarker[] }) {
+function DiffOverview({
+  markers,
+  scrollState,
+}: {
+  markers: DiffOverviewMarker[];
+  scrollState: Signal<DiffScrollState | null>;
+}) {
   if (!markers.length) return null;
   return (
     <div
@@ -1091,7 +1137,26 @@ function DiffOverview({ markers }: { markers: DiffOverviewMarker[] }) {
           }}
         />
       ))}
+      <DiffOverviewThumb scrollState={scrollState} />
     </div>
+  );
+}
+
+// The viewport's position over the strip, in the same neutral ink used for
+// structure (never a severity hue — color = signal). Reads the scroll signal
+// in its own component so scrolling rerenders only this span, never the diff
+// table.
+function DiffOverviewThumb({ scrollState }: { scrollState: Signal<DiffScrollState | null> }) {
+  const state = scrollState.value;
+  if (!state || state.content <= state.viewport) return null;
+  return (
+    <span
+      class="absolute left-[-1px] right-[-1px] z-20 rounded-full bg-ink/15"
+      style={{
+        top: `${(state.top / state.content) * 100}%`,
+        height: `${(state.viewport / state.content) * 100}%`,
+      }}
+    />
   );
 }
 

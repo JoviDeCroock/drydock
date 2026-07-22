@@ -1,4 +1,5 @@
 import { maxSeverity, severityGroup, type SeverityGroup } from "./diff-annotations";
+import type { DisplaySegment } from "./diff-hunks";
 
 export type DiffOverviewTone = "added" | "removed" | SeverityGroup;
 
@@ -13,6 +14,27 @@ export interface DiffOverviewMarker {
 export interface DiffOverviewRow {
   tone: "added" | "removed" | "unchanged";
   line: number | null;
+}
+
+export interface DisplayOverviewSourceRow {
+  tone: "added" | "removed" | "unchanged";
+  afterLine: number | null;
+}
+
+// The overview strip shares the scrollbar's coordinate space: markers are
+// positioned over the rows actually rendered, with each collapsed gap counting
+// as the single expander row it occupies — not over the logical file. A marker
+// halfway down the strip is halfway down the scroll, even while gaps hide most
+// of the file, and markers reflow as gaps expand.
+export function displayOverviewRows(
+  segments: readonly DisplaySegment[],
+  rows: readonly DisplayOverviewSourceRow[],
+): DiffOverviewRow[] {
+  return segments.map((segment) =>
+    segment.kind === "gap"
+      ? { tone: "unchanged" as const, line: null }
+      : { tone: rows[segment.index].tone, line: rows[segment.index].afterLine },
+  );
 }
 
 interface Region {
