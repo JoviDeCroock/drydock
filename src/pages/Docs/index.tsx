@@ -6,7 +6,7 @@ import { LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { cn } from "../../components/cn";
 import { PageShell } from "../../components/PageShell";
-import { Eyebrow, SectionLabel } from "../../components/Typography";
+import { Eyebrow, MonoLabel, SectionLabel } from "../../components/Typography";
 import { ensureHighlighter, highlighterReady, tokenizeLines } from "../../components/highlight";
 import { docsPageSeo, PageSeo } from "../../lib/seo";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
@@ -770,7 +770,7 @@ function ReviewAnswer({
 }) {
   return (
     <div class="px-5 py-3.5 grid grid-cols-1 sm:grid-cols-[120px_180px_minmax(0,1fr)] gap-1.5 sm:gap-4 sm:items-baseline">
-      <dt class="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-subtle">{label}</dt>
+      <MonoLabel as="dt">{label}</MonoLabel>
       <dd class="m-0 text-[13px] font-medium text-ink">{question}</dd>
       <dd class="m-0 text-[13px] leading-[1.55] text-ink-muted">{children}</dd>
     </div>
@@ -851,7 +851,7 @@ function PathCard({
 function Definition({ label, children }: { label: string; children: ComponentChildren }) {
   return (
     <div class="grid grid-cols-[72px_minmax(0,1fr)] gap-3">
-      <dt class="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-subtle">{label}</dt>
+      <MonoLabel as="dt">{label}</MonoLabel>
       <dd class="m-0 text-[12px] leading-[1.55] text-ink-muted">{children}</dd>
     </div>
   );

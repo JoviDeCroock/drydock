@@ -54,13 +54,12 @@ export function RiskSignalsSection({
 
       {contextualFindings.length ? (
         <div>
-          <p class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle m-0 flex items-center gap-3">
-            <span>Package context</span>
-            <span aria-hidden class="flex-1 h-px bg-border" />
-            <span class="text-ink-subtle">
-              {contextualFindings.length} {pluralize("signal", contextualFindings.length)}
-            </span>
-          </p>
+          <SectionLabel
+            as="h3"
+            aside={`${contextualFindings.length} ${pluralize("signal", contextualFindings.length)}`}
+          >
+            Package context
+          </SectionLabel>
           <div class="pt-3">
             <FindingGrid findings={contextualFindings} onSelect={onSelect} />
           </div>

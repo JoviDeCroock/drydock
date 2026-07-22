@@ -24,23 +24,60 @@ export function Eyebrow({
   );
 }
 
+// Renders a real heading by default: section labels are the report's only
+// section titles, and a <p> left every card an anonymous <section> with no
+// h2/h3 between the page h1 and its content. Preflight keeps headings at
+// inherited size/weight, so the visual treatment is unchanged. `aside` puts
+// trailing metadata (e.g. a count) after the rule, which otherwise is drawn
+// by the ::after pseudo.
 export function SectionLabel({
   children,
+  aside,
+  as: As = "h2",
   class: className,
 }: {
   children: ComponentChildren;
+  aside?: ComponentChildren;
+  as?: "h2" | "h3" | "p";
   class?: string;
 }) {
   return (
-    <p
+    <As
       class={cn(
         "font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle m-0 flex items-center gap-3",
-        "after:content-[''] after:flex-1 after:h-px after:bg-border",
+        !aside && "after:content-[''] after:flex-1 after:h-px after:bg-border",
         className,
       )}
     >
       {children}
-    </p>
+      {aside ? (
+        <>
+          <span aria-hidden class="flex-1 h-px bg-border" />
+          <span>{aside}</span>
+        </>
+      ) : null}
+    </As>
+  );
+}
+
+// The system's bare 11px mono label (field labels, column headers, metadata
+// captions). Use this instead of copy-pasting the class string — page-local
+// copies have already drifted on tracking.
+export function MonoLabel({
+  children,
+  as: As = "span",
+  class: className,
+}: {
+  children: ComponentChildren;
+  as?: "span" | "p" | "div" | "dt";
+  class?: string;
+}) {
+  return (
+    <As
+      class={cn("font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle m-0", className)}
+    >
+      {children}
+    </As>
   );
 }
 
