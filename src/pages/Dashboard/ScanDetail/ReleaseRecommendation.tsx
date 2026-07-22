@@ -2,7 +2,7 @@ import type { ComponentChildren } from "preact";
 import { countSeverities, highestFindingRisk, sortFindingsBySeverity } from "../../../lib/findings";
 import { pluralize } from "../../../lib/format";
 import { getReleaseRecommendation } from "../recommendation";
-import type { AiFinding, DisplayedAiResult } from "../../../../server/lib/ai-review-types";
+import type { DisplayedAiResult } from "../../../../server/lib/ai-review-types";
 import type { PersistedScanDetail } from "../../../models/scan";
 import { Badge } from "../../../components/Badge";
 import { Card } from "../../../components/Card";
@@ -41,21 +41,18 @@ export function ReleaseRecommendation({
     usePersistedRiskSummary && detail.riskSummary
       ? detail.riskSummary.releaseFindingCount
       : changedFindings.length;
-  const aiFindings: AiFinding[] = ai?.kind === "complete" ? ai.findings : [];
   const recommendation = getReleaseRecommendation(
     artifactRisk,
     releaseRisk,
     releaseFindingCount,
     isWorkflowGate ? "gate" : "npm",
   );
-  const evidence = buildRecommendationEvidence(
-    detail,
-    summary,
-    diffCount,
-    changedFindings,
-    aiFindings,
-  );
-  const severityCounts = countSeverities([...detail.findings, ...aiFindings]);
+  // `detail.findings` and `changedFindings` already include the AI reviewer's
+  // findings (persisted as `source: "ai"` rows), so they are counted and shown
+  // as evidence from that single source — concatenating `ai.findings` from the
+  // review envelope on top would double-count every AI finding.
+  const evidence = buildRecommendationEvidence(detail, summary, diffCount, changedFindings);
+  const severityCounts = countSeverities(detail.findings);
   const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
 
   // The recommendation is the report's verdict, so it gets the only elevated
@@ -132,10 +129,9 @@ function buildRecommendationEvidence(
   summary: PersistedSummary,
   diffCount: number,
   changedFindings: PersistedFinding[],
-  assistantFindings: AiFinding[],
 ): Array<{ label: string; value: ComponentChildren }> {
   const evidence: Array<{ label: string; value: ComponentChildren }> = [];
-  const releaseFindings: RecommendationFinding[] = [...changedFindings, ...assistantFindings];
+  const releaseFindings: RecommendationFinding[] = changedFindings;
   if (releaseFindings.length) {
     const topFindings = sortFindingsBySeverity(releaseFindings).slice(0, 3);
     for (const finding of topFindings) {

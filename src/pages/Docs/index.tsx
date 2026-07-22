@@ -288,8 +288,9 @@ export default function DocsPage() {
                   credential in GitHub Actions. Drydock never needs it.
                 </SafetyItem>
                 <SafetyItem title="Deterministic checks stay authoritative">
-                  The optional AI reviewer is advisory, off by default, and cannot downgrade a
-                  deterministic finding.
+                  The AI reviewer is advisory and on by default behind a per-organization
+                  killswitch. Its findings can raise concern but never downgrade a deterministic
+                  finding.
                 </SafetyItem>
                 <SafetyItem title="Failures do not become approvals">
                   Missing, malformed, ambiguous, or unverifiable evidence keeps a gated release

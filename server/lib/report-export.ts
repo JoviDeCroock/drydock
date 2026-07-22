@@ -59,18 +59,26 @@ export function buildReportExport(detail: ScanDetail) {
     releaseConsistency: normalizeReleaseConsistency(summary.releaseConsistency),
     packageJsonDiff: summary.packageJsonDiff ?? null,
     diff: summary.diff ?? null,
-    findings: [...detail.findings].sort(compareFindings).map((finding) => ({
-      severity: finding.severity,
-      file: finding.file,
-      line: finding.line ?? null,
-      ruleId: finding.ruleId ?? null,
-      ruleVersion: finding.ruleVersion ?? null,
-      source: finding.source,
-      diffStatus: finding.diffStatus ?? null,
-      releaseDelta: finding.releaseDelta ?? null,
-      evidence: finding.evidence,
-      reason: finding.reason,
-    })),
+    // Deterministic findings only. A completed AI review's findings are carried
+    // by `aiReview.findings` above; including the persisted `source: "ai"` rows
+    // here too would double-count them in this array and break the invariant
+    // that every entry has a ruleId/ruleVersion. Keeps `drydock.report.v1`'s
+    // findings[] meaning stable across the persistence change.
+    findings: detail.findings
+      .filter((finding) => finding.source !== "ai")
+      .sort(compareFindings)
+      .map((finding) => ({
+        severity: finding.severity,
+        file: finding.file,
+        line: finding.line ?? null,
+        ruleId: finding.ruleId ?? null,
+        ruleVersion: finding.ruleVersion ?? null,
+        source: finding.source,
+        diffStatus: finding.diffStatus ?? null,
+        releaseDelta: finding.releaseDelta ?? null,
+        evidence: finding.evidence,
+        reason: finding.reason,
+      })),
   };
 }
 

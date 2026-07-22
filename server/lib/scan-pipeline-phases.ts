@@ -24,6 +24,7 @@ import {
   redactJson,
   summarizePackageJsonDiff,
   DETERMINISTIC_RULES_VERSION,
+  type CodePatternSet,
   type DiffEntry,
   type FileRecord,
   type Finding,
@@ -32,7 +33,11 @@ import {
   type PackageJsonSummary,
 } from "./review";
 import { computeScanRiskBreakdown, type ScanRiskBreakdown } from "./risk";
-import { maybeWriteScanArtifacts, scanArtifactReadBucket } from "./scan-artifacts";
+import {
+  maybeWriteScanArtifacts,
+  projectAiReviewFindings,
+  scanArtifactReadBucket,
+} from "./scan-artifacts";
 import { sha256Hex, stableJson } from "./stable-json";
 import type { ScanResult } from "../types";
 
@@ -68,7 +73,6 @@ export interface DeterministicFindings {
   redactedDetails: Record<string, unknown> | null;
   annotatedFindings: Array<Finding & FindingDiffAnnotation>;
   releaseRuleFindings: Finding[];
-  findingAnnotations: FindingAnnotationRecord[];
 }
 
 // Acquire the staged artifact, then resolve + fetch the baseline it diffs
@@ -131,11 +135,6 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
   const releaseRuleFindings = stripFindingAnnotations(
     annotatedFindings.filter((finding) => finding.releaseDelta),
   );
-  const findingAnnotations = annotatedFindings.map((finding, index) => ({
-    findingIndex: index,
-    diffStatus: finding.diffStatus,
-    releaseDelta: finding.releaseDelta,
-  }));
 
   return {
     ruleFindings,
@@ -146,7 +145,6 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
     redactedDetails,
     annotatedFindings,
     releaseRuleFindings,
-    findingAnnotations,
   };
 }
 
@@ -157,6 +155,37 @@ export function scoreRisk(
   aiFindings: AiReview,
 ): ScanRiskBreakdown {
   return computeScanRiskBreakdown(annotatedFindings, aiFindings);
+}
+
+export interface MergedAiFindings {
+  /** Redacted Finding-shaped records for the completed review's findings. */
+  records: Finding[];
+  /** The same records annotated with diff status + release-delta scope. */
+  annotatedRecords: Array<Finding & FindingDiffAnnotation>;
+}
+
+// Pure: project a completed AI review's findings into the same Finding shape
+// deterministic rules emit, so they persist as `scan_findings` rows (source
+// "ai"), count into `finding_count` / the risk breakdown, and carry diff
+// annotations. Additive only — deterministic findings are never replaced or
+// re-scored by this phase, and a review that did not complete contributes
+// nothing (its fail-safe risk handling lives in computeScanRisk).
+export function mergeAiFindings(
+  aiReview: AiReview,
+  findings: DeterministicFindings,
+  diff: ComputedDiff,
+  codePatternSet?: CodePatternSet,
+): MergedAiFindings {
+  // projectAiReviewFindings is shared with the R2 read path so both stores
+  // hold byte-identical rows; it returns [] for a review that did not complete.
+  const records = projectAiReviewFindings(aiReview);
+  if (records.length === 0) return { records: [], annotatedRecords: [] };
+  const annotatedRecords = annotateFindingsWithDiffStatus(records, diff.fileDiff, {
+    previousFiles: findings.redactedPreviousFiles,
+    stagedFiles: findings.redactedStagedFiles,
+    codePatternSet,
+  });
+  return { records, annotatedRecords };
 }
 
 export interface ResolveReleaseConsistencyArgs {
@@ -211,6 +240,8 @@ export interface PersistResultsArgs<TInput, TBroker extends AdapterBroker> {
   diff: ComputedDiff;
   findings: DeterministicFindings;
   aiFindings: AiReview;
+  /** Output of mergeAiFindings for `aiFindings`; empty when the review did not complete. */
+  mergedAiFindings?: MergedAiFindings;
   riskSummary: ScanRiskBreakdown;
   releaseConsistency: ReleaseConsistency;
 }
@@ -227,6 +258,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
 ): Promise<PersistedScanOutcome> {
   const { db, session, adapter, adapterInput, identity, resolved, diff, findings } = args;
   const { staged, baseline } = resolved;
+  const mergedAi = args.mergedAiFindings ?? { records: [], annotatedRecords: [] };
   const risk = args.riskSummary.artifactRisk;
 
   const safety = pipelineSafety();
@@ -256,6 +288,19 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     safety,
   };
 
+  // Annotations span `ruleFindings` followed by the AI finding records (in
+  // aiFindings.findings order): the report read path re-derives the same
+  // combined row list, so `findingIndex` addresses rule findings first and AI
+  // findings after them.
+  const findingAnnotations: FindingAnnotationRecord[] = [
+    ...findings.annotatedFindings,
+    ...mergedAi.annotatedRecords,
+  ].map((finding, index) => ({
+    findingIndex: index,
+    diffStatus: finding.diffStatus,
+    releaseDelta: finding.releaseDelta,
+  }));
+
   const reportPayload = {
     version: 1,
     rulesVersion: DETERMINISTIC_RULES_VERSION,
@@ -269,7 +314,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     packageJsonDiff: diff.manifestDiff,
     diff: diff.fileDiff,
     ruleFindings: findings.ruleFindings,
-    findingAnnotations: findings.findingAnnotations,
+    findingAnnotations,
     aiFindings: args.aiFindings,
     risk: args.riskSummary,
     releaseConsistency: args.releaseConsistency,
@@ -318,6 +363,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     previousFiles: findings.redactedPreviousFiles,
     diff: diff.fileDiff,
     findings: findings.ruleFindings,
+    aiFindingRecords: mergedAi.records,
     codePatternSet: adapter.codePatternSet,
     riskSummary: args.riskSummary,
     report: { version: reportPayload.version, digest: reportDigest },
@@ -344,6 +390,12 @@ export async function recordCompletion(args: RecordCompletionArgs): Promise<void
   const riskSummary = result.riskSummary;
   const risk = result.risk;
 
+  // `findingCount` must match the persisted `scans.finding_count`, which counts
+  // rule rows plus a completed AI review's rows. Emit the breakdown too so an
+  // operator can see how many were advisory.
+  const ruleFindingCount = result.ruleFindings.length;
+  const aiFindingCount = projectAiReviewFindings(result.aiFindings).length;
+
   emitOperationalEvent("info", "scan.pipeline.completed", {
     scanId: identity.scanId,
     organizationId: identity.organizationId,
@@ -356,7 +408,9 @@ export async function recordCompletion(args: RecordCompletionArgs): Promise<void
     contextRisk: riskSummary.contextRisk,
     fileCount: result.fileCount,
     previousFileCount: result.previousFileCount,
-    findingCount: result.ruleFindings.length,
+    findingCount: ruleFindingCount + aiFindingCount,
+    ruleFindingCount,
+    aiFindingCount,
   });
 }
 

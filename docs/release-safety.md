@@ -36,7 +36,11 @@ for the lifecycle behavior behind it.
 - Archive parsing fails closed on traversal, symlinks/hardlinks, malformed
   archives, excessive files, and excessive expanded size.
 - Deterministic findings are authoritative while AI review is unavailable, and AI
-  cannot downgrade deterministic findings when it runs.
+  cannot downgrade deterministic findings when it runs. A completed review's
+  findings persist additively as `scan_findings` rows with `source: "ai"` (and
+  count into `finding_count` / the risk summary), but they never replace, mutate,
+  or re-score a rule finding, and they fold into risk through `combineRisk` — a
+  max — so they can only escalate.
 - AI review fails safe: an enabled review that was attempted but could not complete
   escalates the scan to manual-review risk rather than reading as clean, and a
   near-miss submission is clamped to bounds instead of discarded. See
@@ -52,7 +56,9 @@ turning them into a credential sink.
 Current structured events cover:
 
 - `scan.pipeline.completed` / `scan.pipeline.failed` with adapter, duration,
-  file counts, finding count, and risk.
+  file counts, finding count, and risk. `findingCount` counts rule rows plus a
+  completed AI review's rows (matching persisted `scans.finding_count`), with
+  `ruleFindingCount` / `aiFindingCount` emitted alongside for the split.
 - `scan.ai_review.completed` / `scan.ai_review.failed` when AI review is enabled.
 - `scan.job.completed`, `scan.job.failed`, `scan.job.retryable_failed`, and
   `scan.job.skipped` with scan ID, organization ID, source, attempt, duration,

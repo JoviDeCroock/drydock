@@ -214,7 +214,11 @@ function reconstructReport(
       packageJson,
       packageJsonDiff,
       diff,
-      ruleFindings: findings.map(findingRowToReportFinding),
+      // The report's ruleFindings hold deterministic rows only; a completed AI
+      // review's rows (source "ai", inserted after the rule rows so rowid order
+      // matches the report's combined annotation index space) are carried by
+      // the aiFindings envelope instead — the shape persistResults digested.
+      ruleFindings: findings.filter((row) => row.source === "rule").map(findingRowToReportFinding),
       findingAnnotations: annotations,
       aiFindings: scan.aiJson,
       risk,

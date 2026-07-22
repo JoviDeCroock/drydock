@@ -1,10 +1,13 @@
 import {
   normalizeFindingDiffStatus,
+  redactFindings,
   type DiffEntry,
   type FileRecord,
   type Finding,
   type FindingDiffAnnotation,
 } from "./review";
+import { parsePersistedAiReview } from "./ai-review-contract";
+import { displayedAiResult, type AiReview } from "./ai-review-types";
 import { describeOperationalError, emitOperationalEvent } from "./observability";
 import { sha256Hex, stableJson, utf8Size } from "./stable-json";
 
@@ -796,6 +799,28 @@ function parseReportFindingsObject(
     });
   }
 
+  // A completed AI review's findings are rows too, appended after the rule
+  // findings — the same combined order persistResults indexes its
+  // findingAnnotations over. Derived from the report's aiFindings envelope
+  // rather than duplicated JSON, so pre-existing reports (whose annotations
+  // only cover rule indices) gain their AI rows on read as well; those rows
+  // fall back to read-time diff annotation. A malformed or incomplete review
+  // parses to null/unavailable and contributes nothing.
+  for (const finding of aiFindingRowsFromReport(parsed.aiFindings)) {
+    findings.push({
+      id: artifactFindingId(scanId, findings.length),
+      scanId,
+      severity: finding.severity,
+      file: finding.file,
+      evidence: finding.evidence,
+      reason: finding.reason,
+      line: null,
+      source: "ai",
+      ruleId: null,
+      ruleVersion: null,
+    });
+  }
+
   const annotations = new Map<string, FindingDiffAnnotation>();
   const rawAnnotations = parsed?.findingAnnotations;
   if (Array.isArray(rawAnnotations)) {
@@ -812,6 +837,30 @@ function parseReportFindingsObject(
   }
 
   return { findings, annotations };
+}
+
+// Project a completed AI review's findings into the deterministic Finding
+// shape, re-redacting as a belt-and-braces invariant (nothing persisted or
+// re-derived from the AI path may carry secret material). Shared by the write
+// path (mergeAiFindings persists these as `source: "ai"` rows) and the R2 read
+// path (aiFindingRowsFromReport re-derives them) so both stores hand back
+// byte-identical rows for the same review. An incomplete/invalid/disabled
+// review contributes nothing.
+export function projectAiReviewFindings(review: AiReview | null | undefined): Finding[] {
+  const displayed = displayedAiResult(review ?? null);
+  if (displayed?.kind !== "complete" || displayed.findings.length === 0) return [];
+  return redactFindings(
+    displayed.findings.map((finding) => ({
+      severity: finding.severity,
+      file: finding.file,
+      evidence: finding.evidence,
+      reason: finding.reason,
+    })),
+  );
+}
+
+function aiFindingRowsFromReport(value: unknown): Finding[] {
+  return projectAiReviewFindings(parsePersistedAiReview(value));
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
