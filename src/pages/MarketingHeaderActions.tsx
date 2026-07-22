@@ -17,6 +17,9 @@ export function MarketingHeaderActions({ authed }: { authed: Signal<boolean> }) 
           Dashboard
         </LinkButton>
       </Show>
+      <LinkButton href="/diff" variant="ghost" size="sm">
+        Package diff
+      </LinkButton>
       <LinkButton href="/docs" variant="ghost" size="sm">
         Docs
       </LinkButton>

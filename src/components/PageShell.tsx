@@ -105,6 +105,9 @@ function SiteFooter({ maxWidth }: { maxWidth: string }) {
           </p>
         </div>
         <nav class="flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px]" aria-label="Footer">
+          <a href="/diff" class={linkClass}>
+            Package diff
+          </a>
           <a href="/docs" class={linkClass}>
             Docs
           </a>
