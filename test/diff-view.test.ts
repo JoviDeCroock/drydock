@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   buildRows,
   diffHashLines,
+  initialScrollResetKey,
   isDiffScrollTarget,
   nativeBadge,
   shouldSeekInitialDiffTarget,
@@ -183,5 +184,15 @@ describe("initial diff scroll targeting", () => {
     expect(isDiffScrollTarget("modified", "removed")).toBe(true);
     expect(isDiffScrollTarget("modified", "added")).toBe(true);
     expect(isDiffScrollTarget("unchanged", "added")).toBe(false);
+  });
+
+  test("reset key changes with file identity and content, never with findings", () => {
+    const key = initialScrollResetKey("lib/index.js", "modified", "before\n", "after\n");
+    // Same file and content → same key; findings are not an input, so a
+    // finding set arriving after render can never reset the scroll.
+    expect(initialScrollResetKey("lib/index.js", "modified", "before\n", "after\n")).toBe(key);
+    expect(initialScrollResetKey("lib/other.js", "modified", "before\n", "after\n")).not.toBe(key);
+    expect(initialScrollResetKey("lib/index.js", "added", "before\n", "after\n")).not.toBe(key);
+    expect(initialScrollResetKey("lib/index.js", "modified", "before\n", "after!\n")).not.toBe(key);
   });
 });

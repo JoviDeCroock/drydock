@@ -384,14 +384,16 @@ function useLineTokens(text: string, lang: string | undefined): TokenLine[] | nu
   );
 }
 
-function initialScrollResetKey(
+// Keyed on the file identity and content only — deliberately not on findings.
+// Findings arriving after the diff is on screen must not yank the scroll back
+// to the first change (or reset the single-sided render window) mid-read.
+// Exported for tests.
+export function initialScrollResetKey(
   path: string,
   status: string,
   beforeSample: string,
   afterSample: string,
-  findings: readonly DiffFinding[],
 ): string {
-  const findingKey = findings.map((finding) => `${finding.id}:${finding.line ?? ""}`).join("|");
   return [
     path,
     status,
@@ -399,7 +401,6 @@ function initialScrollResetKey(
     afterSample.length,
     beforeSample.slice(0, 64),
     afterSample.slice(0, 64),
-    findingKey,
   ].join("\0");
 }
 
@@ -761,7 +762,7 @@ function DiffBody({
         text={afterSample}
         tokens={afterTokens}
         findings={findings}
-        resetKey={initialScrollResetKey(path, status, "", afterSample, findings)}
+        resetKey={initialScrollResetKey(path, status, "", afterSample)}
         seekFirstChange={shouldSeekInitialDiffTarget(status)}
       />
     );
@@ -780,7 +781,7 @@ function DiffBody({
         text={beforeSample}
         tokens={beforeTokens}
         findings={findings}
-        resetKey={initialScrollResetKey(path, status, beforeSample, "", findings)}
+        resetKey={initialScrollResetKey(path, status, beforeSample, "")}
         seekFirstChange={shouldSeekInitialDiffTarget(status)}
       />
     );
@@ -797,7 +798,7 @@ function DiffBody({
         text={afterSample || beforeSample}
         tokens={afterSample ? afterTokens : beforeTokens}
         findings={findings}
-        resetKey={initialScrollResetKey(path, status, beforeSample, afterSample, findings)}
+        resetKey={initialScrollResetKey(path, status, beforeSample, afterSample)}
         seekFirstChange={shouldSeekInitialDiffTarget(status)}
       />
     );
@@ -814,7 +815,7 @@ function DiffBody({
         text={afterSample}
         tokens={afterTokens}
         findings={findings}
-        resetKey={initialScrollResetKey(path, status, "", afterSample, findings)}
+        resetKey={initialScrollResetKey(path, status, "", afterSample)}
         seekFirstChange={shouldSeekInitialDiffTarget(status)}
       />
     );
@@ -828,7 +829,7 @@ function DiffBody({
         text={beforeSample}
         tokens={beforeTokens}
         findings={findings}
-        resetKey={initialScrollResetKey(path, status, beforeSample, "", findings)}
+        resetKey={initialScrollResetKey(path, status, beforeSample, "")}
         seekFirstChange={shouldSeekInitialDiffTarget(status)}
       />
     );
@@ -915,7 +916,7 @@ function TwoSidedView({
       {unpinned.length ? <AnnotationBanner findings={unpinned} /> : null}
       <div class="relative h-[560px]">
         <DiffScrollViewport
-          resetKey={initialScrollResetKey(path, status, beforeSample, afterSample, findings)}
+          resetKey={initialScrollResetKey(path, status, beforeSample, afterSample)}
           scrollState={scrollState}
           label={`Diff of ${path}`}
         >
