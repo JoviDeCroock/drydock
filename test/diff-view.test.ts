@@ -85,6 +85,20 @@ describe("buildRows", () => {
     });
   });
 
+  test("skips word-diff decoration for huge changed blocks instead of going quadratic", () => {
+    // Pairing scores every removed×added line combination, so a 150×150 block
+    // (common in bundled artifacts) must bail out rather than run 22,500 word
+    // diffs; line tones still render.
+    const before = Array.from({ length: 150 }, (_, i) => `const before${i} = ${i};`).join("\n");
+    const after = Array.from({ length: 150 }, (_, i) => `const after${i} = ${i};`).join("\n");
+    const rows = buildRows(`${before}\n`, `${after}\n`, null, null, { wordDiff: true });
+
+    expect(rows).toHaveLength(300);
+    expect(rows.every((row) => row.wordParts === null)).toBe(true);
+    expect(rows[0].tone).toBe("removed");
+    expect(rows[150].tone).toBe("added");
+  });
+
   test("treats whitespace-only line edits as unchanged with -w", () => {
     const rows = buildRows("const value=1;\n", "const value = 1;\n", null, null, {
       ignoreWhitespace: true,

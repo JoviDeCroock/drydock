@@ -10,12 +10,14 @@ import {
   type DiffFinding,
   type SeverityGroup,
 } from "./diff-annotations";
+import { buildDisplaySegments, GAP_EXPAND_STEP } from "./diff-hunks";
 import {
   diffOverviewMarkers,
   type DiffOverviewMarker,
   type DiffOverviewRow,
 } from "./diff-overview";
 import {
+  canHighlight,
   ensureHighlighter,
   highlighterReady,
   langForPath,
@@ -228,11 +230,18 @@ function stripWhitespace(value: string): string {
   return value.replace(/\s+/g, "");
 }
 
+// pairChangedRows scores every removed×added line pair with a word diff, so a
+// single huge changed block (common in bundled artifacts) turns quadratic.
+// Beyond this cell budget the word-diff decoration is skipped for that block;
+// line tones still render.
+const WORD_DIFF_MAX_PAIR_CELLS = 10_000;
+
 function applyWordDiff(chunks: RowChunk[]) {
   for (let index = 0; index < chunks.length - 1; index += 1) {
     const removed = chunks[index];
     const added = chunks[index + 1];
     if (removed.tone !== "removed" || added.tone !== "added") continue;
+    if (removed.rows.length * added.rows.length > WORD_DIFF_MAX_PAIR_CELLS) continue;
     for (const [beforeRow, afterRow] of pairChangedRows(removed.rows, added.rows)) {
       const parts = buildWordParts(beforeRow.text, afterRow.text);
       beforeRow.wordParts = parts.before;
@@ -369,10 +378,12 @@ function partTone(part: ChangeObject<string>): WordPart["tone"] {
 }
 
 // Tokenize an entire side once, memoized on the sample/language/ready signal.
+// Sides beyond the highlight cap stay plain text: tokenizing them would block
+// the main thread for seconds (see HIGHLIGHT_MAX_LINES).
 function useLineTokens(text: string, lang: string | undefined): TokenLine[] | null {
   const ready = highlighterReady.value;
   return useMemo(
-    () => (lang && ready && text ? tokenizeLines(text, lang) : null),
+    () => (lang && ready && text && canHighlight(text) ? tokenizeLines(text, lang) : null),
     [text, lang, ready],
   );
 }
@@ -540,6 +551,11 @@ export function DiffView({
   const native = nativeBadge(after) ?? nativeBadge(before);
   const showDiffOptions = !binary && !contentSkipped && Boolean(beforeSample && afterSample);
   const hashLines = diffHashLines(before, after, beforeLabel, afterLabel);
+  const highlightCapped =
+    !binary &&
+    !contentSkipped &&
+    Boolean(langForPath(path)) &&
+    (!canHighlight(beforeSample) || !canHighlight(afterSample));
 
   return (
     <div class="flex flex-col gap-3 min-h-0">
@@ -564,6 +580,7 @@ export function DiffView({
           <span>
             {afterLabel}: {formatSize(after?.size ?? null)}
           </span>
+          {highlightCapped ? <span>syntax highlighting off (large file)</span> : null}
         </div>
         {hashLines.map((line) => (
           <span key={line} class="break-all">
@@ -665,7 +682,10 @@ function DiffBody({
   ignoreWhitespace: boolean;
 }) {
   const lang = langForPath(path);
-  if (lang && !binary) ensureHighlighter();
+  const anyHighlightableSide =
+    Boolean(beforeSample && canHighlight(beforeSample)) ||
+    Boolean(afterSample && canHighlight(afterSample));
+  if (lang && !binary && anyHighlightableSide) ensureHighlighter();
   const beforeTokens = useLineTokens(beforeSample, lang);
   const afterTokens = useLineTokens(afterSample, lang);
 
@@ -761,13 +781,77 @@ function DiffBody({
     );
   }
 
-  const rows = buildRows(beforeSample, afterSample, beforeTokens, afterTokens, {
-    wordDiff,
-    ignoreWhitespace,
-  });
+  return (
+    <TwoSidedView
+      path={path}
+      status={status}
+      beforeSample={beforeSample}
+      afterSample={afterSample}
+      beforeTokens={beforeTokens}
+      afterTokens={afterTokens}
+      beforeLabel={beforeLabel}
+      afterLabel={afterLabel}
+      findings={findings}
+      wordDiff={wordDiff}
+      ignoreWhitespace={ignoreWhitespace}
+    />
+  );
+}
+
+function TwoSidedView({
+  path,
+  status,
+  beforeSample,
+  afterSample,
+  beforeTokens,
+  afterTokens,
+  beforeLabel,
+  afterLabel,
+  findings,
+  wordDiff,
+  ignoreWhitespace,
+}: {
+  path: string;
+  status: string;
+  beforeSample: string;
+  afterSample: string;
+  beforeTokens: TokenLine[] | null;
+  afterTokens: TokenLine[] | null;
+  beforeLabel: string;
+  afterLabel: string;
+  findings: DiffFinding[];
+  wordDiff: boolean;
+  ignoreWhitespace: boolean;
+}) {
+  // Line-diffing two large sides is too expensive to redo on every render.
+  const rows = useMemo(
+    () =>
+      buildRows(beforeSample, afterSample, beforeTokens, afterTokens, {
+        wordDiff,
+        ignoreWhitespace,
+      }),
+    [beforeSample, afterSample, beforeTokens, afterTokens, wordDiff, ignoreWhitespace],
+  );
   const presentLines = new Set<number>();
   for (const row of rows) if (row.afterLine !== null) presentLines.add(row.afterLine);
   const { pinned, unpinned } = partitionFindingsByLine(findings, presentLines);
+  // Gap keys embed the file identity and the whitespace mode (which reshapes
+  // row indexes), so expansion state from a previously viewed file can never
+  // apply to the wrong gap.
+  const gapKeyPrefix = [path, beforeSample.length, afterSample.length, ignoreWhitespace].join("\0");
+  const expansions = useSignal<Record<string, number>>({});
+  const segments = buildDisplaySegments(
+    rows,
+    new Set(pinned.keys()),
+    expansions.value,
+    gapKeyPrefix,
+  );
+  const expandGap = (key: string) => {
+    expansions.value = {
+      ...expansions.value,
+      [key]: (expansions.value[key] ?? 0) + GAP_EXPAND_STEP,
+    };
+  };
   return (
     <div class="border border-border rounded-md overflow-hidden">
       <div class="bg-surface-2 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle flex justify-between">
@@ -781,10 +865,22 @@ function DiffBody({
         >
           <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
             <tbody>
-              {rows.map((row, index) => {
+              {segments.map((segment) => {
+                if (segment.kind === "gap") {
+                  return (
+                    <GapRow
+                      key={segment.key}
+                      hiddenCount={segment.hiddenCount}
+                      noun="unchanged lines"
+                      colSpan={4}
+                      onExpand={() => expandGap(segment.key)}
+                    />
+                  );
+                }
+                const row = rows[segment.index];
                 const pins = row.afterLine !== null ? pinned.get(row.afterLine) : undefined;
                 return (
-                  <Fragment key={index}>
+                  <Fragment key={segment.index}>
                     <DiffRow row={row} status={status} />
                     {pins ? (
                       <AnnotationRows
@@ -802,6 +898,36 @@ function DiffBody({
         <DiffOverview markers={diffOverviewMarkers(toOverviewRows(rows), pinned)} />
       </div>
     </div>
+  );
+}
+
+// A collapsed run of rows, rendered as a full-width expander. Clicking reveals
+// GAP_EXPAND_STEP rows from each edge of the gap so context grows around the
+// changes above and below it.
+function GapRow({
+  hiddenCount,
+  noun,
+  colSpan,
+  onExpand,
+}: {
+  hiddenCount: number;
+  noun: string;
+  colSpan: number;
+  onExpand: () => void;
+}) {
+  return (
+    <tr>
+      <td colSpan={colSpan} class="p-0">
+        <button
+          type="button"
+          onClick={onExpand}
+          aria-label={`Show more of ${hiddenCount} hidden ${noun}`}
+          class="w-full cursor-pointer border-y border-border bg-surface-2 px-3 py-1 text-center font-mono text-[11px] text-ink-subtle transition-colors hover:bg-accent-soft hover:text-ink"
+        >
+          ⋯ {hiddenCount.toLocaleString()} {noun} · show more
+        </button>
+      </td>
+    </tr>
   );
 }
 
@@ -827,6 +953,12 @@ function DiffRow({ row, status }: { row: Row; status: string }) {
   );
 }
 
+// Every line of a single-sided view is "changed", so there is nothing to
+// collapse; instead the table renders incrementally so a 36k-line added bundle
+// doesn't build tens of thousands of rows in one pass.
+const SINGLE_SIDED_INITIAL_LINES = 1000;
+const SINGLE_SIDED_LINE_STEP = 1000;
+
 function SingleSidedView({
   label,
   tone,
@@ -847,9 +979,19 @@ function SingleSidedView({
   const headerBg =
     tone === "added" ? "bg-ok-soft" : tone === "removed" ? "bg-danger-soft" : "bg-surface-2";
   const rowBg = tone === "added" ? "bg-ok-soft" : tone === "removed" ? "bg-danger-soft" : "";
-  const lines = text.split("\n");
-  if (lines.length && lines[lines.length - 1] === "") lines.pop();
-  const presentLines = new Set<number>(lines.map((_, index) => index + 1));
+  const lines = useMemo(() => splitLines(text), [text]);
+  // The stored count only applies while its resetKey matches, so switching
+  // files snaps back to the initial window without an effect.
+  const visibleStore = useSignal({ key: resetKey, count: SINGLE_SIDED_INITIAL_LINES });
+  const stored = visibleStore.value;
+  const visibleCount = Math.min(
+    lines.length,
+    stored.key === resetKey ? stored.count : SINGLE_SIDED_INITIAL_LINES,
+  );
+  const visibleLines = visibleCount < lines.length ? lines.slice(0, visibleCount) : lines;
+  // Findings pinned past the rendered window fall back to the banner above the
+  // diff (same as truncated samples), so capping rendering never hides one.
+  const presentLines = new Set<number>(visibleLines.map((_, index) => index + 1));
   const { pinned, unpinned } = partitionFindingsByLine(findings, presentLines);
   return (
     <div class="border border-border rounded-md overflow-hidden">
@@ -866,7 +1008,7 @@ function SingleSidedView({
         <DiffScrollViewport resetKey={resetKey}>
           <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
             <tbody>
-              {lines.map((line, index) => {
+              {visibleLines.map((line, index) => {
                 const pins = pinned.get(index + 1);
                 return (
                   <Fragment key={index}>
@@ -891,6 +1033,19 @@ function SingleSidedView({
                   </Fragment>
                 );
               })}
+              {visibleCount < lines.length ? (
+                <GapRow
+                  hiddenCount={lines.length - visibleCount}
+                  noun="more lines"
+                  colSpan={2}
+                  onExpand={() =>
+                    (visibleStore.value = {
+                      key: resetKey,
+                      count: visibleCount + SINGLE_SIDED_LINE_STEP,
+                    })
+                  }
+                />
+              ) : null}
             </tbody>
           </table>
         </DiffScrollViewport>
