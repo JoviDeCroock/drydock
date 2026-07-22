@@ -422,7 +422,13 @@ function DiffScrollViewport({
     return () => window.cancelAnimationFrame(frame);
   }, [resetKey]);
   return (
-    <div ref={ref} class="overflow-auto h-full pr-5">
+    // overflow-anchor off: expanding a gap inserts rows at/below the clicked
+    // button, which is stable with an untouched scrollTop. Browser scroll
+    // anchoring can pick the button itself as anchor (when it sits at the
+    // viewport top) and jump the scroll past the newly revealed rows; Safari
+    // has no anchoring at all. Disabling it makes every browser behave the
+    // same.
+    <div ref={ref} class="overflow-auto h-full pr-5 [overflow-anchor:none]">
       {children}
     </div>
   );
