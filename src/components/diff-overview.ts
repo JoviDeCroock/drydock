@@ -23,9 +23,10 @@ export interface DisplayOverviewSourceRow {
 
 // The overview strip shares the scrollbar's coordinate space: markers are
 // positioned over the rows actually rendered, with each collapsed gap counting
-// as the single expander row it occupies — not over the logical file. A marker
-// halfway down the strip is halfway down the scroll, even while gaps hide most
-// of the file, and markers reflow as gaps expand.
+// as the single expander row it occupies — not over the logical file — and
+// markers reflow as gaps expand. Positions are row-index approximations of
+// scroll position: a long wrapped line or a tall annotation callout still
+// occupies one index, so marker and thumb can drift near such rows.
 export function displayOverviewRows(
   segments: readonly DisplaySegment[],
   rows: readonly DisplayOverviewSourceRow[],

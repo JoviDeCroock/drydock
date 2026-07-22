@@ -896,6 +896,12 @@ function TwoSidedView({
   // Gap keys embed the file identity and the whitespace mode (which reshapes
   // row indexes), so expansion state from a previously viewed file can never
   // apply to the wrong gap.
+  // Known tradeoff: findings that arrive after first render add keepLines
+  // anchors that reshape segments in place — a split gap re-keys its right
+  // half (dropping its expansion) and revealed rows above the viewport shift
+  // content without scroll compensation. Accepted because findings ship with
+  // the diff payload in practice, and the alternative — keying the scroll
+  // reset on findings — lost the reader's place entirely on every change.
   const gapKeyPrefix = [path, beforeSample.length, afterSample.length, ignoreWhitespace].join("\0");
   const expansions = useSignal<Record<string, number>>({});
   const expansionState = expansions.value;
@@ -1002,7 +1008,13 @@ function GapRow({
           {hiddenCount <= GAP_SHOW_ALL_MAX ? (
             <button
               type="button"
-              onClick={() => onExpand(hiddenCount)}
+              onClick={(event) => {
+                // The full reveal unmounts this row; park focus on the scroll
+                // region first so keyboard users aren't dropped back to the
+                // document body.
+                event.currentTarget.closest<HTMLElement>("[role='region']")?.focus();
+                onExpand(hiddenCount);
+              }}
               aria-label={`Show all ${hiddenCount} hidden ${noun}`}
               class={cn(GAP_BUTTON_CLASS, "border-l")}
             >
