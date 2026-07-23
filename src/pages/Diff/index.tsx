@@ -158,8 +158,9 @@ function DiffLanding() {
             void open(packageName.peek().trim());
           }}
         >
-          <div class="w-auto min-w-[100px]" aria-label="Package ecosystem">
+          <div class="w-auto min-w-[100px]">
             <Select
+              aria-label="Package ecosystem"
               value={ecosystem}
               onChange={(value) => (ecosystem.value = value === "pypi" ? "pypi" : "npm")}
             >
