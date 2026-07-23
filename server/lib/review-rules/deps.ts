@@ -1,6 +1,6 @@
 import type { Finding, PackageJsonDiff } from "../review";
 import type { DependencySection, PackageJsonDiffEntry } from "../review-serialize";
-import { specMaxMajor, unusualDependencySpecKind } from "../dependency-specs";
+import { specMajorRange, unusualDependencySpecKind } from "../dependency-specs";
 import { firstJsonPropertyLine, tag } from "./helpers";
 
 // Dependency-change rules derived from the package.json diff: newly added
@@ -76,29 +76,35 @@ function keyFinding(
   hasBaseline: boolean,
   stagedPackageJsonText?: string | null,
 ): Finding | null {
-  // Representative staged spec: the entry in the lowest-ordered section
-  // (dependencies < optionalDependencies < peerDependencies). A key normally
-  // carries the same spec in every section it appears in.
-  const representative = [...entries].sort(
-    (a, b) => sectionRank(a.section) - sectionRank(b.section),
-  )[0];
-  const stagedSpec = representative.staged;
+  const sorted = [...entries].sort((a, b) => sectionRank(a.section) - sectionRank(b.section));
+
+  // An unusual spec in ANY changed section wins outright. npm 7+ installs peer
+  // dependencies too, so a git/URL spec added under peerDependencies must not
+  // hide behind a benign spec in a lower-ranked section and downgrade to the
+  // medium added finding.
+  for (const entry of sorted) {
+    if (entry.staged === undefined) continue;
+    const kind = unusualDependencySpecKind(entry.staged);
+    if (!kind) continue;
+    return tag("dependencyUnusualSpec", {
+      severity: "high",
+      file: "package.json",
+      line: firstJsonPropertyLine(stagedPackageJsonText, key, entry.staged),
+      evidence: `${key}: ${entry.staged}`,
+      reason: `${kind} dependency specs resolve code outside normal npm semver ranges and can introduce unreviewed install-time behavior`,
+    });
+  }
+
+  // Representative staged spec for the remaining rules: the entry in the
+  // lowest-ordered section (dependencies < optionalDependencies <
+  // peerDependencies). A key normally carries the same spec in every section
+  // it appears in.
+  const stagedSpec = sorted[0].staged;
   // undefined means the diff carries no staged spec at all; "" is a real spec
   // (npm treats it like "*") and keeps flowing through the rules below.
   if (stagedSpec === undefined) return null;
 
   const line = firstJsonPropertyLine(stagedPackageJsonText, key, stagedSpec);
-
-  const kind = unusualDependencySpecKind(stagedSpec);
-  if (kind) {
-    return tag("dependencyUnusualSpec", {
-      severity: "high",
-      file: "package.json",
-      line,
-      evidence: `${key}: ${stagedSpec}`,
-      reason: `${kind} dependency specs resolve code outside normal npm semver ranges and can introduce unreviewed install-time behavior`,
-    });
-  }
 
   const addedSections = entries.filter((e) => e.status === "added").map((e) => e.section);
   const relocation = addedSections.length > 0 && (removedInstallingSpecs?.length ?? 0) > 0;
@@ -130,19 +136,23 @@ function keyFinding(
     });
   }
 
-  // Modified in place, or relocated with a changed spec: compare the resolvable
-  // major each spec admits. A relocated key can carry several removed specs
-  // (removed from more than one installing section at once); fire if the staged
-  // major differs from any of them, using that spec as the previous side, so an
-  // unchanged duplicate cannot mask a real major change.
+  // Modified in place, or relocated with a changed spec: compare the span of
+  // majors each spec admits, and fire when the staged spec admits a major
+  // outside the previously reviewed span — higher (widening) or lower
+  // (downgrade). A pure narrowing stays inside what the prior release was
+  // reviewed against and raises nothing. A relocated key can carry several
+  // removed specs (removed from more than one installing section at once);
+  // fire against the first escaped one, so an unchanged duplicate cannot mask
+  // a real major change.
   if (!hasBaseline) return null;
-  const stagedMajor = specMaxMajor(stagedSpec);
-  if (stagedMajor === undefined) return null;
+  const stagedRange = specMajorRange(stagedSpec);
+  if (stagedRange === undefined) return null;
   const modified = entries.find((e) => e.status === "modified");
   const previousSpecs = modified ? [modified.previous] : (removedInstallingSpecs ?? []);
   const changed = previousSpecs.find((spec) => {
-    const previousMajor = specMaxMajor(spec ?? undefined);
-    return previousMajor !== undefined && previousMajor !== stagedMajor;
+    const previousRange = specMajorRange(spec ?? undefined);
+    if (previousRange === undefined) return false;
+    return stagedRange.max > previousRange.max || stagedRange.min < previousRange.min;
   });
   if (changed !== undefined) {
     return tag("dependencyMajorBump", {

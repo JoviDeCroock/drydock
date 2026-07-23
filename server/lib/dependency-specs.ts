@@ -19,23 +19,52 @@ export function unusualDependencySpecKind(spec: string): string | null {
   return null;
 }
 
-// The major version consumers can actually resolve from a plain registry spec.
-// npm installs the HIGHEST published version the range admits, so the signal
-// for "consumers can now pull a newer major" is the maximum major across the
-// spec's `||` branches, not the minimum floor: widening `^1.0.0` to
-// `^1.0.0 || ^2.0.0` ships 2.x even though the floor is still 1.x. Unparseable
-// or unanchored branches (dist-tags, `*`, git/URL specs) yield undefined — the
-// resolvable major cannot be known without the registry — and are skipped
-// within a union so a no-op `|| ` suffix cannot suppress the comparison.
-export function specMaxMajor(spec: string | undefined): number | undefined {
+// The span of major versions consumers can actually resolve from a plain
+// registry spec. npm installs the HIGHEST published version the range admits,
+// so widening `^1.0.0` to `^1.0.0 || ^2.0.0`, `1.0.0 - 2.0.0`, or `>=1.0.0`
+// ships 2.x even though the floor is still 1.x — and a downgrade like `^2.0.0`
+// to `^1.0.0` admits a major the prior range never did. Both directions escape
+// the previously reviewed span, which is why the major-bump rule compares
+// spans instead of single majors: a pure narrowing (`>=1.0.0` to `^1.0.0`)
+// stays inside the reviewed span and must not fire. Unparseable or unanchored
+// branches (dist-tags, `*`, git/URL specs) yield undefined — the resolvable
+// major cannot be known without the registry — and are skipped within a union
+// so a no-op `|| ` suffix cannot suppress the comparison.
+export interface MajorRange {
+  min: number;
+  // Infinity for a bare ">=" comparator with no upper bound: it admits every
+  // future major.
+  max: number;
+}
+
+export function specMajorRange(spec: string | undefined): MajorRange | undefined {
   if (!spec || unusualDependencySpecKind(spec)) return undefined;
-  let max: number | undefined;
+  let range: MajorRange | undefined;
   for (const branch of spec.split("||")) {
-    const parsed = branchFloor(branch.trim());
+    const trimmed = branch.trim();
+    const parsed = branchFloor(trimmed);
     if (!parsed) continue;
-    max = max === undefined ? parsed.parts[0] : Math.max(max, parsed.parts[0]);
+    const min = parsed.parts[0];
+    const max = branchMaxMajor(trimmed) ?? min;
+    range = range ? { min: Math.min(range.min, min), max: Math.max(range.max, max) } : { min, max };
   }
-  return max;
+  return range;
+}
+
+// The highest major a single range branch admits. A hyphen range follows its
+// high endpoint ("1.0.0 - 2.3.4" admits 2.x), and a bare ">=" comparator with
+// no upper bound admits every future major (Infinity) — in both forms npm can
+// install above the floor's major, so the floor alone would under-report what
+// consumers can pull. An upper-bound comparator ("<2.0.0") keeps the floor's
+// major: resolving its exact admitted major needs more range algebra than a
+// deterministic manifest rule should carry, and the floor is the conservative
+// under-approximation.
+function branchMaxMajor(branch: string): number | undefined {
+  const hyphen = branch.split(/\s+-\s+/);
+  if (hyphen.length === 2) return branchFloor(hyphen[1])?.parts[0];
+  if (!branchFloor(branch)) return undefined;
+  if (branch.startsWith(">=") && !branch.includes("<")) return Infinity;
+  return undefined;
 }
 
 // The lowest concrete version a plain registry spec can resolve to, for

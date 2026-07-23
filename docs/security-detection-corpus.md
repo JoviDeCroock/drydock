@@ -219,9 +219,12 @@ still fire because they describe the staged manifest, not the delta (the
 `dependency-first-publish-no-baseline` golden case). A key relocated between installing sections
 (`dependencies` ↔ `optionalDependencies`) with an unchanged spec is treated as already-shipped code
 and raises nothing, but a peer requirement moved into `dependencies` genuinely starts shipping and is a
-real addition. Major-bump follows the highest major a spec admits, matching npm's install of the
-highest published version: widening `^1.0.0` to `^1.0.0 || ^2.0.0` ships 2.x and fires, and a no-op
-`|| ` suffix or an unparseable leading branch cannot suppress the comparison. An empty spec is treated
+real addition. Major-bump compares the span of majors each spec
+admits, matching npm's install of the highest published version: widening `^1.0.0` to
+`^1.0.0 || ^2.0.0`, to the hyphen range `1.0.0 - 2.0.0`, or to a bare `>=1.0.0` (which admits every
+future major) fires, and a downgrade such as `^2.0.0` → `^1.0.0` fires because 1.x was never in the
+reviewed span. A pure narrowing (`>=1.0.0` → `^1.0.0`) stays inside that span and raises nothing, and
+a no-op `|| ` suffix or an unparseable leading branch cannot suppress the comparison. An empty spec is treated
 like `*` rather than skipped, and `workspace:`/`catalog:`/`link:`/`portal:` protocols join
 `git:`/`https:`/`file:`/`npm:` as unusual specs (they name no published package). Spec parsing lives in
 `server/lib/dependency-specs.ts`, shared with the UI's dependency diff links: the link uses each spec's

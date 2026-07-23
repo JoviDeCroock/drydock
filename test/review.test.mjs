@@ -1407,6 +1407,27 @@ describe("review", () => {
     expect(packageJsonDiffFindings(optionalAndRuntime)).toEqual([
       expect.objectContaining({ ruleId: "dependency.optional-added", evidence: "sharp: ^0.33.0" }),
     ]);
+
+    // An unusual spec in ANY changed section outranks the added/bump rules:
+    // npm 7+ installs peer dependencies too, so a git spec added under
+    // peerDependencies must not hide behind a benign spec in dependencies and
+    // downgrade the key to the medium added finding.
+    const unusualBehindBenign = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { evil: "^1.0.0" } },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        dependencies: { evil: "^2.0.0" },
+        peerDependencies: { evil: "git+https://example.invalid/evil.git" },
+      },
+    );
+    expect(packageJsonDiffFindings(unusualBehindBenign)).toEqual([
+      expect.objectContaining({
+        ruleId: "dependency.unusual-spec",
+        severity: "high",
+        evidence: "evil: git+https://example.invalid/evil.git",
+      }),
+    ]);
   });
 
   test("gates delta rules on baseline-manifest presence, not its version string", () => {
@@ -1454,6 +1475,44 @@ describe("review", () => {
       { name: "pkg", version: "1.0.1", dependencies: { dep: "~1.2.0 || ^1.5.0" } },
     );
     expect(packageJsonDiffFindings(unionSameMajor)).toEqual([]);
+
+    // A hyphen range installs up to its high endpoint, and a bare ">=" with no
+    // upper bound admits every future major — widening into either form fires.
+    const hyphenWidening = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { dep: "^1.0.0" } },
+      { name: "pkg", version: "1.0.1", dependencies: { dep: "1.0.0 - 2.0.0" } },
+    );
+    expect(packageJsonDiffFindings(hyphenWidening)).toEqual([
+      expect.objectContaining({ ruleId: "dependency.major-bump" }),
+    ]);
+    const unboundedWidening = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { dep: "^1.0.0" } },
+      { name: "pkg", version: "1.0.1", dependencies: { dep: ">=1.0.0" } },
+    );
+    expect(packageJsonDiffFindings(unboundedWidening)).toEqual([
+      expect.objectContaining({ ruleId: "dependency.major-bump" }),
+    ]);
+
+    // A downgrade admits a major the prior range never did and fires; a pure
+    // narrowing stays inside the previously reviewed span and stays quiet, as
+    // does a rewrite whose upper-bound comparator keeps ">=" finite.
+    const downgrade = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { dep: "^2.0.0" } },
+      { name: "pkg", version: "1.0.1", dependencies: { dep: "^1.0.0" } },
+    );
+    expect(packageJsonDiffFindings(downgrade)).toEqual([
+      expect.objectContaining({ ruleId: "dependency.major-bump" }),
+    ]);
+    const narrowing = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { dep: ">=1.0.0" } },
+      { name: "pkg", version: "1.0.1", dependencies: { dep: "^1.0.0" } },
+    );
+    expect(packageJsonDiffFindings(narrowing)).toEqual([]);
+    const boundedRewrite = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { dep: "^1.0.0" } },
+      { name: "pkg", version: "1.0.1", dependencies: { dep: ">=1.0.0 <2.0.0" } },
+    );
+    expect(packageJsonDiffFindings(boundedRewrite)).toEqual([]);
 
     // npm treats an empty spec like "*" — the loosest range must not be the
     // one silent path through the added rule.
