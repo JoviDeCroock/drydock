@@ -1,6 +1,7 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { Hono } from "hono";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
+import worker from "../../server/index";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob, persistScan } from "../../server/db/scans";
@@ -161,6 +162,42 @@ function successfulExecution(): RebuildExecution {
 }
 
 describe("rebuild attestation job", () => {
+  test("retries queue messages when persistence infrastructure fails", async () => {
+    const retry = vi.fn();
+    const body = {
+      kind: "rebuild_attestation" as const,
+      organizationId: "org-retry",
+      scanId: "scan-retry",
+    };
+    const batch = {
+      messages: [{ body, attempts: 1, retry }],
+    } as unknown as MessageBatch<import("../../server/lib/scan-job").QueueMessage>;
+    const brokenEnv = {
+      ...env,
+      DB: {
+        prepare() {
+          throw new Error("transient D1 failure");
+        },
+      },
+    } as unknown as Cloudflare.Env;
+    const ctx = createExecutionContext();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await worker.queue(batch, brokenEnv, ctx);
+
+    expect(retry).toHaveBeenCalledWith({ delaySeconds: 5 });
+    expect(warn).toHaveBeenCalledWith(
+      "rebuild.queue.retry_scheduled",
+      expect.objectContaining({
+        event: "rebuild.queue.retry_scheduled",
+        scanId: body.scanId,
+        organizationId: body.organizationId,
+        attempt: 1,
+      }),
+    );
+    warn.mockRestore();
+  });
+
   test("resolves a pending plan to byte-identical and persists it for readers", async () => {
     const owner = await seedUser();
     const scanId = await seedCompletedScan(owner, pendingAttestation());

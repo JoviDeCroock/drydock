@@ -53,7 +53,8 @@ const MAX_DIVERGENT_PATHS_SHOWN = 5;
 function RebuildAttestationRow({ rebuild }: { rebuild: RebuildAttestation }) {
   const divergent = rebuild.comparison?.divergentPaths ?? [];
   const missing = rebuild.comparison?.missingFromRebuild ?? [];
-  const shown = [...missing, ...divergent].slice(0, MAX_DIVERGENT_PATHS_SHOWN);
+  const extra = rebuild.comparison?.extraInRebuild ?? [];
+  const shown = [...missing, ...divergent, ...extra].slice(0, MAX_DIVERGENT_PATHS_SHOWN);
   const totalDiffering =
     (rebuild.comparison?.divergentPaths.length ?? 0) +
     (rebuild.comparison?.missingFromRebuild.length ?? 0) +

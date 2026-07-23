@@ -5,7 +5,11 @@ import { npmAdapter } from "./adapters/npm";
 import { errorMessage } from "./errors";
 import { notifyScanCompletion } from "./notify";
 import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
-import { executeRebuildAttestationJob, type RebuildAttestationQueueMessage } from "./rebuild-job";
+import {
+  executeRebuildAttestationJob,
+  hasPendingRebuildAttestation,
+  type RebuildAttestationQueueMessage,
+} from "./rebuild-job";
 import { runScanPipeline } from "./scan-pipeline";
 import { sandboxErrorDetail } from "./sandbox";
 import type { ScanInput } from "../types";
@@ -69,6 +73,18 @@ export async function executeScanJob(
   const session: WorkspaceSession = { userId: message.actorUserId };
   const claimed = await claimScanForRun(db, message.scanId, message.organizationId);
   if (!claimed) {
+    // A queue-send failure can happen after the pipeline has already persisted
+    // the scan as complete. On redelivery that terminal scan cannot be claimed,
+    // so recover its pending rebuild handoff before treating the message as an
+    // ordinary duplicate.
+    const rebuildMessage: RebuildAttestationQueueMessage = {
+      kind: "rebuild_attestation",
+      organizationId: message.organizationId,
+      scanId: message.scanId,
+    };
+    if (attempt > 1 && (await hasPendingRebuildAttestation(db, rebuildMessage))) {
+      await dispatchRebuildAttestation(env, executionCtx, db, rebuildMessage);
+    }
     emitOperationalEvent("warn", "scan.job.skipped", {
       scanId: message.scanId,
       organizationId: message.organizationId,
@@ -130,13 +146,7 @@ export async function executeScanJob(
         organizationId: message.organizationId,
         scanId: message.scanId,
       };
-      if (env.SCAN_QUEUE) {
-        await env.SCAN_QUEUE.send(rebuildMessage);
-      } else {
-        executionCtx.waitUntil(
-          executeRebuildAttestationJob(env, rebuildMessage, db).then(() => {}),
-        );
-      }
+      await dispatchRebuildAttestation(env, executionCtx, db, rebuildMessage);
     }
     return result;
   } catch (err) {
@@ -195,6 +205,19 @@ export async function executeScanJob(
     }
     throw err;
   }
+}
+
+async function dispatchRebuildAttestation(
+  env: Cloudflare.Env,
+  executionCtx: ExecutionContext,
+  db: AppDb,
+  message: RebuildAttestationQueueMessage,
+) {
+  if (env.SCAN_QUEUE) {
+    await env.SCAN_QUEUE.send(message);
+    return;
+  }
+  executionCtx.waitUntil(executeRebuildAttestationJob(env, message, db).then(() => {}));
 }
 
 export function classifyScanError(err: unknown): SafeScanError {

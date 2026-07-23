@@ -156,9 +156,10 @@ export async function runRebuildSteps(
     );
     if (!prepared.success) return { ok: false, failure: "toolchain-unavailable", steps };
   }
+  const packageManagerCommand = commandForPackageManager(strategy);
   const versions = await run(
     "versions",
-    `node --version && ${strategy.packageManager} --version`,
+    `node --version && ${packageManagerCommand} --version`,
     30_000,
   );
   const [nodeVersion, pmVersion] = versions.success
@@ -171,13 +172,17 @@ export async function runRebuildSteps(
   // free, egress-restricted container.
   // Install always runs at the repository root so monorepo workspace graphs
   // resolve; the build/pack steps then run in the package directory.
-  const install = await run("install", installCommand(strategy, repoDir), INSTALL_TIMEOUT_MS);
+  const install = await run(
+    "install",
+    installCommand(strategy, packageManagerCommand, repoDir),
+    INSTALL_TIMEOUT_MS,
+  );
   if (!install.success) return { ok: false, failure: "install-failed", steps };
 
   if (hasBuildScript) {
     const build = await run(
       "build",
-      `cd ${shq(pkgDir)} && ${strategy.packageManager} run build`,
+      `cd ${shq(pkgDir)} && ${packageManagerCommand} run build`,
       BUILD_TIMEOUT_MS,
     );
     if (!build.success) return { ok: false, failure: "build-failed", steps };
@@ -186,7 +191,7 @@ export async function runRebuildSteps(
   const outDir = `${WORKDIR}/out`;
   const pack = await run(
     "pack",
-    `mkdir -p ${shq(outDir)} && cd ${shq(pkgDir)} && ${strategy.packageManager} pack --pack-destination ${shq(outDir)}`,
+    `mkdir -p ${shq(outDir)} && cd ${shq(pkgDir)} && ${packageManagerCommand} pack --pack-destination ${shq(outDir)}`,
     PACK_TIMEOUT_MS,
   );
   if (!pack.success) return { ok: false, failure: "pack-failed", steps };
@@ -295,29 +300,43 @@ function locatePackageCommand(repoDir: string, packageName: string): string {
   ].join(" && ");
 }
 
-// The locate output is container stdout (hostile): accept only the first line
-// shaped exactly like `./<safe segments>/package.json`.
+// The locate output is container stdout (hostile): accept exactly one line
+// shaped like `./<safe segments>/package.json`. Multiple valid matches are
+// ambiguous and must never be resolved by filesystem order.
 function parseLocatedPackageDir(stdout: string): string | null {
+  const matches: string[] = [];
   for (const line of stdout.split("\n").slice(0, 5)) {
     const match = /^\.\/(.+)\/package\.json$/.exec(line.trim());
     if (!match) continue;
     const segments = match[1].split("/");
     if (segments.length > 8) continue;
     if (segments.every((segment) => /^[A-Za-z0-9_.@-]+$/.test(segment) && segment !== "..")) {
-      return segments.join("/");
+      matches.push(segments.join("/"));
     }
   }
-  return null;
+  return matches.length === 1 ? matches[0] : null;
 }
 
-function installCommand(strategy: RebuildStrategy, rootDir: string): string {
+function commandForPackageManager(strategy: RebuildStrategy): string {
+  // Corepack does not install an npm shim from a bare `corepack enable`, so a
+  // repository-level npm pin must be invoked through Corepack explicitly.
+  return strategy.packageManager === "npm" && strategy.corepackSpec
+    ? "corepack npm"
+    : strategy.packageManager;
+}
+
+function installCommand(
+  strategy: RebuildStrategy,
+  packageManagerCommand: string,
+  rootDir: string,
+): string {
   if (strategy.packageManager === "pnpm") {
     // Workspace installs happen at the repo root; --ignore-scripts covers
     // dependency lifecycle hooks. Frozen lockfile keeps the tree at what the
     // repository pinned; fall back to a plain install when out of sync.
-    return `cd ${shq(rootDir)} && (pnpm install --ignore-scripts --frozen-lockfile || pnpm install --ignore-scripts)`;
+    return `cd ${shq(rootDir)} && (${packageManagerCommand} install --ignore-scripts --frozen-lockfile || ${packageManagerCommand} install --ignore-scripts)`;
   }
-  return `cd ${shq(rootDir)} && (npm ci --ignore-scripts --no-audit --no-fund || npm install --ignore-scripts --no-audit --no-fund)`;
+  return `cd ${shq(rootDir)} && (${packageManagerCommand} ci --ignore-scripts --no-audit --no-fund || ${packageManagerCommand} install --ignore-scripts --no-audit --no-fund)`;
 }
 
 function parseHashOutput(stdout: string): {

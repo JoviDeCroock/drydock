@@ -465,19 +465,30 @@ export default {
     for (const message of batch.messages) {
       const messageStartedAtMs = Date.now();
       if (isRebuildAttestationMessage(message.body)) {
-        // Single-shot: the job persists every outcome (including failures) as
-        // an inconclusive attestation, so there is nothing useful to retry.
         const rebuildMessage = message.body;
         try {
           await executeRebuildAttestationJob(env, rebuildMessage);
         } catch (err) {
-          emitOperationalEvent("error", "rebuild.queue.message_failed", {
-            scanId: rebuildMessage.scanId,
-            organizationId: rebuildMessage.organizationId,
-            attempt: message.attempts,
-            durationMs: durationMsSince(messageStartedAtMs),
-            error: describeOperationalError(err),
-          });
+          if (message.attempts < MAX_SCAN_JOB_ATTEMPTS) {
+            message.retry({ delaySeconds: retryDelaySeconds(message.attempts) });
+            emitOperationalEvent("warn", "rebuild.queue.retry_scheduled", {
+              scanId: rebuildMessage.scanId,
+              organizationId: rebuildMessage.organizationId,
+              attempt: message.attempts,
+              nextDelaySeconds: retryDelaySeconds(message.attempts),
+              durationMs: durationMsSince(messageStartedAtMs),
+              error: describeOperationalError(err),
+            });
+          } else {
+            emitOperationalEvent("error", "rebuild.queue.message_failed", {
+              scanId: rebuildMessage.scanId,
+              organizationId: rebuildMessage.organizationId,
+              attempt: message.attempts,
+              durationMs: durationMsSince(messageStartedAtMs),
+              error: describeOperationalError(err),
+            });
+            throw err;
+          }
         }
         continue;
       }

@@ -5,6 +5,7 @@ import type {
   FindingDiffStatus,
   PackageJsonSummary,
 } from "../../server/lib/review";
+import { normalizeRebuildAttestation } from "../../server/lib/rebuild-attestation";
 import { apiFetch, apiJson, errorMessage } from "./api";
 import {
   decideWorkflowGate,
@@ -355,7 +356,17 @@ export const ScanDetailModel = createModel((id: string) => {
 
   const isWorkflowGate = computed(() => detail.value?.scan.source === "workflow_gate");
   const status = computed(() => detail.value?.scan.status ?? null);
-  const isPolling = computed(() => status.value === "pending" || status.value === "running");
+  const rebuildPending = computed(() => {
+    const summary = detail.value?.scan.summaryJson;
+    if (!summary || typeof summary !== "object" || Array.isArray(summary)) return false;
+    return (
+      normalizeRebuildAttestation((summary as Record<string, unknown>).rebuildAttestation)
+        ?.status === "pending"
+    );
+  });
+  const isPolling = computed(
+    () => status.value === "pending" || status.value === "running" || rebuildPending.value,
+  );
   const isDefaultComparison = computed(() => {
     const selected = selectedVersion.value;
     const v = versions.value;
@@ -371,11 +382,12 @@ export const ScanDetailModel = createModel((id: string) => {
     return v ? (cache[v] ?? null) : null;
   });
 
-  // Background polling while the scan is still running. A self-scheduling
-  // timeout chain (not setInterval) lets the cadence adapt: consecutive
-  // failures back off exponentially, and a scan stuck non-terminal past the
-  // stall window latches `pollingStalled` instead of polling forever. Both
-  // signals are read unconditionally so the effect tracks them on every run.
+  // Background polling while the scan or its deferred rebuild is still
+  // running. A self-scheduling timeout chain (not setInterval) lets the cadence
+  // adapt: consecutive failures back off exponentially, and a scan stuck
+  // non-terminal past the stall window latches `pollingStalled` instead of
+  // polling forever. Both signals are read unconditionally so the effect
+  // tracks them on every run.
   effect(() => {
     const polling = isPolling.value;
     const stalled = pollingStalled.value;

@@ -411,6 +411,25 @@ describe("runRebuildSteps", () => {
     expect(joined).toContain("pnpm pack --pack-destination");
   });
 
+  test("npm packageManager pins invoke npm through corepack", async () => {
+    const sandbox = scriptedSandbox([
+      [
+        "cat ",
+        ok(
+          manifestStdout({ name: "@scope/pkg", packageManager: "npm@10.9.0" }, "package-lock.json"),
+        ),
+      ],
+      ["--version", ok("v22.11.0\n10.9.0")],
+      ["sha1sum", ok(hashStdout)],
+    ]);
+    const execution = await runRebuildSteps(sandbox, plan);
+    expect(execution.ok).toBe(true);
+    const joined = sandbox.commands.join("\n");
+    expect(joined).toContain("corepack prepare 'npm@10.9.0' --activate");
+    expect(joined).toContain("corepack npm ci --ignore-scripts");
+    expect(joined).toContain("corepack npm pack --pack-destination");
+  });
+
   test("yarn repositories are reported as unsupported", async () => {
     const sandbox = scriptedSandbox([
       ["cat ", ok(manifestStdout({ name: "@scope/pkg" }, "yarn.lock"))],
@@ -478,6 +497,21 @@ describe("runRebuildSteps", () => {
     ]);
     const execution = await runRebuildSteps(sandbox, plan);
     expect(execution).toMatchObject({ ok: false, failure: "package-not-located" });
+  });
+
+  test("rejects multiple workspace packages with the same manifest name", async () => {
+    const sandbox = scriptedSandbox([
+      [
+        "cat '/workspace/rebuild/repo/package.json'",
+        ok(manifestStdout({ name: "monorepo-root" }, "package.json")),
+      ],
+      ["grep -lE", ok("./packages/core/package.json\n./fixtures/core/package.json\n")],
+    ]);
+    const execution = await runRebuildSteps(sandbox, plan);
+    expect(execution).toMatchObject({ ok: false, failure: "package-not-located" });
+    expect(sandbox.commands.join("\n")).not.toContain(
+      "cat '/workspace/rebuild/repo/packages/core/package.json'",
+    );
   });
 
   test("hostile locate output is rejected instead of trusted as a path", async () => {

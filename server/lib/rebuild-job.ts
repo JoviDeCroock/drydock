@@ -35,6 +35,29 @@ export interface ExecuteRebuildJobOptions {
   executor?: RebuildExecutor;
 }
 
+/**
+ * Check whether a terminal scan still has a rebuild handoff to recover. The
+ * original scan queue message calls this on redelivery when its first attempt
+ * completed the scan but failed to enqueue the rebuild message.
+ */
+export async function hasPendingRebuildAttestation(
+  db: AppDb,
+  message: RebuildAttestationQueueMessage,
+): Promise<boolean> {
+  const rows = await db
+    .select({ status: scans.status, summaryJson: scans.summaryJson })
+    .from(scans)
+    .where(and(eq(scans.id, message.scanId), eq(scans.organizationId, message.organizationId)))
+    .limit(1);
+  const scan = rows[0];
+  if (scan?.status !== "complete") return false;
+  const summary =
+    scan.summaryJson && typeof scan.summaryJson === "object" && !Array.isArray(scan.summaryJson)
+      ? (scan.summaryJson as Record<string, unknown>)
+      : null;
+  return normalizeRebuildAttestation(summary?.rebuildAttestation)?.status === "pending";
+}
+
 export async function executeRebuildAttestationJob(
   env: Cloudflare.Env,
   message: RebuildAttestationQueueMessage,

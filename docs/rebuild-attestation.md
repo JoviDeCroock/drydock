@@ -35,7 +35,11 @@ staged shasum); PyPI and VS Code have no rebuild strategy yet.
    never the frozen `report.json` artifact, because the record is mutable).
 2. **Deferred job** (`rebuild-job.ts`): scan completion enqueues a
    `rebuild_attestation` message on `SCAN_QUEUE` (waitUntil fallback in local
-   dev). Container rebuilds take minutes and never hold up scan completion.
+   dev). If that handoff fails after scan persistence, redelivery of the
+   original scan message recovers the pending handoff. Rebuild-job D1/R2
+   failures retry through the queue and reach its DLQ after exhaustion instead
+   of being acknowledged while still pending. Container rebuilds take minutes
+   and never hold up scan completion.
 3. **Rebuild** (`rebuild-sandbox.ts` + `rebuild-steps.ts`): a disposable
    Cloudflare container clones the repo at the first resolvable ref, detects
    the strategy from the repository root (`packageManager` field via corepack,
@@ -65,7 +69,9 @@ pack`/`pnpm pack` apply the same `files`-field/`.npmignore` rules the
    The staged bytes are never re-fetched and never enter the container.
 5. The outcome replaces the pending record in `summary.rebuildAttestation`,
    surfaces under "Source binding" on the scan detail page, and exports as the
-   additive optional `rebuildAttestation` field of `drydock.report.v1`.
+   additive optional `rebuildAttestation` field of `drydock.report.v1`. A
+   completed scan page keeps polling while this record is pending, then stops
+   when the deferred outcome arrives.
 
 ## Outcome ladder
 

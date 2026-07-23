@@ -18,6 +18,10 @@ const npmConnectionMock = vi.hoisted(() => ({ decryptNpmToken: vi.fn() }));
 const notifyMock = vi.hoisted(() => ({
   notifyScanCompletion: vi.fn().mockResolvedValue(undefined),
 }));
+const rebuildJobMock = vi.hoisted(() => ({
+  executeRebuildAttestationJob: vi.fn().mockResolvedValue(null),
+  hasPendingRebuildAttestation: vi.fn().mockResolvedValue(false),
+}));
 
 vi.mock("../server/db/client.ts", () => dbMock);
 vi.mock("../server/db/events.ts", () => dbMock);
@@ -26,6 +30,7 @@ vi.mock("../server/db/scans.ts", () => dbMock);
 vi.mock("../server/lib/scan-pipeline.ts", () => pipelineMock);
 vi.mock("../server/lib/npm-connection.ts", () => npmConnectionMock);
 vi.mock("../server/lib/notify.ts", () => notifyMock);
+vi.mock("../server/lib/rebuild-job.ts", () => rebuildJobMock);
 
 const { classifyScanError, executeScanJob, retryDelaySeconds } =
   await import("../server/lib/scan-job.ts");
@@ -174,6 +179,7 @@ describe("executeScanJob idempotency", () => {
       riskSummary: { releaseRisk: "low" },
       package: { name: null },
     });
+    rebuildJobMock.hasPendingRebuildAttestation.mockResolvedValue(false);
   });
 
   afterEach(() => {
@@ -181,6 +187,8 @@ describe("executeScanJob idempotency", () => {
     pipelineMock.runScanPipeline.mockReset();
     npmConnectionMock.decryptNpmToken.mockReset();
     notifyMock.notifyScanCompletion.mockClear();
+    rebuildJobMock.executeRebuildAttestationJob.mockReset();
+    rebuildJobMock.hasPendingRebuildAttestation.mockReset();
     vi.restoreAllMocks();
   });
 
@@ -202,6 +210,39 @@ describe("executeScanJob idempotency", () => {
 
     expect(pipelineMock.runScanPipeline).toHaveBeenCalledTimes(1);
     expect(dbMock.markNpmConnectionUsed).toHaveBeenCalledWith({}, message.organizationId);
+  });
+
+  test("recovers a pending rebuild handoff when queue dispatch fails after completion", async () => {
+    const send = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("queue unavailable"))
+      .mockResolvedValueOnce(undefined);
+    const queueEnv = { DB: {}, SCAN_QUEUE: { send } };
+    dbMock.claimScanForRun.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    pipelineMock.runScanPipeline.mockResolvedValue({
+      id: message.scanId,
+      risk: "low",
+      riskSummary: { releaseRisk: "low" },
+      package: { name: "@scope/pkg" },
+      rebuildAttestation: { status: "pending" },
+    });
+
+    await expect(
+      executeScanJob(queueEnv, ctx, message, {}, { attempt: 1, finalAttempt: false }),
+    ).rejects.toThrow("queue unavailable");
+
+    rebuildJobMock.hasPendingRebuildAttestation.mockResolvedValueOnce(true);
+    await expect(
+      executeScanJob(queueEnv, ctx, message, {}, { attempt: 2, finalAttempt: false }),
+    ).resolves.toBeNull();
+
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenLastCalledWith({
+      kind: "rebuild_attestation",
+      organizationId: message.organizationId,
+      scanId: message.scanId,
+    });
+    expect(pipelineMock.runScanPipeline).toHaveBeenCalledTimes(1);
   });
 
   test("emits a structured completion log without token material", async () => {

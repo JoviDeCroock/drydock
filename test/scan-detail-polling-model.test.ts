@@ -26,6 +26,35 @@ function runningDetail(): PersistedScanDetail {
   };
 }
 
+function completedDetail(rebuildStatus: "pending" | "inconclusive"): PersistedScanDetail {
+  const detail = runningDetail();
+  return {
+    ...detail,
+    scan: {
+      ...detail.scan,
+      status: "complete",
+      summaryJson: {
+        rebuildAttestation: {
+          status: rebuildStatus,
+          plan: {
+            repository: "https://github.com/owner/repo",
+            refs: [{ kind: "git-head", value: "a".repeat(40) }],
+            directory: null,
+            packageName: "left-pad",
+            version: "1.0.1",
+            expectedShasum: "b".repeat(40),
+          },
+          ref: null,
+          toolchain: null,
+          comparison: null,
+          signals: [],
+          completedAt: rebuildStatus === "inconclusive" ? "2026-07-23T00:00:00.000Z" : null,
+        },
+      },
+    },
+  };
+}
+
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -123,6 +152,32 @@ describe("ScanDetailModel polling", () => {
     // Success resets the cadence: the next poll fires at the base delay again.
     await vi.advanceTimersByTimeAsync(SCAN_POLL_BASE_DELAY_MS);
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  test("keeps polling a completed scan until its deferred rebuild resolves", async () => {
+    const resolved = completedDetail("inconclusive");
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      return Promise.resolve(
+        url.endsWith("/status") ? jsonResponse({ scan: resolved.scan }) : jsonResponse(resolved),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    model = new ScanDetailModel("scan-1");
+    model.detail.value = completedDetail("pending");
+
+    await vi.advanceTimersByTimeAsync(SCAN_POLL_BASE_DELAY_MS);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const updated = model.detail.value;
+    expect(updated).not.toBeNull();
+    expect(
+      (updated!.scan.summaryJson as { rebuildAttestation?: { status?: string } }).rebuildAttestation
+        ?.status,
+    ).toBe("inconclusive");
+
+    await vi.advanceTimersByTimeAsync(2 * SCAN_POLL_BASE_DELAY_MS);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   test("stops polling and raises pollingStalled after the stall window", async () => {
