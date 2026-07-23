@@ -32,7 +32,7 @@ export function RiskSignalsSection({
 
   return (
     <section class="flex flex-col gap-3">
-      <SectionLabel>Risk signals</SectionLabel>
+      <SectionLabel as="h2">Risk signals</SectionLabel>
       <div class="flex flex-wrap items-center gap-2">
         <Badge tone={changedFindings.length ? "medium" : "ok"}>
           {changedFindings.length

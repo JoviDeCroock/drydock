@@ -54,7 +54,7 @@ export function ReleaseSecuritySection({
   return (
     <Card class="flex flex-col gap-5">
       <div class="flex items-center justify-between gap-2 flex-wrap">
-        <SectionLabel>Release security</SectionLabel>
+        <SectionLabel as="h2">Release security</SectionLabel>
         <Badge tone={enabled ? "ok" : "neutral"}>{enabled ? "required" : "not required"}</Badge>
       </div>
 

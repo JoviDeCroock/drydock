@@ -68,7 +68,7 @@ export default function AccountPage() {
 
       <div class="flex flex-col gap-6">
         <SettingsCard class="flex flex-col gap-1.5">
-          <SectionLabel>Profile</SectionLabel>
+          <SectionLabel as="h2">Profile</SectionLabel>
           {user?.name ? <span class="text-[14px] font-medium text-ink">{user.name}</span> : null}
           <MonoDetail parts={[user?.email ? <span key="email">{user.email}</span> : null]} />
         </SettingsCard>

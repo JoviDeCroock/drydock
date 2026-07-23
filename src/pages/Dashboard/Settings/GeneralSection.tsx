@@ -53,7 +53,7 @@ export function GeneralSection({
 
   return (
     <SettingsCard class="flex flex-col gap-5">
-      <SectionLabel>General</SectionLabel>
+      <SectionLabel as="h2">General</SectionLabel>
 
       {active ? (
         <div class="flex flex-col gap-1.5">
@@ -81,7 +81,7 @@ export function GeneralSection({
           is shown only when the action is actually available. */}
       {canDelete ? (
         <div class="flex flex-col gap-3">
-          <SectionLabel>Danger zone</SectionLabel>
+          <SectionLabel as="h3">Danger zone</SectionLabel>
           <Muted class="text-[13px] m-0 max-w-[760px]">
             Deleting this organization permanently removes its members, npm and GitHub connections,
             notification recipients, and scan history. This cannot be undone.

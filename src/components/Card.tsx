@@ -97,7 +97,9 @@ export function SettingsCardHeader({
 }) {
   return (
     <div class={cn("px-5 py-4 flex items-center justify-between gap-3", className)}>
-      <SectionLabel class="flex-1">{title}</SectionLabel>
+      <SectionLabel as="h3" class="flex-1">
+        {title}
+      </SectionLabel>
       {aside ? <div class="shrink-0 flex items-center gap-2">{aside}</div> : null}
     </div>
   );
@@ -138,15 +140,19 @@ export function CollapsibleCard({
   return (
     <Card as="section" padding="none" class={cn("overflow-hidden", className)}>
       <details open={defaultOpen} class="group">
-        <summary class="list-none cursor-pointer flex items-center gap-2.5 px-5 py-4 transition-colors hover:bg-surface-2">
-          <span
-            aria-hidden
-            class="text-ink-subtle text-[10px] inline-block transition-transform duration-150 ease-out group-open:rotate-90"
+        <summary class="list-none cursor-pointer px-5 py-4 transition-colors hover:bg-surface-2">
+          <SectionLabel
+            as="h2"
+            aside={aside ? <span class="flex items-center gap-2">{aside}</span> : undefined}
           >
-            ▸
-          </span>
-          <SectionLabel class="flex-1">{title}</SectionLabel>
-          {aside ? <div class="flex items-center gap-2 shrink-0">{aside}</div> : null}
+            <span
+              aria-hidden
+              class="text-ink-subtle text-[10px] inline-block transition-transform duration-150 ease-out group-open:rotate-90"
+            >
+              ▸
+            </span>
+            <span>{title}</span>
+          </SectionLabel>
         </summary>
         {/* The section-label's trailing rule is the header divider; a border-t
             here would stack a second hairline right below it (double border). */}

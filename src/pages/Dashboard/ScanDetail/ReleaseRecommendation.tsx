@@ -63,13 +63,13 @@ export function ReleaseRecommendation({
   return (
     <Card class="p-5 sm:p-6 flex flex-col gap-4">
       <div class="flex flex-col gap-2">
-        <SectionLabel>Recommendation</SectionLabel>
+        <SectionLabel as="h2">Recommendation</SectionLabel>
         <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <h2
+          <h3
             class={`m-0 text-lg font-semibold tracking-[-0.01em] ${verdictColor(recommendation.tone)}`}
           >
             {capitalize(recommendation.label)}
-          </h2>
+          </h3>
           <div class="flex flex-wrap items-center gap-2">
             {artifactRisk !== releaseRisk ? (
               <Badge tone="neutral">artifact {artifactRisk}</Badge>

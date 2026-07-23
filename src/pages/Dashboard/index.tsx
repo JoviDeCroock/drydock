@@ -218,7 +218,9 @@ function RecentReviewsSection({
   return (
     <Card as="section" padding="none" class="overflow-hidden">
       <div class="px-5 py-4 flex flex-col gap-3 md:flex-row md:items-center">
-        <SectionLabel class="flex-1 min-w-0 after:hidden">Recent reviews</SectionLabel>
+        <SectionLabel as="h2" class="flex-1 min-w-0 after:hidden">
+          Recent reviews
+        </SectionLabel>
         <div class="flex flex-wrap items-center gap-2 shrink-0">
           <ScanStateSelect
             value={scans.filter.value}
@@ -399,7 +401,7 @@ function NpmSetupCallout() {
   return (
     <Card as="section" class="p-5 flex flex-wrap items-center justify-between gap-3">
       <div class="flex flex-col gap-1.5 min-w-0">
-        <SectionLabel>npm not connected</SectionLabel>
+        <SectionLabel as="h2">npm not connected</SectionLabel>
         <Muted class="text-[13px] m-0">
           Connect npm in settings so Drydock can fetch staged tarballs and run reviews.
         </Muted>

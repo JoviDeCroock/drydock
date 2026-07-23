@@ -115,7 +115,7 @@ function TreeNode({
       <button
         type="button"
         onClick={() => onSelect(node.path)}
-        aria-pressed={isSelected}
+        aria-current={isSelected ? "true" : undefined}
         class={cn(
           "w-full flex items-center gap-2 py-1 pr-2 pl-2 rounded text-left transition-colors",
           "text-[13px] font-mono",

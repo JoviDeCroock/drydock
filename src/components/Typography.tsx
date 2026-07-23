@@ -24,21 +24,20 @@ export function Eyebrow({
   );
 }
 
-// Renders a real heading by default: section labels are the report's only
-// section titles, and a <p> left every card an anonymous <section> with no
-// h2/h3 between the page h1 and its content. Preflight keeps headings at
+// Section labels name both top-level sections and nested subsections, so every
+// caller chooses its semantic level explicitly. Preflight keeps headings at
 // inherited size/weight, so the visual treatment is unchanged. `aside` puts
-// trailing metadata (e.g. a count) after the rule, which otherwise is drawn
-// by the ::after pseudo.
+// trailing metadata (e.g. a count) after the rule, which otherwise is drawn by
+// the ::after pseudo.
 export function SectionLabel({
   children,
   aside,
-  as: As = "h2",
+  as: As,
   class: className,
 }: {
   children: ComponentChildren;
   aside?: ComponentChildren;
-  as?: "h2" | "h3" | "p";
+  as: "h2" | "h3" | "p";
   class?: string;
 }) {
   return (

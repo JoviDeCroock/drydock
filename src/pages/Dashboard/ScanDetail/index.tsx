@@ -335,7 +335,7 @@ export default function ScanDetailPage() {
 
             <section class={workbenchGridClass}>
               <Card as="aside" class="p-5 flex flex-col gap-3 lg:h-[720px] overflow-hidden">
-                <SectionLabel>Release tree</SectionLabel>
+                <SectionLabel as="h2">Release tree</SectionLabel>
                 <Input
                   type="search"
                   value={fileFilter.value}
@@ -370,7 +370,7 @@ export default function ScanDetailPage() {
               </Card>
 
               <Card class="p-5 flex flex-col gap-3 lg:h-[720px]">
-                <SectionLabel>File diff</SectionLabel>
+                <SectionLabel as="h2">File diff</SectionLabel>
                 <DiffWorkbench
                   entry={selectedEntry.value}
                   stagedMeta={stagedFileMeta.value}

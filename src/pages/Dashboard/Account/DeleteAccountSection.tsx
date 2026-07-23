@@ -52,7 +52,7 @@ export function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
 
   return (
     <SettingsCard class="flex flex-col gap-3">
-      <SectionLabel>Danger zone</SectionLabel>
+      <SectionLabel as="h2">Danger zone</SectionLabel>
       <Muted class="text-[13px] m-0 max-w-[760px]">
         Deleting your account permanently removes your personal workspace, every organization you
         solely own, and your two-factor enrollment, and signs you out everywhere. This cannot be
