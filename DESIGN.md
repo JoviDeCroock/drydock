@@ -221,16 +221,17 @@ The system is typography-first. It communicates through type, severity color, an
 
 ### Allowed glyphs
 
-| Glyph | Role                  | Used in                                     |
-| ----- | --------------------- | ------------------------------------------- |
-| `▸`   | Collapsed folder      | FileTree                                    |
-| `▾`   | Expanded folder       | FileTree (when needed)                      |
-| `→`   | Relation / flow       | `previous → staged` captions, VersionPicker |
-| `←`   | Back link             | Page header back-links                      |
-| `·`   | Metadata separator    | Mono detail line                            |
-| `✓`   | Passed / connected    | Inline status                               |
-| `✕`   | Failed / disconnected | Inline status                               |
-| `•`   | Badge dot             | `Badge dot` prop                            |
+| Glyph | Role                    | Used in                                     |
+| ----- | ----------------------- | ------------------------------------------- |
+| `▸`   | Collapsed folder        | FileTree                                    |
+| `▾`   | Expanded folder         | FileTree (when needed)                      |
+| `→`   | Relation / flow         | `previous → staged` captions, VersionPicker |
+| `←`   | Back link               | Page header back-links                      |
+| `·`   | Metadata separator      | Mono detail line                            |
+| `✓`   | Passed / connected      | Inline status                               |
+| `✕`   | Failed / disconnected   | Inline status                               |
+| `•`   | Badge dot               | `Badge dot` prop                            |
+| `⋯`   | More actions / overflow | Row action menus, DiffView "show more"      |
 
 ### Glyph treatment
 

@@ -21,6 +21,7 @@ import { Badge, severityTone } from "../../components/Badge";
 import { Button, LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { LoadingState } from "../../components/Loading";
+import { Menu, MenuItem, MenuLink } from "../../components/Menu";
 import { OrgSwitcher } from "../../components/OrgSwitcher";
 import { PageShell } from "../../components/PageShell";
 import { Select } from "../../components/Select";
@@ -466,8 +467,10 @@ function ScanTable({
                 <ScanStatusBadge status={scan.status} />
               </Td>
               <Td>
-                <div class="flex flex-wrap items-center gap-2">
-                  <DecisionBadge decision={scan.decision} />
+                <DecisionBadge decision={scan.decision} />
+              </Td>
+              <Td>
+                <div class="flex items-center gap-2">
                   {canQuickDecide(scan) ? (
                     <Button
                       variant={scan.decision ? "secondary" : "primary"}
@@ -483,21 +486,26 @@ function ScanTable({
                           : "Decide"}
                     </Button>
                   ) : null}
-                </div>
-              </Td>
-              <Td>
-                {scan.status === "failed" ? (
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={() => onDelete(scan)}
-                    disabled={deleteBusy}
+                  <Menu
+                    align="end"
+                    triggerAriaLabel={`More actions for ${scan.packageName || scan.stageId}`}
+                    triggerClass="inline-flex items-center justify-center h-7 w-7 rounded-md border border-transparent text-ink-muted hover:bg-surface-2 hover:text-ink transition-colors duration-150"
+                    trigger={() => (
+                      <span aria-hidden="true" class="text-[13px] leading-none">
+                        ⋯
+                      </span>
+                    )}
                   >
-                    Delete
-                  </Button>
-                ) : (
-                  <span class="font-mono text-xs text-ink-subtle">—</span>
-                )}
+                    <MenuLink href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}>
+                      Open review
+                    </MenuLink>
+                    {scan.status === "failed" ? (
+                      <MenuItem tone="danger" onSelect={() => onDelete(scan)} disabled={deleteBusy}>
+                        Delete review
+                      </MenuItem>
+                    ) : null}
+                  </Menu>
+                </div>
               </Td>
             </tr>
           ))}
