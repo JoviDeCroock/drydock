@@ -471,7 +471,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
 
           {hasManifestChanges(diff.packageJsonDiff) ? (
             <section class="flex flex-col gap-3">
-              <SectionLabel>Manifest changes</SectionLabel>
+              <SectionLabel as="h2">Manifest changes</SectionLabel>
               <PackageJsonDiffView diff={diff.packageJsonDiff} linkDependencyDiffs />
             </section>
           ) : null}
