@@ -491,7 +491,7 @@ function ScanTable({
                     triggerAriaLabel={`More actions for ${scan.packageName || scan.stageId}`}
                     triggerClass="inline-flex items-center justify-center h-7 w-7 rounded-md border border-transparent text-ink-muted hover:bg-surface-2 hover:text-ink transition-colors duration-150"
                     trigger={() => (
-                      <span aria-hidden="true" class="text-base leading-none">
+                      <span aria-hidden="true" class="text-[13px] leading-none">
                         ⋯
                       </span>
                     )}
