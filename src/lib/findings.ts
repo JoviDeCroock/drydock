@@ -1,6 +1,6 @@
 import { type SeverityCounts, type SeverityKey } from "../components/SeverityBar";
 
-export const SEVERITY_RANK: Record<SeverityKey, number> = {
+const SEVERITY_RANK: Record<SeverityKey, number> = {
   critical: 0,
   high: 1,
   medium: 2,
@@ -9,7 +9,7 @@ export const SEVERITY_RANK: Record<SeverityKey, number> = {
   ok: 5,
 };
 
-export function normalizeSeverityKey(value: string | undefined): SeverityKey | null {
+function normalizeSeverityKey(value: string | undefined): SeverityKey | null {
   switch (value) {
     case "critical":
     case "high":

@@ -4,7 +4,7 @@ import { apiFetch, errorMessage } from "./api";
 
 export type { StagedPublishesScanResponse };
 
-export function startStagedPublishScans(): Promise<StagedPublishesScanResponse> {
+function startStagedPublishScans(): Promise<StagedPublishesScanResponse> {
   return apiFetch<StagedPublishesScanResponse>("/api/v1/staged-publishes/scan", {
     method: "POST",
   });

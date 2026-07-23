@@ -1,7 +1,7 @@
 import { signal } from "@preact/signals";
 import type { HighlighterCore } from "shiki/core";
 
-export interface Token {
+interface Token {
   content: string;
   color?: string;
   className?: string;

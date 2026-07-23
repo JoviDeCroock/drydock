@@ -14,7 +14,7 @@ const markSizeClass = {
 
 type MarkSize = keyof typeof markSizeClass;
 
-export function AikidoMark({ size = "sm", class: className }: { size?: MarkSize; class?: string }) {
+function AikidoMark({ size = "sm", class: className }: { size?: MarkSize; class?: string }) {
   const imageClass = cn("w-auto", markSizeClass[size]);
   const imgProps = {
     alt: "Aikido Security",

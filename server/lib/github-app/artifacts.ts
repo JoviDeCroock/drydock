@@ -26,7 +26,7 @@ export interface WorkflowArtifactSource {
  */
 export type ClassifyArtifact = (path: string) => { ecosystem: string; kind: string } | null;
 
-export interface ResolvedReleaseFile {
+interface ResolvedReleaseFile {
   path: string;
   bytes: Uint8Array;
   sha256: string;
@@ -65,7 +65,7 @@ export class WorkflowArtifactError extends Error {
 // ── Configuration ────────────────────────────────────────────────────────────
 
 export const MAX_OUTER_ZIP_BYTES = 25 * 1024 * 1024;
-export const MAX_TOTAL_ARTIFACT_ZIP_BYTES = 50 * 1024 * 1024;
+const MAX_TOTAL_ARTIFACT_ZIP_BYTES = 50 * 1024 * 1024;
 export const MAX_OUTER_ZIP_ENTRIES = 256;
 export const MAX_PER_ENTRY_BYTES = 25 * 1024 * 1024;
 const MAX_RELEASE_ARTIFACTS = 20;

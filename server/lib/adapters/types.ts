@@ -36,7 +36,7 @@ export interface AcquiredArtifact {
 // Opaque to the pipeline — the adapter is the only thing that interprets it.
 export type StagedDetails = unknown;
 
-export type ReleaseProvenanceArtifactKind = "tarball" | "wheel" | "sdist" | "vsix";
+type ReleaseProvenanceArtifactKind = "tarball" | "wheel" | "sdist" | "vsix";
 
 // One reviewed release artifact bound to the SHA-256 the control plane
 // recomputed from its immutable bytes.
@@ -58,7 +58,7 @@ export interface ReleaseProvenance {
   artifacts: ReleaseProvenanceArtifact[];
 }
 
-export type BaselineSelectionSource =
+type BaselineSelectionSource =
   | "dist-tag"
   | "semver-predecessor"
   | "highest-published"
@@ -74,7 +74,7 @@ export interface BaselineInfo {
   reason: string;
 }
 
-export interface AdapterRunFindingsArgs {
+interface AdapterRunFindingsArgs {
   staged: AcquiredArtifact;
   baseline: AcquiredArtifact | null;
   details: StagedDetails;
@@ -83,7 +83,7 @@ export interface AdapterRunFindingsArgs {
   stagedManifestText: string | null;
 }
 
-export interface AdapterDescribeArgs<TInput> {
+interface AdapterDescribeArgs<TInput> {
   input: TInput;
   staged: AcquiredArtifact;
   details: StagedDetails;
@@ -91,7 +91,7 @@ export interface AdapterDescribeArgs<TInput> {
   previous: AcquiredArtifact | null;
 }
 
-export interface AdapterPackageSummary {
+interface AdapterPackageSummary {
   name: string | null;
   stagedVersion: string | null;
   stagedTag: string | null;

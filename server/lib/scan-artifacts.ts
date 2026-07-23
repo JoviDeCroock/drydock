@@ -11,7 +11,7 @@ import { displayedAiResult, type AiReview } from "./ai-review-types";
 import { describeOperationalError, emitOperationalEvent } from "./observability";
 import { sha256Hex, stableJson, utf8Size } from "./stable-json";
 
-export const SCAN_ARTIFACT_STORAGE_VERSION = 1;
+const SCAN_ARTIFACT_STORAGE_VERSION = 1;
 export const SCAN_ARTIFACT_WRITE_ATTEMPTS = 3;
 const ARTIFACT_CONTENT_TYPE = "application/json; charset=utf-8";
 
@@ -45,7 +45,7 @@ export interface ScanArtifactFileRow {
 // replacement for a D1 row on the read path. The id is derived from the finding
 // index (`artifactFindingId`) rather than a persisted UUID, so it stays stable
 // across reads without a per-finding D1 row.
-export interface ScanArtifactFindingRow {
+interface ScanArtifactFindingRow {
   id: string;
   scanId: string;
   severity: string;
@@ -81,7 +81,7 @@ export interface ScanArtifactsDetail {
   findingAnnotations: Map<string, FindingDiffAnnotation>;
 }
 
-export interface ScanArtifactsManifestDetail {
+interface ScanArtifactsManifestDetail {
   manifest: ScanArtifactsManifest;
 }
 

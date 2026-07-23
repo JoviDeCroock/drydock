@@ -55,7 +55,7 @@ export interface ParsedDeploymentProtectionEvent {
   deploymentCallbackUrl: string;
 }
 
-export interface ParsedInstallationLifecycleEvent {
+interface ParsedInstallationLifecycleEvent {
   kind: "installation";
   action: "suspend" | "unsuspend" | "deleted";
   installationId: string;

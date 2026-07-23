@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { cn } from "./cn";
 
-export function Label({
+function Label({
   children,
   for: htmlFor,
   class: className,

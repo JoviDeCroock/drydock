@@ -6,11 +6,7 @@ export interface RegistryMetadata {
   time?: Record<string, string>;
 }
 
-export type BaselineSelectionSource =
-  | "dist-tag"
-  | "semver-predecessor"
-  | "highest-published"
-  | "none";
+type BaselineSelectionSource = "dist-tag" | "semver-predecessor" | "highest-published" | "none";
 
 export interface BaselineVersionSelection {
   version: string | null;

@@ -7,7 +7,7 @@ export interface SendEmailInput {
   html?: string;
 }
 
-export interface SendEmailBinding {
+interface SendEmailBinding {
   send(message: unknown): Promise<void>;
 }
 

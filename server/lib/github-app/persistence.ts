@@ -141,7 +141,7 @@ export async function getInstallationByExternalId(
   return row ? readInstallationRow(row) : null;
 }
 
-export async function getInstallationForOrganization(
+async function getInstallationForOrganization(
   db: AppDb,
   organizationId: string,
   installationRowId: string,

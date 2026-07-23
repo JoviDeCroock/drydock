@@ -8,14 +8,9 @@
 // lifecycle churn is no longer recorded at all, and notification-delivery and
 // internal gate-processing events are persisted but excluded here as noise.
 
-export type AuditCategory =
-  | "release_decision"
-  | "member"
-  | "security"
-  | "integration"
-  | "organization";
+type AuditCategory = "release_decision" | "member" | "security" | "integration" | "organization";
 
-export type AuditSeverity = "info" | "notice" | "security";
+type AuditSeverity = "info" | "notice" | "security";
 
 interface AuditEventDef {
   category: AuditCategory;

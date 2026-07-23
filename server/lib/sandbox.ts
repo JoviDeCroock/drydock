@@ -5,7 +5,7 @@ import * as tarParser from "./tar-parser.js";
 import type { TarSuspiciousEntry } from "./tar-parser.js";
 
 export const SANDBOX_MAX_FILES = 2_500;
-export const SANDBOX_MAX_TAR_BYTES = 25 * 1024 * 1024;
+const SANDBOX_MAX_TAR_BYTES = 25 * 1024 * 1024;
 // Total decompressed bytes the streaming tar reader may consume. Bodies beyond
 // the retention budget (SANDBOX_MAX_TAR_BYTES) are skipped, not buffered, so
 // this cap bounds CPU/streaming work rather than memory — it is what lets big

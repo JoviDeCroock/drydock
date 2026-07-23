@@ -12,9 +12,9 @@ export const VSCODE_RULE_IDS = {
   extensionDependency: "vscode.extension-dependency",
 } as const;
 
-export type VscodeArtifactKind = "vsix";
+type VscodeArtifactKind = "vsix";
 
-export interface VscodeReleaseManifestArtifact {
+interface VscodeReleaseManifestArtifact {
   path: string;
   sha256: string;
   kind: VscodeArtifactKind;

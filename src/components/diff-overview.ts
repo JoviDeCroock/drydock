@@ -1,7 +1,7 @@
 import { maxSeverity, severityGroup, type SeverityGroup } from "./diff-annotations";
 import type { DisplaySegment } from "./diff-hunks";
 
-export type DiffOverviewTone = "added" | "removed" | SeverityGroup;
+type DiffOverviewTone = "added" | "removed" | SeverityGroup;
 
 export interface DiffOverviewMarker {
   key: string;

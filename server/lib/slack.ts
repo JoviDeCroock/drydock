@@ -11,7 +11,7 @@ import { errorMessage } from "./errors";
 // Restricting to public channels is deliberate: chat:write.public means the bot
 // never has to be invited, so delivery to the chosen channel always works.
 
-export const SLACK_CHANNEL_LIST_SCOPE = "channels:read";
+const SLACK_CHANNEL_LIST_SCOPE = "channels:read";
 export const SLACK_OAUTH_SCOPES = "chat:write,chat:write.public";
 
 const SLACK_AUTHORIZE_URL = "https://slack.com/oauth/v2/authorize";
@@ -265,7 +265,7 @@ export interface SlackMessage {
   blocks: unknown[];
 }
 
-export type SlackDeliveryStatusClass = "2xx" | "4xx" | "5xx" | "other";
+type SlackDeliveryStatusClass = "2xx" | "4xx" | "5xx" | "other";
 
 export interface SlackDeliveryResult {
   ok: boolean;

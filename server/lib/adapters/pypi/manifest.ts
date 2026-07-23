@@ -17,7 +17,7 @@ export function normalizePyPiProjectName(name: string): string {
   return name.toLowerCase().replace(/[-_.]+/g, "-");
 }
 
-export function isValidPyPiProjectName(name: string): boolean {
+function isValidPyPiProjectName(name: string): boolean {
   return (
     typeof name === "string" &&
     name.length > 0 &&
@@ -164,7 +164,7 @@ function parseFileRecord(
   };
 }
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 

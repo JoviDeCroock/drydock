@@ -27,7 +27,7 @@ export function buildNpmFindings(args: {
   ];
 }
 
-export function createStagedMetadataFindings(
+function createStagedMetadataFindings(
   details: StagedPublishDetails | null,
   pkg: PackageJsonSummary | null,
 ): Finding[] {

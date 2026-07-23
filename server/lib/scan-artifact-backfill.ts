@@ -16,8 +16,8 @@ export interface ScanArtifactsBackfillResult {
   nextCursor: string | null;
 }
 
-export const SCAN_ARTIFACT_BACKFILL_DEFAULT_LIMIT = 10;
-export const SCAN_ARTIFACT_BACKFILL_MAX_LIMIT = 50;
+const SCAN_ARTIFACT_BACKFILL_DEFAULT_LIMIT = 10;
+const SCAN_ARTIFACT_BACKFILL_MAX_LIMIT = 50;
 
 type BackfillCandidate = typeof scans.$inferSelect;
 

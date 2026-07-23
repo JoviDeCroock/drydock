@@ -58,7 +58,7 @@ export interface ComputedDiff {
   stagedManifestText: string | null;
 }
 
-export interface FindingAnnotationRecord {
+interface FindingAnnotationRecord {
   findingIndex: number;
   diffStatus: FindingDiffAnnotation["diffStatus"];
   releaseDelta: boolean;

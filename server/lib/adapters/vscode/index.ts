@@ -227,33 +227,18 @@ export function createVscodeExtensionReview(input: {
   };
 }
 
-export { VSCODE_RELEASE_MANIFEST_SCHEMA, VSCODE_RULE_IDS, VSCODE_RULES_VERSION } from "./types";
+export { VSCODE_RULE_IDS, VSCODE_RULES_VERSION } from "./types";
 export type {
-  VscodeAdapterDetails,
   VscodeAdapterInput,
   VscodeArtifactInput,
-  VscodeExtensionManifest,
   VscodeReleaseCandidateReview,
-  VscodeReleaseManifest,
 } from "./types";
 export {
   buildVscodeReleaseManifest,
   extensionIdFromManifest,
   inferVscodeArtifactKind,
   normalizeVsixFiles,
-  packageJsonSummaryForVscode,
-  parseVscodeAdapterInput,
   parseVscodeExtensionManifest,
-  parseVscodeReleaseManifest,
 } from "./manifest";
-export {
-  isAllowedVscodeArtifactUrl,
-  pickVscodeBaselineVersion,
-  vscodeVsixAssetUrl,
-} from "./broker";
-export type {
-  VscodeBroker,
-  VscodeMarketplaceFile,
-  VscodeMarketplaceVersion,
-  VscodePublicArtifactRef,
-} from "./broker";
+export { isAllowedVscodeArtifactUrl, pickVscodeBaselineVersion } from "./broker";
+export type { VscodeBroker } from "./broker";

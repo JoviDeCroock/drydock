@@ -19,7 +19,7 @@ export interface NpmBrokerDownloadOptions {
   maxFiles?: number;
 }
 
-export interface NpmBrokerProps {
+interface NpmBrokerProps {
   organizationId: string;
 }
 

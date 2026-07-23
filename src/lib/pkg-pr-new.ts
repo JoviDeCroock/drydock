@@ -5,8 +5,8 @@
 // (validation, egress allowlist) and the UI (input detection, labels), so this
 // module must stay dependency-free and pure.
 
-export const PKG_PR_NEW_HOST = "pkg.pr.new";
-export const PKG_PR_NEW_ORIGIN = `https://${PKG_PR_NEW_HOST}`;
+const PKG_PR_NEW_HOST = "pkg.pr.new";
+const PKG_PR_NEW_ORIGIN = `https://${PKG_PR_NEW_HOST}`;
 
 export interface PkgPrNewSpec {
   /** Normalized canonical URL (https, no query/hash/credentials). */

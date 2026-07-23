@@ -1,7 +1,7 @@
 import type { DiffEntry, FileRecord, Finding, PackageJsonDiff, RiskLevel } from "./review";
 import type { AiReviewEcosystem } from "./ai-review-contract";
 
-export interface AiFinding {
+interface AiFinding {
   severity: "info" | "low" | "medium" | "high" | "critical";
   file: string;
   evidence: string;
@@ -11,11 +11,7 @@ export interface AiFinding {
 
 export type AiReviewStatus = "complete" | "invalid" | "unavailable";
 
-export type AiReleaseAssessment =
-  | "nothing_unusual"
-  | "review_recommended"
-  | "suspicious"
-  | "blocked";
+type AiReleaseAssessment = "nothing_unusual" | "review_recommended" | "suspicious" | "blocked";
 
 export interface AiReview {
   status: AiReviewStatus;

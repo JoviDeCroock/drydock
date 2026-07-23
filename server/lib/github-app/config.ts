@@ -12,7 +12,7 @@ export interface GithubAppEnv {
 export const SUPPORTED_ECOSYSTEMS = ["pypi", "npm", "vscode"] as const;
 export type SupportedEcosystem = (typeof SUPPORTED_ECOSYSTEMS)[number];
 
-export const INSTALLATION_STATUSES = ["active", "suspended", "uninstalled"] as const;
+const INSTALLATION_STATUSES = ["active", "suspended", "uninstalled"] as const;
 export type InstallationStatus = (typeof INSTALLATION_STATUSES)[number];
 
 // GitHub places a 64KB limit on installation_target/account_login; we cap shorter to
