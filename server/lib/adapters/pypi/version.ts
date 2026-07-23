@@ -58,7 +58,7 @@ export function parsePyPiVersion(version: string): ParsedPyPiVersion | null {
 // Canonical spelling used only for equality, not display. Unparseable legacy
 // versions fall back to a separator-normalized form so "1.0_beta" and
 // "1.0-beta" still compare equal.
-export function pyPiVersionEquivalenceKey(version: string): string {
+function pyPiVersionEquivalenceKey(version: string): string {
   const parsed = parsePyPiVersion(version);
   if (!parsed) {
     return version

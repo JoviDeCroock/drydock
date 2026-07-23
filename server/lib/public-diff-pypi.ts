@@ -50,7 +50,7 @@ const PUBLIC_CACHE_SCOPE = "public";
 // One raw (unredacted) side of a public diff, plus the ecosystem's findings
 // builder. The orchestrator in public-diff.ts owns diffing, redaction, risk,
 // and caching so both ecosystems share one assembly path.
-export interface PublicDiffAcquiredSide {
+interface PublicDiffAcquiredSide {
   files: FileRecord[];
   packageJson: PackageJsonSummary | null;
 }
@@ -279,7 +279,7 @@ function wheelRank(artifact: PyPiRemoteArtifact, otherNamespaces: Set<string>): 
   return 3;
 }
 
-export async function downloadPublicPyPiArtifacts(
+async function downloadPublicPyPiArtifacts(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
   artifacts: PyPiRemoteArtifact[],
