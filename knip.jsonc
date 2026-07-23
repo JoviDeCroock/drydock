@@ -1,0 +1,30 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // Most entry points are discovered by plugins: Wrangler resolves the Worker
+  // (server/index.ts) from wrangler.jsonc `main`, Vite resolves the UI from
+  // index.html, and Vitest/Playwright resolve the test suites. Only the wiring
+  // that plugins can't statically trace is listed here.
+  "entry": [
+    // Maintenance script for the local oxlint plugin; run by hand, never imported.
+    "tooling/oxlint/signals-local/regenerate-suppressions.mjs"
+  ],
+  "ignore": [
+    // Package fixtures are hostile-evidence samples the fixture builder reads as
+    // bytes at runtime; they are never part of the module graph.
+    "test/e2e-fixtures/**",
+    // Lint-rule fixtures deliberately hold "bad" code to exercise the rule.
+    "test/fixtures/oxlint-signals/**"
+  ],
+  "ignoreDependencies": [
+    // `cloudflare:workers` / `cloudflare:test` / `cloudflare:email` are Workers
+    // runtime virtual modules, not the `cloudflare` npm package.
+    "cloudflare",
+    // Referenced only as a JSDoc `import("eslint").Rule` type in the oxlint plugin.
+    "eslint"
+  ],
+  // The agent tour runs Playwright with a second config passed via `--config`
+  // from scripts/agent-tour.mjs, which the plugin can't see from package.json.
+  "playwright": {
+    "config": ["playwright.config.ts", "playwright.agent-tour.config.ts"]
+  }
+}
