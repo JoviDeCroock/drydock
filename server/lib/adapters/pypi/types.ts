@@ -23,7 +23,7 @@ export const PYPI_ARTIFACT_LIMIT = 20;
 
 export type PyPiArtifactKind = "wheel" | "sdist";
 
-export interface PyPiReleaseManifestArtifact {
+interface PyPiReleaseManifestArtifact {
   path: string;
   sha256: string;
   url?: string;

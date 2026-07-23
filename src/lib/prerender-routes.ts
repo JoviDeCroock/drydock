@@ -1,4 +1,4 @@
-export const HYDRATED_PRERENDER_ROUTES = [
+const HYDRATED_PRERENDER_ROUTES = [
   "/",
   "/login",
   "/register",
@@ -7,7 +7,7 @@ export const HYDRATED_PRERENDER_ROUTES = [
   "/diff",
 ] as const;
 
-export const DASHBOARD_SHELL_ROUTES = [
+const DASHBOARD_SHELL_ROUTES = [
   "/dashboard",
   "/dashboard/account",
   "/dashboard/invite",

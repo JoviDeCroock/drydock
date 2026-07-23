@@ -15,7 +15,7 @@ import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
 import { LoadingLine, MonoDetail, Muted, SectionLabel } from "../../../components/Typography";
 
-export function gateStatusTone(status: PublicWorkflowGate["status"]) {
+function gateStatusTone(status: PublicWorkflowGate["status"]) {
   switch (status) {
     case "approved":
       return "ok" as const;
@@ -27,7 +27,7 @@ export function gateStatusTone(status: PublicWorkflowGate["status"]) {
   }
 }
 
-export function gateStatusLabel(status: PublicWorkflowGate["status"]): string {
+function gateStatusLabel(status: PublicWorkflowGate["status"]): string {
   switch (status) {
     case "approved":
       return "approved · job released";

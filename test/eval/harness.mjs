@@ -81,7 +81,7 @@ function normalize(fx, kind, ecosystem) {
   };
 }
 
-export function loadCorpus() {
+function loadCorpus() {
   const regression = [
     ...readCases(join(CORPUS_DIR, "cases")).map((fx) => normalize(fx, "regression", "npm")),
     ...readCases(join(CORPUS_DIR, "cases-pypi")).map((fx) => normalize(fx, "regression", "pypi")),
@@ -272,7 +272,7 @@ function pct(value) {
   return value == null ? "n/a" : `${(value * 100).toFixed(0)}%`;
 }
 
-export function renderMarkdown(result) {
+function renderMarkdown(result) {
   const lines = [];
   lines.push("# Detection eval report");
   lines.push("");

@@ -1,8 +1,8 @@
 import type { ComponentChildren } from "preact";
 import { cn } from "./cn";
 
-export type Severity = "critical" | "high" | "medium" | "low" | "info" | "ok";
-export type Status = "added" | "removed" | "modified" | "unchanged" | "mixed";
+type Severity = "critical" | "high" | "medium" | "low" | "info" | "ok";
+type Status = "added" | "removed" | "modified" | "unchanged" | "mixed";
 export type BadgeTone = Severity | Status | "neutral";
 
 const toneStyles: Record<BadgeTone, string> = {

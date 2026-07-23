@@ -12,16 +12,16 @@ export interface VscodeMarketplaceVersion {
   files: VscodeMarketplaceFile[];
 }
 
-export interface VscodeMarketplaceFile {
+interface VscodeMarketplaceFile {
   assetType: string | null;
   source: string | null;
 }
 
-export interface VscodeBrokerDownloadOptions {
+interface VscodeBrokerDownloadOptions {
   maxFiles?: number;
 }
 
-export interface VscodePublicArtifactRef {
+interface VscodePublicArtifactRef {
   url: string;
 }
 
@@ -124,7 +124,7 @@ export function pickVscodeBaselineVersion(
   };
 }
 
-export function vscodeVsixAssetUrl(version: VscodeMarketplaceVersion): string | null {
+function vscodeVsixAssetUrl(version: VscodeMarketplaceVersion): string | null {
   for (const file of version.files) {
     if (file.assetType !== MARKETPLACE_VSIX_ASSET_TYPE || !file.source) continue;
     return isAllowedVscodeArtifactUrl(file.source) ? file.source : null;

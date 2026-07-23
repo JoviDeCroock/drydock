@@ -17,7 +17,7 @@ export {
 } from "./seo-metadata";
 export type { PageSeoMetadata } from "./seo-metadata";
 
-export interface PrerenderHeadElement {
+interface PrerenderHeadElement {
   type: string;
   props: Record<string, string>;
   children?: string;

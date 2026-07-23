@@ -4,7 +4,7 @@ import { githubWorkflowGates, scans } from "../../db/schema";
 import type { InstallationRecord, ReleaseTargetRecord } from "./persistence";
 import type { ParsedDeploymentProtectionEvent } from "./webhook";
 
-export type WorkflowGateStatus = "pending" | "approved" | "rejected" | "errored";
+type WorkflowGateStatus = "pending" | "approved" | "rejected" | "errored";
 
 export interface WorkflowGateRecord {
   id: string;

@@ -21,7 +21,7 @@ export interface ListAuditEventsOptions {
   limit?: number;
 }
 
-export interface AuditEventRow {
+interface AuditEventRow {
   id: string;
   type: string;
   createdAt: Date;

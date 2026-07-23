@@ -15,7 +15,7 @@ interface ReportExportFilenameInput {
 
 // Schema tag for the exported report document. Bump the suffix when the export
 // shape changes in a way consumers must branch on.
-export const REPORT_EXPORT_SCHEMA = "drydock.report.v1";
+const REPORT_EXPORT_SCHEMA = "drydock.report.v1";
 
 // Build a self-contained, archivable view of a completed review from the data
 // already persisted for it: provenance metadata, package/baseline identity, the

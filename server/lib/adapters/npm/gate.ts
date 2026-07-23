@@ -22,7 +22,7 @@ import {
  * digested, and parsed in the credentials-free sandbox. `files`/`packageJson`
  * are the parsed contents; `sha256` is the reviewed tarball digest.
  */
-export interface NpmGateArtifactInput {
+interface NpmGateArtifactInput {
   path: string;
   sha256: string;
   files: FileRecord[];
@@ -181,6 +181,4 @@ function parseGateArtifact(raw: unknown): NpmGateArtifactInput {
       : {}),
   };
 }
-
-export type { NpmReleaseManifest };
 export { buildNpmReleaseManifest };

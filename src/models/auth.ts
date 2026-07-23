@@ -1,14 +1,14 @@
 import { computed, createModel, signal } from "@preact/signals";
 import { errorMessage } from "./api";
 
-export interface SessionUser {
+interface SessionUser {
   id: string;
   name?: string;
   email?: string;
   twoFactorEnabled?: boolean;
 }
 
-export interface AuthSession {
+interface AuthSession {
   user: SessionUser;
   session?: unknown;
 }
@@ -16,7 +16,7 @@ export interface AuthSession {
 // Where the verification link returns the user after they click it. Better Auth
 // embeds this as the callbackURL in the emailed link; on success it redirects
 // here (signed in), on failure it appends `?error=<code>`.
-export const VERIFY_EMAIL_CALLBACK_PATH = "/verify-email";
+const VERIFY_EMAIL_CALLBACK_PATH = "/verify-email";
 
 export function verificationCallbackPath(returnTo?: string): string {
   if (!returnTo || returnTo === "/dashboard") return VERIFY_EMAIL_CALLBACK_PATH;
@@ -34,7 +34,7 @@ export class AuthError extends Error {
   }
 }
 
-export const SessionModel = createModel(() => {
+const SessionModel = createModel(() => {
   const session = signal<AuthSession | null>(null);
   const loaded = signal(false);
   const error = signal<string | null>(null);

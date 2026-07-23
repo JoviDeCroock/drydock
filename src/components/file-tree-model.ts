@@ -4,7 +4,7 @@ import { maxSeverity } from "./diff-annotations";
 // Pure tree model for FileTree. Kept JSX-free so the path nesting, status
 // aggregation, and finding-count bubbling are unit-testable without rendering.
 
-export type FileStatus = "added" | "removed" | "modified" | "unchanged";
+type FileStatus = "added" | "removed" | "modified" | "unchanged";
 export type FolderStatus = FileStatus | "mixed";
 
 // Per-file finding counts (count + highest severity for tone), keyed by path.
@@ -30,7 +30,7 @@ export interface FolderNode {
   children: Array<FileNode | FolderNode>;
 }
 
-export function aggregateStatus(children: Array<FileNode | FolderNode>): FolderStatus {
+function aggregateStatus(children: Array<FileNode | FolderNode>): FolderStatus {
   if (!children.length) return "unchanged";
   const statuses = new Set<FolderStatus>();
   for (const child of children) statuses.add(child.status);

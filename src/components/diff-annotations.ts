@@ -27,7 +27,7 @@ export function severityGroup(severity: string): SeverityGroup {
 // Severity ordering for "highest wins" aggregation (file-tree finding counts
 // bubble the max severity up to parent folders for tone). Unknown severities
 // rank below ok so a recognized severity always wins.
-export const SEVERITY_RANK: Record<string, number> = {
+const SEVERITY_RANK: Record<string, number> = {
   critical: 5,
   high: 4,
   medium: 3,

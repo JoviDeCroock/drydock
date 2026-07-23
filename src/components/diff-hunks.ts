@@ -20,12 +20,12 @@ export interface HunkRowLike {
   afterLine: number | null;
 }
 
-export interface RowSegment {
+interface RowSegment {
   kind: "row";
   index: number;
 }
 
-export interface GapSegment {
+interface GapSegment {
   kind: "gap";
   key: string;
   hiddenCount: number;

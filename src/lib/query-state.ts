@@ -19,7 +19,7 @@ export function buildQueryUrl(updates: QueryUpdates): string {
   return window.location.pathname + (search ? `?${search}` : "");
 }
 
-export function currentLocationKey(): string {
+function currentLocationKey(): string {
   return window.location.pathname + window.location.search;
 }
 

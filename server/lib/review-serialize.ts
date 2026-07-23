@@ -16,9 +16,9 @@ export interface PackageJsonSummary {
   exports?: unknown;
 }
 
-export type DependencySection = "dependencies" | "optionalDependencies" | "peerDependencies";
+type DependencySection = "dependencies" | "optionalDependencies" | "peerDependencies";
 
-export interface PackageJsonDiffEntry {
+interface PackageJsonDiffEntry {
   key: string;
   status: "added" | "removed" | "modified";
   previous?: string;

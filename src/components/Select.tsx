@@ -2,7 +2,7 @@ import type { ComponentChildren, JSX } from "preact";
 import type { Signal } from "@preact/signals";
 import { cn } from "./cn";
 
-export type SelectSize = "sm" | "md";
+type SelectSize = "sm" | "md";
 
 const sizeStyles: Record<SelectSize, string> = {
   sm: "text-xs leading-none pl-2.5 pr-8 py-1.5",

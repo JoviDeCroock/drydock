@@ -8,7 +8,7 @@
 // This signal is display-only context. It never modifies `risk`, the risk
 // breakdown, or any finding — deterministic findings stay authoritative.
 
-export type ReleaseConsistencyStatus = "match" | "subset" | "diverged" | "none";
+type ReleaseConsistencyStatus = "match" | "subset" | "diverged" | "none";
 
 export interface FindingProfileEntry {
   ruleId: string;

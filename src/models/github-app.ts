@@ -16,7 +16,7 @@ export interface PublicGithubAppInstallation {
   updatedAt: string;
 }
 
-export type SupportedEcosystem = "pypi" | "npm" | "vscode";
+type SupportedEcosystem = "pypi" | "npm" | "vscode";
 
 export interface PublicReleaseTarget {
   id: string;
@@ -35,7 +35,7 @@ export interface PublicReleaseTarget {
   updatedAt: string;
 }
 
-export type WorkflowGateStatus = "pending" | "approved" | "rejected" | "errored";
+type WorkflowGateStatus = "pending" | "approved" | "rejected" | "errored";
 export type WorkflowGateDecision = "approved" | "rejected";
 export type GatePackageDecision = "publish" | "no_publish";
 

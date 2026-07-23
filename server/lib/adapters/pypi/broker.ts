@@ -2,11 +2,11 @@ import type { DownloadResult } from "../../sandbox";
 import type { AdapterBroker, AdapterConnectionRef, AdapterContext } from "../types";
 import type { PyPiArtifactKind, PyPiProjectMetadata } from "./types";
 
-export interface PyPiBrokerDownloadOptions {
+interface PyPiBrokerDownloadOptions {
   maxFiles?: number;
 }
 
-export interface PyPiPublicArtifactRef {
+interface PyPiPublicArtifactRef {
   url: string;
   kind: PyPiArtifactKind;
 }

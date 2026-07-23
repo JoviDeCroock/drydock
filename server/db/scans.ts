@@ -54,7 +54,7 @@ export interface PersistedScanInput {
   artifacts?: ScanArtifactMetadata | null;
 }
 
-export interface ScanRiskSummary {
+interface ScanRiskSummary {
   artifactRisk: string;
   releaseRisk: string;
   contextRisk: string;
@@ -81,7 +81,7 @@ export interface CreateScanJobInput {
   stagedVersion?: string | null;
 }
 
-export const SCAN_SOURCES = ["manual", "auto_discovery", "workflow_gate"] as const;
+const SCAN_SOURCES = ["manual", "auto_discovery", "workflow_gate"] as const;
 export type ScanSource = (typeof SCAN_SOURCES)[number];
 
 export async function createScanJob(db: AppDb, input: CreateScanJobInput) {

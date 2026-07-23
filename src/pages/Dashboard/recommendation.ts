@@ -1,4 +1,4 @@
-export type RecommendationTone = "critical" | "high" | "medium" | "ok" | "neutral";
+type RecommendationTone = "critical" | "high" | "medium" | "ok" | "neutral";
 
 export interface ReleaseRecommendationCopy {
   label: string;

@@ -43,7 +43,7 @@ export function getPublicDiffVersions(packageName: string): Promise<PublicDiffVe
   );
 }
 
-export function getPublicDiff(
+function getPublicDiff(
   packageName: string,
   fromVersion: string,
   toVersion: string,
@@ -51,7 +51,7 @@ export function getPublicDiff(
   return apiFetch(`/api/public/v1/package-diff?${diffQuery(packageName, fromVersion, toVersion)}`);
 }
 
-export function getPublicDiffFile(
+function getPublicDiffFile(
   packageName: string,
   fromVersion: string,
   toVersion: string,

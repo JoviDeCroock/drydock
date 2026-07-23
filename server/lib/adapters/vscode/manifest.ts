@@ -127,7 +127,7 @@ export function buildVscodeReleaseManifest(
   });
 }
 
-export function parseVscodeReleaseManifest(value: unknown): VscodeReleaseManifest {
+function parseVscodeReleaseManifest(value: unknown): VscodeReleaseManifest {
   if (!isRecord(value)) throw new Error("manifest must be an object");
   if (value.schema !== VSCODE_RELEASE_MANIFEST_SCHEMA) {
     throw new Error(`manifest schema must be ${VSCODE_RELEASE_MANIFEST_SCHEMA}`);
@@ -254,13 +254,13 @@ function isSafeExtensionId(value: string): boolean {
   return SAFE_PUBLISHER_RE.test(parts[0]) && SAFE_EXTENSION_NAME_RE.test(parts[1]);
 }
 
-export function isSafeManifestPath(path: string): boolean {
+function isSafeManifestPath(path: string): boolean {
   if (!path || path.length > 512 || path.includes("\0") || path.includes("\\")) return false;
   if (path.startsWith("/") || path.startsWith("../") || path.includes("/../")) return false;
   if (/^[A-Za-z]:/.test(path)) return false;
   return path.split("/").every((part) => part && part !== "." && part !== "..");
 }
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -45,7 +45,7 @@ export interface ScanFileResponse {
 export type ScanDecision = "publish" | "no_publish";
 export type ScanDecisionFilter = "undecided" | "publish" | "no_publish" | "all";
 
-export interface ScanRiskSummary {
+interface ScanRiskSummary {
   artifactRisk: string;
   releaseRisk: string;
   contextRisk: string;
@@ -133,7 +133,7 @@ export interface ListScansResponse {
   limit: number;
 }
 
-export function listScans(
+function listScans(
   options: { cursor?: string | null; filter?: ScanDecisionFilter; limit?: number } = {},
 ): Promise<ListScansResponse> {
   const params = new URLSearchParams();
@@ -144,7 +144,7 @@ export function listScans(
   return apiFetch<ListScansResponse>(`/api/v1/scans${qs ? `?${qs}` : ""}`);
 }
 
-export function setScanDecision(
+function setScanDecision(
   id: string,
   decision: ScanDecision,
   reason: string | null,
@@ -155,39 +155,36 @@ export function setScanDecision(
   });
 }
 
-export function deleteScan(id: string): Promise<{ ok: true; id: string }> {
+function deleteScan(id: string): Promise<{ ok: true; id: string }> {
   return apiFetch<{ ok: true; id: string }>(`/api/v1/scans/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
 }
 
-export function getScan(
-  id: string,
-  options: { poll?: boolean } = {},
-): Promise<PersistedScanDetail> {
+function getScan(id: string, options: { poll?: boolean } = {}): Promise<PersistedScanDetail> {
   const suffix = options.poll ? "?poll=1" : "";
   return apiFetch<PersistedScanDetail>(`/api/v1/scans/${encodeURIComponent(id)}${suffix}`);
 }
 
-export function getScanStatus(id: string): Promise<ScanStatusResponse> {
+function getScanStatus(id: string): Promise<ScanStatusResponse> {
   return apiFetch<ScanStatusResponse>(`/api/v1/scans/${encodeURIComponent(id)}/status`);
 }
 
-export function getScanFile(id: string, path: string): Promise<ScanFileResponse> {
+function getScanFile(id: string, path: string): Promise<ScanFileResponse> {
   const query = `?path=${encodeURIComponent(path)}`;
   return apiFetch<ScanFileResponse>(`/api/v1/scans/${encodeURIComponent(id)}/file${query}`);
 }
 
-export function getScanVersions(id: string): Promise<ScanVersionsResponse> {
+function getScanVersions(id: string): Promise<ScanVersionsResponse> {
   return apiFetch<ScanVersionsResponse>(`/api/v1/scans/${encodeURIComponent(id)}/versions`);
 }
 
-export function getScanCompare(id: string, version: string): Promise<ScanCompareResponse> {
+function getScanCompare(id: string, version: string): Promise<ScanCompareResponse> {
   const query = `?version=${encodeURIComponent(version)}`;
   return apiFetch<ScanCompareResponse>(`/api/v1/scans/${encodeURIComponent(id)}/compare${query}`);
 }
 
-export function getScanCompareFile(
+function getScanCompareFile(
   id: string,
   version: string,
   path: string,

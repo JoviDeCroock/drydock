@@ -17,7 +17,7 @@ export const encoder = new TextEncoder();
 
 // Each header is exactly 512 bytes; entry bodies are zero-padded to a multiple
 // of 512. The archive is terminated with two zero blocks.
-export const TAR_BLOCK = 512;
+const TAR_BLOCK = 512;
 
 function pad(bytes, length) {
   if (bytes.length > length) throw new Error("field overflow: " + bytes.length + " > " + length);
@@ -31,7 +31,7 @@ function octal(value, length) {
   return pad(encoder.encode(text + "\0"), length);
 }
 
-export function tarHeader({ name = "", size = 0, type = "0", prefix = "" }) {
+function tarHeader({ name = "", size = 0, type = "0", prefix = "" }) {
   const buf = new Uint8Array(TAR_BLOCK);
   buf.set(pad(encoder.encode(name), 100), 0);
   buf.set(pad(encoder.encode("0000644"), 8), 100); // mode

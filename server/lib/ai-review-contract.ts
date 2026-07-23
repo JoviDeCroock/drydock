@@ -128,10 +128,10 @@ export const MAX_TOTAL_TOOL_RESPONSE_CHARS = 48_000;
 // Low-signal releases can lead with the faster fallback model; beyond this many
 // changed files, keep the strong model first.
 export const MAX_LOW_SIGNAL_CHANGED_FILES = 5;
-export const DEFAULT_TOOL_CHARS = 8_000;
-export const MAX_READ_BATCH_PATHS = 10;
-export const MAX_SEARCH_QUERIES = 5;
-export const MAX_SEARCH_RESULTS = 20;
+const DEFAULT_TOOL_CHARS = 8_000;
+const MAX_READ_BATCH_PATHS = 10;
+const MAX_SEARCH_QUERIES = 5;
+const MAX_SEARCH_RESULTS = 20;
 export const SEARCH_SNIPPET_RADIUS = 140;
 // Unchanged-run context kept on each side of a change when rendering diffs.
 export const DIFF_CONTEXT_LINES = 3;
@@ -148,7 +148,7 @@ const releaseAssessmentSchema = z.enum([
 
 // Shared by the schema and `clampAiReviewSubmission` so both enforce the exact
 // same limits. Sized to keep a worst-case submission inside MAX_REVIEW_OUTPUT_TOKENS.
-export const AI_REVIEW_BOUNDS = {
+const AI_REVIEW_BOUNDS = {
   summary: 1_000,
   file: 300,
   evidence: 600,
@@ -261,7 +261,7 @@ const persistedAiFindingSchema = z.object({
   recommendation: z.string(),
 });
 
-export const persistedAiReviewSchema = z.object({
+const persistedAiReviewSchema = z.object({
   status: z.enum(["complete", "invalid", "unavailable"]),
   risk: riskSchema,
   releaseAssessment: z.enum([

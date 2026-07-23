@@ -2,7 +2,7 @@ import type { ComponentChildren } from "preact";
 import { Badge, severityTone, statusTone } from "./Badge";
 import { cn } from "./cn";
 
-export function FileRef({
+function FileRef({
   file,
   onSelect,
   class: className,
