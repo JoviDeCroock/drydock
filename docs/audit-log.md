@@ -59,7 +59,8 @@ Flat 90-day window (`AUDIT_LOG_RETENTION_DAYS`). `pruneAuditEventsOlderThan`
 (`server/db/audit-log.ts`) runs each scheduled tick from the Worker's `scheduled`
 handler, after the discovery sweep. Because lifecycle/discovery churn is no
 longer written, retention is a single age sweep across all rows rather than a
-type-restricted one.
+type-restricted one. The sweep's bare `createdAt` predicate is backed by the
+`scan_events_created_idx` index, so it never scans the whole table.
 
 ## UI
 

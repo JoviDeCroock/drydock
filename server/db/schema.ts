@@ -191,6 +191,9 @@ export const scans = sqliteTable(
       table.createdAt,
       table.id,
     ),
+    // Account deletion nulls decided_by_user_id by user id, and D1 enforces the
+    // user FK on delete; without this index both walk the whole table.
+    decidedByIdx: index("scans_decided_by_idx").on(table.decidedByUserId),
   }),
 );
 
@@ -250,6 +253,12 @@ export const scanEvents = sqliteTable(
   (table) => ({
     orgCreatedIdx: index("scan_events_org_created_idx").on(table.organizationId, table.createdAt),
     scanIdx: index("scan_events_scan_idx").on(table.scanId),
+    // The retention sweep deletes by bare created_at; the (org, created_at)
+    // index cannot serve that, so without this it scans the whole audit table.
+    createdIdx: index("scan_events_created_idx").on(table.createdAt),
+    // Account deletion nulls actor_user_id by user id, and D1 enforces the user
+    // FK on delete; both need a direct index on the column.
+    actorIdx: index("scan_events_actor_idx").on(table.actorUserId),
   }),
 );
 
@@ -480,14 +489,22 @@ export const account = sqliteTable(
   }),
 );
 
-export const verification = sqliteTable("verification", {
-  id: text("id").primaryKey(),
-  identifier: text("identifier").notNull(),
-  value: text("value").notNull(),
-  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
-  createdAt: integer("created_at", { mode: "timestamp_ms" }),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
-});
+export const verification = sqliteTable(
+  "verification",
+  {
+    id: text("id").primaryKey(),
+    identifier: text("identifier").notNull(),
+    value: text("value").notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
+  },
+  (table) => ({
+    // Better Auth resolves verification values by identifier on every
+    // email-verification / password-reset / step-up flow.
+    identifierIdx: index("verification_identifier_idx").on(table.identifier),
+  }),
+);
 
 export const twoFactor = sqliteTable(
   "two_factor",
