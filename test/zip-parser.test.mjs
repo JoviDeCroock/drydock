@@ -135,6 +135,59 @@ describe("readZipStream", () => {
     ]);
   });
 
+  test("demotes bodies past the full-inspection tier instead of failing the parse", async () => {
+    // Two-tier cap: maxFiles bounds text retention, maxEntries bounds the
+    // walk. Platform wheels with thousands of files parse; tail files are
+    // hash-only with a single archive-level notice.
+    const zip = buildZip([
+      { path: "demo/a.py", body: "a = 1\n" },
+      { path: "demo/b.py", body: "b = 2\n" },
+      { path: "demo/c.py", body: "c = 3\n" },
+      { path: "demo/d.py", body: "d = 4\n" },
+    ]);
+    const { files, suspicious } = await readZipStream(chunkedStream(zip), 2, 1024, 1 << 20, 10);
+    expect(files).toHaveLength(4);
+    expect(files[0].textSample).toBe("a = 1\n");
+    expect(files[1].textSample).toBe("b = 2\n");
+    for (const tail of files.slice(2)) {
+      expect(tail.flags).toContain("content-skipped");
+      expect(tail.textSample).toBeUndefined();
+      expect(tail.sha256).toMatch(/^[0-9a-f]{64}$/);
+    }
+    expect(suspicious).toEqual([
+      expect.objectContaining({
+        kind: "retention-tier",
+        path: "<archive>",
+        detail: expect.stringContaining("2-file full-inspection tier"),
+      }),
+    ]);
+    expect(suspicious[0].detail).toContain("2 additional file bodies");
+  });
+
+  test("still fails the parse past the hard entry cap", async () => {
+    const zip = buildZip(
+      Array.from({ length: 6 }, (_, i) => ({ path: `demo/f${i}.py`, body: "x\n" })),
+    );
+    await expect(readZipStream(chunkedStream(zip), 2, 1024, 1 << 20, 5)).rejects.toThrow(
+      /archive contains too many files/,
+    );
+  });
+
+  test("retains a wheel METADATA past the full-inspection tier", async () => {
+    const zip = buildZip([
+      { path: "demo/a.py", body: "a = 1\n" },
+      { path: "demo/b.py", body: "b = 2\n" },
+      {
+        path: "demo-1.0.0.dist-info/METADATA",
+        body: "Metadata-Version: 2.3\nName: demo\nVersion: 1.0.0\n",
+      },
+    ]);
+    const { files } = await readZipStream(chunkedStream(zip), 2, 1024, 1 << 20, 10);
+    const manifest = files.find((file) => file.path.endsWith("METADATA"));
+    expect(manifest?.textSample).toContain("Name: demo");
+    expect(manifest?.flags ?? []).not.toContain("content-skipped");
+  });
+
   test("hashes an oversized deflated entry through streaming inflate", async () => {
     const big = new Uint8Array(4096);
     for (let i = 0; i < big.length; i += 1) big[i] = i % 251;

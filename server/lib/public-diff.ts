@@ -63,6 +63,9 @@ export interface PublicPackageDiff {
   findings: Array<Finding & FindingDiffAnnotation>;
   risk: ScanRiskBreakdown;
   textSamplesOmitted?: boolean;
+  // Coverage caveats from acquisition (e.g. a PyPI artifact kind omitted from
+  // both sides because it exceeded a sandbox cap). Rendered as a banner.
+  notices?: string[];
   cachedAt: string;
 }
 
@@ -79,12 +82,15 @@ export interface PublicDiffInput {
 const PUBLIC_DIFF_RISK_VERSION = "1";
 // v3: ecosystem-aware payloads. Each ecosystem carries its own rules-version
 // segment so a PyPI rules bump does not invalidate cached npm pairs.
+// v4: two-tier sandbox entry cap — big archives now parse with hash-only
+// tails, and payloads carry acquisition notices; cached v3 pairs would
+// misrepresent both.
 function publicDiffCachePrefix(ecosystem: PublicDiffEcosystem): string {
   const rules =
     ecosystem === "pypi"
       ? `${DETERMINISTIC_RULES_VERSION}+pypi-${PYPI_RULES_VERSION}`
       : DETERMINISTIC_RULES_VERSION;
-  return `public-diff:v3:${ecosystem}:rules=${rules}:risk=${PUBLIC_DIFF_RISK_VERSION}:`;
+  return `public-diff:v4:${ecosystem}:rules=${rules}:risk=${PUBLIC_DIFF_RISK_VERSION}:`;
 }
 // Package bytes are immutable, while the analysis version is encoded above.
 // The TTL therefore bounds storage rather than correctness.
@@ -194,6 +200,7 @@ export async function loadPublicPackageDiff(
     packageJsonDiff: manifestDiff,
     findings,
     risk,
+    ...(sources.notices?.length ? { notices: sources.notices } : {}),
     cachedAt: new Date().toISOString(),
   };
   await writePublicDiffCache(env, cacheKey, payload, {

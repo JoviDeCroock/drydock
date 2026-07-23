@@ -577,7 +577,16 @@ describe("readTar limits and malformed archives", () => {
     expect(files[0].sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(files[1].sha256).toBe(await tarParser.sha256Hex(bodyB));
     expect(files[1].flags).toEqual(["content-skipped"]);
-    expect(suspicious.map((s) => s.kind)).toEqual(["content-skipped"]);
+    // Bulk budget demotions aggregate into one archive-level notice instead of
+    // one suspicious entry (and finding) per demoted file.
+    expect(suspicious).toEqual([
+      expect.objectContaining({
+        kind: "retention-tier",
+        path: "<archive>",
+        detail: expect.stringContaining("cumulative retention budget"),
+      }),
+    ]);
+    expect(suspicious[0].detail).toContain("1 additional file bodies");
   });
 
   test("retains package.json even after earlier entries consume the retention budget", async () => {
@@ -603,8 +612,9 @@ describe("readTar limits and malformed archives", () => {
     expect(files.find((file) => file.path === "install.js")?.flags).toEqual(["content-skipped"]);
     expect(suspicious).toEqual([
       expect.objectContaining({
-        kind: "content-skipped",
-        path: "install.js",
+        kind: "retention-tier",
+        path: "<archive>",
+        detail: expect.stringContaining("cumulative retention budget"),
       }),
     ]);
   });
@@ -735,7 +745,7 @@ describe("readTar limits and malformed archives", () => {
     expect(manifest?.flags ?? []).not.toContain("content-skipped");
   });
 
-  test("distinguishes per-file-limit skips from cumulative-budget skips in the detail", async () => {
+  test("distinguishes per-file-limit skips from cumulative-budget skips", async () => {
     const limits = { maxFiles: 100, maxTarBytes: 1024 };
     const tar = buildTar([
       { name: "package/huge.node", body: new Uint8Array(2048).fill(0x42) },
@@ -743,10 +753,80 @@ describe("readTar limits and malformed archives", () => {
       { name: "package/late.js", body: "x".repeat(100) },
     ]);
     const { suspicious } = await parseFull(tar, limits);
+    // Oversized bodies keep their per-file entry (the notable prepackaged-
+    // binary pattern); the bulk budget demotion is one archive-level notice.
     const huge = suspicious.find((s) => s.path === "huge.node");
     const late = suspicious.find((s) => s.path === "late.js");
     expect(huge.detail).toContain("per-file inspection limit");
-    expect(late.detail).toContain("cumulative retention budget");
+    expect(late).toBeUndefined();
+    const budget = suspicious.find((s) => s.kind === "retention-tier");
+    expect(budget.path).toBe("<archive>");
+    expect(budget.detail).toContain("cumulative retention budget");
+  });
+
+  test("demotes bodies past the full-inspection tier instead of failing the parse", async () => {
+    // Two-tier cap: maxFiles bounds text retention, maxEntries bounds the walk.
+    // numpy's sdist (8k+ files, mostly vendored build system) is the shape this
+    // exists for — the archive parses, and tail files are hash-only.
+    const limits = { maxFiles: 2, maxTarBytes: 1 << 20 };
+    const tar = buildTar([
+      { name: "package/a.js", body: "const a = 1;\n" },
+      { name: "package/b.js", body: "const b = 2;\n" },
+      { name: "package/c.js", body: "const c = 3;\n" },
+      { name: "package/d.js", body: "const d = 4;\n" },
+    ]);
+    const { files, suspicious } = await tarParser.readTarStream(
+      new Response(tar).body,
+      limits.maxFiles,
+      limits.maxTarBytes,
+      Infinity,
+      10,
+    );
+    expect(files).toHaveLength(4);
+    expect(files[0].textSample).toContain("const a");
+    expect(files[1].textSample).toContain("const b");
+    for (const tail of files.slice(2)) {
+      expect(tail.flags).toContain("content-skipped");
+      expect(tail.textSample).toBeUndefined();
+      expect(tail.sha256).toMatch(/^[0-9a-f]{64}$/);
+    }
+    expect(suspicious).toEqual([
+      expect.objectContaining({
+        kind: "retention-tier",
+        path: "<archive>",
+        detail: expect.stringContaining("2-file full-inspection tier"),
+      }),
+    ]);
+    expect(suspicious[0].detail).toContain("2 additional file bodies");
+  });
+
+  test("still fails the parse past the hard entry cap", async () => {
+    const tar = buildTar(
+      Array.from({ length: 6 }, (_, i) => ({ name: `package/f${i}.js`, body: "x\n" })),
+    );
+    await expect(
+      tarParser.readTarStream(new Response(tar).body, 2, 1 << 20, Infinity, 5),
+    ).rejects.toThrow(/archive contains too many files/);
+  });
+
+  test("retains manifests past the full-inspection tier", async () => {
+    // Identity evidence must not be starved by an archive padded with files:
+    // PKG-INFO arrives after the tier is filled and must still carry text.
+    const tar = buildTar([
+      { name: "foo-1.0.0/a.js", body: "const a = 1;\n" },
+      { name: "foo-1.0.0/b.js", body: "const b = 2;\n" },
+      { name: "foo-1.0.0/PKG-INFO", body: "Metadata-Version: 2.1\nName: foo\nVersion: 1.0.0\n" },
+    ]);
+    const { files } = await tarParser.readTarStream(
+      new Response(tar).body,
+      2,
+      1 << 20,
+      Infinity,
+      10,
+    );
+    const manifest = files.find((file) => file.path.endsWith("PKG-INFO"));
+    expect(manifest?.textSample).toContain("Name: foo");
+    expect(manifest?.flags ?? []).not.toContain("content-skipped");
   });
 
   test("releases a replaced duplicate's bytes so later files are not needlessly skipped", async () => {

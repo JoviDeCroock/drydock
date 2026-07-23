@@ -8,7 +8,9 @@ import { PublicDiffError } from "../../server/lib/public-diff-error";
 import {
   buildPublicPyPiDiffSources,
   listPublicPyPiVersions,
+  resolvePublicPyPiDownloads,
   selectPublicPyPiDiffArtifacts,
+  type PublicPyPiArtifactDownload,
 } from "../../server/lib/public-diff-pypi";
 import { createPackageDiff, type FileRecord } from "../../server/lib/review";
 
@@ -289,5 +291,77 @@ describe("buildPublicPyPiDiffSources", () => {
       "evil-dep": "(>=1.0)",
     });
     expect(sources.codePatternSet).toBe("python");
+  });
+});
+
+function download(
+  kind: "sdist" | "wheel",
+  version: string,
+  outcome: { error?: PublicDiffError } = {},
+): PublicPyPiArtifactDownload {
+  const filename =
+    kind === "sdist" ? `demo_pkg-${version}.tar.gz` : `demo_pkg-${version}-py3-none-any.whl`;
+  return {
+    artifact: {
+      filename,
+      url: `${HOST}/${filename}`,
+      sha256: "a".repeat(64),
+      packagetype: kind === "sdist" ? "sdist" : "bdist_wheel",
+      kind,
+      size: 10,
+    },
+    input: outcome.error ? null : { path: filename, files: wheelFiles(version) },
+    error: outcome.error ?? null,
+  };
+}
+
+describe("resolvePublicPyPiDownloads", () => {
+  const tooManyFiles = new PublicDiffError("package has too many files to diff", 413);
+
+  test("drops an over-cap artifact kind from both sides and surfaces a notice", () => {
+    // The numpy shape: the sdist blows a sandbox cap on one side while both
+    // wheels are fine. The diff must degrade to wheel-vs-wheel, not fail and
+    // not render the surviving sdist as a wholesale add/remove.
+    const resolved = resolvePublicPyPiDownloads(
+      [download("sdist", "1.0.0"), download("wheel", "1.0.0")],
+      [download("sdist", "1.1.0", { error: tooManyFiles }), download("wheel", "1.1.0")],
+    );
+
+    expect(resolved.from.map((input) => input.path)).toEqual(["demo_pkg-1.0.0-py3-none-any.whl"]);
+    expect(resolved.to.map((input) => input.path)).toEqual(["demo_pkg-1.1.0-py3-none-any.whl"]);
+    expect([...resolved.omittedKinds]).toEqual(["sdist"]);
+    expect(resolved.notices).toEqual([
+      "The source distribution (sdist) could not be scanned (package has too many files to diff), so sdist files are omitted from both sides of this diff.",
+    ]);
+  });
+
+  test("keeps transient failures fatal instead of degrading silently", () => {
+    const downloadFailed = new PublicDiffError("package download failed", 502);
+    expect(() =>
+      resolvePublicPyPiDownloads(
+        [download("sdist", "1.0.0"), download("wheel", "1.0.0")],
+        [download("sdist", "1.1.0", { error: downloadFailed }), download("wheel", "1.1.0")],
+      ),
+    ).toThrowError("package download failed");
+  });
+
+  test("fails with the capacity error when nothing survives on a side", () => {
+    expect(() =>
+      resolvePublicPyPiDownloads(
+        [download("sdist", "1.0.0")],
+        [download("sdist", "1.1.0", { error: tooManyFiles })],
+      ),
+    ).toThrowError("package has too many files to diff");
+  });
+
+  test("passes clean downloads through untouched", () => {
+    const resolved = resolvePublicPyPiDownloads(
+      [download("sdist", "1.0.0"), download("wheel", "1.0.0")],
+      [download("sdist", "1.1.0"), download("wheel", "1.1.0")],
+    );
+    expect(resolved.from).toHaveLength(2);
+    expect(resolved.to).toHaveLength(2);
+    expect(resolved.omittedKinds.size).toBe(0);
+    expect(resolved.notices).toEqual([]);
   });
 });

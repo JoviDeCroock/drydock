@@ -287,6 +287,7 @@ publicDiffRoutes.get("/", async (c) => {
       findings: payload.findings,
       risk: payload.risk,
       textSamplesOmitted: payload.textSamplesOmitted ?? false,
+      notices: payload.notices ?? [],
       cachedAt: payload.cachedAt,
     },
     200,

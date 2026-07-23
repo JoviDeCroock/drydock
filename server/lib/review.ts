@@ -114,6 +114,12 @@ function tarSuspiciousSeverity(entry: TarSuspiciousEntry): Finding["severity"] {
   if (entry.kind === "non-regular") {
     return entry.detail.includes("(directory)") ? "info" : "high";
   }
+  // Coverage disclosure, not suspicion: every large-but-honest archive (numpy
+  // vendors its whole build system) crosses the retention tiers, and a medium
+  // here would brand each of its releases as elevated risk. The per-file
+  // "changed but not inspected" diff status is the control that keeps a
+  // payload buried past the tier visible.
+  if (entry.kind === "retention-tier") return "info";
   return "medium";
 }
 
@@ -134,6 +140,8 @@ function tarSuspiciousReason(entry: TarSuspiciousEntry, dialect: "npm" | "pypi")
       return "path contains zero-width or visually-confusable characters; the consumer's tar implementation may canonicalize this differently than the reviewer and let it bypass deterministic file checks";
     case "content-skipped":
       return "file body exceeded the scanner's retention limit, so only its path, size, and content hash were recorded; the content was never inspected — the diff's baseline hash comparison shows whether it changed, and its contents must be verified through provenance or out-of-band review";
+    case "retention-tier":
+      return "the archive is larger than the scanner's full-inspection tier, so some file bodies were recorded hash-only and never content-inspected; the diff's baseline hash comparison still shows whether each one changed, and changed-but-uninspected files must be verified through provenance or out-of-band review";
   }
 }
 

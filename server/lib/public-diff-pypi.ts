@@ -62,6 +62,9 @@ export interface PublicDiffAcquiredSources {
   // re-runs the deterministic rules and must use the same set the findings
   // were built with, or unchanged capabilities get marked as release deltas.
   codePatternSet?: CodePatternSet;
+  // Human-readable coverage caveats (e.g. an artifact kind omitted because it
+  // exceeded a sandbox cap), surfaced verbatim on the diff response.
+  notices?: string[];
   buildFindings(fileDiff: DiffEntry[], manifestDiff: PackageJsonDiff): Finding[];
 }
 
@@ -279,13 +282,19 @@ function wheelRank(artifact: PyPiRemoteArtifact, otherNamespaces: Set<string>): 
   return 3;
 }
 
+export interface PublicPyPiArtifactDownload {
+  artifact: PyPiRemoteArtifact;
+  input: PyPiArtifactInput | null;
+  error: PublicDiffError | null;
+}
+
 async function downloadPublicPyPiArtifacts(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
   artifacts: PyPiRemoteArtifact[],
-): Promise<PyPiArtifactInput[]> {
+): Promise<PublicPyPiArtifactDownload[]> {
   return Promise.all(
-    artifacts.map(async (artifact) => {
+    artifacts.map(async (artifact): Promise<PublicPyPiArtifactDownload> => {
       if (!isAllowedPyPiArtifactUrl(artifact.url)) {
         throw new PublicDiffError("registry returned an unexpected artifact URL", 502);
       }
@@ -302,12 +311,18 @@ async function downloadPublicPyPiArtifacts(
           publicArtifactUrls: [artifact.url],
         });
         return {
-          path: artifact.filename,
-          files: result.files,
-          ...(result.suspiciousEntries ? { suspiciousEntries: result.suspiciousEntries } : {}),
+          artifact,
+          input: {
+            path: artifact.filename,
+            files: result.files,
+            ...(result.suspiciousEntries ? { suspiciousEntries: result.suspiciousEntries } : {}),
+          },
+          error: null,
         };
       } catch (err) {
-        throw publicDiffDownloadError(err);
+        // Per-artifact capture instead of a throw: the caller decides whether
+        // a capacity failure dooms the whole diff or just this artifact kind.
+        return { artifact, input: null, error: publicDiffDownloadError(err) };
       }
     }),
   );
@@ -371,18 +386,90 @@ export async function acquirePublicPyPiDiff(
 ): Promise<PublicDiffAcquiredSources> {
   const metadata = await fetchPublicPyPiProjectMetadata(env, ctx, input.packageName);
   const selection = selectPublicPyPiDiffArtifacts(metadata, input.fromVersion, input.toVersion);
-  const [from, to] = await Promise.all([
+  const [fromDownloads, toDownloads] = await Promise.all([
     downloadPublicPyPiArtifacts(env, ctx, selection.from),
     downloadPublicPyPiArtifacts(env, ctx, selection.to),
   ]);
-  return buildPublicPyPiDiffSources({
-    packageName: metadata.info?.name ?? input.packageName,
-    fromVersion: input.fromVersion,
-    toVersion: input.toVersion,
-    from,
-    to,
-    toRemoteArtifacts: selection.to,
+  const { from, to, omittedKinds, notices } = resolvePublicPyPiDownloads(
+    fromDownloads,
+    toDownloads,
+  );
+
+  return {
+    ...buildPublicPyPiDiffSources({
+      packageName: metadata.info?.name ?? input.packageName,
+      fromVersion: input.fromVersion,
+      toVersion: input.toVersion,
+      from,
+      to,
+      // The synthetic release manifest must describe only the artifacts the
+      // diff actually contains, or the metadata-mismatch rules would flag the
+      // omitted artifact as missing evidence.
+      toRemoteArtifacts: selection.to.filter((artifact) => !omittedKinds.has(artifact.kind)),
+    }),
+    ...(notices.length ? { notices } : {}),
+  };
+}
+
+// Pure resolution of per-artifact download outcomes into a servable pair,
+// split from the network path so the fallback rules are directly testable.
+export function resolvePublicPyPiDownloads(
+  fromDownloads: PublicPyPiArtifactDownload[],
+  toDownloads: PublicPyPiArtifactDownload[],
+): {
+  from: PyPiArtifactInput[];
+  to: PyPiArtifactInput[];
+  omittedKinds: Set<PyPiRemoteArtifact["kind"]>;
+  notices: string[];
+} {
+  const downloads = [...fromDownloads, ...toDownloads];
+
+  // Only capacity failures (413: file-count or byte caps) degrade to a
+  // partial diff; a transient download failure must stay fatal or the diff
+  // would silently render wheel-only and look complete.
+  const fatal = downloads.find(
+    (download) => download.error && download.error.status !== 413,
+  )?.error;
+  if (fatal) throw fatal;
+
+  // An over-cap artifact is dropped from BOTH sides, not just its own: keeping
+  // the other side's copy would diff sdist-vs-nothing and render the entire
+  // sdist tree as added or removed.
+  const omittedKinds = new Set(
+    downloads.filter((download) => download.error).map((download) => download.artifact.kind),
+  );
+  const from = pickSurvivingInputs(fromDownloads, omittedKinds);
+  const to = pickSurvivingInputs(toDownloads, omittedKinds);
+  if (!from.length || !to.length) {
+    // Nothing survived on a side — every scannable artifact tripped a cap, so
+    // surface the capacity error rather than an empty diff.
+    const firstError = downloads.find((download) => download.error)?.error;
+    throw (
+      firstError ?? new PublicDiffError("version has no diffable wheel or sdist artifacts", 404)
+    );
+  }
+
+  const notices = [...omittedKinds].sort().map((kind) => {
+    const failed = downloads.find((download) => download.error && download.artifact.kind === kind);
+    const reason = failed?.error?.message ?? "artifact exceeds scan limits";
+    return `${kind === "sdist" ? "The source distribution (sdist)" : "The wheel"} could not be scanned (${reason}), so ${kind} files are omitted from both sides of this diff.`;
   });
+
+  return { from, to, omittedKinds, notices };
+}
+
+function pickSurvivingInputs(
+  downloads: PublicPyPiArtifactDownload[],
+  omittedKinds: Set<PyPiRemoteArtifact["kind"]>,
+): PyPiArtifactInput[] {
+  const inputs: PyPiArtifactInput[] = [];
+  for (const download of downloads) {
+    if (omittedKinds.has(download.artifact.kind)) continue;
+    // A download with no error always carries its input; the guard is for the
+    // type system, not a reachable state.
+    if (download.input) inputs.push(download.input);
+  }
+  return inputs;
 }
 
 function pyPiDiffSide(
