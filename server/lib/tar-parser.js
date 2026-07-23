@@ -721,14 +721,18 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes,
             } else if (tierFull) {
               demotedByTier += 1;
               if (!tierNotice) {
+                // Pushed directly, not via addSuspicious: an archive that
+                // fills the suspicious cap with per-file entries first must
+                // not silently drop the coverage disclosure, and the
+                // aggregates are bounded to one per cause.
                 tierNotice = { kind: "retention-tier", path: "<archive>", detail: "" };
-                addSuspicious(tierNotice);
+                suspicious.push(tierNotice);
               }
             } else {
               demotedByBudget += 1;
               if (!budgetNotice) {
                 budgetNotice = { kind: "retention-tier", path: "<archive>", detail: "" };
-                addSuspicious(budgetNotice);
+                suspicious.push(budgetNotice);
               }
             }
           }
@@ -1240,14 +1244,18 @@ export async function readZipStream(body, maxFiles, maxTarBytes, maxStreamBytes,
           } else if (tierFull) {
             demotedByTier += 1;
             if (!tierNotice) {
+              // Pushed directly, not via addSuspicious: an archive that fills
+              // the suspicious cap with per-file entries first must not
+              // silently drop the coverage disclosure, and the aggregates are
+              // bounded to one per cause.
               tierNotice = { kind: "retention-tier", path: "<archive>", detail: "" };
-              addSuspicious(tierNotice);
+              suspicious.push(tierNotice);
             }
           } else {
             demotedByBudget += 1;
             if (!budgetNotice) {
               budgetNotice = { kind: "retention-tier", path: "<archive>", detail: "" };
-              addSuspicious(budgetNotice);
+              suspicious.push(budgetNotice);
             }
           }
         }

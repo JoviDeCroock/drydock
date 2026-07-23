@@ -809,6 +809,29 @@ describe("readTar limits and malformed archives", () => {
     ).rejects.toThrow(/archive contains too many files/);
   });
 
+  test("keeps the retention-tier notice when per-file entries already filled the suspicious cap", async () => {
+    // An archive can stuff the capped suspicious list with per-file entries
+    // (here: symlinks) before any demotion happens; the aggregate coverage
+    // disclosure must still be emitted, not silently dropped by the cap.
+    const tar = buildTar([
+      { name: "package/l1", type: "2", body: "" },
+      { name: "package/l2", type: "2", body: "" },
+      { name: "package/l3", type: "2", body: "" },
+      { name: "package/a.bin", body: new Uint8Array(400).fill(0x61) },
+      { name: "package/b.bin", body: new Uint8Array(400).fill(0x62) },
+    ]);
+    const { suspicious } = await tarParser.readTarStream(
+      new Response(tar).body,
+      2,
+      500,
+      Infinity,
+      10,
+    );
+    const notice = suspicious.find((s) => s.kind === "retention-tier");
+    expect(notice?.detail).toContain("cumulative retention budget");
+    expect(notice?.detail).toContain("1 additional file bodies");
+  });
+
   test("retains manifests past the full-inspection tier", async () => {
     // Identity evidence must not be starved by an archive padded with files:
     // PKG-INFO arrives after the tier is filled and must still carry text.
