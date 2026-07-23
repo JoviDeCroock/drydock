@@ -472,7 +472,12 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
           {hasManifestChanges(diff.packageJsonDiff) ? (
             <section class="flex flex-col gap-3">
               <SectionLabel as="h2">Manifest changes</SectionLabel>
-              <PackageJsonDiffView diff={diff.packageJsonDiff} linkDependencyDiffs />
+              {/* PyPI requirement rows are not npm packages, so they get no
+                  npm diff links. */}
+              <PackageJsonDiffView
+                diff={diff.packageJsonDiff}
+                linkDependencyDiffs={diff.ecosystem === "npm"}
+              />
             </section>
           ) : null}
 
