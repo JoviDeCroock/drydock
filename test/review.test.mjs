@@ -572,6 +572,120 @@ describe("review", () => {
     });
   });
 
+  test("does not flag placeholder URL credentials as secret content", () => {
+    // requests' HISTORY.md CVE-2023-32681 entry (`http://user:pass@proxy`) is
+    // the canonical benign hit: doc-style placeholder passwords are not leaks.
+    const staged = [
+      {
+        path: "HISTORY.md",
+        size: 160,
+        sha256: "history",
+        flags: [],
+        textSample:
+          "When proxies are defined with user info (`http://user:pass@proxy.example`),\n" +
+          "a Proxy-Authorization header is constructed.\n",
+      },
+      {
+        path: "lib/config.js",
+        size: 120,
+        sha256: "config",
+        flags: [],
+        textSample: 'const proxyExample = "https://user:<password>@registry.example.com";\n',
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings.some((finding) => finding.ruleId === "file.secret-content")).toBe(false);
+  });
+
+  test("still flags URL credentials with a real-looking password", () => {
+    const staged = [
+      {
+        path: "lib/config.js",
+        size: 120,
+        sha256: "config-real",
+        flags: [],
+        textSample: 'const upstream = "https://deploy:9f8a7b6c5d4e3f2a1b@registry.example.com";\n',
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({ ruleId: "file.secret-content", file: "lib/config.js" }),
+    );
+  });
+
+  test("does not scan Python packaging metadata prose as capability evidence", () => {
+    // PKG-INFO / .dist-info/METADATA embed the README long-description, so
+    // capability regexes over them only re-flag documentation examples.
+    const prose =
+      "Metadata-Version: 2.3\nName: demo\nVersion: 1.0.0\n\nUsage:\n\n" +
+      '    requests.get("https://api.example.invalid/status")\n\n' +
+      "Reads proxy auth from os.environ or a .netrc file.\n";
+    const staged = [
+      { path: "sdist/PKG-INFO", size: 200, sha256: "pkginfo", flags: [], textSample: prose },
+      {
+        path: "sdist/src/.egg-info/PKG-INFO",
+        size: 200,
+        sha256: "egg",
+        flags: [],
+        textSample: prose,
+      },
+      {
+        path: "wheel/py3-none-any/.dist-info/METADATA",
+        size: 200,
+        sha256: "meta",
+        flags: [],
+        textSample: prose,
+      },
+      {
+        path: "wheel/py3-none-any/demo/client.py",
+        size: 160,
+        sha256: "client",
+        flags: [],
+        textSample:
+          "import os\nimport requests\n\n\ndef send():\n" +
+          '    return requests.get("https://api.example.invalid", params={"k": os.environ.get("D")})\n',
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged), null, {
+      codePatternSet: "python",
+    });
+    const codeFindingFiles = new Set(
+      findings.filter((finding) => finding.ruleId?.startsWith("code.")).map((f) => f.file),
+    );
+
+    expect(codeFindingFiles.has("sdist/PKG-INFO")).toBe(false);
+    expect(codeFindingFiles.has("sdist/src/.egg-info/PKG-INFO")).toBe(false);
+    expect(codeFindingFiles.has("wheel/py3-none-any/.dist-info/METADATA")).toBe(false);
+    // Real package code with the same capabilities still flags.
+    expect(codeFindingFiles.has("wheel/py3-none-any/demo/client.py")).toBe(true);
+  });
+
+  test("demotes secret-looking content in unreachable test files", () => {
+    const staged = [
+      {
+        path: "test/fixtures/server.key",
+        size: 160,
+        sha256: "test-key",
+        flags: [],
+        textSample: "-----BEGIN PRIVATE KEY-----\nTESTFIXTUREONLY\n-----END PRIVATE KEY-----\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        ruleId: "file.secret-content",
+        file: "test/fixtures/server.key",
+        // Added files flag critical; the test-scope demotion steps it to high.
+        severity: "high",
+        testScoped: true,
+        evidence: expect.stringContaining("test-scoped"),
+      }),
+    );
+  });
+
   test("does not flag secret-looking source map content", () => {
     // The tar parser strips text samples from .map files (shouldSkipTextSample),
     // so deterministic rules never see source-map contents.

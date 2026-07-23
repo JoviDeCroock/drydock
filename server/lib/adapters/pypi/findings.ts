@@ -39,7 +39,14 @@ export function pyPiReleaseFindings(
     // entries, duplicates, confusable paths) the sandbox recorded for this
     // artifact. Without this the gate would drop them and pass an sdist whose
     // oversized file was never inspected — a fail-open gap the npm path avoids.
-    for (const finding of tarSuspiciousEntryFindings(artifact.suspiciousEntries)) {
+    // Explicit directory records are excluded: setuptools and every other
+    // Python build backend always emits them, so unlike an `npm pack` tarball a
+    // typeflag-5 entry is the archive norm here, not provenance evidence
+    // (requests alone carries 16, each one a noise finding on the public diff).
+    const suspiciousEntries = (artifact.suspiciousEntries ?? []).filter(
+      (entry) => !(entry.kind === "non-regular" && entry.detail.includes("(directory)")),
+    );
+    for (const finding of tarSuspiciousEntryFindings(suspiciousEntries, { dialect: "pypi" })) {
       findings.push({ ...finding, file: namespacedPath(artifact.path, finding.file) });
     }
     const metadataEvidencePath = namespacedPath(artifact.path, summary.metadataPath ?? "METADATA");

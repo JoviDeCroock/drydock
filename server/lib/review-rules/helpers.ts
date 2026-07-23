@@ -1,6 +1,6 @@
 import type { Finding } from "../review";
 import { firstMatchingLine } from "../text-utils";
-import { HIGH_CONFIDENCE_SECRET_PATTERNS, SECRET_PATTERNS } from "./patterns";
+import { FINDING_SECRET_PATTERNS, HIGH_CONFIDENCE_SECRET_PATTERNS } from "./patterns";
 import { DETERMINISTIC_RULE_IDS, type DeterministicRuleKey } from "./rule-ids";
 
 // Family modules tag findings with a rule ID only; the deterministic ruleset
@@ -11,6 +11,27 @@ export function tag(
   finding: Omit<Finding, "ruleId" | "ruleVersion">,
 ): Finding {
   return { ...finding, ruleId: DETERMINISTIC_RULE_IDS[rule] };
+}
+
+const DEMOTED_SEVERITY: Partial<Record<Finding["severity"], Finding["severity"]>> = {
+  critical: "high",
+  high: "medium",
+  medium: "low",
+};
+
+// Demote a finding that lives in an unreachable test file by one severity step
+// and mark it test-scoped so the risk roll-up can keep it out of the capability
+// co-occurrence escalation. Findings are demoted, never dropped — malware does
+// hide in test directories. Obfuscated matches keep full severity: hiding an
+// identifier inside a test file is still a malice signal.
+export function testScope(testScoped: boolean, obfuscated: boolean, finding: Finding): Finding {
+  if (!testScoped || obfuscated) return finding;
+  return {
+    ...finding,
+    severity: DEMOTED_SEVERITY[finding.severity] ?? finding.severity,
+    evidence: `test-scoped ${finding.evidence}`,
+    testScoped: true,
+  };
 }
 
 interface SecretTextOptions {
@@ -36,7 +57,7 @@ export function firstSecretLine(
 }
 
 function secretPatternsFor(options: SecretTextOptions): Array<[RegExp, string]> {
-  return options.highConfidenceOnly ? HIGH_CONFIDENCE_SECRET_PATTERNS : SECRET_PATTERNS;
+  return options.highConfidenceOnly ? HIGH_CONFIDENCE_SECRET_PATTERNS : FINDING_SECRET_PATTERNS;
 }
 
 export function firstJsonPropertyLine(

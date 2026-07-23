@@ -2,9 +2,9 @@ import { hasImplicitNodeGypInstall, isRootGypPath } from "../tar-parser.js";
 import { firstMatchingLine, firstMatchingSourceLine } from "../text-utils";
 import type { Finding } from "../review";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
-import { firstJsonPropertyLine, tag } from "./helpers";
+import { firstJsonPropertyLine, tag, testScope } from "./helpers";
 import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./context";
-import { isDocumentationPath, isTypeDeclarationPath } from "./file-types";
+import { isDocumentationPath, isPythonMetadataPath, isTypeDeclarationPath } from "./file-types";
 import { scriptCommandTokens, scriptPathCandidates } from "./reachability";
 import { normalizeCodeForScanning } from "./normalize";
 
@@ -130,6 +130,7 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
 
   for (const file of ctx.files) {
     if (isDocumentationPath(file.path) || isTypeDeclarationPath(file.path)) continue;
+    if (ctx.codePatternSet === "python" && isPythonMetadataPath(file.path)) continue;
 
     const sample = file.textSample || "";
     // Constant-fold runtime-assembled identifiers (`'chi'+'ld_process'`,
@@ -263,26 +264,6 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
   }
 
   return findings;
-}
-
-const DEMOTED_SEVERITY: Partial<Record<Finding["severity"], Finding["severity"]>> = {
-  critical: "high",
-  high: "medium",
-  medium: "low",
-};
-
-// Demote a capability finding that lives in an unreachable test file by one
-// severity step and mark it test-scoped so the risk roll-up can keep it out of
-// the capability co-occurrence escalation. Obfuscated matches keep full
-// severity: hiding an identifier inside a test file is still a malice signal.
-function testScope(testScoped: boolean, obfuscated: boolean, finding: Finding): Finding {
-  if (!testScoped || obfuscated) return finding;
-  return {
-    ...finding,
-    severity: DEMOTED_SEVERITY[finding.severity] ?? finding.severity,
-    evidence: `test-scoped ${finding.evidence}`,
-    testScoped: true,
-  };
 }
 
 // Match a capability category against the raw sample and, only if that misses,

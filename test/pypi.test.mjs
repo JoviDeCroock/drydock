@@ -281,6 +281,58 @@ describe("PyPI artifact summaries and review", () => {
     );
   });
 
+  test("drops sdist directory tar entries and keeps other non-regular entries with PyPI wording", () => {
+    const manifest = parsePyPiReleaseManifest({
+      schema: "drydock.release-artifacts.v1",
+      ecosystem: "pypi",
+      package: "demo-package",
+      version: "1.2.0",
+      artifacts: [{ path: "dist/demo_package-1.2.0.tar.gz", sha256: "b".repeat(64) }],
+    });
+
+    const review = createPyPiReleaseCandidateReview({
+      manifest,
+      artifacts: [
+        {
+          path: "dist/demo_package-1.2.0.tar.gz",
+          files: [
+            file(
+              "demo_package-1.2.0/PKG-INFO",
+              "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
+            ),
+          ],
+          suspiciousEntries: [
+            // setuptools always emits explicit directory records, so these are
+            // the archive norm on PyPI — not the provenance signal they are for
+            // `npm pack` tarballs.
+            { kind: "non-regular", path: "demo_package-1.2.0", detail: "typeflag 5 (directory)" },
+            {
+              kind: "non-regular",
+              path: "demo_package-1.2.0/tests",
+              detail: "typeflag 5 (directory)",
+            },
+            {
+              kind: "non-regular",
+              path: "demo_package-1.2.0/evil",
+              detail: "typeflag 2 (symlink)",
+            },
+          ],
+        },
+      ],
+    });
+
+    const tarFindings = review.ruleFindings.filter(
+      (finding) => finding.ruleId === "tar.suspicious-entry",
+    );
+    expect(tarFindings).toHaveLength(1);
+    expect(tarFindings[0]).toMatchObject({
+      severity: "high",
+      file: "dist/demo_package-1.2.0.tar.gz/evil",
+    });
+    expect(tarFindings[0].reason).toContain("Python build backends");
+    expect(tarFindings[0].reason).not.toContain("npm");
+  });
+
   test("does not flag PEP 440-equivalent version spellings as metadata mismatches", () => {
     const manifest = parsePyPiReleaseManifest({
       schema: "drydock.release-artifacts.v1",
