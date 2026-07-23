@@ -1,3 +1,4 @@
+import { useId } from "preact/hooks";
 import { Badge } from "./Badge";
 import { Select } from "./Select";
 
@@ -23,13 +24,18 @@ export function VersionPicker({
   disabled?: boolean;
 }) {
   const tagsForSelected = options.find((option) => option.version === selected)?.distTags ?? [];
+  const selectId = useId();
 
   return (
     <div class="flex flex-wrap items-center gap-3">
-      <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+      <label
+        for={selectId}
+        class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle"
+      >
         Compare against
-      </span>
+      </label>
       <Select
+        id={selectId}
         value={selected ?? ""}
         onChange={(value) => {
           if (value) onChange(value);

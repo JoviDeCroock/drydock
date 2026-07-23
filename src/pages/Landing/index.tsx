@@ -65,7 +65,7 @@ export default function LandingPage() {
       <AikidoPartnerStrip />
 
       <section aria-label="Why review a publish" class="flex flex-col gap-4">
-        <SectionLabel>Why review a publish</SectionLabel>
+        <SectionLabel as="p">Why review a publish</SectionLabel>
         <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
           The attacks that matter ship in the artifact.
         </h2>
@@ -81,7 +81,7 @@ export default function LandingPage() {
       </section>
 
       <section aria-label="How it works" class="flex flex-col gap-5">
-        <SectionLabel>How it works</SectionLabel>
+        <SectionLabel as="h2">How it works</SectionLabel>
         <HowSteps
           items={[
             {
@@ -120,7 +120,7 @@ export default function LandingPage() {
       </section>
 
       <section aria-label="How Drydock hooks in" class="flex flex-col gap-4">
-        <SectionLabel>How it hooks in</SectionLabel>
+        <SectionLabel as="h2">How it hooks in</SectionLabel>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <RegistryCard title="npm stage publish">
             A maintainer runs <code class="font-mono text-[12px] text-ink">npm stage publish</code>{" "}
@@ -140,7 +140,7 @@ export default function LandingPage() {
       </section>
 
       <section aria-label="Safeguards" class="flex flex-col gap-4">
-        <SectionLabel>Safeguards</SectionLabel>
+        <SectionLabel as="h2">Safeguards</SectionLabel>
         <StatusStrip>
           <StatusStripItem label="credentials" status="scoped" tone="ok">
             Scoped tokens only fetch release evidence. Publish credentials stay in npm or GitHub
@@ -157,7 +157,7 @@ export default function LandingPage() {
       </section>
 
       <section aria-label="Get started" class="flex flex-col gap-4">
-        <SectionLabel>Get started</SectionLabel>
+        <SectionLabel as="p">Get started</SectionLabel>
         <h2 class="text-[32px] font-semibold tracking-[-0.02em] leading-[1.15] m-0 max-w-[680px]">
           Put your next release in the dock.
         </h2>
@@ -443,7 +443,7 @@ function ScanPreview() {
 
   return (
     <section class="flex flex-col gap-3" aria-label="Sample review">
-      <SectionLabel>What a review looks like</SectionLabel>
+      <SectionLabel as="h2">What a review looks like</SectionLabel>
       <p class="m-0 text-[13px] text-ink-muted leading-[1.55]">
         A condensed report. Select a file in the release tree to walk the diff.
       </p>
@@ -618,13 +618,13 @@ function TreeFileRow({
         : cn(treeToneClass[tone], "hover:bg-surface-2/60"),
     ),
   );
-  const pressed = useComputed(() => selected.value === fileKey);
+  const current = useComputed(() => (selected.value === fileKey ? "true" : undefined));
   return (
     <li class="flex">
       <button
         type="button"
         class={rowClass}
-        aria-pressed={pressed}
+        aria-current={current}
         onClick={() => {
           selected.value = fileKey;
         }}

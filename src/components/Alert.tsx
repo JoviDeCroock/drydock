@@ -10,6 +10,16 @@ const toneStyles: Record<AlertTone, string> = {
   ok: "bg-ok-soft border-ok text-ok-text",
 };
 
+// The disc is a shape, so it takes the saturated token — inheriting the text
+// color via bg-current would render it in the -text variant (DESIGN.md lists
+// alert discs under saturated shapes, like the border).
+const toneDisc: Record<AlertTone, string> = {
+  critical: "bg-danger",
+  warn: "bg-warn",
+  info: "bg-info",
+  ok: "bg-ok",
+};
+
 export function Alert({
   tone = "info",
   class: className,
@@ -29,7 +39,10 @@ export function Alert({
         className,
       )}
     >
-      <span class="w-4 h-4 rounded-full bg-current shrink-0 mt-0.5 opacity-90" aria-hidden />
+      <span
+        class={cn("w-4 h-4 rounded-full shrink-0 mt-0.5 opacity-90", toneDisc[tone])}
+        aria-hidden
+      />
       <div class="text-ink flex-1">{children}</div>
     </div>
   );

@@ -75,7 +75,7 @@ function ReportSection({
 }) {
   return (
     <section class={`flex flex-col gap-3 min-w-0 ${className || ""}`}>
-      <SectionLabel>{title}</SectionLabel>
+      <SectionLabel as="h2">{title}</SectionLabel>
       {children}
     </section>
   );

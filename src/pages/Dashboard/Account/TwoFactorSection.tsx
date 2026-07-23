@@ -234,7 +234,9 @@ export function TwoFactorSection() {
     <SettingsCard as="section" class="flex flex-col gap-5">
       <div class="flex flex-col gap-1.5">
         <div class="flex items-center gap-3">
-          <SectionLabel class="flex-1">Two-factor authentication</SectionLabel>
+          <SectionLabel as="h2" class="flex-1">
+            Two-factor authentication
+          </SectionLabel>
           <span class="shrink-0">
             {enabled ? <Badge tone="ok">enabled</Badge> : <Badge tone="neutral">not enabled</Badge>}
           </span>

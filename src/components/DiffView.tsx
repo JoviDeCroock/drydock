@@ -215,6 +215,14 @@ function buildRowsIgnoringWhitespace(
 function splitLines(value: string): string[] {
   const lines = value.split("\n");
   if (lines.length && lines[lines.length - 1] === "") lines.pop();
+  // Strip the CR of CRLF endings: shiki's tokenizer drops it, so a CRLF file
+  // would otherwise render differently plain vs highlighted (a stray \r is a
+  // segment break under whitespace-pre-wrap in some engines). Diffing still
+  // runs on the raw samples, so both sides stay consistent.
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.endsWith("\r")) lines[index] = line.slice(0, -1);
+  }
   return lines;
 }
 

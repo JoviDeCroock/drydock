@@ -6,7 +6,7 @@ import { LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { cn } from "../../components/cn";
 import { PageShell } from "../../components/PageShell";
-import { Eyebrow, SectionLabel } from "../../components/Typography";
+import { Eyebrow, MonoLabel, SectionLabel } from "../../components/Typography";
 import { ensureHighlighter, highlighterReady, tokenizeLines } from "../../components/highlight";
 import { docsPageSeo, PageSeo } from "../../lib/seo";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
@@ -144,7 +144,7 @@ export default function DocsPage() {
         <div class="flex flex-col gap-16 min-w-0">
           <section id="start-here" class="flex flex-col gap-10 scroll-mt-6">
             <div class="flex flex-col gap-3">
-              <SectionLabel>Start here</SectionLabel>
+              <SectionLabel as="p">Start here</SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
                 A second pair of eyes at the last responsible moment.
               </h2>
@@ -302,7 +302,7 @@ export default function DocsPage() {
 
           <section id="choose-path" class="flex flex-col gap-8 scroll-mt-6">
             <div class="flex flex-col gap-3">
-              <SectionLabel>Choose a release path</SectionLabel>
+              <SectionLabel as="p">Choose a release path</SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
                 Put the checkpoint where your release already pauses.
               </h2>
@@ -343,7 +343,7 @@ export default function DocsPage() {
 
           <section id="staged-publishing" class="flex flex-col gap-8 scroll-mt-6">
             <div class="flex flex-col gap-3">
-              <SectionLabel>Path 1 · npm stage publish</SectionLabel>
+              <SectionLabel as="p">Path 1 · npm stage publish</SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
                 npm holds the candidate; you keep the approval.
               </h2>
@@ -416,7 +416,7 @@ export default function DocsPage() {
 
           <section id="workflow-gating" class="flex flex-col gap-8 scroll-mt-6">
             <div class="flex flex-col gap-3">
-              <SectionLabel>
+              <SectionLabel as="p">
                 Path 2 · GitHub workflow gates <Badge tone="info">Preview</Badge>
               </SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
@@ -619,7 +619,7 @@ export default function DocsPage() {
               class="p-6 md:p-8 flex flex-col md:flex-row md:items-center md:justify-between gap-5"
             >
               <div class="flex flex-col gap-2 max-w-[560px]">
-                <SectionLabel>Ready when your release is</SectionLabel>
+                <SectionLabel as="p">Ready when your release is</SectionLabel>
                 <h2 class="m-0 text-xl font-semibold tracking-[-0.015em]">
                   Add the checkpoint before the next publish.
                 </h2>
@@ -770,7 +770,7 @@ function ReviewAnswer({
 }) {
   return (
     <div class="px-5 py-3.5 grid grid-cols-1 sm:grid-cols-[120px_180px_minmax(0,1fr)] gap-1.5 sm:gap-4 sm:items-baseline">
-      <dt class="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-subtle">{label}</dt>
+      <MonoLabel as="dt">{label}</MonoLabel>
       <dd class="m-0 text-[13px] font-medium text-ink">{question}</dd>
       <dd class="m-0 text-[13px] leading-[1.55] text-ink-muted">{children}</dd>
     </div>
@@ -851,7 +851,7 @@ function PathCard({
 function Definition({ label, children }: { label: string; children: ComponentChildren }) {
   return (
     <div class="grid grid-cols-[72px_minmax(0,1fr)] gap-3">
-      <dt class="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-subtle">{label}</dt>
+      <MonoLabel as="dt">{label}</MonoLabel>
       <dd class="m-0 text-[12px] leading-[1.55] text-ink-muted">{children}</dd>
     </div>
   );

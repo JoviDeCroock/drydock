@@ -1,3 +1,4 @@
+import { useMemo, useRef } from "preact/hooks";
 import type { DiffEntry } from "../../server/lib/review";
 import { Badge, severityTone } from "./Badge";
 import { cn } from "./cn";
@@ -28,10 +29,19 @@ function TreeIndent({ depth }: { depth: number }) {
   return (
     <>
       {Array.from({ length: depth }, (_, index) => (
-        <span key={index} class="w-5 shrink-0" aria-hidden />
+        // 12px spacer + the row's 8px flex gap = the 20px-per-depth indent
+        // DESIGN.md specs; a 20px spacer would compound to 28px per level.
+        <span key={index} class="w-3 shrink-0" aria-hidden />
       ))}
     </>
   );
+}
+
+// A path can legally appear as both a file and a directory prefix in a hostile
+// tarball, producing sibling nodes with identical paths — the kind prefix
+// keeps their render keys distinct.
+function nodeKey(node: FileNode | FolderNode): string {
+  return `${node.kind}:${node.path}`;
 }
 
 function FindingCountBadge({ count, severity }: { count: number; severity: string | null }) {
@@ -55,7 +65,11 @@ export function FileTree({
   onSelect: (path: string) => void;
   findingCounts?: FindingCountMap;
 }) {
-  const tree = buildTree(entries, findingCounts);
+  // Two localeCompare sorts over every entry — memoized so rerenders that
+  // keep the same entries array (selection changes, finding arrivals) don't
+  // re-sort a megabyte-scale package's tree. Filtering produces a fresh
+  // array, so filter keystrokes still rebuild — that's inherent to the input.
+  const tree = useMemo(() => buildTree(entries, findingCounts), [entries, findingCounts]);
   if (!tree.length) {
     return (
       <div class="px-4 py-3">
@@ -67,7 +81,7 @@ export function FileTree({
     <ul class="list-none p-0 m-0">
       {tree.map((node) => (
         <TreeNode
-          key={node.path}
+          key={nodeKey(node)}
           node={node}
           depth={0}
           selectedPath={selectedPath}
@@ -90,42 +104,8 @@ function TreeNode({
   onSelect: (path: string) => void;
 }) {
   if (node.kind === "folder") {
-    const initiallyOpen = node.status !== "unchanged" && depth < 2;
     return (
-      <li class="m-0">
-        <details open={initiallyOpen} class="group">
-          <summary
-            class={cn(
-              "list-none cursor-pointer flex items-center gap-2 py-1 pr-2 pl-2 rounded hover:bg-surface-2",
-              "text-[13px] font-mono",
-            )}
-          >
-            <TreeIndent depth={depth} />
-            <span
-              aria-hidden
-              class="text-ink-subtle text-[10px] inline-block transition-transform duration-150 ease-out group-open:rotate-90"
-            >
-              ▸
-            </span>
-            <span class={cn("flex-1 truncate", statusToText(node.status))} title={`${node.name}/`}>
-              {node.name}/
-              <StatusLabel status={node.status} />
-            </span>
-            <FindingCountBadge count={node.findingCount} severity={node.findingSeverity} />
-          </summary>
-          <ul class="list-none p-0 m-0">
-            {node.children.map((child) => (
-              <TreeNode
-                key={child.path}
-                node={child}
-                depth={depth + 1}
-                selectedPath={selectedPath}
-                onSelect={onSelect}
-              />
-            ))}
-          </ul>
-        </details>
-      </li>
+      <FolderTreeNode node={node} depth={depth} selectedPath={selectedPath} onSelect={onSelect} />
     );
   }
 
@@ -135,6 +115,7 @@ function TreeNode({
       <button
         type="button"
         onClick={() => onSelect(node.path)}
+        aria-current={isSelected ? "true" : undefined}
         class={cn(
           "w-full flex items-center gap-2 py-1 pr-2 pl-2 rounded text-left transition-colors",
           "text-[13px] font-mono",
@@ -151,6 +132,64 @@ function TreeNode({
         </span>
         <FindingCountBadge count={node.findingCount} severity={node.findingSeverity} />
       </button>
+    </li>
+  );
+}
+
+function FolderTreeNode({
+  node,
+  depth,
+  selectedPath,
+  onSelect,
+}: {
+  node: FolderNode;
+  depth: number;
+  selectedPath: string | null;
+  onSelect: (path: string) => void;
+}) {
+  // Frozen at mount: re-applying a recomputed value as a live `open` prop
+  // would clobber the user's manual folder toggles whenever the aggregate
+  // status changes (e.g. switching compare versions while the tree stays
+  // mounted). Deliberate cost: a folder that only becomes "changed" in a
+  // later comparison keeps its first frozen default — the accent name color
+  // and finding badge still flag it on the collapsed row, and surfaces that
+  // want fresh defaults remount the tree (the /diff page keys per version
+  // pair).
+  const initiallyOpen = useRef(node.status !== "unchanged" && depth < 2).current;
+  return (
+    <li class="m-0">
+      <details open={initiallyOpen} class="group">
+        <summary
+          class={cn(
+            "list-none cursor-pointer flex items-center gap-2 py-1 pr-2 pl-2 rounded hover:bg-surface-2",
+            "text-[13px] font-mono",
+          )}
+        >
+          <TreeIndent depth={depth} />
+          <span
+            aria-hidden
+            class="text-ink-subtle text-[10px] inline-block transition-transform duration-150 ease-out group-open:rotate-90"
+          >
+            ▸
+          </span>
+          <span class={cn("flex-1 truncate", statusToText(node.status))} title={`${node.name}/`}>
+            {node.name}/
+            <StatusLabel status={node.status} />
+          </span>
+          <FindingCountBadge count={node.findingCount} severity={node.findingSeverity} />
+        </summary>
+        <ul class="list-none p-0 m-0">
+          {node.children.map((child) => (
+            <TreeNode
+              key={nodeKey(child)}
+              node={child}
+              depth={depth + 1}
+              selectedPath={selectedPath}
+              onSelect={onSelect}
+            />
+          ))}
+        </ul>
+      </details>
     </li>
   );
 }

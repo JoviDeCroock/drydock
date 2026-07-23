@@ -116,7 +116,7 @@ export default function GithubAppCallbackPage() {
       <Show<PublicGithubAppInstallation | null> when={linkedInstallation}>
         {(installation) => (
           <Card as="section" class="p-5 flex flex-col gap-4">
-            <SectionLabel>Linked installation</SectionLabel>
+            <SectionLabel as="h2">Linked installation</SectionLabel>
             <div class="flex flex-col gap-2">
               <span class="font-mono text-[16px] font-medium">{installation.accountLogin}</span>
               <MonoDetail
@@ -140,7 +140,7 @@ export default function GithubAppCallbackPage() {
       <Show when={() => phase.value === "error"}>
         {() => (
           <Card as="section" class="p-5 flex flex-col gap-4">
-            <SectionLabel>What went wrong</SectionLabel>
+            <SectionLabel as="h2">What went wrong</SectionLabel>
             <CallbackErrorView queryError={queryError.value} callbackError={callbackError} />
             <div class="flex gap-2 flex-wrap">
               <LinkButton href={SETTINGS_PATH}>Back to settings</LinkButton>

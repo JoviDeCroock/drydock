@@ -5,7 +5,7 @@ import type { PersistedScanDetail } from "../../../models/scan";
 import { Alert } from "../../../components/Alert";
 import { Badge, severityTone } from "../../../components/Badge";
 import { Button, LinkButton } from "../../../components/Button";
-import { LoadingLine, MonoDetail } from "../../../components/Typography";
+import { LoadingLine, MonoDetail, MonoLabel } from "../../../components/Typography";
 
 export function ScanDetailHeader({
   detail,
@@ -94,14 +94,15 @@ function reportExportHref(detail: PersistedScanDetail): string {
 }
 
 export function VersionPickerSkeleton({ stagedVersion }: { stagedVersion: string | null }) {
+  // The sanctioned inline loading line, not a faked disabled select — that
+  // reimplemented LoadingLine without its aria-live and edged into the
+  // "skeleton bone" shape DESIGN.md bans. min-h matches the md Select's
+  // rendered height (13px × 1.55 + 2×8px padding + 2px border ≈ 38px) so the
+  // header doesn't shift when the real picker mounts.
   return (
-    <div class="flex flex-wrap items-center gap-3" aria-busy="true">
-      <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
-        Compare against
-      </span>
-      <div class="flex items-center bg-bg border border-border rounded-md text-[13px] text-ink-muted pl-3 pr-8 py-2 font-mono min-w-[200px] opacity-60">
-        loading versions<span class="ml-0.5 motion-safe:animate-pulse">…</span>
-      </div>
+    <div class="flex flex-wrap items-center gap-3 min-h-[38px]" aria-busy="true">
+      <MonoLabel>Compare against</MonoLabel>
+      <LoadingLine size="inline">loading versions</LoadingLine>
       <span class="font-mono text-[11px] text-ink-muted">→ staged {stagedVersion || "—"}</span>
     </div>
   );

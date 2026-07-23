@@ -33,9 +33,7 @@ export function BrandMark({
       </a>
     );
   }
-  return (
-    <span class={classes} aria-label="Drydock">
-      drydock
-    </span>
-  );
+  // No aria-label: it is prohibited ARIA on a generic role, and the visible
+  // text already names the brand.
+  return <span class={classes}>drydock</span>;
 }

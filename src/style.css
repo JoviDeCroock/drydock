@@ -169,10 +169,6 @@
     color: var(--sh-token-link);
   }
 
-  .severity-bar-segment {
-    fill: currentColor;
-  }
-
   html,
   body {
     margin: 0;
@@ -213,5 +209,18 @@
   :focus-visible {
     outline: 2px solid var(--color-accent);
     outline-offset: 2px;
+  }
+
+  /* showModal() makes the background inert but does not stop it scrolling;
+     without this, long pages wheel-scroll behind the open dialog. The stable
+     scrollbar gutter keeps classic-scrollbar platforms (Windows, Linux) from
+     shifting the page sideways when the lock removes the scrollbar; it is a
+     no-op under overlay scrollbars. */
+  html {
+    scrollbar-gutter: stable;
+  }
+
+  body:has(dialog[open]) {
+    overflow: hidden;
   }
 }

@@ -157,7 +157,7 @@ export default function PrivacyPage() {
         </Section>
 
         <section class="flex flex-col gap-4">
-          <SectionLabel>Contact us</SectionLabel>
+          <SectionLabel as="h2">Contact us</SectionLabel>
           <Prose>
             Questions about this policy or a request about your data? Email us and we will respond.
           </Prose>
@@ -181,7 +181,7 @@ function Section({
 }) {
   return (
     <section id={id} class="flex flex-col gap-3.5 scroll-mt-6">
-      <SectionLabel>{label}</SectionLabel>
+      <SectionLabel as="h2">{label}</SectionLabel>
       {children}
     </section>
   );

@@ -91,7 +91,7 @@ export function GatePackagesPanel({
   return (
     <section class="flex flex-col gap-3 border border-border rounded-lg p-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
-        <SectionLabel>Release packages</SectionLabel>
+        <SectionLabel as="h2">Release packages</SectionLabel>
         <span class="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-subtle">
           {approved} of {packages.length} approved
           {rejected ? ` · ${rejected} rejected` : ""}
@@ -166,7 +166,7 @@ export function GateContextPanel({
   return (
     <section class="flex flex-col gap-3 border border-border rounded-lg p-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
-        <SectionLabel>Deployment gate</SectionLabel>
+        <SectionLabel as="h2">Deployment gate</SectionLabel>
         {gate ? (
           <Badge tone={gateStatusTone(gate.status)}>{gateStatusLabel(gate.status)}</Badge>
         ) : null}

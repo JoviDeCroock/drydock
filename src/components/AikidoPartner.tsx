@@ -42,7 +42,9 @@ export function AikidoFootnote({ class: className }: { class?: string }) {
         "text-ink-muted inline-flex items-center opacity-80 hover:opacity-100 transition-opacity duration-150 ease-out",
         className,
       )}
-      aria-label="Aikido Security"
+      // No aria-label override: the accessible name composes from the visible
+      // "Sponsored by" text plus the wordmark's alt, keeping the sponsorship
+      // context (WCAG 2.5.3 label-in-name).
     >
       <span class="mr-2">Sponsored by</span> <AikidoMark size="xs" />
     </a>
@@ -52,7 +54,7 @@ export function AikidoFootnote({ class: className }: { class?: string }) {
 export function AikidoPartnerStrip({ class: className }: { class?: string }) {
   return (
     <section aria-label="Sponsored by Aikido Security" class={cn("flex flex-col gap-4", className)}>
-      <SectionLabel>Sponsored by</SectionLabel>
+      <SectionLabel as="p">Sponsored by</SectionLabel>
       <a
         href={AIKIDO_URL}
         target="_blank"

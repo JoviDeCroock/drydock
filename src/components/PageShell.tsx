@@ -39,10 +39,12 @@ export function PageShell({
   const centered = width === "narrow";
   return (
     <div class="flex min-h-[100svh] flex-col">
-      <main
-        class={cn("mx-auto w-full grow px-6 pt-6 pb-16 flex flex-col gap-6", maxWidth, className)}
-      >
-        {brand ? (
+      <SkipLink />
+      {brand ? (
+        // A real banner landmark outside <main>, so landmark navigation and
+        // the skip link can bypass the header actions on every route. The
+        // pt-6 here plus main's pt-6 reproduces the former in-main gap-6.
+        <header class={cn("mx-auto w-full px-6 pt-6", maxWidth)}>
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="flex items-center gap-2.5">
               <HeaderBrandMark />
@@ -53,7 +55,12 @@ export function PageShell({
               {feedbackPosition === "end" ? <FeedbackButton /> : null}
             </div>
           </div>
-        ) : null}
+        </header>
+      ) : null}
+      <main
+        id="main-content"
+        class={cn("mx-auto w-full grow px-6 pt-6 pb-16 flex flex-col gap-6", maxWidth, className)}
+      >
         {centered ? (
           // `my-auto` (not justify-center) so over-tall content never clips off-screen.
           <div class="my-auto flex w-full flex-col gap-6">{children}</div>
@@ -63,6 +70,18 @@ export function PageShell({
       </main>
       <SiteFooter maxWidth={maxWidth} />
     </div>
+  );
+}
+
+// Visually hidden until keyboard-focused; the first tab stop on every page.
+function SkipLink() {
+  return (
+    <a
+      href="#main-content"
+      class="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:rounded-md focus:border focus:border-border focus:bg-surface focus:px-3 focus:py-2 focus:text-[13px] focus:text-ink focus:no-underline focus:shadow-md"
+    >
+      Skip to content
+    </a>
   );
 }
 

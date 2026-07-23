@@ -1,5 +1,5 @@
 import type { ComponentChildren, JSX } from "preact";
-import { useRef } from "preact/hooks";
+import { useId, useRef } from "preact/hooks";
 import { useComputed, useSignal, useSignalEffect } from "@preact/signals";
 import { Show, useLiveSignal } from "@preact/signals/utils";
 import { cn } from "./cn";
@@ -27,6 +27,7 @@ export function Menu({
   const focusFirstOnOpen = useSignal(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelId = useId();
 
   // `trigger` is a plain prop whose closure can change (e.g. its label derives
   // from parent state) without `open` changing. Track it via a live signal so
@@ -128,11 +129,39 @@ export function Menu({
 
   const onPanelClick = (event: MouseEvent) => {
     const target = event.target as HTMLElement | null;
-    if (target?.closest("[data-menu-item]")) open.value = false;
+    if (!target?.closest("[data-menu-item]")) return;
+    open.value = false;
+    // The activated item unmounts with the panel; without this, keyboard
+    // activation (Enter fires a click) strands focus on <body>.
+    triggerRef.current?.focus();
+  };
+
+  // Tabbing out of the menu should close it — Tab is not menu navigation, and
+  // leaving a stale open panel behind confuses both sighted keyboard users and
+  // AT (aria-expanded would keep announcing "expanded").
+  const onFocusOut = (event: FocusEvent) => {
+    if (!open.value) return;
+    const node = rootRef.current;
+    const next = event.relatedTarget;
+    // A null relatedTarget is ambiguous: focus left the document, or (Safari /
+    // Firefox-macOS) a mousedown on a button blurred without focusing.
+    // Closing on null would unmount the panel before an in-panel click fires,
+    // silently swallowing the activation — and click-outside is already
+    // handled by the document pointerdown listener. Only close when focus
+    // verifiably moved to an element outside the menu.
+    if (!(next instanceof Node)) return;
+    if (node && node.contains(next)) return;
+    open.value = false;
+    focusFirstOnOpen.value = false;
   };
 
   return (
-    <div ref={rootRef} onKeyDown={onRootKeyDown} class="relative inline-block">
+    <div
+      ref={rootRef}
+      onKeyDown={onRootKeyDown}
+      onFocusOut={onFocusOut}
+      class="relative inline-block"
+    >
       <button
         ref={triggerRef}
         type="button"
@@ -144,6 +173,7 @@ export function Menu({
         disabled={disabled}
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-controls={panelId}
         aria-label={triggerAriaLabel}
         class={cn("cursor-pointer disabled:cursor-not-allowed disabled:opacity-60", triggerClass)}
       >
@@ -152,6 +182,7 @@ export function Menu({
       <Show when={open}>
         {() => (
           <div
+            id={panelId}
             role="menu"
             onClick={onPanelClick}
             class={cn(

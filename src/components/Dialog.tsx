@@ -41,8 +41,17 @@ export function Dialog({
     onClose();
   };
 
+  // Backdrop dismissal requires the press to START on the backdrop. A click
+  // alone is not enough: a text-selection drag that starts in an input and
+  // ends over the backdrop dispatches its click on the <dialog> (the common
+  // ancestor), which would close the dialog and discard the form.
+  const pressStartedOnBackdrop = useRef(false);
+  const onBackdropPointerDown = (event: PointerEvent) => {
+    pressStartedOnBackdrop.current = event.target === ref.current;
+  };
   const onBackdropClick = (event: MouseEvent) => {
-    if (event.target === ref.current) onClose();
+    if (event.target === ref.current && pressStartedOnBackdrop.current) onClose();
+    pressStartedOnBackdrop.current = false;
   };
 
   return (
@@ -52,6 +61,7 @@ export function Dialog({
       aria-describedby={description ? descriptionId : undefined}
       onClose={onClose}
       onCancel={onCancel}
+      onPointerDown={onBackdropPointerDown}
       onClick={onBackdropClick}
       class={cn(
         "p-0 m-auto bg-surface text-ink border border-border rounded-lg shadow-md",
@@ -61,10 +71,6 @@ export function Dialog({
       )}
     >
       <div class="relative flex flex-col gap-4 p-5">
-        <CloseButton
-          onClick={onClose}
-          class="absolute top-3 right-3 w-7 h-7 text-[14px] text-ink-subtle hover:text-ink hover:bg-surface-2 focus:ring-2 focus:ring-accent"
-        />
         <header class="flex flex-col gap-1 pr-7">
           <h2 id={titleId} class="text-[18px] font-medium tracking-[-0.01em] leading-[1.35] m-0">
             {title}
@@ -77,6 +83,13 @@ export function Dialog({
         </header>
         <div class="flex flex-col gap-3">{children}</div>
         {footer ? <footer class="flex flex-wrap justify-end gap-2 pt-1">{footer}</footer> : null}
+        {/* Rendered last (absolutely positioned top-right) so showModal()'s
+            native initial focus lands on the first real control instead of
+            the ✕; call-site `autofocus` still takes precedence natively. */}
+        <CloseButton
+          onClick={onClose}
+          class="absolute top-3 right-3 w-7 h-7 text-[14px] text-ink-subtle hover:text-ink hover:bg-surface-2"
+        />
       </div>
     </dialog>
   );

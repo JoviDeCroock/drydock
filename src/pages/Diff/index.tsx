@@ -159,7 +159,7 @@ function DiffLanding() {
       </section>
 
       <section class="flex flex-col gap-3" aria-label="Notable supply-chain diffs">
-        <SectionLabel>See a real incident</SectionLabel>
+        <SectionLabel as="h2">See a real incident</SectionLabel>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           {INCIDENT_DIFFS.map((incident) => (
             <Card
@@ -189,7 +189,7 @@ function DiffLanding() {
       </section>
 
       <section class="flex flex-col gap-3">
-        <SectionLabel>Why diff the artifact</SectionLabel>
+        <SectionLabel as="h2">Why diff the artifact</SectionLabel>
         <Muted class="m-0 text-[14px] leading-[1.65] max-w-[680px]">
           Registry tarballs can differ from the repository: build output, install scripts, and files
           that never saw a pull request all ship in the artifact. Diffing the published bytes is how
@@ -332,7 +332,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
         <>
           <section class="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-4">
             <Card as="aside" class="p-5 flex flex-col gap-3 lg:h-[720px] overflow-hidden">
-              <SectionLabel>Release tree</SectionLabel>
+              <SectionLabel as="h2">Release tree</SectionLabel>
               <Input
                 type="search"
                 value={fileFilter}
@@ -367,7 +367,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
             </Card>
 
             <Card class="p-5 flex flex-col gap-3 lg:h-[720px]">
-              <SectionLabel>File diff</SectionLabel>
+              <SectionLabel as="h2">File diff</SectionLabel>
               <PublicDiffWorkbench
                 entry={selectedEntry.value}
                 model={model}
@@ -391,7 +391,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
           ) : null}
 
           <section class="flex flex-col gap-3 pt-3">
-            <SectionLabel>Before it ships</SectionLabel>
+            <SectionLabel as="p">Before it ships</SectionLabel>
             <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0">
               {hasPreview ? "This is the review that matters." : "This diff is after the fact."}
             </h2>
@@ -523,11 +523,12 @@ function VersionSelect({
   onChange: (version: string) => void;
 }) {
   return (
-    <div class="inline-block w-auto min-w-[160px]" aria-label={label}>
+    <div class="inline-block w-auto min-w-[160px]">
       <Select
         value={selected}
         size="sm"
         class="font-mono"
+        aria-label={label}
         onChange={(value) => {
           if (value && value !== selected) onChange(value);
         }}

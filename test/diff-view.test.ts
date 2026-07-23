@@ -100,6 +100,14 @@ describe("buildRows", () => {
     expect(rows[150].tone).toBe("added");
   });
 
+  test("strips CRLF carriage returns from rendered row text", () => {
+    // shiki drops the \r when tokenizing, so a retained \r would make a CRLF
+    // file render differently before and after the lazy highlighter loads.
+    const rows = buildRows("const a = 1;\r\n", "const a = 2;\r\n", null, null, {});
+    expect(rows.map((row) => row.text)).toEqual(["const a = 1;", "const a = 2;"]);
+    expect(rows.some((row) => row.text.includes("\r"))).toBe(false);
+  });
+
   test("treats whitespace-only line edits as unchanged with -w", () => {
     const rows = buildRows("const value=1;\n", "const value = 1;\n", null, null, {
       ignoreWhitespace: true,

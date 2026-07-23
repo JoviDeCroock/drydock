@@ -13,7 +13,10 @@ export function StatusStrip({
 }) {
   const colsClass =
     cols === 2 ? "md:grid-cols-2" : cols === 4 ? "md:grid-cols-2 lg:grid-cols-4" : "md:grid-cols-3";
-  return <section class={cn("grid grid-cols-1 gap-3", colsClass, className)}>{children}</section>;
+  // A plain div: an unnamed <section> is an anonymous landmark-ish region
+  // (noise in AT outlines), and the strip often nests inside an already
+  // labeled section on marketing pages.
+  return <div class={cn("grid grid-cols-1 gap-3", colsClass, className)}>{children}</div>;
 }
 
 export function StatusStripItem({
@@ -30,7 +33,9 @@ export function StatusStripItem({
   class?: string;
 }) {
   return (
-    <article
+    // Not an <article>: these tiles are dashboard readouts, not standalone
+    // syndicatable content.
+    <div
       class={cn(
         "bg-surface border border-border rounded-lg p-4 flex flex-col gap-2 min-h-[118px]",
         className,
@@ -43,6 +48,6 @@ export function StatusStripItem({
         <Badge tone={tone}>{status}</Badge>
       </div>
       {children ? <p class="m-0 text-[13px] leading-[1.55] text-ink-muted">{children}</p> : null}
-    </article>
+    </div>
   );
 }

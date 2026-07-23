@@ -16,17 +16,61 @@ const items = signal<ToastItem[]>([]);
 let nextId = 0;
 
 // Transient confirmations only — long enough to read one sentence, short enough
-// that stacked toasts clear themselves without manual dismissal.
+// that stacked toasts clear themselves without manual dismissal. Critical
+// toasts are errors and never auto-dismiss: losing an OAuth failure message
+// after 4s means losing the only record of what went wrong.
 const TOAST_TTL_MS = 4000;
+
+const timers = new Map<number, ReturnType<typeof setTimeout>>();
 
 export function pushToast(message: string, tone: ToastTone = "info"): void {
   const id = ++nextId;
   items.value = [...items.value, { id, tone, message }];
-  setTimeout(() => dismissToast(id), TOAST_TTL_MS);
+  if (tone !== "critical") scheduleToastDismiss(id);
 }
 
 export function dismissToast(id: number): void {
+  const timer = timers.get(id);
+  if (timer !== undefined) clearTimeout(timer);
+  timers.delete(id);
+  holds.delete(id);
   items.value = items.value.filter((item) => item.id !== id);
+}
+
+function scheduleToastDismiss(id: number): void {
+  timers.set(
+    id,
+    setTimeout(() => dismissToast(id), TOAST_TTL_MS),
+  );
+}
+
+// Hover/focus pause: while a user is reading (pointer over the toast) or
+// interacting (focus on its dismiss button), the clock stops; the last release
+// restarts a full TTL. Holds are refcounted because hover and focus overlap —
+// un-counted, mouse-leave would restart the timer while keyboard focus was
+// still inside the toast (and dismissal would then strand focus on <body>).
+// Exported for tests.
+const holds = new Map<number, number>();
+
+export function holdToast(id: number): void {
+  holds.set(id, (holds.get(id) ?? 0) + 1);
+  const timer = timers.get(id);
+  if (timer === undefined) return;
+  clearTimeout(timer);
+  timers.delete(id);
+}
+
+export function releaseToast(id: number): void {
+  const count = holds.get(id) ?? 0;
+  if (count > 1) {
+    holds.set(id, count - 1);
+    return;
+  }
+  holds.delete(id);
+  const item = items.value.find((entry) => entry.id === id);
+  if (!item || item.tone === "critical") return;
+  if (timers.has(id)) return;
+  scheduleToastDismiss(id);
 }
 
 // The colored disc mirrors the Alert indicator — the only filled-shape exception
@@ -46,6 +90,10 @@ export function Toaster() {
           key={item.id}
           class="pointer-events-auto flex items-start gap-2.5 bg-surface border border-border rounded-lg shadow-md px-3.5 py-3"
           role={item.tone === "critical" ? "alert" : "status"}
+          onMouseEnter={() => holdToast(item.id)}
+          onMouseLeave={() => releaseToast(item.id)}
+          onFocusIn={() => holdToast(item.id)}
+          onFocusOut={() => releaseToast(item.id)}
         >
           <span
             class={cn("w-4 h-4 rounded-full shrink-0 mt-0.5 opacity-90", toneDisc[item.tone])}
@@ -61,4 +109,16 @@ export function Toaster() {
       ))}
     </div>
   );
+}
+
+// Test-only escape hatch: reset the module-level store between cases.
+export function clearToastsForTest(): void {
+  for (const timer of timers.values()) clearTimeout(timer);
+  timers.clear();
+  holds.clear();
+  items.value = [];
+}
+
+export function toastItemsForTest(): readonly ToastItem[] {
+  return items.value;
 }
