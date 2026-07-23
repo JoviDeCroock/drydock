@@ -137,29 +137,38 @@ function keyFinding(
   }
 
   // Modified in place, or relocated with a changed spec: compare the span of
-  // majors each spec admits, and fire when the staged spec admits a major
+  // majors each spec admits, and fire when a staged spec admits a major
   // outside the previously reviewed span — higher (widening) or lower
   // (downgrade). A pure narrowing stays inside what the prior release was
-  // reviewed against and raises nothing. A relocated key can carry several
-  // removed specs (removed from more than one installing section at once);
-  // fire against the first escaped one, so an unchanged duplicate cannot mask
+  // reviewed against and raises nothing. Each modified row compares its own
+  // staged spec against its own previous spec, so a major change confined to a
+  // higher-ranked section (the peer row of a dependencies + peerDependencies
+  // pairing) cannot hide behind an unchanged-major lower-ranked one. A
+  // relocated key compares the representative staged spec against every spec
+  // removed from an installing section, so an unchanged duplicate cannot mask
   // a real major change.
+  //
+  // Known limit: optionalDependencies entries override same-named dependencies
+  // entries at install time, and unchanged duplicates never reach the diff, so
+  // a manifest listing one key at diverging specs across installing sections
+  // can draw a bump for a range its optional twin already admitted. That
+  // duplicate-with-diverging-specs shape itself warrants a reviewer's glance,
+  // so the extra low-severity finding is accepted rather than modeled.
   if (!hasBaseline) return null;
-  const stagedRange = specMajorRange(stagedSpec);
-  if (stagedRange === undefined) return null;
-  const modified = entries.find((e) => e.status === "modified");
-  const previousSpecs = modified ? [modified.previous] : (removedInstallingSpecs ?? []);
-  const changed = previousSpecs.find((spec) => {
-    const previousRange = specMajorRange(spec ?? undefined);
-    if (previousRange === undefined) return false;
-    return stagedRange.max > previousRange.max || stagedRange.min < previousRange.min;
-  });
-  if (changed !== undefined) {
+  const modifiedEntries = entries.filter((e) => e.status === "modified");
+  const pairs = modifiedEntries.length
+    ? modifiedEntries.map((e) => ({ previous: e.previous, staged: e.staged }))
+    : (removedInstallingSpecs ?? []).map((previous) => ({ previous, staged: stagedSpec }));
+  for (const pair of pairs) {
+    const stagedRange = specMajorRange(pair.staged);
+    const previousRange = specMajorRange(pair.previous ?? undefined);
+    if (stagedRange === undefined || previousRange === undefined) continue;
+    if (stagedRange.max <= previousRange.max && stagedRange.min >= previousRange.min) continue;
     return tag("dependencyMajorBump", {
       severity: "low",
       file: "package.json",
-      line,
-      evidence: `${key}: ${changed} -> ${stagedSpec}`,
+      line: firstJsonPropertyLine(stagedPackageJsonText, key, pair.staged),
+      evidence: `${key}: ${pair.previous} -> ${pair.staged}`,
       reason:
         "the dependency spec now resolves to a different major version than the previously reviewed release admitted, so consumers can pull code outside the range the prior version was reviewed against; review the dependency's own release diff",
     });

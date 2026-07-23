@@ -1514,6 +1514,30 @@ describe("review", () => {
     );
     expect(packageJsonDiffFindings(boundedRewrite)).toEqual([]);
 
+    // Every modified row compares its own spec pair: a major change confined
+    // to the peer row of a dependencies + peerDependencies pairing cannot hide
+    // behind an unchanged-major dependencies row.
+    const peerRowBump = summarizePackageJsonDiff(
+      {
+        name: "pkg",
+        version: "1.0.0",
+        dependencies: { dep: "^1.0.0" },
+        peerDependencies: { dep: "^1.0.0" },
+      },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        dependencies: { dep: "^1.1.0" },
+        peerDependencies: { dep: "^2.0.0" },
+      },
+    );
+    expect(packageJsonDiffFindings(peerRowBump)).toEqual([
+      expect.objectContaining({
+        ruleId: "dependency.major-bump",
+        evidence: "dep: ^1.0.0 -> ^2.0.0",
+      }),
+    ]);
+
     // npm treats an empty spec like "*" — the loosest range must not be the
     // one silent path through the added rule.
     const emptySpec = summarizePackageJsonDiff(
