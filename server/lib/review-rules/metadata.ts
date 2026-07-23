@@ -48,9 +48,12 @@ export function metadataFindings(ctx: RuleContext): Finding[] {
       // dummy tokens in test cases) is demoted one step like the code.*
       // capability rules, never dropped: a shipped private key is still worth
       // surfacing, but it is not the leak signal a package-code secret is.
+      // Only longstanding (unchanged-from-baseline) material demotes — a
+      // secret newly entering a test tree is a fresh leak or fresh payload
+      // staging and keeps full severity until a baseline knows about it.
       findings.push(
         testScope(
-          isUnreachableTestFile(ctx, file.path),
+          isUnreachableTestFile(ctx, file.path) && changed === "unchanged",
           false,
           tag("fileSecretContent", {
             severity: changed === "added" ? "critical" : "high",

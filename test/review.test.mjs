@@ -599,6 +599,9 @@ describe("review", () => {
   });
 
   test("still flags URL credentials with a real-looking password", () => {
+    // Weak-word passwords stay findings when the username is not itself a
+    // placeholder: `svc:secret@db` is a real (if weak) connection-string
+    // credential, unlike doc-style `user:pass@proxy`.
     const staged = [
       {
         path: "lib/config.js",
@@ -607,12 +610,29 @@ describe("review", () => {
         flags: [],
         textSample: 'const upstream = "https://deploy:9f8a7b6c5d4e3f2a1b@registry.example.com";\n',
       },
+      {
+        path: "lib/db.js",
+        size: 120,
+        sha256: "config-weak",
+        flags: [],
+        textSample: 'const dsn = "postgres://svc:secret@10.0.0.5:5432/prod";\n',
+      },
+      {
+        path: "lib/admin.js",
+        size: 120,
+        sha256: "config-admin",
+        flags: [],
+        textSample: 'const admin = "mysql://root:admin@db.internal:3306/app";\n',
+      },
     ];
     const findings = deterministicFindings(staged, createPackageDiff([], staged));
-
-    expect(findings).toContainEqual(
-      expect.objectContaining({ ruleId: "file.secret-content", file: "lib/config.js" }),
+    const secretFiles = new Set(
+      findings.filter((finding) => finding.ruleId === "file.secret-content").map((f) => f.file),
     );
+
+    expect(secretFiles.has("lib/config.js")).toBe(true);
+    expect(secretFiles.has("lib/db.js")).toBe(true);
+    expect(secretFiles.has("lib/admin.js")).toBe(true);
   });
 
   test("does not scan Python packaging metadata prose as capability evidence", () => {
@@ -662,7 +682,31 @@ describe("review", () => {
     expect(codeFindingFiles.has("wheel/py3-none-any/demo/client.py")).toBe(true);
   });
 
-  test("demotes secret-looking content in unreachable test files", () => {
+  test("demotes longstanding secret-looking content in unreachable test files", () => {
+    const key = {
+      path: "test/fixtures/server.key",
+      size: 160,
+      sha256: "test-key",
+      flags: [],
+      textSample: "-----BEGIN PRIVATE KEY-----\nTESTFIXTUREONLY\n-----END PRIVATE KEY-----\n",
+    };
+    const findings = deterministicFindings([key], createPackageDiff([key], [key]));
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        ruleId: "file.secret-content",
+        file: "test/fixtures/server.key",
+        // Unchanged files flag high; the test-scope demotion steps it to medium.
+        severity: "medium",
+        testScoped: true,
+        evidence: expect.stringContaining("test-scoped"),
+      }),
+    );
+  });
+
+  test("keeps full severity for a secret newly added to a test tree", () => {
+    // A secret entering a test tree is a fresh leak (or fresh payload staging),
+    // not longstanding fixture material — the test-scope demotion must not apply.
     const staged = [
       {
         path: "test/fixtures/server.key",
@@ -673,17 +717,10 @@ describe("review", () => {
       },
     ];
     const findings = deterministicFindings(staged, createPackageDiff([], staged));
+    const secret = findings.find((finding) => finding.ruleId === "file.secret-content");
 
-    expect(findings).toContainEqual(
-      expect.objectContaining({
-        ruleId: "file.secret-content",
-        file: "test/fixtures/server.key",
-        // Added files flag critical; the test-scope demotion steps it to high.
-        severity: "high",
-        testScoped: true,
-        evidence: expect.stringContaining("test-scoped"),
-      }),
-    );
+    expect(secret).toMatchObject({ severity: "critical", file: "test/fixtures/server.key" });
+    expect(secret.testScoped).toBeUndefined();
   });
 
   test("does not flag secret-looking source map content", () => {

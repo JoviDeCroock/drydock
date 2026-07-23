@@ -118,20 +118,39 @@ export const PYTHON_EXECUTION_CAPABILITY_PATTERNS = [
 // Doc-style placeholder passwords (`http://user:pass@proxy.example`,
 // `https://alice:<token>@host`) are ubiquitous in READMEs and changelogs —
 // requests' CVE-2023-32681 HISTORY entry is the canonical benign hit — and are
-// not leaked material. The finding-side pattern refuses a match when the
-// password segment is an obvious placeholder; redaction keeps the broad
+// not leaked material. The finding-side pattern refuses a match in two tiers:
+// structural placeholders (template syntax, masks, canonical fakes) are never
+// secrets regardless of the username, while bare weak words ("pass", "secret",
+// "token", "admin") only count as placeholders when the username is itself a
+// placeholder word — `svc:secret@db` or `root:admin@host` is a real (if weak)
+// connection-string credential and keeps flagging. Redaction keeps the broad
 // pattern, since over-redacting a placeholder is harmless while under-redacting
 // a real credential is not.
 const URL_CREDENTIALS_REDACTION_PATTERN = /\b(?:[A-Za-z]+:\/\/)[^\s/@:]+:[^\s/@]+@[^\s'"\\]+/g;
-const PLACEHOLDER_PASSWORD_SEGMENT = [
+const PLACEHOLDER_USERNAME_SEGMENT = [
+  "user(?:name)?",
+  "usr",
+  "foo",
+  "bar",
+  "alice",
+  "bob",
+  "me",
+  "test",
+  "demo",
+  "example",
+  "admin",
+].join("|");
+const WEAK_WORD_PASSWORD_SEGMENT = [
   "pass(?:word|wd)?",
   "pwd",
   "secret",
   "token",
   "example",
+  "admin",
+].join("|");
+const STRUCTURAL_PLACEHOLDER_SEGMENT = [
   "changeme",
   "hunter2",
-  "admin",
   "(?:your|my)[-_]?(?:password|token|secret|key)",
   "x{3,}",
   "\\*{3,}",
@@ -142,7 +161,7 @@ const PLACEHOLDER_PASSWORD_SEGMENT = [
   "%[^%@\\s]+%",
 ].join("|");
 const URL_CREDENTIALS_FINDING_PATTERN = new RegExp(
-  String.raw`\b(?:[A-Za-z]+:\/\/)[^\s/@:]+:(?!(?:${PLACEHOLDER_PASSWORD_SEGMENT})@)[^\s/@]+@[^\s'"\\]+`,
+  String.raw`\b(?:[A-Za-z]+:\/\/)(?!(?:${PLACEHOLDER_USERNAME_SEGMENT}):(?:${WEAK_WORD_PASSWORD_SEGMENT}|${STRUCTURAL_PLACEHOLDER_SEGMENT})@|[^\s/@:]+:(?:${STRUCTURAL_PLACEHOLDER_SEGMENT})@)[^\s/@:]+:[^\s/@]+@[^\s'"\\]+`,
   "gi",
 );
 
