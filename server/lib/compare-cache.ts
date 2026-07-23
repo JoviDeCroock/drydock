@@ -61,23 +61,31 @@ export async function computeCompareMetadataCacheKey(input: {
   return `${METADATA_CACHE_PREFIX}${hex}`;
 }
 
-export async function readCompareMetadataCache(
+// Registry metadata is only minutes-fresh anyway (METADATA_CACHE_TTL_SECONDS),
+// so repeat reads within a colo can serve KV's minimum colo-cached copy
+// instead of round-tripping to central storage on every request.
+const METADATA_CACHE_READ_COLO_TTL_SECONDS = 60;
+
+export async function readCompareMetadataCache<T = RegistryMetadata>(
   env: Cloudflare.Env,
   key: string,
-): Promise<RegistryMetadata | null> {
+): Promise<T | null> {
   if (!env.COMPARE_CACHE) return null;
   try {
-    return await env.COMPARE_CACHE.get<RegistryMetadata>(key, "json");
+    return await env.COMPARE_CACHE.get<T>(key, {
+      type: "json",
+      cacheTtl: METADATA_CACHE_READ_COLO_TTL_SECONDS,
+    });
   } catch {
     return null;
   }
 }
 
-export async function writeCompareMetadataCache(
+export async function writeCompareMetadataCache<T = RegistryMetadata>(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
   key: string,
-  payload: RegistryMetadata,
+  payload: T,
 ) {
   if (!env.COMPARE_CACHE) return;
   const write = env.COMPARE_CACHE.put(key, JSON.stringify(payload), {

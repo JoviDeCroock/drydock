@@ -45,6 +45,67 @@ describe("public package-diff routes", () => {
     expect(await res.json()).toEqual({
       error: "public package diff is disabled for custom registries",
     });
+
+    // A custom registry signals a private deployment, so the PyPI surface is
+    // disabled with it — it would otherwise still reach the public internet.
+    const pypi = await publicDiffFetchWithEnv(
+      "/api/public/v1/package-diff/versions?package=requests&ecosystem=pypi",
+      customRegistryEnv,
+      "10.0.0.9",
+    );
+    expect(pypi.status).toBe(404);
+  });
+
+  test("rejects an unknown ecosystem", async () => {
+    const res = await publicDiffFetch(
+      "/api/public/v1/package-diff?package=left-pad&from=1.0.0&to=1.0.1&ecosystem=rubygems",
+      "10.0.0.6",
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid ecosystem" });
+
+    const versions = await publicDiffFetch(
+      "/api/public/v1/package-diff/versions?package=left-pad&ecosystem=rubygems",
+      "10.0.0.6",
+    );
+    expect(versions.status).toBe(400);
+    expect(await versions.json()).toEqual({ error: "invalid ecosystem" });
+  });
+
+  test("validates PyPI project names with PyPI rules, not npm rules", async () => {
+    const invalid = await publicDiffFetch(
+      "/api/public/v1/package-diff?package=-bad-&from=1.0.0&to=1.0.1&ecosystem=pypi",
+      "10.0.0.7",
+    );
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toEqual({ error: "invalid package name" });
+
+    // Uppercase is invalid for npm but fine for PyPI: the request advances to
+    // version validation instead of failing on the name.
+    const upper = await publicDiffFetch(
+      "/api/public/v1/package-diff?package=UPPER_CASE&to=1.0.1&ecosystem=pypi",
+      "10.0.0.7",
+    );
+    expect(upper.status).toBe(400);
+    expect(await upper.json()).toEqual({ error: "invalid from version" });
+  });
+
+  test("accepts PEP 440 epoch versions only for PyPI", async () => {
+    // Identical from/to proves the epoch version passed the PyPI version regex
+    // without the request ever reaching the registry.
+    const pypi = await publicDiffFetch(
+      `/api/public/v1/package-diff?package=pkg&from=${encodeURIComponent("1!1.0")}&to=${encodeURIComponent("1!1.0")}&ecosystem=pypi`,
+      "10.0.0.8",
+    );
+    expect(pypi.status).toBe(400);
+    expect(await pypi.json()).toEqual({ error: "from and to must differ" });
+
+    const npm = await publicDiffFetch(
+      `/api/public/v1/package-diff?package=pkg&from=${encodeURIComponent("1!1.0")}&to=1.0.1`,
+      "10.0.0.8",
+    );
+    expect(npm.status).toBe(400);
+    expect(await npm.json()).toEqual({ error: "invalid from version" });
   });
 
   test("responds without a session instead of 401", async () => {

@@ -17,7 +17,7 @@ export function normalizePyPiProjectName(name: string): string {
   return name.toLowerCase().replace(/[-_.]+/g, "-");
 }
 
-function isValidPyPiProjectName(name: string): boolean {
+export function isValidPyPiProjectName(name: string): boolean {
   return (
     typeof name === "string" &&
     name.length > 0 &&

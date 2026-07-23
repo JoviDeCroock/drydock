@@ -7,10 +7,12 @@ import {
   writePublicDiffCache,
   type PublicPackageDiff,
 } from "../../server/lib/public-diff";
+import { PYPI_RULES_VERSION } from "../../server/lib/adapters/pypi/types";
 import { DETERMINISTIC_RULES_VERSION } from "../../server/lib/review";
 
 function payload(textSample = "export const value = 1;\n"): PublicPackageDiff {
   return {
+    ecosystem: "npm",
     packageName: "cache-test-package",
     fromVersion: "1.0.0",
     toVersion: "1.0.1",
@@ -38,6 +40,7 @@ function payload(textSample = "export const value = 1;\n"): PublicPackageDiff {
 describe("public diff cache", () => {
   test("versions computed results by deterministic rules and risk schema", async () => {
     const key = await computePublicDiffCacheKey({
+      ecosystem: "npm",
       registryUrl: "https://registry.npmjs.org",
       packageName: "cache-test-package",
       fromVersion: "1.0.0",
@@ -46,6 +49,30 @@ describe("public diff cache", () => {
 
     expect(key).toContain(`rules=${DETERMINISTIC_RULES_VERSION}`);
     expect(key).toContain("risk=1");
+  });
+
+  test("keys PyPI pairs by ecosystem, both rules versions, and normalized name", async () => {
+    const pypiKey = await computePublicDiffCacheKey({
+      ecosystem: "pypi",
+      registryUrl: "https://pypi.org/pypi",
+      packageName: "Cache.Test_Package",
+      fromVersion: "1.0.0",
+      toVersion: "1.0.1",
+    });
+
+    expect(pypiKey).toContain(":pypi:");
+    expect(pypiKey).toContain(`rules=${DETERMINISTIC_RULES_VERSION}+pypi-${PYPI_RULES_VERSION}`);
+    // PyPI names are case- and separator-insensitive; both spellings must hit
+    // the same cache entry.
+    expect(
+      await computePublicDiffCacheKey({
+        ecosystem: "pypi",
+        registryUrl: "https://pypi.org/pypi",
+        packageName: "cache-test-package",
+        fromVersion: "1.0.0",
+        toVersion: "1.0.1",
+      }),
+    ).toBe(pypiKey);
   });
 
   test("serves an awaited colo write even when KV still returns a cached miss", async () => {

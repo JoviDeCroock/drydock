@@ -6,6 +6,7 @@ import {
 } from "../../review";
 import { firstMatchingLine } from "../../text-utils";
 import { normalizePyPiProjectName } from "./manifest";
+import { pyPiVersionsEquivalent } from "./version";
 import {
   PYPI_RULE_IDS,
   PYPI_RULES_VERSION,
@@ -62,7 +63,10 @@ export function pyPiReleaseFindings(
         }),
       );
     }
-    if (summary.version && summary.version !== manifest.version) {
+    // PEP 440-equivalent spellings ("1.0-1" vs "1.0.post1", legacy "-final"
+    // markers) are the same version, not tampering evidence — only flag
+    // versions that differ after canonicalization, like the name compare.
+    if (summary.version && !pyPiVersionsEquivalent(summary.version, manifest.version)) {
       findings.push(
         tag("metadataMismatch", {
           severity: "critical",

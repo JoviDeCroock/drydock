@@ -1,5 +1,5 @@
 import type { ComponentChildren, JSX } from "preact";
-import type { Signal } from "@preact/signals";
+import type { ReadonlySignal, Signal } from "@preact/signals";
 import { cn } from "./cn";
 
 type SelectSize = "sm" | "md";
@@ -21,7 +21,9 @@ type SelectProps = Omit<
   JSX.SelectHTMLAttributes<HTMLSelectElement>,
   "class" | "size" | "value" | "disabled" | "onChange"
 > & {
-  value: string | Signal<string>;
+  // ReadonlySignal so narrower signals (union-typed values, computeds) can be
+  // passed directly; the component only ever reads the value.
+  value: string | ReadonlySignal<string>;
   disabled?: boolean | Signal<boolean>;
   onChange: (value: string) => void;
   children: ComponentChildren;

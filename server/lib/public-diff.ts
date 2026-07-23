@@ -1,11 +1,16 @@
 import type { AiReview } from "./ai-review-types";
 import { buildNpmFindings } from "./adapters/npm/findings";
+import { normalizePyPiProjectName } from "./adapters/pypi/manifest";
+import { PYPI_RULES_VERSION } from "./adapters/pypi/types";
 import {
   computeCompareMetadataCacheKey,
   readCompareMetadataCache,
   writeCompareMetadataCache,
 } from "./compare-cache";
-import { parsePkgPrNewUrl } from "../../src/lib/pkg-pr-new";
+import { parsePkgPrNewUrl, type PkgPrNewSpec } from "../../src/lib/pkg-pr-new";
+import { publicDiffDownloadError } from "./public-diff-download";
+import { PublicDiffError } from "./public-diff-error";
+import { acquirePublicPyPiDiff, type PublicDiffAcquiredSources } from "./public-diff-pypi";
 import {
   downloadPkgPrNewTarball,
   downloadPublishedTarball,
@@ -30,15 +35,20 @@ import {
 import { computeScanRiskBreakdown, type ScanRiskBreakdown } from "./risk";
 import { parseSandboxErrorDetail } from "./sandbox";
 
-// Anonymous, credential-free diff of two published npm versions — or of a
-// pkg.pr.new preview tarball against a published version (fromVersion /
-// toVersion may each be a validated pkg.pr.new URL). Reuses the
-// scan pipeline's pure phases (package diff, deterministic rules, diff-status
-// annotation, risk breakdown) over two published tarballs instead of
-// staged-vs-published. Findings run on raw text samples before redaction, like
-// the scan pipeline, so secret detection keeps working; only redacted evidence
-// is cached or returned.
+export { PublicDiffError } from "./public-diff-error";
+
+export type PublicDiffEcosystem = "npm" | "pypi";
+
+// Anonymous, credential-free diff of two published versions of an npm package
+// or PyPI project — or, on npm, of a pkg.pr.new preview tarball against a
+// published version (fromVersion / toVersion may each be a validated
+// pkg.pr.new URL). Reuses the scan pipeline's pure phases (package diff,
+// deterministic rules, diff-status annotation, risk breakdown) over published
+// artifacts instead of staged-vs-published. Findings run on raw text samples
+// before redaction, like the scan pipeline, so secret detection keeps working;
+// only redacted evidence is cached or returned.
 export interface PublicPackageDiff {
+  ecosystem: PublicDiffEcosystem;
   packageName: string;
   fromVersion: string;
   toVersion: string;
@@ -56,19 +66,26 @@ export interface PublicPackageDiff {
   cachedAt: string;
 }
 
-export class PublicDiffError extends Error {
-  constructor(
-    message: string,
-    public status: 400 | 404 | 413 | 502,
-  ) {
-    super(message);
-    this.name = "PublicDiffError";
-  }
+export interface PublicDiffInput {
+  ecosystem: PublicDiffEcosystem;
+  packageName: string;
+  fromVersion: string;
+  toVersion: string;
+  registryUrl: string;
+  allowInsecureLocalhost?: boolean;
 }
 
 // Bump this when risk aggregation changes without a deterministic-rules bump.
 const PUBLIC_DIFF_RISK_VERSION = "1";
-const CACHE_PREFIX = `public-diff:v2:rules=${DETERMINISTIC_RULES_VERSION}:risk=${PUBLIC_DIFF_RISK_VERSION}:`;
+// v3: ecosystem-aware payloads. Each ecosystem carries its own rules-version
+// segment so a PyPI rules bump does not invalidate cached npm pairs.
+function publicDiffCachePrefix(ecosystem: PublicDiffEcosystem): string {
+  const rules =
+    ecosystem === "pypi"
+      ? `${DETERMINISTIC_RULES_VERSION}+pypi-${PYPI_RULES_VERSION}`
+      : DETERMINISTIC_RULES_VERSION;
+  return `public-diff:v3:${ecosystem}:rules=${rules}:risk=${PUBLIC_DIFF_RISK_VERSION}:`;
+}
 // Package bytes are immutable, while the analysis version is encoded above.
 // The TTL therefore bounds storage rather than correctness.
 const CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
@@ -125,13 +142,7 @@ export async function fetchPublicPackageMetadata(
 export async function loadPublicPackageDiff(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
-  input: {
-    packageName: string;
-    fromVersion: string;
-    toVersion: string;
-    registryUrl: string;
-    allowInsecureLocalhost?: boolean;
-  },
+  input: PublicDiffInput,
 ): Promise<PublicPackageDiff> {
   // Preview-side validation is fetch-free and runs before any cache or
   // registry work: a preview URL must name the same package as the request.
@@ -147,6 +158,57 @@ export async function loadPublicPackageDiff(
   const cached = await readPublicDiffCache(env, cacheKey);
   if (cached) return cached;
 
+  const sources =
+    input.ecosystem === "pypi"
+      ? await acquirePublicPyPiDiff(env, ctx, input)
+      : await acquirePublicNpmDiff(env, ctx, input, { fromPreview, toPreview });
+
+  const fileDiff = createPackageDiff(sources.from.files, sources.to.files);
+  const manifestDiff = redactJson(
+    summarizePackageJsonDiff(sources.from.packageJson, sources.to.packageJson),
+  );
+  const ruleFindings = redactFindings(sources.buildFindings(fileDiff, manifestDiff));
+
+  const redactedFromFiles = redactFileRecords(sources.from.files);
+  const redactedToFiles = redactFileRecords(sources.to.files);
+  const findings = annotateFindingsWithDiffStatus(ruleFindings, fileDiff, {
+    previousFiles: redactedFromFiles,
+    stagedFiles: redactedToFiles,
+    // Baseline fingerprints re-run the deterministic rules over the previous
+    // files; they must use the ecosystem's pattern set (python for PyPI) or
+    // unchanged capabilities read as release deltas.
+    codePatternSet: sources.codePatternSet,
+  });
+  const risk = computeScanRiskBreakdown(findings, AI_REVIEW_DISABLED);
+
+  const payload: PublicPackageDiff = {
+    ecosystem: input.ecosystem,
+    packageName: input.packageName,
+    fromVersion: input.fromVersion,
+    toVersion: input.toVersion,
+    fromPackageJson: redactJson(sources.from.packageJson),
+    toPackageJson: redactJson(sources.to.packageJson),
+    fromFiles: redactedFromFiles,
+    toFiles: redactedToFiles,
+    diff: fileDiff,
+    packageJsonDiff: manifestDiff,
+    findings,
+    risk,
+    cachedAt: new Date().toISOString(),
+  };
+  await writePublicDiffCache(env, cacheKey, payload, {
+    ttlSeconds: fromPreview || toPreview ? PREVIEW_CACHE_TTL_SECONDS : CACHE_TTL_SECONDS,
+  });
+  return payload;
+}
+
+async function acquirePublicNpmDiff(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  input: PublicDiffInput,
+  previews: { fromPreview: PkgPrNewSpec | null; toPreview: PkgPrNewSpec | null },
+): Promise<PublicDiffAcquiredSources> {
+  const { fromPreview, toPreview } = previews;
   // Registry metadata is only needed for registry-version sides; a
   // preview-vs-preview pair may not be published on npm at all yet.
   let fromTarballUrl = fromPreview?.url;
@@ -189,53 +251,23 @@ export async function loadPublicPackageDiff(
       : downloadArchive(env, ctx, toTarballUrl, input),
   ]);
 
-  const fileDiff = createPackageDiff(fromArchive.files, toArchive.files);
-  const manifestDiff = redactJson(
-    summarizePackageJsonDiff(fromArchive.packageJson, toArchive.packageJson),
-  );
-  const toManifestText =
-    toArchive.files.find((file) => file.path === "package.json")?.textSample ?? null;
-
-  const ruleFindings = redactFindings(
-    buildNpmFindings({
-      staged: {
-        files: toArchive.files,
-        manifest: toArchive.packageJson ?? null,
-        suspiciousTarEntries: toArchive.suspiciousEntries,
-      },
-      details: null,
-      fileDiff,
-      manifestDiff,
-      stagedManifestText: toManifestText,
-    }),
-  );
-
-  const redactedFromFiles = redactFileRecords(fromArchive.files);
-  const redactedToFiles = redactFileRecords(toArchive.files);
-  const findings = annotateFindingsWithDiffStatus(ruleFindings, fileDiff, {
-    previousFiles: redactedFromFiles,
-    stagedFiles: redactedToFiles,
-  });
-  const risk = computeScanRiskBreakdown(findings, AI_REVIEW_DISABLED);
-
-  const payload: PublicPackageDiff = {
-    packageName: input.packageName,
-    fromVersion: input.fromVersion,
-    toVersion: input.toVersion,
-    fromPackageJson: redactJson(fromArchive.packageJson ?? null),
-    toPackageJson: redactJson(toArchive.packageJson ?? null),
-    fromFiles: redactedFromFiles,
-    toFiles: redactedToFiles,
-    diff: fileDiff,
-    packageJsonDiff: manifestDiff,
-    findings,
-    risk,
-    cachedAt: new Date().toISOString(),
+  return {
+    from: { files: fromArchive.files, packageJson: fromArchive.packageJson ?? null },
+    to: { files: toArchive.files, packageJson: toArchive.packageJson ?? null },
+    buildFindings: (fileDiff, manifestDiff) =>
+      buildNpmFindings({
+        staged: {
+          files: toArchive.files,
+          manifest: toArchive.packageJson ?? null,
+          suspiciousTarEntries: toArchive.suspiciousEntries,
+        },
+        details: null,
+        fileDiff,
+        manifestDiff,
+        stagedManifestText:
+          toArchive.files.find((file) => file.path === "package.json")?.textSample ?? null,
+      }),
   };
-  await writePublicDiffCache(env, cacheKey, payload, {
-    ttlSeconds: fromPreview || toPreview ? PREVIEW_CACHE_TTL_SECONDS : CACHE_TTL_SECONDS,
-  });
-  return payload;
 }
 
 async function downloadArchive(
@@ -250,11 +282,7 @@ async function downloadArchive(
       allowInsecureLocalhost: input.allowInsecureLocalhost,
     });
   } catch (err) {
-    const detail = parseSandboxErrorDetail(err);
-    if (detail?.status === 413) {
-      throw new PublicDiffError("package is too large to diff", 413);
-    }
-    throw new PublicDiffError("package download failed", 502);
+    throw publicDiffDownloadError(err);
   }
 }
 
@@ -262,29 +290,33 @@ async function downloadPreviewArchive(env: Cloudflare.Env, ctx: ExecutionContext
   try {
     return await downloadPkgPrNewTarball(env, ctx, url);
   } catch (err) {
-    const detail = parseSandboxErrorDetail(err);
-    if (detail?.status === 404) {
+    // A preview ref that no longer resolves is the one failure the shared
+    // mapping cannot name, because published tarball URLs come from registry
+    // metadata and never 404 on their own.
+    if (parseSandboxErrorDetail(err)?.status === 404) {
       throw new PublicDiffError("preview not found on pkg.pr.new", 404);
     }
-    if (detail?.status === 413) {
-      throw new PublicDiffError("package is too large to diff", 413);
-    }
-    throw new PublicDiffError("preview download failed", 502);
+    throw publicDiffDownloadError(err);
   }
 }
 
 export async function computePublicDiffCacheKey(input: {
+  ecosystem: PublicDiffEcosystem;
   packageName: string;
   fromVersion: string;
   toVersion: string;
   registryUrl: string;
 }): Promise<string> {
+  // PyPI project names are case- and separator-insensitive, so normalize them
+  // before hashing to keep "Django" and "django" on one cache entry.
+  const packageName =
+    input.ecosystem === "pypi" ? normalizePyPiProjectName(input.packageName) : input.packageName;
   const data = new TextEncoder().encode(
-    `${input.registryUrl}|${input.packageName}|${input.fromVersion}|${input.toVersion}`,
+    `${input.ecosystem}|${input.registryUrl}|${packageName}|${input.fromVersion}|${input.toVersion}`,
   );
   const digest = await crypto.subtle.digest("SHA-256", data);
   const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-  return `${CACHE_PREFIX}${hex}`;
+  return `${publicDiffCachePrefix(input.ecosystem)}${hex}`;
 }
 
 export async function readPublicDiffCache(

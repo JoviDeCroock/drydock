@@ -8,15 +8,18 @@ import type {
   PackageJsonSummary,
 } from "../../server/lib/review";
 import type { ScanRiskBreakdown } from "../../server/lib/risk";
+import type { DiffEcosystem } from "../lib/package-diff-path";
 import { apiFetch, errorMessage } from "./api";
 
 export interface PublicDiffVersionsResponse {
+  ecosystem: DiffEcosystem;
   packageName: string;
   versions: Array<{ version: string; distTags: string[]; publishedAt?: string }>;
   suggested: { from: string; to: string } | null;
 }
 
 export interface PublicDiffResponse {
+  ecosystem: DiffEcosystem;
   packageName: string;
   fromVersion: string;
   toVersion: string;
@@ -37,39 +40,57 @@ export interface PublicDiffFileResponse {
   textSamplesOmitted: boolean;
 }
 
-export function getPublicDiffVersions(packageName: string): Promise<PublicDiffVersionsResponse> {
+export function getPublicDiffVersions(
+  ecosystem: DiffEcosystem,
+  packageName: string,
+): Promise<PublicDiffVersionsResponse> {
   return apiFetch(
-    `/api/public/v1/package-diff/versions?package=${encodeURIComponent(packageName)}`,
+    `/api/public/v1/package-diff/versions?package=${encodeURIComponent(packageName)}${ecosystemQuery(ecosystem)}`,
   );
 }
 
 function getPublicDiff(
+  ecosystem: DiffEcosystem,
   packageName: string,
   fromVersion: string,
   toVersion: string,
 ): Promise<PublicDiffResponse> {
-  return apiFetch(`/api/public/v1/package-diff?${diffQuery(packageName, fromVersion, toVersion)}`);
+  return apiFetch(
+    `/api/public/v1/package-diff?${diffQuery(ecosystem, packageName, fromVersion, toVersion)}`,
+  );
 }
 
 function getPublicDiffFile(
+  ecosystem: DiffEcosystem,
   packageName: string,
   fromVersion: string,
   toVersion: string,
   path: string,
 ): Promise<PublicDiffFileResponse> {
   return apiFetch(
-    `/api/public/v1/package-diff/file?${diffQuery(packageName, fromVersion, toVersion)}&path=${encodeURIComponent(path)}`,
+    `/api/public/v1/package-diff/file?${diffQuery(ecosystem, packageName, fromVersion, toVersion)}&path=${encodeURIComponent(path)}`,
   );
 }
 
-function diffQuery(packageName: string, fromVersion: string, toVersion: string): string {
-  return `package=${encodeURIComponent(packageName)}&from=${encodeURIComponent(fromVersion)}&to=${encodeURIComponent(toVersion)}`;
+function diffQuery(
+  ecosystem: DiffEcosystem,
+  packageName: string,
+  fromVersion: string,
+  toVersion: string,
+): string {
+  return `package=${encodeURIComponent(packageName)}&from=${encodeURIComponent(fromVersion)}&to=${encodeURIComponent(toVersion)}${ecosystemQuery(ecosystem)}`;
+}
+
+// npm requests keep their historical parameter-free URLs so long-lived colo
+// cache entries stay valid; only PyPI adds the ecosystem parameter.
+function ecosystemQuery(ecosystem: DiffEcosystem): string {
+  return ecosystem === "pypi" ? "&ecosystem=pypi" : "";
 }
 
 // One model instance per (package, from, to) page view; the page remounts the
 // model when the route changes, so all state here is for a single version pair.
 export const PackageDiffModel = createModel(
-  (packageName: string, fromVersion: string, toVersion: string) => {
+  (ecosystem: DiffEcosystem, packageName: string, fromVersion: string, toVersion: string) => {
     const loading = signal(true);
     const error = signal<string | null>(null);
     const diff = signal<PublicDiffResponse | null>(null);
@@ -93,8 +114,8 @@ export const PackageDiffModel = createModel(
         loading.value = true;
         error.value = null;
         const [diffResult, versionsResult] = await Promise.allSettled([
-          getPublicDiff(packageName, fromVersion, toVersion),
-          getPublicDiffVersions(packageName),
+          getPublicDiff(ecosystem, packageName, fromVersion, toVersion),
+          getPublicDiffVersions(ecosystem, packageName),
         ]);
         const versionsData = versionsResult.status === "fulfilled" ? versionsResult.value : null;
         if (diffResult.status === "fulfilled") {
@@ -104,7 +125,7 @@ export const PackageDiffModel = createModel(
             versions.value = versionsData;
             loading.value = false;
           });
-          const initial = pickInitialPath(diffData.diff);
+          const initial = pickInitialPath(diffData.diff, ecosystem);
           if (initial) void this.selectPath(initial);
         } else {
           batch(() => {
@@ -131,7 +152,13 @@ export const PackageDiffModel = createModel(
           fileLoading.value = true;
         });
         try {
-          const data = await getPublicDiffFile(packageName, fromVersion, toVersion, path);
+          const data = await getPublicDiffFile(
+            ecosystem,
+            packageName,
+            fromVersion,
+            toVersion,
+            path,
+          );
           fileCache.set(path, data);
           // A slow response for a file the user already navigated away from
           // must not clobber the selection they moved to.
@@ -158,12 +185,21 @@ const INITIAL_STATUS_RANK: Record<string, number> = {
   removed: 2,
 };
 
-// Open the workbench on the most review-worthy file: the manifest when it
-// changed, otherwise the first changed file in tree-sort order.
-function pickInitialPath(entries: DiffEntry[]): string | null {
+// Open the workbench on the most review-worthy file: the ecosystem's manifest
+// when it changed, otherwise the first changed file in tree-sort order. The
+// match is per-ecosystem — an npm package vendoring a PKG-INFO must not
+// auto-open the vendored Python metadata instead of package.json.
+function isManifestPath(path: string, ecosystem: DiffEcosystem): boolean {
+  if (ecosystem === "pypi") {
+    return /(^|\/)PKG-INFO$/.test(path) || path.endsWith(".dist-info/METADATA");
+  }
+  return path === "package.json";
+}
+
+function pickInitialPath(entries: DiffEntry[], ecosystem: DiffEcosystem): string | null {
   const changed = entries.filter((entry) => entry.status !== "unchanged");
   if (!changed.length) return null;
-  const manifest = changed.find((entry) => entry.path === "package.json");
+  const manifest = changed.find((entry) => isManifestPath(entry.path, ecosystem));
   if (manifest) return manifest.path;
   return changed.slice().sort((a, b) => {
     const rank = (INITIAL_STATUS_RANK[a.status] ?? 3) - (INITIAL_STATUS_RANK[b.status] ?? 3);

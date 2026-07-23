@@ -268,14 +268,72 @@ describe("PyPI artifact summaries and review", () => {
       ],
     });
 
+    // The sdist archive root is stripped from the evidence path, matching the
+    // prepared file list ("big.so"), so the finding pins to a real file.
     expect(review.ruleFindings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           ruleId: "tar.suspicious-entry",
           severity: "medium",
-          file: "dist/demo_package-1.2.0.tar.gz/demo_package-1.2.0/big.so",
+          file: "dist/demo_package-1.2.0.tar.gz/big.so",
         }),
       ]),
+    );
+  });
+
+  test("does not flag PEP 440-equivalent version spellings as metadata mismatches", () => {
+    const manifest = parsePyPiReleaseManifest({
+      schema: "drydock.release-artifacts.v1",
+      ecosystem: "pypi",
+      package: "demo-package",
+      version: "1.2.0-final",
+      artifacts: [{ path: "dist/demo_package-1.2.0-py3-none-any.whl", sha256: "a".repeat(64) }],
+    });
+    const review = createPyPiReleaseCandidateReview({
+      manifest,
+      artifacts: [
+        {
+          path: "dist/demo_package-1.2.0-py3-none-any.whl",
+          files: [
+            file(
+              "demo_package-1.2.0.dist-info/METADATA",
+              "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
+            ),
+          ],
+        },
+      ],
+    });
+
+    expect(
+      review.ruleFindings.filter((finding) => finding.ruleId === "pypi.metadata-mismatch"),
+    ).toEqual([]);
+  });
+
+  test("still flags genuinely different artifact versions as critical", () => {
+    const manifest = parsePyPiReleaseManifest({
+      schema: "drydock.release-artifacts.v1",
+      ecosystem: "pypi",
+      package: "demo-package",
+      version: "1.3.0",
+      artifacts: [{ path: "dist/demo_package-1.3.0-py3-none-any.whl", sha256: "a".repeat(64) }],
+    });
+    const review = createPyPiReleaseCandidateReview({
+      manifest,
+      artifacts: [
+        {
+          path: "dist/demo_package-1.3.0-py3-none-any.whl",
+          files: [
+            file(
+              "demo_package-1.3.0.dist-info/METADATA",
+              "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
+            ),
+          ],
+        },
+      ],
+    });
+
+    expect(review.ruleFindings).toContainEqual(
+      expect.objectContaining({ severity: "critical", ruleId: "pypi.metadata-mismatch" }),
     );
   });
 
