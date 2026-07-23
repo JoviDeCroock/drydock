@@ -48,7 +48,23 @@ test("OrgSwitcher trigger updates after organizations load", async ({ page }) =>
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        scans: [],
+        scans: [
+          {
+            id: "scan-failed-menu",
+            stageId: "stage-failed-menu",
+            source: "npm",
+            organizationId: "org-acme",
+            ownerUserId: "user-org-switcher",
+            packageName: "@acme/failed-release",
+            stagedVersion: "2.0.0",
+            previousVersion: "1.0.0",
+            risk: "unknown",
+            status: "failed",
+            decision: null,
+            createdAt: "2026-06-15T12:00:00.000Z",
+            updatedAt: "2026-06-15T12:00:00.000Z",
+          },
+        ],
         nextCursor: null,
         filter: "undecided",
         limit: 50,
@@ -94,4 +110,35 @@ test("OrgSwitcher trigger updates after organizations load", async ({ page }) =>
   releaseOrganizations?.();
 
   await expect(switcher).toContainText("Acme Widgets");
+  await switcher.click();
+
+  const menu = page.getByRole("menu");
+  await expect(menu).toBeVisible();
+  await expect(menu).toHaveAttribute("popover", "manual");
+  expect(await menu.evaluate((node) => node.matches(":popover-open"))).toBe(true);
+
+  const box = await menu.boundingBox();
+  const viewport = page.viewportSize();
+  expect(box).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(8);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(viewport!.width - 8);
+  expect(box!.y).toBeGreaterThanOrEqual(8);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height - 8);
+
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 480, height: 360 });
+
+  const actions = page.getByRole("button", { name: "More actions for @acme/failed-release" });
+  await actions.evaluate((node) => node.scrollIntoView({ block: "end" }));
+  const triggerBox = await actions.boundingBox();
+  await actions.click();
+
+  const actionsMenu = page.getByRole("menu");
+  await expect(actionsMenu).toBeVisible();
+  await expect(actionsMenu.getByRole("menuitem", { name: "Delete review" })).toBeVisible();
+  const actionsBox = await actionsMenu.boundingBox();
+  expect(triggerBox).not.toBeNull();
+  expect(actionsBox).not.toBeNull();
+  expect(actionsBox!.y + actionsBox!.height).toBeLessThanOrEqual(triggerBox!.y);
 });

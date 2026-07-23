@@ -1,8 +1,9 @@
 import type { ComponentChildren, JSX } from "preact";
 import { useId, useRef } from "preact/hooks";
 import { useComputed, useSignal, useSignalEffect } from "@preact/signals";
-import { Show, useLiveSignal } from "@preact/signals/utils";
+import { useLiveSignal } from "@preact/signals/utils";
 import { cn } from "./cn";
+import { menuPanelPosition } from "./menu-position";
 
 interface MenuProps {
   trigger: (open: boolean) => ComponentChildren;
@@ -27,6 +28,7 @@ export function Menu({
   const focusFirstOnOpen = useSignal(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const panelId = useId();
 
   // `trigger` is a plain prop whose closure can change (e.g. its label derives
@@ -48,8 +50,35 @@ export function Menu({
     items[nextIndex]?.focus();
   };
 
+  const positionPanel = () => {
+    const triggerNode = triggerRef.current;
+    const panelNode = panelRef.current;
+    if (!triggerNode || !panelNode) return;
+    const position = menuPanelPosition(
+      triggerNode.getBoundingClientRect(),
+      panelNode.getBoundingClientRect(),
+      { width: window.innerWidth, height: window.innerHeight },
+      align,
+    );
+    panelNode.style.top = `${position.top}px`;
+    panelNode.style.left = `${position.left}px`;
+  };
+
   useSignalEffect(() => {
-    if (!open.value) return;
+    const isOpen = open.value;
+    const panelNode = panelRef.current;
+    if (!panelNode) return;
+    if (!isOpen) {
+      if (panelNode.matches(":popover-open")) panelNode.hidePopover();
+      return;
+    }
+
+    panelNode.style.visibility = "hidden";
+    if (!panelNode.matches(":popover-open")) panelNode.showPopover();
+    positionPanel();
+    panelNode.style.visibility = "";
+
+    const onPositionChange = () => positionPanel();
     const onPointer = (event: PointerEvent) => {
       const node = rootRef.current;
       if (!node) return;
@@ -63,9 +92,13 @@ export function Menu({
       focusFirstOnOpen.value = false;
       triggerRef.current?.focus();
     };
+    window.addEventListener("resize", onPositionChange);
+    window.addEventListener("scroll", onPositionChange, true);
     document.addEventListener("pointerdown", onPointer);
     document.addEventListener("keydown", onKey);
     return () => {
+      window.removeEventListener("resize", onPositionChange);
+      window.removeEventListener("scroll", onPositionChange, true);
       document.removeEventListener("pointerdown", onPointer);
       document.removeEventListener("keydown", onKey);
     };
@@ -179,32 +212,36 @@ export function Menu({
       >
         {triggerContent}
       </button>
-      <Show when={open}>
-        {() => (
-          <div
-            id={panelId}
-            role="menu"
-            onClick={onPanelClick}
-            class={cn(
-              "absolute z-20 mt-1 min-w-[200px] bg-surface border border-border rounded-md shadow-md py-1",
-              align === "end" ? "right-0" : "left-0",
-              panelClass,
-            )}
-          >
-            {children}
-          </div>
+      <div
+        ref={panelRef}
+        id={panelId}
+        role="menu"
+        popover="manual"
+        onClick={onPanelClick}
+        class={cn(
+          "fixed z-20 m-0 min-w-[200px] max-w-[calc(100vw-1rem)] max-h-[calc(100vh-1rem)] overflow-y-auto",
+          "bg-surface border border-border rounded-md shadow-md px-0 py-1",
+          panelClass,
         )}
-      </Show>
+      >
+        {children}
+      </div>
     </div>
   );
 }
 
 type MenuItemProps = Omit<JSX.ButtonHTMLAttributes<HTMLButtonElement>, "class" | "onClick"> & {
   onSelect?: () => void;
-  tone?: "default" | "accent";
+  tone?: "default" | "accent" | "danger";
   active?: boolean;
   class?: string;
   children: ComponentChildren;
+};
+
+const menuItemToneClass: Record<NonNullable<MenuItemProps["tone"]>, string> = {
+  default: "text-ink",
+  accent: "text-accent",
+  danger: "text-danger-text",
 };
 
 export function MenuItem({
@@ -227,7 +264,7 @@ export function MenuItem({
       class={cn(
         "w-full text-left text-[13px] px-3 py-1.5 cursor-pointer",
         "hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent",
-        tone === "accent" ? "text-accent" : "text-ink",
+        menuItemToneClass[tone],
         active ? "font-medium" : "",
         className,
       )}
