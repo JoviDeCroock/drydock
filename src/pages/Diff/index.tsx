@@ -95,7 +95,7 @@ function DiffLanding() {
   const error = useSignal<string | null>(null);
   const namePlaceholder = useComputed(() =>
     ecosystem.value === "pypi"
-      ? "project name, e.g. requests or numpy"
+      ? "project name, e.g. requests"
       : "package name or pkg.pr.new URL, e.g. react",
   );
   const nameLabel = useComputed(() =>
