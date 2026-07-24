@@ -195,7 +195,16 @@ review or provenance.
 Pinning is what unlocks the large-release budget. An auto-detect release target
 has no name to narrow the run by, so it matches every non-expired artifact the
 run uploaded and keeps the smaller single-upload budget (20 distributions,
-50 MiB of artifact ZIPs) rather than downloading unrelated CI output.
+50 MiB of artifact ZIPs) rather than downloading unrelated CI output. Shard
+families are a PyPI-only behavior; the npm and VS Code gates still match their
+conventional artifact name exactly.
+
+Give each distribution exactly one shard. A matrix leg that runs a full
+`python -m build` ships the sdist alongside its wheel, so the same
+`*.tar.gz` lands in every shard: identical bytes are accepted once, but two
+shards producing the same filename from a non-reproducible build fail the gate
+with `artifact_identity_inconsistent` rather than binding two digests to one
+manifest path. Build the sdist in its own job, as below.
 
 ```yaml
 jobs:

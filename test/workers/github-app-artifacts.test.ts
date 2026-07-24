@@ -375,6 +375,58 @@ describe("fetchReleaseBundleWithToken", () => {
     expect(bundle.artifacts.every((artifact) => artifact.path.endsWith(".whl"))).toBe(true);
   });
 
+  test("fails closed when two shards carry the same path with different bytes", async () => {
+    const wheel = makeWheelBytes("demo-package", "1.2.0");
+    const artifacts = [
+      {
+        id: ARTIFACT_ID,
+        name: `${ARTIFACT_NAME}-linux`,
+        bundleZip: makeZip([{ path: wheel.path, body: wheel.bytes }]),
+      },
+      {
+        id: ARTIFACT_ID + 1,
+        name: `${ARTIFACT_NAME}-macos`,
+        bundleZip: makeZip([
+          { path: wheel.path, body: concat([wheel.bytes, new Uint8Array([0])]) },
+        ]),
+      },
+    ];
+    stubGithubFetch({ bundleZip: null, artifacts });
+
+    await expect(
+      processReleaseBundleWithToken(
+        TOKEN,
+        source({ artifactNamePrefix: ARTIFACT_NAME }),
+        classifyArtifact,
+        async (artifact) => artifact,
+      ),
+    ).rejects.toThrow(/appears in more than one artifact upload/);
+  });
+
+  test("accepts a distribution re-uploaded byte-identically across shards", async () => {
+    // A matrix leg that runs a full `python -m build` ships the sdist next to
+    // its wheel, so the same sdist can arrive from several shards.
+    const wheel = makeWheelBytes("demo-package", "1.2.0");
+    const bundleZip = makeZip([{ path: wheel.path, body: wheel.bytes }]);
+    stubGithubFetch({
+      bundleZip: null,
+      artifacts: [
+        { id: ARTIFACT_ID, name: `${ARTIFACT_NAME}-linux`, bundleZip },
+        { id: ARTIFACT_ID + 1, name: `${ARTIFACT_NAME}-macos`, bundleZip },
+      ],
+    });
+
+    const bundle = await processReleaseBundleWithToken(
+      TOKEN,
+      source({ artifactNamePrefix: ARTIFACT_NAME }),
+      classifyArtifact,
+      async (artifact) => artifact,
+    );
+
+    expect(bundle.artifacts).toHaveLength(1);
+    expect(bundle.artifacts[0]?.path).toBe(wheel.path);
+  });
+
   test("keeps the single-upload budget when no artifact name narrows the run", async () => {
     // An auto-detect release target supplies neither name nor prefix, so every
     // non-expired upload on the run matches. The shard-family budget must not

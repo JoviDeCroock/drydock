@@ -128,6 +128,48 @@ describe("PyPI artifact summaries and review", () => {
     });
   });
 
+  test("keeps per-artifact rule evidence on every platform wheel", () => {
+    // `pthExecution` fires once per artifact and reads its severity, evidence,
+    // and line from the file body. Compacting a byte-identical `.pth` down to
+    // one copy would leave the siblings reporting medium / ".pth file included
+    // in wheel" for content that does contain an import line.
+    const platforms = ["macosx_11_0_arm64", "manylinux_x86_64", "win_amd64"];
+    const paths = platforms.map(
+      (platform) => `dist/demo_package-1.2.0-cp312-cp312-${platform}.whl`,
+    );
+    const wheelFiles = (platform) => [
+      file(
+        "demo_package-1.2.0.dist-info/METADATA",
+        "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
+      ),
+      file(
+        "demo_package-1.2.0.dist-info/WHEEL",
+        `Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: cp312-cp312-${platform}\n`,
+      ),
+      file("demo_package-1.2.0.dist-info/RECORD", "demo_package/__init__.py,,\n"),
+      file("sitecustomize.pth", "import demo_package.bootstrap\n"),
+    ];
+    const review = createPyPiReleaseCandidateReview({
+      manifest: parsePyPiReleaseManifest({
+        schema: "drydock.release-artifacts.v1",
+        ecosystem: "pypi",
+        package: "demo-package",
+        version: "1.2.0",
+        artifacts: paths.map((path, index) => ({ path, sha256: `${index}a`.repeat(32) })),
+      }),
+      artifacts: paths.map((path, index) => ({ path, files: wheelFiles(platforms[index]) })),
+    });
+
+    const pth = review.ruleFindings.filter((finding) => finding.ruleId === "pypi.pth-execution");
+    expect(pth.map((finding) => finding.file)).toEqual(
+      paths.map((path) => `${path}/sitecustomize.pth`),
+    );
+    expect(pth.map((finding) => finding.severity)).toEqual(["high", "high", "high"]);
+    expect(new Set(pth.map((finding) => finding.evidence))).toEqual(
+      new Set([".pth file contains an import line"]),
+    );
+  });
+
   test("creates deterministic PyPI findings for wheel startup hooks and setup.py install commands", () => {
     const manifest = parsePyPiReleaseManifest({
       schema: "drydock.release-artifacts.v1",

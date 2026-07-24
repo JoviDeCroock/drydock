@@ -226,12 +226,14 @@ function resolveBundleClassifier(
     },
     ...(override
       ? { artifactName: override }
-      : {
-          // The exact conventional name remains valid; `-${shard}` suffixes let
-          // large releases keep every outer Actions ZIP under the per-download
-          // cap while excluding unrelated workflow artifacts.
-          artifactNamePrefix: adapter.artifactName,
-        }),
+      : adapter.shardedArtifactNames
+        ? {
+            // The exact conventional name remains valid; `-${shard}` suffixes
+            // let large releases keep every outer Actions ZIP under the
+            // per-download cap while excluding unrelated workflow artifacts.
+            artifactNamePrefix: adapter.artifactName,
+          }
+        : { artifactName: adapter.artifactName }),
   };
 }
 

@@ -408,13 +408,24 @@ function sampleRetentionKey(artifact: PyPiPreparedArtifact, path: string): strin
   return `${artifact.kind}\0${normalizePyPiDiffFilePath(path)}`;
 }
 
+// Bodies that must survive on every artifact, not just the first copy.
+//
+// Identity/integrity records (`METADATA`, `PKG-INFO`, `WHEEL`, `RECORD`) are
+// parsed per artifact by `summarizePyPiArtifact` and `undeclaredWheelFiles`.
+// `.pth` and `setup.py` are read by `pyPiReleaseFindings`, which emits one
+// finding per artifact and derives its severity, evidence, and line from the
+// sample: a compacted copy would report `.pth file included in wheel` (medium)
+// next to a byte-identical sibling reporting `.pth file contains an import
+// line` (high), or drop the `setup.py` finding altogether.
 function mustRetainPerArtifact(path: string): boolean {
-  const basename = path.split("/").at(-1)?.toUpperCase();
+  const basename = path.split("/").at(-1)?.toUpperCase() ?? "";
   return (
     basename === "METADATA" ||
     basename === "PKG-INFO" ||
     basename === "WHEEL" ||
-    basename === "RECORD"
+    basename === "RECORD" ||
+    basename === "SETUP.PY" ||
+    basename.endsWith(".PTH")
   );
 }
 

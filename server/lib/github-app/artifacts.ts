@@ -244,6 +244,13 @@ async function processReleaseBundle<TArtifact>(
   // happened to include) are ignored — they are never scanned, so they cannot
   // influence the review.
   const candidateArtifacts: TArtifact[] = [];
+  // Shard families let the same distribution filename arrive from more than one
+  // upload (a matrix leg that runs a full `python -m build` ships the sdist
+  // alongside its wheel). Identical bytes are the same already-reviewed
+  // distribution, but the same path with different bytes is a genuine
+  // ambiguity: the manifest and provenance record one path per distribution, so
+  // fail closed rather than bind two digests to it.
+  const releaseFileDigests = new Map<string, string>();
   let releaseArtifactCount = 0;
   let totalZipBytes = 0;
   for (const artifact of runArtifacts) {
@@ -264,6 +271,18 @@ async function processReleaseBundle<TArtifact>(
     for (const entry of entries) {
       const classified = classifyArtifact(entry.path);
       if (!classified) continue;
+      const sha256 = await sha256Hex(entry.bytes);
+      const seenDigest = releaseFileDigests.get(entry.path);
+      if (seenDigest !== undefined) {
+        if (seenDigest !== sha256) {
+          throw new WorkflowArtifactError(
+            "artifact_identity_inconsistent",
+            `${entry.path} appears in more than one artifact upload with different bytes`,
+          );
+        }
+        continue;
+      }
+      releaseFileDigests.set(entry.path, sha256);
       releaseArtifactCount += 1;
       if (releaseArtifactCount > limits.maxReleaseArtifacts) {
         throw new WorkflowArtifactError(
@@ -271,7 +290,6 @@ async function processReleaseBundle<TArtifact>(
           `artifact bundle contains more than ${limits.maxReleaseArtifacts} release files`,
         );
       }
-      const sha256 = await sha256Hex(entry.bytes);
       candidateArtifacts.push(
         await processArtifact({
           path: entry.path,

@@ -87,12 +87,12 @@ export async function resolveBundleArtifact(
 /**
  * Intern repeated text bodies after one identical wheel path has been retained.
  *
- * Hash/size/flags remain on every artifact, so platform-specific changes still
- * diff independently. Identity and integrity metadata stay fully sampled on
- * every wheel/sdist because adapters parse those records per artifact. The
- * PyPI adapter later drops redundant samples from its flattened scan input;
- * interning here releases each sandbox response's duplicate string immediately
- * without changing pre-pipeline evidence semantics.
+ * This is a pure memory optimization: every entry keeps its own `textSample`,
+ * and equal digests mean the replacement string is byte-identical, so no
+ * evidence changes and no file needs to be excluded. It only releases each
+ * sandbox response's duplicate string as soon as the shard is parsed. Whether
+ * an adapter later *drops* a redundant sample from its flattened scan input is
+ * that adapter's decision (see `mustRetainPerArtifact` in the PyPI adapter).
  */
 export function compactDuplicateTextSamples(
   artifact: ParsedGateArtifact,
@@ -100,7 +100,7 @@ export function compactDuplicateTextSamples(
   scope: string,
 ): ParsedGateArtifact {
   for (const file of artifact.files) {
-    if (!file.textSample || mustRetainPerArtifact(file.path)) continue;
+    if (!file.textSample) continue;
     const key = `${scope}\0${artifact.kind}\0${file.path}\0${file.sha256}`;
     const retained = retainedSamples.get(key);
     if (retained !== undefined) {
@@ -110,17 +110,6 @@ export function compactDuplicateTextSamples(
     }
   }
   return artifact;
-}
-
-function mustRetainPerArtifact(path: string): boolean {
-  const basename = path.split("/").at(-1)?.toUpperCase();
-  return (
-    basename === "PACKAGE.JSON" ||
-    basename === "METADATA" ||
-    basename === "PKG-INFO" ||
-    basename === "WHEEL" ||
-    basename === "RECORD"
-  );
 }
 
 async function mapWithConcurrency<T, U>(

@@ -38,6 +38,15 @@ describe("workflow-gate adapter registry", () => {
   test("lists every registered ecosystem", () => {
     expect(supportedWorkflowGateEcosystems()).toContain("pypi");
   });
+
+  test("only PyPI opts into shard-family artifact names", () => {
+    // A prefix match widens discovery to `${artifactName}-*`, so ecosystems
+    // whose releases always fit one bounded upload must keep the exact match.
+    const sharded = supportedWorkflowGateEcosystems().filter(
+      (ecosystem) => getWorkflowGateAdapter(ecosystem).shardedArtifactNames,
+    );
+    expect(sharded).toEqual(["pypi"]);
+  });
 });
 
 // ── Dispatch failure inside the shared runner ────────────────────────────────
