@@ -113,14 +113,18 @@ function keyFinding(
   const addedEntries = entries.filter((entry) => entry.status === "added");
   const addedSections = addedEntries.map((entry) => entry.section);
   const addsInstallingSection = addedSections.some(isInstallingSection);
-  const addsPeerSection = addedSections.includes("peerDependencies");
   const wasPreviouslyInstalled = addedEntries.some((entry) => entry.previouslyInstalled);
   const wasPreviouslyDeclared = addedEntries.some((entry) => entry.previouslyDeclared);
   // Legacy/manually-created diffs may not carry the cross-section flags, so
   // preserve the removed-row relocation fallback for those payloads.
   const relocation = (removedInstallingSpecs?.length ?? 0) > 0;
   const installsNewCode = addsInstallingSection && !wasPreviouslyInstalled && !relocation;
-  const addsNewPeerRequirement = addsPeerSection && !wasPreviouslyDeclared && !relocation;
+  const addsNewPeerRequirement =
+    addedEntries.some(
+      (entry) => entry.section === "peerDependencies" && !entry.stagedPeerOptional,
+    ) &&
+    !wasPreviouslyDeclared &&
+    !relocation;
 
   if (installsNewCode && addedSections.includes("optionalDependencies")) {
     return tag("dependencyOptionalAdded", {
@@ -159,16 +163,22 @@ function keyFinding(
   // removed from an installing section, so an unchanged duplicate cannot mask
   // a real major change.
   //
-  // Known limit: optionalDependencies entries override same-named dependencies
-  // entries at install time, and unchanged duplicates never reach the diff, so
-  // a manifest listing one key at diverging specs across installing sections
-  // can draw a bump for a range its optional twin already admitted. That
-  // duplicate-with-diverging-specs shape itself warrants a reviewer's glance,
-  // so the extra low-severity finding is accepted rather than modeled.
   if (!hasBaseline) return null;
   const modifiedEntries = entries.filter((e) => e.status === "modified");
-  const pairs = modifiedEntries.length
-    ? modifiedEntries.map((e) => ({ previous: e.previous, staged: e.staged }))
+  const directPairs = [
+    ...modifiedEntries.map((entry) => ({ previous: entry.previous, staged: entry.staged })),
+    ...addedEntries
+      .filter(
+        (entry) =>
+          entry.section === "optionalDependencies" && entry.previousInstalledSpec !== undefined,
+      )
+      .map((entry) => ({
+        previous: entry.previousInstalledSpec,
+        staged: entry.staged,
+      })),
+  ];
+  const pairs = directPairs.length
+    ? directPairs
     : (removedInstallingSpecs ?? []).map((previous) => ({ previous, staged: stagedSpec }));
   for (const pair of pairs) {
     const stagedRanges = specMajorRanges(pair.staged);

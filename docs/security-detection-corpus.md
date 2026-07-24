@@ -204,9 +204,10 @@ broad URL pattern; only the finding side (`FINDING_SECRET_PATTERNS`) narrows. On
 provenance signal there (requests alone produced 16 release-delta info findings). Unsafe, absolute,
 or Unicode-confusable directory records remain findings, and the remaining
 non-regular/suspicious-entry reasons use PyPI wording instead of npm's.
-`1.18.0` closes the plain-dependency-addition gap: a newly added runtime or peer
-dependency with an ordinary registry spec raises `dependency.added` (medium), and a modified spec
-whose resolvable major version changed
+`1.18.0` closes the plain-dependency-addition gap: a newly added runtime or required
+peer dependency with an ordinary registry spec raises `dependency.added` (medium), while a peer
+marked optional through `peerDependenciesMeta` does not because npm will not install it
+automatically. A modified spec whose resolvable major version changed
 (`4.3.0` → `5.0.0`, `^1` → `^2`) raises `dependency.major-bump` (low), both anchoring the risk roll-up
 like the other metadata rules. Findings resolve one-per-key by precedence
 (unusual-spec > optional-added > added > major-bump), so a dependency listed in both `dependencies`
@@ -220,11 +221,14 @@ still fire because they describe the staged manifest, not the delta (the
 (`dependencies` ↔ `optionalDependencies`) with an unchanged spec is treated as already-shipped code
 and raises nothing, but a peer requirement moved into `dependencies` genuinely starts shipping and is a
 real addition. A key newly duplicated into another section is not treated as new when it was already
-installed (for example, adding a peer declaration beside an unchanged runtime dependency).
+installed (for example, adding a peer declaration beside an unchanged runtime dependency). Because
+an `optionalDependencies` entry overrides a same-named `dependencies` entry, adding such an override
+compares its spec with the previously effective runtime spec and can raise `dependency.major-bump`.
 Major-bump compares the intervals of majors each spec
 admits, matching npm's install of the highest published version: widening `^1.0.0` to
 `^1.0.0 || ^2.0.0`, to the hyphen range `1.0.0 - 2.0.0`, or to a bare `>=1.0.0` (which admits every
-future major) fires, as does a bounded widening to `>=1.0.0 <3.0.0`; a downgrade such as
+future major) fires, as does a bounded widening to `>=1.0.0 <3.0.0` even when its comparators are
+reordered; a downgrade such as
 `^2.0.0` → `^1.0.0` fires because 1.x was never in the reviewed intervals. Disjoint unions retain
 their holes, so changing `^1.0.0 || ^3.0.0` to `^2.0.0` also fires. A pure narrowing
 (`>=1.0.0` → `^1.0.0`) stays inside the reviewed intervals and raises nothing, and

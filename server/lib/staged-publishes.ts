@@ -1,7 +1,7 @@
 import { errorMessage } from "./errors";
 import { normalizeRegistryUrl, type NormalizeRegistryUrlOptions } from "./npm-connection";
 import { reliableFetch } from "./reliable-fetch";
-import { normalizeStringRecord } from "./tar-parser.js";
+import { normalizePeerDependenciesMeta, normalizeStringRecord } from "./tar-parser.js";
 import type { PackageJsonSummary } from "./review";
 import { isValidStageId } from "./stage-id";
 
@@ -272,6 +272,7 @@ function readPackageJsonSummary(
   const dependencies = normalizeStringRecord(value.dependencies);
   const devDependencies = normalizeStringRecord(value.devDependencies);
   const peerDependencies = normalizeStringRecord(value.peerDependencies);
+  const peerDependenciesMeta = normalizePeerDependenciesMeta(value.peerDependenciesMeta);
   const optionalDependencies = normalizeStringRecord(value.optionalDependencies);
   const files = Array.isArray(value.files)
     ? value.files.filter((item): item is string => typeof item === "string")
@@ -287,6 +288,7 @@ function readPackageJsonSummary(
     dependencies,
     devDependencies,
     peerDependencies,
+    ...(Object.keys(peerDependenciesMeta).length ? { peerDependenciesMeta } : {}),
     optionalDependencies,
     ...(files.length ? { files } : {}),
     ...(bin ? { bin } : {}),
@@ -300,6 +302,7 @@ function readPackageJsonSummary(
     Object.keys(dependencies).length ||
     Object.keys(devDependencies).length ||
     Object.keys(peerDependencies).length ||
+    Object.keys(peerDependenciesMeta).length ||
     Object.keys(optionalDependencies).length ||
     files.length ||
     bin ||

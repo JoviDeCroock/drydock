@@ -1468,6 +1468,59 @@ describe("review", () => {
     ]);
   });
 
+  test("compares an added optional override with the previous installed spec", () => {
+    const optionalOverride = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { dep: "^1.0.0" } },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        dependencies: { dep: "^1.0.0" },
+        optionalDependencies: { dep: "^2.0.0" },
+      },
+    );
+
+    expect(optionalOverride.dependencies).toEqual([
+      {
+        key: "dep",
+        status: "added",
+        staged: "^2.0.0",
+        section: "optionalDependencies",
+        previouslyDeclared: true,
+        previouslyInstalled: true,
+        previousInstalledSpec: "^1.0.0",
+      },
+    ]);
+    expect(packageJsonDiffFindings(optionalOverride)).toEqual([
+      expect.objectContaining({
+        ruleId: "dependency.major-bump",
+        evidence: "dep: ^1.0.0 -> ^2.0.0",
+      }),
+    ]);
+  });
+
+  test("does not report newly added optional peer dependencies as mandatory", () => {
+    const optionalPeer = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0" },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        peerDependencies: { dep: "^1.0.0" },
+        peerDependenciesMeta: { dep: { optional: true } },
+      },
+    );
+
+    expect(optionalPeer.dependencies).toEqual([
+      {
+        key: "dep",
+        status: "added",
+        staged: "^1.0.0",
+        section: "peerDependencies",
+        stagedPeerOptional: true,
+      },
+    ]);
+    expect(packageJsonDiffFindings(optionalPeer)).toEqual([]);
+  });
+
   test("gates delta rules on baseline-manifest presence, not its version string", () => {
     // A prior release whose manifest parsed but declared no version must not be
     // able to switch off the next release's added/major-bump checks.
@@ -1559,6 +1612,16 @@ describe("review", () => {
       { name: "pkg", version: "1.0.1", dependencies: { dep: ">=1.0.0 <3.0.0" } },
     );
     expect(packageJsonDiffFindings(boundedWidening)).toEqual([
+      expect.objectContaining({ ruleId: "dependency.major-bump" }),
+    ]);
+
+    // Comparator sets are intersections, so reordering the upper and lower
+    // bounds must not hide the newly admitted major.
+    const reorderedComparators = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { dep: "^1.0.0" } },
+      { name: "pkg", version: "1.0.1", dependencies: { dep: "<3.0.0 >=1.0.0" } },
+    );
+    expect(packageJsonDiffFindings(reorderedComparators)).toEqual([
       expect.objectContaining({ ruleId: "dependency.major-bump" }),
     ]);
 

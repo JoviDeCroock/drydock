@@ -7,6 +7,7 @@ export interface PackageJsonSummary {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   optionalDependencies?: Record<string, string>;
   files?: string[];
   bin?: string | Record<string, string>;
@@ -29,6 +30,8 @@ export interface PackageJsonDiffEntry {
   // distinguish a new declaration from a duplicate of already-installed code.
   previouslyDeclared?: true;
   previouslyInstalled?: true;
+  previousInstalledSpec?: string;
+  stagedPeerOptional?: true;
 }
 
 export interface PackageJsonDiff {
@@ -94,11 +97,21 @@ function diffDependencySections(
       const previouslyInstalled = INSTALLING_DEPENDENCY_SECTIONS.some(
         (candidate) => entry.key in (previousPkg?.[candidate] || {}),
       );
+      const previousInstalledSpec =
+        section === "optionalDependencies"
+          ? (previousPkg?.optionalDependencies?.[entry.key] ??
+            previousPkg?.dependencies?.[entry.key])
+          : undefined;
+      const stagedPeerOptional =
+        section === "peerDependencies" &&
+        stagedPkg?.peerDependenciesMeta?.[entry.key]?.optional === true;
       return {
         ...entry,
         section,
         ...(previouslyDeclared ? { previouslyDeclared: true as const } : {}),
         ...(previouslyInstalled ? { previouslyInstalled: true as const } : {}),
+        ...(previousInstalledSpec !== undefined ? { previousInstalledSpec } : {}),
+        ...(stagedPeerOptional ? { stagedPeerOptional: true as const } : {}),
       };
     });
 

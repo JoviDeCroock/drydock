@@ -57,6 +57,17 @@ export function normalizeStringRecord(value) {
   return out;
 }
 
+export function normalizePeerDependenciesMeta(value) {
+  const out = {};
+  if (!isPlainObject(value)) return out;
+  for (const [key, nested] of Object.entries(value)) {
+    if (isPlainObject(nested) && typeof nested.optional === "boolean") {
+      out[key] = { optional: nested.optional };
+    }
+  }
+  return out;
+}
+
 export function normalizeStringList(value) {
   if (!Array.isArray(value)) return [];
   return value.filter((item) => typeof item === "string");
@@ -1423,6 +1434,7 @@ export function parsePackageJson(files) {
       dependencies: parsed.dependencies || {},
       devDependencies: parsed.devDependencies || {},
       peerDependencies: parsed.peerDependencies || {},
+      peerDependenciesMeta: normalizePeerDependenciesMeta(parsed.peerDependenciesMeta),
       optionalDependencies: parsed.optionalDependencies || {},
       ...(normalizeStringList(parsed.files).length
         ? { files: normalizeStringList(parsed.files) }

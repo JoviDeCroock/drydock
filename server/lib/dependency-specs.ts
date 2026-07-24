@@ -60,7 +60,7 @@ function branchMajorRange(branch: string): MajorRange | null {
   const floor = branchFloor(branch);
   if (!floor) return null;
   const min = floor.parts[0];
-  let max = branch.startsWith(">=") ? Infinity : min;
+  let max = floor.extendsToHigherMajors ? Infinity : min;
   for (const upper of branch.matchAll(/<(=)?\s*v?(\d+)(?:\.(\d+|x|\*))?(?:\.(\d+|x|\*))?/gi)) {
     const major = Number.parseInt(upper[2], 10);
     const minor = numericPart(upper[3]);
@@ -103,16 +103,18 @@ export function exactDependencyVersion(spec: string | undefined): string | null 
 
 interface BranchFloor {
   parts: [number, number, number];
+  extendsToHigherMajors: boolean;
 }
 
 function branchFloor(branch: string): BranchFloor | null {
   const match = branch.match(
-    /^(?:[~^=]|>=)?\s*v?(\d+)(?:\.(\d+|x|\*))?(?:\.(\d+|x|\*))?([-+][0-9A-Za-z.+-]+)?(?=$|\s)/,
+    /(?:^|\s)([~^=]|>=)?\s*v?(\d+)(?:\.(\d+|x|\*))?(?:\.(\d+|x|\*))?([-+][0-9A-Za-z.+-]+)?(?=$|\s)/,
   );
   if (!match) return null;
-  const [, major, minor, patch] = match;
+  const [, operator, major, minor, patch] = match;
   return {
     parts: [Number.parseInt(major, 10), numericPart(minor), numericPart(patch)],
+    extendsToHigherMajors: operator === ">=",
   };
 }
 
