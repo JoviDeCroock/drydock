@@ -188,7 +188,9 @@ high-confidence set (requests' README examples were flagging `code.network-acces
 `file.secret-content` now gets the same unreachable-test-file demotion as the `code.*` rules
 (one severity step, `testScoped`, never dropped — requests ships six test-CA/server keys under
 `tests/certs/`), but only for material unchanged from the baseline: a secret newly entering a test
-tree is a fresh leak (or fresh payload staging) and keeps full severity; and
+tree is a fresh leak (or fresh payload staging) and keeps full severity. Python reachability starts
+from every non-test module and follows static imports, so an imported test module also keeps full
+severity; and
 URL-with-embedded-credentials matches are excluded from `file.secret-content` when they are
 doc-style placeholders, in two tiers: structural placeholder passwords (template syntax such as
 `<password>`/`${VAR}`/`%VAR%`, `xxx`/`***` masks, canonical fakes like `changeme`) never flag

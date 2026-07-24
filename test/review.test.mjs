@@ -731,6 +731,49 @@ describe("review", () => {
     expect(secret.testScoped).toBeUndefined();
   });
 
+  test("keeps full severity for an unchanged Python test secret imported by package code", () => {
+    const absoluteSecret = {
+      path: "sdist/src/demo/tests/secrets.py",
+      size: 80,
+      sha256: "python-absolute-secret",
+      flags: [],
+      textSample: 'password = "production-secret-value"\n',
+    };
+    const relativeSecret = {
+      path: "sdist/src/demo/tests/relative_secrets.py",
+      size: 80,
+      sha256: "python-relative-secret",
+      flags: [],
+      textSample: 'password = "another-production-secret"\n',
+    };
+    const app = {
+      path: "sdist/src/demo/app.py",
+      size: 80,
+      sha256: "python-app",
+      flags: [],
+      textSample:
+        "from demo.tests.secrets import password\n" +
+        "from .tests.relative_secrets import password as relative_password\n",
+    };
+    const findings = deterministicFindings(
+      [absoluteSecret, relativeSecret, app],
+      createPackageDiff([absoluteSecret, relativeSecret], [absoluteSecret, relativeSecret, app]),
+      null,
+      { codePatternSet: "python" },
+    );
+    const secretFindings = findings.filter(
+      (candidate) => candidate.ruleId === "file.secret-content",
+    );
+
+    expect(secretFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ severity: "high", file: absoluteSecret.path }),
+        expect.objectContaining({ severity: "high", file: relativeSecret.path }),
+      ]),
+    );
+    expect(secretFindings.every((finding) => finding.testScoped === undefined)).toBe(true);
+  });
+
   test("does not flag secret-looking source map content", () => {
     // The tar parser strips text samples from .map files (shouldSkipTextSample),
     // so deterministic rules never see source-map contents.

@@ -1,4 +1,5 @@
-import type { FileRecord, PackageJsonSummary } from "../review";
+import type { CodePatternSet, FileRecord, PackageJsonSummary } from "../review";
+import { isTestPath } from "./file-types";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 
 // Static require/import edges between files inside the package. The walk is a
@@ -24,6 +25,11 @@ const RESOLUTION_SUFFIXES = [
   "/index.cjs",
 ];
 
+const PYTHON_RESOLUTION_SUFFIXES = [".py", "/__init__.py"];
+const PYTHON_FROM_IMPORT_PATTERN =
+  /^\s*from\s+([A-Za-z_][\w.]*|\.+[A-Za-z_][\w.]*|\.+)\s+import\s+([^#;\n]+)/gm;
+const PYTHON_IMPORT_PATTERN = /^\s*import\s+([^#;\n]+)/gm;
+
 // Files a registry tarball consumer install can execute: declared entrypoints
 // (main/module/browser/exports), bin targets, lifecycle script targets, and everything
 // statically importable from them. Seeding from lifecycle scripts matters for
@@ -33,7 +39,10 @@ export function consumerReachablePaths(
   files: FileRecord[],
   packageJson: PackageJsonSummary | null,
   extraSeedPaths: string[] = [],
+  codePatternSet: CodePatternSet | undefined = "javascript",
 ): Set<string> {
+  if (codePatternSet === "python") return pythonConsumerReachablePaths(files);
+
   const byNormalizedPath = new Map<string, FileRecord>();
   for (const file of files) {
     byNormalizedPath.set(stripPackagePrefix(file.path), file);
@@ -58,6 +67,115 @@ export function consumerReachablePaths(
     }
   }
   return reachable;
+}
+
+// Python packages do not have a package.json-style entrypoint manifest. Treat
+// every non-test Python module as consumer-reachable, then follow its static
+// imports into test trees. This is deliberately conservative: an import edge
+// can only keep a finding loud, never hide one.
+function pythonConsumerReachablePaths(files: FileRecord[]): Set<string> {
+  const byNormalizedPath = new Map<string, FileRecord>();
+  const queue: string[] = [];
+  for (const file of files) {
+    const path = stripPackagePrefix(file.path);
+    byNormalizedPath.set(path, file);
+    if (/\.py$/i.test(path) && !isTestPath(path)) queue.push(path);
+  }
+
+  const reachable = new Set<string>();
+  while (queue.length) {
+    const path = queue.pop();
+    if (!path || reachable.has(path)) continue;
+    reachable.add(path);
+    const file = byNormalizedPath.get(path);
+    if (!file?.textSample) continue;
+    for (const candidate of pythonImportCandidates(path, file.textSample)) {
+      for (const resolved of resolvePythonModulePaths(candidate, byNormalizedPath)) {
+        if (!reachable.has(resolved)) queue.push(resolved);
+      }
+    }
+  }
+  return reachable;
+}
+
+function pythonImportCandidates(sourcePath: string, text: string): string[] {
+  const candidates: string[] = [];
+  PYTHON_FROM_IMPORT_PATTERN.lastIndex = 0;
+  for (const match of text.matchAll(PYTHON_FROM_IMPORT_PATTERN)) {
+    const base = pythonModuleCandidate(sourcePath, match[1]);
+    if (base) candidates.push(base);
+    for (const imported of pythonImportedNames(match[2])) {
+      const separator = match[1].endsWith(".") ? "" : ".";
+      const nested = pythonModuleCandidate(sourcePath, `${match[1]}${separator}${imported}`);
+      if (nested) candidates.push(nested);
+    }
+  }
+  PYTHON_IMPORT_PATTERN.lastIndex = 0;
+  for (const match of text.matchAll(PYTHON_IMPORT_PATTERN)) {
+    for (const imported of pythonImportedNames(match[1])) {
+      const candidate = pythonModuleCandidate(sourcePath, imported);
+      if (candidate) candidates.push(candidate);
+    }
+  }
+  return candidates;
+}
+
+function pythonImportedNames(value: string): string[] {
+  return value
+    .replace(/[()]/g, "")
+    .split(",")
+    .map((part) => part.trim().split(/\s+as\s+/i)[0])
+    .filter((part) => /^[A-Za-z_][\w.]*$/.test(part));
+}
+
+function pythonModuleCandidate(sourcePath: string, moduleName: string): string | null {
+  const root = pythonArtifactRoot(sourcePath);
+  const rootSegments = root ? root.split("/") : [];
+  const relative = /^(\.+)(.*)$/.exec(moduleName);
+  let segments: string[];
+  let remainder: string;
+  if (relative) {
+    segments = sourcePath.split("/").slice(0, -1);
+    for (let index = 1; index < relative[1].length; index += 1) {
+      if (segments.length <= rootSegments.length) return null;
+      segments.pop();
+    }
+    remainder = relative[2];
+  } else {
+    segments = [...rootSegments];
+    remainder = moduleName;
+  }
+  if (remainder) segments.push(...remainder.split(".").filter(Boolean));
+  return normalizePathSegments(segments.join("/"));
+}
+
+function pythonArtifactRoot(path: string): string {
+  const segments = path.split("/");
+  if (segments[0] === "sdist") return "sdist";
+  if (segments[0] === "wheel" && segments[1]) return `wheel/${segments[1]}`;
+  return "";
+}
+
+function resolvePythonModulePaths(
+  candidate: string,
+  byNormalizedPath: Map<string, FileRecord>,
+): string[] {
+  const resolved = new Set<string>();
+  for (const suffix of PYTHON_RESOLUTION_SUFFIXES) {
+    const exact = candidate + suffix;
+    if (byNormalizedPath.has(exact)) resolved.add(exact);
+
+    // Sdists commonly keep importable packages below src/. Absolute imports
+    // omit that source-root segment, so conservatively match the same module
+    // suffix anywhere inside this artifact namespace.
+    const root = pythonArtifactRoot(candidate);
+    const modulePath = root ? candidate.slice(root.length + 1) : candidate;
+    const ending = `/${modulePath}${suffix}`;
+    for (const path of byNormalizedPath.keys()) {
+      if (pythonArtifactRoot(path) === root && path.endsWith(ending)) resolved.add(path);
+    }
+  }
+  return [...resolved];
 }
 
 function entrypointCandidates(packageJson: PackageJsonSummary | null): string[] {
