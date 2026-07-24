@@ -281,7 +281,7 @@ describe("PyPI artifact summaries and review", () => {
     );
   });
 
-  test("drops sdist directory tar entries and keeps other non-regular entries with PyPI wording", () => {
+  test("drops ordinary sdist directories and keeps unsafe non-regular entries", () => {
     const manifest = parsePyPiReleaseManifest({
       schema: "drydock.release-artifacts.v1",
       ecosystem: "pypi",
@@ -316,6 +316,16 @@ describe("PyPI artifact summaries and review", () => {
               path: "demo_package-1.2.0/evil",
               detail: "typeflag 2 (symlink)",
             },
+            {
+              kind: "non-regular",
+              path: "../../outside",
+              detail: "typeflag 5 (directory)",
+            },
+            {
+              kind: "non-regular",
+              path: "demo_package-1.2.0/tests\u200b/certs",
+              detail: "typeflag 5 (directory)",
+            },
           ],
         },
       ],
@@ -324,13 +334,16 @@ describe("PyPI artifact summaries and review", () => {
     const tarFindings = review.ruleFindings.filter(
       (finding) => finding.ruleId === "tar.suspicious-entry",
     );
-    expect(tarFindings).toHaveLength(1);
-    expect(tarFindings[0]).toMatchObject({
-      severity: "high",
-      file: "dist/demo_package-1.2.0.tar.gz/evil",
-    });
-    expect(tarFindings[0].reason).toContain("Python build backends");
-    expect(tarFindings[0].reason).not.toContain("npm");
+    expect(tarFindings).toHaveLength(3);
+    expect(tarFindings.map((finding) => finding.file)).toEqual([
+      "dist/demo_package-1.2.0.tar.gz/evil",
+      "dist/demo_package-1.2.0.tar.gz/../../outside",
+      "dist/demo_package-1.2.0.tar.gz/tests\u200b/certs",
+    ]);
+    for (const finding of tarFindings) {
+      expect(finding.reason).toContain("Python build backends");
+      expect(finding.reason).not.toContain("npm");
+    }
   });
 
   test("does not flag PEP 440-equivalent version spellings as metadata mismatches", () => {

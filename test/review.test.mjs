@@ -624,6 +624,13 @@ describe("review", () => {
         flags: [],
         textSample: 'const admin = "mysql://root:admin@db.internal:3306/app";\n',
       },
+      {
+        path: "lib/default-admin.js",
+        size: 120,
+        sha256: "config-default-admin",
+        flags: [],
+        textSample: 'const admin = "mysql://admin:admin@db.internal:3306/app";\n',
+      },
     ];
     const findings = deterministicFindings(staged, createPackageDiff([], staged));
     const secretFiles = new Set(
@@ -633,6 +640,7 @@ describe("review", () => {
     expect(secretFiles.has("lib/config.js")).toBe(true);
     expect(secretFiles.has("lib/db.js")).toBe(true);
     expect(secretFiles.has("lib/admin.js")).toBe(true);
+    expect(secretFiles.has("lib/default-admin.js")).toBe(true);
   });
 
   test("does not scan Python packaging metadata prose as capability evidence", () => {

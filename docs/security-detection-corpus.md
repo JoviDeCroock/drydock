@@ -196,10 +196,12 @@ regardless of the username, while bare weak words (`pass`, `secret`, `token`, `a
 as placeholders when the username is itself a placeholder word — `user:pass@proxy` (requests'
 CVE-2023-32681 changelog entry, the canonical benign hit) skips, but a `svc:secret@db` or
 `root:admin@host` connection string is a real weak credential and still flags. Redaction keeps the
-broad URL pattern; only the finding side (`FINDING_SECRET_PATTERNS`) narrows. On the PyPI side (`0.4.0`), explicit directory tar records (typeflag 5) are no longer
-surfaced as `tar.suspicious-entry`: setuptools always emits them, so unlike `npm pack` output they
-carry no provenance signal there (requests alone produced 16 release-delta info findings), and the
-remaining non-regular/suspicious-entry reasons use PyPI wording instead of npm's.
+broad URL pattern; only the finding side (`FINDING_SECRET_PATTERNS`) narrows. On the PyPI side
+(`0.4.0`), safely normalized explicit directory tar records (typeflag 5) are no longer surfaced as
+`tar.suspicious-entry`: setuptools always emits them, so unlike `npm pack` output they carry no
+provenance signal there (requests alone produced 16 release-delta info findings). Unsafe, absolute,
+or Unicode-confusable directory records remain findings, and the remaining
+non-regular/suspicious-entry reasons use PyPI wording instead of npm's.
 
 ### Fixture format
 

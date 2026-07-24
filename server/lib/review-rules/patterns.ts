@@ -138,7 +138,6 @@ const PLACEHOLDER_USERNAME_SEGMENT = [
   "test",
   "demo",
   "example",
-  "admin",
 ].join("|");
 const WEAK_WORD_PASSWORD_SEGMENT = [
   "pass(?:word|wd)?",
