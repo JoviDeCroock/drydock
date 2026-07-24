@@ -20,6 +20,13 @@ import {
 const MAX_PYPI_BASELINE_ARTIFACTS = 128;
 const MAX_PYPI_BASELINE_ADVERTISED_BYTES = 768 * 1024 * 1024;
 
+/**
+ * Diff namespaces that still carry the body of a repeated logical file, keyed by
+ * `${kind}\0${normalized diff path}`. The staged pass decides; the baseline pass
+ * mirrors it (see `compactBaselineArtifactSamples`).
+ */
+export type PyPiSampleRetention = Map<string, Set<string>>;
+
 export function preparePyPiArtifact(input: PyPiArtifactInput): PyPiPreparedArtifact {
   const kind = inferPyPiArtifactKind(input.path);
   if (!kind) throw new Error("PyPI artifact must be a wheel or sdist");
@@ -51,7 +58,7 @@ export function acquireStagedPyPi(input: PyPiAdapterInput): {
 } {
   assertManifestArtifactSet(input.manifest, input.artifacts);
   const preparedArtifacts = input.artifacts.map(preparePyPiArtifact);
-  compactDuplicateArtifactSamples(preparedArtifacts);
+  compactStagedArtifactSamples(preparedArtifacts);
   const files = flattenPyPiArtifactFiles(preparedArtifacts);
   const manifest = packageJsonSummaryFor(input.manifest, preparedArtifacts);
   return {
@@ -70,8 +77,9 @@ export async function acquireBaselinePyPi(
   broker: PyPiBroker,
   staged: { artifact: AcquiredArtifact; details: StagedDetails },
 ): Promise<{ artifact: AcquiredArtifact | null; baseline: BaselineInfo }> {
+  const stagedRetention = stagedSampleRetention(staged.details);
   if (input.previousArtifacts?.length) {
-    return baselineFromPreviousArtifacts(input);
+    return baselineFromPreviousArtifacts(input, stagedRetention);
   }
 
   const metadata = input.metadata ?? (await broker.fetchProjectMetadata(input.manifest.package));
@@ -111,14 +119,19 @@ export async function acquireBaselinePyPi(
   // comparable baseline in sequence so only one archive's bytes/text samples
   // are live at a time; the public `/diff` path has its own two-artifact planner.
   const preparedArtifacts: PyPiPreparedArtifact[] = [];
-  const retainedSamples = new Set<string>();
-  for (const artifact of [...comparable].sort((a, b) => a.filename.localeCompare(b.filename))) {
+  const retainedDigests = new Map<string, Set<string>>();
+  for (const artifact of [...comparable].sort(
+    (a, b) =>
+      filenameArtifactNamespace(a.filename, a.kind).localeCompare(
+        filenameArtifactNamespace(b.filename, b.kind),
+      ) || a.filename.localeCompare(b.filename),
+  )) {
     const result = await broker.downloadPublicArtifact({
       url: artifact.url,
       kind: artifact.kind,
     });
     const prepared = preparePyPiArtifact({ path: artifact.filename, files: result.files });
-    compactDuplicateArtifactSamples([prepared], retainedSamples);
+    compactBaselineArtifactSamples([prepared], stagedRetention, retainedDigests);
     preparedArtifacts.push(prepared);
   }
   return {
@@ -136,13 +149,16 @@ export async function acquireBaselinePyPi(
   };
 }
 
-export function baselineFromPreviousArtifacts(input: PyPiAdapterInput): {
+export function baselineFromPreviousArtifacts(
+  input: PyPiAdapterInput,
+  stagedRetention: PyPiSampleRetention = new Map(),
+): {
   artifact: AcquiredArtifact | null;
   baseline: BaselineInfo;
 } {
   if (!input.previousArtifacts?.length) return emptyPyPiBaseline("no-previous-artifacts");
   const preparedArtifacts = input.previousArtifacts.map(preparePyPiArtifact);
-  compactDuplicateArtifactSamples(preparedArtifacts);
+  compactBaselineArtifactSamples(preparedArtifacts, stagedRetention, new Map());
   const manifest = packageJsonSummaryFor(input.manifest, preparedArtifacts);
   return {
     artifact: {
@@ -297,21 +313,99 @@ export function flattenPyPiArtifactFiles(artifacts: PyPiPreparedArtifact[]): Fil
  * remain fully reviewable while honest repeated Python sources do not multiply
  * the parent Worker's heap by the wheel count.
  */
-function compactDuplicateArtifactSamples(
-  artifacts: PyPiPreparedArtifact[],
-  retained = new Set<string>(),
-): void {
-  for (const artifact of [...artifacts].sort((a, b) => a.path.localeCompare(b.path))) {
+function compactStagedArtifactSamples(artifacts: PyPiPreparedArtifact[]): void {
+  const retainedDigests = new Map<string, Set<string>>();
+  for (const artifact of sortedForSampleRetention(artifacts)) {
     for (const file of artifact.files) {
       if (!file.textSample || mustRetainPerArtifact(file.path)) continue;
-      const key = `${artifact.kind}\0${file.path}\0${file.sha256}`;
-      if (retained.has(key)) {
-        delete file.textSample;
-      } else {
-        retained.add(key);
-      }
+      const key = sampleRetentionKey(artifact, file.path);
+      if (!retainFirstDigest(retainedDigests, key, file.sha256)) delete file.textSample;
     }
   }
+}
+
+/**
+ * Compact a baseline artifact set against the staged side's retention decisions.
+ *
+ * Staged and baseline are different artifact sets — a release that adds a
+ * platform wheel has no baseline counterpart for it — so letting each side pick
+ * its own "first" copy can leave a shared file's body under different diff
+ * namespaces. The namespace that kept only the baseline body then renders as a
+ * whole-file deletion (and its mirror as a phantom addition) for a file that
+ * merely changed. Following the staged decision keeps both sides of every
+ * namespace either both sampled or both bare.
+ */
+function compactBaselineArtifactSamples(
+  artifacts: PyPiPreparedArtifact[],
+  stagedRetention: PyPiSampleRetention,
+  retainedDigests: Map<string, Set<string>>,
+): void {
+  for (const artifact of sortedForSampleRetention(artifacts)) {
+    const namespace = filenameArtifactNamespace(artifact.path, artifact.kind);
+    for (const file of artifact.files) {
+      if (!file.textSample || mustRetainPerArtifact(file.path)) continue;
+      const key = sampleRetentionKey(artifact, file.path);
+      const stagedNamespaces = stagedRetention.get(key);
+      if (stagedNamespaces) {
+        if (!stagedNamespaces.has(namespace)) delete file.textSample;
+        continue;
+      }
+      // The candidate dropped this file entirely, so there is no staged copy to
+      // align with; keep the first baseline copy of each distinct digest so the
+      // removal still shows its content once.
+      if (!retainFirstDigest(retainedDigests, key, file.sha256)) delete file.textSample;
+    }
+  }
+}
+
+/** The diff namespaces a compacted staged artifact set still carries a body in. */
+export function stagedSampleRetention(details: StagedDetails): PyPiSampleRetention {
+  const retention: PyPiSampleRetention = new Map();
+  for (const artifact of (details as PyPiAdapterDetails).preparedArtifacts) {
+    const namespace = filenameArtifactNamespace(artifact.path, artifact.kind);
+    for (const file of artifact.files) {
+      if (!file.textSample || mustRetainPerArtifact(file.path)) continue;
+      const key = sampleRetentionKey(artifact, file.path);
+      const namespaces = retention.get(key);
+      if (namespaces) namespaces.add(namespace);
+      else retention.set(key, new Set([namespace]));
+    }
+  }
+  return retention;
+}
+
+function retainFirstDigest(
+  retainedDigests: Map<string, Set<string>>,
+  key: string,
+  sha256: string,
+): boolean {
+  const digests = retainedDigests.get(key);
+  if (!digests) {
+    retainedDigests.set(key, new Set([sha256]));
+    return true;
+  }
+  if (digests.has(sha256)) return false;
+  digests.add(sha256);
+  return true;
+}
+
+// Ordered by diff namespace rather than bundle path: shard uploads can place the
+// same wheel at `dist/x.whl` or `x.whl`, and the baseline only ever sees the
+// bare PyPI filename, so a path-ordered pass would disagree across sides.
+function sortedForSampleRetention(artifacts: PyPiPreparedArtifact[]): PyPiPreparedArtifact[] {
+  return [...artifacts].sort(
+    (a, b) =>
+      filenameArtifactNamespace(a.path, a.kind).localeCompare(
+        filenameArtifactNamespace(b.path, b.kind),
+      ) || a.path.localeCompare(b.path),
+  );
+}
+
+// The diff pairs files by their normalized path (`*.dist-info/` collapsed), so
+// retention keys on the same normalized path — otherwise a version-stamped
+// `.dist-info` entry could never align between staged and baseline.
+function sampleRetentionKey(artifact: PyPiPreparedArtifact, path: string): string {
+  return `${artifact.kind}\0${normalizePyPiDiffFilePath(path)}`;
 }
 
 function mustRetainPerArtifact(path: string): boolean {

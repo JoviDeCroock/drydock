@@ -1100,4 +1100,81 @@ describe("PyPI baseline acquisition through the broker", () => {
       ),
     ).toHaveLength(1);
   });
+
+  test("keeps the retained sample in the same namespace on both sides of the diff", async () => {
+    // 1.2.0 adds a macOS wheel the baseline never published. Its filename sorts
+    // before `manylinux`, so an independent baseline pass would keep the shared
+    // body under `macosx` on the staged side and under `manylinux` on the
+    // baseline side — rendering a changed file as a whole-file deletion.
+    const platformWheel = (platform, version, initSha, initBody) => [
+      file(
+        `demo_package-${version}.dist-info/METADATA`,
+        `Metadata-Version: 2.3\nName: demo-package\nVersion: ${version}\n`,
+      ),
+      file(
+        `demo_package-${version}.dist-info/WHEEL`,
+        `Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: cp312-cp312-${platform}\n`,
+        { sha256: "sha-wheel-metadata" },
+      ),
+      file(`demo_package-${version}.dist-info/RECORD`, "demo_package/__init__.py,,\n", {
+        sha256: "sha-wheel-record",
+      }),
+      file("demo_package/__init__.py", initBody, { sha256: initSha }),
+    ];
+    const stagedPaths = [
+      "dist/demo_package-1.2.0-cp312-cp312-macosx_11_0_arm64.whl",
+      "dist/demo_package-1.2.0-cp312-cp312-manylinux_x86_64.whl",
+    ];
+    const manylinuxUrl =
+      "https://files.pythonhosted.org/packages/demo_package-1.1.0-cp312-cp312-manylinux_x86_64.whl";
+    const input = pypiAdapter.parseInput({
+      manifest: candidateManifest(
+        stagedPaths.map((path, index) => ({ path, sha256: `${index}a`.repeat(32) })),
+      ),
+      artifacts: [
+        {
+          path: stagedPaths[0],
+          files: platformWheel("macosx_11_0_arm64", "1.2.0", "sha-init-new", "VALUE = 2\n"),
+        },
+        {
+          path: stagedPaths[1],
+          files: platformWheel("manylinux_x86_64", "1.2.0", "sha-init-new", "VALUE = 2\n"),
+        },
+      ],
+    });
+    const { broker } = stubBroker({
+      metadata: {
+        info: { version: "1.1.0" },
+        releases: {
+          "1.1.0": [
+            {
+              filename: "demo_package-1.1.0-cp312-cp312-manylinux_x86_64.whl",
+              packagetype: "bdist_wheel",
+              url: manylinuxUrl,
+              digests: { sha256: "c".repeat(64) },
+              upload_time_iso_8601: "2026-02-01T00:00:00.000Z",
+            },
+          ],
+        },
+      },
+      downloads: {
+        [manylinuxUrl]: platformWheel("manylinux_x86_64", "1.1.0", "sha-init-old", "VALUE = 1\n"),
+      },
+    });
+
+    const staged = await pypiAdapter.acquireStaged(adapterCtx, input, broker);
+    const baseline = await pypiAdapter.acquireBaseline(adapterCtx, input, broker, staged);
+
+    const sampleAt = (files, namespace) =>
+      files.find((entry) => entry.path === `${namespace}/demo_package/__init__.py`)?.textSample;
+
+    // The macOS wheel is new, so it keeps the body and the diff shows it as an
+    // added file with content.
+    expect(sampleAt(staged.artifact.files, "wheel/cp312-cp312-macosx_11_0_arm64")).toBe(
+      "VALUE = 2\n",
+    );
+    // The manylinux namespace exists on both sides, so neither side keeps a body.
+    expect(sampleAt(staged.artifact.files, "wheel/cp312-cp312-manylinux_x86_64")).toBeUndefined();
+    expect(sampleAt(baseline.artifact.files, "wheel/cp312-cp312-manylinux_x86_64")).toBeUndefined();
+  });
 });

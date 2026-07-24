@@ -140,9 +140,15 @@ export function evaluateGithubArtifactEgress(requestUrl: string): GithubArtifact
  * downstream by the ecosystem's `WorkflowGateAdapter`
  * (`server/lib/workflow-gates`) once the bytes have been parsed in the sandbox.
  * This stage enumerates the workflow run's non-expired GitHub Actions artifacts
- * unless `source.artifactName` narrows it to one named upload. It then collects
+ * unless `source.artifactName` narrows it to one named upload or
+ * `source.artifactNamePrefix` narrows it to one shard family. It then collects
  * only the inner files the supplied `classifyArtifact` keeps and recomputes
  * their SHA-256; every other file in every upload is ignored.
+ *
+ * This raw-byte collector retains every distribution's bytes at once, so it
+ * keeps the tighter 20-file/50-MiB budget and is exercised only by the artifact
+ * ingestion invariant tests. Production goes through
+ * `processReleaseBundleForGate`.
  */
 export async function fetchReleaseBundleWithToken(
   installationToken: string,
@@ -169,6 +175,13 @@ export async function fetchReleaseBundleWithToken(
  * Production uses this to parse a distribution in the credentials-free sandbox
  * and retain only compact evidence. The raw-byte collector above deliberately
  * keeps its tighter 20-file/50-MiB limits.
+ *
+ * The larger budget is only granted when an exact name or shard-family prefix
+ * narrows the run to the release upload. An unnarrowed source matches every
+ * non-expired artifact on the run — including unrelated logs, coverage, and
+ * build output — so it keeps the tighter budget rather than spending a Worker
+ * invocation downloading up to 768 MiB of files that were never release
+ * candidates.
  */
 export async function processReleaseBundleWithToken<TArtifact>(
   installationToken: string,
@@ -176,14 +189,20 @@ export async function processReleaseBundleWithToken<TArtifact>(
   classifyArtifact: ClassifyArtifact,
   processArtifact: (artifact: ResolvedReleaseFile) => Promise<TArtifact>,
 ): Promise<ResolvedReleaseBundle<TArtifact>> {
+  const narrowed = Boolean(source.artifactName?.trim() || source.artifactNamePrefix?.trim());
   return processReleaseBundle(
     installationToken,
     source,
     classifyArtifact,
-    {
-      maxReleaseArtifacts: MAX_STREAMED_RELEASE_ARTIFACTS,
-      maxTotalZipBytes: MAX_STREAMED_TOTAL_ARTIFACT_ZIP_BYTES,
-    },
+    narrowed
+      ? {
+          maxReleaseArtifacts: MAX_STREAMED_RELEASE_ARTIFACTS,
+          maxTotalZipBytes: MAX_STREAMED_TOTAL_ARTIFACT_ZIP_BYTES,
+        }
+      : {
+          maxReleaseArtifacts: MAX_RELEASE_ARTIFACTS,
+          maxTotalZipBytes: MAX_TOTAL_ARTIFACT_ZIP_BYTES,
+        },
     processArtifact,
   );
 }
@@ -281,18 +300,9 @@ async function processReleaseBundle<TArtifact>(
 
 /**
  * Convenience wrapper that swaps the App JWT for an installation token before
- * calling `fetchReleaseBundleWithToken`. Production callers should use this so
+ * calling `processReleaseBundleWithToken`. Production callers should use this so
  * the access token's lifetime is scoped to a single bundle resolution.
  */
-export async function fetchReleaseBundleForGate(
-  config: GithubAppConfig,
-  source: WorkflowArtifactSource,
-  classifyArtifact: ClassifyArtifact,
-): Promise<ResolvedReleaseBundle> {
-  const token = await getInstallationAccessToken(config, source.installationExternalId);
-  return fetchReleaseBundleWithToken(token, source, classifyArtifact);
-}
-
 export async function processReleaseBundleForGate<TArtifact>(
   config: GithubAppConfig,
   source: WorkflowArtifactSource,

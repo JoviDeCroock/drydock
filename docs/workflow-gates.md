@@ -67,8 +67,8 @@ The PyPI adapter (`server/lib/adapters/pypi/`):
 - strips the common sdist root before reading `PKG-INFO`;
 - groups artifacts by normalized project name and requires a shared version inside each group;
 - discovers the conventional `pypi-release-candidate` upload plus
-  `pypi-release-candidate-*` shards, parsing one bounded Actions artifact at a
-  time and retaining every distribution digest;
+  `pypi-release-candidate-*` shards (pinned release targets only), parsing one
+  bounded Actions artifact at a time and retaining every distribution digest;
 - selects the default baseline from PyPI `info.version`, falling back to newest non-yanked upload time;
 - downloads matching baseline wheels/sdists sequentially through a
   credential-free broker restricted to `https://files.pythonhosted.org`;

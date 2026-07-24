@@ -185,12 +185,17 @@ gate.
 ### Large compiled releases
 
 Projects that already build wheels in a platform matrix should upload each
-matrix result as its own bounded shard. Leave the release target's optional
-artifact-name override blank: a pinned PyPI target automatically selects the
-exact `pypi-release-candidate` name and every
+matrix result as its own bounded shard. Pin the release target's ecosystem to
+`pypi` and leave its optional artifact-name override blank: a pinned PyPI target
+automatically selects the exact `pypi-release-candidate` name and every
 `pypi-release-candidate-*` shard, while ignoring unrelated workflow artifacts.
 Drydock processes one shard at a time but does not omit distributions from the
 review or provenance.
+
+Pinning is what unlocks the large-release budget. An auto-detect release target
+has no name to narrow the run by, so it matches every non-expired artifact the
+run uploaded and keeps the smaller single-upload budget (20 distributions,
+50 MiB of artifact ZIPs) rather than downloading unrelated CI output.
 
 ```yaml
 jobs:

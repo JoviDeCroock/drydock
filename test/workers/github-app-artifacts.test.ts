@@ -375,6 +375,30 @@ describe("fetchReleaseBundleWithToken", () => {
     expect(bundle.artifacts.every((artifact) => artifact.path.endsWith(".whl"))).toBe(true);
   });
 
+  test("keeps the single-upload budget when no artifact name narrows the run", async () => {
+    // An auto-detect release target supplies neither name nor prefix, so every
+    // non-expired upload on the run matches. The shard-family budget must not
+    // apply there or an unrelated CI run would be downloaded wholesale.
+    const artifacts = Array.from({ length: 21 }, (_, index) => {
+      const wheel = makeWheelBytes("demo-package", `1.2.${index}`);
+      return {
+        id: ARTIFACT_ID + index,
+        name: `unrelated-build-output-${index}`,
+        bundleZip: makeZip([{ path: wheel.path, body: wheel.bytes }]),
+      };
+    });
+    stubGithubFetch({ bundleZip: null, artifacts });
+
+    await expect(
+      processReleaseBundleWithToken(
+        TOKEN,
+        source(),
+        classifyArtifact,
+        async (artifact) => artifact,
+      ),
+    ).rejects.toThrow(/more than 20 release files/);
+  });
+
   test("ignores non-artifact files in the bundle", async () => {
     const fixture = await buildFixture({
       extraEntries: [

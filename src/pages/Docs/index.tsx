@@ -480,8 +480,10 @@ export default function DocsPage() {
               </Prose>
               <Prose>
                 Large compiled PyPI releases can upload one bounded artifact per wheel or sdist.
-                Name the shards <Code>pypi-release-candidate-*</Code>; Drydock processes them one at
-                a time while keeping every distribution in the review and provenance.
+                Name the shards <Code>pypi-release-candidate-*</Code> and set the release target's
+                ecosystem to PyPI; Drydock then processes them one at a time while keeping every
+                distribution in the review and provenance. A target left on auto-detect has no name
+                to match, so it keeps the smaller single-upload limits.
               </Prose>
               <Callout label="Monorepos work as one gate">
                 Drydock groups uploaded files by package and opens a separate report for each one.
