@@ -205,6 +205,23 @@ function hasDiffablePublicArtifact(files: PyPiReleaseFile[]): boolean {
 }
 
 const PREFERRED_WHEEL_NAMESPACE = "wheel/py3-none-any";
+// A public diff may select one sdist and one wheel for each version. Each
+// artifact is independently bounded by the sandbox, but starting four large
+// parses at once can still exceed the parent Worker's aggregate memory/CPU
+// envelope. Keep the request-wide advertised download set bounded before any
+// bytes are fetched. When both artifact kinds do not fit, retain the cheaper
+// comparable pair and disclose the omitted coverage.
+export const PUBLIC_PYPI_DIFF_MAX_SELECTED_BYTES = 50 * 1024 * 1024;
+
+interface PublicPyPiDiffSelection {
+  from: PyPiRemoteArtifact[];
+  to: PyPiRemoteArtifact[];
+}
+
+interface PublicPyPiDiffPlan extends PublicPyPiDiffSelection {
+  omittedKinds: Set<PyPiRemoteArtifact["kind"]>;
+  notices: string[];
+}
 
 // A PyPI release can carry dozens of platform wheels; downloading them all for
 // an anonymous endpoint would be unbounded work. Each side is capped at one
@@ -215,13 +232,80 @@ export function selectPublicPyPiDiffArtifacts(
   metadata: PyPiProjectMetadata,
   fromVersion: string,
   toVersion: string,
-): { from: PyPiRemoteArtifact[]; to: PyPiRemoteArtifact[] } {
+): PublicPyPiDiffSelection {
   const fromAll = usablePublicArtifacts(metadata, fromVersion);
   const toAll = usablePublicArtifacts(metadata, toVersion);
   return {
     from: pickPublicSideArtifacts(fromAll, toAll),
     to: pickPublicSideArtifacts(toAll, fromAll),
   };
+}
+
+export function limitPublicPyPiDiffArtifacts(
+  selection: PublicPyPiDiffSelection,
+  maxSelectedBytes = PUBLIC_PYPI_DIFF_MAX_SELECTED_BYTES,
+): PublicPyPiDiffPlan {
+  const selected = [...selection.from, ...selection.to];
+  const selectedBytes = sumArtifactSizes(selected);
+  if (selectedBytes !== null && selectedBytes <= maxSelectedBytes) {
+    return { ...selection, omittedKinds: new Set(), notices: [] };
+  }
+
+  const candidates = (["wheel", "sdist"] as const)
+    .map((kind) => {
+      const from = selection.from.filter((artifact) => artifact.kind === kind);
+      const to = selection.to.filter((artifact) => artifact.kind === kind);
+      const bytes = from.length && to.length ? sumArtifactSizes([...from, ...to]) : null;
+      return { kind, from, to, bytes };
+    })
+    .filter(
+      (
+        candidate,
+      ): candidate is {
+        kind: PyPiRemoteArtifact["kind"];
+        from: PyPiRemoteArtifact[];
+        to: PyPiRemoteArtifact[];
+        bytes: number;
+      } => candidate.bytes !== null && candidate.bytes <= maxSelectedBytes,
+    )
+    .sort((a, b) => a.bytes - b.bytes || artifactKindRank(a.kind) - artifactKindRank(b.kind));
+
+  const kept = candidates[0];
+  if (!kept) {
+    throw new PublicDiffError("selected PyPI artifacts exceed the public diff size limit", 413);
+  }
+
+  const omittedKinds = new Set(
+    selected.map((artifact) => artifact.kind).filter((kind) => kind !== kept.kind),
+  );
+  const notices = [...omittedKinds]
+    .sort()
+    .map(
+      (kind) =>
+        `${kind === "sdist" ? "The source distribution (sdist)" : "The wheel"} was omitted from both sides to keep selected artifact downloads within the ${formatMiB(maxSelectedBytes)} public diff limit.`,
+    );
+  return { from: kept.from, to: kept.to, omittedKinds, notices };
+}
+
+function sumArtifactSizes(artifacts: PyPiRemoteArtifact[]): number | null {
+  let total = 0;
+  for (const artifact of artifacts) {
+    if (artifact.size === null || !Number.isSafeInteger(artifact.size) || artifact.size < 0) {
+      return null;
+    }
+    total += artifact.size;
+    if (!Number.isSafeInteger(total)) return null;
+  }
+  return total;
+}
+
+function artifactKindRank(kind: PyPiRemoteArtifact["kind"]): number {
+  // When costs tie, prefer the installable wheel over source-only evidence.
+  return kind === "wheel" ? 0 : 1;
+}
+
+function formatMiB(bytes: number): string {
+  return `${Math.floor(bytes / (1024 * 1024))} MiB`;
 }
 
 function usablePublicArtifacts(
@@ -288,44 +372,64 @@ export interface PublicPyPiArtifactDownload {
   error: PublicDiffError | null;
 }
 
+async function downloadPublicPyPiArtifact(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  artifact: PyPiRemoteArtifact,
+): Promise<PublicPyPiArtifactDownload> {
+  if (!isAllowedPyPiArtifactUrl(artifact.url)) {
+    throw new PublicDiffError("registry returned an unexpected artifact URL", 502);
+  }
+  try {
+    // No credentials exist on this path: the gateway sees only this single
+    // pinned public-artifact URL and forwards the request uncredentialed.
+    // Mirrors createPyPiBroker.downloadPublicArtifact (adapters/pypi/
+    // broker.ts) — keep the sandbox options in lockstep with it; the
+    // broker cannot be reused directly because its AdapterContext requires
+    // an authenticated db/session this anonymous path never has.
+    const result = await downloadInSandbox(env, ctx, {
+      tarballUrl: artifact.url,
+      archiveFormat: artifact.kind === "wheel" ? "zip" : "tgz",
+      publicArtifactUrls: [artifact.url],
+    });
+    return {
+      artifact,
+      input: {
+        path: artifact.filename,
+        files: result.files,
+        ...(result.suspiciousEntries ? { suspiciousEntries: result.suspiciousEntries } : {}),
+      },
+      error: null,
+    };
+  } catch (err) {
+    // Per-artifact capture instead of a throw: the caller decides whether
+    // a capacity failure dooms the whole diff or just this artifact kind.
+    return { artifact, input: null, error: publicDiffDownloadError(err) };
+  }
+}
+
 async function downloadPublicPyPiArtifacts(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
-  artifacts: PyPiRemoteArtifact[],
-): Promise<PublicPyPiArtifactDownload[]> {
-  return Promise.all(
-    artifacts.map(async (artifact): Promise<PublicPyPiArtifactDownload> => {
-      if (!isAllowedPyPiArtifactUrl(artifact.url)) {
-        throw new PublicDiffError("registry returned an unexpected artifact URL", 502);
-      }
-      try {
-        // No credentials exist on this path: the gateway sees only this single
-        // pinned public-artifact URL and forwards the request uncredentialed.
-        // Mirrors createPyPiBroker.downloadPublicArtifact (adapters/pypi/
-        // broker.ts) — keep the sandbox options in lockstep with it; the
-        // broker cannot be reused directly because its AdapterContext requires
-        // an authenticated db/session this anonymous path never has.
-        const result = await downloadInSandbox(env, ctx, {
-          tarballUrl: artifact.url,
-          archiveFormat: artifact.kind === "wheel" ? "zip" : "tgz",
-          publicArtifactUrls: [artifact.url],
-        });
-        return {
-          artifact,
-          input: {
-            path: artifact.filename,
-            files: result.files,
-            ...(result.suspiciousEntries ? { suspiciousEntries: result.suspiciousEntries } : {}),
-          },
-          error: null,
-        };
-      } catch (err) {
-        // Per-artifact capture instead of a throw: the caller decides whether
-        // a capacity failure dooms the whole diff or just this artifact kind.
-        return { artifact, input: null, error: publicDiffDownloadError(err) };
-      }
-    }),
-  );
+  selection: PublicPyPiDiffSelection,
+): Promise<{ from: PublicPyPiArtifactDownload[]; to: PublicPyPiArtifactDownload[] }> {
+  const from: PublicPyPiArtifactDownload[] = [];
+  const to: PublicPyPiArtifactDownload[] = [];
+
+  // Parse one comparable artifact pair at a time. This preserves from/to
+  // latency overlap while ensuring a request never has four dynamic sandbox
+  // Workers inflating large archives concurrently.
+  for (const kind of ["sdist", "wheel"] as const) {
+    const fromArtifact = selection.from.find((artifact) => artifact.kind === kind);
+    const toArtifact = selection.to.find((artifact) => artifact.kind === kind);
+    const [fromDownload, toDownload] = await Promise.all([
+      fromArtifact ? downloadPublicPyPiArtifact(env, ctx, fromArtifact) : null,
+      toArtifact ? downloadPublicPyPiArtifact(env, ctx, toArtifact) : null,
+    ]);
+    if (fromDownload) from.push(fromDownload);
+    if (toDownload) to.push(toDownload);
+  }
+  return { from, to };
 }
 
 // Pure assembly over already-downloaded artifact contents, split from the
@@ -385,23 +489,21 @@ export async function acquirePublicPyPiDiff(
   input: { packageName: string; fromVersion: string; toVersion: string },
 ): Promise<PublicDiffAcquiredSources> {
   const metadata = await fetchPublicPyPiProjectMetadata(env, ctx, input.packageName);
-  const selection = selectPublicPyPiDiffArtifacts(metadata, input.fromVersion, input.toVersion);
-  const [fromDownloads, toDownloads] = await Promise.all([
-    downloadPublicPyPiArtifacts(env, ctx, selection.from),
-    downloadPublicPyPiArtifacts(env, ctx, selection.to),
-  ]);
-  const { from, to, omittedKinds, notices } = resolvePublicPyPiDownloads(
-    fromDownloads,
-    toDownloads,
+  const selection = limitPublicPyPiDiffArtifacts(
+    selectPublicPyPiDiffArtifacts(metadata, input.fromVersion, input.toVersion),
   );
+  const downloads = await downloadPublicPyPiArtifacts(env, ctx, selection);
+  const resolved = resolvePublicPyPiDownloads(downloads.from, downloads.to);
+  const omittedKinds = new Set([...selection.omittedKinds, ...resolved.omittedKinds]);
+  const notices = [...selection.notices, ...resolved.notices];
 
   return {
     ...buildPublicPyPiDiffSources({
       packageName: metadata.info?.name ?? input.packageName,
       fromVersion: input.fromVersion,
       toVersion: input.toVersion,
-      from,
-      to,
+      from: resolved.from,
+      to: resolved.to,
       // The synthetic release manifest must describe only the artifacts the
       // diff actually contains, or the metadata-mismatch rules would flag the
       // omitted artifact as missing evidence.
