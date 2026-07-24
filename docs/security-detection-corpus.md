@@ -101,7 +101,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.17.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.18.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -207,7 +207,9 @@ non-regular/suspicious-entry reasons use PyPI wording instead of npm's.
 `1.18.0` closes the plain-dependency-addition gap: a newly added runtime or required
 peer dependency with an ordinary registry spec raises `dependency.added` (medium), while a peer
 marked optional through `peerDependenciesMeta` does not because npm will not install it
-automatically. A modified spec whose resolvable major version changed
+automatically. Optionality changes are diffed even when the peer spec stays unchanged: optional to
+required raises `dependency.added`, while a spec change that remains optional stays quiet. A
+modified spec whose resolvable major version changed
 (`4.3.0` → `5.0.0`, `^1` → `^2`) raises `dependency.major-bump` (low), both anchoring the risk roll-up
 like the other metadata rules. Findings resolve one-per-key by precedence
 (unusual-spec > optional-added > added > major-bump), so a dependency listed in both `dependencies`
@@ -222,7 +224,8 @@ optional peer stays quiet because npm does not install that peer automatically. 
 (`dependencies` ↔ `optionalDependencies`) with an unchanged spec is treated as already-shipped code
 and raises nothing, but a peer requirement moved into `dependencies` genuinely starts shipping and is a
 real addition. A key newly duplicated into another section is not treated as new when it was already
-installed (for example, adding a peer declaration beside an unchanged runtime dependency). Because
+installed (for example, adding a peer declaration beside an unchanged runtime dependency); a peer
+that admits a new major still raises `dependency.major-bump`. Because
 an `optionalDependencies` entry overrides a same-named `dependencies` entry, adding such an override
 compares its spec with the previously effective runtime spec and can raise `dependency.major-bump`.
 Major-bump compares the intervals of majors each spec
@@ -233,7 +236,9 @@ reordered or the set contains redundant lower bounds; a downgrade such as
 `^2.0.0` → `^1.0.0` fires because 1.x was never in the reviewed intervals. Disjoint unions retain
 their holes, so changing `^1.0.0 || ^3.0.0` to `^2.0.0` also fires. A pure narrowing
 (`>=1.0.0` → `^1.0.0`) stays inside the reviewed intervals and raises nothing, and
-a no-op `|| ` suffix or an unparseable leading branch cannot suppress the comparison. An empty spec is treated
+a no-op `|| ` suffix or an unparseable leading branch cannot suppress the comparison. Upper-only
+comparator ranges such as `<=1.9.9` implicitly start at major 0 and participate in the same check.
+An empty spec is treated
 like `*` rather than skipped, and `workspace:`/`catalog:`/`link:`/`portal:` protocols join
 `git:`/`https:`/`file:`/`npm:` as unusual specs (they name no published package). Spec parsing lives in
 `server/lib/dependency-specs.ts`, shared with the UI's dependency diff links: modified rows link

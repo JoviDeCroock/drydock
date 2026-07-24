@@ -58,10 +58,14 @@ function branchMajorRange(branch: string): MajorRange | null {
   }
 
   const floor = branchFloor(branch);
-  if (!floor) return null;
-  const min = floor.min;
-  let max = floor.max;
-  for (const upper of branch.matchAll(/<(=)?\s*v?(\d+)(?:\.(\d+|x|\*))?(?:\.(\d+|x|\*))?/gi)) {
+  const uppers = [...branch.matchAll(/<(=)?\s*v?(\d+)(?:\.(\d+|x|\*))?(?:\.(\d+|x|\*))?/gi)];
+  // Upper-only comparator sets are valid npm ranges and implicitly start at
+  // 0. Keep strict-greater ranges unanchored until their partial-version
+  // semantics can be represented without over-approximating `>1` as major 1.
+  if (!floor && (!uppers.length || /(?:^|\s)>\s*v?\d/i.test(branch))) return null;
+  const min = floor?.min ?? 0;
+  let max = floor?.max ?? Infinity;
+  for (const upper of uppers) {
     const major = Number.parseInt(upper[2], 10);
     const minor = numericPart(upper[3]);
     const patch = numericPart(upper[4]);
@@ -120,7 +124,7 @@ function branchFloor(branch: string): BranchFloor | null {
   let min = 0;
   let max = Infinity;
   for (const match of branch.matchAll(
-    /(?:^|\s)([~^=]|>=)?\s*v?(\d+)(?:\.(\d+|x|\*))?(?:\.(\d+|x|\*))?([-+][0-9A-Za-z.+-]+)?(?=$|\s)/g,
+    /(?:^|\s)(~>|[~^=]|>=)?\s*v?(\d+)(?:\.(\d+|x|\*))?(?:\.(\d+|x|\*))?([-+][0-9A-Za-z.+-]+)?(?=$|\s)/g,
   )) {
     found = true;
     const [, operator, major] = match;

@@ -31,6 +31,8 @@ export interface PackageJsonDiffEntry {
   previouslyDeclared?: true;
   previouslyInstalled?: true;
   previousInstalledSpec?: string;
+  previousDeclaredSpecs?: string[];
+  previousPeerOptional?: true;
   stagedPeerOptional?: true;
 }
 
@@ -88,9 +90,24 @@ function diffDependencySections(
   previousPkg: PackageJsonSummary | null | undefined,
   stagedPkg: PackageJsonSummary | null | undefined,
 ): PackageJsonDiffEntry[] {
-  const sectionEntries = (section: DependencySection) =>
-    diffObject(previousPkg?.[section] || {}, stagedPkg?.[section] || {}).map((entry) => {
-      if (entry.status !== "added") return { ...entry, section };
+  const sectionEntries = (section: DependencySection) => {
+    const previous = previousPkg?.[section] || {};
+    const staged = stagedPkg?.[section] || {};
+    const entries = diffObject(previous, staged);
+    if (section === "peerDependencies") {
+      for (const key of Object.keys(staged)) {
+        if (!(key in previous) || previous[key] !== staged[key]) continue;
+        if (isOptionalPeer(previousPkg, key) === isOptionalPeer(stagedPkg, key)) continue;
+        entries.push({
+          key,
+          status: "modified",
+          previous: previous[key],
+          staged: staged[key],
+        });
+      }
+    }
+
+    return entries.map((entry) => {
       const previouslyDeclared = DEPENDENCY_SECTIONS.some(
         (candidate) => entry.key in (previousPkg?.[candidate] || {}),
       );
@@ -102,24 +119,45 @@ function diffDependencySections(
           ? (previousPkg?.optionalDependencies?.[entry.key] ??
             previousPkg?.dependencies?.[entry.key])
           : undefined;
+      const previousDeclaredSpecs =
+        entry.status === "added" && section === "peerDependencies"
+          ? DEPENDENCY_SECTIONS.flatMap((candidate) => {
+              const spec = previousPkg?.[candidate]?.[entry.key];
+              return spec === undefined ? [] : [spec];
+            })
+          : [];
+      const previousPeerOptional =
+        section === "peerDependencies" && isOptionalPeer(previousPkg, entry.key);
       const stagedPeerOptional =
-        section === "peerDependencies" &&
-        stagedPkg?.peerDependenciesMeta?.[entry.key]?.optional === true;
+        section === "peerDependencies" && isOptionalPeer(stagedPkg, entry.key);
       return {
         ...entry,
         section,
-        ...(previouslyDeclared ? { previouslyDeclared: true as const } : {}),
-        ...(previouslyInstalled ? { previouslyInstalled: true as const } : {}),
-        ...(previousInstalledSpec !== undefined ? { previousInstalledSpec } : {}),
+        ...(entry.status === "added" && previouslyDeclared
+          ? { previouslyDeclared: true as const }
+          : {}),
+        ...(entry.status === "added" && previouslyInstalled
+          ? { previouslyInstalled: true as const }
+          : {}),
+        ...(entry.status === "added" && previousInstalledSpec !== undefined
+          ? { previousInstalledSpec }
+          : {}),
+        ...(previousDeclaredSpecs.length ? { previousDeclaredSpecs } : {}),
+        ...(previousPeerOptional ? { previousPeerOptional: true as const } : {}),
         ...(stagedPeerOptional ? { stagedPeerOptional: true as const } : {}),
       };
     });
+  };
 
   return [
     ...sectionEntries("dependencies"),
     ...sectionEntries("optionalDependencies"),
     ...sectionEntries("peerDependencies"),
   ].sort((a, b) => a.key.localeCompare(b.key) || a.section.localeCompare(b.section));
+}
+
+function isOptionalPeer(pkg: PackageJsonSummary | null | undefined, key: string): boolean {
+  return pkg?.peerDependenciesMeta?.[key]?.optional === true;
 }
 
 const DEPENDENCY_SECTIONS: DependencySection[] = [

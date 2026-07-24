@@ -1408,6 +1408,22 @@ describe("review", () => {
       expect.objectContaining({ ruleId: "dependency.optional-added", evidence: "sharp: ^0.33.0" }),
     ]);
 
+    // optionalDependencies overrides a same-named dependencies entry, so the
+    // high finding must cite the effective optional spec rather than the
+    // lower-ranked runtime row.
+    const differentOptionalSpec = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0" },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        dependencies: { sharp: "^0.32.0" },
+        optionalDependencies: { sharp: "^0.33.0" },
+      },
+    );
+    expect(packageJsonDiffFindings(differentOptionalSpec)).toEqual([
+      expect.objectContaining({ ruleId: "dependency.optional-added", evidence: "sharp: ^0.33.0" }),
+    ]);
+
     // An unusual spec in ANY changed section outranks the added/bump rules:
     // npm 7+ installs peer dependencies too, so a git spec added under
     // peerDependencies must not hide behind a benign spec in dependencies and
@@ -1448,9 +1464,26 @@ describe("review", () => {
         section: "peerDependencies",
         previouslyDeclared: true,
         previouslyInstalled: true,
+        previousDeclaredSpecs: ["^18.0.0"],
       },
     ]);
     expect(packageJsonDiffFindings(existingRuntimeGetsPeer)).toEqual([]);
+
+    const existingRuntimeGetsNewMajorPeer = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { react: "^18.0.0" } },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        dependencies: { react: "^18.0.0" },
+        peerDependencies: { react: "^19.0.0" },
+      },
+    );
+    expect(packageJsonDiffFindings(existingRuntimeGetsNewMajorPeer)).toEqual([
+      expect.objectContaining({
+        ruleId: "dependency.major-bump",
+        evidence: "react: ^18.0.0 -> ^19.0.0",
+      }),
+    ]);
 
     // A peer-only requirement becoming an installed dependency still ships
     // code from the package, even if the peer declaration remains in place.
@@ -1532,6 +1565,80 @@ describe("review", () => {
     expect(packageJsonDiffFindings(optionalGitPeer)).toEqual([]);
   });
 
+  test("tracks optional peer changes and required transitions", () => {
+    const modifiedOptionalPeer = summarizePackageJsonDiff(
+      {
+        name: "pkg",
+        version: "1.0.0",
+        peerDependencies: { dep: "^1.0.0" },
+        peerDependenciesMeta: { dep: { optional: true } },
+      },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        peerDependencies: { dep: "git+https://example.invalid/dep.git" },
+        peerDependenciesMeta: { dep: { optional: true } },
+      },
+    );
+    expect(modifiedOptionalPeer.dependencies).toEqual([
+      {
+        key: "dep",
+        status: "modified",
+        previous: "^1.0.0",
+        staged: "git+https://example.invalid/dep.git",
+        section: "peerDependencies",
+        previousPeerOptional: true,
+        stagedPeerOptional: true,
+      },
+    ]);
+    expect(packageJsonDiffFindings(modifiedOptionalPeer)).toEqual([]);
+
+    const optionalBecomesRequired = summarizePackageJsonDiff(
+      {
+        name: "pkg",
+        version: "1.0.0",
+        peerDependencies: { dep: "^1.0.0" },
+        peerDependenciesMeta: { dep: { optional: true } },
+      },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        peerDependencies: { dep: "^1.0.0" },
+      },
+    );
+    expect(optionalBecomesRequired.dependencies).toEqual([
+      {
+        key: "dep",
+        status: "modified",
+        previous: "^1.0.0",
+        staged: "^1.0.0",
+        section: "peerDependencies",
+        previousPeerOptional: true,
+      },
+    ]);
+    expect(packageJsonDiffFindings(optionalBecomesRequired)).toEqual([
+      expect.objectContaining({
+        ruleId: "dependency.added",
+        evidence: "dep: ^1.0.0",
+      }),
+    ]);
+
+    const requiredBecomesOptional = summarizePackageJsonDiff(
+      {
+        name: "pkg",
+        version: "1.0.0",
+        peerDependencies: { dep: "^1.0.0" },
+      },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        peerDependencies: { dep: "^1.0.0" },
+        peerDependenciesMeta: { dep: { optional: true } },
+      },
+    );
+    expect(packageJsonDiffFindings(requiredBecomesOptional)).toEqual([]);
+  });
+
   test("gates delta rules on baseline-manifest presence, not its version string", () => {
     // A prior release whose manifest parsed but declared no version must not be
     // able to switch off the next release's added/major-bump checks.
@@ -1604,6 +1711,16 @@ describe("review", () => {
     );
     expect(packageJsonDiffFindings(downgrade)).toEqual([
       expect.objectContaining({ ruleId: "dependency.major-bump" }),
+    ]);
+    const upperOnlyDowngrade = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { dep: "^2.0.0" } },
+      { name: "pkg", version: "1.0.1", dependencies: { dep: "<=1.9.9" } },
+    );
+    expect(packageJsonDiffFindings(upperOnlyDowngrade)).toEqual([
+      expect.objectContaining({
+        ruleId: "dependency.major-bump",
+        evidence: "dep: ^2.0.0 -> <=1.9.9",
+      }),
     ]);
     const narrowing = summarizePackageJsonDiff(
       { name: "pkg", version: "1.0.0", dependencies: { dep: ">=1.0.0" } },

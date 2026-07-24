@@ -109,43 +109,52 @@ function keyFinding(
   // (npm treats it like "*") and keeps flowing through the rules below.
   if (stagedSpec === undefined) return null;
 
-  const line = firstJsonPropertyLine(stagedPackageJsonText, key, stagedSpec);
-
   const addedEntries = entries.filter((entry) => entry.status === "added");
-  const addedSections = addedEntries.map((entry) => entry.section);
-  const addsInstallingSection = addedSections.some(isInstallingSection);
+  const addsInstallingSection = addedEntries.some((entry) => isInstallingSection(entry.section));
   const wasPreviouslyInstalled = addedEntries.some((entry) => entry.previouslyInstalled);
-  const wasPreviouslyDeclared = addedEntries.some((entry) => entry.previouslyDeclared);
   // Legacy/manually-created diffs may not carry the cross-section flags, so
   // preserve the removed-row relocation fallback for those payloads.
   const relocation = (removedInstallingSpecs?.length ?? 0) > 0;
   const installsNewCode = addsInstallingSection && !wasPreviouslyInstalled && !relocation;
+  const addedRequiredPeer = addedEntries.find(
+    (entry) => entry.section === "peerDependencies" && !entry.stagedPeerOptional,
+  );
+  const requiredPeerTransition = entries.find(
+    (entry) =>
+      entry.section === "peerDependencies" &&
+      entry.status === "modified" &&
+      entry.previousPeerOptional &&
+      !entry.stagedPeerOptional,
+  );
   const addsNewPeerRequirement =
-    addedEntries.some(
-      (entry) => entry.section === "peerDependencies" && !entry.stagedPeerOptional,
-    ) &&
-    !wasPreviouslyDeclared &&
-    !relocation;
+    Boolean(requiredPeerTransition) ||
+    Boolean(addedRequiredPeer && !addedRequiredPeer.previouslyDeclared && !relocation);
 
-  if (installsNewCode && addedSections.includes("optionalDependencies")) {
+  const addedOptional = addedEntries.find((entry) => entry.section === "optionalDependencies");
+  if (installsNewCode && addedOptional?.staged !== undefined) {
     return tag("dependencyOptionalAdded", {
       severity: "high",
       file: "package.json",
-      line,
-      evidence: `${key}: ${stagedSpec}`,
+      line: firstJsonPropertyLine(stagedPackageJsonText, key, addedOptional.staged),
+      evidence: `${key}: ${addedOptional.staged}`,
       reason:
         "optional dependencies can execute install lifecycle hooks while failing softly on unsupported platforms, so newly added optional dependencies require manual review",
     });
   }
 
   if ((installsNewCode || addsNewPeerRequirement) && hasBaseline) {
+    const findingEntry =
+      (installsNewCode
+        ? addedEntries.find((entry) => isInstallingSection(entry.section))
+        : (requiredPeerTransition ?? addedRequiredPeer)) ?? sorted[0];
+    const findingSpec = findingEntry.staged ?? stagedSpec;
     // dependencies installs into every consumer; a peer requirement is instead
     // something the consumer must supply, so the framing differs.
     return tag("dependencyAdded", {
       severity: "medium",
       file: "package.json",
-      line,
-      evidence: `${key}: ${stagedSpec}`,
+      line: firstJsonPropertyLine(stagedPackageJsonText, key, findingSpec),
+      evidence: `${key}: ${findingSpec}`,
       reason: installsNewCode
         ? "a newly added dependency ships third-party code this scan does not inspect into every consumer install — the event-stream/flatmap-stream and node-ipc/peacenotwar vector — so review the new dependency's own contents before approving"
         : "a newly added peer dependency requires every consumer to install this third-party package, which this scan does not inspect — review the dependency's own contents before approving",
@@ -165,7 +174,41 @@ function keyFinding(
   // a real major change.
   //
   if (!hasBaseline) return null;
-  const modifiedEntries = entries.filter((e) => e.status === "modified");
+  for (const entry of addedEntries) {
+    if (
+      entry.section !== "peerDependencies" ||
+      entry.stagedPeerOptional ||
+      entry.staged === undefined ||
+      !entry.previousDeclaredSpecs?.length
+    ) {
+      continue;
+    }
+    const stagedRanges = specMajorRanges(entry.staged);
+    const previousRanges = entry.previousDeclaredSpecs.flatMap(
+      (spec) => specMajorRanges(spec) ?? [],
+    );
+    if (
+      stagedRanges === undefined ||
+      !previousRanges.length ||
+      majorRangesAreSubset(stagedRanges, previousRanges)
+    ) {
+      continue;
+    }
+    return tag("dependencyMajorBump", {
+      severity: "low",
+      file: "package.json",
+      line: firstJsonPropertyLine(stagedPackageJsonText, key, entry.staged),
+      evidence: `${key}: ${entry.previousDeclaredSpecs.join(" || ")} -> ${entry.staged}`,
+      reason:
+        "the dependency spec now resolves to a different major version than the previously reviewed release admitted, so consumers can pull code outside the range the prior version was reviewed against; review the dependency's own release diff",
+    });
+  }
+
+  const modifiedEntries = entries.filter(
+    (entry) =>
+      entry.status === "modified" &&
+      !(entry.section === "peerDependencies" && entry.stagedPeerOptional),
+  );
   const directPairs = [
     ...modifiedEntries.map((entry) => ({ previous: entry.previous, staged: entry.staged })),
     ...addedEntries
