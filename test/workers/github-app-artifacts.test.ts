@@ -3,6 +3,7 @@ import {
   type WorkflowArtifactSource,
   evaluateGithubArtifactEgress,
   fetchReleaseBundleWithToken,
+  processReleaseBundleWithToken,
 } from "../../server/lib/github-app/artifacts";
 
 const TOKEN = "ghs_installation_test_token";
@@ -335,6 +336,43 @@ describe("fetchReleaseBundleWithToken", () => {
     expect(bundle.artifactSizeBytes).toBe(first.bundleZip.length + secondZip.length);
     const paths = bundle.artifacts.map((artifact) => artifact.path).sort();
     expect(paths).toEqual([first.wheel.path, secondWheel.path].sort());
+  });
+
+  test("processes a NumPy-sized shard family one release file at a time", async () => {
+    const artifacts = Array.from({ length: 44 }, (_, index) => {
+      const wheel = makeWheelBytes("demo-package", `1.2.${index}`);
+      return {
+        id: ARTIFACT_ID + index,
+        name: `${ARTIFACT_NAME}-${String(index).padStart(2, "0")}`,
+        bundleZip: makeZip([{ path: wheel.path, body: wheel.bytes }]),
+      };
+    });
+    artifacts.push({
+      id: ARTIFACT_ID + 100,
+      name: "unrelated-build-output",
+      bundleZip: makeZip([{ path: "dist/unrelated-1.0.0.tar.gz", body: "ignored" }]),
+    });
+    stubGithubFetch({ bundleZip: null, artifacts });
+
+    let activeProcessors = 0;
+    let maxActiveProcessors = 0;
+    const bundle = await processReleaseBundleWithToken(
+      TOKEN,
+      source({ artifactNamePrefix: ARTIFACT_NAME }),
+      classifyArtifact,
+      async (artifact) => {
+        activeProcessors += 1;
+        maxActiveProcessors = Math.max(maxActiveProcessors, activeProcessors);
+        await Promise.resolve();
+        activeProcessors -= 1;
+        return { path: artifact.path, sha256: artifact.sha256 };
+      },
+    );
+
+    expect(bundle.artifacts).toHaveLength(44);
+    expect(bundle.artifactName).toBe("all");
+    expect(maxActiveProcessors).toBe(1);
+    expect(bundle.artifacts.every((artifact) => artifact.path.endsWith(".whl"))).toBe(true);
   });
 
   test("ignores non-artifact files in the bundle", async () => {

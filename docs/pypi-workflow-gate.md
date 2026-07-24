@@ -14,12 +14,14 @@ gate lifecycle.
 ## The release candidate
 
 There is **no Drydock manifest file** to write. The boundary is the workflow
-run's uploaded artifacts: CI runs `python -m build`, records `dist/SHA256SUMS`
-for publish-time verification, and uploads `dist/*` (one or more `.whl` plus the
-sdist) as a GitHub Actions artifact. Drydock treats every `.whl` / `.tar.gz` /
-`.tgz` it finds as the release set; identity (`package` / `version`) is read
-from each wheel's `METADATA` and the sdist's `PKG-INFO` after the bytes are
-parsed in the credentials-free sandbox.
+run's uploaded artifacts: CI runs `python -m build`, records checksums for
+publish-time verification, and uploads one or more `.whl` files plus the sdist.
+Small releases can use one `pypi-release-candidate` GitHub Actions artifact;
+large compiled releases use `pypi-release-candidate-*` shards with one bounded
+wheel/sdist upload per shard. Drydock treats every `.whl` / `.tar.gz` / `.tgz`
+in that family as the release set; identity (`package` / `version`) is read from
+each wheel's `METADATA` and the sdist's `PKG-INFO` after the bytes are parsed in
+the credentials-free sandbox.
 
 Integrity rests on **GitHub artifact immutability**, exactly like the npm gate:
 
@@ -101,7 +103,9 @@ The baseline is the currently-published PyPI version, selected from the project'
 public PyPI JSON metadata and downloaded from `files.pythonhosted.org`
 (`acquireBaselinePyPi`, `pickPyPiBaselineRelease`). PyPI packages are public, so
 no credential is attached for the baseline fetch. If no comparable published
-release exists, the review runs without a baseline (full-tree review).
+release exists, the review runs without a baseline (full-tree review). Matching
+platform baselines are downloaded and sandbox-parsed sequentially so a release
+with dozens of wheels never inflates them concurrently.
 
 ## Code sharing
 
@@ -139,7 +143,7 @@ jobs:
           cd dist && sha256sum *.whl *.tar.gz *.tgz > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: pypi-release-candidate # or leave blank to auto-detect
+          name: pypi-release-candidate
           path: |
             dist/*.whl
             dist/*.tar.gz
@@ -178,13 +182,74 @@ is neither a wheel nor an sdist). PyPI strongly encourages configuring a GitHub
 Environment for Trusted Publishers; the same environment carries the Drydock
 gate.
 
+### Large compiled releases
+
+Projects that already build wheels in a platform matrix should upload each
+matrix result as its own bounded shard. Leave the release target's optional
+artifact-name override blank: a pinned PyPI target automatically selects the
+exact `pypi-release-candidate` name and every
+`pypi-release-candidate-*` shard, while ignoring unrelated workflow artifacts.
+Drydock processes one shard at a time but does not omit distributions from the
+review or provenance.
+
+```yaml
+jobs:
+  build-wheel:
+    strategy:
+      matrix:
+        include: # project-specific
+          - { shard: linux-x64, os: ubuntu-latest }
+          - { shard: macos-arm64, os: macos-14 }
+          - { shard: windows-x64, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./ci/build-wheel "${{ matrix.shard }}" # writes one or more dist/*.whl
+      - run: cd dist && sha256sum *.whl > "SHA256SUMS-${{ matrix.shard }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pypi-release-candidate-${{ matrix.shard }}
+          path: dist/
+          if-no-files-found: error
+
+  build-sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m build --sdist
+      - run: cd dist && sha256sum *.tar.gz > SHA256SUMS-sdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pypi-release-candidate-sdist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: [build-wheel, build-sdist]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pypi-release-candidate-*
+          merge-multiple: true
+          path: dist
+      - run: |
+          cd dist
+          for sums in SHA256SUMS-*; do sha256sum --check --strict "$sums"; done
+          rm SHA256SUMS-*
+      - uses: pypa/gh-action-pypi-publish@release/v1
+```
+
 ## Acceptance mapping (issue #308)
 
 - _A GitHub Actions PyPI publish job waits on Drydock through a GitHub
   Environment gate_ — `environment: pypi` + the shared deployment-protection
   webhook path.
 - _Drydock reviews every candidate wheel/sdist and records their SHA-256
-  digests_ — the bundle bytes are recomputed (`fetchReleaseBundleForGate`) and
+  digests_ — the bundle bytes are recomputed (`processReleaseBundleForGate`) and
   bound into the synthesized `drydock.release-artifacts.v1` manifest.
 - _Scan detail and report export expose the reviewed artifact digests_ —
   `pypiAdapter.summarizeDetails` emits a `provenance` block carried into

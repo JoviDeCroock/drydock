@@ -8,6 +8,7 @@ import { readGithubAppConfig } from "../../server/lib/github-app/config";
 import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
 import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
 import type { PyPiAdapterInput } from "../../server/lib/adapters/pypi/index";
+import { acquireStagedPyPi } from "../../server/lib/adapters/pypi/acquire";
 import { prepareReleaseCandidatesForGate } from "../../server/lib/workflow-gates/prepare";
 
 const WEBHOOK_SECRET = "webhook-secret-value-1234567890";
@@ -175,6 +176,16 @@ function metadataFile(name: string, version: string): SandboxFile {
     sha256: "ab".repeat(32),
     flags: [],
     textSample: `Metadata-Version: 2.3\nName: ${name}\nVersion: ${version}\n`,
+  };
+}
+
+function sharedSourceFile(path = "demo_package/_core.py"): SandboxFile {
+  return {
+    path,
+    size: 15,
+    sha256: "cd".repeat(32),
+    flags: [],
+    textSample: "VALUE = 1\n",
   };
 }
 
@@ -397,6 +408,78 @@ describe("prepareReleaseCandidatesForGate", () => {
     expect(downloadedArtifactIds).toEqual(["88888"]);
   });
 
+  test("streams and compacts a 44-wheel PyPI shard family", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9107",
+      repositoryId: 71007,
+      runId: 13131,
+    });
+    const wheelPaths = Array.from(
+      { length: 44 },
+      (_, index) =>
+        `dist/demo_package-1.2.0-cp312-cp312-manylinux_${String(index).padStart(2, "0")}_x86_64.whl`,
+    );
+    const scenario = await buildScenario(13131, {
+      artifactPaths: [wheelPaths[0]],
+      extraArtifacts: [
+        ...wheelPaths.slice(1).map((path, index) => ({
+          id: 90000 + index,
+          name: `pypi-release-candidate-${String(index + 1).padStart(2, "0")}`,
+          artifactPaths: [path],
+        })),
+        {
+          id: 99999,
+          name: "unrelated-build-output",
+          artifactPaths: ["dist/unrelated_package-9.9.9-py3-none-any.whl"],
+        },
+      ],
+    });
+    const loaderMock = buildLoaderMock(
+      wheelPaths.map(() => [metadataFile("demo-package", "1.2.0"), sharedSourceFile()]),
+    );
+    const ctx = buildCtxWithGateway();
+    const bindings = buildConfigBindings();
+    const config = readGithubAppConfig({
+      ...bindings,
+      BETTER_AUTH_SECRET: bindings.BETTER_AUTH_SECRET,
+    });
+    const sandboxEnv = {
+      ...env,
+      ...bindings,
+      LOADER: loaderMock.binding as unknown as WorkerLoader,
+    } as Cloudflare.Env;
+
+    const db = createDb(env.DB);
+    const result = await prepareReleaseCandidatesForGate(sandboxEnv, ctx, db, {
+      config,
+      organizationId: seeded.organizationId,
+      gateId: seeded.gateId,
+    });
+
+    expect(result.packages).toHaveLength(1);
+    const pipelineInput = result.packages[0].candidate.pipelineInput as unknown as PyPiAdapterInput;
+    expect(pipelineInput.manifest.artifacts).toHaveLength(44);
+    expect(pipelineInput.artifacts).toHaveLength(44);
+    expect(loaderMock.calls).toHaveLength(44);
+    const retainedSharedSamples = pipelineInput.artifacts
+      .flatMap((artifact) => artifact.files)
+      .filter((file) => file.path === "demo_package/_core.py" && file.textSample);
+    expect(retainedSharedSamples).toHaveLength(44);
+    const staged = acquireStagedPyPi(pipelineInput);
+    expect(
+      staged.artifact.files.filter(
+        (file) => file.path.endsWith("demo_package/_core.py") && file.textSample,
+      ),
+    ).toHaveLength(1);
+
+    const downloadedArtifactIds = scenario.fetchSpy.mock.calls
+      .map(([input]) => (input instanceof Request ? input.url : String(input)))
+      .filter((url) => url.includes("/actions/artifacts/"))
+      .map((url) => url.match(/\/actions\/artifacts\/(\d+)\/zip$/)?.[1]);
+    expect(downloadedArtifactIds).toHaveLength(44);
+    expect(downloadedArtifactIds).not.toContain("99999");
+  });
+
   test("fans a monorepo bundle out into one candidate per distinct package", async () => {
     const seeded = await seedGateForTest({
       installationExternalId: "9105",
@@ -412,8 +495,8 @@ describe("prepareReleaseCandidatesForGate", () => {
       ],
     });
     const loaderMock = buildLoaderMock([
-      [metadataFile("alpha-pkg", "1.0.0")],
-      [metadataFile("beta-pkg", "2.0.0")],
+      [metadataFile("alpha-pkg", "1.0.0"), sharedSourceFile("shared.py")],
+      [metadataFile("beta-pkg", "2.0.0"), sharedSourceFile("shared.py")],
     ]);
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
@@ -440,6 +523,10 @@ describe("prepareReleaseCandidatesForGate", () => {
     for (const pkg of result.packages) {
       expect(pkg.candidate.ecosystem).toBe("pypi");
       expect(pkg.packageAdapter.id).toBe("pypi");
+      const input = pkg.candidate.pipelineInput as unknown as PyPiAdapterInput;
+      expect(input.artifacts[0].files.find((file) => file.path === "shared.py")?.textSample).toBe(
+        "VALUE = 1\n",
+      );
     }
     expect(scenario.artifactPaths).toHaveLength(2);
 

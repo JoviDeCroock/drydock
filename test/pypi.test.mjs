@@ -1040,4 +1040,64 @@ describe("PyPI baseline acquisition through the broker", () => {
       baseline.artifact.files.every((entry) => entry.path.startsWith("wheel/py3-none-any/")),
     ).toBe(true);
   });
+
+  test("downloads 44 comparable baseline wheels sequentially and compacts repeated samples", async () => {
+    const wheelNames = Array.from(
+      { length: 44 },
+      (_, index) =>
+        `demo_package-1.1.0-cp312-cp312-manylinux_${String(index).padStart(2, "0")}_x86_64.whl`,
+    );
+    const candidateNames = wheelNames.map((name) => name.replace("1.1.0", "1.2.0"));
+    const manifest = candidateManifest(
+      candidateNames.map((path) => ({ path: `dist/${path}`, sha256: "a".repeat(64) })),
+    );
+    const input = pypiAdapter.parseInput({
+      manifest,
+      artifacts: candidateNames.map((path) => ({
+        path: `dist/${path}`,
+        files: wheelArtifactFiles("1.2.0"),
+      })),
+    });
+    const metadata = {
+      info: { version: "1.1.0" },
+      releases: {
+        "1.1.0": wheelNames.map((filename) => ({
+          filename,
+          packagetype: "bdist_wheel",
+          url: `https://files.pythonhosted.org/packages/${filename}`,
+          size: 5 * 1024 * 1024,
+          digests: { sha256: "c".repeat(64) },
+          upload_time_iso_8601: "2026-02-01T00:00:00.000Z",
+        })),
+      },
+    };
+    let activeDownloads = 0;
+    let maxActiveDownloads = 0;
+    const calls = [];
+    const broker = {
+      async fetchProjectMetadata() {
+        return metadata;
+      },
+      async downloadPublicArtifact(artifact) {
+        calls.push(artifact);
+        activeDownloads += 1;
+        maxActiveDownloads = Math.max(maxActiveDownloads, activeDownloads);
+        await Promise.resolve();
+        activeDownloads -= 1;
+        return { files: wheelArtifactFiles("1.1.0"), packageJson: null };
+      },
+      dispose() {},
+    };
+
+    const staged = await pypiAdapter.acquireStaged(adapterCtx, input, broker);
+    const baseline = await pypiAdapter.acquireBaseline(adapterCtx, input, broker, staged);
+
+    expect(calls).toHaveLength(44);
+    expect(maxActiveDownloads).toBe(1);
+    expect(
+      baseline.artifact.files.filter(
+        (entry) => entry.path.endsWith("demo_package/__init__.py") && entry.textSample,
+      ),
+    ).toHaveLength(1);
+  });
 });

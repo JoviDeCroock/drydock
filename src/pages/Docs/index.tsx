@@ -478,6 +478,11 @@ export default function DocsPage() {
                 should match. Most importantly: download and publish the uploaded files—never
                 rebuild after approval.
               </Prose>
+              <Prose>
+                Large compiled PyPI releases can upload one bounded artifact per wheel or sdist.
+                Name the shards <Code>pypi-release-candidate-*</Code>; Drydock processes them one at
+                a time while keeping every distribution in the review and provenance.
+              </Prose>
               <Callout label="Monorepos work as one gate">
                 Drydock groups uploaded files by package and opens a separate report for each one.
                 The held job continues only after every package is approved; rejecting one blocks
@@ -504,7 +509,7 @@ export default function DocsPage() {
       - run: cd dist && sha256sum *.whl *.tar.gz > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: release-candidate
+          name: pypi-release-candidate
           path: dist/
 
   publish:
@@ -515,7 +520,7 @@ export default function DocsPage() {
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: release-candidate
+          name: pypi-release-candidate
           path: dist
       - run: cd dist && sha256sum --check --strict SHA256SUMS
       - run: rm dist/SHA256SUMS
@@ -532,7 +537,7 @@ export default function DocsPage() {
       - run: cd dist && sha256sum *.tgz > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: release-candidate
+          name: npm-release-candidates
           path: dist/
 
   publish:
@@ -544,7 +549,7 @@ export default function DocsPage() {
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: release-candidate
+          name: npm-release-candidates
           path: dist
       - run: cd dist && sha256sum --check --strict SHA256SUMS
       - run: |
@@ -563,7 +568,7 @@ export default function DocsPage() {
       - run: cd dist && sha256sum *.vsix > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: release-candidate
+          name: vscode-release-candidate
           path: dist/
 
   publish:
@@ -572,7 +577,7 @@ export default function DocsPage() {
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: release-candidate
+          name: vscode-release-candidate
           path: dist
       - run: cd dist && sha256sum --check --strict SHA256SUMS
       - run: npx @vscode/vsce publish --packagePath dist/extension.vsix`}

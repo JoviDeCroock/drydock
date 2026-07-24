@@ -17,6 +17,9 @@ import {
   type PyPiRemoteArtifact,
 } from "./types";
 
+const MAX_PYPI_BASELINE_ARTIFACTS = 128;
+const MAX_PYPI_BASELINE_ADVERTISED_BYTES = 768 * 1024 * 1024;
+
 export function preparePyPiArtifact(input: PyPiArtifactInput): PyPiPreparedArtifact {
   const kind = inferPyPiArtifactKind(input.path);
   if (!kind) throw new Error("PyPI artifact must be a wheel or sdist");
@@ -48,6 +51,7 @@ export function acquireStagedPyPi(input: PyPiAdapterInput): {
 } {
   assertManifestArtifactSet(input.manifest, input.artifacts);
   const preparedArtifacts = input.artifacts.map(preparePyPiArtifact);
+  compactDuplicateArtifactSamples(preparedArtifacts);
   const files = flattenPyPiArtifactFiles(preparedArtifacts);
   const manifest = packageJsonSummaryFor(input.manifest, preparedArtifacts);
   return {
@@ -92,17 +96,31 @@ export async function acquireBaselinePyPi(
     });
   }
 
-  const downloaded: PyPiArtifactInput[] = await Promise.all(
-    comparable.map(async (artifact) => {
-      const result = await broker.downloadPublicArtifact({
-        url: artifact.url,
-        kind: artifact.kind,
-      });
-      return { path: artifact.filename, files: result.files };
-    }),
-  );
+  const advertisedBytes = comparable.reduce((total, artifact) => total + (artifact.size ?? 0), 0);
+  if (
+    comparable.length > MAX_PYPI_BASELINE_ARTIFACTS ||
+    advertisedBytes > MAX_PYPI_BASELINE_ADVERTISED_BYTES
+  ) {
+    return emptyPyPiBaseline(`${selection.reason}:baseline-resource-budget`, {
+      version: selection.version,
+      source: selection.source,
+    });
+  }
 
-  const preparedArtifacts = downloaded.map(preparePyPiArtifact);
+  // A release can have dozens of platform wheels. Download + sandbox-parse each
+  // comparable baseline in sequence so only one archive's bytes/text samples
+  // are live at a time; the public `/diff` path has its own two-artifact planner.
+  const preparedArtifacts: PyPiPreparedArtifact[] = [];
+  const retainedSamples = new Set<string>();
+  for (const artifact of [...comparable].sort((a, b) => a.filename.localeCompare(b.filename))) {
+    const result = await broker.downloadPublicArtifact({
+      url: artifact.url,
+      kind: artifact.kind,
+    });
+    const prepared = preparePyPiArtifact({ path: artifact.filename, files: result.files });
+    compactDuplicateArtifactSamples([prepared], retainedSamples);
+    preparedArtifacts.push(prepared);
+  }
   return {
     artifact: {
       files: flattenPyPiArtifactFiles(preparedArtifacts),
@@ -124,6 +142,7 @@ export function baselineFromPreviousArtifacts(input: PyPiAdapterInput): {
 } {
   if (!input.previousArtifacts?.length) return emptyPyPiBaseline("no-previous-artifacts");
   const preparedArtifacts = input.previousArtifacts.map(preparePyPiArtifact);
+  compactDuplicateArtifactSamples(preparedArtifacts);
   const manifest = packageJsonSummaryFor(input.manifest, preparedArtifacts);
   return {
     artifact: {
@@ -267,6 +286,41 @@ export function flattenPyPiArtifactFiles(artifacts: PyPiPreparedArtifact[]): Fil
       ...file,
       path: namespacedPath(artifactDiffNamespace(artifact), normalizePyPiDiffFilePath(file.path)),
     })),
+  );
+}
+
+/**
+ * Keep one text body for identical logical files repeated across platform wheels.
+ *
+ * Every artifact retains path, size, hash, and flags. A wheel whose copy differs
+ * has a different digest and keeps its own sample, so platform-specific payloads
+ * remain fully reviewable while honest repeated Python sources do not multiply
+ * the parent Worker's heap by the wheel count.
+ */
+function compactDuplicateArtifactSamples(
+  artifacts: PyPiPreparedArtifact[],
+  retained = new Set<string>(),
+): void {
+  for (const artifact of [...artifacts].sort((a, b) => a.path.localeCompare(b.path))) {
+    for (const file of artifact.files) {
+      if (!file.textSample || mustRetainPerArtifact(file.path)) continue;
+      const key = `${artifact.kind}\0${file.path}\0${file.sha256}`;
+      if (retained.has(key)) {
+        delete file.textSample;
+      } else {
+        retained.add(key);
+      }
+    }
+  }
+}
+
+function mustRetainPerArtifact(path: string): boolean {
+  const basename = path.split("/").at(-1)?.toUpperCase();
+  return (
+    basename === "METADATA" ||
+    basename === "PKG-INFO" ||
+    basename === "WHEEL" ||
+    basename === "RECORD"
   );
 }
 
