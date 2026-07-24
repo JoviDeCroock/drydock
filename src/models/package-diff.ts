@@ -30,6 +30,9 @@ export interface PublicDiffResponse {
   findings: Array<Finding & FindingDiffAnnotation>;
   risk: ScanRiskBreakdown;
   textSamplesOmitted: boolean;
+  // Coverage caveats (e.g. an artifact kind omitted because it exceeded a
+  // sandbox cap); rendered as a banner above the diff.
+  notices: string[];
   cachedAt: string;
 }
 

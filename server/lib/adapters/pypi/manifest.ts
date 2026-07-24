@@ -115,6 +115,7 @@ const SUSPICIOUS_ENTRY_KINDS = new Set([
   "duplicate",
   "unicode-confusable",
   "content-skipped",
+  "retention-tier",
 ]);
 
 // The sandbox parser caps suspicious entries at maxFiles; this bounds the

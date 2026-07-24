@@ -5,6 +5,14 @@ import * as tarParser from "./tar-parser.js";
 import type { TarSuspiciousEntry } from "./tar-parser.js";
 
 export const SANDBOX_MAX_FILES = 2_500;
+// Hard cap on archive entries walked at all. SANDBOX_MAX_FILES bounds the
+// expensive tier (bodies retained with a full text sample for detection);
+// entries past that tier are still hashed and native-sniffed but recorded
+// hash-only, so per-entry cost is header parsing plus digest work already
+// bounded by the stream-byte budget below. Sized for big-but-honest sdists —
+// numpy vendors its whole build system (8k+ files) — while staying under the
+// zip EOCD 16-bit entry count.
+export const SANDBOX_MAX_ENTRIES = 20_000;
 const SANDBOX_MAX_TAR_BYTES = 25 * 1024 * 1024;
 // Total decompressed bytes the streaming tar reader may consume. Bodies beyond
 // the retention budget (SANDBOX_MAX_TAR_BYTES) are skipped, not buffered, so
@@ -12,6 +20,7 @@ const SANDBOX_MAX_TAR_BYTES = 25 * 1024 * 1024;
 // prepackaged-binary packages dock without buffering their binaries.
 export const SANDBOX_MAX_STREAM_TAR_BYTES = 10 * SANDBOX_MAX_TAR_BYTES;
 const MAX_FILES = SANDBOX_MAX_FILES;
+const MAX_ENTRIES = SANDBOX_MAX_ENTRIES;
 const MAX_TAR_BYTES = SANDBOX_MAX_TAR_BYTES;
 const MAX_STREAM_TAR_BYTES = SANDBOX_MAX_STREAM_TAR_BYTES;
 
@@ -269,6 +278,7 @@ async function parseInCredentialsFreeSandbox(
       NPM_REGISTRY: env.NPM_REGISTRY || "https://registry.npmjs.org",
       ARCHIVE_FORMAT: format,
       MAX_FILES: Math.min(maxFiles ?? MAX_FILES, MAX_FILES),
+      MAX_ENTRIES,
       MAX_TAR_BYTES,
       MAX_STREAM_TAR_BYTES,
     },
@@ -333,6 +343,7 @@ export async function downloadInSandbox(
       NPM_REGISTRY: options.npmRegistry || env.NPM_REGISTRY || "https://registry.npmjs.org",
       ARCHIVE_FORMAT: options.archiveFormat || "tgz",
       MAX_FILES: Math.min(options.maxFiles ?? MAX_FILES, MAX_FILES),
+      MAX_ENTRIES,
       MAX_TAR_BYTES,
       MAX_STREAM_TAR_BYTES,
     },
@@ -407,21 +418,29 @@ export default {
         return json({ error: reason, status }, status);
       }
       let files;
+      let suspiciousEntries;
       try {
-        files = await readZipArchiveBuffered(zip, env.MAX_FILES || 2_500, maxTarBytes);
+        const parsed = await readZipArchiveBuffered(
+          zip,
+          env.MAX_FILES || 2_500,
+          maxTarBytes,
+          env.MAX_ENTRIES || env.MAX_FILES || 2_500,
+        );
+        files = parsed.files;
+        suspiciousEntries = parsed.suspicious;
       } catch (err) {
         const reason = err && err.tarSafety && err.message ? err.message : "zip parse failed";
         const status = reason === "archive contains too many files" || reason === "archive expands beyond safety limit" ? 413 : 400;
         return json({ error: reason, status }, status);
       }
-      return json({ files, packageJson: null });
+      return json({ files, packageJson: null, suspiciousEntries });
     }
     if (archiveFormat === "zip") {
       let files;
       let suspiciousEntries;
       try {
         if (!res.body) return json({ error: "archive download failed", status: 400 }, 400);
-        const parsed = await readZipStream(res.body, env.MAX_FILES || 2_500, maxTarBytes, maxStreamTarBytes);
+        const parsed = await readZipStream(res.body, env.MAX_FILES || 2_500, maxTarBytes, maxStreamTarBytes, env.MAX_ENTRIES || env.MAX_FILES || 2_500);
         files = parsed.files;
         suspiciousEntries = parsed.suspicious;
       } catch (err) {
@@ -443,7 +462,7 @@ export default {
       // almost nothing, so the decompressed budget inside readTarStream does
       // not bound download size or inflater CPU on its own.
       const tarStream = boundedByteStream(res.body, maxStreamTarBytes).pipeThrough(new DecompressionStream("gzip"));
-      const parsed = await readTarStream(tarStream, env.MAX_FILES || 2_500, maxTarBytes, maxStreamTarBytes);
+      const parsed = await readTarStream(tarStream, env.MAX_FILES || 2_500, maxTarBytes, maxStreamTarBytes, env.MAX_ENTRIES || env.MAX_FILES || 2_500);
       files = parsed.files;
       suspiciousEntries = parsed.suspicious;
     } catch (err) {

@@ -1,6 +1,7 @@
 import {
   deterministicFindings,
   packageJsonDiffFindings,
+  tarSuspiciousEntryFindings,
   type DiffEntry,
   type Finding,
   type PackageJsonDiff,
@@ -84,6 +85,9 @@ export function buildVscodeFindings(args: {
       codePatternSet: "javascript",
     }),
     ...packageJsonDiffFindings(args.manifestDiff, args.stagedManifestText),
+    ...tarSuspiciousEntryFindings(args.staged.suspiciousTarEntries, {
+      fileDiff: args.fileDiff,
+    }),
     ...vscodeManifestFindings(args.details, extensionManifest, args.staged.files),
   ];
 }

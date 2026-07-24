@@ -49,7 +49,7 @@ export const pypiAdapter: PackageAdapter<PyPiAdapterInput, PyPiBroker> = {
       ...deterministicFindings(args.staged.files, args.fileDiff, null, {
         codePatternSet: "python",
       }),
-      ...pyPiReleaseFindings(details.manifest, details.preparedArtifacts),
+      ...pyPiReleaseFindings(details.manifest, details.preparedArtifacts, args.fileDiff),
     ];
   },
 

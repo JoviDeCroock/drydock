@@ -14,7 +14,7 @@
 //     cross-function calls resolve by the lexical names below.
 
 /** @typedef {{ path: string, size: number, sha256: string, flags: string[], textSample?: string }} ParsedFile */
-/** @typedef {{ kind: "non-regular"|"duplicate"|"unicode-confusable"|"content-skipped", path: string, detail: string }} TarSuspiciousEntry */
+/** @typedef {{ kind: "non-regular"|"duplicate"|"unicode-confusable"|"content-skipped"|"retention-tier", path: string, detail: string }} TarSuspiciousEntry */
 
 export function readString(bytes, start, len) {
   let end = start;
@@ -517,11 +517,22 @@ export async function readTar(buffer, maxFiles, maxTarBytes) {
 // no text) instead of failing the parse — the esbuild/rover pattern of
 // multi-hundred-megabyte prepackaged platform binaries alongside a small
 // manifest.
-export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes) {
+//
+// File counts are tiered the same way bytes are: `maxFiles` bounds how many
+// bodies keep a full text sample (the expensive tier — whole-body decode plus
+// downstream detection work), while `maxEntries` is the hard cap on entries
+// walked at all. Big-but-honest sdists (numpy vendors its entire build system:
+// 8k+ files) parse instead of failing; files past the full-inspection tier are
+// still hashed and native-sniffed, so the diff layer can prove them identical
+// to (or diverged from) the baseline.
+export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes, maxEntries) {
   const nul = String.fromCharCode(0);
   if (!body) throw tarError("tarball decompression failed");
   const cursor = createStreamCursor(body, maxStreamBytes);
   const { fill, take, discard } = cursor;
+  // Entry cap can only widen the file cap, never shrink it: callers that don't
+  // opt into the two-tier split keep the old single-cap behavior.
+  const entryLimit = Math.max(Number.isFinite(maxEntries) ? maxEntries : maxFiles, maxFiles);
 
   const files = [];
   const suspicious = [];
@@ -535,7 +546,16 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes)
   let nextLongName = null;
   let pax = null;
   let retainedBytes = 0;
-  let regularEntryCount = 0;
+  let entryCount = 0;
+  let retainedTextCount = 0;
+  // Bulk demotions (cumulative budget spent, full-inspection tier filled) are
+  // coverage disclosure, not per-file anomalies: one aggregate suspicious entry
+  // per cause, with the count filled in once the walk finishes. Per-file
+  // entries stay reserved for bodies over the per-file inspection limit.
+  let demotedByBudget = 0;
+  let demotedByTier = 0;
+  let budgetNotice = null;
+  let tierNotice = null;
 
   function addSuspicious(entry) {
     if (suspicious.length < suspiciousLimit) {
@@ -556,6 +576,8 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes)
     while (await fill(512)) {
       const header = take(512);
       if (header.every((b) => b === 0)) break;
+      entryCount += 1;
+      if (entryCount > entryLimit) throw tarError("archive contains too many files");
 
       const rawName = readString(header, 0, 100);
       const prefix = readString(header, 345, 155);
@@ -596,12 +618,6 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes)
           nextLongName = candidate;
         }
       } else if (isRegular) {
-        // Count every regular entry, not just distinct paths: duplicate paths
-        // replace their earlier entry in `files`, so without this a tar could
-        // carry thousands of records for one path — each streamed and hashed —
-        // while never tripping the file-count cap.
-        regularEntryCount += 1;
-        if (regularEntryCount > maxFiles) throw tarError("archive contains too many files");
         const rawCandidate =
           (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName;
         const canonicalCandidate = canonicalizePath(rawCandidate);
@@ -633,10 +649,15 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes)
         //  - everything else must fit the shared maxTarBytes budget.
         const isNpmRootManifest = path === "package.json";
         const mustRetainBody = path ? isRetainedManifestPath(path) : false;
+        // The full-inspection tier bounds text-sample retention by count the
+        // way the budget bounds it by bytes; manifests keep drawing on their
+        // bounded byte headroom past the tier because identity evidence is
+        // exactly what must not be starved by a padded archive.
+        const tierFull = retainedTextCount >= maxFiles;
         const retainBody =
           size <= maxTarBytes &&
           (isNpmRootManifest ||
-            budgetBase + size <= maxTarBytes ||
+            (!tierFull && budgetBase + size <= maxTarBytes) ||
             (mustRetainBody && budgetBase + size <= 2 * maxTarBytes));
         // A root manifest we cannot inspect — too large for the per-file limit, or
         // crowded out of the retention budget by earlier manifest-named entries —
@@ -654,6 +675,7 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes)
           if (!(await fill(size))) throw tarError("truncated tar entry");
           summarized = await summarizeFile(path, take(size));
           contributed = size;
+          retainedTextCount += 1;
         } else {
           // The body is dropped, but hashed on the way past: the digest costs
           // no memory and lets the diff layer prove a skipped binary is
@@ -678,18 +700,37 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes)
               await digester.finalize(),
               headCapture.bytes(),
             );
-            // Distinguish a body too large to inspect on its own from a small
-            // body skipped only because earlier files spent the shared budget —
-            // the message is user-facing evidence and must be accurate.
-            const detail =
-              size > maxTarBytes
-                ? `file body (${size} bytes) exceeds the ${maxTarBytes}-byte per-file inspection limit`
-                : `file body (${size} bytes) did not fit the archive's ${maxTarBytes}-byte cumulative retention budget already spent on earlier files`;
-            addSuspicious({
-              kind: "content-skipped",
-              path,
-              detail: `${detail}; path, size, and sha256 recorded but content not inspected`,
-            });
+            // A body over the per-file limit is a notable artifact in its own
+            // right (the prepackaged-binary pattern) and keeps its per-file
+            // entry. Small bodies demoted in bulk — budget spent or tier
+            // filled — collapse into one aggregate entry per cause: a large
+            // sdist can demote thousands of files, and a per-file entry for
+            // each would flood the suspicious list and the findings built
+            // from it. Each demoted file still carries its content-skipped
+            // flag, size, and sha256 in the file record.
+            if (size > maxTarBytes) {
+              addSuspicious({
+                kind: "content-skipped",
+                path,
+                detail: `file body (${size} bytes) exceeds the ${maxTarBytes}-byte per-file inspection limit; path, size, and sha256 recorded but content not inspected`,
+              });
+            } else if (tierFull) {
+              demotedByTier += 1;
+              if (!tierNotice) {
+                // Pushed directly, not via addSuspicious: an archive that
+                // fills the suspicious cap with per-file entries first must
+                // not silently drop the coverage disclosure, and the
+                // aggregates are bounded to one per cause.
+                tierNotice = { kind: "retention-tier", path: "<archive>", detail: "" };
+                suspicious.push(tierNotice);
+              }
+            } else {
+              demotedByBudget += 1;
+              if (!budgetNotice) {
+                budgetNotice = { kind: "retention-tier", path: "<archive>", detail: "" };
+                suspicious.push(budgetNotice);
+              }
+            }
           }
         }
         if (path && summarized) {
@@ -704,7 +745,7 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes)
             retainedBytes -= retainedByPath.get(path) || 0;
             files[seenPaths.get(path)] = summarized;
           } else {
-            if (files.length >= maxFiles) throw tarError("archive contains too many files");
+            if (files.length >= entryLimit) throw tarError("archive contains too many files");
             seenPaths.set(path, files.length);
             files.push(summarized);
           }
@@ -732,6 +773,14 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes)
       // Inter-entry padding; a missing final pad block is tolerated like the
       // buffer reader tolerated a trailing partial block.
       if (padding > 0) await discard(padding);
+    }
+    // The aggregate demotion notices were pushed at first occurrence (so they
+    // survive the suspicious-entry cap); the final counts only exist now.
+    if (budgetNotice) {
+      budgetNotice.detail = `the archive's ${maxTarBytes}-byte cumulative retention budget was spent on earlier files; ${demotedByBudget} additional file bodies were recorded hash-only (path, size, sha256) without content inspection`;
+    }
+    if (tierNotice) {
+      tierNotice.detail = `the archive exceeds the ${maxFiles}-file full-inspection tier; ${demotedByTier} additional file bodies were recorded hash-only (path, size, sha256) without content inspection`;
     }
     return { files, suspicious };
   } finally {
@@ -812,12 +861,13 @@ export async function readZipArchive(buffer, maxFiles, maxArchiveBytes) {
 // exactly the way VS Code / yauzl do. Wheels and sdists never need this:
 // Python's zipfile writes sizes in local headers, so they take the streaming
 // reader instead of paying the buffer.
-export async function readZipArchiveBuffered(buffer, maxFiles, maxArchiveBytes) {
+export async function readZipArchiveBuffered(buffer, maxFiles, maxArchiveBytes, maxEntries) {
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   const eocd = findZipEndOfCentralDirectory(bytes);
   if (eocd < 0) throw tarError("zip central directory not found");
 
   const entryCount = readUint16Le(bytes, eocd + 10);
+  const entryLimit = Math.max(Number.isFinite(maxEntries) ? maxEntries : maxFiles, maxFiles);
   const centralDirectorySize = readUint32Le(bytes, eocd + 12);
   const centralDirectoryOffset = readUint32Le(bytes, eocd + 16);
   if (
@@ -827,12 +877,17 @@ export async function readZipArchiveBuffered(buffer, maxFiles, maxArchiveBytes) 
   ) {
     throw tarError("zip64 archives are not supported");
   }
+  if (entryCount > entryLimit) throw tarError("archive contains too many files");
   if (centralDirectoryOffset + centralDirectorySize > bytes.length) {
     throw tarError("truncated zip central directory");
   }
 
   const files = [];
+  const suspicious = [];
   let expandedBytes = 0;
+  let retainedTextCount = 0;
+  let demotedByTier = 0;
+  let tierNotice = null;
   let offset = centralDirectoryOffset;
   const pathDecoder = new TextDecoder("utf-8", { fatal: false });
   for (let index = 0; index < entryCount; index += 1) {
@@ -855,7 +910,6 @@ export async function readZipArchiveBuffered(buffer, maxFiles, maxArchiveBytes) 
     offset = fileNameEnd + extraLength + commentLength;
 
     if (!path) continue;
-    if (files.length >= maxFiles) throw tarError("archive contains too many files");
     if (uncompressedSize > maxArchiveBytes || expandedBytes + uncompressedSize > maxArchiveBytes) {
       throw tarError("archive expands beyond safety limit");
     }
@@ -883,9 +937,25 @@ export async function readZipArchiveBuffered(buffer, maxFiles, maxArchiveBytes) 
     }
     if (body.length !== uncompressedSize) throw tarError("zip entry size mismatch");
     expandedBytes += body.length;
-    files.push(await summarizeFile(path, body));
+    const tierFull = retainedTextCount >= maxFiles;
+    if (!tierFull || isRetainedManifestPath(path)) {
+      files.push(await summarizeFile(path, body));
+      retainedTextCount += 1;
+    } else {
+      files.push(
+        summarizeSkippedFile(path, uncompressedSize, await sha256Hex(body), body.subarray(0, 64)),
+      );
+      demotedByTier += 1;
+      if (!tierNotice) {
+        tierNotice = { kind: "retention-tier", path: "<archive>", detail: "" };
+        suspicious.push(tierNotice);
+      }
+    }
   }
-  return files;
+  if (tierNotice) {
+    tierNotice.detail = `the archive exceeds the ${maxFiles}-file full-inspection tier; ${demotedByTier} additional file bodies were recorded hash-only (path, size, sha256) without content inspection`;
+  }
+  return { files, suspicious };
 }
 
 // Caps the raw bytes flowing out of a stream. gzip/deflate can decode an
@@ -1022,11 +1092,14 @@ export async function inflateRetainedZipEntry(cursor, compressedSize, uncompress
 // encrypted (bit 0), and zip64 entries are rejected: Python's zipfile never
 // writes them for wheels/sdists, and each would make the local view
 // unverifiable.
-export async function readZipStream(body, maxFiles, maxTarBytes, maxStreamBytes) {
+export async function readZipStream(body, maxFiles, maxTarBytes, maxStreamBytes, maxEntries) {
   if (!body) throw tarError("archive download failed");
   const cursor = createStreamCursor(body, maxStreamBytes);
   const expansionLimit = Number.isFinite(maxStreamBytes) ? maxStreamBytes : Infinity;
   const pathDecoder = new TextDecoder("utf-8", { fatal: false });
+  // Two-tier caps, mirroring readTarStream: `maxFiles` bounds full text-sample
+  // retention, `maxEntries` (never below maxFiles) is the hard walk cap.
+  const entryLimit = Math.max(Number.isFinite(maxEntries) ? maxEntries : maxFiles, maxFiles);
 
   const files = [];
   const suspicious = [];
@@ -1046,11 +1119,18 @@ export async function readZipStream(body, maxFiles, maxTarBytes, maxStreamBytes)
   // the scanner replaced. Cross-checked at EOCD; any disagreement fails closed.
   const lastLocalOffsetByPath = new Map();
   const cdWinnerOffsetByPath = new Map();
-  let localFileRecordCount = 0;
+  let localEntryCount = 0;
   let retainedBytes = 0;
   let expandedBytes = 0;
   let sawCentralDirectory = false;
   let centralEntryCount = 0;
+  let retainedTextCount = 0;
+  // Bulk demotions aggregate into one suspicious entry per cause (see
+  // readTarStream); per-file entries stay reserved for oversized bodies.
+  let demotedByBudget = 0;
+  let demotedByTier = 0;
+  let budgetNotice = null;
+  let tierNotice = null;
 
   function addSuspicious(entry) {
     if (suspicious.length < suspiciousLimit) {
@@ -1100,14 +1180,10 @@ export async function readZipStream(body, maxFiles, maxTarBytes, maxStreamBytes)
         if (!(await cursor.discard(extraLength))) throw tarError("truncated zip entry");
         localEntries.set(headerOffset, { rawPath, method, compressedSize, uncompressedSize });
 
-        // Count every non-directory record, not just distinct paths: duplicate
-        // records replace their earlier entry in `files`, so without this a
-        // zip could carry thousands of records for one path — each parsed,
-        // inflated, and hashed — while never tripping the file-count cap.
-        if (!rawPath.endsWith("/")) {
-          localFileRecordCount += 1;
-          if (localFileRecordCount > maxFiles) throw tarError("archive contains too many files");
-        }
+        // Bound every local record, including directory markers and unsafe
+        // paths, since each still consumes parser and central-directory work.
+        localEntryCount += 1;
+        if (localEntryCount > entryLimit) throw tarError("archive contains too many files");
 
         expandedBytes += uncompressedSize;
         if (expandedBytes > expansionLimit) throw tarError("archive expands beyond safety limit");
@@ -1136,9 +1212,13 @@ export async function readZipStream(body, maxFiles, maxTarBytes, maxStreamBytes)
         // an unlimited bypass, and one too large to inspect is skipped, not
         // fatal.
         const mustRetainBody = isRetainedManifestPath(path);
+        // Full-inspection tier: same count bound as readTarStream, with the
+        // same manifest exemption (identity evidence draws on its bounded
+        // byte headroom regardless of how many files preceded it).
+        const tierFull = retainedTextCount >= maxFiles;
         const retainBody =
           uncompressedSize <= maxTarBytes &&
-          (budgetBase + uncompressedSize <= maxTarBytes ||
+          ((!tierFull && budgetBase + uncompressedSize <= maxTarBytes) ||
             (mustRetainBody && budgetBase + uncompressedSize <= 2 * maxTarBytes));
         let summarized;
         let contributed = 0;
@@ -1156,6 +1236,7 @@ export async function readZipStream(body, maxFiles, maxTarBytes, maxStreamBytes)
           }
           summarized = await summarizeFile(path, bodyBytes);
           contributed = uncompressedSize;
+          retainedTextCount += 1;
         } else {
           const { sha256, head } = await digestSkippedZipEntry(
             cursor,
@@ -1164,18 +1245,32 @@ export async function readZipStream(body, maxFiles, maxTarBytes, maxStreamBytes)
             method,
           );
           summarized = summarizeSkippedFile(path, uncompressedSize, sha256, head);
-          // Distinguish a body too large to inspect on its own from a small
-          // body skipped only because earlier files spent the shared budget —
-          // the message is user-facing evidence and must be accurate.
-          const detail =
-            uncompressedSize > maxTarBytes
-              ? `file body (${uncompressedSize} bytes) exceeds the ${maxTarBytes}-byte per-file inspection limit`
-              : `file body (${uncompressedSize} bytes) did not fit the archive's ${maxTarBytes}-byte cumulative retention budget already spent on earlier files`;
-          addSuspicious({
-            kind: "content-skipped",
-            path,
-            detail: `${detail}; path, size, and sha256 recorded but content not inspected`,
-          });
+          // Oversized bodies keep their per-file entry (the prepackaged-binary
+          // pattern); bulk demotions collapse into the per-cause aggregates,
+          // mirroring readTarStream.
+          if (uncompressedSize > maxTarBytes) {
+            addSuspicious({
+              kind: "content-skipped",
+              path,
+              detail: `file body (${uncompressedSize} bytes) exceeds the ${maxTarBytes}-byte per-file inspection limit; path, size, and sha256 recorded but content not inspected`,
+            });
+          } else if (tierFull) {
+            demotedByTier += 1;
+            if (!tierNotice) {
+              // Pushed directly, not via addSuspicious: an archive that fills
+              // the suspicious cap with per-file entries first must not
+              // silently drop the coverage disclosure, and the aggregates are
+              // bounded to one per cause.
+              tierNotice = { kind: "retention-tier", path: "<archive>", detail: "" };
+              suspicious.push(tierNotice);
+            }
+          } else {
+            demotedByBudget += 1;
+            if (!budgetNotice) {
+              budgetNotice = { kind: "retention-tier", path: "<archive>", detail: "" };
+              suspicious.push(budgetNotice);
+            }
+          }
         }
         if (seenPaths.has(path)) {
           // Python's zipfile resolves duplicate names last-write-wins (both for
@@ -1189,7 +1284,7 @@ export async function readZipStream(body, maxFiles, maxTarBytes, maxStreamBytes)
           retainedBytes -= retainedByPath.get(path) || 0;
           files[seenPaths.get(path)] = summarized;
         } else {
-          if (files.length >= maxFiles) throw tarError("archive contains too many files");
+          if (files.length >= entryLimit) throw tarError("archive contains too many files");
           seenPaths.set(path, files.length);
           files.push(summarized);
         }
@@ -1267,6 +1362,14 @@ export async function readZipStream(body, maxFiles, maxTarBytes, maxStreamBytes)
             : "zip central directory not found",
         );
       }
+    }
+    // The aggregate demotion notices were pushed at first occurrence (so they
+    // survive the suspicious-entry cap); the final counts only exist now.
+    if (budgetNotice) {
+      budgetNotice.detail = `the archive's ${maxTarBytes}-byte cumulative retention budget was spent on earlier files; ${demotedByBudget} additional file bodies were recorded hash-only (path, size, sha256) without content inspection`;
+    }
+    if (tierNotice) {
+      tierNotice.detail = `the archive exceeds the ${maxFiles}-file full-inspection tier; ${demotedByTier} additional file bodies were recorded hash-only (path, size, sha256) without content inspection`;
     }
     return { files, suspicious };
   } finally {

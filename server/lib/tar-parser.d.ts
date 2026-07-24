@@ -28,7 +28,8 @@ export type TarSuspiciousEntryKind =
   | "non-regular"
   | "duplicate"
   | "unicode-confusable"
-  | "content-skipped";
+  | "content-skipped"
+  | "retention-tier";
 
 export interface TarSuspiciousEntry {
   kind: TarSuspiciousEntryKind;
@@ -111,6 +112,7 @@ export function readTarStream(
   maxFiles: number,
   maxTarBytes: number,
   maxStreamBytes: number,
+  maxEntries?: number,
 ): Promise<ReadTarResult>;
 export function readUint16Le(bytes: Uint8Array, offset: number): number;
 export function readUint32Le(bytes: Uint8Array, offset: number): number;
@@ -125,7 +127,8 @@ export function readZipArchiveBuffered(
   buffer: ArrayBuffer | Uint8Array,
   maxFiles: number,
   maxArchiveBytes: number,
-): Promise<ParsedFile[]>;
+  maxEntries?: number,
+): Promise<ReadTarResult>;
 export function boundedByteStream(
   body: ReadableStream<Uint8Array>,
   maxBytes: number,
@@ -152,6 +155,7 @@ export function readZipStream(
   maxFiles: number,
   maxTarBytes: number,
   maxStreamBytes: number,
+  maxEntries?: number,
 ): Promise<ReadTarResult>;
 export function readStreamBounded(
   body: ReadableStream<Uint8Array> | null,
