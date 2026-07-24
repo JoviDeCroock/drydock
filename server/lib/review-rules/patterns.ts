@@ -115,6 +115,55 @@ export const PYTHON_EXECUTION_CAPABILITY_PATTERNS = [
   ...PYTHON_DYNAMIC_EVALUATION_PATTERNS,
 ];
 
+// Doc-style placeholder passwords (`http://user:pass@proxy.example`,
+// `https://alice:<token>@host`) are ubiquitous in READMEs and changelogs —
+// requests' CVE-2023-32681 HISTORY entry is the canonical benign hit — and are
+// not leaked material. The finding-side pattern refuses a match in two tiers:
+// structural placeholders (template syntax, masks, canonical fakes) are never
+// secrets regardless of the username, while bare weak words ("pass", "secret",
+// "token", "admin") only count as placeholders when the username is itself a
+// placeholder word — `svc:secret@db` or `root:admin@host` is a real (if weak)
+// connection-string credential and keeps flagging. Redaction keeps the broad
+// pattern, since over-redacting a placeholder is harmless while under-redacting
+// a real credential is not.
+const URL_CREDENTIALS_REDACTION_PATTERN = /\b(?:[A-Za-z]+:\/\/)[^\s/@:]+:[^\s/@]+@[^\s'"\\]+/g;
+const PLACEHOLDER_USERNAME_SEGMENT = [
+  "user(?:name)?",
+  "usr",
+  "foo",
+  "bar",
+  "alice",
+  "bob",
+  "me",
+  "test",
+  "demo",
+  "example",
+].join("|");
+const WEAK_WORD_PASSWORD_SEGMENT = [
+  "pass(?:word|wd)?",
+  "pwd",
+  "secret",
+  "token",
+  "example",
+  "admin",
+].join("|");
+const STRUCTURAL_PLACEHOLDER_SEGMENT = [
+  "changeme",
+  "hunter2",
+  "(?:your|my)[-_]?(?:password|token|secret|key)",
+  "x{3,}",
+  "\\*{3,}",
+  "<[^>@\\s]*>",
+  "\\{[^}@\\s]*\\}",
+  "\\$\\{[^}@\\s]*\\}",
+  "\\$[A-Za-z_][A-Za-z0-9_]*",
+  "%[^%@\\s]+%",
+].join("|");
+const URL_CREDENTIALS_FINDING_PATTERN = new RegExp(
+  String.raw`\b(?:[A-Za-z]+:\/\/)(?!(?:${PLACEHOLDER_USERNAME_SEGMENT}):(?:${WEAK_WORD_PASSWORD_SEGMENT}|${STRUCTURAL_PLACEHOLDER_SEGMENT})@|[^\s/@:]+:(?:${STRUCTURAL_PLACEHOLDER_SEGMENT})@)[^\s/@:]+:[^\s/@]+@[^\s'"\\]+`,
+  "gi",
+);
+
 export const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/npm_[A-Za-z0-9]{20,}/g, "[REDACTED_NPM_TOKEN]"],
   [/gh[pousr]_[A-Za-z0-9_]{20,}/g, "[REDACTED_GITHUB_TOKEN]"],
@@ -128,7 +177,7 @@ export const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/xox[abprs]-[A-Za-z0-9-]{10,}/g, "[REDACTED_SLACK_TOKEN]"],
   [/https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/]+/g, "[REDACTED_SLACK_WEBHOOK]"],
   [/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, "[REDACTED_JWT]"],
-  [/\b(?:[A-Za-z]+:\/\/)[^\s/@:]+:[^\s/@]+@[^\s'"\\]+/g, "[REDACTED_URL_WITH_CREDENTIALS]"],
+  [URL_CREDENTIALS_REDACTION_PATTERN, "[REDACTED_URL_WITH_CREDENTIALS]"],
   [
     /-----BEGIN (?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END (?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g,
     "[REDACTED_PRIVATE_KEY]",
@@ -137,10 +186,17 @@ export const SECRET_PATTERNS: Array<[RegExp, string]> = [
   ...genericSecretPatterns(),
 ];
 
-export const HIGH_CONFIDENCE_SECRET_PATTERNS: Array<[RegExp, string]> = SECRET_PATTERNS.slice(
-  0,
-  -1,
+// Detection-side view of SECRET_PATTERNS: identical except the URL-credentials
+// pattern requires a non-placeholder password. Redaction stays on the broad set.
+export const FINDING_SECRET_PATTERNS: Array<[RegExp, string]> = SECRET_PATTERNS.map(
+  ([pattern, label]) =>
+    pattern === URL_CREDENTIALS_REDACTION_PATTERN
+      ? [URL_CREDENTIALS_FINDING_PATTERN, label]
+      : [pattern, label],
 );
+
+export const HIGH_CONFIDENCE_SECRET_PATTERNS: Array<[RegExp, string]> =
+  FINDING_SECRET_PATTERNS.slice(0, -1);
 
 function genericSecretPatterns(): Array<[RegExp, string]> {
   return [

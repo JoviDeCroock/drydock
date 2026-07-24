@@ -60,6 +60,7 @@ export function buildRuleContext(
       files,
       packageJson,
       lifecycleScriptSeedPaths(files, scripts, implicitScripts),
+      options.codePatternSet,
     ),
     patterns: codePatternsFor(options.codePatternSet),
     codePatternSet: options.codePatternSet,

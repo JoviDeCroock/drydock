@@ -4,6 +4,7 @@ import {
   PYTHON_EXECUTION_CAPABILITY_PATTERNS,
   tarSuspiciousEntryFindings,
 } from "../../review";
+import { canonicalizePath, normalizeTarPath, type TarSuspiciousEntry } from "../../tar-parser.js";
 import { firstMatchingLine } from "../../text-utils";
 import { normalizePyPiProjectName } from "./manifest";
 import { pyPiVersionsEquivalent } from "./version";
@@ -39,7 +40,14 @@ export function pyPiReleaseFindings(
     // entries, duplicates, confusable paths) the sandbox recorded for this
     // artifact. Without this the gate would drop them and pass an sdist whose
     // oversized file was never inspected — a fail-open gap the npm path avoids.
-    for (const finding of tarSuspiciousEntryFindings(artifact.suspiciousEntries)) {
+    // Explicit directory records are excluded: setuptools and every other
+    // Python build backend always emits them, so unlike an `npm pack` tarball a
+    // typeflag-5 entry is the archive norm here, not provenance evidence
+    // (requests alone carries 16, each one a noise finding on the public diff).
+    const suspiciousEntries = (artifact.suspiciousEntries ?? []).filter(
+      (entry) => !isOrdinaryPyPiDirectoryEntry(entry),
+    );
+    for (const finding of tarSuspiciousEntryFindings(suspiciousEntries, { dialect: "pypi" })) {
       findings.push({ ...finding, file: namespacedPath(artifact.path, finding.file) });
     }
     const metadataEvidencePath = namespacedPath(artifact.path, summary.metadataPath ?? "METADATA");
@@ -192,6 +200,12 @@ export function pyPiReleaseFindings(
   }
 
   return findings;
+}
+
+function isOrdinaryPyPiDirectoryEntry(entry: TarSuspiciousEntry): boolean {
+  if (entry.kind !== "non-regular" || entry.detail !== "typeflag 5 (directory)") return false;
+  if (entry.path.startsWith("/") || canonicalizePath(entry.path) !== entry.path) return false;
+  return normalizeTarPath(entry.path) !== null;
 }
 
 export function summarizePyPiArtifact(

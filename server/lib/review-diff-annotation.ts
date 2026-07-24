@@ -4,10 +4,10 @@ import {
   codePatternsFor,
   DETERMINISTIC_RULE_IDS,
   deterministicFindings,
+  FINDING_SECRET_PATTERNS,
   JS_PATTERN_SET,
   PYTHON_PATTERN_SET,
   safeJson,
-  SECRET_PATTERNS,
 } from "./review-rules";
 import type {
   CodePatternSet,
@@ -212,7 +212,9 @@ function patternsForFinding(
     case DETERMINISTIC_RULE_IDS.codeCredentialAccess:
       return patterns.credentialAccess;
     case DETERMINISTIC_RULE_IDS.fileSecretContent:
-      return SECRET_PATTERNS.map(([pattern]) => pattern);
+      // The finding-side set, so line matching agrees with what detection
+      // actually flagged (placeholder URL credentials are not secrets).
+      return FINDING_SECRET_PATTERNS.map(([pattern]) => pattern);
     default:
       return [];
   }

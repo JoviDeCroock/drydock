@@ -92,15 +92,19 @@ function severityToRisk(severity: string | null | undefined): RiskLevel {
   return "low";
 }
 
+// `dialect` only changes the human-facing reason text: what counts as a normal
+// archive shape differs per ecosystem (npm pack emits only regular file
+// records; Python build backends also emit directory records).
 export function tarSuspiciousEntryFindings(
   entries: TarSuspiciousEntry[] | undefined | null,
+  options: { dialect?: "npm" | "pypi" } = {},
 ): Finding[] {
   if (!entries || !entries.length) return [];
   return entries.map((entry) => ({
     severity: tarSuspiciousSeverity(entry),
     file: entry.path || "<unknown>",
     evidence: `${entry.kind}: ${entry.detail}`,
-    reason: tarSuspiciousReason(entry),
+    reason: tarSuspiciousReason(entry, options.dialect ?? "npm"),
     ruleId: DETERMINISTIC_RULE_IDS.tarSuspiciousEntry,
     ruleVersion: DETERMINISTIC_RULES_VERSION,
   }));
@@ -113,13 +117,17 @@ function tarSuspiciousSeverity(entry: TarSuspiciousEntry): Finding["severity"] {
   return "medium";
 }
 
-function tarSuspiciousReason(entry: TarSuspiciousEntry): string {
+function tarSuspiciousReason(entry: TarSuspiciousEntry, dialect: "npm" | "pypi"): string {
   switch (entry.kind) {
     case "non-regular":
       if (entry.detail.includes("(directory)")) {
-        return "archive contains an explicit directory entry; npm pack normally emits regular file records, so this is recorded for provenance but does not by itself indicate executable or link behavior";
+        return dialect === "pypi"
+          ? "archive contains an explicit directory entry; Python build backends normally emit these, so this is recorded for provenance but does not by itself indicate executable or link behavior"
+          : "archive contains an explicit directory entry; npm pack normally emits regular file records, so this is recorded for provenance but does not by itself indicate executable or link behavior";
       }
-      return "npm publish only emits regular files; symlinks, hardlinks, devices, FIFOs, directories, or reserved entries in a tarball indicate a hand-crafted archive that may target the consumer's filesystem on extract";
+      return dialect === "pypi"
+        ? "Python build backends only emit regular file and directory records; symlinks, hardlinks, devices, FIFOs, or reserved entries in an sdist indicate a hand-crafted archive that may target the consumer's filesystem on extract"
+        : "npm publish only emits regular files; symlinks, hardlinks, devices, FIFOs, directories, or reserved entries in a tarball indicate a hand-crafted archive that may target the consumer's filesystem on extract";
     case "duplicate":
       return "two entries share the same normalized path; last-write-wins extraction means a benign first entry can mask a malicious second";
     case "unicode-confusable":

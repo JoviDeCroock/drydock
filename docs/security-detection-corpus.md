@@ -15,7 +15,7 @@ The fixture taxonomy is based on the current Drydock rule surface plus public np
 - [Aikido's AsyncAPI incident report](https://www.aikido.dev/blog/asyncapi-npm-packages-backdoored-via-github-actions) documents a compromised GitHub Actions publishing path that injected a rotating string-table wrapper around a detached `node -e` child process in shipped JavaScript. The safe `asyncapi-rotating-string-table-dropper` fixture preserves that detection shape without retaining its endpoint, identifier, or payload.
 - The same benchmark shows the central detection trade-off: benign and malicious packages often call the same APIs. Broad environment reads and secret-like environment names are capability evidence, while common runtime flags such as `process.env.NODE_ENV` or `import.meta.env.DEV` are not credential sources. Chains such as collect → serialize → exfiltrate are stronger intent evidence.
 - Network-only code follows that trade-off: unchanged network-only files are suppressed as package context, added network-only files remain medium-severity contextual evidence, and added network access escalates to high when it is tied to lifecycle scripts, process execution, dynamic evaluation, or credential access.
-- Documentation and prose files remain available as package evidence, but deterministic `code.*` rules do not treat them as executable capability evidence. Secret checks in documentation use only high-confidence token formats; generic key/value examples such as `token = localStorage.getItem("token")` are not `file.secret-content` findings.
+- Documentation and prose files remain available as package evidence, but deterministic `code.*` rules do not treat them as executable capability evidence. Secret checks in documentation use only high-confidence token formats; generic key/value examples such as `token = localStorage.getItem("token")` are not `file.secret-content` findings. Python packaging metadata (`PKG-INFO`, `*.dist-info/METADATA`) embeds the README long-description and gets the same treatment under the Python pattern set, and URL-with-credentials matches that are doc-style placeholders (`http://user:pass@proxy`, template passwords like `<password>`/`${VAR}`) are excluded from findings everywhere — but weak-word passwords with a non-placeholder username (`svc:secret@db`) still flag, and redaction always applies the broad pattern.
 - TypeScript declaration files (`.d.ts`/`.d.cts`/`.d.mts`) keep a diffable text sample but are excluded from `code.*` and `file.secret-content` content scanning (`isTypeDeclarationPath`). Declarations are never executed and carry only type signatures, so scanning large bundled declarations is pure perf/memory cost and a signature like `fetch(url: string)` would only produce false positives. Cheap path-based checks (credential filenames, the files-allowlist) still apply.
 
 ## Safety policy
@@ -99,9 +99,9 @@ versions (see the invariant below).
 
 A PyPI review runs two rule families over the staged artifacts:
 
-- `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.2.0`).
+- `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.16.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.17.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -178,7 +178,32 @@ describe only the npm invocation and the package's own manifest, so reading them
 positive (observed on dt-clean 1.2.1 and salita 2.0.0). `npm_config_*` is deliberately not
 allowlisted because it can carry live registry auth (`npm_config__authToken`). The strip also now
 preserves newlines when erasing a match, so a multiline access can no longer shift later findings'
-line numbers.
+line numbers. `1.17.0` fixes four false-positive classes observed on the benign
+requests 2.34.1→2.34.2 public PyPI diff (47 deterministic findings, nearly all noise):
+Python packaging metadata (`PKG-INFO`, `*.egg-info/PKG-INFO`, `*.dist-info/METADATA` —
+`isPythonMetadataPath`) embeds the README long-description, so under the Python pattern set it is
+excluded from `code.*` capability scanning and its secret scan drops to the documentation-strength
+high-confidence set (requests' README examples were flagging `code.network-access` and a high
+`code.credential-access` "collect-and-exfiltrate" three times over across sdist and wheel metadata);
+`file.secret-content` now gets the same unreachable-test-file demotion as the `code.*` rules
+(one severity step, `testScoped`, never dropped — requests ships six test-CA/server keys under
+`tests/certs/`), but only for material unchanged from the baseline: a secret newly entering a test
+tree is a fresh leak (or fresh payload staging) and keeps full severity. Python reachability starts
+from every non-test module and follows static imports, so an imported test module also keeps full
+severity; and
+URL-with-embedded-credentials matches are excluded from `file.secret-content` when they are
+doc-style placeholders, in two tiers: structural placeholder passwords (template syntax such as
+`<password>`/`${VAR}`/`%VAR%`, `xxx`/`***` masks, canonical fakes like `changeme`) never flag
+regardless of the username, while bare weak words (`pass`, `secret`, `token`, `admin`) only count
+as placeholders when the username is itself a placeholder word — `user:pass@proxy` (requests'
+CVE-2023-32681 changelog entry, the canonical benign hit) skips, but a `svc:secret@db` or
+`root:admin@host` connection string is a real weak credential and still flags. Redaction keeps the
+broad URL pattern; only the finding side (`FINDING_SECRET_PATTERNS`) narrows. On the PyPI side
+(`0.4.0`), safely normalized explicit directory tar records (typeflag 5) are no longer surfaced as
+`tar.suspicious-entry`: setuptools always emits them, so unlike `npm pack` output they carry no
+provenance signal there (requests alone produced 16 release-delta info findings). Unsafe, absolute,
+or Unicode-confusable directory records remain findings, and the remaining
+non-regular/suspicious-entry reasons use PyPI wording instead of npm's.
 
 ### Fixture format
 

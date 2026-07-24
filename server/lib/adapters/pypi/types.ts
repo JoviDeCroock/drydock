@@ -2,7 +2,7 @@ import type { DiffEntry, FileRecord, Finding, RiskLevel } from "../../review";
 import type { TarSuspiciousEntry } from "../../tar-parser.js";
 
 export const PYPI_RELEASE_MANIFEST_SCHEMA = "drydock.release-artifacts.v1";
-export const PYPI_RULES_VERSION = "0.3.0";
+export const PYPI_RULES_VERSION = "0.4.0";
 
 export const PYPI_RULE_IDS = {
   metadataMissing: "pypi.metadata-missing",

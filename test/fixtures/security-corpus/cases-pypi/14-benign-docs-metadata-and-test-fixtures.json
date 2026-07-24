@@ -1,0 +1,135 @@
+{
+  "id": "pypi-benign-docs-metadata-and-test-fixtures",
+  "title": "README prose in PKG-INFO, placeholder doc credentials, sdist directory entries, and test-suite fixture material stay demoted",
+  "category": "control",
+  "intent": "modeled on the requests 2.34.1->2.34.2 public diff: packaging metadata embedding capability-looking README prose must not raise code.* findings, placeholder proxy credentials in docs are not secrets, setuptools' explicit directory tar records are the archive norm, and test-suite certs/env reads demote (never drop) to test-scoped severities",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.3.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.3.0.tar.gz",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.3.0.tar.gz",
+      "files": [
+        {
+          "path": "demo_package-1.3.0/PKG-INFO",
+          "size": 420,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.3.0\n\n# demo-package\n\nUsage example:\n\n    resp = requests.get(\"https://api.example.invalid/status\")\n\nProxy credentials can come from os.environ or a .netrc file, e.g.\n`http://user:pass@proxy.example.invalid`.\n"
+        },
+        {
+          "path": "demo_package-1.3.0/HISTORY.md",
+          "size": 180,
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "flags": [],
+          "textSample": "# History\n\n## 1.3.0\n\n- Fixed forwarding of proxy auth when proxies are defined with user info\n  (`http://user:pass@proxy.example.invalid`).\n"
+        },
+        {
+          "path": "demo_package-1.3.0/demo_package/__init__.py",
+          "size": 24,
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "flags": [],
+          "textSample": "__version__ = \"1.3.0\"\n"
+        },
+        {
+          "path": "demo_package-1.3.0/tests/certs/server.key",
+          "size": 160,
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+          "flags": [],
+          "textSample": "-----BEGIN PRIVATE KEY-----\nTESTFIXTUREONLYTESTFIXTUREONLYTESTFIXTUREONLY\n-----END PRIVATE KEY-----\n"
+        },
+        {
+          "path": "demo_package-1.3.0/tests/test_client.py",
+          "size": 120,
+          "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "flags": [],
+          "textSample": "import os\n\n\ndef test_env_default():\n    value = os.environ.get(\"DEMO_SETTING\", \"\")\n    assert value == \"\"\n"
+        }
+      ],
+      "suspiciousEntries": [
+        {
+          "kind": "non-regular",
+          "path": "demo_package-1.3.0",
+          "detail": "typeflag 5 (directory)"
+        },
+        {
+          "kind": "non-regular",
+          "path": "demo_package-1.3.0/tests",
+          "detail": "typeflag 5 (directory)"
+        },
+        {
+          "kind": "non-regular",
+          "path": "demo_package-1.3.0/tests/certs",
+          "detail": "typeflag 5 (directory)"
+        }
+      ]
+    }
+  ],
+  "previousArtifacts": [
+    {
+      "path": "dist/demo_package-1.2.9.tar.gz",
+      "files": [
+        {
+          "path": "demo_package-1.2.9/PKG-INFO",
+          "size": 300,
+          "sha256": "aaaa111111111111111111111111111111111111111111111111111111111111",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.9\n\n# demo-package\n\nUsage example:\n\n    resp = requests.get(\"https://api.example.invalid/status\")\n"
+        },
+        {
+          "path": "demo_package-1.2.9/HISTORY.md",
+          "size": 40,
+          "sha256": "aaaa222222222222222222222222222222222222222222222222222222222222",
+          "flags": [],
+          "textSample": "# History\n\n## 1.2.9\n\n- Initial release.\n"
+        },
+        {
+          "path": "demo_package-1.2.9/demo_package/__init__.py",
+          "size": 24,
+          "sha256": "aaaa333333333333333333333333333333333333333333333333333333333333",
+          "flags": [],
+          "textSample": "__version__ = \"1.2.9\"\n"
+        },
+        {
+          "path": "demo_package-1.2.9/tests/certs/server.key",
+          "size": 160,
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+          "flags": [],
+          "textSample": "-----BEGIN PRIVATE KEY-----\nTESTFIXTUREONLYTESTFIXTUREONLYTESTFIXTUREONLY\n-----END PRIVATE KEY-----\n"
+        },
+        {
+          "path": "demo_package-1.2.9/tests/test_client.py",
+          "size": 120,
+          "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "flags": [],
+          "textSample": "import os\n\n\ndef test_env_default():\n    value = os.environ.get(\"DEMO_SETTING\", \"\")\n    assert value == \"\"\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedFindings": [
+    {
+      "ruleId": "file.secret-content",
+      "severity": "medium",
+      "file": "sdist/tests/certs/server.key"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "low",
+      "file": "sdist/tests/test_client.py"
+    }
+  ],
+  "coverageGaps": [
+    "the shipped test private key still anchors overall risk at medium; there is no allowlist for well-known test-fixture certificate material"
+  ]
+}

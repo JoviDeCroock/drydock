@@ -572,6 +572,208 @@ describe("review", () => {
     });
   });
 
+  test("does not flag placeholder URL credentials as secret content", () => {
+    // requests' HISTORY.md CVE-2023-32681 entry (`http://user:pass@proxy`) is
+    // the canonical benign hit: doc-style placeholder passwords are not leaks.
+    const staged = [
+      {
+        path: "HISTORY.md",
+        size: 160,
+        sha256: "history",
+        flags: [],
+        textSample:
+          "When proxies are defined with user info (`http://user:pass@proxy.example`),\n" +
+          "a Proxy-Authorization header is constructed.\n",
+      },
+      {
+        path: "lib/config.js",
+        size: 120,
+        sha256: "config",
+        flags: [],
+        textSample: 'const proxyExample = "https://user:<password>@registry.example.com";\n',
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings.some((finding) => finding.ruleId === "file.secret-content")).toBe(false);
+  });
+
+  test("still flags URL credentials with a real-looking password", () => {
+    // Weak-word passwords stay findings when the username is not itself a
+    // placeholder: `svc:secret@db` is a real (if weak) connection-string
+    // credential, unlike doc-style `user:pass@proxy`.
+    const staged = [
+      {
+        path: "lib/config.js",
+        size: 120,
+        sha256: "config-real",
+        flags: [],
+        textSample: 'const upstream = "https://deploy:9f8a7b6c5d4e3f2a1b@registry.example.com";\n',
+      },
+      {
+        path: "lib/db.js",
+        size: 120,
+        sha256: "config-weak",
+        flags: [],
+        textSample: 'const dsn = "postgres://svc:secret@10.0.0.5:5432/prod";\n',
+      },
+      {
+        path: "lib/admin.js",
+        size: 120,
+        sha256: "config-admin",
+        flags: [],
+        textSample: 'const admin = "mysql://root:admin@db.internal:3306/app";\n',
+      },
+      {
+        path: "lib/default-admin.js",
+        size: 120,
+        sha256: "config-default-admin",
+        flags: [],
+        textSample: 'const admin = "mysql://admin:admin@db.internal:3306/app";\n',
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+    const secretFiles = new Set(
+      findings.filter((finding) => finding.ruleId === "file.secret-content").map((f) => f.file),
+    );
+
+    expect(secretFiles.has("lib/config.js")).toBe(true);
+    expect(secretFiles.has("lib/db.js")).toBe(true);
+    expect(secretFiles.has("lib/admin.js")).toBe(true);
+    expect(secretFiles.has("lib/default-admin.js")).toBe(true);
+  });
+
+  test("does not scan Python packaging metadata prose as capability evidence", () => {
+    // PKG-INFO / .dist-info/METADATA embed the README long-description, so
+    // capability regexes over them only re-flag documentation examples.
+    const prose =
+      "Metadata-Version: 2.3\nName: demo\nVersion: 1.0.0\n\nUsage:\n\n" +
+      '    requests.get("https://api.example.invalid/status")\n\n' +
+      "Reads proxy auth from os.environ or a .netrc file.\n";
+    const staged = [
+      { path: "sdist/PKG-INFO", size: 200, sha256: "pkginfo", flags: [], textSample: prose },
+      {
+        path: "sdist/src/.egg-info/PKG-INFO",
+        size: 200,
+        sha256: "egg",
+        flags: [],
+        textSample: prose,
+      },
+      {
+        path: "wheel/py3-none-any/.dist-info/METADATA",
+        size: 200,
+        sha256: "meta",
+        flags: [],
+        textSample: prose,
+      },
+      {
+        path: "wheel/py3-none-any/demo/client.py",
+        size: 160,
+        sha256: "client",
+        flags: [],
+        textSample:
+          "import os\nimport requests\n\n\ndef send():\n" +
+          '    return requests.get("https://api.example.invalid", params={"k": os.environ.get("D")})\n',
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged), null, {
+      codePatternSet: "python",
+    });
+    const codeFindingFiles = new Set(
+      findings.filter((finding) => finding.ruleId?.startsWith("code.")).map((f) => f.file),
+    );
+
+    expect(codeFindingFiles.has("sdist/PKG-INFO")).toBe(false);
+    expect(codeFindingFiles.has("sdist/src/.egg-info/PKG-INFO")).toBe(false);
+    expect(codeFindingFiles.has("wheel/py3-none-any/.dist-info/METADATA")).toBe(false);
+    // Real package code with the same capabilities still flags.
+    expect(codeFindingFiles.has("wheel/py3-none-any/demo/client.py")).toBe(true);
+  });
+
+  test("demotes longstanding secret-looking content in unreachable test files", () => {
+    const key = {
+      path: "test/fixtures/server.key",
+      size: 160,
+      sha256: "test-key",
+      flags: [],
+      textSample: "-----BEGIN PRIVATE KEY-----\nTESTFIXTUREONLY\n-----END PRIVATE KEY-----\n",
+    };
+    const findings = deterministicFindings([key], createPackageDiff([key], [key]));
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        ruleId: "file.secret-content",
+        file: "test/fixtures/server.key",
+        // Unchanged files flag high; the test-scope demotion steps it to medium.
+        severity: "medium",
+        testScoped: true,
+        evidence: expect.stringContaining("test-scoped"),
+      }),
+    );
+  });
+
+  test("keeps full severity for a secret newly added to a test tree", () => {
+    // A secret entering a test tree is a fresh leak (or fresh payload staging),
+    // not longstanding fixture material — the test-scope demotion must not apply.
+    const staged = [
+      {
+        path: "test/fixtures/server.key",
+        size: 160,
+        sha256: "test-key",
+        flags: [],
+        textSample: "-----BEGIN PRIVATE KEY-----\nTESTFIXTUREONLY\n-----END PRIVATE KEY-----\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+    const secret = findings.find((finding) => finding.ruleId === "file.secret-content");
+
+    expect(secret).toMatchObject({ severity: "critical", file: "test/fixtures/server.key" });
+    expect(secret.testScoped).toBeUndefined();
+  });
+
+  test("keeps full severity for an unchanged Python test secret imported by package code", () => {
+    const absoluteSecret = {
+      path: "sdist/src/demo/tests/secrets.py",
+      size: 80,
+      sha256: "python-absolute-secret",
+      flags: [],
+      textSample: 'password = "production-secret-value"\n',
+    };
+    const relativeSecret = {
+      path: "sdist/src/demo/tests/relative_secrets.py",
+      size: 80,
+      sha256: "python-relative-secret",
+      flags: [],
+      textSample: 'password = "another-production-secret"\n',
+    };
+    const app = {
+      path: "sdist/src/demo/app.py",
+      size: 80,
+      sha256: "python-app",
+      flags: [],
+      textSample:
+        "from demo.tests.secrets import password\n" +
+        "from .tests.relative_secrets import password as relative_password\n",
+    };
+    const findings = deterministicFindings(
+      [absoluteSecret, relativeSecret, app],
+      createPackageDiff([absoluteSecret, relativeSecret], [absoluteSecret, relativeSecret, app]),
+      null,
+      { codePatternSet: "python" },
+    );
+    const secretFindings = findings.filter(
+      (candidate) => candidate.ruleId === "file.secret-content",
+    );
+
+    expect(secretFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ severity: "high", file: absoluteSecret.path }),
+        expect.objectContaining({ severity: "high", file: relativeSecret.path }),
+      ]),
+    );
+    expect(secretFindings.every((finding) => finding.testScoped === undefined)).toBe(true);
+  });
+
   test("does not flag secret-looking source map content", () => {
     // The tar parser strips text samples from .map files (shouldSkipTextSample),
     // so deterministic rules never see source-map contents.

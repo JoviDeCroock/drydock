@@ -24,6 +24,20 @@ export function isDocumentationPath(path: string): boolean {
   return DOCUMENTATION_BASENAMES.has(basename);
 }
 
+// Python packaging metadata files: an sdist's PKG-INFO (root or *.egg-info/),
+// and a wheel's *.dist-info/METADATA. Their payload is the project
+// long-description — README prose, not executable code — so running capability
+// regexes over them only re-flags documentation (`requests.get(...)` examples,
+// netrc mentions). The diff tree can collapse the versioned directory down to a
+// bare ".egg-info"/".dist-info" segment, so the parent match allows an empty
+// prefix. Secret scanning still applies at documentation (high-confidence)
+// strength: a real token pasted into metadata must keep surfacing.
+export function isPythonMetadataPath(path: string): boolean {
+  const normalized = path.replaceAll("\\", "/").toLowerCase();
+  if (/(^|\/)pkg-info$/.test(normalized)) return true;
+  return /(^|\/)[^/]*\.(?:dist-info|egg-info)\/metadata$/.test(normalized);
+}
+
 const TEST_DIRECTORY_SEGMENTS = new Set(["test", "tests", "__tests__", "spec", "specs"]);
 
 // Test-suite files shipped inside a package (a test runner's own test/ tree,
