@@ -1512,6 +1512,26 @@ describe("review", () => {
     );
   });
 
+  test("escalates retention-tier findings when hash-only content changed", () => {
+    const entries = [
+      {
+        kind: "retention-tier",
+        path: "<archive>",
+        detail: "one file body was recorded hash-only",
+      },
+    ];
+    const unchanged = tarSuspiciousEntryFindings(entries, {
+      fileDiff: [{ status: "unchanged", flags: ["content-skipped"] }],
+    });
+    const changed = tarSuspiciousEntryFindings(entries, {
+      fileDiff: [{ status: "modified", flags: ["content-skipped"] }],
+    });
+
+    expect(unchanged[0].severity).toBe("info");
+    expect(changed[0].severity).toBe("medium");
+    expect(computeRisk(changed)).toBe("medium");
+  });
+
   test("uses staged metadata to flag implicit node-gyp even when the gyp file is absent from the tarball", () => {
     const staged = [
       {

@@ -374,7 +374,7 @@ export function buildPublicPyPiDiffSources(input: {
     // fabricating a full AdapterRunFindingsArgs this path doesn't have.
     buildFindings: (fileDiff) => [
       ...deterministicFindings(toFiles, fileDiff, null, { codePatternSet: "python" }),
-      ...remapPyPiFindingPaths(pyPiReleaseFindings(manifest, toPrepared), toPrepared),
+      ...remapPyPiFindingPaths(pyPiReleaseFindings(manifest, toPrepared, fileDiff), toPrepared),
     ],
   };
 }

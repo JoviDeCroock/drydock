@@ -58,6 +58,9 @@ export const vscodeAdapter: PackageAdapter<VscodeAdapterInput, VscodeBroker> = {
           path: `${input.manifest.package}-${selected.version}.vsix`,
           sha256: UNKNOWN_BASELINE_SHA256,
           files: downloaded.files,
+          ...(downloaded.suspiciousEntries
+            ? { suspiciousEntries: downloaded.suspiciousEntries }
+            : {}),
         });
         if (
           acquired.artifact.manifest?.name !== input.manifest.package ||
@@ -150,6 +153,9 @@ function acquireVscodeArtifact(
     artifact: {
       files,
       manifest: packageJsonSummaryForVscode(manifest),
+      ...(artifactInput.suspiciousEntries
+        ? { suspiciousTarEntries: artifactInput.suspiciousEntries }
+        : {}),
     },
     details: {
       manifest: releaseManifest,

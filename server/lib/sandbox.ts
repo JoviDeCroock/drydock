@@ -418,14 +418,22 @@ export default {
         return json({ error: reason, status }, status);
       }
       let files;
+      let suspiciousEntries;
       try {
-        files = await readZipArchiveBuffered(zip, env.MAX_FILES || 2_500, maxTarBytes);
+        const parsed = await readZipArchiveBuffered(
+          zip,
+          env.MAX_FILES || 2_500,
+          maxTarBytes,
+          env.MAX_ENTRIES || env.MAX_FILES || 2_500,
+        );
+        files = parsed.files;
+        suspiciousEntries = parsed.suspicious;
       } catch (err) {
         const reason = err && err.tarSafety && err.message ? err.message : "zip parse failed";
         const status = reason === "archive contains too many files" || reason === "archive expands beyond safety limit" ? 413 : 400;
         return json({ error: reason, status }, status);
       }
-      return json({ files, packageJson: null });
+      return json({ files, packageJson: null, suspiciousEntries });
     }
     if (archiveFormat === "zip") {
       let files;

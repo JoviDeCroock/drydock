@@ -23,7 +23,9 @@ export function buildNpmFindings(args: {
     ...deterministicFindings(args.staged.files, args.fileDiff, args.staged.manifest),
     ...packageJsonDiffFindings(args.manifestDiff, args.stagedManifestText),
     ...createStagedMetadataFindings(args.details, args.staged.manifest),
-    ...tarSuspiciousEntryFindings(args.staged.suspiciousTarEntries),
+    ...tarSuspiciousEntryFindings(args.staged.suspiciousTarEntries, {
+      fileDiff: args.fileDiff,
+    }),
   ];
 }
 

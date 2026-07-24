@@ -83,6 +83,7 @@ function deriveVscodeReleaseCandidates(
           path: artifact.path,
           sha256: artifact.sha256,
           files: artifact.files,
+          ...(artifact.suspiciousEntries ? { suspiciousEntries: artifact.suspiciousEntries } : {}),
         },
       },
       package: { name: manifest.package, version: manifest.version },

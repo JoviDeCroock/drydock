@@ -127,7 +127,8 @@ export function readZipArchiveBuffered(
   buffer: ArrayBuffer | Uint8Array,
   maxFiles: number,
   maxArchiveBytes: number,
-): Promise<ParsedFile[]>;
+  maxEntries?: number,
+): Promise<ReadTarResult>;
 export function boundedByteStream(
   body: ReadableStream<Uint8Array>,
   maxBytes: number,

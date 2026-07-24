@@ -429,10 +429,13 @@ describe("readTar suspicious entries", () => {
       { name: "package/four", type: "2", body: "" },
       { name: "package/real.js", body: "real\n" },
     ]);
-    const { files, suspicious } = await parseFull(tar, {
-      ...PARSE_LIMITS,
-      maxFiles: 2,
-    });
+    const { files, suspicious } = await tarParser.readTarStream(
+      new Response(tar).body,
+      2,
+      PARSE_LIMITS.maxTarBytes,
+      Infinity,
+      10,
+    );
     expect(files.map((file) => file.path)).toEqual(["real.js"]);
     expect(suspicious.map((entry) => entry.path)).toEqual(["one", "two", "<archive>"]);
     expect(suspicious[2].detail).toContain("additional entries omitted");
@@ -803,6 +806,19 @@ describe("readTar limits and malformed archives", () => {
   test("still fails the parse past the hard entry cap", async () => {
     const tar = buildTar(
       Array.from({ length: 6 }, (_, i) => ({ name: `package/f${i}.js`, body: "x\n" })),
+    );
+    await expect(
+      tarParser.readTarStream(new Response(tar).body, 2, 1 << 20, Infinity, 5),
+    ).rejects.toThrow(/archive contains too many files/);
+  });
+
+  test("counts non-regular records toward the hard entry cap", async () => {
+    const tar = buildTar(
+      Array.from({ length: 6 }, (_, i) => ({
+        name: `package/link-${i}`,
+        type: "2",
+        body: "",
+      })),
     );
     await expect(
       tarParser.readTarStream(new Response(tar).body, 2, 1 << 20, Infinity, 5),

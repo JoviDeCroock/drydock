@@ -97,11 +97,19 @@ function severityToRisk(severity: string | null | undefined): RiskLevel {
 // records; Python build backends also emit directory records).
 export function tarSuspiciousEntryFindings(
   entries: TarSuspiciousEntry[] | undefined | null,
-  options: { dialect?: "npm" | "pypi" } = {},
+  options: {
+    dialect?: "npm" | "pypi";
+    fileDiff?: Array<Pick<DiffEntry, "status" | "flags">>;
+  } = {},
 ): Finding[] {
   if (!entries || !entries.length) return [];
+  const hasChangedSkippedContent = (options.fileDiff ?? []).some(
+    (entry) =>
+      (entry.status === "added" || entry.status === "modified") &&
+      entry.flags.includes("content-skipped"),
+  );
   return entries.map((entry) => ({
-    severity: tarSuspiciousSeverity(entry),
+    severity: tarSuspiciousSeverity(entry, hasChangedSkippedContent),
     file: entry.path || "<unknown>",
     evidence: `${entry.kind}: ${entry.detail}`,
     reason: tarSuspiciousReason(entry, options.dialect ?? "npm"),
@@ -110,7 +118,10 @@ export function tarSuspiciousEntryFindings(
   }));
 }
 
-function tarSuspiciousSeverity(entry: TarSuspiciousEntry): Finding["severity"] {
+function tarSuspiciousSeverity(
+  entry: TarSuspiciousEntry,
+  hasChangedSkippedContent: boolean,
+): Finding["severity"] {
   if (entry.kind === "non-regular") {
     return entry.detail.includes("(directory)") ? "info" : "high";
   }
@@ -119,7 +130,9 @@ function tarSuspiciousSeverity(entry: TarSuspiciousEntry): Finding["severity"] {
   // here would brand each of its releases as elevated risk. The per-file
   // "changed but not inspected" diff status is the control that keeps a
   // payload buried past the tier visible.
-  if (entry.kind === "retention-tier") return "info";
+  if (entry.kind === "retention-tier") {
+    return hasChangedSkippedContent ? "medium" : "info";
+  }
   return "medium";
 }
 

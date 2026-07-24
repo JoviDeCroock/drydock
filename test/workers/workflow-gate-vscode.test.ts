@@ -113,6 +113,13 @@ describe("VS Code workflow-gate adapter", () => {
         },
       ],
       packageJson: null,
+      suspiciousEntries: [
+        {
+          kind: "retention-tier",
+          path: "<archive>",
+          detail: "one file body was recorded hash-only",
+        },
+      ],
     });
     const parsed = await resolveBundleArtifacts(
       { ...env, LOADER: loader.binding as unknown as WorkerLoader } as Cloudflare.Env,
@@ -130,6 +137,13 @@ describe("VS Code workflow-gate adapter", () => {
       ecosystem: "vscode",
       package: "example.remote-text-fetcher",
       version: "1.0.0",
+    });
+    expect(candidate.pipelineInput.artifact).toMatchObject({
+      suspiciousEntries: [
+        expect.objectContaining({
+          kind: "retention-tier",
+        }),
+      ],
     });
   });
 
@@ -293,6 +307,7 @@ describe("prepareReleaseCandidatesForGate · vscode auto-detect", () => {
 interface SandboxResult {
   files: { path: string; size: number; sha256: string; flags: string[]; textSample?: string }[];
   packageJson: { name?: string; version?: string } | null;
+  suspiciousEntries?: Array<{ kind: string; path: string; detail: string }>;
 }
 
 function buildLoaderMock(result: SandboxResult) {

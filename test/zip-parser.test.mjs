@@ -173,6 +173,15 @@ describe("readZipStream", () => {
     );
   });
 
+  test("counts directory records toward the hard entry cap", async () => {
+    const zip = buildZip(
+      Array.from({ length: 6 }, (_, i) => ({ path: `demo/dir-${i}/`, body: "" })),
+    );
+    await expect(readZipStream(chunkedStream(zip), 2, 1024, 1 << 20, 5)).rejects.toThrow(
+      /archive contains too many files/,
+    );
+  });
+
   test("retains a wheel METADATA past the full-inspection tier", async () => {
     const zip = buildZip([
       { path: "demo/a.py", body: "a = 1\n" },
@@ -476,7 +485,7 @@ describe("readZipArchiveBuffered", () => {
         dataDescriptor: true,
       },
     ]);
-    const files = await readZipArchiveBuffered(zip, 2_500, 25 * 1024 * 1024);
+    const { files } = await readZipArchiveBuffered(zip, 2_500, 25 * 1024 * 1024);
     expect(files.map((file) => file.path)).toEqual([
       "extension/package.json",
       "extension/extension.js",
@@ -493,7 +502,52 @@ describe("readZipArchiveBuffered", () => {
     ]);
     const buffered = await readZipArchiveBuffered(zip, 2_500, 25 * 1024 * 1024);
     const streamed = await parse(zip);
-    expect(buffered).toEqual(streamed);
+    expect(buffered.files).toEqual(streamed);
+    expect(buffered.suspicious).toEqual([]);
+  });
+
+  test("demotes VSIX bodies past the full-inspection tier", async () => {
+    const zip = buildZip([
+      { path: "extension/a.js", body: "a = 1\n", dataDescriptor: true },
+      { path: "extension/b.js", body: "b = 2\n", dataDescriptor: true },
+      { path: "extension/c.js", body: "c = 3\n", dataDescriptor: true },
+      {
+        path: "extension/package.json",
+        body: JSON.stringify({
+          name: "demo",
+          publisher: "example",
+          version: "1.0.0",
+          engines: { vscode: "^1.90.0" },
+        }),
+        dataDescriptor: true,
+      },
+    ]);
+    const { files, suspicious } = await readZipArchiveBuffered(zip, 2, 1024, 10);
+    expect(files.find((file) => file.path === "extension/c.js")?.flags).toContain(
+      "content-skipped",
+    );
+    expect(files.find((file) => file.path === "extension/package.json")?.textSample).toContain(
+      '"publisher":"example"',
+    );
+    expect(suspicious).toEqual([
+      expect.objectContaining({
+        kind: "retention-tier",
+        detail: expect.stringContaining("1 additional file bodies"),
+      }),
+    ]);
+  });
+
+  test("enforces the hard entry cap for buffered VSIX archives", async () => {
+    const zip = buildZip(
+      Array.from({ length: 6 }, (_, i) => ({
+        path: `extension/f${i}.js`,
+        body: "x\n",
+        dataDescriptor: true,
+      })),
+    );
+    await expect(readZipArchiveBuffered(zip, 2, 1024, 5)).rejects.toThrow(
+      /archive contains too many files/,
+    );
   });
 });
 

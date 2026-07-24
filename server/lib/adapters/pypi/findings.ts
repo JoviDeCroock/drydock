@@ -1,4 +1,5 @@
 import {
+  type DiffEntry,
   type FileRecord,
   type Finding,
   PYTHON_EXECUTION_CAPABILITY_PATTERNS,
@@ -30,6 +31,7 @@ const DIRECT_REFERENCE_REQUIREMENT_RE = /@\s*[a-z][a-z0-9+.-]*:\/\//i;
 export function pyPiReleaseFindings(
   manifest: PyPiReleaseManifest,
   artifacts: PyPiPreparedArtifact[],
+  fileDiff: DiffEntry[] = [],
 ): Finding[] {
   const findings: Finding[] = [];
   const manifestName = normalizePyPiProjectName(manifest.package);
@@ -47,7 +49,10 @@ export function pyPiReleaseFindings(
     const suspiciousEntries = (artifact.suspiciousEntries ?? []).filter(
       (entry) => !isOrdinaryPyPiDirectoryEntry(entry),
     );
-    for (const finding of tarSuspiciousEntryFindings(suspiciousEntries, { dialect: "pypi" })) {
+    for (const finding of tarSuspiciousEntryFindings(suspiciousEntries, {
+      dialect: "pypi",
+      fileDiff,
+    })) {
       findings.push({ ...finding, file: namespacedPath(artifact.path, finding.file) });
     }
     const metadataEvidencePath = namespacedPath(artifact.path, summary.metadataPath ?? "METADATA");

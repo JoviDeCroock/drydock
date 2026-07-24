@@ -1,5 +1,6 @@
 import type { FileRecord, PackageJsonSummary } from "../../review";
 import { safeJson } from "../../review-rules";
+import type { TarSuspiciousEntry } from "../../tar-parser.js";
 import {
   VSCODE_RELEASE_MANIFEST_SCHEMA,
   type VscodeAdapterInput,
@@ -185,7 +186,33 @@ function parseVscodeArtifactInput(raw: unknown, field: string): VscodeArtifactIn
     path,
     sha256: sha256.toLowerCase(),
     files: raw.files.map((file, index) => parseFileRecord(file, field, index)),
+    ...parseSuspiciousEntries(raw.suspiciousEntries),
   };
+}
+
+const SUSPICIOUS_ENTRY_KINDS = new Set([
+  "non-regular",
+  "duplicate",
+  "unicode-confusable",
+  "content-skipped",
+  "retention-tier",
+]);
+
+function parseSuspiciousEntries(
+  raw: unknown,
+): { suspiciousEntries: TarSuspiciousEntry[] } | Record<string, never> {
+  if (!Array.isArray(raw) || !raw.length) return {};
+  const entries: TarSuspiciousEntry[] = [];
+  for (const item of raw.slice(0, 5_000)) {
+    if (!isRecord(item)) continue;
+    if (typeof item.kind !== "string" || !SUSPICIOUS_ENTRY_KINDS.has(item.kind)) continue;
+    entries.push({
+      kind: item.kind as TarSuspiciousEntry["kind"],
+      path: typeof item.path === "string" ? item.path : "",
+      detail: typeof item.detail === "string" ? item.detail : "",
+    });
+  }
+  return entries.length ? { suspiciousEntries: entries } : {};
 }
 
 function parseFileRecord(raw: unknown, field: string, index: number): FileRecord {

@@ -414,6 +414,46 @@ describe("VS Code extension review adapter", () => {
     );
   });
 
+  test("raises medium risk when a changed VSIX tail was recorded hash-only", () => {
+    const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
+      { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
+    ]);
+    const review = createVscodeExtensionReview({
+      manifest,
+      artifact: {
+        ...artifact([
+          file(
+            "extension/package.json",
+            extensionPackageJson({
+              activationEvents: ["onCommand:remoteTextFetcher.run"],
+            }),
+          ),
+          {
+            path: "extension/out/extension.js",
+            size: 26,
+            sha256: "11",
+            flags: ["content-skipped"],
+          },
+        ]),
+        suspiciousEntries: [
+          {
+            kind: "retention-tier",
+            path: "<archive>",
+            detail: "one file body was recorded hash-only",
+          },
+        ],
+      },
+    });
+
+    expect(review.risk).toBe("medium");
+    expect(review.ruleFindings).toContainEqual(
+      expect.objectContaining({
+        ruleId: "tar.suspicious-entry",
+        severity: "medium",
+      }),
+    );
+  });
+
   test("accepts capitalized extension names the Marketplace grandfathered in", () => {
     const manifest = buildVscodeReleaseManifest("golang.Go", "0.42.0", [
       { path: "dist/go-0.42.0.vsix", sha256: SHA },

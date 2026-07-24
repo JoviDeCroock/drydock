@@ -14,7 +14,7 @@
 //     cross-function calls resolve by the lexical names below.
 
 /** @typedef {{ path: string, size: number, sha256: string, flags: string[], textSample?: string }} ParsedFile */
-/** @typedef {{ kind: "non-regular"|"duplicate"|"unicode-confusable"|"content-skipped", path: string, detail: string }} TarSuspiciousEntry */
+/** @typedef {{ kind: "non-regular"|"duplicate"|"unicode-confusable"|"content-skipped"|"retention-tier", path: string, detail: string }} TarSuspiciousEntry */
 
 export function readString(bytes, start, len) {
   let end = start;
@@ -546,7 +546,7 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes,
   let nextLongName = null;
   let pax = null;
   let retainedBytes = 0;
-  let regularEntryCount = 0;
+  let entryCount = 0;
   let retainedTextCount = 0;
   // Bulk demotions (cumulative budget spent, full-inspection tier filled) are
   // coverage disclosure, not per-file anomalies: one aggregate suspicious entry
@@ -576,6 +576,8 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes,
     while (await fill(512)) {
       const header = take(512);
       if (header.every((b) => b === 0)) break;
+      entryCount += 1;
+      if (entryCount > entryLimit) throw tarError("archive contains too many files");
 
       const rawName = readString(header, 0, 100);
       const prefix = readString(header, 345, 155);
@@ -616,12 +618,6 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes,
           nextLongName = candidate;
         }
       } else if (isRegular) {
-        // Count every regular entry, not just distinct paths: duplicate paths
-        // replace their earlier entry in `files`, so without this a tar could
-        // carry thousands of records for one path — each streamed and hashed —
-        // while never tripping the file-count cap.
-        regularEntryCount += 1;
-        if (regularEntryCount > entryLimit) throw tarError("archive contains too many files");
         const rawCandidate =
           (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName;
         const canonicalCandidate = canonicalizePath(rawCandidate);
@@ -865,12 +861,13 @@ export async function readZipArchive(buffer, maxFiles, maxArchiveBytes) {
 // exactly the way VS Code / yauzl do. Wheels and sdists never need this:
 // Python's zipfile writes sizes in local headers, so they take the streaming
 // reader instead of paying the buffer.
-export async function readZipArchiveBuffered(buffer, maxFiles, maxArchiveBytes) {
+export async function readZipArchiveBuffered(buffer, maxFiles, maxArchiveBytes, maxEntries) {
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   const eocd = findZipEndOfCentralDirectory(bytes);
   if (eocd < 0) throw tarError("zip central directory not found");
 
   const entryCount = readUint16Le(bytes, eocd + 10);
+  const entryLimit = Math.max(Number.isFinite(maxEntries) ? maxEntries : maxFiles, maxFiles);
   const centralDirectorySize = readUint32Le(bytes, eocd + 12);
   const centralDirectoryOffset = readUint32Le(bytes, eocd + 16);
   if (
@@ -880,12 +877,17 @@ export async function readZipArchiveBuffered(buffer, maxFiles, maxArchiveBytes) 
   ) {
     throw tarError("zip64 archives are not supported");
   }
+  if (entryCount > entryLimit) throw tarError("archive contains too many files");
   if (centralDirectoryOffset + centralDirectorySize > bytes.length) {
     throw tarError("truncated zip central directory");
   }
 
   const files = [];
+  const suspicious = [];
   let expandedBytes = 0;
+  let retainedTextCount = 0;
+  let demotedByTier = 0;
+  let tierNotice = null;
   let offset = centralDirectoryOffset;
   const pathDecoder = new TextDecoder("utf-8", { fatal: false });
   for (let index = 0; index < entryCount; index += 1) {
@@ -908,7 +910,6 @@ export async function readZipArchiveBuffered(buffer, maxFiles, maxArchiveBytes) 
     offset = fileNameEnd + extraLength + commentLength;
 
     if (!path) continue;
-    if (files.length >= maxFiles) throw tarError("archive contains too many files");
     if (uncompressedSize > maxArchiveBytes || expandedBytes + uncompressedSize > maxArchiveBytes) {
       throw tarError("archive expands beyond safety limit");
     }
@@ -936,9 +937,25 @@ export async function readZipArchiveBuffered(buffer, maxFiles, maxArchiveBytes) 
     }
     if (body.length !== uncompressedSize) throw tarError("zip entry size mismatch");
     expandedBytes += body.length;
-    files.push(await summarizeFile(path, body));
+    const tierFull = retainedTextCount >= maxFiles;
+    if (!tierFull || isRetainedManifestPath(path)) {
+      files.push(await summarizeFile(path, body));
+      retainedTextCount += 1;
+    } else {
+      files.push(
+        summarizeSkippedFile(path, uncompressedSize, await sha256Hex(body), body.subarray(0, 64)),
+      );
+      demotedByTier += 1;
+      if (!tierNotice) {
+        tierNotice = { kind: "retention-tier", path: "<archive>", detail: "" };
+        suspicious.push(tierNotice);
+      }
+    }
   }
-  return files;
+  if (tierNotice) {
+    tierNotice.detail = `the archive exceeds the ${maxFiles}-file full-inspection tier; ${demotedByTier} additional file bodies were recorded hash-only (path, size, sha256) without content inspection`;
+  }
+  return { files, suspicious };
 }
 
 // Caps the raw bytes flowing out of a stream. gzip/deflate can decode an
@@ -1102,7 +1119,7 @@ export async function readZipStream(body, maxFiles, maxTarBytes, maxStreamBytes,
   // the scanner replaced. Cross-checked at EOCD; any disagreement fails closed.
   const lastLocalOffsetByPath = new Map();
   const cdWinnerOffsetByPath = new Map();
-  let localFileRecordCount = 0;
+  let localEntryCount = 0;
   let retainedBytes = 0;
   let expandedBytes = 0;
   let sawCentralDirectory = false;
@@ -1163,14 +1180,10 @@ export async function readZipStream(body, maxFiles, maxTarBytes, maxStreamBytes,
         if (!(await cursor.discard(extraLength))) throw tarError("truncated zip entry");
         localEntries.set(headerOffset, { rawPath, method, compressedSize, uncompressedSize });
 
-        // Count every non-directory record, not just distinct paths: duplicate
-        // records replace their earlier entry in `files`, so without this a
-        // zip could carry thousands of records for one path — each parsed,
-        // inflated, and hashed — while never tripping the file-count cap.
-        if (!rawPath.endsWith("/")) {
-          localFileRecordCount += 1;
-          if (localFileRecordCount > entryLimit) throw tarError("archive contains too many files");
-        }
+        // Bound every local record, including directory markers and unsafe
+        // paths, since each still consumes parser and central-directory work.
+        localEntryCount += 1;
+        if (localEntryCount > entryLimit) throw tarError("archive contains too many files");
 
         expandedBytes += uncompressedSize;
         if (expandedBytes > expansionLimit) throw tarError("archive expands beyond safety limit");
