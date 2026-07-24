@@ -1430,6 +1430,44 @@ describe("review", () => {
     ]);
   });
 
+  test("does not treat a duplicate declaration as a new dependency", () => {
+    const existingRuntimeGetsPeer = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { react: "^18.0.0" } },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        dependencies: { react: "^18.0.0" },
+        peerDependencies: { react: "^18.0.0" },
+      },
+    );
+    expect(existingRuntimeGetsPeer.dependencies).toEqual([
+      {
+        key: "react",
+        status: "added",
+        staged: "^18.0.0",
+        section: "peerDependencies",
+        previouslyDeclared: true,
+        previouslyInstalled: true,
+      },
+    ]);
+    expect(packageJsonDiffFindings(existingRuntimeGetsPeer)).toEqual([]);
+
+    // A peer-only requirement becoming an installed dependency still ships
+    // code from the package, even if the peer declaration remains in place.
+    const existingPeerGetsRuntime = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", peerDependencies: { react: "^18.0.0" } },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        dependencies: { react: "^18.0.0" },
+        peerDependencies: { react: "^18.0.0" },
+      },
+    );
+    expect(packageJsonDiffFindings(existingPeerGetsRuntime)).toEqual([
+      expect.objectContaining({ ruleId: "dependency.added", evidence: "react: ^18.0.0" }),
+    ]);
+  });
+
   test("gates delta rules on baseline-manifest presence, not its version string", () => {
     // A prior release whose manifest parsed but declared no version must not be
     // able to switch off the next release's added/major-bump checks.
@@ -1513,6 +1551,26 @@ describe("review", () => {
       { name: "pkg", version: "1.0.1", dependencies: { dep: ">=1.0.0 <2.0.0" } },
     );
     expect(packageJsonDiffFindings(boundedRewrite)).toEqual([]);
+
+    // A higher upper bound admits 2.x and must not be collapsed to the 1.x
+    // floor of the comparator set.
+    const boundedWidening = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { dep: "^1.0.0" } },
+      { name: "pkg", version: "1.0.1", dependencies: { dep: ">=1.0.0 <3.0.0" } },
+    );
+    expect(packageJsonDiffFindings(boundedWidening)).toEqual([
+      expect.objectContaining({ ruleId: "dependency.major-bump" }),
+    ]);
+
+    // Disjoint unions must keep their holes: the previous range admitted 1.x
+    // and 3.x, but never the staged 2.x major.
+    const unionHole = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { dep: "^1.0.0 || ^3.0.0" } },
+      { name: "pkg", version: "1.0.1", dependencies: { dep: "^2.0.0" } },
+    );
+    expect(packageJsonDiffFindings(unionHole)).toEqual([
+      expect.objectContaining({ ruleId: "dependency.major-bump" }),
+    ]);
 
     // Every modified row compares its own spec pair: a major change confined
     // to the peer row of a dependencies + peerDependencies pairing cannot hide

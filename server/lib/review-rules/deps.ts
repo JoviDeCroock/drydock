@@ -1,6 +1,10 @@
 import type { Finding, PackageJsonDiff } from "../review";
 import type { DependencySection, PackageJsonDiffEntry } from "../review-serialize";
-import { specMajorRange, unusualDependencySpecKind } from "../dependency-specs";
+import {
+  majorRangesAreSubset,
+  specMajorRanges,
+  unusualDependencySpecKind,
+} from "../dependency-specs";
 import { firstJsonPropertyLine, tag } from "./helpers";
 
 // Dependency-change rules derived from the package.json diff: newly added
@@ -106,11 +110,19 @@ function keyFinding(
 
   const line = firstJsonPropertyLine(stagedPackageJsonText, key, stagedSpec);
 
-  const addedSections = entries.filter((e) => e.status === "added").map((e) => e.section);
-  const relocation = addedSections.length > 0 && (removedInstallingSpecs?.length ?? 0) > 0;
-  const genuinelyNew = addedSections.length > 0 && !relocation;
+  const addedEntries = entries.filter((entry) => entry.status === "added");
+  const addedSections = addedEntries.map((entry) => entry.section);
+  const addsInstallingSection = addedSections.some(isInstallingSection);
+  const addsPeerSection = addedSections.includes("peerDependencies");
+  const wasPreviouslyInstalled = addedEntries.some((entry) => entry.previouslyInstalled);
+  const wasPreviouslyDeclared = addedEntries.some((entry) => entry.previouslyDeclared);
+  // Legacy/manually-created diffs may not carry the cross-section flags, so
+  // preserve the removed-row relocation fallback for those payloads.
+  const relocation = (removedInstallingSpecs?.length ?? 0) > 0;
+  const installsNewCode = addsInstallingSection && !wasPreviouslyInstalled && !relocation;
+  const addsNewPeerRequirement = addsPeerSection && !wasPreviouslyDeclared && !relocation;
 
-  if (genuinelyNew && addedSections.includes("optionalDependencies")) {
+  if (installsNewCode && addedSections.includes("optionalDependencies")) {
     return tag("dependencyOptionalAdded", {
       severity: "high",
       file: "package.json",
@@ -121,24 +133,23 @@ function keyFinding(
     });
   }
 
-  if (genuinelyNew && hasBaseline) {
+  if ((installsNewCode || addsNewPeerRequirement) && hasBaseline) {
     // dependencies installs into every consumer; a peer requirement is instead
     // something the consumer must supply, so the framing differs.
-    const runtimeAdded = addedSections.some((section) => section !== "peerDependencies");
     return tag("dependencyAdded", {
       severity: "medium",
       file: "package.json",
       line,
       evidence: `${key}: ${stagedSpec}`,
-      reason: runtimeAdded
+      reason: installsNewCode
         ? "a newly added dependency ships third-party code this scan does not inspect into every consumer install — the event-stream/flatmap-stream and node-ipc/peacenotwar vector — so review the new dependency's own contents before approving"
         : "a newly added peer dependency requires every consumer to install this third-party package, which this scan does not inspect — review the dependency's own contents before approving",
     });
   }
 
-  // Modified in place, or relocated with a changed spec: compare the span of
-  // majors each spec admits, and fire when a staged spec admits a major
-  // outside the previously reviewed span — higher (widening) or lower
+  // Modified in place, or relocated with a changed spec: compare the intervals
+  // of majors each spec admits, and fire when a staged spec admits a major
+  // outside the previously reviewed intervals — higher (widening), lower
   // (downgrade). A pure narrowing stays inside what the prior release was
   // reviewed against and raises nothing. Each modified row compares its own
   // staged spec against its own previous spec, so a major change confined to a
@@ -160,10 +171,10 @@ function keyFinding(
     ? modifiedEntries.map((e) => ({ previous: e.previous, staged: e.staged }))
     : (removedInstallingSpecs ?? []).map((previous) => ({ previous, staged: stagedSpec }));
   for (const pair of pairs) {
-    const stagedRange = specMajorRange(pair.staged);
-    const previousRange = specMajorRange(pair.previous ?? undefined);
-    if (stagedRange === undefined || previousRange === undefined) continue;
-    if (stagedRange.max <= previousRange.max && stagedRange.min >= previousRange.min) continue;
+    const stagedRanges = specMajorRanges(pair.staged);
+    const previousRanges = specMajorRanges(pair.previous ?? undefined);
+    if (stagedRanges === undefined || previousRanges === undefined) continue;
+    if (majorRangesAreSubset(stagedRanges, previousRanges)) continue;
     return tag("dependencyMajorBump", {
       severity: "low",
       file: "package.json",

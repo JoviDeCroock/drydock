@@ -103,7 +103,7 @@ describe("parseDiffPackage", () => {
 });
 
 describe("dependencyDiffHref", () => {
-  test("links a bump straight to the floor-to-floor version pair", () => {
+  test("links a bump straight to an exact published-version pair", () => {
     expect(
       dependencyDiffHref({
         key: "event-pubsub",
@@ -114,7 +114,7 @@ describe("dependencyDiffHref", () => {
     ).toBe("/diff/event-pubsub/4.3.0/5.0.0");
     expect(
       dependencyDiffHref({ key: "left-pad", status: "modified", previous: "^1.2", staged: "~2" }),
-    ).toBe("/diff/left-pad/1.2.0/2.0.0");
+    ).toBeNull();
     expect(
       dependencyDiffHref({
         key: "@scope/dep",
@@ -122,7 +122,7 @@ describe("dependencyDiffHref", () => {
         previous: ">=1.0.0 <2",
         staged: "2.0.0-beta.1",
       }),
-    ).toBe("/diff/@scope/dep/1.0.0/2.0.0-beta.1");
+    ).toBeNull();
   });
 
   test("links an added dependency to the package-only form", () => {
@@ -131,28 +131,7 @@ describe("dependencyDiffHref", () => {
     );
   });
 
-  test("links the concrete floor-to-floor pair for a union", () => {
-    // The link needs a concrete published pair, so it uses each spec's minimum
-    // floor: "^2.0.0 || ^1.0.0" floors at 1.0.0, equal to the previous floor,
-    // so no distinct pair to link — even though the server major-bump finding
-    // (which follows npm's highest-admitted major) does fire on this widening.
-    expect(
-      dependencyDiffHref({
-        key: "dep",
-        status: "modified",
-        previous: "^1.0.0",
-        staged: "^2.0.0 || ^1.0.0",
-      }),
-    ).toBeNull();
-    expect(
-      dependencyDiffHref({
-        key: "dep",
-        status: "modified",
-        previous: "^1.0.0",
-        staged: "^2.0.0 || ^3.0.0",
-      }),
-    ).toBe("/diff/dep/1.0.0/2.0.0");
-    // Build metadata is not part of the published version identifier.
+  test("preserves exact prerelease and build identifiers", () => {
     expect(
       dependencyDiffHref({
         key: "dep",
@@ -160,7 +139,15 @@ describe("dependencyDiffHref", () => {
         previous: "1.2.3+build",
         staged: "2.0.0",
       }),
-    ).toBe("/diff/dep/1.2.3/2.0.0");
+    ).toBe("/diff/dep/1.2.3%2Bbuild/2.0.0");
+    expect(
+      dependencyDiffHref({
+        key: "dep",
+        status: "modified",
+        previous: "1.2.3-beta.1",
+        staged: "2.0.0-rc.1",
+      }),
+    ).toBe("/diff/dep/1.2.3-beta.1/2.0.0-rc.1");
   });
 
   test("aliased, git-hosted, and URL specs get no link", () => {
@@ -186,28 +173,28 @@ describe("dependencyDiffHref", () => {
     }
   });
 
-  test("modified rows without anchoring floors get no link", () => {
+  test("modified rows without exact published versions get no link", () => {
     // A package-only fallback would land on the latest published pair — a
     // diff unrelated to the change in the row — so no link is rendered.
     for (const row of [
       { key: "dep", status: "modified", previous: "latest", staged: "next" },
       { key: "dep", status: "modified", previous: "*", staged: "2.0.0" },
-      // Equal floors: a range widened from caret to tilde anchors no pair.
+      // Range bounds are not proof that those exact versions were published.
       { key: "dep", status: "modified", previous: "^1.0.0", staged: "~1.0.0" },
+      { key: "dep", status: "modified", previous: "^1.2.0", staged: "^2.0.0" },
+      { key: "dep", status: "modified", previous: "^1.0.0", staged: "^2.0.0 || ^3.0.0" },
     ]) {
       expect(dependencyDiffHref(row)).toBeNull();
     }
   });
 
-  test("normalizes leading-zero version segments so links target real versions", () => {
-    // "01.0.0" must not reach a diff link as a version segment no registry
-    // published, and it must compare equal to "1.0.0" so no bogus pair links.
+  test("rejects invalid leading-zero exact versions", () => {
     expect(
       dependencyDiffHref({ key: "dep", status: "modified", previous: "1.0.0", staged: "=01.0.0" }),
     ).toBeNull();
     expect(
       dependencyDiffHref({ key: "dep", status: "modified", previous: "01.0.0", staged: "2.0.0" }),
-    ).toBe("/diff/dep/1.0.0/2.0.0");
+    ).toBeNull();
   });
 
   test("removed dependencies get no link", () => {

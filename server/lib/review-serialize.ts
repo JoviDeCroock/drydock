@@ -24,6 +24,11 @@ export interface PackageJsonDiffEntry {
   previous?: string;
   staged?: string;
   section?: DependencySection;
+  // Added rows carry prior cross-section membership when it would otherwise be
+  // invisible from the changed rows alone. The dependency rules use this to
+  // distinguish a new declaration from a duplicate of already-installed code.
+  previouslyDeclared?: true;
+  previouslyInstalled?: true;
 }
 
 export interface PackageJsonDiff {
@@ -81,10 +86,21 @@ function diffDependencySections(
   stagedPkg: PackageJsonSummary | null | undefined,
 ): PackageJsonDiffEntry[] {
   const sectionEntries = (section: DependencySection) =>
-    diffObject(previousPkg?.[section] || {}, stagedPkg?.[section] || {}).map((entry) => ({
-      ...entry,
-      section,
-    }));
+    diffObject(previousPkg?.[section] || {}, stagedPkg?.[section] || {}).map((entry) => {
+      if (entry.status !== "added") return { ...entry, section };
+      const previouslyDeclared = DEPENDENCY_SECTIONS.some(
+        (candidate) => entry.key in (previousPkg?.[candidate] || {}),
+      );
+      const previouslyInstalled = INSTALLING_DEPENDENCY_SECTIONS.some(
+        (candidate) => entry.key in (previousPkg?.[candidate] || {}),
+      );
+      return {
+        ...entry,
+        section,
+        ...(previouslyDeclared ? { previouslyDeclared: true as const } : {}),
+        ...(previouslyInstalled ? { previouslyInstalled: true as const } : {}),
+      };
+    });
 
   return [
     ...sectionEntries("dependencies"),
@@ -92,6 +108,16 @@ function diffDependencySections(
     ...sectionEntries("peerDependencies"),
   ].sort((a, b) => a.key.localeCompare(b.key) || a.section.localeCompare(b.section));
 }
+
+const DEPENDENCY_SECTIONS: DependencySection[] = [
+  "dependencies",
+  "optionalDependencies",
+  "peerDependencies",
+];
+const INSTALLING_DEPENDENCY_SECTIONS: DependencySection[] = [
+  "dependencies",
+  "optionalDependencies",
+];
 
 // Normalize the two npm `bin` shapes to a command -> target map. A string `bin`
 // installs one command named after the package (the unscoped part for scoped

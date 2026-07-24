@@ -219,18 +219,22 @@ still fire because they describe the staged manifest, not the delta (the
 `dependency-first-publish-no-baseline` golden case). A key relocated between installing sections
 (`dependencies` ↔ `optionalDependencies`) with an unchanged spec is treated as already-shipped code
 and raises nothing, but a peer requirement moved into `dependencies` genuinely starts shipping and is a
-real addition. Major-bump compares the span of majors each spec
+real addition. A key newly duplicated into another section is not treated as new when it was already
+installed (for example, adding a peer declaration beside an unchanged runtime dependency).
+Major-bump compares the intervals of majors each spec
 admits, matching npm's install of the highest published version: widening `^1.0.0` to
 `^1.0.0 || ^2.0.0`, to the hyphen range `1.0.0 - 2.0.0`, or to a bare `>=1.0.0` (which admits every
-future major) fires, and a downgrade such as `^2.0.0` → `^1.0.0` fires because 1.x was never in the
-reviewed span. A pure narrowing (`>=1.0.0` → `^1.0.0`) stays inside that span and raises nothing, and
+future major) fires, as does a bounded widening to `>=1.0.0 <3.0.0`; a downgrade such as
+`^2.0.0` → `^1.0.0` fires because 1.x was never in the reviewed intervals. Disjoint unions retain
+their holes, so changing `^1.0.0 || ^3.0.0` to `^2.0.0` also fires. A pure narrowing
+(`>=1.0.0` → `^1.0.0`) stays inside the reviewed intervals and raises nothing, and
 a no-op `|| ` suffix or an unparseable leading branch cannot suppress the comparison. An empty spec is treated
 like `*` rather than skipped, and `workspace:`/`catalog:`/`link:`/`portal:` protocols join
 `git:`/`https:`/`file:`/`npm:` as unusual specs (they name no published package). Spec parsing lives in
-`server/lib/dependency-specs.ts`, shared with the UI's dependency diff links: the link uses each spec's
-concrete minimum floor to build a published version pair and renders nothing when it cannot (unusual
-spec, unanchored range, or equal floors), so a link is never confidently wrong even when the finding
-still fires (the `dependency-added-major-bump` golden case).
+`server/lib/dependency-specs.ts`, shared with the UI's dependency diff links: modified rows link
+directly only when both specs are exact registry version keys. Ranges render no direct link because
+their bounds need not have been published; added dependencies use the package-only route that resolves
+a published pair from registry metadata.
 
 ### Fixture format
 
