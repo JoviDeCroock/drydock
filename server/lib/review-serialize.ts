@@ -7,6 +7,7 @@ export interface PackageJsonSummary {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   optionalDependencies?: Record<string, string>;
   files?: string[];
   bin?: string | Record<string, string>;
@@ -16,18 +17,32 @@ export interface PackageJsonSummary {
   exports?: unknown;
 }
 
-type DependencySection = "dependencies" | "optionalDependencies" | "peerDependencies";
+export type DependencySection = "dependencies" | "optionalDependencies" | "peerDependencies";
 
-interface PackageJsonDiffEntry {
+export interface PackageJsonDiffEntry {
   key: string;
   status: "added" | "removed" | "modified";
   previous?: string;
   staged?: string;
   section?: DependencySection;
+  // Added rows carry prior cross-section membership when it would otherwise be
+  // invisible from the changed rows alone. The dependency rules use this to
+  // distinguish a new declaration from a duplicate of already-installed code.
+  previouslyDeclared?: true;
+  previouslyInstalled?: true;
+  previousInstalledSpec?: string;
+  previousDeclaredSpecs?: string[];
+  previousPeerOptional?: true;
+  stagedPeerOptional?: true;
 }
 
 export interface PackageJsonDiff {
   name: string | null;
+  // Whether a baseline manifest was diffed against, independent of whether that
+  // manifest declared a version. The dependency delta rules gate on this rather
+  // than previousVersion so a prior release that shipped a version-less manifest
+  // cannot switch off the next release's added/major-bump checks.
+  hasPreviousManifest: boolean;
   previousVersion: string | null;
   stagedVersion: string | null;
   scripts: PackageJsonDiffEntry[];
@@ -47,6 +62,7 @@ export function summarizePackageJsonDiff(
   const changedDependencies = diffDependencySections(previousPkg, stagedPkg);
   return {
     name: stagedPkg?.name || previousPkg?.name || null,
+    hasPreviousManifest: Boolean(previousPkg),
     previousVersion: previousPkg?.version || null,
     stagedVersion: stagedPkg?.version || null,
     scripts: changedScripts,
@@ -74,11 +90,64 @@ function diffDependencySections(
   previousPkg: PackageJsonSummary | null | undefined,
   stagedPkg: PackageJsonSummary | null | undefined,
 ): PackageJsonDiffEntry[] {
-  const sectionEntries = (section: DependencySection) =>
-    diffObject(previousPkg?.[section] || {}, stagedPkg?.[section] || {}).map((entry) => ({
-      ...entry,
-      section,
-    }));
+  const sectionEntries = (section: DependencySection) => {
+    const previous = previousPkg?.[section] || {};
+    const staged = stagedPkg?.[section] || {};
+    const entries = diffObject(previous, staged);
+    if (section === "peerDependencies") {
+      for (const key of Object.keys(staged)) {
+        if (!(key in previous) || previous[key] !== staged[key]) continue;
+        if (isOptionalPeer(previousPkg, key) === isOptionalPeer(stagedPkg, key)) continue;
+        entries.push({
+          key,
+          status: "modified",
+          previous: previous[key],
+          staged: staged[key],
+        });
+      }
+    }
+
+    return entries.map((entry) => {
+      const previouslyDeclared = DEPENDENCY_SECTIONS.some(
+        (candidate) => entry.key in (previousPkg?.[candidate] || {}),
+      );
+      const previouslyInstalled = INSTALLING_DEPENDENCY_SECTIONS.some(
+        (candidate) => entry.key in (previousPkg?.[candidate] || {}),
+      );
+      const previousInstalledSpec =
+        section === "optionalDependencies"
+          ? (previousPkg?.optionalDependencies?.[entry.key] ??
+            previousPkg?.dependencies?.[entry.key])
+          : undefined;
+      const previousDeclaredSpecs =
+        entry.status === "added" && section === "peerDependencies"
+          ? DEPENDENCY_SECTIONS.flatMap((candidate) => {
+              const spec = previousPkg?.[candidate]?.[entry.key];
+              return spec === undefined ? [] : [spec];
+            })
+          : [];
+      const previousPeerOptional =
+        section === "peerDependencies" && isOptionalPeer(previousPkg, entry.key);
+      const stagedPeerOptional =
+        section === "peerDependencies" && isOptionalPeer(stagedPkg, entry.key);
+      return {
+        ...entry,
+        section,
+        ...(entry.status === "added" && previouslyDeclared
+          ? { previouslyDeclared: true as const }
+          : {}),
+        ...(entry.status === "added" && previouslyInstalled
+          ? { previouslyInstalled: true as const }
+          : {}),
+        ...(entry.status === "added" && previousInstalledSpec !== undefined
+          ? { previousInstalledSpec }
+          : {}),
+        ...(previousDeclaredSpecs.length ? { previousDeclaredSpecs } : {}),
+        ...(previousPeerOptional ? { previousPeerOptional: true as const } : {}),
+        ...(stagedPeerOptional ? { stagedPeerOptional: true as const } : {}),
+      };
+    });
+  };
 
   return [
     ...sectionEntries("dependencies"),
@@ -86,6 +155,20 @@ function diffDependencySections(
     ...sectionEntries("peerDependencies"),
   ].sort((a, b) => a.key.localeCompare(b.key) || a.section.localeCompare(b.section));
 }
+
+function isOptionalPeer(pkg: PackageJsonSummary | null | undefined, key: string): boolean {
+  return pkg?.peerDependenciesMeta?.[key]?.optional === true;
+}
+
+const DEPENDENCY_SECTIONS: DependencySection[] = [
+  "dependencies",
+  "optionalDependencies",
+  "peerDependencies",
+];
+const INSTALLING_DEPENDENCY_SECTIONS: DependencySection[] = [
+  "dependencies",
+  "optionalDependencies",
+];
 
 // Normalize the two npm `bin` shapes to a command -> target map. A string `bin`
 // installs one command named after the package (the unscoped part for scoped

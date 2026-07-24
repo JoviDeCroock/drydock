@@ -1094,6 +1094,12 @@ describe("parsePackageJson", () => {
           version: "1.2.3",
           scripts: { preinstall: "node bad.js" },
           dependencies: { foo: "1.0.0" },
+          peerDependencies: { host: "^2.0.0", required: "^1.0.0" },
+          peerDependenciesMeta: {
+            host: { optional: true },
+            required: { optional: false },
+            malformed: "yes",
+          },
           files: ["dist", 42, "README.md"],
         }),
       },
@@ -1104,6 +1110,10 @@ describe("parsePackageJson", () => {
     expect(parsed?.scripts?.preinstall).toBe("node bad.js");
     expect(parsed?.dependencies?.foo).toBe("1.0.0");
     expect(parsed?.devDependencies).toEqual({});
+    expect(parsed?.peerDependenciesMeta).toEqual({
+      host: { optional: true },
+      required: { optional: false },
+    });
     expect(parsed?.files).toEqual(["dist", "README.md"]);
   });
 
@@ -1246,6 +1256,8 @@ describe("rendered sandbox parser source", () => {
     "decodeText",
     "isPlainObject",
     "normalizeStringRecord",
+    "normalizePeerDependenciesMeta",
+    "normalizeStringList",
     "canonicalizePath",
     "hasUnicodeConfusables",
     "isRootGypPath",

@@ -15,6 +15,7 @@ export interface ParsedPackageJson {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   optionalDependencies?: Record<string, string>;
   files?: string[];
   bin?: unknown;
@@ -162,3 +163,6 @@ export function readStreamBounded(
   maxBytes: number,
 ): Promise<Uint8Array>;
 export function parsePackageJson(files: ParsedFile[]): ParsedPackageJson | null;
+export function normalizePeerDependenciesMeta(
+  value: unknown,
+): Record<string, { optional: boolean }>;

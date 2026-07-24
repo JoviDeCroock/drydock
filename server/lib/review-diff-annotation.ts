@@ -66,6 +66,8 @@ function isReleaseScopedFinding(finding: { ruleId?: string | null }): boolean {
     finding.ruleId?.startsWith("vscode.") ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyUnusualSpec ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyOptionalAdded ||
+    finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyAdded ||
+    finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyMajorBump ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffCredentialFileAdded ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffLargeNewFile ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.tarSuspiciousEntry,

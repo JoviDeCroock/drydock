@@ -1,0 +1,90 @@
+{
+  "id": "dependency-added-major-bump",
+  "title": "Release adds a new runtime dependency and crosses a dependency major boundary",
+  "category": "dependency-supply-chain",
+  "intent": "The node-ipc/peacenotwar and event-stream/flatmap-stream shape: the parent release's own files look clean while the payload arrives through a newly added or major-bumped dependency that the scan never inspects.",
+  "coverageGaps": [
+    "the added/bumped dependency's own tarball is not fetched or diffed; the findings direct a reviewer to the dependency's own release diff instead"
+  ],
+  "previousPackageJson": {
+    "name": "dependency-added-major-bump",
+    "version": "9.2.1",
+    "main": "index.js",
+    "dependencies": {
+      "event-pubsub": "4.3.0",
+      "js-message": "1.0.3"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "dependency-added-major-bump",
+    "version": "11.0.0",
+    "main": "index.js",
+    "dependencies": {
+      "event-pubsub": "5.0.0",
+      "js-message": "1.0.3",
+      "peace-banner": "^9.1.3"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 160,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"dependency-added-major-bump\",\"version\":\"9.2.1\",\"main\":\"index.js\",\"dependencies\":{\"event-pubsub\":\"4.3.0\",\"js-message\":\"1.0.3\"}}"
+    },
+    {
+      "path": "index.js",
+      "size": 44,
+      "sha256": "index-v1",
+      "flags": [],
+      "textSample": "module.exports = require('./lib/ipc.js');\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 190,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"dependency-added-major-bump\",\"version\":\"11.0.0\",\"main\":\"index.js\",\"dependencies\":{\"event-pubsub\":\"5.0.0\",\"js-message\":\"1.0.3\",\"peace-banner\":\"^9.1.3\"}}"
+    },
+    {
+      "path": "index.js",
+      "size": 44,
+      "sha256": "index-v1",
+      "flags": [],
+      "textSample": "module.exports = require('./lib/ipc.js');\n"
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedFindings": [
+    {
+      "ruleId": "dependency.added",
+      "severity": "medium",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "dependency.major-bump",
+      "severity": "low",
+      "file": "package.json"
+    }
+  ],
+  "expectedPackageJsonDiff": {
+    "dependencies": [
+      {
+        "key": "event-pubsub",
+        "status": "modified",
+        "previous": "4.3.0",
+        "staged": "5.0.0",
+        "section": "dependencies"
+      },
+      {
+        "key": "peace-banner",
+        "status": "added",
+        "staged": "^9.1.3",
+        "section": "dependencies"
+      }
+    ]
+  }
+}

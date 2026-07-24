@@ -68,13 +68,13 @@ The first corpus slice covers:
 - large opaque binary addition;
 - files that appear in the tarball outside a declared `package.json.files` allowlist;
 - malformed `package.json` parse failure;
-- dependency and entrypoint package-json diff changes; unusual non-registry dependency specs raise deterministic findings, and a newly added `bin` command raises `diff.bin-added` because npm links it onto the consumer's install path;
+- dependency and entrypoint package-json diff changes; unusual non-registry dependency specs raise deterministic findings, a newly added runtime dependency raises `dependency.added` and a spec crossing a major version boundary raises `dependency.major-bump` (the release pulls third-party code the scan never inspects — the node-ipc/peacenotwar and event-stream/flatmap-stream vector), and a newly added `bin` command raises `diff.bin-added` because npm links it onto the consumer's install path;
 
 ## Known coverage gaps
 
 The corpus deliberately records some product gaps instead of hiding them:
 
-- Plain dependency additions are visible in `packageJsonDiff`, but they do not yet raise deterministic findings unless they use unusual specs such as `github:`, `git+ssh:`, `http(s):`, `file:`, or `npm:` aliases. Newly added optional dependencies also raise deterministic findings because they can fail softly while still running install-time lifecycle hooks.
+- Dependency findings stop at the manifest: an added or major-bumped dependency raises a deterministic finding, but the dependency's own tarball is not fetched or diffed, so a payload hidden inside it is only caught if the reviewer follows the finding to that dependency's own release diff. Within-major version bumps and unanchored specs (dist-tags such as `latest`, `*`, bare `>` ranges) raise nothing because they cannot prove a reviewed-range escape without registry resolution.
 - A newly added `bin` command raises `diff.bin-added` (medium), but `main`/`module`/`types`/`exports` retargets are intentionally not flagged: they change on almost every build (`index.js` → `dist/index.js`) and would be noise. They remain visible as the `entrypointsChanged` diff flag.
 - Maintainer/package transfer signals, new publisher signals, package reputation, and OpenSSF/package intelligence integrations are not implemented.
 - Behavior-chain detection is regex-based and does not yet prove source-to-sink intent. The one modeled chain is a heuristic: credential access co-located with a network egress path in the same file escalates to high (the collect-and-exfiltrate shape), without proving the value actually flows from the read to the send.
@@ -101,7 +101,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.17.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.18.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -204,6 +204,47 @@ broad URL pattern; only the finding side (`FINDING_SECRET_PATTERNS`) narrows. On
 provenance signal there (requests alone produced 16 release-delta info findings). Unsafe, absolute,
 or Unicode-confusable directory records remain findings, and the remaining
 non-regular/suspicious-entry reasons use PyPI wording instead of npm's.
+`1.18.0` closes the plain-dependency-addition gap: a newly added runtime or required
+peer dependency with an ordinary registry spec raises `dependency.added` (medium), while a peer
+marked optional through `peerDependenciesMeta` does not because npm will not install it
+automatically. Optionality changes are diffed even when the peer spec stays unchanged: optional to
+required raises `dependency.added`, while a spec change that remains optional stays quiet. A
+modified spec whose resolvable major version changed
+(`4.3.0` → `5.0.0`, `^1` → `^2`) raises `dependency.major-bump` (low), both anchoring the risk roll-up
+like the other metadata rules. Findings resolve one-per-key by precedence
+(unusual-spec > optional-added > added > major-bump), so a dependency listed in both `dependencies`
+and `peerDependencies` — the common pairing — cannot double-flag. The delta rules require a baseline
+manifest, gated on baseline-manifest presence rather than its version string (so a prior release that
+shipped a version-less manifest cannot switch the next release's checks off): a first-ever publish
+diffs every dependency as added, so without a previous release the delta rules stay silent instead of
+flooring every first release at medium, while `dependency.optional-added` and `dependency.unusual-spec`
+still fire because they describe the staged manifest, not the delta (the
+`dependency-first-publish-no-baseline` golden case), except that an unusual spec used only by an
+optional peer stays quiet because npm does not install that peer automatically. A key relocated between installing sections
+(`dependencies` ↔ `optionalDependencies`) with an unchanged spec is treated as already-shipped code
+and raises nothing, but a peer requirement moved into `dependencies` genuinely starts shipping and is a
+real addition. A key newly duplicated into another section is not treated as new when it was already
+installed (for example, adding a peer declaration beside an unchanged runtime dependency); a peer
+that admits a new major still raises `dependency.major-bump`. Because
+an `optionalDependencies` entry overrides a same-named `dependencies` entry, adding such an override
+compares its spec with the previously effective runtime spec and can raise `dependency.major-bump`.
+Major-bump compares the intervals of majors each spec
+admits, matching npm's install of the highest published version: widening `^1.0.0` to
+`^1.0.0 || ^2.0.0`, to the hyphen range `1.0.0 - 2.0.0`, or to a bare `>=1.0.0` (which admits every
+future major) fires, as does a bounded widening to `>=1.0.0 <3.0.0` even when its comparators are
+reordered or the set contains redundant lower bounds; a downgrade such as
+`^2.0.0` → `^1.0.0` fires because 1.x was never in the reviewed intervals. Disjoint unions retain
+their holes, so changing `^1.0.0 || ^3.0.0` to `^2.0.0` also fires. A pure narrowing
+(`>=1.0.0` → `^1.0.0`) stays inside the reviewed intervals and raises nothing, and
+a no-op `|| ` suffix or an unparseable leading branch cannot suppress the comparison. Upper-only
+comparator ranges such as `<=1.9.9` implicitly start at major 0 and participate in the same check.
+An empty spec is treated
+like `*` rather than skipped, and `workspace:`/`catalog:`/`link:`/`portal:` protocols join
+`git:`/`https:`/`file:`/`npm:` as unusual specs (they name no published package). Spec parsing lives in
+`server/lib/dependency-specs.ts`, shared with the UI's dependency diff links: modified rows link
+directly only when both specs are exact registry version keys. Ranges render no direct link because
+their bounds need not have been published; added dependencies use the package-only route that resolves
+a published pair from registry metadata.
 
 ### Fixture format
 

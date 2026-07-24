@@ -65,6 +65,10 @@ export function mergeStagedPackageJson(
     tarballPackageJson?.implicitScripts,
     stagedMetadataPackageJson?.implicitScripts,
   );
+  const peerDependenciesMeta = {
+    ...tarballPackageJson?.peerDependenciesMeta,
+    ...stagedMetadataPackageJson?.peerDependenciesMeta,
+  };
   if (
     stagedMetadataPackageJson?.scripts?.install === "node-gyp rebuild" &&
     stagedMetadataPackageJson.gypfile === true &&
@@ -97,6 +101,7 @@ export function mergeStagedPackageJson(
         stagedMetadataPackageJson?.peerDependencies,
       ),
     ),
+    ...(Object.keys(peerDependenciesMeta).length ? { peerDependenciesMeta } : {}),
     ...optionalRecord(
       "optionalDependencies",
       mergeRecord(

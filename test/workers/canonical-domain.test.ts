@@ -87,6 +87,26 @@ describe("canonical domain routing", () => {
     expect(html).toContain("File-by-file diff of @preact/signals between 1.0.0 and 2.0.0");
   });
 
+  test("serves the diff shell for the package-only /diff/<name> form", async () => {
+    // Added-dependency "view diff" links open /diff/<name> in a new tab; a hard
+    // navigation must get the diff shell, not the homepage prerender.
+    diffAssetRequests.length = 0;
+    const res = await fetchWorker("https://drydock.org/diff/peace-banner", diffAssetEnv);
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(diffAssetRequests).toEqual(["/diff/"]);
+    expect(html).toContain('<div id="app">diff shell</div>');
+  });
+
+  test("serves the diff shell for a scoped package-only /diff/@scope/name form", async () => {
+    diffAssetRequests.length = 0;
+    const res = await fetchWorker("https://drydock.org/diff/@preact/signals", diffAssetEnv);
+
+    expect(res.status).toBe(200);
+    expect(diffAssetRequests).toEqual(["/diff/"]);
+  });
+
   test("keeps server-owned misses as JSON 404s", async () => {
     const res = await fetchWorker("https://drydock.org/webhooks/not-found", assetEnv);
 

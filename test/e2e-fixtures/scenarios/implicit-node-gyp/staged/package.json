@@ -9,5 +9,9 @@
     "README.md"
   ],
   "type": "module",
-  "main": "index.js"
+  "main": "index.js",
+  "dependencies": {
+    "event-pubsub": "5.0.0",
+    "peace-banner": "^9.1.3"
+  }
 }
