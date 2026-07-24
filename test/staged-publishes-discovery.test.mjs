@@ -31,6 +31,7 @@ vi.mock("../server/lib/staged-publishes.ts", () => stagedPublishesMock);
 vi.mock("../server/lib/scan-job.ts", () => scanJobMock);
 
 const {
+  createStageStartCoordinator,
   ensureUsableNpmConnection,
   discoverAndQueueStagedPublishes,
   InvalidNpmConnectionError,
@@ -388,6 +389,138 @@ describe("discoverAndQueueStagedPublishes", () => {
     expect(result).toEqual(
       expect.objectContaining({ found: 3, created: 3, skipped: 0, queued: true }),
     );
+    expect(stagedPublishesMock.checkStagedPublishAccess).toHaveBeenCalledTimes(3);
+    expect(
+      stagedPublishesMock.checkStagedPublishAccess.mock.calls.filter(
+        (call) => call[2] === "stage-page-2",
+      ),
+    ).toHaveLength(1);
+  });
+
+  test("starts queued scans with bounded concurrency", async () => {
+    stagedPublishesMock.listStagedPublishes.mockResolvedValue({
+      items: Array.from({ length: 6 }, (_, index) => ({
+        id: `stage-${index}`,
+        packageName: `pkg-${index}`,
+        version: "1.0.0",
+      })),
+    });
+    dbMock.listExistingScanStageIds.mockResolvedValue(new Set());
+    dbMock.createScanJob.mockResolvedValue({ id: "scan-new" });
+
+    let activeAccessChecks = 0;
+    let maxActiveAccessChecks = 0;
+    const releases = [];
+    stagedPublishesMock.checkStagedPublishAccess.mockImplementation(async () => {
+      activeAccessChecks++;
+      maxActiveAccessChecks = Math.max(maxActiveAccessChecks, activeAccessChecks);
+      await new Promise((resolve) => releases.push(resolve));
+      activeAccessChecks--;
+      return { allowed: true, status: 206, detail: null };
+    });
+
+    const pending = discoverAndQueueStagedPublishes(
+      {
+        db,
+        env,
+        executionCtx: ctx,
+        organizationId: "org_a",
+        actorUserId: "user_a",
+        source: "auto_discovery",
+        eventSource: "staged_publishes.cron",
+      },
+      { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
+    );
+    await flushPromises();
+
+    expect(stagedPublishesMock.checkStagedPublishAccess).toHaveBeenCalledTimes(5);
+    expect(maxActiveAccessChecks).toBe(5);
+
+    releases.shift()?.();
+    await flushPromises();
+    expect(stagedPublishesMock.checkStagedPublishAccess).toHaveBeenCalledTimes(6);
+    expect(maxActiveAccessChecks).toBe(5);
+
+    for (const release of releases) release();
+    const result = await pending;
+
+    expect(result).toEqual(
+      expect.objectContaining({ found: 6, created: 6, skipped: 0, queued: true }),
+    );
+    expect(env.SCAN_QUEUE.send).toHaveBeenCalledTimes(6);
+  });
+
+  test("serializes duplicate stage starts across organizations", async () => {
+    stagedPublishesMock.listStagedPublishes.mockResolvedValue({
+      items: [{ id: "stage-shared", packageName: "pkg-a", version: "1.0.0" }],
+    });
+    dbMock.listExistingScanStageIds.mockResolvedValue(new Set());
+    dbMock.createScanJob.mockResolvedValue({ id: "scan-new" });
+
+    let activeAccessChecks = 0;
+    let maxActiveAccessChecks = 0;
+    const releases = [];
+    stagedPublishesMock.checkStagedPublishAccess.mockImplementation(async () => {
+      activeAccessChecks++;
+      maxActiveAccessChecks = Math.max(maxActiveAccessChecks, activeAccessChecks);
+      await new Promise((resolve) => releases.push(resolve));
+      activeAccessChecks--;
+      return { allowed: true, status: 206, detail: null };
+    });
+
+    const stageStartCoordinator = createStageStartCoordinator();
+    const first = discoverAndQueueStagedPublishes(
+      {
+        db,
+        env,
+        executionCtx: ctx,
+        organizationId: "org_a",
+        actorUserId: "user_a",
+        source: "auto_discovery",
+        eventSource: "staged_publishes.cron",
+        stageStartCoordinator,
+      },
+      { token: "npm_secret_token_a", registryUrl: "https://registry.npmjs.org" },
+    );
+    const second = discoverAndQueueStagedPublishes(
+      {
+        db,
+        env,
+        executionCtx: ctx,
+        organizationId: "org_b",
+        actorUserId: "user_b",
+        source: "auto_discovery",
+        eventSource: "staged_publishes.cron",
+        stageStartCoordinator,
+      },
+      { token: "npm_secret_token_b", registryUrl: "https://registry.npmjs.org" },
+    );
+    await flushPromises();
+
+    expect(stagedPublishesMock.checkStagedPublishAccess).toHaveBeenCalledTimes(1);
+    expect(maxActiveAccessChecks).toBe(1);
+
+    releases.shift()?.();
+    await flushPromises();
+    expect(stagedPublishesMock.checkStagedPublishAccess).toHaveBeenCalledTimes(2);
+    expect(maxActiveAccessChecks).toBe(1);
+
+    for (const release of releases) release();
+    const results = await Promise.all([first, second]);
+
+    expect(results).toEqual([
+      expect.objectContaining({ created: 1, skipped: 0 }),
+      expect.objectContaining({ created: 1, skipped: 0 }),
+    ]);
+    expect(dbMock.createScanJob).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ organizationId: "org_a", stageId: "stage-shared" }),
+    );
+    expect(dbMock.createScanJob).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ organizationId: "org_b", stageId: "stage-shared" }),
+    );
+    expect(env.SCAN_QUEUE.send).toHaveBeenCalledTimes(2);
   });
 
   test("removes the pending scan when queue dispatch fails", async () => {
@@ -477,3 +610,7 @@ describe("discoverAndQueueStagedPublishes", () => {
     );
   });
 });
+
+async function flushPromises() {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+}

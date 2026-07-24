@@ -62,6 +62,8 @@ Workflow gates reuse the scan pipeline when the registry cannot stage a release 
 
 Cron-triggered npm discovery finds staged publishes for organizations with validated npm connections and creates scans using the same pipeline. Token-expiry and validation issues should surface through settings/UI status and redacted observability events.
 
+Within a single org sweep, new staged publishes are started through a bounded-concurrency pool capped at `STAGED_PUBLISH_SCAN_START_CONCURRENCY` (`mapWithConcurrency` in `server/lib/staged-publishes-discovery.ts`) rather than sequentially. Because the same staged publish can be visible to more than one organization, a cron invocation shares a `StageStartCoordinator` across its concurrent org sweeps: matching stage IDs are started one at a time, while each org still gets its own scan row and queue message. Raise the concurrency constant only after measuring CPU time per tick.
+
 ## Data stores
 
 - **D1** — Better Auth tables, organizations, npm connections, scans, scan files/findings, workflow gates, release targets, summaries, and audit/event metadata. D1 remains the operational source of truth.
