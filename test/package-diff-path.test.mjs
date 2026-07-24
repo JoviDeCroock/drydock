@@ -188,13 +188,18 @@ describe("dependencyDiffHref", () => {
     }
   });
 
-  test("rejects invalid leading-zero exact versions", () => {
+  test("rejects invalid exact versions", () => {
     expect(
       dependencyDiffHref({ key: "dep", status: "modified", previous: "1.0.0", staged: "=01.0.0" }),
     ).toBeNull();
     expect(
       dependencyDiffHref({ key: "dep", status: "modified", previous: "01.0.0", staged: "2.0.0" }),
     ).toBeNull();
+    for (const staged of ["1.0.0-01", "1.0.0-alpha..1", "1.0.0+build..1"]) {
+      expect(
+        dependencyDiffHref({ key: "dep", status: "modified", previous: "1.0.0", staged }),
+      ).toBeNull();
+    }
   });
 
   test("removed dependencies get no link", () => {

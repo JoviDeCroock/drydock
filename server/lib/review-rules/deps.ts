@@ -88,6 +88,7 @@ function keyFinding(
   // medium added finding.
   for (const entry of sorted) {
     if (entry.staged === undefined) continue;
+    if (entry.section === "peerDependencies" && entry.stagedPeerOptional) continue;
     const kind = unusualDependencySpecKind(entry.staged);
     if (!kind) continue;
     return tag("dependencyUnusualSpec", {

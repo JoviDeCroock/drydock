@@ -217,7 +217,8 @@ shipped a version-less manifest cannot switch the next release's checks off): a 
 diffs every dependency as added, so without a previous release the delta rules stay silent instead of
 flooring every first release at medium, while `dependency.optional-added` and `dependency.unusual-spec`
 still fire because they describe the staged manifest, not the delta (the
-`dependency-first-publish-no-baseline` golden case). A key relocated between installing sections
+`dependency-first-publish-no-baseline` golden case), except that an unusual spec used only by an
+optional peer stays quiet because npm does not install that peer automatically. A key relocated between installing sections
 (`dependencies` ↔ `optionalDependencies`) with an unchanged spec is treated as already-shipped code
 and raises nothing, but a peer requirement moved into `dependencies` genuinely starts shipping and is a
 real addition. A key newly duplicated into another section is not treated as new when it was already
@@ -228,7 +229,7 @@ Major-bump compares the intervals of majors each spec
 admits, matching npm's install of the highest published version: widening `^1.0.0` to
 `^1.0.0 || ^2.0.0`, to the hyphen range `1.0.0 - 2.0.0`, or to a bare `>=1.0.0` (which admits every
 future major) fires, as does a bounded widening to `>=1.0.0 <3.0.0` even when its comparators are
-reordered; a downgrade such as
+reordered or the set contains redundant lower bounds; a downgrade such as
 `^2.0.0` → `^1.0.0` fires because 1.x was never in the reviewed intervals. Disjoint unions retain
 their holes, so changing `^1.0.0 || ^3.0.0` to `^2.0.0` also fires. A pure narrowing
 (`>=1.0.0` → `^1.0.0`) stays inside the reviewed intervals and raises nothing, and

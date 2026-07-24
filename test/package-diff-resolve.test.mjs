@@ -24,15 +24,18 @@ describe("resolveSuggestedDiffPath", () => {
       suggested: { from: "1.0.0", to: "1.1.0" },
     });
 
-    await expect(resolveSuggestedDiffPath("resolve-ok")).resolves.toEqual({
+    await expect(resolveSuggestedDiffPath("npm", "resolve-ok")).resolves.toEqual({
       path: "/diff/@scope/dep/1.0.0/1.1.0",
     });
+    expect(apiFetch).toHaveBeenCalledWith(
+      "/api/public/v1/package-diff/versions?package=resolve-ok",
+    );
   });
 
   test("reports when the package has no diffable pair", async () => {
     apiFetch.mockResolvedValueOnce({ packageName: "solo", versions: [], suggested: null });
 
-    await expect(resolveSuggestedDiffPath("resolve-solo")).resolves.toEqual({
+    await expect(resolveSuggestedDiffPath("npm", "resolve-solo")).resolves.toEqual({
       error: "This package needs at least two published versions to diff.",
     });
   });
@@ -40,7 +43,7 @@ describe("resolveSuggestedDiffPath", () => {
   test("surfaces fetch failures as the error branch", async () => {
     apiFetch.mockRejectedValueOnce(new Error("package not found"));
 
-    await expect(resolveSuggestedDiffPath("resolve-missing")).resolves.toEqual({
+    await expect(resolveSuggestedDiffPath("npm", "resolve-missing")).resolves.toEqual({
       error: "package not found",
     });
   });
@@ -54,8 +57,8 @@ describe("getPublicDiffVersions cache", () => {
       suggested: { from: "1.0.0", to: "2.0.0" },
     });
 
-    await getPublicDiffVersions("cache-hit");
-    await getPublicDiffVersions("cache-hit");
+    await getPublicDiffVersions("npm", "cache-hit");
+    await getPublicDiffVersions("npm", "cache-hit");
 
     expect(apiFetch).toHaveBeenCalledTimes(1);
   });
@@ -71,10 +74,10 @@ describe("getPublicDiffVersions cache", () => {
         suggested: { from: "1.0.0", to: "1.1.0" },
       });
 
-    await expect(getPublicDiffVersions("cache-pending")).resolves.toMatchObject({
+    await expect(getPublicDiffVersions("npm", "cache-pending")).resolves.toMatchObject({
       suggested: null,
     });
-    await expect(getPublicDiffVersions("cache-pending")).resolves.toMatchObject({
+    await expect(getPublicDiffVersions("npm", "cache-pending")).resolves.toMatchObject({
       suggested: { from: "1.0.0", to: "1.1.0" },
     });
     expect(apiFetch).toHaveBeenCalledTimes(2);
@@ -87,8 +90,8 @@ describe("getPublicDiffVersions cache", () => {
       suggested: { from: "1.0.0", to: "2.0.0" },
     });
 
-    await expect(getPublicDiffVersions("cache-retry")).rejects.toThrow("registry hiccup");
-    await expect(getPublicDiffVersions("cache-retry")).resolves.toMatchObject({
+    await expect(getPublicDiffVersions("npm", "cache-retry")).rejects.toThrow("registry hiccup");
+    await expect(getPublicDiffVersions("npm", "cache-retry")).resolves.toMatchObject({
       packageName: "flaky",
     });
     expect(apiFetch).toHaveBeenCalledTimes(2);

@@ -54,13 +54,13 @@ function branchMajorRange(branch: string): MajorRange | null {
   if (hyphen.length === 2) {
     const low = branchFloor(hyphen[0]);
     const high = branchFloor(hyphen[1]);
-    return low && high ? { min: low.parts[0], max: high.parts[0] } : null;
+    return low && high ? { min: low.min, max: high.min } : null;
   }
 
   const floor = branchFloor(branch);
   if (!floor) return null;
-  const min = floor.parts[0];
-  let max = floor.extendsToHigherMajors ? Infinity : min;
+  const min = floor.min;
+  let max = floor.max;
   for (const upper of branch.matchAll(/<(=)?\s*v?(\d+)(?:\.(\d+|x|\*))?(?:\.(\d+|x|\*))?/gi)) {
     const major = Number.parseInt(upper[2], 10);
     const minor = numericPart(upper[3]);
@@ -94,28 +94,41 @@ export function exactDependencyVersion(spec: string | undefined): string | null 
   if (!spec || unusualDependencySpecKind(spec)) return null;
   const match = spec
     .trim()
-    .match(/^(?:=\s*)?v?(\d+)\.(\d+)\.(\d+)((?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/);
+    .match(
+      /^(?:=\s*)?v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/,
+    );
   if (!match) return null;
-  const [, major, minor, patch, suffix] = match;
+  const [, major, minor, patch, prerelease, build] = match;
   if ([major, minor, patch].some((part) => part.length > 1 && part.startsWith("0"))) return null;
-  return `${major}.${minor}.${patch}${suffix}`;
+  if (
+    prerelease
+      ?.split(".")
+      .some((part) => /^\d+$/.test(part) && part.length > 1 && part.startsWith("0"))
+  ) {
+    return null;
+  }
+  return `${major}.${minor}.${patch}${prerelease ? `-${prerelease}` : ""}${build ? `+${build}` : ""}`;
 }
 
 interface BranchFloor {
-  parts: [number, number, number];
-  extendsToHigherMajors: boolean;
+  min: number;
+  max: number;
 }
 
 function branchFloor(branch: string): BranchFloor | null {
-  const match = branch.match(
-    /(?:^|\s)([~^=]|>=)?\s*v?(\d+)(?:\.(\d+|x|\*))?(?:\.(\d+|x|\*))?([-+][0-9A-Za-z.+-]+)?(?=$|\s)/,
-  );
-  if (!match) return null;
-  const [, operator, major, minor, patch] = match;
-  return {
-    parts: [Number.parseInt(major, 10), numericPart(minor), numericPart(patch)],
-    extendsToHigherMajors: operator === ">=",
-  };
+  let found = false;
+  let min = 0;
+  let max = Infinity;
+  for (const match of branch.matchAll(
+    /(?:^|\s)([~^=]|>=)?\s*v?(\d+)(?:\.(\d+|x|\*))?(?:\.(\d+|x|\*))?([-+][0-9A-Za-z.+-]+)?(?=$|\s)/g,
+  )) {
+    found = true;
+    const [, operator, major] = match;
+    const candidate = Number.parseInt(major, 10);
+    min = Math.max(min, candidate);
+    if (operator !== ">=") max = Math.min(max, candidate);
+  }
+  return found ? { min, max } : null;
 }
 
 function numericPart(value: string | undefined): number {

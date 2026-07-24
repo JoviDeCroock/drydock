@@ -1519,6 +1519,17 @@ describe("review", () => {
       },
     ]);
     expect(packageJsonDiffFindings(optionalPeer)).toEqual([]);
+
+    const optionalGitPeer = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0" },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        peerDependencies: { dep: "git+https://example.invalid/dep.git" },
+        peerDependenciesMeta: { dep: { optional: true } },
+      },
+    );
+    expect(packageJsonDiffFindings(optionalGitPeer)).toEqual([]);
   });
 
   test("gates delta rules on baseline-manifest presence, not its version string", () => {
@@ -1622,6 +1633,17 @@ describe("review", () => {
       { name: "pkg", version: "1.0.1", dependencies: { dep: "<3.0.0 >=1.0.0" } },
     );
     expect(packageJsonDiffFindings(reorderedComparators)).toEqual([
+      expect.objectContaining({ ruleId: "dependency.major-bump" }),
+    ]);
+
+    // Comparator-set intersections use the strongest lower bound. The previous
+    // range admits only 2.x, so moving to 1.x is a downgrade even though an
+    // earlier redundant comparator mentioned 1.x.
+    const strongestLowerBound = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", dependencies: { dep: ">=1 >=2 <3" } },
+      { name: "pkg", version: "1.0.1", dependencies: { dep: "^1.0.0" } },
+    );
+    expect(packageJsonDiffFindings(strongestLowerBound)).toEqual([
       expect.objectContaining({ ruleId: "dependency.major-bump" }),
     ]);
 
