@@ -85,12 +85,16 @@ const PUBLIC_DIFF_RISK_VERSION = "1";
 // v4: two-tier sandbox entry cap — big archives now parse with hash-only
 // tails, and payloads carry acquisition notices; cached v3 pairs would
 // misrepresent both.
+// PyPI v5: pairs now have a request-wide selected-byte budget, which can omit
+// one artifact kind with a notice instead of exhausting the Worker. npm stays
+// on v4 so this PyPI-only change does not invalidate its computed cache.
 function publicDiffCachePrefix(ecosystem: PublicDiffEcosystem): string {
   const rules =
     ecosystem === "pypi"
       ? `${DETERMINISTIC_RULES_VERSION}+pypi-${PYPI_RULES_VERSION}`
       : DETERMINISTIC_RULES_VERSION;
-  return `public-diff:v4:${ecosystem}:rules=${rules}:risk=${PUBLIC_DIFF_RISK_VERSION}:`;
+  const payloadVersion = ecosystem === "pypi" ? "v5" : "v4";
+  return `public-diff:${payloadVersion}:${ecosystem}:rules=${rules}:risk=${PUBLIC_DIFF_RISK_VERSION}:`;
 }
 // Package bytes are immutable, while the analysis version is encoded above.
 // The TTL therefore bounds storage rather than correctness.

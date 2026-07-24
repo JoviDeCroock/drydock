@@ -7,6 +7,7 @@ import type {
 import { PublicDiffError } from "../../server/lib/public-diff-error";
 import {
   buildPublicPyPiDiffSources,
+  limitPublicPyPiDiffArtifacts,
   listPublicPyPiVersions,
   resolvePublicPyPiDownloads,
   selectPublicPyPiDiffArtifacts,
@@ -108,6 +109,43 @@ describe("selectPublicPyPiDiffArtifacts", () => {
       "demo_pkg-1.1.0.tar.gz",
       "demo_pkg-1.1.0-py3-none-any.whl",
     ]);
+  });
+
+  test("keeps only the cheaper comparable artifact pair when the request-wide budget is exceeded", () => {
+    const selected = selectPublicPyPiDiffArtifacts(metadata, "1.0.0", "1.1.0");
+    const mib = 1024 * 1024;
+    const sized = {
+      from: selected.from.map((artifact) => ({
+        ...artifact,
+        size: (artifact.kind === "sdist" ? 40 : 10) * mib,
+      })),
+      to: selected.to.map((artifact) => ({
+        ...artifact,
+        size: (artifact.kind === "sdist" ? 40 : 10) * mib,
+      })),
+    };
+
+    const planned = limitPublicPyPiDiffArtifacts(sized, 30 * mib);
+
+    expect(planned.from.map((artifact) => artifact.kind)).toEqual(["wheel"]);
+    expect(planned.to.map((artifact) => artifact.kind)).toEqual(["wheel"]);
+    expect([...planned.omittedKinds]).toEqual(["sdist"]);
+    expect(planned.notices).toEqual([
+      "The source distribution (sdist) was omitted from both sides to keep selected artifact downloads within the 30 MiB public diff limit.",
+    ]);
+  });
+
+  test("rejects before download when no comparable artifact pair fits the budget", () => {
+    const selected = selectPublicPyPiDiffArtifacts(metadata, "1.0.0", "1.1.0");
+    const mib = 1024 * 1024;
+    const sized = {
+      from: selected.from.map((artifact) => ({ ...artifact, size: 40 * mib })),
+      to: selected.to.map((artifact) => ({ ...artifact, size: 40 * mib })),
+    };
+
+    expect(() => limitPublicPyPiDiffArtifacts(sized, 30 * mib)).toThrowError(
+      "selected PyPI artifacts exceed the public diff size limit",
+    );
   });
 
   test("404s for unknown versions and versions without allowed artifacts", () => {
