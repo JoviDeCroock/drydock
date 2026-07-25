@@ -605,6 +605,9 @@ export function DiffView({
   const binary = hasFlag(before, "binary") || hasFlag(after, "binary");
   const contentSkipped = hasFlag(before, "content-skipped") || hasFlag(after, "content-skipped");
   const truncated = hasFlag(before, "truncated") || hasFlag(after, "truncated");
+  // SAMPLE_OMITTED_FLAG in server/lib/public-diff.ts: the parser did capture a
+  // body, but it did not fit the public diff's cached sample budget.
+  const sampleOmitted = hasFlag(before, "sample-omitted") || hasFlag(after, "sample-omitted");
   const native = nativeBadge(after) ?? nativeBadge(before);
   const showDiffOptions = !binary && !contentSkipped && Boolean(beforeSample && afterSample);
   const hashLines = diffHashLines(before, after, beforeLabel, afterLabel);
@@ -623,6 +626,7 @@ export function DiffView({
           {truncated ? <Badge tone="neutral">truncated</Badge> : null}
           {binary ? <Badge tone="neutral">binary</Badge> : null}
           {contentSkipped ? <Badge tone="neutral">content skipped</Badge> : null}
+          {sampleOmitted ? <Badge tone="neutral">sample omitted</Badge> : null}
           {native ? <Badge tone="neutral">{native}</Badge> : null}
         </div>
         {showDiffOptions ? (
@@ -652,6 +656,7 @@ export function DiffView({
         afterSample={afterSample}
         binary={binary}
         contentSkipped={contentSkipped}
+        sampleOmitted={sampleOmitted}
         beforeLabel={beforeLabel}
         afterLabel={afterLabel}
         findings={findings}
@@ -720,6 +725,7 @@ function DiffBody({
   afterSample,
   binary,
   contentSkipped,
+  sampleOmitted,
   beforeLabel,
   afterLabel,
   findings,
@@ -732,6 +738,7 @@ function DiffBody({
   afterSample: string;
   binary: boolean;
   contentSkipped: boolean;
+  sampleOmitted: boolean;
   beforeLabel: string;
   afterLabel: string;
   findings: DiffFinding[];
@@ -754,6 +761,18 @@ function DiffBody({
     return (
       <DiffMessage findings={findings}>
         File content was not retained. No text diff available.
+      </DiffMessage>
+    );
+  }
+
+  // Distinct from the cases above: the body was read and scanned, it just did
+  // not fit the cached sample budget for this release pair. Say so, rather than
+  // implying nothing was ever inspected.
+  if (sampleOmitted && !beforeSample && !afterSample) {
+    return (
+      <DiffMessage findings={findings}>
+        Text sample not cached for this file. This release pair exceeds the sample budget, which
+        keeps changed files first.
       </DiffMessage>
     );
   }
