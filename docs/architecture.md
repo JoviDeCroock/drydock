@@ -62,6 +62,8 @@ Workflow gates reuse the scan pipeline when the registry cannot stage a release 
 
 Cron-triggered npm discovery finds staged publishes for organizations with validated npm connections and creates scans using the same pipeline. Token-expiry and validation issues should surface through settings/UI status and redacted observability events.
 
+A per-org sweep failure is logged as `staged_publishes.cron.org_failed` with a `transient` field. Registry transport failures (status `0` — timeout, DNS, TLS) and 408/429/5xx responses are classified transient by `isTransientSweepFailure` and logged at **warn**: `reliableFetch` has already retried, discovery is idempotent, and the next 15-minute tick re-sweeps the org, so the cost is at most one cycle of detection latency. Everything else — unexpected statuses, D1 failures, bugs in the sweep — stays at **error**. Expired tokens never reach this log; they take the `recordExpiredNpmConnection` path instead. Repeated transient failures for one org are deliberately not escalated here; that would need failure counting across ticks.
+
 Within a single org sweep, new staged publishes are started through a bounded-concurrency pool capped at `STAGED_PUBLISH_SCAN_START_CONCURRENCY` (`mapWithConcurrency` in `server/lib/staged-publishes-discovery.ts`) rather than sequentially. Because the same staged publish can be visible to more than one organization, a cron invocation shares a `StageStartCoordinator` across its concurrent org sweeps: matching stage IDs are started one at a time, while each org still gets its own scan row and queue message. Raise the concurrency constant only after measuring CPU time per tick.
 
 ## Data stores

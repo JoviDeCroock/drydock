@@ -245,6 +245,7 @@ describe("staged publishes discovery cron", () => {
     vi.stubGlobal("fetch", fetchMock);
     vi.spyOn(console, "log").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const send = vi.fn(async () => undefined);
     const ctx = createExecutionContext();
@@ -255,15 +256,21 @@ describe("staged publishes discovery cron", () => {
     );
     await waitOnExecutionContext(ctx);
 
-    const failureCall = errorSpy.mock.calls.find(
+    // Upstream weather is warn-level: the error channel is reserved for
+    // failures an operator can act on.
+    const failureCall = warnSpy.mock.calls.find(
       (call) => call[0] === "staged_publishes.cron.org_failed",
     );
     expect(failureCall).toBeDefined();
     expect(failureCall![1]).toMatchObject({
       event: "staged_publishes.cron.org_failed",
       organizationId: org.organizationId,
+      transient: true,
       error: { status: 500 },
     });
+    expect(
+      errorSpy.mock.calls.find((call) => call[0] === "staged_publishes.cron.org_failed"),
+    ).toBeUndefined();
 
     const connection = await getNpmConnection(createDb(env.DB), org.organizationId);
     expect(connection?.validationStatus).toBe("valid");
@@ -271,6 +278,81 @@ describe("staged publishes discovery cron", () => {
     expect(await eventTypesForOrg(org.organizationId)).not.toContain(
       "npm_connection.token_expired",
     );
+  });
+
+  test("logs a staged-list fetch timeout as a transient warning", async () => {
+    // The production case: registry.npmjs.org never answers `/-/stage`, so
+    // reliableFetch aborts every attempt and the sweep sees status 0. The next
+    // tick re-sweeps the org, so this must not page anyone.
+    const org = await seedOrg({
+      index: 0,
+      token: "npm_valid_aaaaaaaaaaaa",
+      validationStatus: "valid",
+    });
+
+    const fetchMock = vi.fn(async () => {
+      throw new Error("fetch timeout");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const ctx = createExecutionContext();
+    await worker.scheduled(scheduledController(), env as Cloudflare.Env, ctx);
+    await waitOnExecutionContext(ctx);
+
+    const failureCall = warnSpy.mock.calls.find(
+      (call) => call[0] === "staged_publishes.cron.org_failed",
+    );
+    expect(failureCall).toBeDefined();
+    expect(failureCall![1]).toMatchObject({
+      organizationId: org.organizationId,
+      transient: true,
+      error: { status: 0, detail: "fetch timeout" },
+    });
+    expect(
+      errorSpy.mock.calls.find((call) => call[0] === "staged_publishes.cron.org_failed"),
+    ).toBeUndefined();
+
+    // Still eligible for the next sweep.
+    const connection = await getNpmConnection(createDb(env.DB), org.organizationId);
+    expect(connection?.validationStatus).toBe("valid");
+  });
+
+  test("keeps a non-transient sweep failure at error level", async () => {
+    // A 404 on `/-/stage` is not upstream weather — the endpoint the sweep
+    // depends on is gone or the registry URL is wrong. That stays actionable.
+    const org = await seedOrg({
+      index: 0,
+      token: "npm_valid_aaaaaaaaaaaa",
+      validationStatus: "valid",
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("not found", { status: 404 })),
+    );
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const ctx = createExecutionContext();
+    await worker.scheduled(scheduledController(), env as Cloudflare.Env, ctx);
+    await waitOnExecutionContext(ctx);
+
+    const failureCall = errorSpy.mock.calls.find(
+      (call) => call[0] === "staged_publishes.cron.org_failed",
+    );
+    expect(failureCall).toBeDefined();
+    expect(failureCall![1]).toMatchObject({
+      organizationId: org.organizationId,
+      transient: false,
+      error: { status: 404 },
+    });
+    expect(
+      warnSpy.mock.calls.find((call) => call[0] === "staged_publishes.cron.org_failed"),
+    ).toBeUndefined();
   });
 
   test("dispatches an auto-discovery email for the valid org", async () => {

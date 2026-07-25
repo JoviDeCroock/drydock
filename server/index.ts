@@ -33,6 +33,7 @@ import {
   discoverAndQueueStagedPublishes,
   ensureUsableNpmConnection,
   isNpmConnectionAuthFailure,
+  isTransientSweepFailure,
   recordExpiredNpmConnection,
   StagedPublishesFetchError,
 } from "./lib/staged-publishes-discovery";
@@ -402,8 +403,14 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
           err instanceof StagedPublishesFetchError
             ? { status: err.status, detail: err.detail }
             : describeOperationalError(err);
-        emitOperationalEvent("error", "staged_publishes.cron.org_failed", {
+        // Registry timeouts and 5xx are upstream weather, not a broken sweep;
+        // logging them at error made every npm hiccup indistinguishable from a
+        // real failure. `transient` is emitted either way so a query can select
+        // on the field rather than on the level.
+        const transient = isTransientSweepFailure(err);
+        emitOperationalEvent(transient ? "warn" : "error", "staged_publishes.cron.org_failed", {
           organizationId: connection.organizationId,
+          transient,
           error: detail,
         });
       }

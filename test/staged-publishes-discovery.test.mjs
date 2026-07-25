@@ -36,6 +36,7 @@ const {
   discoverAndQueueStagedPublishes,
   InvalidNpmConnectionError,
   isNpmConnectionAuthFailure,
+  isTransientSweepFailure,
 } = await import("../server/lib/staged-publishes-discovery.ts");
 
 const env = { DB: {}, SCAN_QUEUE: { send: vi.fn() } };
@@ -608,6 +609,37 @@ describe("discoverAndQueueStagedPublishes", () => {
     expect(env.SCAN_QUEUE.send).toHaveBeenCalledWith(
       expect.objectContaining({ stageId: "stage-new" }),
     );
+  });
+});
+
+describe("isTransientSweepFailure", () => {
+  function fetchError(status) {
+    const err = new stagedPublishesMock.StagedPublishesFetchError();
+    err.status = status;
+    return err;
+  }
+
+  test("classifies transport and registry-side failures as transient", () => {
+    // 0 is the reliableFetch abort (timeout/DNS/TLS); the rest are the registry
+    // declining to serve after retries.
+    for (const status of [0, 408, 429, 500, 502, 503, 504]) {
+      expect(isTransientSweepFailure(fetchError(status))).toBe(true);
+    }
+  });
+
+  test("keeps auth and client-side statuses actionable", () => {
+    // 401/403 never reach the generic failure log (they take the expired-token
+    // path), but classification must not quietly downgrade them if they do.
+    for (const status of [400, 401, 403, 404, 410, 422]) {
+      expect(isTransientSweepFailure(fetchError(status))).toBe(false);
+    }
+  });
+
+  test("treats non-fetch failures as actionable", () => {
+    // A D1 error or a bug in the sweep is ours to fix, not upstream weather.
+    expect(isTransientSweepFailure(new Error("D1_ERROR"))).toBe(false);
+    expect(isTransientSweepFailure(new InvalidNpmConnectionError("org_a"))).toBe(false);
+    expect(isTransientSweepFailure(null)).toBe(false);
   });
 });
 
