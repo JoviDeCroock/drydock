@@ -21,6 +21,12 @@
 	"ai": {
 		"binding": "AI"
 	},
+	"analytics_engine_datasets": [
+		{
+			"binding": "PRODUCT_ANALYTICS",
+			"dataset": "drydock_product_events"
+		}
+	],
 	"flagship": [
 		{
 			"binding": "FLAGS",

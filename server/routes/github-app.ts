@@ -576,6 +576,7 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
       reason: comment || null,
     },
     scanArtifactReadBucket(c.env),
+    c.env,
   );
   if (!decidedPackage) {
     const current = await getGateForOrganization(db, organizationId, gateId);

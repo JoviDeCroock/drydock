@@ -4,6 +4,7 @@ import { enforceRateLimit, RateLimitError } from "../db/rate-limit";
 import { getPublicDiffAdapter } from "../lib/ecosystems";
 import { PUBLIC_NPM_REGISTRY } from "../lib/ecosystems/npm/public-diff";
 import { rateLimitResponse } from "../lib/platform/http";
+import { recordProductEvent } from "../lib/platform/analytics";
 import {
   computePublicDiffCacheKey,
   loadPublicPackageDiff,
@@ -111,7 +112,11 @@ function publicDiffErrorResponse(c: PublicDiffContext, err: unknown): Response {
 
 async function loadRequestedDiff(
   c: PublicDiffContext,
-  options: { limitColdComputation?: boolean } = {},
+  // `countView` is off for the `/file` route. Both routes funnel through here,
+  // and `/file` is called once per file the visitor opens — counting it would
+  // report one page view as thirty, and skew the cache column toward `hit`
+  // because only the first request can miss.
+  options: { limitColdComputation?: boolean; countView?: boolean } = {},
 ): Promise<{ payload: PublicPackageDiff } | { error: Response }> {
   const adapter = requestedEcosystem(c);
   if (adapter instanceof Response) return { error: adapter };
@@ -133,21 +138,51 @@ async function loadRequestedDiff(
     registryUrl: adapter.registryUrl,
   };
 
+  const startedAtMs = Date.now();
+  let cacheHit: boolean | null = null;
   try {
     if (options.limitColdComputation) {
       const cacheKey = await computePublicDiffCacheKey(input);
       const cached = await readPublicDiffCache(c.env, cacheKey);
-      if (cached) return { payload: cached };
+      if (cached) {
+        if (options.countView) recordPublicDiffView(c, cached, true, startedAtMs);
+        return { payload: cached };
+      }
 
       const limited = await enforcePublicRateLimit(c, "fetch", 10);
       if (limited) return { error: limited };
     }
 
-    const payload = await loadPublicPackageDiff(c.env, c.executionCtx, input);
+    const payload = await loadPublicPackageDiff(c.env, c.executionCtx, input, {
+      onCacheOutcome: (hit) => {
+        cacheHit = hit;
+      },
+    });
+    if (options.countView) recordPublicDiffView(c, payload, cacheHit, startedAtMs);
     return { payload };
   } catch (err) {
     return { error: publicDiffErrorResponse(c, err) };
   }
+}
+
+// The growth loop's only measurement. Anonymous by construction: the package
+// name is already public in the request URL, the cache key, and the page's own
+// Open Graph metadata, and nothing about the visitor is recorded — no IP, no
+// user agent, no session, no cookie. See server/lib/platform/analytics.ts.
+function recordPublicDiffView(
+  c: PublicDiffContext,
+  payload: PublicPackageDiff,
+  cacheHit: boolean | null,
+  startedAtMs: number,
+): void {
+  recordProductEvent(c.env, {
+    name: "public_diff.viewed",
+    ecosystem: payload.ecosystem,
+    packageName: payload.packageName,
+    cache: cacheHit === null ? "unknown" : cacheHit ? "hit" : "miss",
+    risk: payload.risk?.artifactRisk ?? "unknown",
+    durationMs: Math.max(0, Date.now() - startedAtMs),
+  });
 }
 
 publicDiffRoutes.get("/versions", async (c) => {
@@ -203,7 +238,8 @@ function publicDiffCacheTag(ecosystem: string, packageName: string): string {
 publicDiffRoutes.get("/", async (c) => {
   const limited = await enforcePublicRateLimit(c, "fetch", 10);
   if (limited) return limited;
-  const loaded = await loadRequestedDiff(c);
+  // The version-pair route is the page view; `/file` below is not.
+  const loaded = await loadRequestedDiff(c, { countView: true });
   if ("error" in loaded) return loaded.error;
   const { payload } = loaded;
 

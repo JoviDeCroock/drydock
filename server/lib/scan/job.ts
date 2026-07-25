@@ -17,6 +17,7 @@ import {
 import { runScanPipeline } from "./pipeline";
 import { sandboxErrorDetail } from "../sandbox";
 import type { ScanInput } from "../../types";
+import { recordProductEvent } from "../platform/analytics";
 
 export interface ScanQueueMessage extends ScanInput {
   scanId: string;
@@ -101,6 +102,7 @@ export async function executeScanJob(
         stageId: message.stageId,
         maxFiles: message.maxFiles,
         organizationId: message.organizationId,
+        source: message.source ?? "manual",
       },
     );
     emitOperationalEvent("info", "scan.job.completed", {
@@ -146,6 +148,16 @@ export async function executeScanJob(
         });
       } else {
         await markScanFailed(db, message.scanId, message.organizationId, safe);
+        // Counted only on a terminal failure, so a scan that succeeds on retry
+        // is not filed as a failure in the aggregate.
+        recordProductEvent(env, {
+          name: "scan.failed",
+          organizationId: message.organizationId,
+          ecosystem: "npm",
+          source: message.source ?? "manual",
+          code: safe.code,
+          durationMs: durationMsSince(startedAtMs),
+        });
         emitOperationalEvent("error", "scan.job.failed", {
           scanId: message.scanId,
           organizationId: message.organizationId,

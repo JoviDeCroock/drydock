@@ -56,6 +56,7 @@ import {
   checkStagedPublishAccess,
   fetchStagedPublishDetails,
 } from "../lib/ecosystems/npm/staged-publishes";
+import { recordProductEvent } from "../lib/platform/analytics";
 import type { Bindings, ScanInput, Variables } from "../types";
 
 export const scansRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -128,6 +129,16 @@ scansRoutes.post("/", async (c) => {
       organizationId,
       actorUserId: session.userId,
     };
+
+    // Counted at creation, not completion, so the queued → completed drop-off
+    // is visible: a scan that never reaches a terminal state emits neither
+    // `scan.completed` nor `scan.failed` and would otherwise vanish.
+    recordProductEvent(c.env, {
+      name: "scan.queued",
+      organizationId,
+      ecosystem: "npm",
+      source: message.source ?? "manual",
+    });
 
     if (c.env.SCAN_QUEUE) {
       await c.env.SCAN_QUEUE.send(message);
@@ -258,6 +269,7 @@ scansRoutes.post("/:id/decision", async (c) => {
       reason,
     },
     scanArtifactReadBucket(c.env),
+    c.env,
   );
 
   if (!updated) {

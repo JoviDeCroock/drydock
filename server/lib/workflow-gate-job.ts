@@ -25,6 +25,7 @@ import {
   durationMsSince,
   emitOperationalEvent,
 } from "./platform/observability";
+import { recordProductEvent } from "./platform/analytics";
 import {
   type PreparedGatePackage,
   type PreparedGateRelease,
@@ -457,7 +458,10 @@ async function reviewGatePackages(
       const result = await runScanPipeline(
         { env, executionCtx, db, session: { userId: ownerUserId } },
         packageAdapter,
-        { scanId, stageId, organizationId, ...candidate.pipelineInput },
+        // `source` matches the `workflow_gate` value the D1 row already
+        // carries; without it the product counter files every gated scan as
+        // "unknown" and the npm/gate split is unreadable.
+        { scanId, stageId, organizationId, source: "workflow_gate", ...candidate.pipelineInput },
       );
       return {
         scanId,
@@ -467,7 +471,20 @@ async function reviewGatePackages(
         baselineComparisonSkipped: Boolean(result.baseline.comparisonSkipped),
       };
     } catch (err) {
-      await markScanFailed(db, scanId, organizationId, classifyScanError(err));
+      const safe = classifyScanError(err);
+      await markScanFailed(db, scanId, organizationId, safe);
+      // `scan.failed` otherwise only fires on the npm queue path, so gated
+      // failures went uncounted while gated *completions* were counted — which
+      // biases the derived failure rate low for exactly the ecosystems that
+      // only release through a gate.
+      recordProductEvent(env, {
+        name: "scan.failed",
+        organizationId,
+        ecosystem: packageAdapter.id,
+        source: "workflow_gate",
+        code: safe.code,
+        durationMs: 0,
+      });
       throw err;
     }
   });
