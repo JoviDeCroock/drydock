@@ -132,4 +132,24 @@ export interface WorkflowGateAdapter {
    * shared runner fail-closes the deployment.
    */
   prepareReleaseCandidates(artifacts: ParsedGateArtifact[]): PreparedReleaseCandidate[];
+
+  /**
+   * Optional narrowing pass over one artifact, immediately after the shared
+   * router parsed it and before the bundle's bytes are discarded.
+   *
+   * Exists for ecosystems whose releases fan out into many near-identical
+   * artifacts: a PyPI release can ship dozens of platform wheels that repeat the
+   * same pure-Python sources, so PyPI collapses duplicate text samples here
+   * (`retainedSamples` is shared across the whole bundle, keyed per adapter, so
+   * one logical file's body is retained once). Paths, hashes, sizes, and flags
+   * stay per artifact, so a divergent platform wheel remains independently
+   * visible.
+   *
+   * Ecosystems that upload one artifact per package omit this and the shared
+   * runner passes the parsed artifact through unchanged.
+   */
+  narrowParsedArtifact?(
+    artifact: ParsedGateArtifact,
+    retainedSamples: Map<string, string>,
+  ): ParsedGateArtifact;
 }

@@ -15,6 +15,11 @@ export const ECOSYSTEM_LABELS = {
 
 export type EcosystemId = keyof typeof ECOSYSTEM_LABELS;
 
+/** Narrow an arbitrary string to a known ecosystem id. */
+export function isEcosystemId(id: string): id is EcosystemId {
+  return id in ECOSYSTEM_LABELS;
+}
+
 /** Label for an ecosystem id, falling back to the id itself if unrecognized. */
 export function ecosystemLabel(id: string): string {
   return ECOSYSTEM_LABELS[id as EcosystemId] ?? id;

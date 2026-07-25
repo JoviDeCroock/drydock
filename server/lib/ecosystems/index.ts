@@ -51,10 +51,6 @@ export function getEcosystem(id: string): EcosystemModule | undefined {
   return ECOSYSTEM_MODULES[id as EcosystemId];
 }
 
-export function isEcosystemId(id: string): id is EcosystemId {
-  return id in ECOSYSTEM_MODULES;
-}
-
 /**
  * Sentinel ecosystem assigned to a kept bundle entry whose extension more than
  * one ecosystem claims (an npm `.tgz` vs a PyPI sdist `.tar.gz`). The shared
@@ -167,4 +163,6 @@ export function detectArchiveEcosystems(
   return claims;
 }
 
-export type { EcosystemId, EcosystemModule } from "./types";
+// The id set itself lives in ./labels (dependency-free, importable from the UI).
+export { isEcosystemId } from "./labels";
+export type { EcosystemModule } from "./types";

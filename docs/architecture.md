@@ -61,6 +61,10 @@ Today: npm has all three, PyPI has gate + public diff (the registry cannot stage
 
 Adding an ecosystem means writing one directory and one registry entry. Routes and orchestrators read capabilities off the registry instead of branching on the ecosystem name, so a new ecosystem does not need to be threaded through `routes/public-diff.ts`, the gate router, or the scan job.
 
+When an ecosystem needs behavior the shared runner does not have, add an optional method to the relevant adapter contract rather than an `if (ecosystem === …)` in the runner. `WorkflowGateAdapter.narrowParsedArtifact` is the worked example: PyPI collapses duplicate text samples across the dozens of platform wheels one release ships, and the shared gate runner just calls the hook when the adapter defines it.
+
+The ecosystem id set is spelled once, in `ecosystems/labels.ts` (`EcosystemId`, `ECOSYSTEM_LABELS`, `isEcosystemId`). That module is dependency-free on purpose: the registry imports adapters, brokers, and the sandbox client, so the browser bundle reads labels from here instead, and persisted-value validators (`ReleaseProvenance.ecosystem`, report export) narrow through `isEcosystemId` rather than repeating the union.
+
 ## Trust boundaries
 
 - **Browser/UI** — not trusted for authorization. It sends authenticated requests and renders escaped package text. It must not render package-provided HTML, scripts, images, SVG, or other active content.

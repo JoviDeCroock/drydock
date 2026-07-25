@@ -1,7 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { type AppDb } from "../../db/client";
 import { githubAppInstallations, githubReleaseTargets } from "../../db/schema";
-import { normalizePyPiProjectName, preparePyPiArtifact } from "../ecosystems/pypi";
 import type { AdapterBroker, PackageAdapter } from "../ecosystems/package-adapter";
 import {
   type ClassifyArtifact,
@@ -17,10 +16,11 @@ import {
 import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
 import {
   classifyBundleArtifact,
+  getEcosystem,
   getWorkflowGateAdapter,
   UnsupportedEcosystemError,
 } from "../ecosystems";
-import { compactDuplicateTextSamples, resolveBundleArtifact } from "./resolve";
+import { resolveBundleArtifact } from "./resolve";
 import type { ParsedGateArtifact, PreparedReleaseCandidate, WorkflowGateAdapter } from "./types";
 
 export interface PrepareForGateInput {
@@ -144,16 +144,11 @@ export async function prepareReleaseCandidatesForGate(
       classify,
       async (file) => {
         const resolved = await resolveBundleArtifact(env, ctx, file);
-        if (resolved.ecosystem !== "pypi") return resolved;
-        const prepared = preparePyPiArtifact({
-          path: resolved.path,
-          files: resolved.files,
-          ...(resolved.suspiciousEntries ? { suspiciousEntries: resolved.suspiciousEntries } : {}),
-        });
-        const sampleScope = prepared.summary.name
-          ? normalizePyPiProjectName(prepared.summary.name)
-          : resolved.path;
-        return compactDuplicateTextSamples(resolved, retainedSamples, sampleScope);
+        // Ecosystems whose releases fan out into many near-identical artifacts
+        // narrow them here, while the bundle's bytes are still being streamed.
+        // Which ecosystems need it is the adapter's call, not this runner's.
+        const adapter = getEcosystem(resolved.ecosystem)?.gate;
+        return adapter?.narrowParsedArtifact?.(resolved, retainedSamples) ?? resolved;
       },
     );
     const packages = prepareBundlePackages(bundle.artifacts);

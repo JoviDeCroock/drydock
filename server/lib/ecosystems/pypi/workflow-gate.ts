@@ -11,6 +11,7 @@ import {
 } from "./";
 import type { AdapterBroker, PackageAdapter } from "../package-adapter";
 import { WorkflowArtifactError } from "../../github-app/artifacts";
+import { compactDuplicateTextSamples } from "../../workflow-gates/resolve";
 import type {
   ArchiveContents,
   ParsedGateArtifact,
@@ -46,6 +47,25 @@ export const pypiWorkflowGateAdapter: WorkflowGateAdapter = {
     // single project-version directory. Nested egg-info metadata can appear in
     // vendored files inside npm tarballs, so it must not claim the archive.
     return contents.files.some((file) => isSdistRootMetadataPath(file.path)) ? "sdist" : null;
+  },
+
+  // A PyPI release fans out into many platform wheels that repeat the same
+  // pure-Python sources verbatim. Scope the dedupe by normalized project name so
+  // two different projects in one bundle never share retained bodies, falling
+  // back to the artifact path when the distribution carries no parseable name.
+  narrowParsedArtifact(
+    artifact: ParsedGateArtifact,
+    retainedSamples: Map<string, string>,
+  ): ParsedGateArtifact {
+    const prepared = preparePyPiArtifact({
+      path: artifact.path,
+      files: artifact.files,
+      ...(artifact.suspiciousEntries ? { suspiciousEntries: artifact.suspiciousEntries } : {}),
+    });
+    const scope = prepared.summary.name
+      ? normalizePyPiProjectName(prepared.summary.name)
+      : artifact.path;
+    return compactDuplicateTextSamples(artifact, retainedSamples, scope);
   },
 
   prepareReleaseCandidates(artifacts: ParsedGateArtifact[]): PreparedReleaseCandidate[] {

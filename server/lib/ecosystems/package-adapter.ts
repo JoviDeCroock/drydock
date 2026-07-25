@@ -8,6 +8,7 @@ import type {
   PackageJsonSummary,
 } from "../review";
 import type { TarSuspiciousEntry } from "../tar-parser.js";
+import type { EcosystemId } from "./labels";
 
 export interface AdapterContext {
   env: Cloudflare.Env;
@@ -57,7 +58,7 @@ export interface ReleaseProvenanceArtifact {
 // uniformly across ecosystems in the report "Provenance" section and surfaced in
 // the report export so a maintainer's CI can verify against it.
 export interface ReleaseProvenance {
-  ecosystem: "npm" | "pypi" | "vscode";
+  ecosystem: EcosystemId;
   mode: "workflow_gate";
   artifacts: ReleaseProvenanceArtifact[];
 }

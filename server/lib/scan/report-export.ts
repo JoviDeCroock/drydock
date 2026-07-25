@@ -3,6 +3,7 @@ import { parsePersistedAiReview } from "../ai-review/contract";
 import { displayedAiResult } from "../ai-review/types";
 import { normalizeReleaseConsistency } from "./release-memory";
 import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems/package-adapter";
+import { isEcosystemId } from "../ecosystems/labels";
 
 // A persisted scan detail, as returned by getScan (never null at the call site).
 type ScanDetail = NonNullable<Awaited<ReturnType<typeof getScan>>>;
@@ -141,10 +142,7 @@ function extractProvenance(stagedPublish: unknown): ReleaseProvenance | null {
   const provenance = stagedPublish.provenance;
   if (!isRecord(provenance)) return null;
   const { ecosystem, mode, artifacts } = provenance;
-  if (
-    (ecosystem !== "npm" && ecosystem !== "pypi" && ecosystem !== "vscode") ||
-    mode !== "workflow_gate"
-  ) {
+  if (typeof ecosystem !== "string" || !isEcosystemId(ecosystem) || mode !== "workflow_gate") {
     return null;
   }
   if (!Array.isArray(artifacts)) return null;
