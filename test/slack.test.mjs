@@ -11,7 +11,7 @@ import {
   signSlackState,
   slackRedirectUri,
   verifySlackState,
-} from "../server/lib/slack.ts";
+} from "../server/lib/notify/slack";
 
 const originalFetch = globalThis.fetch;
 

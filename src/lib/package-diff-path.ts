@@ -2,7 +2,7 @@ import type { PackageJsonDiffEntry } from "../../server/types";
 import {
   exactDependencyVersion,
   unusualDependencySpecKind,
-} from "../../server/lib/dependency-specs";
+} from "../../server/lib/review/dependency-specs";
 
 export type DiffEcosystem = "npm" | "pypi";
 

@@ -3,7 +3,7 @@
 A signed-in user can permanently delete their own account from **Account settings**
 (`/dashboard/account` → Danger zone). It is built on Better Auth's first-party
 [`deleteUser`](https://www.better-auth.com/docs/concepts/users-accounts#delete-user) feature,
-enabled in `server/lib/auth.ts`:
+enabled in `server/lib/auth/index.ts`:
 
 ```ts
 user: {

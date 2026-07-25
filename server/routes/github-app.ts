@@ -7,12 +7,12 @@ import { getScan, recordGatePackageDecision } from "../db/scans";
 import {
   requireActiveOrganization,
   requireActiveOrganizationContext,
-} from "../lib/active-organization";
+} from "../lib/auth/active-organization";
 import { userHasTwoFactor, verifyTotpStepUp } from "../lib/auth";
-import { roleCanManageIntegrations } from "../lib/roles";
-import { rateLimitResponse } from "../lib/http";
-import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
-import { scanArtifactReadBucket } from "../lib/scan-artifacts";
+import { roleCanManageIntegrations } from "../lib/auth/roles";
+import { rateLimitResponse } from "../lib/platform/http";
+import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
+import { scanArtifactReadBucket } from "../lib/scan/artifacts";
 import {
   buildHumanDecisionComment,
   buildReportUrl,

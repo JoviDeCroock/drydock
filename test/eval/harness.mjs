@@ -21,11 +21,11 @@ import {
   deterministicFindings,
   packageJsonDiffFindings,
   summarizePackageJsonDiff,
-} from "../../server/lib/review.ts";
+} from "../../server/lib/review";
 import {
   createPyPiReleaseCandidateReview,
   parsePyPiReleaseManifest,
-} from "../../server/lib/adapters/pypi/index.ts";
+} from "../../server/lib/adapters/pypi";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CORPUS_DIR = join(__dirname, "..", "fixtures", "security-corpus");

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { filterDiffEntries, findingCountsByPath } from "../src/features/review/diff-entries.ts";
+import { filterDiffEntries, findingCountsByPath } from "../src/features/review/diff-entries";
 
 describe("findingCountsByPath", () => {
   const item = (file, severity) => ({

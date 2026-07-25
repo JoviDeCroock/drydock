@@ -19,7 +19,7 @@ import {
   type ScanDecision,
 } from "../../../models/scan";
 import type { WorkflowGateDecision } from "../../../models/github-app";
-import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review-types";
+import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review/types";
 import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
 import { Alert } from "../../../components/Alert";
 import { Button } from "../../../components/Button";

@@ -69,7 +69,7 @@ review, which remain specific to the new release.
 - The query is organization-scoped (`scans_org_decision_created_idx` covers
   it); one organization's review history is never visible to another.
 
-Code: `server/lib/release-memory.ts` (profile building + comparison),
+Code: `server/lib/scan/release-memory.ts` (profile building + comparison),
 `server/db/release-memory.ts` (prior-approved-scan lookup),
-`resolveReleaseConsistency` in `server/lib/scan-pipeline-phases.ts` (pipeline
+`resolveReleaseConsistency` in `server/lib/scan/pipeline-phases.ts` (pipeline
 phase), `src/pages/Dashboard/ScanDetail/ReleaseConsistencyNotice.tsx` (UI).

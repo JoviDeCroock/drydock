@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   parseGithubWebhookEvent,
   verifyGithubWebhookSignature,
-} from "../server/lib/github-app/webhook.ts";
+} from "../server/lib/github-app/webhook";
 
 const WEBHOOK_SECRET = "webhook-secret-value-1234567890";
 

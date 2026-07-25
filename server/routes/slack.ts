@@ -15,10 +15,10 @@ import {
 import {
   requireActiveOrganization,
   requireActiveOrganizationContext,
-} from "../lib/active-organization";
-import { rateLimitResponse } from "../lib/http";
-import { roleCanManageIntegrations } from "../lib/roles";
-import { decryptSlackBotToken, encryptSlackBotToken } from "../lib/secret-box";
+} from "../lib/auth/active-organization";
+import { rateLimitResponse } from "../lib/platform/http";
+import { roleCanManageIntegrations } from "../lib/auth/roles";
+import { decryptSlackBotToken, encryptSlackBotToken } from "../lib/platform/secret-box";
 import {
   buildSlackAuthorizeUrl,
   canListSlackChannels,
@@ -31,7 +31,7 @@ import {
   slackRedirectUri,
   type SlackChannel,
   verifySlackState,
-} from "../lib/slack";
+} from "../lib/notify/slack";
 import type { Bindings, Variables } from "../types";
 
 export const slackRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();

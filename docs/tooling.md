@@ -58,7 +58,7 @@ repeated — not by the tests themselves. Deliberate choices that keep it fast:
   it themselves. **Do not add `main` back** unless a test genuinely needs `SELF`
   or a Durable Object binding — and if one does, scope it to a separate project
   rather than taxing the whole worker suite.
-- **Native scrypt for password hashing.** `server/lib/auth.ts` overrides Better
+- **Native scrypt for password hashing.** `server/lib/auth/index.ts` overrides Better
   Auth's KDF with `node:crypto`'s native scrypt (same params, byte-identical
   output — see `test/workers/auth-password-hash.test.ts`). On `workerd` the
   default falls back to a pure-JS scrypt that runs synchronously in the isolate;
@@ -149,7 +149,7 @@ Use `apiFetch` from `src/models/api.ts` for same-origin JSON requests so active 
 
 ## Server route helpers
 
-Use `rateLimitResponse` from `server/lib/http.ts` for 429 JSON responses so `retryAfterSeconds` and `retry-after` headers stay consistent. Use `errorMessage(err)` from `server/lib/errors.ts` for server-side caught-error stringification instead of repeating local branches; it also preserves `message` from Worker RPC-serialized error objects.
+Use `rateLimitResponse` from `server/lib/platform/http.ts` for 429 JSON responses so `retryAfterSeconds` and `retry-after` headers stay consistent. Use `errorMessage(err)` from `server/lib/platform/errors.ts` for server-side caught-error stringification instead of repeating local branches; it also preserves `message` from Worker RPC-serialized error objects.
 
 ## Related skills
 

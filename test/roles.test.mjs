@@ -6,7 +6,7 @@ import {
   ORGANIZATION_ROLES,
   roleCanManageIntegrations,
   roleCanManageMembers,
-} from "../server/lib/roles.ts";
+} from "../server/lib/auth/roles";
 
 describe("normalizeRole", () => {
   test("passes through 'owner' unchanged", () => {

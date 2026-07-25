@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-const { buildAccountVerificationEmail } = await import("../server/lib/account-email.ts");
+const { buildAccountVerificationEmail } = await import("../server/lib/notify/account-email");
 
 describe("buildAccountVerificationEmail", () => {
   const url = "https://drydock.org/api/auth/verify-email?token=abc123&callbackURL=%2Fverify-email";

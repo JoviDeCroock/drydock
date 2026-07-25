@@ -4,7 +4,7 @@ vi.mock("cloudflare:workers", () => ({
   WorkerEntrypoint: class {},
 }));
 
-const { stripTextSamples } = await import("../server/lib/compare-cache.ts");
+const { stripTextSamples } = await import("../server/lib/compare-cache");
 
 describe("stripTextSamples", () => {
   test("removes textSample from file records", () => {

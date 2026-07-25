@@ -8,7 +8,7 @@ import {
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
 import { encryptNpmToken } from "../../server/lib/npm-connection";
-import worker from "../../server/index";
+import worker from "../../server";
 
 const CONCURRENCY_LIMIT = 5;
 

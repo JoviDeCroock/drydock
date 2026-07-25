@@ -1,5 +1,5 @@
 import type { FileRecord, PackageJsonSummary } from "../../review";
-import { safeJson } from "../../review-rules";
+import { safeJson } from "../../review/rules";
 import type { TarSuspiciousEntry } from "../../tar-parser.js";
 import {
   VSCODE_RELEASE_MANIFEST_SCHEMA,

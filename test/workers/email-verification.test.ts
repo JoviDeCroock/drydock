@@ -1,7 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import worker from "../../server/index";
+import worker from "../../server";
 import { createDb } from "../../server/db/client";
 import * as schema from "../../server/db/schema";
 

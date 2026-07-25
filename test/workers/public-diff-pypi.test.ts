@@ -4,7 +4,7 @@ import type {
   PyPiReleaseFile,
   PyPiRemoteArtifact,
 } from "../../server/lib/adapters/pypi/types";
-import { PublicDiffError } from "../../server/lib/public-diff-error";
+import { PublicDiffError } from "../../server/lib/public-diff/error";
 import {
   buildPublicPyPiDiffSources,
   limitPublicPyPiDiffArtifacts,
@@ -12,7 +12,7 @@ import {
   resolvePublicPyPiDownloads,
   selectPublicPyPiDiffArtifacts,
   type PublicPyPiArtifactDownload,
-} from "../../server/lib/public-diff-pypi";
+} from "../../server/lib/public-diff/pypi";
 import { createPackageDiff, type FileRecord } from "../../server/lib/review";
 
 const HOST = "https://files.pythonhosted.org/packages";

@@ -1,5 +1,10 @@
-import { base64UrlDecode, base64UrlEncode, hmacSha256, timingSafeEqual } from "../crypto-utils";
-import { reliableFetch } from "../reliable-fetch";
+import {
+  base64UrlDecode,
+  base64UrlEncode,
+  hmacSha256,
+  timingSafeEqual,
+} from "../platform/crypto-utils";
+import { reliableFetch } from "../platform/reliable-fetch";
 import { GithubAppValidationError, type GithubAppConfig } from "./config";
 import { githubUserHeaders, nextLink } from "./http";
 

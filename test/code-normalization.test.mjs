@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { normalizeCodeForScanning } from "../server/lib/review-rules/normalize.ts";
-import { computeRisk, createPackageDiff, deterministicFindings } from "../server/lib/review.ts";
+import { normalizeCodeForScanning } from "../server/lib/review/rules/normalize";
+import { computeRisk, createPackageDiff, deterministicFindings } from "../server/lib/review";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

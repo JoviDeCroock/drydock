@@ -12,7 +12,7 @@ import {
   normalizeRisk,
   type PackageJsonSummary,
 } from "../lib/review";
-import { normalizeScanRiskBreakdown, type ScanRiskBreakdown } from "../lib/risk";
+import { normalizeScanRiskBreakdown, type ScanRiskBreakdown } from "../lib/review/risk";
 import {
   deleteScanArtifacts,
   loadScanArtifactFile,
@@ -21,7 +21,7 @@ import {
   scanFileRowsForArtifacts,
   type ScanArtifactFileRow,
   type ScanArtifactMetadata,
-} from "../lib/scan-artifacts";
+} from "../lib/scan/artifacts";
 import type { AppDb } from "./client";
 import { recordScanEvent, redactScanEventForClient } from "./events";
 import { githubWorkflowGates, scanEvents, scanFiles, scanFindings, scans } from "./schema";

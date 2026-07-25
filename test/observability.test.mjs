@@ -5,7 +5,7 @@ const {
   durationMsSince,
   emitOperationalEvent,
   sanitizeOperationalFields,
-} = await import("../server/lib/observability.ts");
+} = await import("../server/lib/platform/observability");
 
 describe("operational observability helpers", () => {
   test("redacts token-like fields before logging", () => {

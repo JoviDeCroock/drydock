@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { isOutsidePackageFilesAllowlist } from "../server/lib/review-package-files";
+import { isOutsidePackageFilesAllowlist } from "../server/lib/review/package-files";
 
 describe("isOutsidePackageFilesAllowlist", () => {
   test("treats nested files covered by package.json glob entries as declared", () => {

@@ -1,5 +1,5 @@
 import { computed, createModel, signal } from "@preact/signals";
-import type { OrganizationRole } from "../../server/lib/roles";
+import type { OrganizationRole } from "../../server/lib/auth/roles";
 import { apiFetch, apiJson, errorMessage } from "./api";
 
 export interface OrganizationMember {

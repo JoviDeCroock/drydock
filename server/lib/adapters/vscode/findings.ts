@@ -6,10 +6,10 @@ import {
   type Finding,
   type PackageJsonDiff,
 } from "../../review";
-import { firstJsonPropertyLine } from "../../review-rules/helpers";
-import { JS_PATTERN_SET } from "../../review-rules/patterns";
-import { normalizeCodeForScanning } from "../../review-rules/normalize";
-import { firstMatchingLine } from "../../text-utils";
+import { firstJsonPropertyLine } from "../../review/rules/helpers";
+import { JS_PATTERN_SET } from "../../review/rules/patterns";
+import { normalizeCodeForScanning } from "../../review/rules/normalize";
+import { firstMatchingLine } from "../../platform/text-utils";
 import type { AcquiredArtifact } from "../types";
 import {
   extensionIdFromManifest,

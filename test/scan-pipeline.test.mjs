@@ -50,13 +50,13 @@ vi.mock("../server/lib/npm-connection.ts", async () => ({
   ...(await vi.importActual("../server/lib/npm-connection.ts")),
   decryptNpmToken: npmConnectionMock.decryptNpmToken,
 }));
-vi.mock("../server/lib/ai-review.ts", async () => ({
-  ...(await vi.importActual("../server/lib/ai-review.ts")),
+vi.mock("../server/lib/ai-review/index.ts", async () => ({
+  ...(await vi.importActual("../server/lib/ai-review/index.ts")),
   runSelectiveAiReview: aiReviewMock.runSelectiveAiReview,
 }));
 
-const { runScanPipeline } = await import("../server/lib/scan-pipeline.ts");
-const { npmAdapter } = await import("../server/lib/adapters/npm/index.ts");
+const { runScanPipeline } = await import("../server/lib/scan/pipeline");
+const { npmAdapter } = await import("../server/lib/adapters/npm");
 
 describe("scan pipeline baseline selection", () => {
   beforeEach(() => {

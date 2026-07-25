@@ -2,7 +2,7 @@ import { GithubAppValidationError, type GithubAppConfig } from "./config";
 import { githubAppHeaders, githubInstallationHeaders, nextLink } from "./http";
 import { generateGithubAppJwt } from "./jwt";
 import { parseRepositoryFullName } from "./validation";
-import { reliableFetch } from "../reliable-fetch";
+import { reliableFetch } from "../platform/reliable-fetch";
 
 export interface GithubInstallationMetadata {
   installationId: string;

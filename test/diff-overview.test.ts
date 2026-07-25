@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { buildDisplaySegments, type HunkRowLike } from "../src/components/diff-hunks.ts";
+import { buildDisplaySegments, type HunkRowLike } from "../src/components/diff-hunks";
 import {
   diffOverviewMarkers,
   displayOverviewRows,
   type DiffOverviewRow,
-} from "../src/components/diff-overview.ts";
+} from "../src/components/diff-overview";
 
 describe("diffOverviewMarkers", () => {
   test("collapses contiguous changed rows into overview regions", () => {

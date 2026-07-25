@@ -5,20 +5,20 @@ import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
 import { getOrganizationOwnerUserId } from "./db/organizations";
 import { RateLimitError, enforceRateLimit } from "./db/rate-limit";
 import { createAuth, getAuthSession } from "./lib/auth";
-import { rateLimitResponse } from "./lib/http";
+import { rateLimitResponse } from "./lib/platform/http";
 import { allowInsecureLocalRegistry } from "./lib/npm-connection";
-import { isPackageDiffDetailPath, rewritePackageDiffMetadata } from "./lib/public-diff-page";
+import { isPackageDiffDetailPath, rewritePackageDiffMetadata } from "./lib/public-diff/page";
 import {
   API_CSP,
   DOCUMENT_CSP,
   SECURITY_HEADERS,
   securityHeadersDisabled,
-} from "./lib/security-headers";
+} from "./lib/platform/security-headers";
 import {
   describeOperationalError,
   durationMsSince,
   emitOperationalEvent,
-} from "./lib/observability";
+} from "./lib/platform/observability";
 import {
   classifyScanError,
   executeScanJob,
@@ -26,7 +26,7 @@ import {
   MAX_SCAN_JOB_ATTEMPTS,
   retryDelaySeconds,
   type QueueMessage,
-} from "./lib/scan-job";
+} from "./lib/scan/job";
 import { executeWorkflowGateJob } from "./lib/workflow-gate-job";
 import {
   createStageStartCoordinator,

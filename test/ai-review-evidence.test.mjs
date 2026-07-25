@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildAiReviewPayload, createAiReviewTools } from "../server/lib/ai-review-evidence.ts";
+import { buildAiReviewPayload, createAiReviewTools } from "../server/lib/ai-review/evidence";
 
 const EMPTY_PACKAGE_JSON_DIFF = {
   name: "fixture",

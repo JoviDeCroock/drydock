@@ -13,7 +13,7 @@ import {
   type NpmCredentialValidation,
 } from "./npm-connection";
 import { notifyNpmConnectionExpired } from "./notify";
-import { executeScanJob, type ScanQueueMessage } from "./scan-job";
+import { executeScanJob, type ScanQueueMessage } from "./scan/job";
 import {
   checkStagedPublishAccess,
   listStagedPublishes,

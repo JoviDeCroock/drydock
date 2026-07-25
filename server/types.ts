@@ -3,8 +3,8 @@ import type { BaselineInfo } from "./lib/adapters/types";
 
 export type { ReleaseProvenance } from "./lib/adapters/types";
 import type { AiReview } from "./lib/ai-review";
-import type { ReleaseConsistency } from "./lib/release-memory";
-import type { ScanRiskBreakdown } from "./lib/risk";
+import type { ReleaseConsistency } from "./lib/scan/release-memory";
+import type { ScanRiskBreakdown } from "./lib/review/risk";
 import type {
   DiffEntry,
   Finding,

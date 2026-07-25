@@ -8,7 +8,7 @@ import {
   type PyPiArtifactInput,
   type PyPiPreparedArtifact,
   type PyPiReleaseManifest,
-} from "../adapters/pypi/index";
+} from "../adapters/pypi";
 import type { AdapterBroker, PackageAdapter } from "../adapters/types";
 import { WorkflowArtifactError } from "../github-app/artifacts";
 import type {

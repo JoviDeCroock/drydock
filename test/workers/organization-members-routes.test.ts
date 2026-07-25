@@ -10,9 +10,9 @@ import {
 } from "../../server/db/invitations";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
-import { ACTIVE_ORG_HEADER } from "../../server/lib/active-organization";
-import { generateInvitationToken } from "../../server/lib/invitation-token";
-import type { OrganizationRole } from "../../server/lib/roles";
+import { ACTIVE_ORG_HEADER } from "../../server/lib/auth/active-organization";
+import { generateInvitationToken } from "../../server/lib/auth/invitation-token";
+import type { OrganizationRole } from "../../server/lib/auth/roles";
 import { organizationMembersRoutes } from "../../server/routes/organization-members";
 import { organizationsRoutes } from "../../server/routes/organizations";
 import type { Bindings, Variables } from "../../server/types";

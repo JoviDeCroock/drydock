@@ -1,5 +1,5 @@
 import { useModel, useSignal } from "@preact/signals";
-import type { OrganizationRole } from "../../../../server/lib/roles";
+import type { OrganizationRole } from "../../../../server/lib/auth/roles";
 import { sessionModel } from "../../../models/auth";
 import { OrganizationModel } from "../../../models/organization";
 import { Alert } from "../../../components/Alert";

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { releaseConsistencyVariant } from "../src/pages/Dashboard/ScanDetail/ReleaseConsistencyNotice.tsx";
-import type { ReleaseConsistency } from "../server/lib/release-memory";
+import { releaseConsistencyVariant } from "../src/pages/Dashboard/ScanDetail/ReleaseConsistencyNotice";
+import type { ReleaseConsistency } from "../server/lib/scan/release-memory";
 
 function consistency(overrides: Partial<ReleaseConsistency>): ReleaseConsistency {
   return {

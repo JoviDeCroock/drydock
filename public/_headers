@@ -9,7 +9,7 @@
 # Vite copies public/ to the asset root at build time, so this lands at /_headers
 # where Cloudflare consumes it as config rather than serving it.
 #
-# Keep in sync with server/lib/security-headers.ts (DOCUMENT_CSP +
+# Keep in sync with server/lib/platform/security-headers.ts (DOCUMENT_CSP +
 # SECURITY_HEADERS); test/security-headers.test.ts fails if they drift.
 /*
   Strict-Transport-Security: max-age=31536000; includeSubDomains; preload

@@ -4,7 +4,7 @@ import {
   isLoopbackHostname,
   publicNpmConnection,
   registryProtocolAllowed,
-} from "../server/lib/npm-connection.ts";
+} from "../server/lib/npm-connection";
 
 describe("isLoopbackHostname", () => {
   test("identifies localhost", () => {

@@ -13,7 +13,7 @@ import {
   parseGithubWebhookEvent,
   verifyGithubWebhookSignature,
 } from "../lib/github-app/webhook";
-import { emitOperationalEvent } from "../lib/observability";
+import { emitOperationalEvent } from "../lib/platform/observability";
 import type { Bindings, Variables } from "../types";
 
 export const githubWebhookRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();

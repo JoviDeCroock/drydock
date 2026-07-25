@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, lt, or } from "drizzle-orm";
 import type { AppDb } from "./client";
 import { scanEvents, user } from "./schema";
-import { AUDIT_VISIBLE_TYPES } from "../lib/audit-events";
+import { AUDIT_VISIBLE_TYPES } from "../lib/auth/audit-events";
 
 export const AUDIT_LOG_DEFAULT_LIMIT = 50;
 export const AUDIT_LOG_MAX_LIMIT = 100;

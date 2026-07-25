@@ -20,15 +20,19 @@ import {
   releaseGateReviewClaim,
 } from "./github-app/webhook-gates";
 import { notifyWorkflowGateReview, notifyWorkflowGateTimeout } from "./notify";
-import { describeOperationalError, durationMsSince, emitOperationalEvent } from "./observability";
+import {
+  describeOperationalError,
+  durationMsSince,
+  emitOperationalEvent,
+} from "./platform/observability";
 import {
   type PreparedGatePackage,
   type PreparedGateRelease,
   prepareReleaseCandidatesForGate,
 } from "./workflow-gates/prepare";
 import { combineRisk, type RiskLevel } from "./review";
-import { runScanPipeline } from "./scan-pipeline";
-import { classifyScanError, type WorkflowGateQueueMessage } from "./scan-job";
+import { runScanPipeline } from "./scan/pipeline";
+import { classifyScanError, type WorkflowGateQueueMessage } from "./scan/job";
 
 // A release whose changed (release-delta) findings reach these levels is
 // recommended for rejection in the workbench; everything below is recommended

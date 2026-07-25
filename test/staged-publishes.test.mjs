@@ -5,7 +5,7 @@ import {
   listStagedPublishes,
   parseStagedPublishDetails,
   parseStagedPublishesResponse,
-} from "../server/lib/staged-publishes.ts";
+} from "../server/lib/staged-publishes";
 
 const originalFetch = globalThis.fetch;
 

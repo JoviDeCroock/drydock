@@ -2,8 +2,8 @@ import { Hono } from "hono";
 import { createDb } from "../db/client";
 import { getNpmConnection } from "../db/npm-connections";
 import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
-import { requireActiveOrganization } from "../lib/active-organization";
-import { rateLimitResponse } from "../lib/http";
+import { requireActiveOrganization } from "../lib/auth/active-organization";
+import { rateLimitResponse } from "../lib/platform/http";
 import { allowInsecureLocalRegistry } from "../lib/npm-connection";
 import {
   InvalidNpmConnectionError,

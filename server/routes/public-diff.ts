@@ -3,7 +3,7 @@ import { createDb } from "../db/client";
 import { enforceRateLimit, RateLimitError } from "../db/rate-limit";
 import { isValidPyPiProjectName, normalizePyPiProjectName } from "../lib/adapters/pypi/manifest";
 import { SAFE_VERSION_RE } from "../lib/adapters/pypi/types";
-import { rateLimitResponse } from "../lib/http";
+import { rateLimitResponse } from "../lib/platform/http";
 import {
   computePublicDiffCacheKey,
   fetchPublicPackageMetadata,
@@ -18,7 +18,7 @@ import {
   fetchPublicPyPiProjectMetadata,
   listPublicPyPiVersions,
   PYPI_PUBLIC_REGISTRY,
-} from "../lib/public-diff-pypi";
+} from "../lib/public-diff/pypi";
 import { compareSemver, isValidNpmPackageName } from "../lib/registry";
 import type { Bindings, Variables } from "../types";
 

@@ -19,7 +19,7 @@ import {
   recommendationForReleaseRisk,
   workflowGateCallbackWindowMs,
 } from "../../server/lib/workflow-gate-job";
-import worker from "../../server/index";
+import worker from "../../server";
 
 const WEBHOOK_SECRET = "webhook-secret-value-1234567890";
 const REPORT_BASE_URL = "https://drydock.test";
@@ -972,7 +972,7 @@ describe("executeWorkflowGateJob", () => {
     const retry = vi.fn();
     const batch = {
       messages: [{ body, attempts: 3, retry }],
-    } as unknown as MessageBatch<import("../../server/lib/scan-job").QueueMessage>;
+    } as unknown as MessageBatch<import("../../server/lib/scan/job").QueueMessage>;
 
     await expect(worker.queue(batch, sandboxEnv, ctx)).rejects.toThrow(
       "GitHub deployment protection decision failed (503)",

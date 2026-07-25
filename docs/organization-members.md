@@ -5,7 +5,7 @@ model, the role-based access guards, and the email-token invitation flow.
 
 ## Roles
 
-`server/lib/roles.ts` is the single source of truth:
+`server/lib/auth/roles.ts` is the single source of truth:
 
 - `owner` — the `organizations.ownerUserId`. Exactly one per org. Cannot be
   removed or demoted through the API. Created implicitly when an org is created
@@ -78,7 +78,7 @@ hash (`token_hash`) is persisted — mirroring the password-reset pattern — so
 database read never yields a usable link and revocation is a single row update.
 The raw token exists only in the invite email and the accept request; it is
 **never** returned by any API response (`publicInvitation` omits it). See
-`server/lib/invitation-token.ts`.
+`server/lib/auth/invitation-token.ts`.
 
 ### Create → email → accept
 

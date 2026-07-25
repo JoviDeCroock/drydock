@@ -4,7 +4,7 @@ import {
   hasNoLoadableBodyFlags,
   scanFilesToFileRecords,
   selectDiffWorkbenchState,
-} from "../src/pages/Dashboard/ScanDetail/diff-helpers.ts";
+} from "../src/pages/Dashboard/ScanDetail/diff-helpers";
 
 describe("scanFilesToFileRecords", () => {
   test("maps persisted files and defaults missing size/sha/flags", () => {

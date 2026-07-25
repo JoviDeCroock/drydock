@@ -11,8 +11,8 @@ import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
 import {
   requireActiveOrganization,
   requireActiveOrganizationContext,
-} from "../lib/active-organization";
-import { roleCanManageIntegrations } from "../lib/roles";
+} from "../lib/auth/active-organization";
+import { roleCanManageIntegrations } from "../lib/auth/roles";
 import {
   allowInsecureLocalRegistry,
   decryptNpmToken,
@@ -22,9 +22,9 @@ import {
   validateNpmCredential,
 } from "../lib/npm-connection";
 import { isValidStageId } from "../lib/stage-id";
-import { errorMessage } from "../lib/errors";
-import { rateLimitResponse } from "../lib/http";
-import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
+import { errorMessage } from "../lib/platform/errors";
+import { rateLimitResponse } from "../lib/platform/http";
+import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import type { Bindings, Variables } from "../types";
 
 export const npmConnectionRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();

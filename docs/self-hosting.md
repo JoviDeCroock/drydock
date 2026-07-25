@@ -82,7 +82,7 @@ edits in pull requests you send back upstream.
   `SLACK_CLIENT_ID`.
 
 Keep the queue consumer `max_retries` and `dead_letter_queue` settings aligned
-with `MAX_SCAN_JOB_ATTEMPTS` in `server/lib/scan-job.ts`.
+with `MAX_SCAN_JOB_ATTEMPTS` in `server/lib/scan/job.ts`.
 
 Apply migrations after the D1 database ID is configured:
 

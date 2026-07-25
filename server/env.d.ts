@@ -9,7 +9,7 @@ declare global {
       ARTIFACTS?: R2Bucket;
       SCAN_ARTIFACT_READS_DISABLED?: string;
       COMPARE_CACHE?: KVNamespace;
-      SCAN_QUEUE?: Queue<import("./lib/scan-job").QueueMessage>;
+      SCAN_QUEUE?: Queue<import("./lib/scan/job").QueueMessage>;
       NPM_REGISTRY: string;
       ALLOW_INSECURE_LOCAL_REGISTRY?: string;
       // `.dev.vars`-only escape hatch (see securityHeadersDisabled). Never set in

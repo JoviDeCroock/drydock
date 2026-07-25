@@ -1,6 +1,6 @@
 import { parsePkgPrNewUrl } from "../../src/lib/pkg-pr-new";
 import { registryProtocolAllowed } from "./npm-connection";
-import { reliableFetch } from "./reliable-fetch";
+import { reliableFetch } from "./platform/reliable-fetch";
 import {
   downloadInSandboxStream,
   SandboxError,

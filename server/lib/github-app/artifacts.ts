@@ -1,5 +1,5 @@
 import { readStreamBounded } from "../tar-parser.js";
-import { reliableFetch } from "../reliable-fetch";
+import { reliableFetch } from "../platform/reliable-fetch";
 import { getInstallationAccessToken } from "./api";
 import type { GithubAppConfig } from "./config";
 import { githubInstallationHeaders, nextLink } from "./http";

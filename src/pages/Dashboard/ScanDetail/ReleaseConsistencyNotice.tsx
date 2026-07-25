@@ -1,7 +1,7 @@
 import {
   normalizeReleaseConsistency,
   type ReleaseConsistency,
-} from "../../../../server/lib/release-memory";
+} from "../../../../server/lib/scan/release-memory";
 import { formatDateTime, pluralize } from "../../../lib/format";
 import { Alert } from "../../../components/Alert";
 

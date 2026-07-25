@@ -8,7 +8,7 @@ import {
   pickVscodeBaselineVersion,
   vscodeAdapter,
   VSCODE_RULE_IDS,
-} from "../server/lib/adapters/vscode/index";
+} from "../server/lib/adapters/vscode";
 import { buildZip } from "./helpers/archive-fixtures.mjs";
 
 const SHA = "ab".repeat(32);

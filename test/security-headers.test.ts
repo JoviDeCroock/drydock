@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
-import { API_CSP, DOCUMENT_CSP, SECURITY_HEADERS } from "../server/lib/security-headers.ts";
+import { API_CSP, DOCUMENT_CSP, SECURITY_HEADERS } from "../server/lib/platform/security-headers";
 
 // The HTML document the browser (and external scanners like Aikido) load is a
 // static asset served by Cloudflare's edge, bypassing the Worker. Its security

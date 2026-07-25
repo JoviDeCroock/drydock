@@ -1,14 +1,14 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 import * as OTPAuth from "otpauth";
-import worker from "../../server/index";
+import worker from "../../server";
 import { createDb } from "../../server/db/client";
 import {
   ensurePersonalOrganization,
   organizationRequiresTwoFactorForReleaseDecisions,
   setRequireTwoFactorForReleaseDecisions,
 } from "../../server/db/organizations";
-import { personalOrganizationId } from "../../server/lib/ownership";
+import { personalOrganizationId } from "../../server/lib/auth/ownership";
 
 // The owner-only release-two-factor toggle is itself 2FA-guarded, mirroring the
 // gate decision it governs: enabling requires the owner be enrolled (you cannot

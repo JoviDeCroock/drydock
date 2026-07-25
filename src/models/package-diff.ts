@@ -7,7 +7,7 @@ import type {
   PackageJsonDiff,
   PackageJsonSummary,
 } from "../../server/lib/review";
-import type { ScanRiskBreakdown } from "../../server/lib/risk";
+import type { ScanRiskBreakdown } from "../../server/lib/review/risk";
 import { packageDiffPath, type DiffEcosystem } from "../lib/package-diff-path";
 import { apiFetch, errorMessage } from "./api";
 

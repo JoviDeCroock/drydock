@@ -1,4 +1,4 @@
-import { reliableFetch } from "./reliable-fetch";
+import { reliableFetch } from "./platform/reliable-fetch";
 
 export interface RegistryMetadata {
   versions?: Record<string, { dist?: { tarball?: string } }>;

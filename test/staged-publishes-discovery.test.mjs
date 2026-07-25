@@ -28,7 +28,7 @@ vi.mock("../server/db/npm-connections.ts", () => dbMock);
 vi.mock("../server/db/scans.ts", () => dbMock);
 vi.mock("../server/lib/npm-connection.ts", () => npmConnectionMock);
 vi.mock("../server/lib/staged-publishes.ts", () => stagedPublishesMock);
-vi.mock("../server/lib/scan-job.ts", () => scanJobMock);
+vi.mock("../server/lib/scan/job.ts", () => scanJobMock);
 
 const {
   createStageStartCoordinator,

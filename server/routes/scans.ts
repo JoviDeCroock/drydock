@@ -23,9 +23,9 @@ import {
 import {
   requireActiveOrganization,
   requireActiveOrganizationContext,
-} from "../lib/active-organization";
-import { backfillScanArtifactsBatch } from "../lib/scan-artifact-backfill";
-import { deleteScanArtifacts, scanArtifactReadBucket } from "../lib/scan-artifacts";
+} from "../lib/auth/active-organization";
+import { backfillScanArtifactsBatch } from "../lib/scan/artifact-backfill";
+import { deleteScanArtifacts, scanArtifactReadBucket } from "../lib/scan/artifacts";
 import {
   computeCompareMetadataCacheKey,
   loadCompare,
@@ -33,7 +33,7 @@ import {
   stripTextSamples,
   writeCompareMetadataCache,
 } from "../lib/compare-cache";
-import { rateLimitResponse } from "../lib/http";
+import { rateLimitResponse } from "../lib/platform/http";
 import {
   allowInsecureLocalRegistry,
   decryptNpmToken,
@@ -47,11 +47,11 @@ import {
   type RegistryMetadata,
 } from "../lib/registry";
 import { annotateFindingsWithDiffStatus, createPackageDiff, type FileRecord } from "../lib/review";
-import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
-import { parseScanInput } from "../lib/scan-input";
-import { reportExportFilename, serializeReportExport } from "../lib/report-export";
-import { executeScanJob, type ScanQueueMessage } from "../lib/scan-job";
-import { roleCanManageIntegrations } from "../lib/roles";
+import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
+import { parseScanInput } from "../lib/scan/input";
+import { reportExportFilename, serializeReportExport } from "../lib/scan/report-export";
+import { executeScanJob, type ScanQueueMessage } from "../lib/scan/job";
+import { roleCanManageIntegrations } from "../lib/auth/roles";
 import { checkStagedPublishAccess, fetchStagedPublishDetails } from "../lib/staged-publishes";
 import type { Bindings, ScanInput, Variables } from "../types";
 

@@ -2,7 +2,7 @@ import type { ComponentChildren } from "preact";
 import { countSeverities, highestFindingRisk, sortFindingsBySeverity } from "../../../lib/findings";
 import { pluralize } from "../../../lib/format";
 import { getReleaseRecommendation } from "../recommendation";
-import type { DisplayedAiResult } from "../../../../server/lib/ai-review-types";
+import type { DisplayedAiResult } from "../../../../server/lib/ai-review/types";
 import type { PersistedScanDetail } from "../../../models/scan";
 import { Badge } from "../../../components/Badge";
 import { Card } from "../../../components/Card";

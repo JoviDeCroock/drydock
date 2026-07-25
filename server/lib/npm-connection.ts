@@ -1,8 +1,8 @@
 import { type AppDb } from "../db/client";
 import { getNpmConnection, markNpmConnectionUsed } from "../db/npm-connections";
-import { base64UrlDecode, base64UrlEncode } from "./crypto-utils";
-import { errorMessage } from "./errors";
-import { reliableFetch } from "./reliable-fetch";
+import { base64UrlDecode, base64UrlEncode } from "./platform/crypto-utils";
+import { errorMessage } from "./platform/errors";
+import { reliableFetch } from "./platform/reliable-fetch";
 
 const DEFAULT_REGISTRY = "https://registry.npmjs.org";
 

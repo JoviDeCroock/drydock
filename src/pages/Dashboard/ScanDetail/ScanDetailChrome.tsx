@@ -1,6 +1,6 @@
 import { getDashboardReturnUrl } from "../../../lib/query-state";
 import { formatDateTime } from "../../../lib/format";
-import { reportExportFilename } from "../../../../server/lib/report-export";
+import { reportExportFilename } from "../../../../server/lib/scan/report-export";
 import type { PersistedScanDetail } from "../../../models/scan";
 import { Alert } from "../../../components/Alert";
 import { Badge, severityTone } from "../../../components/Badge";

@@ -4,8 +4,7 @@ vi.mock("cloudflare:workers", () => ({
   WorkerEntrypoint: class {},
 }));
 
-const { SANDBOX_MAX_FILES, evaluateNpmStageGatewayRequest } =
-  await import("../server/lib/sandbox.ts");
+const { SANDBOX_MAX_FILES, evaluateNpmStageGatewayRequest } = await import("../server/lib/sandbox");
 
 describe("npm stage gateway policy", () => {
   const registry = "https://registry.npmjs.org";

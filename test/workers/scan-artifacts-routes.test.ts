@@ -12,13 +12,13 @@ import {
   redactJson,
   summarizePackageJsonDiff,
 } from "../../server/lib/review";
-import type { ScanRiskBreakdown } from "../../server/lib/risk";
+import type { ScanRiskBreakdown } from "../../server/lib/review/risk";
 import {
   SCAN_ARTIFACT_WRITE_ATTEMPTS,
   maybeWriteScanArtifacts,
   writeScanArtifacts,
-} from "../../server/lib/scan-artifacts";
-import { sha256Hex, stableJson } from "../../server/lib/stable-json";
+} from "../../server/lib/scan/artifacts";
+import { sha256Hex, stableJson } from "../../server/lib/platform/stable-json";
 import { parsePackageJson } from "../../server/lib/tar-parser.js";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";

@@ -1,6 +1,6 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
-import worker from "../../server/index";
+import worker from "../../server";
 
 // The public package-diff endpoints are deliberately anonymous: they must be
 // reachable without a session (mounted before the auth middleware), validate

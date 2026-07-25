@@ -24,7 +24,7 @@ The GitHub webhook is public but signed with `GITHUB_WEBHOOK_SECRET` and bypasse
 - `server/routes/release-targets.ts` maps organizations to GitHub repositories/environments/ecosystems.
 - `server/routes/workflow-gates.ts` exposes pending/completed gate review APIs and accept/reject actions.
 - `server/lib/workflow-gates/` resolves workflow runs, artifacts, release targets, callback URLs, and gate lifecycle state.
-- `server/lib/scan-pipeline.ts` runs the same deterministic/AI/report pipeline used by npm registry-staged scans.
+- `server/lib/scan/pipeline.ts` runs the same deterministic/AI/report pipeline used by npm registry-staged scans.
 
 Required bindings/secrets include the GitHub App id/private key/client credentials, webhook secret, installation access, queues, D1, R2, and normal scan pipeline bindings. See [`self-hosting.md`](./self-hosting.md) for setup.
 

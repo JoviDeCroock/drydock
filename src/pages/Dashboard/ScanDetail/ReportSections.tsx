@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import type { DisplayedAiResult } from "../../../../server/lib/ai-review-types";
+import type { DisplayedAiResult } from "../../../../server/lib/ai-review/types";
 import type { ReleaseProvenance } from "../../../../server/types";
 import { Badge, severityTone } from "../../../components/Badge";
 import { PackageJsonDiffView } from "../../../components/PackageJsonDiffView";

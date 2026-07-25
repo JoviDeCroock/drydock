@@ -7,8 +7,8 @@ import {
   createVscodeExtensionReview,
   VSCODE_RULE_IDS,
   VSCODE_RULES_VERSION,
-} from "../server/lib/adapters/vscode/index";
-import { DETERMINISTIC_RULES_VERSION } from "../server/lib/review.ts";
+} from "../server/lib/adapters/vscode";
+import { DETERMINISTIC_RULES_VERSION } from "../server/lib/review";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const casesDir = join(__dirname, "fixtures/security-corpus/cases-vscode");

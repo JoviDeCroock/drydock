@@ -17,11 +17,11 @@ import {
 } from "../db/organizations";
 import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
 import { userHasTwoFactor, verifyTotpStepUp } from "../lib/auth";
-import { sanitizeAddress } from "../lib/email";
-import { rateLimitResponse } from "../lib/http";
-import { describeOperationalError, emitOperationalEvent } from "../lib/observability";
-import { personalOrganizationId } from "../lib/ownership";
-import { roleCanManageIntegrations, type OrganizationRole } from "../lib/roles";
+import { sanitizeAddress } from "../lib/notify/email";
+import { rateLimitResponse } from "../lib/platform/http";
+import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
+import { personalOrganizationId } from "../lib/auth/ownership";
+import { roleCanManageIntegrations, type OrganizationRole } from "../lib/auth/roles";
 import type { Bindings, Variables } from "../types";
 
 const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} _\-./]{0,79}$/u;

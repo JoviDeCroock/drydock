@@ -1,6 +1,6 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
-import worker from "../../server/index";
+import worker from "../../server";
 
 const STATE_CHANGING_ORIGIN = "http://example.com";
 

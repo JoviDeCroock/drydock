@@ -6,7 +6,7 @@ import {
   tarSuspiciousEntryFindings,
 } from "../../review";
 import { canonicalizePath, normalizeTarPath, type TarSuspiciousEntry } from "../../tar-parser.js";
-import { firstMatchingLine } from "../../text-utils";
+import { firstMatchingLine } from "../../platform/text-utils";
 import { normalizePyPiProjectName } from "./manifest";
 import { pyPiVersionsEquivalent } from "./version";
 import {

@@ -14,7 +14,7 @@ import {
   getGateForOrganization,
   markGateErrored,
 } from "../github-app/webhook-gates";
-import { describeOperationalError, emitOperationalEvent } from "../observability";
+import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
 import {
   classifyBundleArtifact,
   getWorkflowGateAdapter,

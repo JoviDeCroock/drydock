@@ -5,7 +5,7 @@ import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
 import { auditRoutes } from "../../server/routes/audit";
-import { ACTIVE_ORG_HEADER } from "../../server/lib/active-organization";
+import { ACTIVE_ORG_HEADER } from "../../server/lib/auth/active-organization";
 import type { Bindings, Variables } from "../../server/types";
 
 interface SeededUser {
