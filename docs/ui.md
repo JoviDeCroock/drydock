@@ -7,6 +7,7 @@ This file is only a compact implementation map.
 ## Stack
 
 - Preact + `preact-iso` routes under `src/pages/`.
+- Cross-surface feature code lives in `src/features/`; see "Shared review surface" below.
 - Tailwind CSS v4 via `@tailwindcss/vite`.
 - Tokens live in `src/style.css` under `@theme`; dark mode follows `prefers-color-scheme`.
 - State uses `@preact/signals`; `useState`/`useReducer` are banned by oxlint.
@@ -19,6 +20,25 @@ Prefer existing primitives in `src/components/` before adding one-off classes:
 - controls: `Button`, `LinkButton`, `Input`, `Field`, `Select`, `Tabs`;
 - feedback/status: `Badge`, `Alert`, `Progress`, `EmptyState`, `Skeleton`;
 - data/review: table, diff, finding, and risk-summary components colocated with their surfaces.
+
+## Shared review surface
+
+Two surfaces render the same review: the authenticated scan workbench
+(`src/pages/Dashboard/ScanDetail/`) and the anonymous public diff
+(`src/pages/Diff/`). What both use lives in `src/features/review/`:
+
+- `types.ts` — `ReviewFinding` (only the fields the review UI renders) and
+  `FindingWithDiffStatus`. Deliberately narrower than a persisted scan finding
+  so the public diff, which persists nothing, does not have to invent
+  `scanId`/`ruleVersion` values to satisfy a shared component.
+- `diff-entries.ts` — `filterDiffEntries` and `findingCountsByPath`.
+- `RiskSignalsSection.tsx` — the changed-file/package-context findings split.
+
+Surface-specific code stays with its page. `ScanDetail/diff-helpers.ts` keeps
+what is tied to the persisted scan model (`scanFilesToFileRecords`,
+`annotatePersistedFindings`, the `DiffWorkbench` state machine). Pages must not
+import from another page's directory — if a second surface needs something,
+move it into `src/features/` instead.
 
 ## Copy and density
 

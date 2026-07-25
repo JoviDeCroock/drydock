@@ -8,7 +8,8 @@ import { Badge } from "../../../components/Badge";
 import { Card } from "../../../components/Card";
 import { SeverityBar } from "../../../components/SeverityBar";
 import { SectionLabel } from "../../../components/Typography";
-import type { FindingWithDiffStatus, PersistedFinding, PersistedSummary } from "./types";
+import type { FindingWithDiffStatus, ReviewFinding } from "../../../features/review/types";
+import type { PersistedSummary } from "./types";
 
 export function ReleaseRecommendation({
   detail,
@@ -136,7 +137,7 @@ function buildRecommendationEvidence(
   detail: PersistedScanDetail,
   summary: PersistedSummary,
   diffCount: number,
-  changedFindings: PersistedFinding[],
+  changedFindings: ReviewFinding[],
   baselineComparisonSkipped: boolean,
 ): Array<{ label: string; value: ComponentChildren }> {
   const evidence: Array<{ label: string; value: ComponentChildren }> = [];
@@ -151,7 +152,7 @@ function buildRecommendationEvidence(
         : "The published release exceeded the download budget, so no file was compared against it.",
     });
   }
-  const releaseFindings: RecommendationFinding[] = changedFindings;
+  const releaseFindings = changedFindings;
   if (releaseFindings.length) {
     const topFindings = sortFindingsBySeverity(releaseFindings).slice(0, 3);
     for (const finding of topFindings) {
@@ -201,9 +202,3 @@ function buildRecommendationEvidence(
 
   return evidence.slice(0, 5);
 }
-
-type RecommendationFinding = {
-  severity?: string;
-  file: string;
-  reason: string;
-};

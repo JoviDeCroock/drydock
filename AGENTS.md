@@ -10,7 +10,7 @@
   - `lib/ai-review.ts` — Workers AI reviewer, wired via `scan-pipeline.ts` and on by default behind the `ai-review` Flagship killswitch.
   - `lib/adapters/` — ecosystem-specific registry/artifact behavior for npm, PyPI, VS Code, and workflow gates.
   - `db/` — Drizzle schema and persistence helpers for scans, findings, artifacts, workflow gates, and Better Auth.
-- `src/` — Preact UI. `index.tsx` mounts `preact-iso`; `models/` re-use `server/` types.
+- `src/` — Preact UI. `index.tsx` mounts `preact-iso`; `models/` re-use `server/` types; `features/` holds code shared by more than one page (a page must never import from another page's directory).
 - `drizzle/` — D1 migrations generated from `server/db/schema.ts`.
 - `docs/` — reference docs. Start with `docs/README.md` and read only the relevant layer.
 - `test/` — Vitest logic/Worker suites plus Playwright fake-registry e2e fixtures.
@@ -27,6 +27,7 @@
 
 - Read `DESIGN.md` before visual or UI decisions. It is the source of truth for fonts, colors, spacing, iconography, data viz, state patterns, and marketing-surface rules.
 - Tailwind CSS v4 tokens live in `src/style.css`; prefer primitives in `src/components/` before one-off classes. No CSS-in-JS and no SVG icons.
+- Code used by two or more pages belongs in `src/features/`, not in one page's folder. The scan workbench and the anonymous `/diff` page share `src/features/review/`; see `docs/ui.md`.
 - Use `preact`, `preact-iso`, and `@preact/signals`; never `preact/compat`.
 - `useState`/`useReducer` are banned. Use `useSignal`, `useComputed`, `createModel`, and `useModel`. See `docs/tooling.md` and `.claude/skills/preact-signals-*`.
 
