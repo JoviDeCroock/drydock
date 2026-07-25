@@ -162,8 +162,9 @@ export function scoreRisk(
   annotatedFindings: Array<Finding & FindingDiffAnnotation>,
   aiFindings: AiReview,
   releaseConsistency?: ReleaseConsistency | null,
+  options: { baselineComparisonSkipped?: boolean } = {},
 ): ScanRiskBreakdown {
-  return computeScanRiskBreakdown(annotatedFindings, aiFindings, releaseConsistency);
+  return computeScanRiskBreakdown(annotatedFindings, aiFindings, releaseConsistency, options);
 }
 
 export interface MergedAiFindings {

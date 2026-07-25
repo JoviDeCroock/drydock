@@ -104,6 +104,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       [...findings.annotatedFindings, ...mergedAiFindings.annotatedRecords],
       aiFindings,
       releaseConsistency,
+      { baselineComparisonSkipped: Boolean(resolved.baseline.baseline.comparisonSkipped) },
     );
 
     const { result, persisted } = await persistResults({

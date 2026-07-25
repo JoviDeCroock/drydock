@@ -47,6 +47,7 @@ export function computeScanRiskBreakdown(
   ruleFindings: RiskFinding[],
   aiFindings: AiReview,
   releaseConsistency?: ReleaseConsistency | null,
+  options: { baselineComparisonSkipped?: boolean } = {},
 ): ScanRiskBreakdown {
   const releaseFindings = ruleFindings.filter((finding) => finding.releaseDelta === true);
   const contextFindings = ruleFindings.filter((finding) => finding.releaseDelta !== true);
@@ -56,7 +57,14 @@ export function computeScanRiskBreakdown(
   // keeps `releaseRisk` (and therefore the workflow gate) untouched.
   const { kept: scoredContextFindings, approvedCount } = dropPriorApprovedFindings(
     contextFindings,
-    releaseConsistency,
+    // Release memory's premise is "this evidence was reviewed before and
+    // nothing changed". With no baseline downloaded, nothing was compared, so
+    // the second half cannot be established: every finding is annotated
+    // `unknown` context, which would otherwise hand the whole scan to the
+    // adjustment and let a matching profile grade an uncompared release as
+    // clean. The profile is (ruleId, severity, file) — identical bytes are not
+    // implied.
+    options.baselineComparisonSkipped ? null : releaseConsistency,
   );
   const scoredFindings =
     approvedCount === 0 ? ruleFindings : [...releaseFindings, ...scoredContextFindings];

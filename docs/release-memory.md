@@ -59,6 +59,15 @@ The boundaries are what make this safe:
 - **It fails closed.** No prior approved scan, or a `diverged` profile whose
   `newFindings` list hit the 25-entry cap (so the approved set can't be
   reconstructed exactly), drops nothing at all.
+- **A skipped baseline disables it entirely.** When the published baseline
+  exceeded the download budget (`BaselineInfo.comparisonSkipped`), every finding
+  is annotated `unknown` package context, so the whole scan would otherwise land
+  in the adjustment's bucket. Release memory's premise is "this evidence was
+  reviewed before _and nothing changed_"; with nothing compared, the second half
+  cannot be established, and a profile match on
+  `(ruleId, severity, file)` does not imply identical bytes. Discounting there
+  would grade an uncompared release as clean — the failure the skipped-baseline
+  handling exists to prevent.
 - **AI output can't reach it, in either direction.** The profile is
   deterministic-only, so the advisory reviewer cannot influence what counts as
   previously approved — and, symmetrically, an AI finding is never dropped by

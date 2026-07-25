@@ -376,3 +376,47 @@ describe("release memory never demotes AI findings", () => {
     expect(result.contextRisk).toBe("high");
   });
 });
+
+describe("release memory and a skipped baseline", () => {
+  // When the published baseline exceeds the download budget the comparison is
+  // skipped and every finding is annotated `unknown` package context, so the
+  // whole scan lands in release memory's bucket. Discounting it on a profile
+  // match would grade an uncompared release as clean — the exact failure the
+  // skipped-baseline handling exists to prevent. The profile is
+  // (ruleId, severity, file); identical bytes are not implied.
+  const uncomparedFinding = (file) => ({
+    ruleId: "file.native-artifact",
+    severity: "high",
+    file,
+    evidence: "e",
+    reason: "r",
+    releaseDelta: false,
+    diffStatus: "unknown",
+  });
+  const matched = {
+    status: "match",
+    priorScanId: "scan-prior",
+    priorVersion: "1.0.0",
+    decidedAt: "2026-07-01T00:00:00.000Z",
+    currentFindingCount: 2,
+    priorFindingCount: 2,
+    newFindingCount: 0,
+    newFindings: [],
+  };
+  const findings = [uncomparedFinding("pkg/_c.pyd"), uncomparedFinding("pkg/_d.pyd")];
+
+  test("a matching profile does not discount an uncompared release", () => {
+    const result = computeScanRiskBreakdown(findings, makeAiReview(), matched, {
+      baselineComparisonSkipped: true,
+    });
+    expect(result.artifactRisk).toBe("high");
+    expect(result.contextRisk).toBe("high");
+    expect(result.priorApprovedContextFindingCount).toBe(0);
+  });
+
+  test("the same scan with a real baseline still discounts", () => {
+    const result = computeScanRiskBreakdown(findings, makeAiReview(), matched);
+    expect(result.artifactRisk).toBe("low");
+    expect(result.priorApprovedContextFindingCount).toBe(2);
+  });
+});
