@@ -87,6 +87,14 @@ export interface WorkflowGateAdapter {
   /** Suggested artifact name for workflows that choose to narrow discovery. */
   readonly artifactName: string;
 
+  /**
+   * Whether `${artifactName}-*` uploads also belong to this ecosystem's release
+   * set. Only ecosystems whose releases can outgrow one bounded Actions ZIP opt
+   * in: a prefix match widens discovery, so an unrelated upload that happens to
+   * start with the conventional name would otherwise be pulled into the review.
+   */
+  readonly shardedArtifactNames?: boolean;
+
   /** Review adapter driven by `runScanPipeline` for this ecosystem. */
   readonly packageAdapter: PackageAdapter<unknown, AdapterBroker>;
 

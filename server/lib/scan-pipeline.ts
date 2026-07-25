@@ -71,7 +71,13 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
     // count into the risk breakdown. Additive only: computeScanRisk folds them
     // in through combineRisk (a max), so they can escalate the deterministic
     // grade but never lower it.
-    const mergedAiFindings = mergeAiFindings(aiFindings, findings, diff, adapter.codePatternSet);
+    const mergedAiFindings = mergeAiFindings(
+      aiFindings,
+      findings,
+      diff,
+      adapter.codePatternSet,
+      Boolean(resolved.baseline.baseline.comparisonSkipped),
+    );
     const riskSummary = scoreRisk(
       [...findings.annotatedFindings, ...mergedAiFindings.annotatedRecords],
       aiFindings,

@@ -1,4 +1,8 @@
-import { type ResolvedReleaseBundle, WorkflowArtifactError } from "../github-app/artifacts";
+import {
+  type ResolvedReleaseBundle,
+  type ResolvedReleaseFile,
+  WorkflowArtifactError,
+} from "../github-app/artifacts";
 import { downloadInSandboxInline } from "../sandbox";
 import { AMBIGUOUS_ARCHIVE_ECOSYSTEM, detectArchiveEcosystems } from "./registry";
 import type { ParsedGateArtifact } from "./types";
@@ -26,53 +30,86 @@ export async function resolveBundleArtifacts(
   ctx: ExecutionContext,
   bundle: ResolvedReleaseBundle,
 ): Promise<ParsedGateArtifact[]> {
-  return mapWithConcurrency(bundle.artifacts, GATE_ARTIFACT_PARSE_CONCURRENCY, async (file) => {
-    const lowerPath = file.path.toLowerCase();
-    // Wheels stream through the zip reader; VSIX archives are yazl-packed
-    // with data-descriptor entries and must take the buffered CD-first path.
-    const format = lowerPath.endsWith(".vsix")
-      ? "vsix"
-      : lowerPath.endsWith(".whl")
-        ? "zip"
-        : "tgz";
-    const parsed = await downloadInSandboxInline(env, ctx, { bytes: file.bytes, format });
-    const contents = { files: parsed.files, packageJson: parsed.packageJson ?? null };
+  return mapWithConcurrency(bundle.artifacts, GATE_ARTIFACT_PARSE_CONCURRENCY, (file) =>
+    resolveBundleArtifact(env, ctx, file),
+  );
+}
 
-    let ecosystem = file.ecosystem;
-    let kind = file.kind;
-    if (ecosystem === AMBIGUOUS_ARCHIVE_ECOSYSTEM) {
-      const claims = detectArchiveEcosystems(contents);
-      if (claims.length === 0) {
-        throw new WorkflowArtifactError(
-          "artifact_identity_missing",
-          `${file.path} is not a recognizable npm or PyPI release artifact`,
-        );
-      }
-      if (claims.length > 1) {
-        // The archive presents as several ecosystems (e.g. an npm tarball that
-        // also ships a root PKG-INFO). Routing it to one would skip the other's
-        // findings, so fail closed and let the maintainer pin the ecosystem.
-        throw new WorkflowArtifactError(
-          "artifact_identity_inconsistent",
-          `${file.path} matches more than one ecosystem (${claims
-            .map((claim) => claim.ecosystem)
-            .join(", ")}); pin the release target's ecosystem to review it`,
-        );
-      }
-      ecosystem = claims[0].ecosystem;
-      kind = claims[0].kind;
+/** Parse one verified release file so streaming bundle ingestion can discard its bytes. */
+export async function resolveBundleArtifact(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  file: ResolvedReleaseFile,
+): Promise<ParsedGateArtifact> {
+  const lowerPath = file.path.toLowerCase();
+  // Wheels stream through the zip reader; VSIX archives are yazl-packed
+  // with data-descriptor entries and must take the buffered CD-first path.
+  const format = lowerPath.endsWith(".vsix") ? "vsix" : lowerPath.endsWith(".whl") ? "zip" : "tgz";
+  const parsed = await downloadInSandboxInline(env, ctx, { bytes: file.bytes, format });
+  const contents = { files: parsed.files, packageJson: parsed.packageJson ?? null };
+
+  let ecosystem = file.ecosystem;
+  let kind = file.kind;
+  if (ecosystem === AMBIGUOUS_ARCHIVE_ECOSYSTEM) {
+    const claims = detectArchiveEcosystems(contents);
+    if (claims.length === 0) {
+      throw new WorkflowArtifactError(
+        "artifact_identity_missing",
+        `${file.path} is not a recognizable npm or PyPI release artifact`,
+      );
     }
+    if (claims.length > 1) {
+      // The archive presents as several ecosystems (e.g. an npm tarball that
+      // also ships a root PKG-INFO). Routing it to one would skip the other's
+      // findings, so fail closed and let the maintainer pin the ecosystem.
+      throw new WorkflowArtifactError(
+        "artifact_identity_inconsistent",
+        `${file.path} matches more than one ecosystem (${claims
+          .map((claim) => claim.ecosystem)
+          .join(", ")}); pin the release target's ecosystem to review it`,
+      );
+    }
+    ecosystem = claims[0].ecosystem;
+    kind = claims[0].kind;
+  }
 
-    return {
-      path: file.path,
-      sha256: file.sha256,
-      ecosystem,
-      kind,
-      files: parsed.files,
-      packageJson: parsed.packageJson ?? null,
-      ...(parsed.suspiciousEntries ? { suspiciousEntries: parsed.suspiciousEntries } : {}),
-    };
-  });
+  return {
+    path: file.path,
+    sha256: file.sha256,
+    ecosystem,
+    kind,
+    files: parsed.files,
+    packageJson: parsed.packageJson ?? null,
+    ...(parsed.suspiciousEntries ? { suspiciousEntries: parsed.suspiciousEntries } : {}),
+  };
+}
+
+/**
+ * Intern repeated text bodies after one identical wheel path has been retained.
+ *
+ * This is a pure memory optimization: every entry keeps its own `textSample`,
+ * and equal digests mean the replacement string is byte-identical, so no
+ * evidence changes and no file needs to be excluded. It only releases each
+ * sandbox response's duplicate string as soon as the shard is parsed. Whether
+ * an adapter later *drops* a redundant sample from its flattened scan input is
+ * that adapter's decision (see `mustRetainPerArtifact` in the PyPI adapter).
+ */
+export function compactDuplicateTextSamples(
+  artifact: ParsedGateArtifact,
+  retainedSamples: Map<string, string>,
+  scope: string,
+): ParsedGateArtifact {
+  for (const file of artifact.files) {
+    if (!file.textSample) continue;
+    const key = `${scope}\0${artifact.kind}\0${file.path}\0${file.sha256}`;
+    const retained = retainedSamples.get(key);
+    if (retained !== undefined) {
+      file.textSample = retained;
+    } else {
+      retainedSamples.set(key, file.textSample);
+    }
+  }
+  return artifact;
 }
 
 async function mapWithConcurrency<T, U>(

@@ -3,6 +3,7 @@ import {
   type WorkflowArtifactSource,
   evaluateGithubArtifactEgress,
   fetchReleaseBundleWithToken,
+  processReleaseBundleWithToken,
 } from "../../server/lib/github-app/artifacts";
 
 const TOKEN = "ghs_installation_test_token";
@@ -335,6 +336,119 @@ describe("fetchReleaseBundleWithToken", () => {
     expect(bundle.artifactSizeBytes).toBe(first.bundleZip.length + secondZip.length);
     const paths = bundle.artifacts.map((artifact) => artifact.path).sort();
     expect(paths).toEqual([first.wheel.path, secondWheel.path].sort());
+  });
+
+  test("processes a NumPy-sized shard family one release file at a time", async () => {
+    const artifacts = Array.from({ length: 44 }, (_, index) => {
+      const wheel = makeWheelBytes("demo-package", `1.2.${index}`);
+      return {
+        id: ARTIFACT_ID + index,
+        name: `${ARTIFACT_NAME}-${String(index).padStart(2, "0")}`,
+        bundleZip: makeZip([{ path: wheel.path, body: wheel.bytes }]),
+      };
+    });
+    artifacts.push({
+      id: ARTIFACT_ID + 100,
+      name: "unrelated-build-output",
+      bundleZip: makeZip([{ path: "dist/unrelated-1.0.0.tar.gz", body: "ignored" }]),
+    });
+    stubGithubFetch({ bundleZip: null, artifacts });
+
+    let activeProcessors = 0;
+    let maxActiveProcessors = 0;
+    const bundle = await processReleaseBundleWithToken(
+      TOKEN,
+      source({ artifactNamePrefix: ARTIFACT_NAME }),
+      classifyArtifact,
+      async (artifact) => {
+        activeProcessors += 1;
+        maxActiveProcessors = Math.max(maxActiveProcessors, activeProcessors);
+        await Promise.resolve();
+        activeProcessors -= 1;
+        return { path: artifact.path, sha256: artifact.sha256 };
+      },
+    );
+
+    expect(bundle.artifacts).toHaveLength(44);
+    expect(bundle.artifactName).toBe("all");
+    expect(maxActiveProcessors).toBe(1);
+    expect(bundle.artifacts.every((artifact) => artifact.path.endsWith(".whl"))).toBe(true);
+  });
+
+  test("fails closed when two shards carry the same path with different bytes", async () => {
+    const wheel = makeWheelBytes("demo-package", "1.2.0");
+    const artifacts = [
+      {
+        id: ARTIFACT_ID,
+        name: `${ARTIFACT_NAME}-linux`,
+        bundleZip: makeZip([{ path: wheel.path, body: wheel.bytes }]),
+      },
+      {
+        id: ARTIFACT_ID + 1,
+        name: `${ARTIFACT_NAME}-macos`,
+        bundleZip: makeZip([
+          { path: wheel.path, body: concat([wheel.bytes, new Uint8Array([0])]) },
+        ]),
+      },
+    ];
+    stubGithubFetch({ bundleZip: null, artifacts });
+
+    await expect(
+      processReleaseBundleWithToken(
+        TOKEN,
+        source({ artifactNamePrefix: ARTIFACT_NAME }),
+        classifyArtifact,
+        async (artifact) => artifact,
+      ),
+    ).rejects.toThrow(/appears in more than one artifact upload/);
+  });
+
+  test("accepts a distribution re-uploaded byte-identically across shards", async () => {
+    // A matrix leg that runs a full `python -m build` ships the sdist next to
+    // its wheel, so the same sdist can arrive from several shards.
+    const wheel = makeWheelBytes("demo-package", "1.2.0");
+    const bundleZip = makeZip([{ path: wheel.path, body: wheel.bytes }]);
+    stubGithubFetch({
+      bundleZip: null,
+      artifacts: [
+        { id: ARTIFACT_ID, name: `${ARTIFACT_NAME}-linux`, bundleZip },
+        { id: ARTIFACT_ID + 1, name: `${ARTIFACT_NAME}-macos`, bundleZip },
+      ],
+    });
+
+    const bundle = await processReleaseBundleWithToken(
+      TOKEN,
+      source({ artifactNamePrefix: ARTIFACT_NAME }),
+      classifyArtifact,
+      async (artifact) => artifact,
+    );
+
+    expect(bundle.artifacts).toHaveLength(1);
+    expect(bundle.artifacts[0]?.path).toBe(wheel.path);
+  });
+
+  test("keeps the single-upload budget when no artifact name narrows the run", async () => {
+    // An auto-detect release target supplies neither name nor prefix, so every
+    // non-expired upload on the run matches. The shard-family budget must not
+    // apply there or an unrelated CI run would be downloaded wholesale.
+    const artifacts = Array.from({ length: 21 }, (_, index) => {
+      const wheel = makeWheelBytes("demo-package", `1.2.${index}`);
+      return {
+        id: ARTIFACT_ID + index,
+        name: `unrelated-build-output-${index}`,
+        bundleZip: makeZip([{ path: wheel.path, body: wheel.bytes }]),
+      };
+    });
+    stubGithubFetch({ bundleZip: null, artifacts });
+
+    await expect(
+      processReleaseBundleWithToken(
+        TOKEN,
+        source(),
+        classifyArtifact,
+        async (artifact) => artifact,
+      ),
+    ).rejects.toThrow(/more than 20 release files/);
   });
 
   test("ignores non-artifact files in the bundle", async () => {

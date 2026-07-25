@@ -1,12 +1,12 @@
 import { and, eq } from "drizzle-orm";
 import { type AppDb } from "../../db/client";
 import { githubAppInstallations, githubReleaseTargets } from "../../db/schema";
+import { normalizePyPiProjectName, preparePyPiArtifact } from "../adapters/pypi/index";
 import type { AdapterBroker, PackageAdapter } from "../adapters/types";
 import {
   type ClassifyArtifact,
-  type ResolvedReleaseBundle,
   WorkflowArtifactError,
-  fetchReleaseBundleForGate,
+  processReleaseBundleForGate,
 } from "../github-app/artifacts";
 import { type GithubAppConfig } from "../github-app/config";
 import {
@@ -20,7 +20,7 @@ import {
   getWorkflowGateAdapter,
   UnsupportedEcosystemError,
 } from "./registry";
-import { resolveBundleArtifacts } from "./resolve";
+import { compactDuplicateTextSamples, resolveBundleArtifact } from "./resolve";
 import type { ParsedGateArtifact, PreparedReleaseCandidate, WorkflowGateAdapter } from "./types";
 
 export interface PrepareForGateInput {
@@ -123,20 +123,40 @@ export async function prepareReleaseCandidatesForGate(
   }
 
   const ecosystemLabel = releaseTarget.ecosystem ?? "auto";
-  const { classify, artifactName } = resolveBundleClassifier(db, gate, releaseTarget, input);
+  const { classify, artifactName, artifactNamePrefix } = resolveBundleClassifier(
+    db,
+    gate,
+    releaseTarget,
+    input,
+  );
 
   try {
-    const bundle = await fetchReleaseBundleForGate(
+    const retainedSamples = new Map<string, string>();
+    const bundle = await processReleaseBundleForGate(
       input.config,
       {
         installationExternalId: installation.installationId,
         repositoryFullName: gate.repositoryFullName,
         runId: gate.runId,
         ...(artifactName ? { artifactName } : {}),
+        ...(artifactNamePrefix ? { artifactNamePrefix } : {}),
       },
       classify,
+      async (file) => {
+        const resolved = await resolveBundleArtifact(env, ctx, file);
+        if (resolved.ecosystem !== "pypi") return resolved;
+        const prepared = preparePyPiArtifact({
+          path: resolved.path,
+          files: resolved.files,
+          ...(resolved.suspiciousEntries ? { suspiciousEntries: resolved.suspiciousEntries } : {}),
+        });
+        const sampleScope = prepared.summary.name
+          ? normalizePyPiProjectName(prepared.summary.name)
+          : resolved.path;
+        return compactDuplicateTextSamples(resolved, retainedSamples, sampleScope);
+      },
     );
-    const packages = await prepareBundlePackages(env, ctx, bundle);
+    const packages = prepareBundlePackages(bundle.artifacts);
     return { gate, packages };
   } catch (err) {
     const reason =
@@ -173,7 +193,7 @@ function resolveBundleClassifier(
   gate: WorkflowGateRecord,
   releaseTarget: { ecosystem: string | null; artifactName: string | null },
   input: PrepareForGateInput,
-): { classify: ClassifyArtifact; artifactName?: string } {
+): { classify: ClassifyArtifact; artifactName?: string; artifactNamePrefix?: string } {
   const override = input.artifactName ?? releaseTarget.artifactName ?? undefined;
   if (releaseTarget.ecosystem === null) {
     return {
@@ -204,7 +224,16 @@ function resolveBundleClassifier(
       const kind = adapter.classifyArtifact(path);
       return kind ? { ecosystem: adapter.ecosystem, kind } : null;
     },
-    artifactName: override ?? adapter.artifactName,
+    ...(override
+      ? { artifactName: override }
+      : adapter.shardedArtifactNames
+        ? {
+            // The exact conventional name remains valid; `-${shard}` suffixes
+            // let large releases keep every outer Actions ZIP under the
+            // per-download cap while excluding unrelated workflow artifacts.
+            artifactNamePrefix: adapter.artifactName,
+          }
+        : { artifactName: adapter.artifactName }),
   };
 }
 
@@ -214,13 +243,7 @@ function resolveBundleClassifier(
  * ecosystem's adapter split its slice into one prepared candidate per distinct
  * package.
  */
-async function prepareBundlePackages(
-  env: Cloudflare.Env,
-  ctx: ExecutionContext,
-  bundle: ResolvedReleaseBundle,
-): Promise<PreparedGatePackage[]> {
-  const resolved = await resolveBundleArtifacts(env, ctx, bundle);
-
+function prepareBundlePackages(resolved: ParsedGateArtifact[]): PreparedGatePackage[] {
   const byEcosystem = new Map<string, ParsedGateArtifact[]>();
   for (const artifact of resolved) {
     const slice = byEcosystem.get(artifact.ecosystem);

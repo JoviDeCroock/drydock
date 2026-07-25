@@ -39,6 +39,13 @@ export function annotateFindingsWithDiffStatus<
     const persisted = finding.id ? options.persistedAnnotations?.get(finding.id) : null;
     if (persisted) return { ...finding, ...persisted };
 
+    // Without a downloaded baseline every file reads as `added`, which would
+    // score the package's whole contents as this release's delta. Report the
+    // comparison as missing instead of inventing one.
+    if (options.baselineComparisonSkipped) {
+      return { ...finding, diffStatus: "unknown" as FindingDiffStatus, releaseDelta: false };
+    }
+
     const diffStatus = diffByPath.get(finding.file) ?? "unknown";
     return {
       ...finding,

@@ -66,8 +66,15 @@ The PyPI adapter (`server/lib/adapters/pypi/`):
 - parses wheel `METADATA`, `WHEEL`, and `RECORD` from ZIP archives;
 - strips the common sdist root before reading `PKG-INFO`;
 - groups artifacts by normalized project name and requires a shared version inside each group;
+- discovers the conventional `pypi-release-candidate` upload plus
+  `pypi-release-candidate-*` shards (pinned release targets only), parsing one
+  bounded Actions artifact at a time and retaining every distribution digest;
 - selects the default baseline from PyPI `info.version`, falling back to newest non-yanked upload time;
-- downloads matching baseline wheels/sdists through a credential-free broker restricted to `https://files.pythonhosted.org`;
+- downloads matching baseline wheels/sdists sequentially through a
+  credential-free broker restricted to `https://files.pythonhosted.org`;
+- records `comparisonSkipped: "baseline-too-large"` when the published release
+  exceeds the download budget, so findings stay `unknown` package context and the
+  report names the missing comparison instead of grading an uncompared release;
 - reports metadata mismatches, missing wheel `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, and `.pyd` native extensions.
 
 ## npm workflow-gate notes
@@ -88,7 +95,7 @@ jobs:
       - run: sha256sum *.tgz > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: npm-package
+          name: npm-release-candidates
           path: |
             *.tgz
             SHA256SUMS
@@ -97,6 +104,8 @@ jobs:
     environment: production
     steps:
       - uses: actions/download-artifact@v4
+        with:
+          name: npm-release-candidates
       # Fail closed if the downloaded bytes drifted from what was reviewed.
       - run: sha256sum --check --strict SHA256SUMS
       - run: npm publish *.tgz

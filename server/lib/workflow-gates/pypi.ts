@@ -32,6 +32,9 @@ import type {
 export const pypiWorkflowGateAdapter: WorkflowGateAdapter = {
   ecosystem: "pypi",
   artifactName: "pypi-release-candidate",
+  // A platform wheel matrix can exceed the per-download ZIP cap, so PyPI
+  // releases may shard across `pypi-release-candidate-*` uploads.
+  shardedArtifactNames: true,
   packageAdapter: pypiAdapter as PackageAdapter<unknown, AdapterBroker>,
 
   classifyArtifact(path: string): WorkflowArtifactKind | null {

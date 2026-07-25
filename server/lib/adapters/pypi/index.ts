@@ -11,6 +11,7 @@ import {
   acquireStagedPyPi,
   baselineFromPreviousArtifacts,
   pickPackageIdentity,
+  stagedSampleRetention,
 } from "./acquire";
 import { createPyPiBroker, type PyPiBroker } from "./broker";
 import { pyPiReleaseFindings } from "./findings";
@@ -92,7 +93,10 @@ export function createPyPiReleaseCandidateReview(input: {
 }): PyPiReleaseCandidateReview {
   const adapterInput = pypiAdapter.parseInput(input);
   const staged = acquireStagedPyPi(adapterInput);
-  const baseline = baselineFromPreviousArtifacts(adapterInput);
+  const baseline = baselineFromPreviousArtifacts(
+    adapterInput,
+    stagedSampleRetention(staged.details),
+  );
   const diff = createPackageDiff(baseline.artifact?.files ?? [], staged.artifact.files);
   const ruleFindings = redactFindings(
     pypiAdapter.runFindings({

@@ -408,6 +408,13 @@ describe("recommendationForReleaseRisk", () => {
     expect(recommendationForReleaseRisk("low")).toBe("approved");
     expect(recommendationForReleaseRisk("medium")).toBe("approved");
   });
+
+  test("asks for manual review when no baseline was compared", () => {
+    // A skipped baseline leaves nothing to grade, so the advisory verdict must
+    // not claim the release is clean — nor reject it for shipping its own files.
+    expect(recommendationForReleaseRisk("low", true)).toBe("manual_review");
+    expect(recommendationForReleaseRisk("critical", true)).toBe("manual_review");
+  });
 });
 
 describe("gate callback timeout classification", () => {

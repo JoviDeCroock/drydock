@@ -48,6 +48,13 @@ export interface FindingAnnotationOptions {
   stagedFiles?: Array<Pick<FileRecord, "path" | "textSample" | "flags">>;
   persistedAnnotations?: Map<string, FindingDiffAnnotation>;
   codePatternSet?: CodePatternSet;
+  /**
+   * A published baseline existed but was not downloaded, so the diff reports
+   * every staged file as added. Nothing can honestly be called a release delta
+   * from that, so every finding is annotated `unknown` package context and the
+   * report surfaces why instead of grading a comparison that never happened.
+   */
+  baselineComparisonSkipped?: boolean;
 }
 
 export { createPackageDiff } from "./review-diff";

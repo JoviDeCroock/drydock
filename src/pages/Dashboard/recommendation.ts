@@ -15,8 +15,21 @@ export function getReleaseRecommendation(
   releaseRisk: string,
   releaseFindingCount: number,
   target: "npm" | "gate" = "npm",
+  baselineComparisonSkipped = false,
 ): ReleaseRecommendationCopy {
   const isGate = target === "gate";
+  // The published release was never downloaded, so every file reads as added
+  // and `releaseRisk` graded nothing. Neither a block nor an all-clear is
+  // supported by the evidence — name the gap instead.
+  if (baselineComparisonSkipped) {
+    return {
+      label: "no baseline to compare",
+      tone: "medium",
+      copy: isGate
+        ? "The published release is too large to download, so this report could not compare against it. Every signal below is package context, not a change this release introduced — review the artifact contents before releasing the job."
+        : "The published release is too large to download, so this report could not compare against it. Every signal below is package context, not a change this release introduced — review the artifact contents before approving.",
+    };
+  }
   if (releaseRisk === "critical" || releaseRisk === "high") {
     return {
       label: "block manual approval",

@@ -128,6 +128,48 @@ describe("PyPI artifact summaries and review", () => {
     });
   });
 
+  test("keeps per-artifact rule evidence on every platform wheel", () => {
+    // `pthExecution` fires once per artifact and reads its severity, evidence,
+    // and line from the file body. Compacting a byte-identical `.pth` down to
+    // one copy would leave the siblings reporting medium / ".pth file included
+    // in wheel" for content that does contain an import line.
+    const platforms = ["macosx_11_0_arm64", "manylinux_x86_64", "win_amd64"];
+    const paths = platforms.map(
+      (platform) => `dist/demo_package-1.2.0-cp312-cp312-${platform}.whl`,
+    );
+    const wheelFiles = (platform) => [
+      file(
+        "demo_package-1.2.0.dist-info/METADATA",
+        "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
+      ),
+      file(
+        "demo_package-1.2.0.dist-info/WHEEL",
+        `Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: cp312-cp312-${platform}\n`,
+      ),
+      file("demo_package-1.2.0.dist-info/RECORD", "demo_package/__init__.py,,\n"),
+      file("sitecustomize.pth", "import demo_package.bootstrap\n"),
+    ];
+    const review = createPyPiReleaseCandidateReview({
+      manifest: parsePyPiReleaseManifest({
+        schema: "drydock.release-artifacts.v1",
+        ecosystem: "pypi",
+        package: "demo-package",
+        version: "1.2.0",
+        artifacts: paths.map((path, index) => ({ path, sha256: `${index}a`.repeat(32) })),
+      }),
+      artifacts: paths.map((path, index) => ({ path, files: wheelFiles(platforms[index]) })),
+    });
+
+    const pth = review.ruleFindings.filter((finding) => finding.ruleId === "pypi.pth-execution");
+    expect(pth.map((finding) => finding.file)).toEqual(
+      paths.map((path) => `${path}/sitecustomize.pth`),
+    );
+    expect(pth.map((finding) => finding.severity)).toEqual(["high", "high", "high"]);
+    expect(new Set(pth.map((finding) => finding.evidence))).toEqual(
+      new Set([".pth file contains an import line"]),
+    );
+  });
+
   test("creates deterministic PyPI findings for wheel startup hooks and setup.py install commands", () => {
     const manifest = parsePyPiReleaseManifest({
       schema: "drydock.release-artifacts.v1",
@@ -1039,5 +1081,185 @@ describe("PyPI baseline acquisition through the broker", () => {
     expect(
       baseline.artifact.files.every((entry) => entry.path.startsWith("wheel/py3-none-any/")),
     ).toBe(true);
+  });
+
+  test("downloads 44 comparable baseline wheels sequentially and compacts repeated samples", async () => {
+    const wheelNames = Array.from(
+      { length: 44 },
+      (_, index) =>
+        `demo_package-1.1.0-cp312-cp312-manylinux_${String(index).padStart(2, "0")}_x86_64.whl`,
+    );
+    const candidateNames = wheelNames.map((name) => name.replace("1.1.0", "1.2.0"));
+    const manifest = candidateManifest(
+      candidateNames.map((path) => ({ path: `dist/${path}`, sha256: "a".repeat(64) })),
+    );
+    const input = pypiAdapter.parseInput({
+      manifest,
+      artifacts: candidateNames.map((path) => ({
+        path: `dist/${path}`,
+        files: wheelArtifactFiles("1.2.0"),
+      })),
+    });
+    const metadata = {
+      info: { version: "1.1.0" },
+      releases: {
+        "1.1.0": wheelNames.map((filename) => ({
+          filename,
+          packagetype: "bdist_wheel",
+          url: `https://files.pythonhosted.org/packages/${filename}`,
+          size: 5 * 1024 * 1024,
+          digests: { sha256: "c".repeat(64) },
+          upload_time_iso_8601: "2026-02-01T00:00:00.000Z",
+        })),
+      },
+    };
+    let activeDownloads = 0;
+    let maxActiveDownloads = 0;
+    const calls = [];
+    const broker = {
+      async fetchProjectMetadata() {
+        return metadata;
+      },
+      async downloadPublicArtifact(artifact) {
+        calls.push(artifact);
+        activeDownloads += 1;
+        maxActiveDownloads = Math.max(maxActiveDownloads, activeDownloads);
+        await Promise.resolve();
+        activeDownloads -= 1;
+        return { files: wheelArtifactFiles("1.1.0"), packageJson: null };
+      },
+      dispose() {},
+    };
+
+    const staged = await pypiAdapter.acquireStaged(adapterCtx, input, broker);
+    const baseline = await pypiAdapter.acquireBaseline(adapterCtx, input, broker, staged);
+
+    expect(calls).toHaveLength(44);
+    expect(maxActiveDownloads).toBe(1);
+    expect(
+      baseline.artifact.files.filter(
+        (entry) => entry.path.endsWith("demo_package/__init__.py") && entry.textSample,
+      ),
+    ).toHaveLength(1);
+  });
+
+  test("marks the comparison skipped when the published baseline is too large", async () => {
+    const manifest = candidateManifest([
+      { path: "dist/demo_package-1.2.0-py3-none-any.whl", sha256: "a".repeat(64) },
+    ]);
+    const input = pypiAdapter.parseInput({
+      manifest,
+      artifacts: [
+        { path: "dist/demo_package-1.2.0-py3-none-any.whl", files: wheelArtifactFiles("1.2.0") },
+      ],
+    });
+    const { broker, calls } = stubBroker({
+      metadata: {
+        info: { version: "1.1.0" },
+        releases: {
+          "1.1.0": [
+            {
+              filename: "demo_package-1.1.0-py3-none-any.whl",
+              packagetype: "bdist_wheel",
+              url: "https://files.pythonhosted.org/packages/demo_package-1.1.0-py3-none-any.whl",
+              // One distribution over the 768 MiB advertised-bytes budget.
+              size: 800 * 1024 * 1024,
+              digests: { sha256: "c".repeat(64) },
+              upload_time_iso_8601: "2026-02-01T00:00:00.000Z",
+            },
+          ],
+        },
+      },
+    });
+
+    const staged = await pypiAdapter.acquireStaged(adapterCtx, input, broker);
+    const baseline = await pypiAdapter.acquireBaseline(adapterCtx, input, broker, staged);
+
+    // Nothing is downloaded, but the report must say a predecessor exists and
+    // was skipped rather than silently reviewing without a baseline.
+    expect(calls).toEqual([]);
+    expect(baseline.artifact).toBeNull();
+    expect(baseline.baseline).toMatchObject({
+      version: "1.1.0",
+      comparisonSkipped: "baseline-too-large",
+    });
+    expect(baseline.baseline.reason).toContain("baseline-resource-budget");
+  });
+
+  test("keeps the retained sample in the same namespace on both sides of the diff", async () => {
+    // 1.2.0 adds a macOS wheel the baseline never published. Its filename sorts
+    // before `manylinux`, so an independent baseline pass would keep the shared
+    // body under `macosx` on the staged side and under `manylinux` on the
+    // baseline side — rendering a changed file as a whole-file deletion.
+    const platformWheel = (platform, version, initSha, initBody) => [
+      file(
+        `demo_package-${version}.dist-info/METADATA`,
+        `Metadata-Version: 2.3\nName: demo-package\nVersion: ${version}\n`,
+      ),
+      file(
+        `demo_package-${version}.dist-info/WHEEL`,
+        `Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: cp312-cp312-${platform}\n`,
+        { sha256: "sha-wheel-metadata" },
+      ),
+      file(`demo_package-${version}.dist-info/RECORD`, "demo_package/__init__.py,,\n", {
+        sha256: "sha-wheel-record",
+      }),
+      file("demo_package/__init__.py", initBody, { sha256: initSha }),
+    ];
+    const stagedPaths = [
+      "dist/demo_package-1.2.0-cp312-cp312-macosx_11_0_arm64.whl",
+      "dist/demo_package-1.2.0-cp312-cp312-manylinux_x86_64.whl",
+    ];
+    const manylinuxUrl =
+      "https://files.pythonhosted.org/packages/demo_package-1.1.0-cp312-cp312-manylinux_x86_64.whl";
+    const input = pypiAdapter.parseInput({
+      manifest: candidateManifest(
+        stagedPaths.map((path, index) => ({ path, sha256: `${index}a`.repeat(32) })),
+      ),
+      artifacts: [
+        {
+          path: stagedPaths[0],
+          files: platformWheel("macosx_11_0_arm64", "1.2.0", "sha-init-new", "VALUE = 2\n"),
+        },
+        {
+          path: stagedPaths[1],
+          files: platformWheel("manylinux_x86_64", "1.2.0", "sha-init-new", "VALUE = 2\n"),
+        },
+      ],
+    });
+    const { broker } = stubBroker({
+      metadata: {
+        info: { version: "1.1.0" },
+        releases: {
+          "1.1.0": [
+            {
+              filename: "demo_package-1.1.0-cp312-cp312-manylinux_x86_64.whl",
+              packagetype: "bdist_wheel",
+              url: manylinuxUrl,
+              digests: { sha256: "c".repeat(64) },
+              upload_time_iso_8601: "2026-02-01T00:00:00.000Z",
+            },
+          ],
+        },
+      },
+      downloads: {
+        [manylinuxUrl]: platformWheel("manylinux_x86_64", "1.1.0", "sha-init-old", "VALUE = 1\n"),
+      },
+    });
+
+    const staged = await pypiAdapter.acquireStaged(adapterCtx, input, broker);
+    const baseline = await pypiAdapter.acquireBaseline(adapterCtx, input, broker, staged);
+
+    const sampleAt = (files, namespace) =>
+      files.find((entry) => entry.path === `${namespace}/demo_package/__init__.py`)?.textSample;
+
+    // The macOS wheel is new, so it keeps the body and the diff shows it as an
+    // added file with content.
+    expect(sampleAt(staged.artifact.files, "wheel/cp312-cp312-macosx_11_0_arm64")).toBe(
+      "VALUE = 2\n",
+    );
+    // The manylinux namespace exists on both sides, so neither side keeps a body.
+    expect(sampleAt(staged.artifact.files, "wheel/cp312-cp312-manylinux_x86_64")).toBeUndefined();
+    expect(sampleAt(baseline.artifact.files, "wheel/cp312-cp312-manylinux_x86_64")).toBeUndefined();
   });
 });
