@@ -79,6 +79,24 @@ export function isNpmConnectionAuthFailure(err: unknown): boolean {
   return false;
 }
 
+/**
+ * Whether a cron sweep error is upstream infrastructure trouble rather than
+ * something an operator can act on. `reliableFetch` has already retried GETs
+ * three times by the time these surface, so this is not "might still succeed" —
+ * it is "the registry, not us". Status 0 is a transport failure (timeout, DNS,
+ * TLS); 408/429/5xx are the registry saying it could not serve the request.
+ *
+ * These are logged at warn so the error channel stays actionable: discovery is
+ * idempotent and the next 15-minute tick re-sweeps the org, so a single one
+ * costs at most one cycle of detection latency. A registry that stays
+ * unreachable for an org is invisible here by design — that needs failure
+ * counting across ticks, not a louder single-tick log.
+ */
+export function isTransientSweepFailure(err: unknown): boolean {
+  if (!(err instanceof StagedPublishesFetchError)) return false;
+  return err.status === 0 || err.status === 408 || err.status === 429 || err.status >= 500;
+}
+
 function describeNpmAuthFailure(err: unknown): string {
   if (err instanceof StagedPublishesFetchError) return `staged_list_${err.status}`;
   if (err instanceof InvalidNpmConnectionError && err.validation) {
