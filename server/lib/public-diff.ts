@@ -62,6 +62,10 @@ export interface PublicPackageDiff {
   packageJsonDiff: PackageJsonDiff;
   findings: Array<Finding & FindingDiffAnnotation>;
   risk: ScanRiskBreakdown;
+  // True when the cached payload could not carry every file's display sample.
+  // Retention is prioritized (see retainedSamplePaths), so this being set does
+  // not mean no sample survived; the per-file `sample-omitted` flag marks the
+  // records that lost theirs.
   textSamplesOmitted?: boolean;
   // Coverage caveats from acquisition (e.g. a PyPI artifact kind omitted from
   // both sides because it exceeded a sandbox cap). Rendered as a banner.
@@ -88,12 +92,16 @@ const PUBLIC_DIFF_RISK_VERSION = "1";
 // PyPI v5: pairs now have a request-wide selected-byte budget, which can omit
 // one artifact kind with a notice instead of exhausting the Worker. npm stays
 // on v4 so this PyPI-only change does not invalidate its computed cache.
+// npm v5 / PyPI v6: oversized pairs retain samples for changed files instead of
+// dropping every sample, and mark the records that lost one. Entries written by
+// the previous versions carry no sample at all for a pair this large, so they
+// must not be served once the prioritized retention ships.
 function publicDiffCachePrefix(ecosystem: PublicDiffEcosystem): string {
   const rules =
     ecosystem === "pypi"
       ? `${DETERMINISTIC_RULES_VERSION}+pypi-${PYPI_RULES_VERSION}`
       : DETERMINISTIC_RULES_VERSION;
-  const payloadVersion = ecosystem === "pypi" ? "v5" : "v4";
+  const payloadVersion = ecosystem === "pypi" ? "v6" : "v5";
   return `public-diff:${payloadVersion}:${ecosystem}:rules=${rules}:risk=${PUBLIC_DIFF_RISK_VERSION}:`;
 }
 // Package bytes are immutable, while the analysis version is encoded above.
@@ -376,17 +384,122 @@ export function serializePublicDiffCachePayload(
 ): string {
   let serialized = JSON.stringify(payload);
   if (utf8ByteLength(serialized) <= maxPayloadBytes) return serialized;
+  // Drop the reference before building anything else: for the pairs that reach
+  // this branch the discarded string is ~20 MiB, and the Worker still holds
+  // both parsed sides. Holding it while the reduced payload is built is what
+  // pushes peak memory past the isolate limit.
+  serialized = "";
 
-  // Rare oversized pair: cache without samples so repeat views stay cheap.
-  // The per-file endpoint then reports samples as unavailable instead of
-  // recomputing two archive parses per file view.
-  serialized = JSON.stringify({
+  // Metadata-only floor. Doubles as the fallback below, so it is built once
+  // rather than re-serialized.
+  const bare = JSON.stringify(bareSamplePayload(payload));
+  const budget = maxPayloadBytes - utf8ByteLength(bare);
+  if (budget <= 0) return bare;
+
+  // Oversized pair: cache a reduced sample set so repeat views stay cheap
+  // without blanking the workbench. Dropping every sample used to leave large
+  // releases (a numpy wheel pair carries ~20 MiB of Python text) rendering
+  // "No text samples available to diff." on every file, including the handful
+  // that actually changed — the only ones a reviewer opens.
+  const retained = retainedSamplePaths(payload, budget);
+  if (!retained.size) return bare;
+
+  const reduced = JSON.stringify({
     ...payload,
-    fromFiles: stripSamples(payload.fromFiles),
-    toFiles: stripSamples(payload.toFiles),
+    fromFiles: applySampleRetention(payload.fromFiles, retained),
+    toFiles: applySampleRetention(payload.toFiles, retained),
     textSamplesOmitted: true,
   } satisfies PublicPackageDiff);
-  return serialized;
+  // Selection works from per-path cost arithmetic rather than a trial
+  // serialization, so confirm the real payload fits before committing to it.
+  return utf8ByteLength(reduced) <= maxPayloadBytes ? reduced : bare;
+}
+
+// Flags a record whose display sample was dropped to fit the cache budget, so
+// the UI can say why the body is missing instead of implying the parser never
+// captured one. Mirrored as a literal in src/components/DiffView.tsx alongside
+// the parser's own flags.
+export const SAMPLE_OMITTED_FLAG = "sample-omitted";
+
+// JSON cost of `,"textSample":<value>` — the bytes a retained sample adds back
+// to a record that would otherwise carry none.
+const TEXT_SAMPLE_KEY_BYTES = ',"textSample":'.length;
+
+// How much of the budget unchanged files may claim once a pair is over it.
+// Every file navigation re-reads and re-parses the whole cached payload, so a
+// degraded payload that fills the full 20 MiB would trade one broken workbench
+// for a slow one. Changed files are what the workbench opens and are not
+// subject to this cap; unchanged bodies are best-effort package context.
+const UNCHANGED_SAMPLE_BUDGET_BYTES = 2 * 1024 * 1024;
+
+function bareSamplePayload(payload: PublicPackageDiff): PublicPackageDiff {
+  return {
+    ...payload,
+    fromFiles: applySampleRetention(payload.fromFiles, new Set()),
+    toFiles: applySampleRetention(payload.toFiles, new Set()),
+    textSamplesOmitted: true,
+  };
+}
+
+// Which paths keep their display sample when the pair exceeds the cache value
+// budget. Changed paths come first — they are what the workbench opens — then
+// unchanged ones as package context under their own smaller cap, cheapest
+// sample first inside each tier so the budget buys the most reviewable files.
+// A path's two sides are always kept or dropped together: a half-sampled
+// modification would render as a whole-file addition or deletion.
+function retainedSamplePaths(payload: PublicPackageDiff, sampleBudget: number): Set<string> {
+  const retained = new Set<string>();
+  let budget = sampleBudget;
+  let unchangedBudget = Math.min(budget, UNCHANGED_SAMPLE_BUDGET_BYTES);
+  for (const candidate of sampleCandidates(payload)) {
+    // Keep scanning past an unaffordable candidate rather than stopping: each
+    // tier is cheapest-first, so only a later tier can still yield a fit.
+    if (candidate.bytes > budget) continue;
+    if (!candidate.changed) {
+      if (candidate.bytes > unchangedBudget) continue;
+      unchangedBudget -= candidate.bytes;
+    }
+    budget -= candidate.bytes;
+    retained.add(candidate.path);
+  }
+  return retained;
+}
+
+interface SampleCandidate {
+  path: string;
+  bytes: number;
+  changed: boolean;
+}
+
+function sampleCandidates(payload: PublicPackageDiff): SampleCandidate[] {
+  const changedPaths = new Set(
+    payload.diff.filter((entry) => entry.status !== "unchanged").map((entry) => entry.path),
+  );
+  const byPath = new Map<string, SampleCandidate>();
+  for (const file of [...payload.fromFiles, ...payload.toFiles]) {
+    if (!file.textSample) continue;
+    const bytes = jsonStringByteLength(file.textSample) + TEXT_SAMPLE_KEY_BYTES;
+    const existing = byPath.get(file.path);
+    if (existing) existing.bytes += bytes;
+    else byPath.set(file.path, { path: file.path, bytes, changed: changedPaths.has(file.path) });
+  }
+  return [...byPath.values()].sort(
+    (a, b) =>
+      Number(b.changed) - Number(a.changed) || a.bytes - b.bytes || a.path.localeCompare(b.path),
+  );
+}
+
+function applySampleRetention(files: FileRecord[], retained: Set<string>): FileRecord[] {
+  return files.map((file) => {
+    if (!file.textSample || retained.has(file.path)) return file;
+    const { textSample: _omitted, ...rest } = file;
+    return {
+      ...rest,
+      flags: rest.flags.includes(SAMPLE_OMITTED_FLAG)
+        ? rest.flags
+        : [...rest.flags, SAMPLE_OMITTED_FLAG],
+    };
+  });
 }
 
 function publicDiffColoCacheRequest(key: string): Request {
@@ -431,10 +544,56 @@ function payloadCacheTtlSeconds(payload: PublicPackageDiff): number {
     : CACHE_TTL_SECONDS;
 }
 
-function utf8ByteLength(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
+// Counted rather than encoded: the strings measured here are the whole cache
+// payload (tens of MiB for a large release), and `TextEncoder.encode` would
+// allocate a throwaway buffer that size on a Worker isolate that is already
+// holding both parsed sides of the diff. Exported for the equivalence tests
+// that pin it to TextEncoder.
+export function utf8ByteLength(value: string): number {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && isLowSurrogate(value.charCodeAt(index + 1))) {
+      // Surrogate pair: one 4-byte code point across two UTF-16 units.
+      bytes += 4;
+      index++;
+    } else {
+      // Includes an unpaired surrogate, which encodes as U+FFFD (3 bytes).
+      bytes += 3;
+    }
+  }
+  return bytes;
 }
 
-function stripSamples(files: FileRecord[]): FileRecord[] {
-  return files.map(({ textSample: _omitted, ...rest }) => rest);
+// JSON.stringify's short escapes; every other control character becomes \u00XX.
+const JSON_SHORT_ESCAPES = new Set([0x08, 0x09, 0x0a, 0x0c, 0x0d]);
+
+// Bytes `JSON.stringify(value)` would produce for a string, quotes included,
+// without building the escaped copy. Sample costs are summed over every file in
+// the payload, so materializing each escaped body just to measure it would
+// double the transient allocation of the whole reduction pass. Exported for the
+// equivalence tests that pin it to JSON.stringify.
+export function jsonStringByteLength(value: string): number {
+  let bytes = 2;
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code < 0x20) bytes += JSON_SHORT_ESCAPES.has(code) ? 2 : 6;
+    else if (code === 0x22 || code === 0x5c) bytes += 2;
+    else if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && isLowSurrogate(value.charCodeAt(index + 1))) {
+      bytes += 4;
+      index++;
+    } else if (code >= 0xd800 && code <= 0xdfff) {
+      // Well-formed JSON.stringify escapes an unpaired surrogate as \udXXX.
+      bytes += 6;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
 }
