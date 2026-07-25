@@ -131,6 +131,7 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
     previousFiles: redactedPreviousFiles,
     stagedFiles: redactedStagedFiles,
     codePatternSet: adapter.codePatternSet,
+    baselineComparisonSkipped: Boolean(baseline.baseline.comparisonSkipped),
   });
   const releaseRuleFindings = stripFindingAnnotations(
     annotatedFindings.filter((finding) => finding.releaseDelta),
@@ -175,6 +176,7 @@ export function mergeAiFindings(
   findings: DeterministicFindings,
   diff: ComputedDiff,
   codePatternSet?: CodePatternSet,
+  baselineComparisonSkipped = false,
 ): MergedAiFindings {
   // projectAiReviewFindings is shared with the R2 read path so both stores
   // hold byte-identical rows; it returns [] for a review that did not complete.
@@ -184,6 +186,7 @@ export function mergeAiFindings(
     previousFiles: findings.redactedPreviousFiles,
     stagedFiles: findings.redactedStagedFiles,
     codePatternSet,
+    baselineComparisonSkipped,
   });
   return { records, annotatedRecords };
 }

@@ -41,17 +41,25 @@ export function ReleaseRecommendation({
     usePersistedRiskSummary && detail.riskSummary
       ? detail.riskSummary.releaseFindingCount
       : changedFindings.length;
+  const baselineComparisonSkipped = summary.baseline?.comparisonSkipped === "baseline-too-large";
   const recommendation = getReleaseRecommendation(
     artifactRisk,
     releaseRisk,
     releaseFindingCount,
     isWorkflowGate ? "gate" : "npm",
+    baselineComparisonSkipped,
   );
   // `detail.findings` and `changedFindings` already include the AI reviewer's
   // findings (persisted as `source: "ai"` rows), so they are counted and shown
   // as evidence from that single source — concatenating `ai.findings` from the
   // review envelope on top would double-count every AI finding.
-  const evidence = buildRecommendationEvidence(detail, summary, diffCount, changedFindings);
+  const evidence = buildRecommendationEvidence(
+    detail,
+    summary,
+    diffCount,
+    changedFindings,
+    baselineComparisonSkipped,
+  );
   const severityCounts = countSeverities(detail.findings);
   const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
 
@@ -129,8 +137,20 @@ function buildRecommendationEvidence(
   summary: PersistedSummary,
   diffCount: number,
   changedFindings: PersistedFinding[],
+  baselineComparisonSkipped: boolean,
 ): Array<{ label: string; value: ComponentChildren }> {
   const evidence: Array<{ label: string; value: ComponentChildren }> = [];
+  // Lead with the missing comparison: it explains why there are no release
+  // deltas below, which would otherwise read as an all-clear.
+  if (baselineComparisonSkipped) {
+    const version = summary.baseline?.version;
+    evidence.push({
+      label: "baseline",
+      value: version
+        ? `Published ${version} exceeded the download budget, so no file was compared against it.`
+        : "The published release exceeded the download budget, so no file was compared against it.",
+    });
+  }
   const releaseFindings: RecommendationFinding[] = changedFindings;
   if (releaseFindings.length) {
     const topFindings = sortFindingsBySeverity(releaseFindings).slice(0, 3);

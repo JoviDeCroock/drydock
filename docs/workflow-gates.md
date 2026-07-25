@@ -72,6 +72,9 @@ The PyPI adapter (`server/lib/adapters/pypi/`):
 - selects the default baseline from PyPI `info.version`, falling back to newest non-yanked upload time;
 - downloads matching baseline wheels/sdists sequentially through a
   credential-free broker restricted to `https://files.pythonhosted.org`;
+- records `comparisonSkipped: "baseline-too-large"` when the published release
+  exceeds the download budget, so findings stay `unknown` package context and the
+  report names the missing comparison instead of grading an uncompared release;
 - reports metadata mismatches, missing wheel `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, and `.pyd` native extensions.
 
 ## npm workflow-gate notes

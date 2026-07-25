@@ -1,5 +1,11 @@
 import type { FileRecord, PackageJsonSummary } from "../../review";
-import type { AcquiredArtifact, AdapterContext, BaselineInfo, StagedDetails } from "../types";
+import type {
+  AcquiredArtifact,
+  AdapterContext,
+  BaselineComparisonSkip,
+  BaselineInfo,
+  StagedDetails,
+} from "../types";
 import type { PyPiBroker } from "./broker";
 import { summarizePyPiArtifact, namespacedPath } from "./findings";
 import { inferPyPiArtifactKind, normalizePyPiProjectName } from "./manifest";
@@ -109,9 +115,13 @@ export async function acquireBaselinePyPi(
     comparable.length > MAX_PYPI_BASELINE_ARTIFACTS ||
     advertisedBytes > MAX_PYPI_BASELINE_ADVERTISED_BYTES
   ) {
+    // A published predecessor exists; we just cannot afford to download it. Say
+    // so, so the review is scored as "could not compare" rather than as a
+    // release that added every file it ships.
     return emptyPyPiBaseline(`${selection.reason}:baseline-resource-budget`, {
       version: selection.version,
       source: selection.source,
+      comparisonSkipped: "baseline-too-large",
     });
   }
 
@@ -177,7 +187,11 @@ export function baselineFromPreviousArtifacts(
 
 function emptyPyPiBaseline(
   reason: string,
-  opts: { version?: string | null; source?: PyPiBaselineSelectionSource } = {},
+  opts: {
+    version?: string | null;
+    source?: PyPiBaselineSelectionSource;
+    comparisonSkipped?: BaselineComparisonSkip;
+  } = {},
 ): { artifact: null; baseline: BaselineInfo } {
   return {
     artifact: null,
@@ -187,6 +201,7 @@ function emptyPyPiBaseline(
       source: opts.source ?? "none",
       distTagVersion: null,
       reason,
+      ...(opts.comparisonSkipped ? { comparisonSkipped: opts.comparisonSkipped } : {}),
     },
   };
 }

@@ -1143,6 +1143,49 @@ describe("PyPI baseline acquisition through the broker", () => {
     ).toHaveLength(1);
   });
 
+  test("marks the comparison skipped when the published baseline is too large", async () => {
+    const manifest = candidateManifest([
+      { path: "dist/demo_package-1.2.0-py3-none-any.whl", sha256: "a".repeat(64) },
+    ]);
+    const input = pypiAdapter.parseInput({
+      manifest,
+      artifacts: [
+        { path: "dist/demo_package-1.2.0-py3-none-any.whl", files: wheelArtifactFiles("1.2.0") },
+      ],
+    });
+    const { broker, calls } = stubBroker({
+      metadata: {
+        info: { version: "1.1.0" },
+        releases: {
+          "1.1.0": [
+            {
+              filename: "demo_package-1.1.0-py3-none-any.whl",
+              packagetype: "bdist_wheel",
+              url: "https://files.pythonhosted.org/packages/demo_package-1.1.0-py3-none-any.whl",
+              // One distribution over the 768 MiB advertised-bytes budget.
+              size: 800 * 1024 * 1024,
+              digests: { sha256: "c".repeat(64) },
+              upload_time_iso_8601: "2026-02-01T00:00:00.000Z",
+            },
+          ],
+        },
+      },
+    });
+
+    const staged = await pypiAdapter.acquireStaged(adapterCtx, input, broker);
+    const baseline = await pypiAdapter.acquireBaseline(adapterCtx, input, broker, staged);
+
+    // Nothing is downloaded, but the report must say a predecessor exists and
+    // was skipped rather than silently reviewing without a baseline.
+    expect(calls).toEqual([]);
+    expect(baseline.artifact).toBeNull();
+    expect(baseline.baseline).toMatchObject({
+      version: "1.1.0",
+      comparisonSkipped: "baseline-too-large",
+    });
+    expect(baseline.baseline.reason).toContain("baseline-resource-budget");
+  });
+
   test("keeps the retained sample in the same namespace on both sides of the diff", async () => {
     // 1.2.0 adds a macOS wheel the baseline never published. Its filename sorts
     // before `manylinux`, so an independent baseline pass would keep the shared

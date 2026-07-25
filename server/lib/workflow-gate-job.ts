@@ -36,7 +36,16 @@ import { classifyScanError, type WorkflowGateQueueMessage } from "./scan-job";
 // The threshold is a product decision held in one place so it is easy to tune.
 const BLOCKING_RISKS: ReadonlySet<RiskLevel> = new Set<RiskLevel>(["high", "critical"]);
 
-export function recommendationForReleaseRisk(releaseRisk: RiskLevel): "approved" | "rejected" {
+export type GateRecommendation = "approved" | "rejected" | "manual_review";
+
+export function recommendationForReleaseRisk(
+  releaseRisk: RiskLevel,
+  baselineComparisonSkipped = false,
+): GateRecommendation {
+  // No baseline was downloaded, so there is no release delta to grade. Neither
+  // "approved" nor "rejected" is supported by the evidence: say the comparison
+  // is missing and let the maintainer review the artifact as a whole.
+  if (baselineComparisonSkipped) return "manual_review";
   return BLOCKING_RISKS.has(releaseRisk) ? "rejected" : "approved";
 }
 
@@ -271,7 +280,11 @@ export async function executeWorkflowGateJob(
   const aggregateReleaseRisk = combineRisk(...reviewed.map((pkg) => pkg.releaseRisk));
   const representative =
     reviewed.find((pkg) => pkg.releaseRisk === aggregateReleaseRisk) ?? reviewed[0];
-  const recommendation = recommendationForReleaseRisk(aggregateReleaseRisk);
+  const baselineComparisonSkipped = reviewed.some((pkg) => pkg.baselineComparisonSkipped);
+  const recommendation = recommendationForReleaseRisk(
+    aggregateReleaseRisk,
+    baselineComparisonSkipped,
+  );
 
   await recordScanEvent(db, {
     organizationId,
@@ -399,6 +412,8 @@ interface ReviewedPackage {
   packageName: string | null;
   version: string | null;
   releaseRisk: RiskLevel;
+  /** The published baseline was not downloaded, so `releaseRisk` graded nothing. */
+  baselineComparisonSkipped: boolean;
 }
 
 const GATE_PACKAGE_SCAN_CONCURRENCY = 3;
@@ -445,6 +460,7 @@ async function reviewGatePackages(
         packageName: result.package.name,
         version: result.package.stagedVersion,
         releaseRisk: result.riskSummary.releaseRisk,
+        baselineComparisonSkipped: Boolean(result.baseline.comparisonSkipped),
       };
     } catch (err) {
       await markScanFailed(db, scanId, organizationId, classifyScanError(err));

@@ -107,6 +107,18 @@ release exists, the review runs without a baseline (full-tree review). Matching
 platform baselines are downloaded and sandbox-parsed sequentially so a release
 with dozens of wheels never inflates them concurrently.
 
+A published release that exceeds the baseline download budget is a different
+case from having no predecessor at all, and the review says so rather than
+guessing. `BaselineInfo.comparisonSkipped` is set to `baseline-too-large`, every
+finding is annotated `unknown` package context instead of a release delta, and
+the report leads with "no baseline to compare" plus the version that was
+skipped. Without that, an uncompared release would report its entire contents as
+newly added — which for a compiled project means every `.pyd` raising a high
+release-delta finding, and an advisory verdict of "block manual approval" that
+no evidence supports. The gate's advisory recommendation becomes
+`manual_review`: neither approval nor rejection is supported when nothing was
+compared. The gate stays pending for a maintainer either way.
+
 ## Code sharing
 
 PyPI review is deterministic-only and shares the package diff, risk model, and

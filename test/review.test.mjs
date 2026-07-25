@@ -910,6 +910,15 @@ describe("review", () => {
       diffStatus: "added",
       releaseDelta: true,
     });
+
+    // With no downloaded baseline every file reads as added, which would grade
+    // the package's whole contents as this release's delta. Report the missing
+    // comparison instead.
+    const withoutBaseline = annotateFindingsWithDiffStatus(findings, diff, {
+      baselineComparisonSkipped: true,
+    });
+    expect(withoutBaseline.every((finding) => finding.releaseDelta === false)).toBe(true);
+    expect(withoutBaseline.every((finding) => finding.diffStatus === "unknown")).toBe(true);
   });
 
   test("keeps modified-file findings contextual when the finding line did not change", () => {

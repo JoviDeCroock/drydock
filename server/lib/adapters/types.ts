@@ -66,12 +66,21 @@ type BaselineSelectionSource =
   | "upload-time"
   | "none";
 
+/**
+ * Why a published baseline exists but was deliberately not downloaded. The diff
+ * then reports every staged file as added, which is a *gap in the comparison*,
+ * not a release delta: findings stay package context and the report says so
+ * instead of recommending a block the evidence does not support.
+ */
+export type BaselineComparisonSkip = "baseline-too-large";
+
 export interface BaselineInfo {
   version: string | null;
   tag: string | null;
   source: BaselineSelectionSource;
   distTagVersion: string | null;
   reason: string;
+  comparisonSkipped?: BaselineComparisonSkip;
 }
 
 interface AdapterRunFindingsArgs {
