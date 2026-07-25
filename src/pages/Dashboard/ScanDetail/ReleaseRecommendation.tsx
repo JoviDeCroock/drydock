@@ -67,8 +67,8 @@ export function ReleaseRecommendation({
   // The recommendation is the report's verdict, so it gets the only elevated
   // (carded) section among the supplementary bare sections below it, plus a
   // headline-scale verdict in the matching severity text color. Elevation +
-  // scale make it out-rank Risk signals / Manifest / Reviewer notes, which all
-  // share the flat SectionLabel altitude.
+  // scale make it out-rank Reviewer / Risk signals / Manifest, which all share
+  // the flat SectionLabel altitude.
   return (
     <Card class="p-5 sm:p-6 flex flex-col gap-4">
       <div class="flex flex-col gap-2">
