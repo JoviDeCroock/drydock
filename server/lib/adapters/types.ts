@@ -24,8 +24,12 @@ export interface AdapterConnectionRef {
 }
 
 // Files plus an ecosystem-normalized "manifest summary" pulled from a fetched
-// artifact. PackageJsonSummary is reused as the manifest carrier today because
-// it is the only ecosystem; future adapters can widen this if needed.
+// artifact. `PackageJsonSummary` is the shared manifest carrier across every
+// ecosystem, not an npm-only shape: the PyPI adapter projects core metadata
+// plus `Requires-Dist` into it, and the VS Code adapter projects the VSIX
+// extension manifest, so diffing, manifest-change summaries, and the report
+// renderer stay ecosystem-agnostic. New adapters normalize into this shape
+// rather than widening it.
 export interface AcquiredArtifact {
   files: FileRecord[];
   manifest: PackageJsonSummary | null;

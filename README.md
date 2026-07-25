@@ -1,4 +1,4 @@
-# Staged Publish Review
+# Drydock
 
 Drydock reviews package artifacts before a maintainer approves publication. It compares the candidate with a tag-aware published baseline, runs deterministic supply-chain checks, optionally sends changed-file evidence to Cloudflare Workers AI, and saves a review report.
 
