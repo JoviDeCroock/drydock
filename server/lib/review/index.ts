@@ -79,6 +79,7 @@ const RISK_RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2, criti
 // shape. computeRisk scores them by co-occurrence instead of by max severity.
 const CODE_CAPABILITY_RULE_IDS = new Set<string>([
   DETERMINISTIC_RULE_IDS.codeProcessExecution,
+  DETERMINISTIC_RULE_IDS.codeRemoteShell,
   DETERMINISTIC_RULE_IDS.codeNetworkAccess,
   DETERMINISTIC_RULE_IDS.codeDynamicEvaluation,
   DETERMINISTIC_RULE_IDS.codeCredentialAccess,
@@ -87,6 +88,12 @@ const CODE_CAPABILITY_RULE_IDS = new Set<string>([
 // tooling routinely shells out (the `legit-build-childprocess` benign hard
 // negative), so alone it is not evidence of risk. It escalates only when it
 // co-occurs with another capability.
+//
+// `code.remote-shell` is deliberately NOT weak. It used to live inside
+// process-execution, which meant a release adding
+// `execSync('curl … | bash')` scored as one weak capability and rolled up to
+// `low` — the whole shell-mediated dropper class read as benign build tooling.
+// Spawning `cc` and spawning `curl … | bash` are not the same evidence.
 const WEAK_LONE_CAPABILITY: string = DETERMINISTIC_RULE_IDS.codeProcessExecution;
 
 function severityToRisk(severity: string | null | undefined): RiskLevel {
@@ -234,7 +241,14 @@ function codeCapabilityRisk(
   if (capabilities.size === 0) return "low";
   // Two or more distinct capabilities co-occurring in one release is the
   // collect-and-exfiltrate shape: escalate even if each is individually weak.
-  if (capabilities.size >= 2) return "high";
+  // Co-occurrence is a floor, not a ceiling — a returned flat "high" would let a
+  // critical capability be *de*-escalated by the presence of a second one, which
+  // is the opposite of what co-occurrence means.
+  if (capabilities.size >= 2) {
+    let highest: RiskLevel = "high";
+    for (const [, { risk }] of capabilities) highest = combineRisk(highest, risk);
+    return highest;
+  }
   const [[ruleId, { risk, obfuscated }]] = capabilities;
   // A lone plain process-execution is benign build/CLI tooling — de-escalate. But
   // an *obfuscated* lone capability is not isolated evidence: hiding the

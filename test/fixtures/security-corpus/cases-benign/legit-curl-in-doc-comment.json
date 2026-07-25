@@ -1,0 +1,38 @@
+{
+  "id": "legit-curl-in-doc-comment",
+  "title": "SDK documents its HTTP API with a curl example in a comment (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-documentation",
+  "source": "benign-popular",
+  "intent": "The `code.remote-shell` patterns match a shell command *string*, and comments are not stripped before matching, so the single most common way an API client documents itself would read as a high-severity shell capability. The rule requires an executor — a spawn API in the same file, or a lifecycle hook pointing at it — so prose stays prose. This file has neither.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": { "name": "api-sdk", "version": "3.0.0", "main": "index.js" },
+  "stagedPackageJson": { "name": "api-sdk", "version": "3.1.0", "main": "index.js" },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 58,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"api-sdk\",\"version\":\"3.0.0\",\"main\":\"index.js\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 58,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"api-sdk\",\"version\":\"3.1.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 240,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "// Create a user.\n//\n// Equivalent to:\n//   curl -X POST https://api.example.invalid/v1/users \\\n//     -H 'content-type: application/json' -d '{\"name\":\"ada\"}'\nexport async function createUser(name) {\n  return { name };\n}\n"
+    }
+  ]
+}

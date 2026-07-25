@@ -2,6 +2,7 @@ export const DETERMINISTIC_RULE_IDS = {
   installScriptPreinstall: "install-script.preinstall",
   installScript: "install-script.lifecycle",
   codeProcessExecution: "code.process-execution",
+  codeRemoteShell: "code.remote-shell",
   codeNetworkAccess: "code.network-access",
   codeDynamicEvaluation: "code.dynamic-evaluation",
   codeCredentialAccess: "code.credential-access",

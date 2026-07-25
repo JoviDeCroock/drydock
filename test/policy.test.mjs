@@ -21,7 +21,15 @@ describe("deterministic policy", () => {
     ];
     const findings = deterministicFindings(files, createPackageDiff([], files));
 
-    expect(findings.filter((finding) => finding.severity === "high")).toHaveLength(2);
+    // The shell command reaches the network, so it is a `code.remote-shell`
+    // finding in its own right rather than a lone weak process spawn — asserted
+    // by rule ID because a bare count silently absorbed that distinction.
+    expect(
+      findings
+        .filter((finding) => finding.severity === "high")
+        .map((f) => f.ruleId)
+        .sort(),
+    ).toEqual(["code.process-execution", "code.remote-shell", "install-script.lifecycle"]);
   });
 
   test("prompt injection text in docs remains just evidence", () => {

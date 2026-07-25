@@ -1,0 +1,38 @@
+{
+  "id": "legit-nc-variable-and-download-helper",
+  "title": "`nc` variable and a downloadString helper, alongside a real spawn (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-childprocess",
+  "source": "benign-popular",
+  "intent": "Two shell-tool patterns that read as ordinary identifiers. `nc` is a ubiquitous variable name (scientific Python's `nc = netCDF4.Dataset(...)`, and short names generally), and `downloadString(text, filename)` is a common browser helper — a case-insensitive bare `DownloadString` matched it. The file also spawns a process, so the executor requirement does not save it: only the patterns themselves can. `nc` now requires a flag and `DownloadString` requires the PowerShell method-call shape.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": { "name": "exporter", "version": "2.0.0" },
+  "stagedPackageJson": { "name": "exporter", "version": "2.1.0" },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 40,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"exporter\",\"version\":\"2.0.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 40,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"exporter\",\"version\":\"2.1.0\"}"
+    },
+    {
+      "path": "scripts/export.js",
+      "size": 320,
+      "sha256": "export-js",
+      "flags": [],
+      "textSample": "const { execFileSync } = require('child_process');\n\nexport function downloadString(text, name) {\n  const blob = new Blob([text]);\n  return { blob, name };\n}\n\n// Maintainer-run export step.\nconst nc = loadDataset('grid.nc');\nexecFileSync('ncdump', ['-h', 'grid.nc']);\nmodule.exports = { downloadString, nc };\n"
+    }
+  ]
+}

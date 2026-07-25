@@ -1,7 +1,11 @@
 import { hasImplicitNodeGypInstall, isRootGypPath } from "../../tar-parser.js";
 import { firstMatchingLine, firstMatchingSourceLine } from "../../platform/text-utils";
 import type { Finding } from "..";
-import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
+import {
+  CONSUMER_INSTALL_LIFECYCLE_SCRIPTS,
+  SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
+  SHELL_NETWORK_TOOL_PATTERN_SET,
+} from "./patterns";
 import { firstJsonPropertyLine, tag, testScope } from "./helpers";
 import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./context";
 import { isDocumentationPath, isPythonMetadataPath, isTypeDeclarationPath } from "./file-types";
@@ -154,6 +158,27 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       normalized,
       packedObfuscation,
     );
+    const remoteShell = matchCategory(
+      ctx.patterns.remoteShell,
+      sample,
+      normalized,
+      packedObfuscation,
+    );
+    const downloadExecute = matchCategory(
+      SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
+      sample,
+      normalized,
+      packedObfuscation,
+    );
+    // A shell network tool is a real egress sink, so it counts as network access
+    // for the credential collect-and-exfiltrate chain below even though the
+    // in-language network patterns cannot see it.
+    const shellNetworkTool = matchCategory(
+      SHELL_NETWORK_TOOL_PATTERN_SET,
+      sample,
+      normalized,
+      packedObfuscation,
+    );
     const networkAccess = matchCategory(
       ctx.patterns.networkAccess,
       sample,
@@ -178,8 +203,44 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       packedObfuscation,
     );
     const adjacentExecutionRisk =
-      processExecution.matched || dynamicEvaluation.matched || credentialAccess.matched;
+      processExecution.matched ||
+      shellNetworkTool.matched ||
+      dynamicEvaluation.matched ||
+      credentialAccess.matched;
 
+    // A shell command is only a capability if something in reach can run it.
+    // The patterns match a command *string*, and comments are not stripped
+    // before matching, so an SDK that documents its HTTP API the usual way
+    // (`// equivalent to: curl -X POST …`) would otherwise raise a high finding
+    // on prose. Requiring a spawn API in the same file, or a lifecycle hook
+    // pointing at it, keeps the dropper shape and drops the documentation.
+    // Download-and-execute is exempt: `curl … | bash` has no benign reading
+    // even in a comment, and a package that ships that line as an instruction
+    // is still telling someone to run it.
+    const shellExecutable =
+      processExecution.matched || lifecycleScriptFile || downloadExecute.matched;
+    if (remoteShell.matched && shellExecutable) {
+      findings.push(
+        testScope(
+          testScoped,
+          remoteShell.obfuscated,
+          tag("codeRemoteShell", {
+            // Download-and-execute has no benign reading; a bare shell tool
+            // paired with a spawn API does, so it sits one step below.
+            severity: downloadExecute.matched ? "critical" : "high",
+            file: file.path,
+            line: downloadExecute.matched ? downloadExecute.line : remoteShell.line,
+            evidence: downloadExecute.matched
+              ? `${prefix}shell command downloads and executes remote code`
+              : `${prefix}shell command with network or inline-interpreter capability`,
+            reason: downloadExecute.matched
+              ? "the command fetches code over the network and pipes it straight into an interpreter, so the package runs bytes it never shipped and no reviewer can see"
+              : "shell commands reach the network and re-enter an interpreter outside the language-level APIs the other capability rules model, so this executes code the package did not ship",
+            ...(remoteShell.obfuscated ? { obfuscated: true } : {}),
+          }),
+        ),
+      );
+    }
     if (processExecution.matched) {
       findings.push(
         testScope(
@@ -238,7 +299,7 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       // is high regardless of whether the file is newly added or a modification
       // to an existing module (the shape behind file-based credential stealers).
       // Credential access on its own stays high only when added.
-      const exfiltrationSink = networkAccess.matched;
+      const exfiltrationSink = networkAccess.matched || shellNetworkTool.matched;
       // A same-file credential→network chain stays full severity even in a
       // test tree: collect-and-exfiltrate is the payload shape itself, not an
       // expected test-suite capability.

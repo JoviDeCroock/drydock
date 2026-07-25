@@ -185,7 +185,14 @@ function startupRemoteCommandFinding(
     if (!reachable.textSample) continue;
     const sample = reachable.textSample;
     const normalized = normalizeCodeForScanning(sample);
-    const processExecution = matches(JS_PATTERN_SET.processExecution, sample, normalized);
+    // `remoteShell` is part of the execution leg, not an extra requirement:
+    // `curl`/`wget`/`nc` used to live in `processExecution` and moved out with
+    // the rules 1.19.0 split. Without it, an extension whose shell evidence is
+    // `terminal.sendText("curl … | sh")` stopped satisfying this conjunction
+    // and lost its critical finding.
+    const processExecution =
+      matches(JS_PATTERN_SET.processExecution, sample, normalized) ||
+      matches(JS_PATTERN_SET.remoteShell, sample, normalized);
     const networkAccess = matches(JS_PATTERN_SET.networkAccess, sample, normalized);
     const dynamicEvaluation = matches(JS_PATTERN_SET.dynamicEvaluation, sample, normalized);
     if (!processExecution || !networkAccess || !dynamicEvaluation) continue;
@@ -194,6 +201,7 @@ function startupRemoteCommandFinding(
       file: reachable.path,
       line: firstMatchingLine(sample, [
         ...JS_PATTERN_SET.processExecution,
+        ...JS_PATTERN_SET.remoteShell,
         ...JS_PATTERN_SET.networkAccess,
         ...JS_PATTERN_SET.dynamicEvaluation,
       ]),

