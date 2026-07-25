@@ -1,6 +1,7 @@
 import type { ComponentChildren } from "preact";
 import type { DisplayedAiResult } from "../../../../server/lib/ai-review/types";
 import type { ReleaseProvenance } from "../../../../server/types";
+import { ecosystemLabel } from "../../../../server/lib/ecosystems/labels";
 import { Badge, severityTone } from "../../../components/Badge";
 import { PackageJsonDiffView } from "../../../components/PackageJsonDiffView";
 import { EmptyLine, SectionLabel } from "../../../components/Typography";
@@ -90,12 +91,7 @@ function ReportSection({
 }
 
 function ProvenanceView({ provenance }: { provenance: ReleaseProvenance }) {
-  const ecosystem =
-    provenance.ecosystem === "pypi"
-      ? "PyPI"
-      : provenance.ecosystem === "vscode"
-        ? "VS Code"
-        : "npm";
+  const ecosystem = ecosystemLabel(provenance.ecosystem);
   return (
     <div class="flex flex-col gap-3">
       <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">

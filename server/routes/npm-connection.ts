@@ -20,8 +20,8 @@ import {
   normalizeRegistryUrl,
   publicNpmConnection,
   validateNpmCredential,
-} from "../lib/npm-connection";
-import { isValidStageId } from "../lib/stage-id";
+} from "../lib/ecosystems/npm/connection";
+import { isValidStageId } from "../lib/ecosystems/npm/stage-id";
 import { errorMessage } from "../lib/platform/errors";
 import { rateLimitResponse } from "../lib/platform/http";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";

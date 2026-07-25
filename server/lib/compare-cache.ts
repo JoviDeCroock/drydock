@@ -1,5 +1,5 @@
-import { downloadPublishedTarball } from "./published-tarball";
-import type { RegistryMetadata } from "./registry";
+import { downloadPublishedTarball } from "./ecosystems/npm/published-tarball";
+import type { RegistryMetadata } from "./ecosystems/npm/registry";
 import { redactFileRecords, redactJson, type FileRecord, type PackageJsonSummary } from "./review";
 
 export interface CachedCompare {

@@ -6,7 +6,7 @@ import {
   discardScanAttempt,
   markScanFailed,
 } from "../../db/scans";
-import { npmAdapter } from "../adapters/npm";
+import { getStagedAdapter } from "../ecosystems";
 import { errorMessage } from "../platform/errors";
 import { notifyScanCompletion } from "../notify";
 import {
@@ -91,12 +91,18 @@ export async function executeScanJob(
 
     await markNpmConnectionUsed(db, message.organizationId);
 
-    const result = await runScanPipeline({ env, executionCtx, db, session }, npmAdapter, {
-      scanId: message.scanId,
-      stageId: message.stageId,
-      maxFiles: message.maxFiles,
-      organizationId: message.organizationId,
-    });
+    // Staged-publish scans are npm-only today; resolving through the registry
+    // keeps the capability declaration authoritative rather than decorative.
+    const result = await runScanPipeline(
+      { env, executionCtx, db, session },
+      getStagedAdapter("npm"),
+      {
+        scanId: message.scanId,
+        stageId: message.stageId,
+        maxFiles: message.maxFiles,
+        organizationId: message.organizationId,
+      },
+    );
     emitOperationalEvent("info", "scan.job.completed", {
       scanId: message.scanId,
       organizationId: message.organizationId,

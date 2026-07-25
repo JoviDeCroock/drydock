@@ -3,7 +3,7 @@ import {
   comparePyPiVersions,
   parsePyPiVersion,
   pyPiVersionsEquivalent,
-} from "../server/lib/adapters/pypi/version";
+} from "../server/lib/ecosystems/pypi/version";
 
 describe("pyPiVersionsEquivalent", () => {
   test("treats PEP 440 spelling variants as the same version", () => {

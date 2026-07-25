@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { isValidStageId, STAGE_ID_PATTERN } from "../server/lib/stage-id";
+import { isValidStageId, STAGE_ID_PATTERN } from "../server/lib/ecosystems/npm/stage-id";
 import { parseScanInput } from "../server/lib/scan/input";
 
 describe("isValidStageId", () => {

@@ -4,7 +4,12 @@ import {
   redactFindings,
   summarizePackageJsonDiff,
 } from "../../review";
-import type { AcquiredArtifact, BaselineInfo, PackageAdapter, ReleaseProvenance } from "../types";
+import type {
+  AcquiredArtifact,
+  BaselineInfo,
+  PackageAdapter,
+  ReleaseProvenance,
+} from "../package-adapter";
 import { createVscodeBroker, pickVscodeBaselineVersion, type VscodeBroker } from "./broker";
 import { buildVscodeFindings } from "./findings";
 import {

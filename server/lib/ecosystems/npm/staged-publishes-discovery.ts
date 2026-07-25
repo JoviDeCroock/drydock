@@ -1,19 +1,15 @@
-import { type AppDb } from "../db/client";
-import { recordScanEvent } from "../db/events";
-import { markNpmConnectionUsed, updateNpmConnectionValidation } from "../db/npm-connections";
+import { type AppDb } from "../../../db/client";
+import { recordScanEvent } from "../../../db/events";
+import { markNpmConnectionUsed, updateNpmConnectionValidation } from "../../../db/npm-connections";
 import {
   type ScanSource,
   createScanJob,
   deletePendingScanJob,
   listExistingScanStageIds,
-} from "../db/scans";
-import {
-  decryptNpmToken,
-  validateNpmCredential,
-  type NpmCredentialValidation,
-} from "./npm-connection";
-import { notifyNpmConnectionExpired } from "./notify";
-import { executeScanJob, type ScanQueueMessage } from "./scan/job";
+} from "../../../db/scans";
+import { decryptNpmToken, validateNpmCredential, type NpmCredentialValidation } from "./connection";
+import { notifyNpmConnectionExpired } from "../../notify";
+import { executeScanJob, type ScanQueueMessage } from "../../scan/job";
 import {
   checkStagedPublishAccess,
   listStagedPublishes,

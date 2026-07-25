@@ -3,7 +3,7 @@ import {
   buildNpmReleaseManifest,
   NPM_RELEASE_MANIFEST_SCHEMA,
   parseNpmReleaseManifest,
-} from "../server/lib/adapters/npm/manifest";
+} from "../server/lib/ecosystems/npm/manifest";
 
 const SHA = "a".repeat(64);
 

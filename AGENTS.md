@@ -9,8 +9,9 @@
   - `lib/review/` — deterministic findings (`rules/`), package/package.json diffing, redaction, serialization, risk computation, and shared UI types. `lib/review/index.ts` is the public entry.
   - `lib/ai-review/` — Workers AI reviewer, wired via `lib/scan/pipeline.ts` and on by default behind the `ai-review` Flagship killswitch.
   - `lib/scan/` — scan lifecycle: pipeline and phases, queue job, input parsing, artifact persistence, report export, release memory.
-  - `lib/public-diff/` — anonymous `/diff` orchestration and its per-ecosystem acquisition.
-  - `lib/adapters/` — ecosystem-specific registry/artifact behavior for npm, PyPI, VS Code, and workflow gates.
+  - `lib/public-diff/` — anonymous `/diff` orchestration and the `PublicDiffAdapter` contract.
+  - `lib/ecosystems/` — one directory per ecosystem (npm, PyPI, VS Code) plus `index.ts`, the single registry declaring which release paths each supports (`staged` / `gate` / `publicDiff`). Add an ecosystem by adding a directory and a registry entry — never by branching on the ecosystem name in a route or orchestrator.
+  - `lib/workflow-gates/` — shared GitHub Environment gate plumbing only; ecosystem gate adapters live in `lib/ecosystems/<id>/workflow-gate.ts`.
   - `lib/auth/` — Better Auth wiring, ownership, roles, active organization, invitation tokens, audit-event allowlist.
   - `lib/notify/` — outbound messaging: notification fan-out, Slack, email.
   - `lib/platform/` — domain-free infrastructure: HTTP helpers, errors, fetch retry, JSON canonicalization, text utils, crypto, secret box, security headers, observability.

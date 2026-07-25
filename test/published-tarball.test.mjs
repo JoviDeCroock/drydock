@@ -5,7 +5,7 @@ vi.mock("cloudflare:workers", () => ({
 }));
 
 const { fetchPkgPrNewTarballStream, fetchPublishedTarballStream, isPublishedTarballUrlAllowed } =
-  await import("../server/lib/published-tarball");
+  await import("../server/lib/ecosystems/npm/published-tarball");
 
 const REGISTRY = "https://registry.npmjs.org";
 const ALLOWED_URL = "https://registry.npmjs.org/@scope/pkg/-/pkg-1.0.0.tgz";

@@ -1,8 +1,8 @@
-import { errorMessage } from "./platform/errors";
-import { normalizeRegistryUrl, type NormalizeRegistryUrlOptions } from "./npm-connection";
-import { reliableFetch } from "./platform/reliable-fetch";
-import { normalizePeerDependenciesMeta, normalizeStringRecord } from "./tar-parser.js";
-import type { PackageJsonSummary } from "./review";
+import { errorMessage } from "../../platform/errors";
+import { normalizeRegistryUrl, type NormalizeRegistryUrlOptions } from "./connection";
+import { reliableFetch } from "../../platform/reliable-fetch";
+import { normalizePeerDependenciesMeta, normalizeStringRecord } from "../../tar-parser.js";
+import type { PackageJsonSummary } from "../../review";
 import { isValidStageId } from "./stage-id";
 
 export interface StagedPublishItem {

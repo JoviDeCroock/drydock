@@ -7,68 +7,93 @@ import {
   preparePyPiArtifact,
   pyPiArtifactDiffPath,
   selectPyPiReleaseArtifacts,
-} from "../adapters/pypi/acquire";
-import { pyPiReleaseFindings } from "../adapters/pypi/findings";
-import { inferPyPiArtifactKind, normalizePyPiProjectName } from "../adapters/pypi/manifest";
+} from "./acquire";
+import { pyPiReleaseFindings } from "./findings";
+import {
+  inferPyPiArtifactKind,
+  isValidPyPiProjectName,
+  normalizePyPiProjectName,
+} from "./manifest";
 import {
   PYPI_RELEASE_MANIFEST_SCHEMA,
+  PYPI_RULES_VERSION,
+  SAFE_VERSION_RE,
   type PyPiArtifactInput,
   type PyPiPreparedArtifact,
   type PyPiProjectMetadata,
   type PyPiReleaseFile,
   type PyPiReleaseManifest,
   type PyPiRemoteArtifact,
-} from "../adapters/pypi/types";
-import { compareParsedPyPiVersions, parsePyPiVersion } from "../adapters/pypi/version";
+} from "./types";
+import { compareParsedPyPiVersions, parsePyPiVersion } from "./version";
 import {
   computeCompareMetadataCacheKey,
   readCompareMetadataCache,
   writeCompareMetadataCache,
-} from "../compare-cache";
-import { publicDiffDownloadError } from "./download";
-import { PublicDiffError } from "./error";
-import { reliableFetch } from "../platform/reliable-fetch";
-import {
-  deterministicFindings,
-  type CodePatternSet,
-  type DiffEntry,
-  type Finding,
-  type FileRecord,
-  type PackageJsonDiff,
-  type PackageJsonSummary,
-} from "../review";
-import { downloadInSandbox } from "../sandbox";
+} from "../../compare-cache";
+import { publicDiffDownloadError } from "../../public-diff/download";
+import { PublicDiffError } from "../../public-diff/error";
+import type {
+  PublicDiffAcquiredSide,
+  PublicDiffAcquiredSources,
+  PublicDiffAdapter,
+} from "../../public-diff/types";
+import { reliableFetch } from "../../platform/reliable-fetch";
+import { DETERMINISTIC_RULES_VERSION, deterministicFindings, type Finding } from "../../review";
+import { downloadInSandbox } from "../../sandbox";
 
 // PyPI side of the anonymous public package diff. Like the npm path it only
 // touches public-registry data: project metadata comes from the canonical
 // pypi.org JSON API and artifact bytes only from files.pythonhosted.org, both
 // fetched without credentials and parsed in the credentials-free sandbox.
-export const PYPI_PUBLIC_REGISTRY = "https://pypi.org/pypi";
+const PYPI_PUBLIC_REGISTRY = "https://pypi.org/pypi";
 
 const PUBLIC_CACHE_SCOPE = "public";
 
-// One raw (unredacted) side of a public diff, plus the ecosystem's findings
-// builder. The orchestrator in public-diff.ts owns diffing, redaction, risk,
-// and caching so both ecosystems share one assembly path.
-interface PublicDiffAcquiredSide {
-  files: FileRecord[];
-  packageJson: PackageJsonSummary | null;
-}
+// The acquired-sources shape is the shared public-diff contract; PyPI fills in
+// the same fields npm does. The orchestrator owns diffing, redaction, risk, and
+// caching so every ecosystem shares one assembly path.
+export type { PublicDiffAcquiredSources } from "../../public-diff/types";
 
-export interface PublicDiffAcquiredSources {
-  from: PublicDiffAcquiredSide;
-  to: PublicDiffAcquiredSide;
-  // Pattern family for diff-status annotation; the baseline fingerprint pass
-  // re-runs the deterministic rules and must use the same set the findings
-  // were built with, or unchanged capabilities get marked as release deltas.
-  codePatternSet?: CodePatternSet;
-  // Human-readable coverage caveats (e.g. an artifact kind omitted because it
-  // exceeded a sandbox cap), surfaced verbatim on the diff response.
-  notices?: string[];
-  buildFindings(fileDiff: DiffEntry[], manifestDiff: PackageJsonDiff): Finding[];
-}
+/**
+ * PyPI's public-diff capability.
+ *
+ * PyPI has no dist-tags and no preview form, and a single release can carry
+ * dozens of platform wheels — hence the artifact selection and byte budget in
+ * this module, which npm does not need.
+ */
+export const pypiPublicDiff: PublicDiffAdapter = {
+  ecosystem: "pypi",
+  registryUrl: PYPI_PUBLIC_REGISTRY,
+  rulesVersionSegment: `${DETERMINISTIC_RULES_VERSION}+pypi-${PYPI_RULES_VERSION}`,
+  // v5: pairs now have a request-wide selected-byte budget, which can omit one
+  // artifact kind with a notice instead of exhausting the Worker.
+  // v6: oversized pairs retain samples for changed files instead of dropping
+  // every sample, and mark the records that lost one. Entries written by v5
+  // carry no sample at all for a pair this large, so they must not be served
+  // once the prioritized retention ships.
+  payloadVersion: "v6",
 
-export async function fetchPublicPyPiProjectMetadata(
+  isValidPackageName: isValidPyPiProjectName,
+  // PyPI names are case/separator-insensitive (PEP 503); canonicalize once at
+  // the request boundary so the cache key, cache tag, and payload identity all
+  // agree — "Django" and "django" must share one entry AND one purge tag.
+  normalizePackageName: normalizePyPiProjectName,
+  isValidVersion: (version) => SAFE_VERSION_RE.test(version),
+  cacheTag: (packageName) => `public-diff:pypi:${packageName}`,
+
+  async listVersions(env, ctx, packageName) {
+    const metadata = await fetchPublicPyPiProjectMetadata(env, ctx, packageName);
+    const { versions, suggested } = listPublicPyPiVersions(metadata);
+    return { packageName: metadata.info?.name ?? packageName, versions, suggested };
+  },
+
+  acquire(env, ctx, input) {
+    return acquirePublicPyPiDiff(env, ctx, input);
+  },
+};
+
+async function fetchPublicPyPiProjectMetadata(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
   projectName: string,
@@ -483,7 +508,7 @@ export function buildPublicPyPiDiffSources(input: {
   };
 }
 
-export async function acquirePublicPyPiDiff(
+async function acquirePublicPyPiDiff(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
   input: { packageName: string; fromVersion: string; toVersion: string },

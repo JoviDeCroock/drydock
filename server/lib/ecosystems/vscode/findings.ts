@@ -10,7 +10,7 @@ import { firstJsonPropertyLine } from "../../review/rules/helpers";
 import { JS_PATTERN_SET } from "../../review/rules/patterns";
 import { normalizeCodeForScanning } from "../../review/rules/normalize";
 import { firstMatchingLine } from "../../platform/text-utils";
-import type { AcquiredArtifact } from "../types";
+import type { AcquiredArtifact } from "../package-adapter";
 import {
   extensionIdFromManifest,
   findVscodeManifestFile,

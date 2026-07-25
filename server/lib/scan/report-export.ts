@@ -2,7 +2,7 @@ import type { getScan } from "../../db/scans";
 import { parsePersistedAiReview } from "../ai-review/contract";
 import { displayedAiResult } from "../ai-review/types";
 import { normalizeReleaseConsistency } from "./release-memory";
-import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../adapters/types";
+import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems/package-adapter";
 
 // A persisted scan detail, as returned by getScan (never null at the call site).
 type ScanDetail = NonNullable<Awaited<ReturnType<typeof getScan>>>;

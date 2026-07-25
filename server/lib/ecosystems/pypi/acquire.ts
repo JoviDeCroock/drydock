@@ -5,7 +5,7 @@ import type {
   BaselineComparisonSkip,
   BaselineInfo,
   StagedDetails,
-} from "../types";
+} from "../package-adapter";
 import type { PyPiBroker } from "./broker";
 import { summarizePyPiArtifact, namespacedPath } from "./findings";
 import { inferPyPiArtifactKind, normalizePyPiProjectName } from "./manifest";

@@ -5,7 +5,7 @@ import type {
   AdapterConnectionRef,
   AdapterContext,
   PackageAdapter,
-} from "../adapters/types";
+} from "../ecosystems/package-adapter";
 import {
   describeOperationalError,
   durationMsSince,

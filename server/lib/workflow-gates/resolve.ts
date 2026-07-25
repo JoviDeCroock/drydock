@@ -4,7 +4,7 @@ import {
   WorkflowArtifactError,
 } from "../github-app/artifacts";
 import { downloadInSandboxInline } from "../sandbox";
-import { AMBIGUOUS_ARCHIVE_ECOSYSTEM, detectArchiveEcosystems } from "./registry";
+import { AMBIGUOUS_ARCHIVE_ECOSYSTEM, detectArchiveEcosystems } from "../ecosystems";
 import type { ParsedGateArtifact } from "./types";
 
 const GATE_ARTIFACT_PARSE_CONCURRENCY = 4;

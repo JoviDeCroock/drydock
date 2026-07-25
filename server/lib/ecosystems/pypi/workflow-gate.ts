@@ -8,16 +8,16 @@ import {
   type PyPiArtifactInput,
   type PyPiPreparedArtifact,
   type PyPiReleaseManifest,
-} from "../adapters/pypi";
-import type { AdapterBroker, PackageAdapter } from "../adapters/types";
-import { WorkflowArtifactError } from "../github-app/artifacts";
+} from "./";
+import type { AdapterBroker, PackageAdapter } from "../package-adapter";
+import { WorkflowArtifactError } from "../../github-app/artifacts";
 import type {
   ArchiveContents,
   ParsedGateArtifact,
   PreparedReleaseCandidate,
   WorkflowArtifactKind,
   WorkflowGateAdapter,
-} from "./types";
+} from "../../workflow-gates/types";
 
 /**
  * PyPI workflow-gate adapter.
@@ -26,7 +26,7 @@ import type {
  * wheel/sdist files the bundle contains, and identity (`package`/`version`) is
  * derived from each wheel's `METADATA` / sdist's `PKG-INFO` after the bytes are
  * parsed in the shared sandbox router. The deterministic review + baseline
- * selection live in the shared `pypiAdapter` (`server/lib/adapters/pypi`); this
+ * selection live in the shared `pypiAdapter` (`server/lib/ecosystems/pypi`); this
  * adapter only owns the gate-time artifact semantics.
  */
 export const pypiWorkflowGateAdapter: WorkflowGateAdapter = {

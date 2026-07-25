@@ -1,5 +1,5 @@
 import type { DownloadResult } from "../../sandbox";
-import type { AdapterBroker, AdapterConnectionRef, AdapterContext } from "../types";
+import type { AdapterBroker, AdapterConnectionRef, AdapterContext } from "../package-adapter";
 
 const MARKETPLACE_EXTENSION_QUERY =
   "https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery?api-version=7.2-preview.1";

@@ -6,7 +6,7 @@ import {
   createPyPiReleaseCandidateReview,
   parsePyPiReleaseManifest,
   PYPI_RULES_VERSION,
-} from "../server/lib/adapters/pypi";
+} from "../server/lib/ecosystems/pypi";
 import { DETERMINISTIC_RULES_VERSION } from "../server/lib/review";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

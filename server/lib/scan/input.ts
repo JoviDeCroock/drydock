@@ -1,5 +1,5 @@
 import type { ScanInput } from "../../types";
-import { isValidStageId } from "../stage-id";
+import { isValidStageId } from "../ecosystems/npm/stage-id";
 
 export type ScanInputParseResult =
   | { ok: true; input: ScanInput }

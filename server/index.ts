@@ -6,7 +6,7 @@ import { getOrganizationOwnerUserId } from "./db/organizations";
 import { RateLimitError, enforceRateLimit } from "./db/rate-limit";
 import { createAuth, getAuthSession } from "./lib/auth";
 import { rateLimitResponse } from "./lib/platform/http";
-import { allowInsecureLocalRegistry } from "./lib/npm-connection";
+import { allowInsecureLocalRegistry } from "./lib/ecosystems/npm/connection";
 import { isPackageDiffDetailPath, rewritePackageDiffMetadata } from "./lib/public-diff/page";
 import {
   API_CSP,
@@ -36,7 +36,7 @@ import {
   isTransientSweepFailure,
   recordExpiredNpmConnection,
   StagedPublishesFetchError,
-} from "./lib/staged-publishes-discovery";
+} from "./lib/ecosystems/npm/staged-publishes-discovery";
 import { auditRoutes } from "./routes/audit";
 import { githubAppRoutes } from "./routes/github-app";
 import { githubWebhookRoutes } from "./routes/github-webhooks";
@@ -50,7 +50,7 @@ import { stagedPublishesRoutes } from "./routes/staged-publishes";
 import type { Bindings, Variables } from "./types";
 
 export { NpmStageGateway } from "./lib/sandbox";
-export { NpmAdapterBroker } from "./lib/adapters/npm";
+export { NpmAdapterBroker } from "./lib/ecosystems/npm";
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 const CANONICAL_HOSTNAME = "drydock.org";

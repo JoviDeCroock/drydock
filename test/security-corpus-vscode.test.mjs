@@ -7,7 +7,7 @@ import {
   createVscodeExtensionReview,
   VSCODE_RULE_IDS,
   VSCODE_RULES_VERSION,
-} from "../server/lib/adapters/vscode";
+} from "../server/lib/ecosystems/vscode";
 import { DETERMINISTIC_RULES_VERSION } from "../server/lib/review";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

@@ -9,7 +9,7 @@ import type {
   BaselineInfo,
   PackageAdapter,
   StagedDetails,
-} from "../adapters/types";
+} from "../ecosystems/package-adapter";
 import {
   describeOperationalError,
   durationMsSince,

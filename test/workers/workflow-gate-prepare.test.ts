@@ -7,8 +7,8 @@ import * as schema from "../../server/db/schema";
 import { readGithubAppConfig } from "../../server/lib/github-app/config";
 import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
 import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
-import type { PyPiAdapterInput } from "../../server/lib/adapters/pypi/index";
-import { acquireStagedPyPi } from "../../server/lib/adapters/pypi/acquire";
+import type { PyPiAdapterInput } from "../../server/lib/ecosystems/pypi";
+import { acquireStagedPyPi } from "../../server/lib/ecosystems/pypi/acquire";
 import { prepareReleaseCandidatesForGate } from "../../server/lib/workflow-gates/prepare";
 
 const WEBHOOK_SECRET = "webhook-secret-value-1234567890";

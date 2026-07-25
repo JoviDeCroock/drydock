@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { normalizeRegistryUrl, validateNpmCredential } from "../server/lib/npm-connection";
+import {
+  normalizeRegistryUrl,
+  validateNpmCredential,
+} from "../server/lib/ecosystems/npm/connection";
 
 const originalFetch = globalThis.fetch;
 

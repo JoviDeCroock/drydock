@@ -90,7 +90,7 @@ The corpus deliberately records some product gaps instead of hiding them:
 
 ## PyPI corpus
 
-The PyPI adapter (`server/lib/adapters/pypi/index.ts`) has its own golden corpus under
+The PyPI adapter (`server/lib/ecosystems/pypi/index.ts`) has its own golden corpus under
 `test/fixtures/security-corpus/cases-pypi/`, evaluated by `test/security-corpus-pypi.test.mjs`. It is a
 separate harness, not an extension of the npm one, because PyPI findings legitimately carry two rule
 versions (see the invariant below).

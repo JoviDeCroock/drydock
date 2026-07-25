@@ -5,16 +5,16 @@ import {
   normalizeVsixFiles,
   parseVscodeExtensionManifest,
   vscodeAdapter,
-} from "../adapters/vscode";
-import type { AdapterBroker, PackageAdapter } from "../adapters/types";
-import { WorkflowArtifactError } from "../github-app/artifacts";
+} from "./";
+import type { AdapterBroker, PackageAdapter } from "../package-adapter";
+import { WorkflowArtifactError } from "../../github-app/artifacts";
 import type {
   ArchiveContents,
   ParsedGateArtifact,
   PreparedReleaseCandidate,
   WorkflowArtifactKind,
   WorkflowGateAdapter,
-} from "./types";
+} from "../../workflow-gates/types";
 
 export const vscodeWorkflowGateAdapter: WorkflowGateAdapter = {
   ecosystem: "vscode",

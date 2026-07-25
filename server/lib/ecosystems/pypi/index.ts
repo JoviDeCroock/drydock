@@ -5,7 +5,7 @@ import {
   redactFindings,
   summarizePackageJsonDiff,
 } from "../../review";
-import type { PackageAdapter, ReleaseProvenance } from "../types";
+import type { PackageAdapter, ReleaseProvenance } from "../package-adapter";
 import {
   acquireBaselinePyPi,
   acquireStagedPyPi,

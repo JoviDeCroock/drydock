@@ -1,12 +1,12 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { type AppDb, createDb } from "../../../db/client";
 import { getNpmConnection } from "../../../db/npm-connections";
-import { allowInsecureLocalRegistry, decryptNpmToken } from "../../npm-connection";
-import { downloadPublishedTarball } from "../../published-tarball";
-import { fetchPackageMetadata, type RegistryMetadata } from "../../registry";
+import { allowInsecureLocalRegistry, decryptNpmToken } from "./connection";
+import { downloadPublishedTarball } from "./published-tarball";
+import { fetchPackageMetadata, type RegistryMetadata } from "./registry";
 import { downloadInSandbox, sandboxErrorDetail, type DownloadResult } from "../../sandbox";
-import { fetchStagedPublishDetails, type StagedPublishDetails } from "../../staged-publishes";
-import type { AdapterBroker, AdapterContext, AdapterConnectionRef } from "../types";
+import { fetchStagedPublishDetails, type StagedPublishDetails } from "./staged-publishes";
+import type { AdapterBroker, AdapterContext, AdapterConnectionRef } from "../package-adapter";
 
 export interface NpmBroker extends AdapterBroker {
   fetchPackageMetadata(name: string): Promise<RegistryMetadata | null>;

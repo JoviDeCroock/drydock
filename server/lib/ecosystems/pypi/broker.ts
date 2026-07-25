@@ -1,5 +1,5 @@
 import type { DownloadResult } from "../../sandbox";
-import type { AdapterBroker, AdapterConnectionRef, AdapterContext } from "../types";
+import type { AdapterBroker, AdapterConnectionRef, AdapterContext } from "../package-adapter";
 import type { PyPiArtifactKind, PyPiProjectMetadata } from "./types";
 
 interface PyPiBrokerDownloadOptions {

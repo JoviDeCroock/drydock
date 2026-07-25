@@ -25,7 +25,7 @@ import {
 import {
   createPyPiReleaseCandidateReview,
   parsePyPiReleaseManifest,
-} from "../../server/lib/adapters/pypi";
+} from "../../server/lib/ecosystems/pypi";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CORPUS_DIR = join(__dirname, "..", "fixtures", "security-corpus");

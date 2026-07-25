@@ -4,7 +4,7 @@ import {
   isValidNpmPackageName,
   pickBaselineVersion,
   pickPreviousVersion,
-} from "../server/lib/registry";
+} from "../server/lib/ecosystems/npm/registry";
 
 describe("npm package name validation", () => {
   test("accepts well-formed unscoped and scoped names", () => {

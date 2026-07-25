@@ -1,22 +1,8 @@
 import type { AiReview } from "../ai-review/types";
-import { buildNpmFindings } from "../adapters/npm/findings";
-import { normalizePyPiProjectName } from "../adapters/pypi/manifest";
-import { PYPI_RULES_VERSION } from "../adapters/pypi/types";
-import {
-  computeCompareMetadataCacheKey,
-  readCompareMetadataCache,
-  writeCompareMetadataCache,
-} from "../compare-cache";
-import { parsePkgPrNewUrl, type PkgPrNewSpec } from "../../../src/lib/pkg-pr-new";
-import { publicDiffDownloadError } from "./download";
+import { getPublicDiffAdapter } from "../ecosystems";
+import { parsePkgPrNewUrl } from "../../../src/lib/pkg-pr-new";
 import { PublicDiffError } from "./error";
-import { acquirePublicPyPiDiff, type PublicDiffAcquiredSources } from "./pypi";
-import {
-  downloadPkgPrNewTarball,
-  downloadPublishedTarball,
-  isPublishedTarballUrlAllowed,
-} from "../published-tarball";
-import { fetchPackageMetadata, type RegistryMetadata } from "../registry";
+import type { PublicDiffAdapter, PublicDiffInput } from "./types";
 import {
   annotateFindingsWithDiffStatus,
   createPackageDiff,
@@ -24,7 +10,6 @@ import {
   redactFindings,
   redactJson,
   summarizePackageJsonDiff,
-  DETERMINISTIC_RULES_VERSION,
   type DiffEntry,
   type FileRecord,
   type Finding,
@@ -33,11 +18,20 @@ import {
   type PackageJsonSummary,
 } from "../review";
 import { computeScanRiskBreakdown, type ScanRiskBreakdown } from "../review/risk";
-import { parseSandboxErrorDetail } from "../sandbox";
 
 export { PublicDiffError } from "./error";
+export type { PublicDiffInput } from "./types";
 
-export type PublicDiffEcosystem = "npm" | "pypi";
+/**
+ * Resolve an ecosystem's public-diff capability, or fail the request. The
+ * registry is the authority on which ecosystems `/diff` serves — routes
+ * validate the query parameter against it rather than against a literal union.
+ */
+function requirePublicDiffAdapter(ecosystem: string): PublicDiffAdapter {
+  const adapter = getPublicDiffAdapter(ecosystem);
+  if (!adapter) throw new PublicDiffError("unsupported ecosystem", 400);
+  return adapter;
+}
 
 // Anonymous, credential-free diff of two published versions of an npm package
 // or PyPI project — or, on npm, of a pkg.pr.new preview tarball against a
@@ -48,7 +42,7 @@ export type PublicDiffEcosystem = "npm" | "pypi";
 // before redaction, like the scan pipeline, so secret detection keeps working;
 // only redacted evidence is cached or returned.
 export interface PublicPackageDiff {
-  ecosystem: PublicDiffEcosystem;
+  ecosystem: string;
   packageName: string;
   fromVersion: string;
   toVersion: string;
@@ -73,36 +67,12 @@ export interface PublicPackageDiff {
   cachedAt: string;
 }
 
-export interface PublicDiffInput {
-  ecosystem: PublicDiffEcosystem;
-  packageName: string;
-  fromVersion: string;
-  toVersion: string;
-  registryUrl: string;
-  allowInsecureLocalhost?: boolean;
-}
-
 // Bump this when risk aggregation changes without a deterministic-rules bump.
 const PUBLIC_DIFF_RISK_VERSION = "1";
-// v3: ecosystem-aware payloads. Each ecosystem carries its own rules-version
-// segment so a PyPI rules bump does not invalidate cached npm pairs.
-// v4: two-tier sandbox entry cap — big archives now parse with hash-only
-// tails, and payloads carry acquisition notices; cached v3 pairs would
-// misrepresent both.
-// PyPI v5: pairs now have a request-wide selected-byte budget, which can omit
-// one artifact kind with a notice instead of exhausting the Worker. npm stays
-// on v4 so this PyPI-only change does not invalidate its computed cache.
-// npm v5 / PyPI v6: oversized pairs retain samples for changed files instead of
-// dropping every sample, and mark the records that lost one. Entries written by
-// the previous versions carry no sample at all for a pair this large, so they
-// must not be served once the prioritized retention ships.
-function publicDiffCachePrefix(ecosystem: PublicDiffEcosystem): string {
-  const rules =
-    ecosystem === "pypi"
-      ? `${DETERMINISTIC_RULES_VERSION}+pypi-${PYPI_RULES_VERSION}`
-      : DETERMINISTIC_RULES_VERSION;
-  const payloadVersion = ecosystem === "pypi" ? "v6" : "v5";
-  return `public-diff:${payloadVersion}:${ecosystem}:rules=${rules}:risk=${PUBLIC_DIFF_RISK_VERSION}:`;
+// The payload and rules segments are per-ecosystem (`PublicDiffAdapter`) so one
+// ecosystem's rules or payload bump cannot invalidate another's cached pairs.
+function publicDiffCachePrefix(adapter: PublicDiffAdapter): string {
+  return `public-diff:${adapter.payloadVersion}:${adapter.ecosystem}:rules=${adapter.rulesVersionSegment}:risk=${PUBLIC_DIFF_RISK_VERSION}:`;
 }
 // Package bytes are immutable, while the analysis version is encoded above.
 // The TTL therefore bounds storage rather than correctness.
@@ -115,7 +85,6 @@ const PREVIEW_CACHE_TTL_SECONDS = 60 * 15;
 const CACHE_READ_COLO_TTL_SECONDS = 60;
 // KV values cap at 25 MiB; leave headroom for metadata around the samples.
 const CACHE_MAX_PAYLOAD_BYTES = 20 * 1024 * 1024;
-const PUBLIC_CACHE_SCOPE = "public";
 const COLO_CACHE_ORIGIN = "https://drydock.org/__cache/public-diff/";
 
 // The public path never evaluates AI review; this mirrors the pipeline's
@@ -130,56 +99,18 @@ const AI_REVIEW_DISABLED: AiReview = {
   model: null,
 };
 
-export async function fetchPublicPackageMetadata(
-  env: Cloudflare.Env,
-  ctx: ExecutionContext,
-  packageName: string,
-  registryUrl: string,
-): Promise<RegistryMetadata> {
-  const key = await computeCompareMetadataCacheKey({
-    registryUrl,
-    packageName,
-    cacheScope: PUBLIC_CACHE_SCOPE,
-  });
-  const cached = await readCompareMetadataCache(env, key);
-  if (cached) return cached;
-
-  let metadata: RegistryMetadata;
-  try {
-    metadata = await fetchPackageMetadata(env, packageName, { npmRegistry: registryUrl });
-  } catch (err) {
-    if (err instanceof Error && err.message.includes("404")) {
-      throw new PublicDiffError("package not found", 404);
-    }
-    throw new PublicDiffError("registry metadata fetch failed", 502);
-  }
-  await writeCompareMetadataCache(env, ctx, key, metadata);
-  return metadata;
-}
-
 export async function loadPublicPackageDiff(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
   input: PublicDiffInput,
 ): Promise<PublicPackageDiff> {
-  // Preview-side validation is fetch-free and runs before any cache or
-  // registry work: a preview URL must name the same package as the request.
-  const fromPreview = parsePkgPrNewUrl(input.fromVersion);
-  const toPreview = parsePkgPrNewUrl(input.toVersion);
-  for (const preview of [fromPreview, toPreview]) {
-    if (preview && preview.packageName !== input.packageName) {
-      throw new PublicDiffError("preview URL is for a different package", 400);
-    }
-  }
+  const adapter = requirePublicDiffAdapter(input.ecosystem);
 
   const cacheKey = await computePublicDiffCacheKey(input);
   const cached = await readPublicDiffCache(env, cacheKey);
   if (cached) return cached;
 
-  const sources =
-    input.ecosystem === "pypi"
-      ? await acquirePublicPyPiDiff(env, ctx, input)
-      : await acquirePublicNpmDiff(env, ctx, input, { fromPreview, toPreview });
+  const sources = await adapter.acquire(env, ctx, input);
 
   const fileDiff = createPackageDiff(sources.from.files, sources.to.files);
   const manifestDiff = redactJson(
@@ -216,126 +147,28 @@ export async function loadPublicPackageDiff(
     cachedAt: new Date().toISOString(),
   };
   await writePublicDiffCache(env, cacheKey, payload, {
-    ttlSeconds: fromPreview || toPreview ? PREVIEW_CACHE_TTL_SECONDS : CACHE_TTL_SECONDS,
+    ttlSeconds: payloadCacheTtlSeconds(payload),
   });
   return payload;
 }
 
-async function acquirePublicNpmDiff(
-  env: Cloudflare.Env,
-  ctx: ExecutionContext,
-  input: PublicDiffInput,
-  previews: { fromPreview: PkgPrNewSpec | null; toPreview: PkgPrNewSpec | null },
-): Promise<PublicDiffAcquiredSources> {
-  const { fromPreview, toPreview } = previews;
-  // Registry metadata is only needed for registry-version sides; a
-  // preview-vs-preview pair may not be published on npm at all yet.
-  let fromTarballUrl = fromPreview?.url;
-  let toTarballUrl = toPreview?.url;
-  if (!fromTarballUrl || !toTarballUrl) {
-    const metadata = await fetchPublicPackageMetadata(
-      env,
-      ctx,
-      input.packageName,
-      input.registryUrl,
-    );
-    fromTarballUrl ??= metadata.versions?.[input.fromVersion]?.dist?.tarball;
-    toTarballUrl ??= metadata.versions?.[input.toVersion]?.dist?.tarball;
-    if (!fromTarballUrl || !toTarballUrl) {
-      throw new PublicDiffError("unknown version", 404);
-    }
-    for (const [tarballUrl, preview] of [
-      [fromTarballUrl, fromPreview],
-      [toTarballUrl, toPreview],
-    ] as const) {
-      if (
-        !preview &&
-        !isPublishedTarballUrlAllowed(
-          tarballUrl,
-          input.registryUrl,
-          input.allowInsecureLocalhost ?? false,
-        )
-      ) {
-        throw new PublicDiffError("registry returned an unexpected tarball URL", 502);
-      }
-    }
-  }
-
-  const [fromArchive, toArchive] = await Promise.all([
-    fromPreview
-      ? downloadPreviewArchive(env, ctx, fromPreview.url)
-      : downloadArchive(env, ctx, fromTarballUrl, input),
-    toPreview
-      ? downloadPreviewArchive(env, ctx, toPreview.url)
-      : downloadArchive(env, ctx, toTarballUrl, input),
-  ]);
-
-  return {
-    from: { files: fromArchive.files, packageJson: fromArchive.packageJson ?? null },
-    to: { files: toArchive.files, packageJson: toArchive.packageJson ?? null },
-    buildFindings: (fileDiff, manifestDiff) =>
-      buildNpmFindings({
-        staged: {
-          files: toArchive.files,
-          manifest: toArchive.packageJson ?? null,
-          suspiciousTarEntries: toArchive.suspiciousEntries,
-        },
-        details: null,
-        fileDiff,
-        manifestDiff,
-        stagedManifestText:
-          toArchive.files.find((file) => file.path === "package.json")?.textSample ?? null,
-      }),
-  };
-}
-
-async function downloadArchive(
-  env: Cloudflare.Env,
-  ctx: ExecutionContext,
-  tarballUrl: string,
-  input: { registryUrl: string; allowInsecureLocalhost?: boolean },
-) {
-  try {
-    return await downloadPublishedTarball(env, ctx, tarballUrl, {
-      registryUrl: input.registryUrl,
-      allowInsecureLocalhost: input.allowInsecureLocalhost,
-    });
-  } catch (err) {
-    throw publicDiffDownloadError(err);
-  }
-}
-
-async function downloadPreviewArchive(env: Cloudflare.Env, ctx: ExecutionContext, url: string) {
-  try {
-    return await downloadPkgPrNewTarball(env, ctx, url);
-  } catch (err) {
-    // A preview ref that no longer resolves is the one failure the shared
-    // mapping cannot name, because published tarball URLs come from registry
-    // metadata and never 404 on their own.
-    if (parseSandboxErrorDetail(err)?.status === 404) {
-      throw new PublicDiffError("preview not found on pkg.pr.new", 404);
-    }
-    throw publicDiffDownloadError(err);
-  }
-}
-
 export async function computePublicDiffCacheKey(input: {
-  ecosystem: PublicDiffEcosystem;
+  ecosystem: string;
   packageName: string;
   fromVersion: string;
   toVersion: string;
   registryUrl: string;
 }): Promise<string> {
-  // PyPI project names are case- and separator-insensitive, so normalize them
-  // before hashing to keep "Django" and "django" on one cache entry.
-  const packageName =
-    input.ecosystem === "pypi" ? normalizePyPiProjectName(input.packageName) : input.packageName;
+  const adapter = requirePublicDiffAdapter(input.ecosystem);
+  // Names the ecosystem treats as equivalent must share one cache entry (PyPI
+  // is case- and separator-insensitive, so "Django" and "django" are one key).
+  const packageName = adapter.normalizePackageName(input.packageName);
   const data = new TextEncoder().encode(
     `${input.ecosystem}|${input.registryUrl}|${packageName}|${input.fromVersion}|${input.toVersion}`,
   );
   const digest = await crypto.subtle.digest("SHA-256", data);
   const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-  return `${publicDiffCachePrefix(input.ecosystem)}${hex}`;
+  return `${publicDiffCachePrefix(adapter)}${hex}`;
 }
 
 export async function readPublicDiffCache(

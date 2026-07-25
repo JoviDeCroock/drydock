@@ -1,8 +1,13 @@
-import { pickBaselineVersion } from "../../registry";
+import { pickBaselineVersion } from "./registry";
 import { parseSandboxErrorDetail } from "../../sandbox";
 import type { PackageJsonSummary } from "../../review";
-import type { StagedPublishDetails } from "../../staged-publishes";
-import type { AcquiredArtifact, AdapterContext, BaselineInfo, StagedDetails } from "../types";
+import type { StagedPublishDetails } from "./staged-publishes";
+import type {
+  AcquiredArtifact,
+  AdapterContext,
+  BaselineInfo,
+  StagedDetails,
+} from "../package-adapter";
 import { mergeStagedPackageJson } from "./findings";
 import type { NpmBroker, NpmBrokerDownloadOptions } from "./broker";
 

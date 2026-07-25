@@ -41,6 +41,7 @@ import {
   type DiffSpec,
 } from "../../lib/package-diff-path";
 import { diffRefLabel, parsePkgPrNewUrl } from "../../lib/pkg-pr-new";
+import { ecosystemLabel } from "../../../server/lib/ecosystems/labels";
 import { filterDiffEntries, findingCountsByPath } from "../../features/review/diff-entries";
 import { RiskSignalsSection } from "../../features/review/RiskSignalsSection";
 import type { FindingWithDiffStatus } from "../../features/review/types";
@@ -361,7 +362,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
         </h1>
         <MonoDetail
           parts={[
-            <span key="ecosystem">{ecosystem === "pypi" ? "PyPI" : "npm"}</span>,
+            <span key="ecosystem">{ecosystemLabel(ecosystem)}</span>,
             <span key="versions">
               {fromLabel} → {toLabel}
             </span>,

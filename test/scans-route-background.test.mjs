@@ -47,11 +47,11 @@ vi.mock("../server/db/scans.ts", async (importOriginal) => ({
 }));
 vi.mock("../server/lib/auth/active-organization.ts", () => activeOrgMock);
 vi.mock("../server/lib/scan/job.ts", () => scanJobMock);
-vi.mock("../server/lib/npm-connection.ts", async (importOriginal) => {
+vi.mock("../server/lib/ecosystems/npm/connection.ts", async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, ...npmConnectionMock };
 });
-vi.mock("../server/lib/staged-publishes.ts", async (importOriginal) => {
+vi.mock("../server/lib/ecosystems/npm/staged-publishes.ts", async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, ...stagedPublishesMock };
 });

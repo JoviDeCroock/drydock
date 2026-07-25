@@ -1,13 +1,13 @@
-import { buildNpmReleaseManifest, npmGateAdapter } from "../adapters/npm/gate";
-import type { AdapterBroker, PackageAdapter } from "../adapters/types";
-import { WorkflowArtifactError } from "../github-app/artifacts";
+import { buildNpmReleaseManifest, npmGateAdapter } from "./gate-review";
+import type { AdapterBroker, PackageAdapter } from "../package-adapter";
+import { WorkflowArtifactError } from "../../github-app/artifacts";
 import type {
   ArchiveContents,
   ParsedGateArtifact,
   PreparedReleaseCandidate,
   WorkflowArtifactKind,
   WorkflowGateAdapter,
-} from "./types";
+} from "../../workflow-gates/types";
 
 /**
  * npm workflow-gate adapter.
@@ -22,7 +22,7 @@ import type {
  *
  * The deterministic review, baseline selection (through the org npm connection),
  * findings, and risk model are shared with the staged-publish path via
- * `npmGateAdapter` (`server/lib/adapters/npm/gate`).
+ * `npmGateAdapter` (`server/lib/ecosystems/npm/gate-review`).
  */
 export const npmWorkflowGateAdapter: WorkflowGateAdapter = {
   ecosystem: "npm",

@@ -1,12 +1,12 @@
-import { parsePkgPrNewUrl } from "../../src/lib/pkg-pr-new";
-import { registryProtocolAllowed } from "./npm-connection";
-import { reliableFetch } from "./platform/reliable-fetch";
+import { parsePkgPrNewUrl } from "../../../../src/lib/pkg-pr-new";
+import { registryProtocolAllowed } from "./connection";
+import { reliableFetch } from "../../platform/reliable-fetch";
 import {
   downloadInSandboxStream,
   SandboxError,
   SANDBOX_MAX_STREAM_TAR_BYTES,
   type DownloadResult,
-} from "./sandbox";
+} from "../../sandbox";
 
 export function isPublishedTarballUrlAllowed(
   tarballUrl: string,

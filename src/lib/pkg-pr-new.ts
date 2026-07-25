@@ -26,7 +26,7 @@ export interface PkgPrNewSpec {
 //   pkg.pr.new/<owner>/<repo>/<name>@<ref>
 //   pkg.pr.new/<owner>/<repo>/@<scope>/<name>@<ref>
 const MAX_INPUT_LENGTH = 512;
-// Mirrors NPM_PACKAGE_NAME_RE in server/lib/registry.ts; kept local so the
+// Mirrors NPM_PACKAGE_NAME_RE in server/lib/ecosystems/npm/registry.ts; kept local so the
 // client bundle does not pull in registry fetch code.
 const NAME_RE = /^[a-z0-9][a-z0-9._~-]*$/;
 const SCOPE_RE = /^@[a-z0-9][a-z0-9._~-]*$/;

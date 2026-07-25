@@ -6,7 +6,7 @@ import type {
   PackageAdapter,
   ReleaseProvenance,
   StagedDetails,
-} from "../types";
+} from "../package-adapter";
 import { acquireBaselineNpm } from "./acquire";
 import { createNpmBroker, type NpmBroker } from "./broker";
 import { buildNpmFindings } from "./findings";

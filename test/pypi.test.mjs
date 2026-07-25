@@ -9,7 +9,7 @@ import {
   pypiAdapter,
   preparePyPiArtifact,
   selectPyPiReleaseArtifacts,
-} from "../server/lib/adapters/pypi";
+} from "../server/lib/ecosystems/pypi";
 import { createPackageDiff } from "../server/lib/review";
 
 function file(path, textSample, extra = {}) {

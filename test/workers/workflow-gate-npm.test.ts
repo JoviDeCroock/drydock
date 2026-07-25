@@ -7,7 +7,7 @@ import * as schema from "../../server/db/schema";
 import { readGithubAppConfig } from "../../server/lib/github-app/config";
 import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
 import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
-import { npmWorkflowGateAdapter } from "../../server/lib/workflow-gates/npm";
+import { npmWorkflowGateAdapter } from "../../server/lib/ecosystems/npm/workflow-gate";
 import { prepareReleaseCandidatesForGate } from "../../server/lib/workflow-gates/prepare";
 import {
   AMBIGUOUS_ARCHIVE_ECOSYSTEM,
@@ -15,10 +15,10 @@ import {
   detectArchiveEcosystems,
   getWorkflowGateAdapter,
   supportedWorkflowGateEcosystems,
-} from "../../server/lib/workflow-gates/registry";
+} from "../../server/lib/ecosystems";
 import { type ParsedGateArtifact } from "../../server/lib/workflow-gates/types";
-import { npmGateAdapter } from "../../server/lib/adapters/npm/gate";
-import type { NpmGateDetails } from "../../server/lib/adapters/npm/gate";
+import { npmGateAdapter } from "../../server/lib/ecosystems/npm/gate-review";
+import type { NpmGateDetails } from "../../server/lib/ecosystems/npm/gate-review";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 

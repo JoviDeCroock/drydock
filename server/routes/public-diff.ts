@@ -1,25 +1,17 @@
 import { Hono, type Context } from "hono";
 import { createDb } from "../db/client";
 import { enforceRateLimit, RateLimitError } from "../db/rate-limit";
-import { isValidPyPiProjectName, normalizePyPiProjectName } from "../lib/adapters/pypi/manifest";
-import { SAFE_VERSION_RE } from "../lib/adapters/pypi/types";
+import { getPublicDiffAdapter } from "../lib/ecosystems";
+import { PUBLIC_NPM_REGISTRY } from "../lib/ecosystems/npm/public-diff";
 import { rateLimitResponse } from "../lib/platform/http";
 import {
   computePublicDiffCacheKey,
-  fetchPublicPackageMetadata,
   loadPublicPackageDiff,
   PublicDiffError,
   readPublicDiffCache,
-  type PublicDiffEcosystem,
   type PublicPackageDiff,
 } from "../lib/public-diff";
-import { isPkgPrNewUrl } from "../../src/lib/pkg-pr-new";
-import {
-  fetchPublicPyPiProjectMetadata,
-  listPublicPyPiVersions,
-  PYPI_PUBLIC_REGISTRY,
-} from "../lib/public-diff/pypi";
-import { compareSemver, isValidNpmPackageName } from "../lib/registry";
+import type { PublicDiffAdapter } from "../lib/public-diff/types";
 import type { Bindings, Variables } from "../types";
 
 // Anonymous by design: these endpoints serve only data derived from public
@@ -30,9 +22,6 @@ import type { Bindings, Variables } from "../types";
 // bound the work a request can ask for. Everything else under /api/* keeps
 // requiring a Better Auth session.
 export const publicDiffRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-
-const NPM_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
-const PUBLIC_NPM_REGISTRY = "https://registry.npmjs.org";
 
 type PublicDiffContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 
@@ -75,42 +64,39 @@ async function enforcePublicRateLimit(
   }
 }
 
-function requestedEcosystem(c: PublicDiffContext): PublicDiffEcosystem | Response {
+// The ecosystem registry is the authority on which ecosystems /diff serves: an
+// ecosystem appears here exactly when its module declares a `publicDiff`
+// capability, so adding one needs no change in this file.
+function requestedEcosystem(c: PublicDiffContext): PublicDiffAdapter | Response {
   const ecosystem = c.req.query("ecosystem")?.trim() || "npm";
-  if (ecosystem !== "npm" && ecosystem !== "pypi") {
+  const adapter = getPublicDiffAdapter(ecosystem);
+  if (!adapter) {
     return c.json({ error: "invalid ecosystem" }, 400);
   }
-  return ecosystem;
+  return adapter;
 }
 
-function requestedPackageName(
-  c: PublicDiffContext,
-  ecosystem: PublicDiffEcosystem,
-): string | Response {
+function requestedPackageName(c: PublicDiffContext, adapter: PublicDiffAdapter): string | Response {
   const packageName = c.req.query("package")?.trim() ?? "";
-  const valid =
-    ecosystem === "pypi" ? isValidPyPiProjectName(packageName) : isValidNpmPackageName(packageName);
-  if (!valid) {
+  if (!adapter.isValidPackageName(packageName)) {
     return c.json({ error: "invalid package name" }, 400);
   }
-  // PyPI names are case/separator-insensitive (PEP 503); canonicalize once at
-  // the request boundary so the cache key, cache-tag, and payload identity
-  // all agree — "Django" and "django" must share one entry AND one purge tag.
-  return ecosystem === "pypi" ? normalizePyPiProjectName(packageName) : packageName;
+  // Canonicalize once at the request boundary so the cache key, cache-tag, and
+  // payload identity all agree — on PyPI "Django" and "django" must share one
+  // entry AND one purge tag.
+  return adapter.normalizePackageName(packageName);
 }
 
-// An npm version side is either a published registry version or a pkg.pr.new
-// preview URL (validated and origin-pinned by the shared parser). PyPI has no
-// preview form, and its versions additionally allow PEP 440 epoch markers
-// ("1!2.0").
+// What a version side may be is the ecosystem's call: npm accepts a published
+// version or a pkg.pr.new preview URL, PyPI has no preview form but allows PEP
+// 440 epoch markers ("1!2.0").
 function requestedVersion(
   c: PublicDiffContext,
-  ecosystem: PublicDiffEcosystem,
+  adapter: PublicDiffAdapter,
   param: string,
 ): string | Response {
   const version = c.req.query(param)?.trim() ?? "";
-  const versionRe = ecosystem === "pypi" ? SAFE_VERSION_RE : NPM_VERSION_RE;
-  if (!versionRe.test(version) && !(ecosystem === "npm" && isPkgPrNewUrl(version))) {
+  if (!adapter.isValidVersion(version)) {
     return c.json({ error: `invalid ${param} version` }, 400);
   }
   return version;
@@ -123,32 +109,28 @@ function publicDiffErrorResponse(c: PublicDiffContext, err: unknown): Response {
   throw err;
 }
 
-function publicRegistryUrl(ecosystem: PublicDiffEcosystem): string {
-  return ecosystem === "pypi" ? PYPI_PUBLIC_REGISTRY : PUBLIC_NPM_REGISTRY;
-}
-
 async function loadRequestedDiff(
   c: PublicDiffContext,
   options: { limitColdComputation?: boolean } = {},
 ): Promise<{ payload: PublicPackageDiff } | { error: Response }> {
-  const ecosystem = requestedEcosystem(c);
-  if (ecosystem instanceof Response) return { error: ecosystem };
-  const packageName = requestedPackageName(c, ecosystem);
+  const adapter = requestedEcosystem(c);
+  if (adapter instanceof Response) return { error: adapter };
+  const packageName = requestedPackageName(c, adapter);
   if (packageName instanceof Response) return { error: packageName };
-  const fromVersion = requestedVersion(c, ecosystem, "from");
+  const fromVersion = requestedVersion(c, adapter, "from");
   if (fromVersion instanceof Response) return { error: fromVersion };
-  const toVersion = requestedVersion(c, ecosystem, "to");
+  const toVersion = requestedVersion(c, adapter, "to");
   if (toVersion instanceof Response) return { error: toVersion };
   if (fromVersion === toVersion) {
     return { error: c.json({ error: "from and to must differ" }, 400) };
   }
 
   const input = {
-    ecosystem,
+    ecosystem: adapter.ecosystem,
     packageName,
     fromVersion,
     toVersion,
-    registryUrl: publicRegistryUrl(ecosystem),
+    registryUrl: adapter.registryUrl,
   };
 
   try {
@@ -171,80 +153,29 @@ async function loadRequestedDiff(
 publicDiffRoutes.get("/versions", async (c) => {
   const limited = await enforcePublicRateLimit(c, "versions", 30);
   if (limited) return limited;
-  const ecosystem = requestedEcosystem(c);
-  if (ecosystem instanceof Response) return ecosystem;
-  const packageName = requestedPackageName(c, ecosystem);
+  const adapter = requestedEcosystem(c);
+  if (adapter instanceof Response) return adapter;
+  const packageName = requestedPackageName(c, adapter);
   if (packageName instanceof Response) return packageName;
 
-  if (ecosystem === "pypi") {
-    let metadata;
-    try {
-      metadata = await fetchPublicPyPiProjectMetadata(c.env, c.executionCtx, packageName);
-    } catch (err) {
-      return publicDiffErrorResponse(c, err);
-    }
-    const { versions, suggested } = listPublicPyPiVersions(metadata);
-    return c.json(
-      {
-        ecosystem,
-        packageName: metadata.info?.name ?? packageName,
-        versions,
-        suggested,
-      },
-      200,
-      {
-        "cache-control": "public, max-age=300, stale-while-revalidate=600",
-        "cache-tag": publicDiffCacheTag(ecosystem, packageName),
-      },
-    );
-  }
-
-  let metadata;
+  let listing;
   try {
-    metadata = await fetchPublicPackageMetadata(
-      c.env,
-      c.executionCtx,
-      packageName,
-      PUBLIC_NPM_REGISTRY,
-    );
+    listing = await adapter.listVersions(c.env, c.executionCtx, packageName);
   } catch (err) {
     return publicDiffErrorResponse(c, err);
   }
 
-  const tagsByVersion = new Map<string, string[]>();
-  for (const [tag, version] of Object.entries(metadata["dist-tags"] ?? {})) {
-    if (!version) continue;
-    const list = tagsByVersion.get(version) ?? [];
-    list.push(tag);
-    tagsByVersion.set(version, list);
-  }
-  const times = metadata.time ?? {};
-  const versions = Object.keys(metadata.versions ?? {})
-    .sort((a, b) => compareSemver(b, a))
-    .map((version) => ({
-      version,
-      distTags: (tagsByVersion.get(version) ?? []).sort(),
-      publishedAt: typeof times[version] === "string" ? times[version] : undefined,
-    }));
-
-  const latest = metadata["dist-tags"]?.latest ?? versions[0]?.version ?? null;
-  const previous = latest
-    ? (versions.find(
-        (entry) => entry.version !== latest && compareSemver(entry.version, latest) < 0,
-      )?.version ?? null)
-    : null;
-
   return c.json(
     {
-      ecosystem,
-      packageName,
-      versions,
-      suggested: latest && previous ? { from: previous, to: latest } : null,
+      ecosystem: adapter.ecosystem,
+      packageName: listing.packageName,
+      versions: listing.versions,
+      suggested: listing.suggested,
     },
     200,
     {
       "cache-control": "public, max-age=300, stale-while-revalidate=600",
-      "cache-tag": publicDiffCacheTag(ecosystem, packageName),
+      "cache-tag": adapter.cacheTag(packageName),
     },
   );
 });
@@ -252,19 +183,21 @@ publicDiffRoutes.get("/versions", async (c) => {
 // Package bytes are immutable, but findings and risk change with the deployed
 // analysis version. Revalidate response payloads at the origin; the versioned
 // colo/KV result cache keeps that revalidation cheap.
-function analyzedPairHeaders(
-  ecosystem: PublicDiffEcosystem,
-  packageName: string,
-): Record<string, string> {
+function analyzedPairHeaders(ecosystem: string, packageName: string): Record<string, string> {
   return {
     "cache-control": "public, max-age=0, must-revalidate",
     "cache-tag": publicDiffCacheTag(ecosystem, packageName),
   };
 }
 
-function publicDiffCacheTag(ecosystem: PublicDiffEcosystem, packageName: string): string {
-  // npm keeps the historical un-prefixed tag so existing purge tooling works.
-  return ecosystem === "pypi" ? `public-diff:pypi:${packageName}` : `public-diff:${packageName}`;
+// Cache-tag shape is the ecosystem's own (npm keeps the historical un-prefixed
+// tag so existing purge tooling works); fall back to a namespaced tag if a
+// payload ever names an ecosystem the registry no longer serves.
+function publicDiffCacheTag(ecosystem: string, packageName: string): string {
+  return (
+    getPublicDiffAdapter(ecosystem)?.cacheTag(packageName) ??
+    `public-diff:${ecosystem}:${packageName}`
+  );
 }
 
 publicDiffRoutes.get("/", async (c) => {

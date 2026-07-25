@@ -38,21 +38,24 @@ import {
   allowInsecureLocalRegistry,
   decryptNpmToken,
   getOrganizationNpmToken,
-} from "../lib/npm-connection";
-import { isPublishedTarballUrlAllowed } from "../lib/published-tarball";
+} from "../lib/ecosystems/npm/connection";
+import { isPublishedTarballUrlAllowed } from "../lib/ecosystems/npm/published-tarball";
 import {
   compareSemver,
   fetchPackageMetadata,
   pickPreviousVersion,
   type RegistryMetadata,
-} from "../lib/registry";
+} from "../lib/ecosystems/npm/registry";
 import { annotateFindingsWithDiffStatus, createPackageDiff, type FileRecord } from "../lib/review";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import { parseScanInput } from "../lib/scan/input";
 import { reportExportFilename, serializeReportExport } from "../lib/scan/report-export";
 import { executeScanJob, type ScanQueueMessage } from "../lib/scan/job";
 import { roleCanManageIntegrations } from "../lib/auth/roles";
-import { checkStagedPublishAccess, fetchStagedPublishDetails } from "../lib/staged-publishes";
+import {
+  checkStagedPublishAccess,
+  fetchStagedPublishDetails,
+} from "../lib/ecosystems/npm/staged-publishes";
 import type { Bindings, ScanInput, Variables } from "../types";
 
 export const scansRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();

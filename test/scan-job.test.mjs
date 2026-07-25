@@ -24,7 +24,7 @@ vi.mock("../server/db/events.ts", () => dbMock);
 vi.mock("../server/db/npm-connections.ts", () => dbMock);
 vi.mock("../server/db/scans.ts", () => dbMock);
 vi.mock("../server/lib/scan/pipeline.ts", () => pipelineMock);
-vi.mock("../server/lib/npm-connection.ts", () => npmConnectionMock);
+vi.mock("../server/lib/ecosystems/npm/connection.ts", () => npmConnectionMock);
 vi.mock("../server/lib/notify/index.ts", () => notifyMock);
 
 const { classifyScanError, executeScanJob, retryDelaySeconds } =

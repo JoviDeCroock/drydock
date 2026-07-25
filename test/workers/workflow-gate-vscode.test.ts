@@ -13,9 +13,9 @@ import {
   detectArchiveEcosystems,
   getWorkflowGateAdapter,
   supportedWorkflowGateEcosystems,
-} from "../../server/lib/workflow-gates/registry";
+} from "../../server/lib/ecosystems";
 import { resolveBundleArtifacts } from "../../server/lib/workflow-gates/resolve";
-import { vscodeWorkflowGateAdapter } from "../../server/lib/workflow-gates/vscode";
+import { vscodeWorkflowGateAdapter } from "../../server/lib/ecosystems/vscode/workflow-gate";
 import {
   type ResolvedReleaseBundle,
   WorkflowArtifactError,

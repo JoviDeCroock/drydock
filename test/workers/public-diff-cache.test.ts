@@ -10,7 +10,7 @@ import {
   writePublicDiffCache,
   type PublicPackageDiff,
 } from "../../server/lib/public-diff";
-import { PYPI_RULES_VERSION } from "../../server/lib/adapters/pypi/types";
+import { PYPI_RULES_VERSION } from "../../server/lib/ecosystems/pypi/types";
 import { DETERMINISTIC_RULES_VERSION } from "../../server/lib/review";
 
 function payload(textSample = "export const value = 1;\n"): PublicPackageDiff {

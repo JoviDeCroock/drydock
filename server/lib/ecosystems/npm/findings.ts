@@ -9,8 +9,8 @@ import {
   type PackageJsonDiff,
   type PackageJsonSummary,
 } from "../../review";
-import type { StagedPublishDetails } from "../../staged-publishes";
-import type { AcquiredArtifact } from "../types";
+import type { StagedPublishDetails } from "./staged-publishes";
+import type { AcquiredArtifact } from "../package-adapter";
 
 export function buildNpmFindings(args: {
   staged: AcquiredArtifact;

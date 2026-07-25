@@ -1,4 +1,4 @@
-import type { AdapterBroker, PackageAdapter } from "../adapters/types";
+import type { AdapterBroker, PackageAdapter } from "../ecosystems/package-adapter";
 import type { FileRecord, PackageJsonSummary } from "../review";
 import type { TarSuspiciousEntry } from "../tar-parser.js";
 
@@ -77,7 +77,7 @@ export interface PreparedReleaseCandidate {
  *    into one candidate per distinct package (grouping by package identity),
  *    rejecting a group whose artifacts disagree on the identity they carry.
  *  - `packageAdapter` — the deterministic review/baseline/findings adapter the
- *    shared pipeline runs (see `server/lib/adapters/types.ts`); risk-to-decision
+ *    shared pipeline runs (see `server/lib/ecosystems/package-adapter.ts`); risk-to-decision
  *    mapping stays shared in `recommendationForReleaseRisk`.
  */
 export interface WorkflowGateAdapter {

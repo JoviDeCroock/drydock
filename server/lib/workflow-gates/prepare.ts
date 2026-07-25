@@ -1,8 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import { type AppDb } from "../../db/client";
 import { githubAppInstallations, githubReleaseTargets } from "../../db/schema";
-import { normalizePyPiProjectName, preparePyPiArtifact } from "../adapters/pypi/index";
-import type { AdapterBroker, PackageAdapter } from "../adapters/types";
+import { normalizePyPiProjectName, preparePyPiArtifact } from "../ecosystems/pypi";
+import type { AdapterBroker, PackageAdapter } from "../ecosystems/package-adapter";
 import {
   type ClassifyArtifact,
   WorkflowArtifactError,
@@ -19,7 +19,7 @@ import {
   classifyBundleArtifact,
   getWorkflowGateAdapter,
   UnsupportedEcosystemError,
-} from "./registry";
+} from "../ecosystems";
 import { compactDuplicateTextSamples, resolveBundleArtifact } from "./resolve";
 import type { ParsedGateArtifact, PreparedReleaseCandidate, WorkflowGateAdapter } from "./types";
 

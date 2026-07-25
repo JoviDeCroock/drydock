@@ -1,5 +1,5 @@
-import type { StagedPublishDetails } from "../../staged-publishes";
-import type { PackageAdapter } from "../types";
+import type { StagedPublishDetails } from "./staged-publishes";
+import type { PackageAdapter } from "../package-adapter";
 import { acquireBaselineNpm, acquireStagedNpm, type NpmAdapterInput } from "./acquire";
 import { createNpmBroker, type NpmBroker } from "./broker";
 import { buildNpmFindings } from "./findings";
