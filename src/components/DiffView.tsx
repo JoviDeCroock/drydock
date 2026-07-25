@@ -575,6 +575,10 @@ export function diffHashLines(
     hasFlag(after, "binary") ||
     hasFlag(before, "content-skipped") ||
     hasFlag(after, "content-skipped") ||
+    // A dropped display sample leaves the hash as the only evidence the
+    // reviewer can take back to the artifact, so it belongs here too.
+    hasFlag(before, "sample-omitted") ||
+    hasFlag(after, "sample-omitted") ||
     Boolean(nativeBadge(before) ?? nativeBadge(after));
   if (!noTextBody) return [];
   // Legacy artifacts persisted before skip-hashing carry no hash — omit

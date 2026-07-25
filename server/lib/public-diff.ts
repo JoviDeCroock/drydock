@@ -382,37 +382,37 @@ export function serializePublicDiffCachePayload(
   payload: PublicPackageDiff,
   maxPayloadBytes = CACHE_MAX_PAYLOAD_BYTES,
 ): string {
-  const serialized = JSON.stringify(payload);
+  let serialized = JSON.stringify(payload);
   if (utf8ByteLength(serialized) <= maxPayloadBytes) return serialized;
+  // Drop the reference before building anything else: for the pairs that reach
+  // this branch the discarded string is ~20 MiB, and the Worker still holds
+  // both parsed sides. Holding it while the reduced payload is built is what
+  // pushes peak memory past the isolate limit.
+  serialized = "";
+
+  // Metadata-only floor. Doubles as the fallback below, so it is built once
+  // rather than re-serialized.
+  const bare = JSON.stringify(bareSamplePayload(payload));
+  const budget = maxPayloadBytes - utf8ByteLength(bare);
+  if (budget <= 0) return bare;
 
   // Oversized pair: cache a reduced sample set so repeat views stay cheap
   // without blanking the workbench. Dropping every sample used to leave large
   // releases (a numpy wheel pair carries ~20 MiB of Python text) rendering
   // "No text samples available to diff." on every file, including the handful
   // that actually changed — the only ones a reviewer opens.
-  const retained = retainedSamplePaths(payload, maxPayloadBytes);
-  if (retained.size) {
-    const reduced = JSON.stringify({
-      ...payload,
-      fromFiles: applySampleRetention(payload.fromFiles, retained),
-      toFiles: applySampleRetention(payload.toFiles, retained),
-      textSamplesOmitted: true,
-    } satisfies PublicPackageDiff);
-    // The selection above works from estimated per-path costs, so confirm the
-    // real payload fits before committing to it rather than trusting the
-    // estimate to be exact.
-    if (utf8ByteLength(reduced) <= maxPayloadBytes) return reduced;
-  }
+  const retained = retainedSamplePaths(payload, budget);
+  if (!retained.size) return bare;
 
-  // Nothing fit: cache metadata only. The per-file endpoint then reports
-  // samples as unavailable instead of recomputing two archive parses per file
-  // view.
-  return JSON.stringify({
+  const reduced = JSON.stringify({
     ...payload,
-    fromFiles: applySampleRetention(payload.fromFiles, new Set()),
-    toFiles: applySampleRetention(payload.toFiles, new Set()),
+    fromFiles: applySampleRetention(payload.fromFiles, retained),
+    toFiles: applySampleRetention(payload.toFiles, retained),
     textSamplesOmitted: true,
   } satisfies PublicPackageDiff);
+  // Selection works from per-path cost arithmetic rather than a trial
+  // serialization, so confirm the real payload fits before committing to it.
+  return utf8ByteLength(reduced) <= maxPayloadBytes ? reduced : bare;
 }
 
 // Flags a record whose display sample was dropped to fit the cache budget, so
@@ -425,31 +425,40 @@ export const SAMPLE_OMITTED_FLAG = "sample-omitted";
 // to a record that would otherwise carry none.
 const TEXT_SAMPLE_KEY_BYTES = ',"textSample":'.length;
 
+// How much of the budget unchanged files may claim once a pair is over it.
+// Every file navigation re-reads and re-parses the whole cached payload, so a
+// degraded payload that fills the full 20 MiB would trade one broken workbench
+// for a slow one. Changed files are what the workbench opens and are not
+// subject to this cap; unchanged bodies are best-effort package context.
+const UNCHANGED_SAMPLE_BUDGET_BYTES = 2 * 1024 * 1024;
+
+function bareSamplePayload(payload: PublicPackageDiff): PublicPackageDiff {
+  return {
+    ...payload,
+    fromFiles: applySampleRetention(payload.fromFiles, new Set()),
+    toFiles: applySampleRetention(payload.toFiles, new Set()),
+    textSamplesOmitted: true,
+  };
+}
+
 // Which paths keep their display sample when the pair exceeds the cache value
 // budget. Changed paths come first — they are what the workbench opens — then
-// unchanged ones as package context, cheapest sample first inside each tier so
-// the budget buys the most reviewable files. A path's two sides are always
-// kept or dropped together: a half-sampled modification would render as a
-// whole-file addition or deletion.
-function retainedSamplePaths(payload: PublicPackageDiff, maxPayloadBytes: number): Set<string> {
+// unchanged ones as package context under their own smaller cap, cheapest
+// sample first inside each tier so the budget buys the most reviewable files.
+// A path's two sides are always kept or dropped together: a half-sampled
+// modification would render as a whole-file addition or deletion.
+function retainedSamplePaths(payload: PublicPackageDiff, sampleBudget: number): Set<string> {
   const retained = new Set<string>();
-  const bare = JSON.stringify({
-    ...payload,
-    fromFiles: applySampleRetention(payload.fromFiles, retained),
-    toFiles: applySampleRetention(payload.toFiles, retained),
-    textSamplesOmitted: true,
-  } satisfies PublicPackageDiff);
-  let budget = maxPayloadBytes - utf8ByteLength(bare);
-  if (budget <= 0) return retained;
-
-  const changedPaths = new Set(
-    payload.diff.filter((entry) => entry.status !== "unchanged").map((entry) => entry.path),
-  );
-  const candidates = sampleCandidates(payload, changedPaths);
-  for (const candidate of candidates) {
-    // Keep scanning past an unaffordable candidate: a cheaper one later in the
-    // tier still fits, and skipping it would waste the remaining budget.
+  let budget = sampleBudget;
+  let unchangedBudget = Math.min(budget, UNCHANGED_SAMPLE_BUDGET_BYTES);
+  for (const candidate of sampleCandidates(payload)) {
+    // Keep scanning past an unaffordable candidate rather than stopping: each
+    // tier is cheapest-first, so only a later tier can still yield a fit.
     if (candidate.bytes > budget) continue;
+    if (!candidate.changed) {
+      if (candidate.bytes > unchangedBudget) continue;
+      unchangedBudget -= candidate.bytes;
+    }
     budget -= candidate.bytes;
     retained.add(candidate.path);
   }
@@ -462,14 +471,14 @@ interface SampleCandidate {
   changed: boolean;
 }
 
-function sampleCandidates(
-  payload: PublicPackageDiff,
-  changedPaths: Set<string>,
-): SampleCandidate[] {
+function sampleCandidates(payload: PublicPackageDiff): SampleCandidate[] {
+  const changedPaths = new Set(
+    payload.diff.filter((entry) => entry.status !== "unchanged").map((entry) => entry.path),
+  );
   const byPath = new Map<string, SampleCandidate>();
   for (const file of [...payload.fromFiles, ...payload.toFiles]) {
     if (!file.textSample) continue;
-    const bytes = utf8ByteLength(JSON.stringify(file.textSample)) + TEXT_SAMPLE_KEY_BYTES;
+    const bytes = jsonStringByteLength(file.textSample) + TEXT_SAMPLE_KEY_BYTES;
     const existing = byPath.get(file.path);
     if (existing) existing.bytes += bytes;
     else byPath.set(file.path, { path: file.path, bytes, changed: changedPaths.has(file.path) });
@@ -535,6 +544,56 @@ function payloadCacheTtlSeconds(payload: PublicPackageDiff): number {
     : CACHE_TTL_SECONDS;
 }
 
-function utf8ByteLength(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
+// Counted rather than encoded: the strings measured here are the whole cache
+// payload (tens of MiB for a large release), and `TextEncoder.encode` would
+// allocate a throwaway buffer that size on a Worker isolate that is already
+// holding both parsed sides of the diff. Exported for the equivalence tests
+// that pin it to TextEncoder.
+export function utf8ByteLength(value: string): number {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && isLowSurrogate(value.charCodeAt(index + 1))) {
+      // Surrogate pair: one 4-byte code point across two UTF-16 units.
+      bytes += 4;
+      index++;
+    } else {
+      // Includes an unpaired surrogate, which encodes as U+FFFD (3 bytes).
+      bytes += 3;
+    }
+  }
+  return bytes;
+}
+
+// JSON.stringify's short escapes; every other control character becomes \u00XX.
+const JSON_SHORT_ESCAPES = new Set([0x08, 0x09, 0x0a, 0x0c, 0x0d]);
+
+// Bytes `JSON.stringify(value)` would produce for a string, quotes included,
+// without building the escaped copy. Sample costs are summed over every file in
+// the payload, so materializing each escaped body just to measure it would
+// double the transient allocation of the whole reduction pass. Exported for the
+// equivalence tests that pin it to JSON.stringify.
+export function jsonStringByteLength(value: string): number {
+  let bytes = 2;
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code < 0x20) bytes += JSON_SHORT_ESCAPES.has(code) ? 2 : 6;
+    else if (code === 0x22 || code === 0x5c) bytes += 2;
+    else if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && isLowSurrogate(value.charCodeAt(index + 1))) {
+      bytes += 4;
+      index++;
+    } else if (code >= 0xd800 && code <= 0xdfff) {
+      // Well-formed JSON.stringify escapes an unpaired surrogate as \udXXX.
+      bytes += 6;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
 }

@@ -155,6 +155,17 @@ describe("diffHashLines", () => {
     expect(diffHashLines(side, { ...side }, "previous", "staged")).toEqual(["sha256 same-hash"]);
   });
 
+  test("surfaces both hashes when the display samples were dropped from the cache", () => {
+    expect(
+      diffHashLines(
+        { sha256: "before-hash", flags: ["sample-omitted"] },
+        { sha256: "after-hash", flags: ["sample-omitted"] },
+        "2.5.0",
+        "2.5.1",
+      ),
+    ).toEqual(["sha256 (2.5.0): before-hash", "sha256 (2.5.1): after-hash"]);
+  });
+
   test("stays silent for text diffs and hashless legacy artifacts", () => {
     expect(
       diffHashLines(

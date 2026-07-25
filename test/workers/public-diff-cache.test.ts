@@ -2,9 +2,11 @@ import { env } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 import {
   computePublicDiffCacheKey,
+  jsonStringByteLength,
   readPublicDiffCache,
   SAMPLE_OMITTED_FLAG,
   serializePublicDiffCachePayload,
+  utf8ByteLength,
   writePublicDiffCache,
   type PublicPackageDiff,
 } from "../../server/lib/public-diff";
@@ -165,5 +167,84 @@ describe("public diff cache", () => {
     expect(cached.textSamplesOmitted).toBe(true);
     expect(cached.fromFiles[0]).not.toHaveProperty("textSample");
     expect(cached.toFiles[0]).not.toHaveProperty("textSample");
+  });
+
+  // Every file navigation re-reads the whole cached payload, so a degraded
+  // payload must not grow to fill the cache budget with unchanged bodies.
+  test("caps how much of an over-budget payload unchanged samples may claim", () => {
+    const unchangedSample = "u".repeat(64 * 1024);
+    const files = Array.from({ length: 200 }, (_, index) => ({
+      path: `lib/mod-${String(index).padStart(3, "0")}.js`,
+      size: unchangedSample.length,
+      sha256: `sha-${index}`,
+      flags: [],
+      textSample: unchangedSample,
+    }));
+    const oversized: PublicPackageDiff = {
+      ...payload(),
+      fromFiles: files,
+      toFiles: files,
+      diff: files.map((file) => ({ path: file.path, status: "unchanged", flags: [] })),
+    };
+    // 25 MiB of samples against a 20 MiB budget: without the unchanged cap the
+    // reduction would happily emit a ~20 MiB payload.
+    const cached = JSON.parse(
+      serializePublicDiffCachePayload(oversized, 20 * 1024 * 1024),
+    ) as PublicPackageDiff;
+
+    const retained = cached.toFiles.filter((file) => file.textSample);
+    expect(retained.length).toBeGreaterThan(0);
+    expect(retained.length).toBeLessThan(files.length);
+    expect(new TextEncoder().encode(JSON.stringify(cached)).byteLength).toBeLessThan(
+      4 * 1024 * 1024,
+    );
+  });
+});
+
+// The reduction sums these over every file in a payload and compares the total
+// against a hard cache limit, so a drift from the runtime's own encoding would
+// silently overshoot (or needlessly discard) samples.
+describe("byte-length counters", () => {
+  const encoder = new TextEncoder();
+  const cases = [
+    "",
+    "plain ascii",
+    'quote " and backslash \\',
+    "tab\tnewline\nreturn\r",
+    "  control",
+    "café façade",
+    "日本語のテキスト",
+    "emoji 🚢🔥 pair",
+    "😀",
+    "lone high \ud800 surrogate",
+    "lone low \udc00 surrogate",
+    "\ud800𐀀",
+  ];
+
+  test("utf8ByteLength matches TextEncoder", () => {
+    for (const value of cases) {
+      expect(utf8ByteLength(value)).toBe(encoder.encode(value).byteLength);
+    }
+  });
+
+  test("jsonStringByteLength matches JSON.stringify", () => {
+    for (const value of cases) {
+      expect(jsonStringByteLength(value)).toBe(encoder.encode(JSON.stringify(value)).byteLength);
+    }
+  });
+
+  test("both counters agree with the runtime across random code units", () => {
+    // Deterministic LCG so a failure is reproducible.
+    let seed = 0x2f6e2b1;
+    const nextCode = () => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed % 0x11000;
+    };
+    for (let iteration = 0; iteration < 2_000; iteration++) {
+      let value = "";
+      for (let index = 0; index < 24; index++) value += String.fromCharCode(nextCode());
+      expect(utf8ByteLength(value)).toBe(encoder.encode(value).byteLength);
+      expect(jsonStringByteLength(value)).toBe(encoder.encode(JSON.stringify(value)).byteLength);
+    }
   });
 });
