@@ -1,13 +1,23 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { createDb } from "./db/client";
 import { AUDIT_LOG_RETENTION_DAYS, pruneAuditEventsOlderThan } from "./db/audit-log";
 import { pruneExpiredAuthRows } from "./db/auth-retention";
+import {
+  MARKETING_REFERRAL_RETENTION_DAYS,
+  pruneMarketingReferralsOlderThan,
+  recordMarketingReferral,
+} from "./db/marketing-referrals";
 import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
 import { getOrganizationOwnerUserId } from "./db/organizations";
 import { RateLimitError, enforceRateLimit } from "./db/rate-limit";
 import { createAuth, getAuthSession } from "./lib/auth";
 import { rateLimitResponse } from "./lib/platform/http";
 import { allowInsecureLocalRegistry } from "./lib/ecosystems/npm/connection";
+import {
+  classifyTrafficSource,
+  marketingSurfaceForPath,
+  referralDay,
+} from "./lib/platform/traffic-source";
 import { isPackageDiffDetailPath, rewritePackageDiffMetadata } from "./lib/public-diff/page";
 import {
   API_CSP,
@@ -43,6 +53,7 @@ import { githubAppRoutes } from "./routes/github-app";
 import { githubWebhookRoutes } from "./routes/github-webhooks";
 import { npmConnectionRoutes } from "./routes/npm-connection";
 import { organizationMembersRoutes } from "./routes/organization-members";
+import { ogRoutes } from "./routes/og";
 import { organizationsRoutes } from "./routes/organizations";
 import { publicDiffRoutes } from "./routes/public-diff";
 import { slackRoutes } from "./routes/slack";
@@ -56,7 +67,7 @@ export { NpmAdapterBroker } from "./lib/ecosystems/npm";
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 const CANONICAL_HOSTNAME = "drydock.org";
 const LEGACY_HOSTNAME = "drydock.resynapse.dev";
-const SERVER_OWNED_PATH_PREFIXES = ["/api", "/webhooks"];
+const SERVER_OWNED_PATH_PREFIXES = ["/api", "/webhooks", "/og"];
 const DASHBOARD_STATIC_ASSET_PATHS = new Set([
   "/dashboard",
   "/dashboard/",
@@ -140,6 +151,11 @@ app.route("/webhooks", githubWebhookRoutes);
 // mounted before the auth middleware below; every other /api/* endpoint keeps
 // requiring a session.
 app.route("/api/public/v1/package-diff", publicDiffRoutes);
+
+// Share cards for the same anonymous surface. Mounted outside /api so social
+// crawlers fetch a plain image URL, and before the auth middleware for the same
+// reason the diff API is: an unfurl has no session and must not need one.
+app.route("/og", ogRoutes);
 
 app.use("/api/*", async (c, next) => {
   try {
@@ -291,10 +307,60 @@ app.route("/api/v1/audit-events", auditRoutes);
 app.notFound(async (c) => {
   if (!isServerOwnedPath(c.req.path) && c.env.ASSETS) {
     const response = await c.env.ASSETS.fetch(assetFallbackRequest(c.req.raw));
+    recordMarketingVisit(c, response);
     return rewritePackageDiffMetadata(response, c.req.path);
   }
   return c.json({ error: "not found" }, 404);
 });
+
+// Campaign attribution for the public marketing surfaces. Runs on the document
+// request because that is the only place an external Referer survives — the
+// diff page's own API calls carry a same-origin referrer and would attribute
+// every visit to ourselves.
+//
+// Fire-and-forget and best-effort by construction: a failed counter write must
+// never turn a page view into an error, and nothing about the visitor beyond a
+// channel bucket is derived or stored (see server/lib/traffic-source.ts).
+function recordMarketingVisit(
+  c: Context<{ Bindings: Bindings; Variables: Variables }>,
+  response: Response,
+) {
+  if (c.req.method !== "GET") return;
+  if (!response.ok) return;
+  if (!response.headers.get("content-type")?.includes("text/html")) return;
+  const surface = marketingSurfaceForPath(c.req.path);
+  if (!surface) return;
+
+  // Everything below is best-effort telemetry sitting directly in the path that
+  // serves the landing page. `c.executionCtx` throws when there is no execution
+  // context, and URL parsing can throw on a malformed request line — either
+  // would turn a page view into a 500 through app.onError. Nothing here is worth
+  // a failed page load.
+  try {
+    const url = new URL(c.req.url);
+    const source = classifyTrafficSource({
+      referer: c.req.header("referer"),
+      campaignSource: url.searchParams.get("utm_source"),
+      userAgent: c.req.header("user-agent"),
+      selfHostname: url.hostname,
+    });
+
+    c.executionCtx.waitUntil(
+      recordMarketingReferral(createDb(c.env.DB), { surface, source }).catch((err) => {
+        emitOperationalEvent("warn", "marketing_referral.record_failed", {
+          surface,
+          source,
+          error: describeOperationalError(err),
+        });
+      }),
+    );
+  } catch (err) {
+    emitOperationalEvent("warn", "marketing_referral.record_failed", {
+      surface,
+      error: describeOperationalError(err),
+    });
+  }
+}
 
 app.onError((err, c) => {
   emitOperationalEvent("error", "request.unhandled_error", {
@@ -467,6 +533,21 @@ async function pruneStaleAuthRows(env: Cloudflare.Env) {
   }
 }
 
+// Same flat-window retention shape as the audit log, on a day-string cutoff
+// because the counter table is keyed by UTC day rather than a timestamp.
+async function pruneStaleMarketingReferrals(env: Cloudflare.Env) {
+  const cutoffDay = referralDay(
+    Date.now() - MARKETING_REFERRAL_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+  );
+  try {
+    await pruneMarketingReferralsOlderThan(createDb(env.DB), cutoffDay);
+  } catch (err) {
+    emitOperationalEvent("error", "marketing_referrals.prune_failed", {
+      error: describeOperationalError(err),
+    });
+  }
+}
+
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
@@ -483,6 +564,7 @@ export default {
     }
     await pruneStaleAuditEvents(env);
     await pruneStaleAuthRows(env);
+    await pruneStaleMarketingReferrals(env);
   },
   async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
     for (const message of batch.messages) {

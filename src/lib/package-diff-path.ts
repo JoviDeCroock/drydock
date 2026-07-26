@@ -35,6 +35,30 @@ export function packageDiffPath(
   return `${prefix}/${encodePackageName(packageName)}/${encodeURIComponent(fromVersion)}/${encodeURIComponent(toVersion)}`;
 }
 
+// Share-card image for a diff: the same path shape under /og, with a trailing
+// /card.png. Built from packageDiffPath so the card and the page can never
+// disagree about how a scoped name or a pkg.pr.new preview ref is encoded.
+//
+// Path segments rather than query parameters: an `&`-separated URL in an
+// `og:image` attribute is an ambiguous ampersand that strict scrapers can
+// mis-parse, and the card only unfurls correctly if every client agrees on it.
+const CARD_PATH_PREFIX = "/og";
+const CARD_PATH_SUFFIX = "/card.png";
+
+export function packageDiffCardPath(
+  ecosystem: DiffEcosystem,
+  packageName: string,
+  fromVersion: string,
+  toVersion: string,
+) {
+  return `${CARD_PATH_PREFIX}${packageDiffPath(ecosystem, packageName, fromVersion, toVersion)}${CARD_PATH_SUFFIX}`;
+}
+
+export function parsePackageDiffCardPath(path: string): DiffSpec | null {
+  if (!path.startsWith(`${CARD_PATH_PREFIX}/`) || !path.endsWith(CARD_PATH_SUFFIX)) return null;
+  return parseDiffSpec(path.slice(CARD_PATH_PREFIX.length, -CARD_PATH_SUFFIX.length));
+}
+
 // Package-only form: /diff/<name>. The page resolves the latest published
 // version pair for the package and redirects to the full spec. npm-only:
 // dependency diff links are the only producer of this form, and they are

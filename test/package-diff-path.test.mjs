@@ -1,9 +1,11 @@
 import { describe, expect, test } from "vitest";
 import {
   dependencyDiffHref,
+  packageDiffCardPath,
   packageDiffPath,
   packageOnlyDiffPath,
   parseDiffPackage,
+  parsePackageDiffCardPath,
   parseDiffSpec,
 } from "../src/lib/package-diff-path";
 
@@ -30,6 +32,53 @@ describe("packageDiffPath", () => {
     );
     // encodeURIComponent leaves "!" untouched; it is path-safe as-is.
     expect(packageDiffPath("pypi", "pkg", "1!1.0", "1!1.1")).toBe("/diff/pypi/pkg/1!1.0/1!1.1");
+  });
+});
+
+describe("share-card paths", () => {
+  test("mirrors the diff page path under /og", () => {
+    expect(packageDiffCardPath("npm", "react", "18.2.0", "18.3.0")).toBe(
+      "/og/diff/react/18.2.0/18.3.0/card.png",
+    );
+    expect(packageDiffCardPath("npm", "@preact/signals", "1.0.0", "1.1.0")).toBe(
+      "/og/diff/@preact/signals/1.0.0/1.1.0/card.png",
+    );
+    expect(packageDiffCardPath("pypi", "requests", "2.31.0", "2.32.0")).toBe(
+      "/og/diff/pypi/requests/2.31.0/2.32.0/card.png",
+    );
+  });
+
+  test("contains no query string", () => {
+    // A raw `&` inside an og:image attribute is an ambiguous ampersand that
+    // strict scrapers can mis-parse, which breaks the unfurl the card exists for.
+    expect(packageDiffCardPath("npm", "@preact/signals", "1.0.0", "1.1.0")).not.toContain("?");
+  });
+
+  test("round-trips every spec the diff page can produce", () => {
+    const specs = [
+      ["npm", "react", "18.2.0", "18.3.0"],
+      ["npm", "@preact/signals", "1.0.0", "1.1.0"],
+      ["npm", "pkg", "1.0.0+build.1", "1.0.1"],
+      ["pypi", "requests", "2.31.0", "2.32.0"],
+      ["npm", "pkg", "https://pkg.pr.new/preact/preact@1234abc", "10.0.0"],
+    ];
+    for (const [ecosystem, name, from, to] of specs) {
+      const parsed = parsePackageDiffCardPath(packageDiffCardPath(ecosystem, name, from, to));
+      expect(parsed, `${ecosystem} ${name}`).toEqual({
+        ecosystem,
+        packageName: name,
+        fromVersion: from,
+        toVersion: to,
+      });
+    }
+  });
+
+  test("rejects paths that are not card paths", () => {
+    expect(parsePackageDiffCardPath("/diff/react/18.2.0/18.3.0")).toBeNull();
+    expect(parsePackageDiffCardPath("/og/diff/react/18.2.0/18.3.0")).toBeNull();
+    expect(parsePackageDiffCardPath("/og/card.png")).toBeNull();
+    expect(parsePackageDiffCardPath("/og/diff/react/card.png")).toBeNull();
+    expect(parsePackageDiffCardPath("/ogx/diff/react/1/2/card.png")).toBeNull();
   });
 });
 

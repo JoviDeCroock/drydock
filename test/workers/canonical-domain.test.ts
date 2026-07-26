@@ -19,8 +19,14 @@ const diffShellHtml = `<!doctype html>
 <meta property="og:title" content="landing title">
 <meta property="og:description" content="landing description">
 <meta property="og:url" content="https://drydock.org/diff">
+<meta property="og:image" content="https://drydock.org/og-image.png">
+<meta property="og:image:alt" content="site card">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="800">
 <meta name="twitter:title" content="landing title">
 <meta name="twitter:description" content="landing description">
+<meta name="twitter:image" content="https://drydock.org/og-image.png">
+<meta name="twitter:image:alt" content="site card">
 <link rel="canonical" href="https://drydock.org/diff">
 </head><body><div id="app">diff shell</div></body></html>`;
 
@@ -85,6 +91,23 @@ describe("canonical domain routing", () => {
     expect(html).toContain('content="https://drydock.org/diff/@preact/signals/1.0.0/2.0.0"');
     expect(html).toContain('href="https://drydock.org/diff/@preact/signals/1.0.0/2.0.0"');
     expect(html).toContain("File-by-file diff of @preact/signals between 1.0.0 and 2.0.0");
+  });
+
+  test("swaps in the per-diff share card, replacing the site-wide image", async () => {
+    // Every shared diff otherwise unfurls with one identical image, so a reader
+    // cannot tell which package a link is about without opening it.
+    const res = await fetchWorker(
+      "https://drydock.org/diff/@preact/signals/1.0.0/2.0.0",
+      diffAssetEnv,
+    );
+    const html = await res.text();
+
+    expect(html).toContain("https://drydock.org/og/diff/@preact/signals/1.0.0/2.0.0/card.png");
+    expect(html).not.toContain('content="https://drydock.org/og-image.png"');
+    // Dimensions must move with the image: the shell declares the 1200x800
+    // static card, and cards are 1200x630.
+    expect(html).toContain('property="og:image:height" content="630"');
+    expect(html).toContain("Drydock package diff card for @preact/signals 1.0.0 to 2.0.0");
   });
 
   test("serves the diff shell for the package-only /diff/<name> form", async () => {

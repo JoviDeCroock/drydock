@@ -1,5 +1,6 @@
 import type { AiReview } from "../ai-review/types";
 import { getPublicDiffAdapter } from "../ecosystems";
+import { coloCache } from "../platform/http";
 import { parsePkgPrNewUrl } from "../../../src/lib/pkg-pr-new";
 import { PublicDiffError } from "./error";
 import type { PublicDiffAdapter, PublicDiffInput } from "./types";
@@ -342,10 +343,6 @@ function applySampleRetention(files: FileRecord[], retained: Set<string>): FileR
 
 function publicDiffColoCacheRequest(key: string): Request {
   return new Request(`${COLO_CACHE_ORIGIN}${encodeURIComponent(key)}`);
-}
-
-function coloCache(): Cache {
-  return (caches as unknown as { default: Cache }).default;
 }
 
 async function readPublicDiffColoCache(key: string): Promise<PublicPackageDiff | null> {
