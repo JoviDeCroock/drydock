@@ -23,13 +23,13 @@ vi.mock("../server/db/client.ts", () => dbMock);
 vi.mock("../server/db/events.ts", () => dbMock);
 vi.mock("../server/db/npm-connections.ts", () => dbMock);
 vi.mock("../server/db/scans.ts", () => dbMock);
-vi.mock("../server/lib/scan-pipeline.ts", () => pipelineMock);
-vi.mock("../server/lib/npm-connection.ts", () => npmConnectionMock);
-vi.mock("../server/lib/notify.ts", () => notifyMock);
+vi.mock("../server/lib/scan/pipeline.ts", () => pipelineMock);
+vi.mock("../server/lib/ecosystems/npm/connection.ts", () => npmConnectionMock);
+vi.mock("../server/lib/notify/index.ts", () => notifyMock);
 
 const { classifyScanError, executeScanJob, retryDelaySeconds } =
-  await import("../server/lib/scan-job.ts");
-const { SandboxError } = await import("../server/lib/sandbox.ts");
+  await import("../server/lib/scan/job");
+const { SandboxError } = await import("../server/lib/sandbox");
 
 describe("scan job retry classification", () => {
   test("retries transient sandbox download failures and does not leak raw detail", () => {

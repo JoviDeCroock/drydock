@@ -1,6 +1,6 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
-import worker from "../../server/index";
+import worker from "../../server";
 
 const HSTS_VALUE = "max-age=31536000; includeSubDomains; preload";
 

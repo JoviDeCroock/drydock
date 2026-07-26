@@ -49,7 +49,7 @@ for the lifecycle behavior behind it.
 ## Operational observability
 
 Runtime paths should emit structured events through
-`server/lib/observability.ts`. The helper redacts sensitive key names and bearer
+`server/lib/platform/observability.ts`. The helper redacts sensitive key names and bearer
 tokens before calling `console`, which keeps Cloudflare logs useful without
 turning them into a credential sink.
 

@@ -19,7 +19,7 @@ import {
   type ScanDecision,
 } from "../../../models/scan";
 import type { WorkflowGateDecision } from "../../../models/github-app";
-import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review-types";
+import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review/types";
 import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
 import { Alert } from "../../../components/Alert";
 import { Button } from "../../../components/Button";
@@ -34,12 +34,13 @@ import { DeleteScanDialog } from "./DeleteScanDialog";
 import { DecisionDialog } from "./DecisionDialog";
 import { GateContextPanel, GateDecisionDialog, GatePackagesPanel } from "./GateDecisionDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
-import { RiskSignalsSection } from "./FindingsSection";
+import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection";
 import { ReleaseConsistencyNotice } from "./ReleaseConsistencyNotice";
 import { ReleaseRecommendation } from "./ReleaseRecommendation";
 import { PersistedReportSections } from "./ReportSections";
 import { ScanDetailHeader, ScanFailureAlert, VersionPickerSkeleton } from "./ScanDetailChrome";
-import { filterDiffEntries, findingCountsByPath, scanFilesToFileRecords } from "./diff-helpers";
+import { filterDiffEntries, findingCountsByPath } from "../../../features/review/diff-entries";
+import { scanFilesToFileRecords } from "./diff-helpers";
 import { useFindingsWithDiff } from "./hooks/useFindingsWithDiff";
 import { useScanFileContent } from "./hooks/useScanFileContent";
 import { useScanVersions } from "./hooks/useScanVersions";

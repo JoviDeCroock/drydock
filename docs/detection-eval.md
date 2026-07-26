@@ -116,7 +116,7 @@ Recall is measured per class so blind spots are visible. Malicious:
 
 - `splitStringLiterals` — `'child_process'` → `'chi'+'ld_process'`; defeats
   literal-based matches like `require('https')`. Now defeated by the
-  constant-folding pre-pass (`server/lib/review-rules/normalize.ts`), which folds
+  constant-folding pre-pass (`server/lib/review/rules/normalize.ts`), which folds
   the chain back to `'child_process'` before the regex set runs, so
   `codeRetention` is back to baseline.
 - `bracketifyMemberAccess` — `process.env` → `process['e'+'nv']`. Also folded

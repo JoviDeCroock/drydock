@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { fetchPublishedTarballStream } from "../../server/lib/published-tarball";
+import { fetchPublishedTarballStream } from "../../server/lib/ecosystems/npm/published-tarball";
 
 const PUBLIC_REGISTRY = "https://registry.npmjs.org";
 const CUSTOM_REGISTRY = "https://npm.internal.example.com";

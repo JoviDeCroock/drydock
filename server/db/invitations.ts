@@ -1,5 +1,5 @@
 import { and, desc, eq, sql } from "drizzle-orm";
-import { normalizeRole, type OrganizationRole } from "../lib/roles";
+import { normalizeRole, type OrganizationRole } from "../lib/auth/roles";
 import type { AppDb } from "./client";
 import { organizationInvitations, organizationMembers, organizations, user } from "./schema";
 

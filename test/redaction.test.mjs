@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { redactText } from "../server/lib/review.ts";
+import { redactText } from "../server/lib/review";
 
 describe("secret redaction", () => {
   test("redacts npm and github tokens", () => {

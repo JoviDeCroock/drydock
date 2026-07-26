@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildTree, type FolderNode } from "../src/components/file-tree-model.ts";
+import { buildTree, type FolderNode } from "../src/components/file-tree-model";
 
 const entry = (path: string, status: "added" | "removed" | "modified" | "unchanged") => ({
   path,

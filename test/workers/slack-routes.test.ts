@@ -13,9 +13,9 @@ import {
   upsertSlackConnection,
 } from "../../server/db/slack-connection";
 import * as schema from "../../server/db/schema";
-import { ACTIVE_ORG_HEADER } from "../../server/lib/active-organization";
-import { decryptSlackBotToken, encryptSlackBotToken } from "../../server/lib/secret-box";
-import { signSlackState } from "../../server/lib/slack";
+import { ACTIVE_ORG_HEADER } from "../../server/lib/auth/active-organization";
+import { decryptSlackBotToken, encryptSlackBotToken } from "../../server/lib/platform/secret-box";
+import { signSlackState } from "../../server/lib/notify/slack";
 import { slackRoutes } from "../../server/routes/slack";
 import type { Bindings, Variables } from "../../server/types";
 

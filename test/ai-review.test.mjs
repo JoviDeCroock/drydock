@@ -8,14 +8,14 @@ import {
   aiGatewayMetadataHeader,
   displayedAiResult,
   selectModelCandidates,
-} from "../server/lib/ai-review.ts";
+} from "../server/lib/ai-review";
 import {
   buildReviewerSystemPrompt,
   MAX_AGENT_STEPS,
   MAX_AI_FINDINGS,
   normalizeAiReviewEcosystem,
-} from "../server/lib/ai-review-contract.ts";
-import { computeScanRisk } from "../server/lib/risk.ts";
+} from "../server/lib/ai-review/contract";
+import { computeScanRisk } from "../server/lib/review/risk";
 
 const EMPTY_PACKAGE_JSON_DIFF = {
   name: null,

@@ -3,7 +3,7 @@ import {
   computeScanRisk,
   computeScanRiskBreakdown,
   normalizeScanRiskBreakdown,
-} from "../server/lib/risk.ts";
+} from "../server/lib/review/risk";
 
 function makeAiReview(overrides = {}) {
   return {

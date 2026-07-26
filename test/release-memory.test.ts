@@ -6,7 +6,7 @@ import {
   computeReleaseConsistency,
   noneReleaseConsistency,
   normalizeReleaseConsistency,
-} from "../server/lib/release-memory";
+} from "../server/lib/scan/release-memory";
 
 const spawn = (file: string, severity = "high") => ({
   ruleId: "code.child-process",

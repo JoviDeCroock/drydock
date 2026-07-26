@@ -1,4 +1,4 @@
-import { base64UrlEncode, base64UrlString } from "../crypto-utils";
+import { base64UrlEncode, base64UrlString } from "../platform/crypto-utils";
 import type { GithubAppConfig } from "./config";
 
 export async function generateGithubAppJwt(config: GithubAppConfig): Promise<string> {

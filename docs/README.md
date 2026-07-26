@@ -23,6 +23,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`self-hosting.md`](./self-hosting.md) — local setup, Cloudflare resources, deploy, GitHub App, Slack.
 - [`e2e-test-environment.md`](./e2e-test-environment.md) — fake registry and Playwright harness.
 - [`tooling.md`](./tooling.md) — oxlint/oxfmt/typecheck, signals lint rules, route/client helpers.
+- [`ui.md`](./ui.md) — compact implementation map for the Preact UI: primitives, copy density, and large-diff performance rules. `DESIGN.md` remains the visual source of truth.
 - [`agent-tour.md`](./agent-tour.md) — portable product walkthrough artifacts.
 - [`test-package.md`](./test-package.md) — package fixture used for manual staged-publish checks.
 

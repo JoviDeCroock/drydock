@@ -9,7 +9,7 @@ import {
   DETERMINISTIC_RULES_VERSION,
   packageJsonDiffFindings,
   summarizePackageJsonDiff,
-} from "../server/lib/review.ts";
+} from "../server/lib/review";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const casesDir = join(__dirname, "fixtures/security-corpus/cases");

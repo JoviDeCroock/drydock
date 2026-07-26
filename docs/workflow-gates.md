@@ -24,7 +24,7 @@ The GitHub webhook is public but signed with `GITHUB_WEBHOOK_SECRET` and bypasse
 - `server/routes/release-targets.ts` maps organizations to GitHub repositories/environments/ecosystems.
 - `server/routes/workflow-gates.ts` exposes pending/completed gate review APIs and accept/reject actions.
 - `server/lib/workflow-gates/` resolves workflow runs, artifacts, release targets, callback URLs, and gate lifecycle state.
-- `server/lib/scan-pipeline.ts` runs the same deterministic/AI/report pipeline used by npm registry-staged scans.
+- `server/lib/scan/pipeline.ts` runs the same deterministic/AI/report pipeline used by npm registry-staged scans.
 
 Required bindings/secrets include the GitHub App id/private key/client credentials, webhook secret, installation access, queues, D1, R2, and normal scan pipeline bindings. See [`self-hosting.md`](./self-hosting.md) for setup.
 
@@ -59,7 +59,7 @@ review, and publish all hash the same bytes.
 
 PyPI has no `drydock-manifest.json`. The release set is whatever wheels and sdists the workflow uploads, with identity parsed from wheel `METADATA` or sdist `PKG-INFO`.
 
-The PyPI adapter (`server/lib/adapters/pypi/`):
+The PyPI adapter (`server/lib/ecosystems/pypi/`):
 
 - normalizes project names with the PEP 503 `[-_.]+ -> -` convention;
 - accepts `.whl`, `.tar.gz`, and `.tgz` artifacts;
@@ -121,7 +121,7 @@ verification.
 
 VS Code extension gates review uploaded `.vsix` artifacts before a workflow publishes them to the Marketplace. Identity is derived from `extension/package.json` inside the VSIX as `publisher.name` plus `version`.
 
-The VS Code adapter (`server/lib/adapters/vscode/`):
+The VS Code adapter (`server/lib/ecosystems/vscode/`):
 
 - accepts `.vsix` artifacts and parses them through the shared ZIP sandbox;
 - strips the VSIX `extension/` payload prefix before deterministic review;
@@ -168,7 +168,7 @@ The gate review workbench shows the release target, package identity/version, ar
 
 ## Adding a new ecosystem
 
-1. Add or extend a package adapter under `server/lib/adapters/<ecosystem>/`.
+1. Add or extend a package adapter under `server/lib/ecosystems/<ecosystem>/`.
 2. Implement release-set derivation from uploaded artifact bytes.
 3. Define baseline acquisition and artifact namespace matching.
 4. Add deterministic findings for ecosystem-specific risky behavior.

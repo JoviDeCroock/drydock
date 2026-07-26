@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { reliableFetch } from "../server/lib/reliable-fetch.ts";
+import { reliableFetch } from "../server/lib/platform/reliable-fetch";
 
 const originalFetch = globalThis.fetch;
 

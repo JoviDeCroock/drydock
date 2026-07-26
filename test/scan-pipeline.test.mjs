@@ -33,30 +33,30 @@ vi.mock("../server/db/client.ts", () => dbMock);
 vi.mock("../server/db/events.ts", () => dbMock);
 vi.mock("../server/db/npm-connections.ts", () => dbMock);
 vi.mock("../server/db/scans.ts", () => dbMock);
-vi.mock("../server/lib/registry.ts", async () => ({
-  ...(await vi.importActual("../server/lib/registry.ts")),
+vi.mock("../server/lib/ecosystems/npm/registry.ts", async () => ({
+  ...(await vi.importActual("../server/lib/ecosystems/npm/registry.ts")),
   fetchPackageMetadata: registryMock.fetchPackageMetadata,
 }));
 vi.mock("../server/lib/sandbox.ts", async () => ({
   ...(await vi.importActual("../server/lib/sandbox.ts")),
   downloadInSandbox: sandboxMock.downloadInSandbox,
 }));
-vi.mock("../server/lib/published-tarball.ts", () => publishedTarballMock);
-vi.mock("../server/lib/staged-publishes.ts", async () => ({
-  ...(await vi.importActual("../server/lib/staged-publishes.ts")),
+vi.mock("../server/lib/ecosystems/npm/published-tarball.ts", () => publishedTarballMock);
+vi.mock("../server/lib/ecosystems/npm/staged-publishes.ts", async () => ({
+  ...(await vi.importActual("../server/lib/ecosystems/npm/staged-publishes.ts")),
   fetchStagedPublishDetails: stagedMock.fetchStagedPublishDetails,
 }));
-vi.mock("../server/lib/npm-connection.ts", async () => ({
-  ...(await vi.importActual("../server/lib/npm-connection.ts")),
+vi.mock("../server/lib/ecosystems/npm/connection.ts", async () => ({
+  ...(await vi.importActual("../server/lib/ecosystems/npm/connection.ts")),
   decryptNpmToken: npmConnectionMock.decryptNpmToken,
 }));
-vi.mock("../server/lib/ai-review.ts", async () => ({
-  ...(await vi.importActual("../server/lib/ai-review.ts")),
+vi.mock("../server/lib/ai-review/index.ts", async () => ({
+  ...(await vi.importActual("../server/lib/ai-review/index.ts")),
   runSelectiveAiReview: aiReviewMock.runSelectiveAiReview,
 }));
 
-const { runScanPipeline } = await import("../server/lib/scan-pipeline.ts");
-const { npmAdapter } = await import("../server/lib/adapters/npm/index.ts");
+const { runScanPipeline } = await import("../server/lib/scan/pipeline");
+const { npmAdapter } = await import("../server/lib/ecosystems/npm");
 
 describe("scan pipeline baseline selection", () => {
   beforeEach(() => {

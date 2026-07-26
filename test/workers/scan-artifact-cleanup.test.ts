@@ -15,8 +15,8 @@ import {
   deleteOrganizationArtifacts,
   deleteScanArtifacts,
   writeScanArtifacts,
-} from "../../server/lib/scan-artifacts";
-import { sha256Hex, stableJson } from "../../server/lib/stable-json";
+} from "../../server/lib/scan/artifacts";
+import { sha256Hex, stableJson } from "../../server/lib/platform/stable-json";
 
 // Mirrors the private safeSegment in scan-artifacts.ts: object keys live under
 // `orgs/{seg(orgId)}/scans/{seg(scanId)}/...`, so listing/asserting in the test

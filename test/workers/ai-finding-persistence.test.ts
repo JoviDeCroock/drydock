@@ -6,9 +6,9 @@ import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { getPriorApprovedScanFindings } from "../../server/db/release-memory";
 import { createScanJob, getScan, persistScan, recordScanDecision } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
-import { buildReportExport } from "../../server/lib/report-export";
-import { writeScanArtifacts } from "../../server/lib/scan-artifacts";
-import { sha256Hex, stableJson } from "../../server/lib/stable-json";
+import { buildReportExport } from "../../server/lib/scan/report-export";
+import { writeScanArtifacts } from "../../server/lib/scan/artifacts";
+import { sha256Hex, stableJson } from "../../server/lib/platform/stable-json";
 import type { Finding } from "../../server/lib/review";
 
 interface SeededUser {

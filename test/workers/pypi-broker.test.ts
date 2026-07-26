@@ -1,6 +1,6 @@
 import { createExecutionContext, env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { createPyPiBroker } from "../../server/lib/adapters/pypi/broker";
+import { createPyPiBroker } from "../../server/lib/ecosystems/pypi/broker";
 
 const originalFetch = globalThis.fetch;
 

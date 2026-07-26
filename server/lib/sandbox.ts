@@ -1,6 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { FileRecord, PackageJsonSummary } from "./review";
-import { STAGE_ID_PATTERN } from "./stage-id";
+import { STAGE_ID_PATTERN } from "./ecosystems/npm/stage-id";
 import * as tarParser from "./tar-parser.js";
 import type { TarSuspiciousEntry } from "./tar-parser.js";
 

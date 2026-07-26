@@ -6,9 +6,9 @@ import {
   type AuditLogCursor,
   listOrganizationAuditEvents,
 } from "../db/audit-log";
-import { requireActiveOrganizationContext } from "../lib/active-organization";
-import { describeAuditEvent } from "../lib/audit-events";
-import { roleCanManageMembers } from "../lib/roles";
+import { requireActiveOrganizationContext } from "../lib/auth/active-organization";
+import { describeAuditEvent } from "../lib/auth/audit-events";
+import { roleCanManageMembers } from "../lib/auth/roles";
 import type { Bindings, Variables } from "../types";
 
 export const auditRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();

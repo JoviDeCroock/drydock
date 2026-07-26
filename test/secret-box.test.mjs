@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { decryptSlackBotToken, encryptSlackBotToken } from "../server/lib/secret-box.ts";
+import { decryptSlackBotToken, encryptSlackBotToken } from "../server/lib/platform/secret-box";
 
 const KEY = "0123456789abcdef0123456789abcdef";
 const env = { NPM_CONNECTIONS_ENCRYPTION_KEY: KEY };

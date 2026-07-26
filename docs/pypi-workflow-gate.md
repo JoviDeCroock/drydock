@@ -124,12 +124,12 @@ compared. The gate stays pending for a maintainer either way.
 PyPI review is deterministic-only and shares the package diff, risk model, and
 redaction with every other adapter. The PyPI-specific pieces:
 
-- `server/lib/adapters/pypi/` — `pypiAdapter`, the `PackageAdapter` the shared
+- `server/lib/ecosystems/pypi/` — `pypiAdapter`, the `PackageAdapter` the shared
   pipeline runs for a gated PyPI publish: artifact preparation
   (`preparePyPiArtifact`), baseline selection (`acquireBaselinePyPi`),
   deterministic PyPI findings (`pyPiReleaseFindings`), and `summarizeDetails`,
   which surfaces the reviewed digests as the report `provenance` block.
-- `server/lib/workflow-gates/pypi.ts` — `pypiWorkflowGateAdapter`, the
+- `server/lib/ecosystems/pypi/workflow-gate.ts` — `pypiWorkflowGateAdapter`, the
   `WorkflowGateAdapter`: `classifyArtifact` (`.whl`/`.tar.gz`/`.tgz`),
   `detectArtifact` (root `PKG-INFO`), and `prepareReleaseCandidates` (group
   parsed artifacts by package identity → one candidate per package).

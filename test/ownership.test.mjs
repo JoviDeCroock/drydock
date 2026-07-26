@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { personalOrganizationId, scanBelongsToOrganization } from "../server/lib/ownership.ts";
+import { personalOrganizationId, scanBelongsToOrganization } from "../server/lib/auth/ownership";
 
 describe("ownership", () => {
   test("personal organization ids are stable per user", () => {

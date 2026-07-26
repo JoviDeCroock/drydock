@@ -4,7 +4,7 @@ vi.mock("cloudflare:workers", () => ({
   WorkerEntrypoint: class {},
 }));
 
-const { computeCompareCacheKey, readCompareCache } = await import("../server/lib/compare-cache.ts");
+const { computeCompareCacheKey, readCompareCache } = await import("../server/lib/compare-cache");
 
 describe("compare cache key", () => {
   test("differs between registries even for the same package@version", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { createPackageDiff, deterministicFindings } from "../server/lib/review.ts";
+import { createPackageDiff, deterministicFindings } from "../server/lib/review";
 
 describe("deterministic policy", () => {
   test("flags install hooks and process execution", () => {

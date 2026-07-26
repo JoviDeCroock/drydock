@@ -3,7 +3,7 @@ import {
   selectUnmappedRepositories,
   type InstallationRepository,
   type PublicReleaseTarget,
-} from "../src/models/github-app.ts";
+} from "../src/models/github-app";
 
 const repos: InstallationRepository[] = [
   { id: 1, fullName: "octo/alpha", defaultBranch: "main" },

@@ -2,7 +2,7 @@ import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import * as OTPAuth from "otpauth";
-import worker from "../../server/index";
+import worker from "../../server";
 import { createDb } from "../../server/db/client";
 import {
   ensurePersonalOrganization,
@@ -12,7 +12,7 @@ import { createScanJob, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
 import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
-import { personalOrganizationId } from "../../server/lib/ownership";
+import { personalOrganizationId } from "../../server/lib/auth/ownership";
 
 // 2FA gate-decision step-up is the trust boundary in issue #162: a maintainer
 // who enrolled in two-factor auth must prove a *fresh* second factor before a

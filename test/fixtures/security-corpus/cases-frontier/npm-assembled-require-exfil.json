@@ -5,7 +5,7 @@
   "verdict": "malicious",
   "threatClass": "obfuscated-dropper",
   "source": "synthetic-adversarial",
-  "intent": "The payload assembles 'child_process', 'https', 'require', 'process', and 'env' from array fragments at runtime, so no contiguous string literal or member-access expression matches the literal regex set directly. Now CAUGHT by the constant-folding normalization pre-pass (server/lib/review-rules/normalize.ts), which folds the assembled identifiers back to literal form before the regex set runs; see test/code-normalization.test.mjs for the gated regression. Safe: the endpoint is example.invalid and no real secret is present.",
+  "intent": "The payload assembles 'child_process', 'https', 'require', 'process', and 'env' from array fragments at runtime, so no contiguous string literal or member-access expression matches the literal regex set directly. Now CAUGHT by the constant-folding normalization pre-pass (server/lib/review/rules/normalize.ts), which folds the assembled identifiers back to literal form before the regex set runs; see test/code-normalization.test.mjs for the gated regression. Safe: the endpoint is example.invalid and no real secret is present.",
   "expectMinRisk": "high",
   "expectAnyRule": [],
   "previousPackageJson": { "name": "assembled-exfil", "version": "1.0.0" },

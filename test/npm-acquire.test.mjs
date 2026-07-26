@@ -4,8 +4,8 @@ vi.mock("cloudflare:workers", () => ({
   WorkerEntrypoint: class {},
 }));
 
-const { acquireBaselineNpm } = await import("../server/lib/adapters/npm/acquire.ts");
-const { SandboxError } = await import("../server/lib/sandbox.ts");
+const { acquireBaselineNpm } = await import("../server/lib/ecosystems/npm/acquire");
+const { SandboxError } = await import("../server/lib/sandbox");
 
 function stagedArtifact() {
   return {

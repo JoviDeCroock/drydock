@@ -5,20 +5,20 @@ import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
 import { getOrganizationOwnerUserId } from "./db/organizations";
 import { RateLimitError, enforceRateLimit } from "./db/rate-limit";
 import { createAuth, getAuthSession } from "./lib/auth";
-import { rateLimitResponse } from "./lib/http";
-import { allowInsecureLocalRegistry } from "./lib/npm-connection";
-import { isPackageDiffDetailPath, rewritePackageDiffMetadata } from "./lib/public-diff-page";
+import { rateLimitResponse } from "./lib/platform/http";
+import { allowInsecureLocalRegistry } from "./lib/ecosystems/npm/connection";
+import { isPackageDiffDetailPath, rewritePackageDiffMetadata } from "./lib/public-diff/page";
 import {
   API_CSP,
   DOCUMENT_CSP,
   SECURITY_HEADERS,
   securityHeadersDisabled,
-} from "./lib/security-headers";
+} from "./lib/platform/security-headers";
 import {
   describeOperationalError,
   durationMsSince,
   emitOperationalEvent,
-} from "./lib/observability";
+} from "./lib/platform/observability";
 import {
   classifyScanError,
   executeScanJob,
@@ -26,7 +26,7 @@ import {
   MAX_SCAN_JOB_ATTEMPTS,
   retryDelaySeconds,
   type QueueMessage,
-} from "./lib/scan-job";
+} from "./lib/scan/job";
 import { executeWorkflowGateJob } from "./lib/workflow-gate-job";
 import {
   createStageStartCoordinator,
@@ -36,7 +36,7 @@ import {
   isTransientSweepFailure,
   recordExpiredNpmConnection,
   StagedPublishesFetchError,
-} from "./lib/staged-publishes-discovery";
+} from "./lib/ecosystems/npm/staged-publishes-discovery";
 import { auditRoutes } from "./routes/audit";
 import { githubAppRoutes } from "./routes/github-app";
 import { githubWebhookRoutes } from "./routes/github-webhooks";
@@ -50,7 +50,7 @@ import { stagedPublishesRoutes } from "./routes/staged-publishes";
 import type { Bindings, Variables } from "./types";
 
 export { NpmStageGateway } from "./lib/sandbox";
-export { NpmAdapterBroker } from "./lib/adapters/npm";
+export { NpmAdapterBroker } from "./lib/ecosystems/npm";
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 const CANONICAL_HOSTNAME = "drydock.org";
@@ -246,7 +246,7 @@ app.get("/api/health", (c) =>
 
 app.get("/api", (c) =>
   c.json({
-    name: "staged-publish-review",
+    name: "drydock",
     endpoints: {
       createScan: "POST /api/v1/scans { stageId }",
       scans: "GET /api/v1/scans",

@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
-import { personalOrganizationId } from "../lib/ownership";
-import { deleteOrganizationArtifacts } from "../lib/scan-artifacts";
+import { personalOrganizationId } from "../lib/auth/ownership";
+import { deleteOrganizationArtifacts } from "../lib/scan/artifacts";
 import type { AppDb, WorkspaceSession } from "./client";
 import {
   githubAppInstallations,

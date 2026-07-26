@@ -3,7 +3,7 @@
 Drydock supports opt-in two-factor authentication (2FA) using TOTP (time-based one-time
 passwords from an authenticator app) plus single-use backup recovery codes. It is built on
 Better Auth's first-party [`two-factor`](https://www.better-auth.com/docs/plugins/2fa) plugin,
-registered in `server/lib/auth.ts`:
+registered in `server/lib/auth/index.ts`:
 
 ```ts
 plugins: [twoFactor({ issuer: "Drydock" })];
@@ -58,7 +58,7 @@ which cannot be reversed — so an existing session alone is not enough.
 
 When the deciding maintainer has 2FA enabled, the request must carry a **fresh**
 `totpCode`. The route checks enrollment with `userHasTwoFactor` and verifies the code
-with `verifyTotpStepUp` (both in `server/lib/auth.ts`), which delegates to Better
+with `verifyTotpStepUp` (both in `server/lib/auth/index.ts`), which delegates to Better
 Auth's own `verifyTOTP` so the code is checked against the request's session user and
 the encrypted secret is never decrypted in app code. Outcomes:
 

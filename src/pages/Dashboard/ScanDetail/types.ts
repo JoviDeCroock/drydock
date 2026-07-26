@@ -1,4 +1,4 @@
-import type { DiffEntry, FindingDiffStatus } from "../../../../server/lib/review";
+import type { DiffEntry } from "../../../../server/lib/review";
 import type { PackageJsonDiff, ReleaseProvenance } from "../../../../server/types";
 import type { PersistedScanDetail } from "../../../models/scan";
 
@@ -27,9 +27,3 @@ export interface PersistedSummary {
 }
 
 export type PersistedFinding = PersistedScanDetail["findings"][number];
-
-export interface FindingWithDiffStatus {
-  finding: PersistedFinding;
-  diffStatus: FindingDiffStatus;
-  releaseDelta: boolean;
-}

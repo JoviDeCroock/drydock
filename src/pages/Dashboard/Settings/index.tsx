@@ -19,7 +19,7 @@ import {
   roleCanManageIntegrations,
   roleCanManageMembers,
   type OrganizationRole,
-} from "../../../../server/lib/roles";
+} from "../../../../server/lib/auth/roles";
 import { LoadingState } from "../../../components/Loading";
 import { OrgSwitcher } from "../../../components/OrgSwitcher";
 import { PageShell } from "../../../components/PageShell";

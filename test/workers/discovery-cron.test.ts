@@ -9,8 +9,8 @@ import {
 } from "../../server/db/npm-connections";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
-import { encryptNpmToken } from "../../server/lib/npm-connection";
-import worker from "../../server/index";
+import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
+import worker from "../../server";
 
 const REGISTRY_URL = "https://registry.npmjs.org";
 const STAGE_ID = "stage-aaaaaa";

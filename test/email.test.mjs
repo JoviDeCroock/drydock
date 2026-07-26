@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 vi.mock("cloudflare:workers", () => ({ WorkerEntrypoint: class {} }));
 
 const { buildMimeMessage, sanitizeAddress, sendNotificationEmail } =
-  await import("../server/lib/email.ts");
+  await import("../server/lib/notify/email");
 
 describe("sanitizeAddress", () => {
   test("accepts a plain email address", () => {

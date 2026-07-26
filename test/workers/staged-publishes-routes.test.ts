@@ -9,7 +9,7 @@ import {
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob, listScans } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
-import { encryptNpmToken } from "../../server/lib/npm-connection";
+import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import { stagedPublishesRoutes } from "../../server/routes/staged-publishes";
 import type { Bindings, Variables } from "../../server/types";
 

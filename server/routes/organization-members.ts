@@ -25,12 +25,12 @@ import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
 import {
   requireActiveOrganization,
   requireActiveOrganizationContext,
-} from "../lib/active-organization";
-import { sanitizeAddress } from "../lib/email";
-import { rateLimitResponse } from "../lib/http";
-import { generateInvitationToken, hashInvitationToken } from "../lib/invitation-token";
+} from "../lib/auth/active-organization";
+import { sanitizeAddress } from "../lib/notify/email";
+import { rateLimitResponse } from "../lib/platform/http";
+import { generateInvitationToken, hashInvitationToken } from "../lib/auth/invitation-token";
 import { notifyOrganizationInvite } from "../lib/notify";
-import { isInvitableRole, roleCanManageMembers, type OrganizationRole } from "../lib/roles";
+import { isInvitableRole, roleCanManageMembers, type OrganizationRole } from "../lib/auth/roles";
 import type { Bindings, Variables } from "../types";
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;

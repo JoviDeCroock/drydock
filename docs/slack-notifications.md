@@ -12,7 +12,7 @@ and paste an incoming-webhook URL.
 
 ## OAuth scopes
 
-`SLACK_OAUTH_SCOPES` (`server/lib/slack.ts`) requests the minimum for a single
+`SLACK_OAUTH_SCOPES` (`server/lib/notify/slack.ts`) requests the minimum for a single
 public channel:
 
 - `chat:write` — post messages.
@@ -45,7 +45,7 @@ public status read.
 
 ## Secret handling
 
-`server/lib/secret-box.ts` (`encryptSlackBotToken` / `decryptSlackBotToken`)
+`server/lib/platform/secret-box.ts` (`encryptSlackBotToken` / `decryptSlackBotToken`)
 mirrors the npm-token scheme: AES-GCM-256 with an HKDF-derived key off the shared
 `NPM_CONNECTIONS_ENCRYPTION_KEY` (≥32 chars required), but a **domain-separated**
 HKDF salt (`drydock:slack-bot-token:salt:v1`) so the bot-token key can never
@@ -56,7 +56,7 @@ future rotation. The token is decrypted only in-memory for the POST to Slack.
 
 There is no `x-organization-id` header on the top-level browser redirect Slack
 sends back, so the org binding travels in a signed state token.
-`signSlackState` / `verifySlackState` (`server/lib/slack.ts`) HMAC-sign
+`signSlackState` / `verifySlackState` (`server/lib/notify/slack.ts`) HMAC-sign
 `{ organizationId, userId, nonce, expiresAt }` with `BETTER_AUTH_SECRET`
 (version-tagged `slackv1`, 15-minute TTL). The callback verifies the signature,
 that the state's `userId` matches the session, and re-checks the caller's role
@@ -91,7 +91,7 @@ connections and notification recipients. Members are read-only (`403` on write).
 
 ## Delivery
 
-`server/lib/notify.ts` runs email and Slack concurrently. `notifyScanCompletion`
+`server/lib/notify/index.ts` runs email and Slack concurrently. `notifyScanCompletion`
 and `notifyWorkflowGateReview` build a `SlackNotificationPayload`, then
 `deliverToSlackConnection` loads the org's `getSlackConnectionSecret`, and — only
 if the connection exists, is enabled, and has a channel — decrypts the token,
@@ -104,7 +104,7 @@ staged-publish notifications report release-delta risk and include release-memor
 context when a prior approved profile exists; the underlying artifact risk and
 deterministic findings remain unchanged.
 
-`postSlackMessage` (`server/lib/slack.ts`) is self-contained and best-effort:
+`postSlackMessage` (`server/lib/notify/slack.ts`) is self-contained and best-effort:
 Slack returns HTTP 200 with `{ ok: false, error }` for app errors (keyed off
 `ok`, not the status), a `429` is surfaced as `rateLimited` with the
 `Retry-After` seconds (no automatic retry in v1), the 5s timeout bounds the call,

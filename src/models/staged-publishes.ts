@@ -1,5 +1,5 @@
 import { createModel, signal } from "@preact/signals";
-import type { StagedPublishesScanResponse } from "../../server/lib/staged-publishes";
+import type { StagedPublishesScanResponse } from "../../server/lib/ecosystems/npm/staged-publishes";
 import { apiFetch, errorMessage } from "./api";
 
 export type { StagedPublishesScanResponse };

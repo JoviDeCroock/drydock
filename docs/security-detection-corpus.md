@@ -90,7 +90,7 @@ The corpus deliberately records some product gaps instead of hiding them:
 
 ## PyPI corpus
 
-The PyPI adapter (`server/lib/adapters/pypi/index.ts`) has its own golden corpus under
+The PyPI adapter (`server/lib/ecosystems/pypi/index.ts`) has its own golden corpus under
 `test/fixtures/security-corpus/cases-pypi/`, evaluated by `test/security-corpus-pypi.test.mjs`. It is a
 separate harness, not an extension of the npm one, because PyPI findings legitimately carry two rule
 versions (see the invariant below).
@@ -113,7 +113,7 @@ the same Python matcher must be used when annotating modified-file findings so r
 classification stays consistent for extensionless Python files. `1.6.2` excludes documentation from
 shared `code.*` capability findings, narrows JavaScript `fetch` matching to calls rather than class
 method declarations, and limits documentation secret-content matches to high-confidence token formats.
-`1.7.0` adds a constant-folding normalization pre-pass (`server/lib/review-rules/normalize.ts`) so the
+`1.7.0` adds a constant-folding normalization pre-pass (`server/lib/review/rules/normalize.ts`) so the
 JavaScript `code.*` rules also see runtime-assembled identifiers: string-concatenation chains
 (`'chi' + 'ld_process'`), `[...].join('')` array assembly, and literal-keyed computed member access
 (`globalThis['re' + 'quire']`) are folded back to their literal form before the regex set runs. A
@@ -241,7 +241,7 @@ comparator ranges such as `<=1.9.9` implicitly start at major 0 and participate 
 An empty spec is treated
 like `*` rather than skipped, and `workspace:`/`catalog:`/`link:`/`portal:` protocols join
 `git:`/`https:`/`file:`/`npm:` as unusual specs (they name no published package). Spec parsing lives in
-`server/lib/dependency-specs.ts`, shared with the UI's dependency diff links: modified rows link
+`server/lib/review/dependency-specs.ts`, shared with the UI's dependency diff links: modified rows link
 directly only when both specs are exact registry version keys. Ranges render no direct link because
 their bounds need not have been published; added dependencies use the package-only route that resolves
 a published pair from registry metadata.

@@ -1,13 +1,15 @@
-# Design System — staged-publish-review
+# Design System — Drydock
 
 Source of truth for visual decisions in this repo. Read this before changing fonts, colors, spacing, or aesthetics. Do not deviate without explicit approval.
 
 ## Product Context
 
-- **What this is:** A second pair of eyes before `npm publish`. A staged npm tarball is scanned, deterministic rules flag risky content, AI reviews changed files, and a human approves or rejects the publish.
-- **Who it's for:** Package authors, security-conscious maintainers, and reviewers at companies that publish packages to the public registry.
+- **What this is:** A second pair of eyes before a release is published. A candidate artifact is scanned, deterministic rules flag risky content, AI advisory review reads changed files, and a human approves or rejects the release. Drydock never publishes — approval always happens in the registry or in GitHub.
+- **How releases reach it:** two paths, one review surface. **npm registry staging** reviews a staged `npm stage publish` tarball; **workflow gates** hold a GitHub Actions publish job behind a deployment-protection rule while npm, PyPI, and VS Code artifacts are reviewed. Both render the same report — ecosystem and release path change the evidence, never the layout.
+- **Surfaces:** the authenticated scan workbench (dashboard, scan detail, settings), the public docs learning path, the marketing landing, and `/diff` — an anonymous, credential-free diff of two published npm or PyPI versions that reuses the same review UI without an account.
+- **Who it's for:** Package authors, security-conscious maintainers, and reviewers at companies that publish to public registries.
 - **Space/industry:** Supply-chain security / developer tooling. Adjacent products: Socket, Snyk Advisor, Aikido, GitHub Advisory Database, vlt.sh.
-- **Project type:** Web app first (the scan workbench), marketing landing layered on the same system later.
+- **Project type:** Web app first (the scan workbench), with marketing and public-utility surfaces layered on the same system.
 
 ## Aesthetic Direction
 

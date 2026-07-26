@@ -17,7 +17,7 @@ const {
   resolveReleaseConsistency,
   persistResults,
   recordCompletion,
-} = await import("../server/lib/scan-pipeline-phases.ts");
+} = await import("../server/lib/scan/pipeline-phases");
 
 const NPM_TOKEN = "npm_abcdefghijklmnopqrstuvwxyz0123";
 

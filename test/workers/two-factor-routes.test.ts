@@ -1,7 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 import * as OTPAuth from "otpauth";
-import worker from "../../server/index";
+import worker from "../../server";
 
 const ORIGIN = "http://example.com";
 const PASSWORD = "correct horse battery staple";

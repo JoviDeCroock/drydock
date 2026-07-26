@@ -1,6 +1,6 @@
 import { and, desc, eq, ne } from "drizzle-orm";
-import { loadScanArtifacts } from "../lib/scan-artifacts";
-import type { ProfileFindingInput } from "../lib/release-memory";
+import { loadScanArtifacts } from "../lib/scan/artifacts";
+import type { ProfileFindingInput } from "../lib/scan/release-memory";
 import type { AppDb } from "./client";
 import { scanFindings, scans } from "./schema";
 

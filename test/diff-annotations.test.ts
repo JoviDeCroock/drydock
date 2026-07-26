@@ -4,7 +4,7 @@ import {
   maxSeverity,
   partitionFindingsByLine,
   severityGroup,
-} from "../src/components/diff-annotations.ts";
+} from "../src/components/diff-annotations";
 
 describe("maxSeverity", () => {
   test("returns the higher-ranked severity", () => {

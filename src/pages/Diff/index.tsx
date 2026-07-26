@@ -41,9 +41,10 @@ import {
   type DiffSpec,
 } from "../../lib/package-diff-path";
 import { diffRefLabel, parsePkgPrNewUrl } from "../../lib/pkg-pr-new";
-import { filterDiffEntries, findingCountsByPath } from "../Dashboard/ScanDetail/diff-helpers";
-import { RiskSignalsSection } from "../Dashboard/ScanDetail/FindingsSection";
-import type { FindingWithDiffStatus } from "../Dashboard/ScanDetail/types";
+import { ecosystemLabel } from "../../../server/lib/ecosystems/labels";
+import { filterDiffEntries, findingCountsByPath } from "../../features/review/diff-entries";
+import { RiskSignalsSection } from "../../features/review/RiskSignalsSection";
+import type { FindingWithDiffStatus } from "../../features/review/types";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
 
@@ -361,7 +362,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
         </h1>
         <MonoDetail
           parts={[
-            <span key="ecosystem">{ecosystem === "pypi" ? "PyPI" : "npm"}</span>,
+            <span key="ecosystem">{ecosystemLabel(ecosystem)}</span>,
             <span key="versions">
               {fromLabel} → {toLabel}
             </span>,
@@ -651,12 +652,14 @@ function VersionSelect({
   );
 }
 
+// Projects a public-diff response into the shared review shape. This surface
+// persists nothing, so the findings have no scan-backed identity — the index is
+// a stable-enough render key within one computed diff.
 function adaptFindings(diff: PublicDiffResponse | null): FindingWithDiffStatus[] {
   if (!diff) return [];
   return diff.findings.map((finding, index) => ({
     finding: {
       id: `public-${index}`,
-      scanId: "",
       severity: finding.severity,
       file: finding.file,
       evidence: finding.evidence,
@@ -664,9 +667,6 @@ function adaptFindings(diff: PublicDiffResponse | null): FindingWithDiffStatus[]
       line: finding.line ?? null,
       source: "rule",
       ruleId: finding.ruleId ?? null,
-      ruleVersion: finding.ruleVersion ?? null,
-      diffStatus: finding.diffStatus,
-      releaseDelta: finding.releaseDelta,
     },
     diffStatus: finding.diffStatus,
     releaseDelta: finding.releaseDelta,

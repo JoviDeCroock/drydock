@@ -2,7 +2,7 @@ import { useComputed, type ReadonlySignal } from "@preact/signals";
 import type { DiffEntry } from "../../../../../server/lib/review";
 import type { PersistedScanDetail, ScanCompareResponse } from "../../../../models/scan";
 import { annotatePersistedFindings, scanFilesToFileRecords } from "../diff-helpers";
-import type { FindingWithDiffStatus } from "../types";
+import type { FindingWithDiffStatus } from "../../../../features/review/types";
 
 // Annotates persisted findings with their diff status against the active
 // comparison, preferring persisted annotations on the default comparison.

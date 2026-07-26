@@ -9,8 +9,8 @@ import {
   pypiAdapter,
   preparePyPiArtifact,
   selectPyPiReleaseArtifacts,
-} from "../server/lib/adapters/pypi/index.ts";
-import { createPackageDiff } from "../server/lib/review.ts";
+} from "../server/lib/ecosystems/pypi";
+import { createPackageDiff } from "../server/lib/review";
 
 function file(path, textSample, extra = {}) {
   return {

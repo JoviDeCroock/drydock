@@ -7,7 +7,7 @@ import {
   packageJsonDiffFindings,
   summarizePackageJsonDiff,
   tarSuspiciousEntryFindings,
-} from "../server/lib/review.ts";
+} from "../server/lib/review";
 
 describe("review", () => {
   test("diff highlights added modified and removed package files", () => {

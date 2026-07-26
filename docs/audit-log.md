@@ -31,7 +31,7 @@ Everything else is still written: `scan.decided`, `github_workflow_gate.*`,
 
 ## Visible allowlist
 
-`server/lib/audit-events.ts` is the single source of truth for the audit view. It
+`server/lib/auth/audit-events.ts` is the single source of truth for the audit view. It
 maps each surfaced `type` to a category (`release_decision`, `member`,
 `security`, `integration`, `organization`), a human label, a severity, and a
 redaction-safe `summarize()` that derives a short detail line from metadata.

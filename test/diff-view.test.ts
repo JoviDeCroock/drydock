@@ -6,7 +6,7 @@ import {
   isDiffScrollTarget,
   nativeBadge,
   shouldSeekInitialDiffTarget,
-} from "../src/components/DiffView.tsx";
+} from "../src/components/DiffView";
 
 describe("buildRows", () => {
   test("marks changed word spans inside paired changed lines", () => {

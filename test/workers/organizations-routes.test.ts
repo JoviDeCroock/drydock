@@ -11,7 +11,7 @@ import {
   resolveNotificationEmails,
 } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
-import { ACTIVE_ORG_HEADER } from "../../server/lib/active-organization";
+import { ACTIVE_ORG_HEADER } from "../../server/lib/auth/active-organization";
 import { npmConnectionRoutes } from "../../server/routes/npm-connection";
 import { organizationsRoutes } from "../../server/routes/organizations";
 import type { Bindings, Variables } from "../../server/types";

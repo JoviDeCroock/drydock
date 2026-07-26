@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { SCAN_FILE_SAMPLE_LIMIT, scanFileRowsForArtifacts } from "../server/lib/scan-artifacts.ts";
+import { SCAN_FILE_SAMPLE_LIMIT, scanFileRowsForArtifacts } from "../server/lib/scan/artifacts";
 
 // scanFileRowsForArtifacts is the single chokepoint that bounds the persisted
 // display sample for both R2 (files.json) and D1 (scan_files). Detection runs

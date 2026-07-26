@@ -1,5 +1,5 @@
 import { useModel, useSignal } from "@preact/signals";
-import type { OrganizationRole } from "../../../../server/lib/roles";
+import type { OrganizationRole } from "../../../../server/lib/auth/roles";
 import { formatTimestamp } from "../../../lib/format";
 import {
   MembersModel,

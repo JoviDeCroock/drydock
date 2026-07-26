@@ -8,12 +8,12 @@ import { readGithubAppConfig } from "../../server/lib/github-app/config";
 import { upsertInstallation } from "../../server/lib/github-app/persistence";
 import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
 import { prepareReleaseCandidatesForGate } from "../../server/lib/workflow-gates/prepare";
-import { pypiWorkflowGateAdapter } from "../../server/lib/workflow-gates/pypi";
+import { pypiWorkflowGateAdapter } from "../../server/lib/ecosystems/pypi/workflow-gate";
 import {
   UnsupportedEcosystemError,
   getWorkflowGateAdapter,
   supportedWorkflowGateEcosystems,
-} from "../../server/lib/workflow-gates/registry";
+} from "../../server/lib/ecosystems";
 
 // ── Pure adapter dispatch ────────────────────────────────────────────────────
 
