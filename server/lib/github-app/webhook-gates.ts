@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, lte, sql, type SQL } from "drizzle-orm";
 import { type AppDb } from "../../db/client";
 import { githubWorkflowGates, scans } from "../../db/schema";
 import type { InstallationRecord, ReleaseTargetRecord } from "./persistence";
@@ -27,8 +27,9 @@ export interface WorkflowGateRecord {
   // several per-package scans (`scans.gate_id = this.id`); this points at the
   // one surfaced as the gate's headline.
   scanId: string | null;
-  // CAS claim flipped once when a delivery starts the review batch, so a
-  // concurrent re-delivery does not double-run the per-package scans.
+  // CAS claim taken when a delivery starts the review batch, so a concurrent
+  // re-delivery does not double-run the per-package scans. It is a lease: see
+  // `GATE_REVIEW_CLAIM_LEASE_MS` for how an abandoned claim is taken over.
   reviewStartedAt: Date | null;
   failureReason: string | null;
   requestedAt: Date;
@@ -201,16 +202,65 @@ function readReleaseRisk(riskSummaryJson: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+// A review claim is a lease, not a permanent flag. A delivery that fails
+// mid-batch hands the claim back via `releaseGateReviewClaim`, but a hard crash
+// (worker eviction, CPU limit, an exhausted queue retry ladder) cannot: it
+// leaves `review_started_at` set with no scan attached, and every later
+// delivery loses the CAS and skips. The gate then sits pending forever with no
+// review, no failure reason, and nothing to tell the maintainer. Expiring the
+// claim keeps the fail-closed guarantee (an expired claim never approves
+// anything) while making an abandoned batch retryable.
+//
+// The lease has to outlast a healthy batch — a monorepo gate scans every
+// package — so it is set well above the queue's own retry ladder rather than
+// tuned tight. `recoverAbandonedGateReviews` sweeps on the same 15-minute cron.
+export const GATE_REVIEW_CLAIM_LEASE_MS = 30 * 60 * 1000;
+
+export type GateReviewClaim = "claimed" | "reclaimed" | "lost";
+
 /**
- * CAS-claim the review batch for a gate. Returns true for exactly the first
- * delivery that flips `review_started_at` from null while the gate is still
- * pending; a concurrent re-delivery loses the claim and skips. A claim that is
- * never finalized (a delivery that fails mid-batch releases it via
- * `releaseGateReviewClaim`; a hard crash leaves the gate pending — safe, never
- * auto-approved).
+ * CAS-claim the review batch for a gate. Returns `claimed` for exactly the
+ * first delivery that flips `review_started_at` from null while the gate is
+ * still pending; a concurrent re-delivery loses the claim and skips.
+ *
+ * A claim older than `GATE_REVIEW_CLAIM_LEASE_MS` with no representative scan
+ * attached belongs to a delivery that died mid-batch, and is taken over
+ * (`reclaimed`). The `scan_id is null` guard is what keeps that safe: a gate
+ * that finished its review and is waiting on a human carries a scan, so it can
+ * never be reclaimed and re-run out from under the maintainer.
  */
-export async function claimGateReviewStart(db: AppDb, gateId: string): Promise<boolean> {
-  const now = new Date();
+export async function claimGateReviewStart(
+  db: AppDb,
+  gateId: string,
+  now: Date = new Date(),
+): Promise<GateReviewClaim> {
+  // Two narrow CAS updates rather than one `or(...)`: SQLite `returning` on an
+  // UPDATE reports the new row, so a combined statement could not tell a fresh
+  // claim from a takeover, and the two cases are logged differently — a
+  // takeover means a previous delivery died mid-batch.
+  const fresh = await casClaimGateReview(
+    db,
+    gateId,
+    now,
+    isNull(githubWorkflowGates.reviewStartedAt),
+  );
+  if (fresh) return "claimed";
+  const staleBefore = new Date(now.getTime() - GATE_REVIEW_CLAIM_LEASE_MS);
+  const takeover = await casClaimGateReview(
+    db,
+    gateId,
+    now,
+    lte(githubWorkflowGates.reviewStartedAt, staleBefore),
+  );
+  return takeover ? "reclaimed" : "lost";
+}
+
+async function casClaimGateReview(
+  db: AppDb,
+  gateId: string,
+  now: Date,
+  claimCondition: SQL | undefined,
+): Promise<boolean> {
   const updated = await db
     .update(githubWorkflowGates)
     .set({ reviewStartedAt: now, updatedAt: now })
@@ -218,11 +268,56 @@ export async function claimGateReviewStart(db: AppDb, gateId: string): Promise<b
       and(
         eq(githubWorkflowGates.id, gateId),
         eq(githubWorkflowGates.status, "pending"),
-        isNull(githubWorkflowGates.reviewStartedAt),
+        isNull(githubWorkflowGates.scanId),
+        claimCondition,
       ),
     )
     .returning({ id: githubWorkflowGates.id });
   return updated.length > 0;
+}
+
+export interface AbandonedGateReview {
+  id: string;
+  organizationId: string;
+  repositoryFullName: string;
+  environment: string;
+  requestedAt: Date;
+  reviewStartedAt: Date;
+  failureReason: string | null;
+}
+
+/**
+ * Pending gates holding a review claim that has outlived its lease without
+ * attaching a scan — the abandoned-batch state described above. Ordered oldest
+ * first and bounded so a cron sweep stays cheap.
+ */
+export async function listAbandonedGateReviews(
+  db: AppDb,
+  input: { staleBefore: Date; limit: number },
+): Promise<AbandonedGateReview[]> {
+  const rows = await db
+    .select({
+      id: githubWorkflowGates.id,
+      organizationId: githubWorkflowGates.organizationId,
+      repositoryFullName: githubWorkflowGates.repositoryFullName,
+      environment: githubWorkflowGates.environment,
+      requestedAt: githubWorkflowGates.requestedAt,
+      reviewStartedAt: githubWorkflowGates.reviewStartedAt,
+      failureReason: githubWorkflowGates.failureReason,
+    })
+    .from(githubWorkflowGates)
+    .where(
+      and(
+        eq(githubWorkflowGates.status, "pending"),
+        isNull(githubWorkflowGates.scanId),
+        lte(githubWorkflowGates.reviewStartedAt, input.staleBefore),
+      ),
+    )
+    .orderBy(githubWorkflowGates.reviewStartedAt)
+    .limit(input.limit);
+  return rows.flatMap((row) =>
+    row.reviewStartedAt ? [{ ...row, reviewStartedAt: row.reviewStartedAt }] : [],
+  );
 }
 
 /**

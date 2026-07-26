@@ -15,8 +15,11 @@ import {
   type WorkflowGateRecord,
   attachScanToGate,
   claimGateReviewStart,
+  GATE_REVIEW_CLAIM_LEASE_MS,
   getGateForOrganization,
+  listAbandonedGateReviews,
   markGateDecided,
+  markGateErrored,
   releaseGateReviewClaim,
 } from "./github-app/webhook-gates";
 import { notifyWorkflowGateReview, notifyWorkflowGateTimeout } from "./notify";
@@ -239,8 +242,18 @@ export async function executeWorkflowGateJob(
   // runs the per-package scans; a concurrent re-delivery loses the CAS and skips
   // here rather than double-running. Early returns above leave the claim unset,
   // so a transient prepare/owner failure stays retryable.
-  const claimed = await claimGateReviewStart(db, gate.id);
-  if (!claimed) {
+  const claim = await claimGateReviewStart(db, gate.id);
+  if (claim === "reclaimed") {
+    // The lease expired with no scan attached, so a previous delivery died
+    // mid-batch without releasing its claim. Worth an operator signal: the
+    // abandoned attempt produced no review and nothing else reports it.
+    emitOperationalEvent("warn", "github_workflow_gate.review_claim_reclaimed", {
+      organizationId,
+      gateId,
+      abandonedAt: gate.reviewStartedAt?.toISOString() ?? null,
+    });
+  }
+  if (claim === "lost") {
     emitOperationalEvent("info", "github_workflow_gate.job_skipped", {
       organizationId,
       gateId,
@@ -409,6 +422,99 @@ export async function executeWorkflowGateJob(
     timeoutState,
     durationMs: jobDurationMs,
   });
+}
+
+// How many abandoned gates one cron tick will act on. Gate reviews are rare and
+// the backlog only ever grows by the number of deliveries that crashed
+// mid-batch, so a small cap keeps the tick cheap; anything beyond it is picked
+// up 15 minutes later. `recovered`/`skipped` counts are logged either way so a
+// truncated sweep is never mistaken for a drained one.
+const GATE_RECOVERY_SWEEP_LIMIT = 20;
+
+export const GATE_TIMEOUT_FAILURE_REASON = "callback_window_elapsed";
+
+export interface GateRecoverySweepResult {
+  abandoned: number;
+  requeued: number;
+  lapsed: number;
+}
+
+/**
+ * Cron sweep for gate reviews whose delivery died mid-batch: the gate is still
+ * pending, holds an expired review claim, and has no scan attached, so nothing
+ * in the delivery path will ever look at it again (a lost CAS makes every retry
+ * a no-op, and the queue message is long gone).
+ *
+ * A gate still inside GitHub's deployment-protection callback window is
+ * re-enqueued — `claimGateReviewStart` takes the expired lease over and re-runs
+ * the batch. A gate past the window is already lost: GitHub auto-rejected the
+ * held deployment without telling us, so re-reviewing it would only produce a
+ * decision with nowhere to go. Those are recorded as `timeout_missed` once
+ * (the stored failure reason is the idempotency guard) so the maintainer sees
+ * why the gate went nowhere instead of it sitting pending forever.
+ *
+ * Never approves or rejects anything: recovery is enqueue-or-annotate only.
+ */
+export async function recoverAbandonedGateReviews(
+  env: Cloudflare.Env,
+  db: AppDb = createDb(env.DB),
+  now: Date = new Date(),
+): Promise<GateRecoverySweepResult> {
+  const staleBefore = new Date(now.getTime() - GATE_REVIEW_CLAIM_LEASE_MS);
+  const abandoned = await listAbandonedGateReviews(db, {
+    staleBefore,
+    limit: GATE_RECOVERY_SWEEP_LIMIT,
+  });
+  const windowMs = workflowGateCallbackWindowMs(env);
+  const result: GateRecoverySweepResult = { abandoned: abandoned.length, requeued: 0, lapsed: 0 };
+
+  for (const gate of abandoned) {
+    const elapsedMs = now.getTime() - gate.requestedAt.getTime();
+    if (classifyGateTimeout(elapsedMs, windowMs) === "missed") {
+      result.lapsed += 1;
+      // Already annotated by an earlier tick — don't re-emit the audit event.
+      if (gate.failureReason === GATE_TIMEOUT_FAILURE_REASON) continue;
+      await markGateErrored(db, gate.id, GATE_TIMEOUT_FAILURE_REASON);
+      await recordScanEvent(db, {
+        organizationId: gate.organizationId,
+        type: "github_workflow_gate.timeout_missed",
+        metadata: { gateId: gate.id, elapsedMs, windowMs, reason: "review_abandoned" },
+      });
+      emitOperationalEvent("error", "github_workflow_gate.timeout_missed", {
+        organizationId: gate.organizationId,
+        gateId: gate.id,
+        repositoryFullName: gate.repositoryFullName,
+        environment: gate.environment,
+        elapsedMs,
+        windowMs,
+        reason: "review_abandoned",
+      });
+      continue;
+    }
+
+    if (!env.SCAN_QUEUE) continue;
+    await env.SCAN_QUEUE.send({
+      kind: "workflow_gate",
+      organizationId: gate.organizationId,
+      gateId: gate.id,
+    } satisfies WorkflowGateQueueMessage);
+    result.requeued += 1;
+    emitOperationalEvent("warn", "github_workflow_gate.review_requeued", {
+      organizationId: gate.organizationId,
+      gateId: gate.id,
+      repositoryFullName: gate.repositoryFullName,
+      environment: gate.environment,
+      abandonedAt: gate.reviewStartedAt.toISOString(),
+      elapsedMs,
+    });
+  }
+
+  emitOperationalEvent("info", "github_workflow_gate.recovery_swept", {
+    ...result,
+    limit: GATE_RECOVERY_SWEEP_LIMIT,
+    truncated: abandoned.length === GATE_RECOVERY_SWEEP_LIMIT,
+  });
+  return result;
 }
 
 interface ReviewedPackage {

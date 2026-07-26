@@ -162,6 +162,19 @@ The publish job must publish the reviewed VSIX bytes. Repacking after approval b
 - If artifact resolution, baseline acquisition, validation, scan, or callback fails, the gate remains blocked or is rejected; do not fail open.
 - Drydock never publishes. It only posts the GitHub deployment-protection decision.
 
+## Abandoned review recovery
+
+A delivery claims a gate's review batch by CAS-setting `review_started_at`, so a concurrent re-delivery cannot double-run the per-package scans. The claim is a **lease** (`GATE_REVIEW_CLAIM_LEASE_MS`, 30 minutes), not a permanent flag: a delivery that fails mid-batch hands the claim back, but a hard crash — worker eviction, a CPU limit, an exhausted queue retry ladder — cannot. Without a lease such a gate sits pending forever with an unreleasable claim, no scan, and no recorded failure, and every later delivery loses the CAS and skips.
+
+`claimGateReviewStart` therefore takes over a claim older than the lease **only while no representative scan is attached**. That guard is what keeps the takeover safe: a gate that finished its review and is waiting on a maintainer carries a scan, so it can never be reclaimed and re-run mid-decision.
+
+The 15-minute cron sweeps the leftovers (`recoverAbandonedGateReviews`, bounded to 20 gates per tick):
+
+- Still inside GitHub's deployment-protection callback window → the gate is re-enqueued and the expired lease is taken over on the next attempt.
+- Past the callback window → GitHub already auto-rejected the held deployment without telling us, so re-reviewing would produce a decision with nowhere to post it. The gate is annotated with the `callback_window_elapsed` failure reason and a single `github_workflow_gate.timeout_missed` audit event; the stored reason is the idempotency guard that stops the sweep re-notifying every tick.
+
+The sweep is enqueue-or-annotate only — it never approves or rejects a gate.
+
 ## Maintainer workbench
 
 The gate review workbench shows the release target, package identity/version, artifact set, scan status, findings, changed files, and accept/reject controls. Accept/reject actions require an authenticated maintainer in the owning organization. Step-up auth requirements should match other sensitive release decisions; see [`two-factor-auth.md`](./two-factor-auth.md).

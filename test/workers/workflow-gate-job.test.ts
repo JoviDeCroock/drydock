@@ -9,6 +9,8 @@ import { eq } from "drizzle-orm";
 import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
 import {
   attachScanToGate,
+  claimGateReviewStart,
+  GATE_REVIEW_CLAIM_LEASE_MS,
   getGateForOrganization,
   listGatePackageScans,
   markGateDecided,
@@ -16,6 +18,8 @@ import {
 import {
   classifyGateTimeout,
   executeWorkflowGateJob,
+  GATE_TIMEOUT_FAILURE_REASON,
+  recoverAbandonedGateReviews,
   recommendationForReleaseRisk,
   workflowGateCallbackWindowMs,
 } from "../../server/lib/workflow-gate-job";
@@ -482,6 +486,167 @@ describe("workflow gate scan attachment", () => {
       seeded.gateId,
     );
     expect(gateAfterRetryClaim?.scanId).toBe(secondScanId);
+  });
+});
+
+describe("workflow gate review claim lease", () => {
+  test("takes over a claim whose lease expired without attaching a scan", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9230",
+      repositoryId: 72031,
+      runId: 31001,
+    });
+    const db = createDb(env.DB);
+
+    // First delivery claims the batch; a concurrent re-delivery must lose.
+    await expect(claimGateReviewStart(db, seeded.gateId)).resolves.toBe("claimed");
+    await expect(claimGateReviewStart(db, seeded.gateId)).resolves.toBe("lost");
+
+    // That delivery then dies without releasing the claim (a hard crash cannot
+    // run the release path), so the claim ages out of its lease.
+    const afterLease = new Date(Date.now() + GATE_REVIEW_CLAIM_LEASE_MS + 1_000);
+    await expect(claimGateReviewStart(db, seeded.gateId, afterLease)).resolves.toBe("reclaimed");
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.reviewStartedAt?.getTime()).toBe(afterLease.getTime());
+  });
+
+  test("never reclaims a reviewed gate that is waiting on a human decision", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9231",
+      repositoryId: 72032,
+      runId: 31002,
+    });
+    const db = createDb(env.DB);
+    const scanId = crypto.randomUUID();
+    await createScanJob(db, {
+      id: scanId,
+      stageId: `workflow-gate:${seeded.gateId}`,
+      organizationId: seeded.organizationId,
+      ownerUserId: seeded.userId,
+      source: "workflow_gate",
+    });
+
+    await expect(claimGateReviewStart(db, seeded.gateId)).resolves.toBe("claimed");
+    await expect(attachScanToGate(db, seeded.gateId, scanId, null)).resolves.toBe(true);
+
+    // A finished review parks the gate with a scan attached for as long as the
+    // maintainer takes to decide — far longer than the lease. Reclaiming it
+    // would re-run the batch under the maintainer's feet.
+    const longAfterLease = new Date(Date.now() + GATE_REVIEW_CLAIM_LEASE_MS * 10);
+    await expect(claimGateReviewStart(db, seeded.gateId, longAfterLease)).resolves.toBe("lost");
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.scanId).toBe(scanId);
+  });
+});
+
+describe("recoverAbandonedGateReviews", () => {
+  // The sweep is deliberately account-wide, and these suites share one D1, so
+  // every assertion filters to the gate under test rather than reading the
+  // sweep's aggregate counters.
+  function recoveryEnv(overrides: Record<string, unknown> = {}) {
+    const sent: { gateId: string }[] = [];
+    const recovery = {
+      ...env,
+      SCAN_QUEUE: { send: async (message: { gateId: string }) => void sent.push(message) },
+      ...overrides,
+    } as unknown as Cloudflare.Env;
+    const requeuedIds = () => sent.map((message) => message.gateId);
+    return { recovery, sent, requeuedIds };
+  }
+
+  test("re-enqueues an abandoned review that is still inside the callback window", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9232",
+      repositoryId: 72033,
+      runId: 31003,
+    });
+    const db = createDb(env.DB);
+    await claimGateReviewStart(db, seeded.gateId);
+    const { recovery, sent } = recoveryEnv();
+
+    const now = new Date(Date.now() + GATE_REVIEW_CLAIM_LEASE_MS + 1_000);
+    await recoverAbandonedGateReviews(recovery, db, now);
+
+    expect(sent).toContainEqual({
+      kind: "workflow_gate",
+      organizationId: seeded.organizationId,
+      gateId: seeded.gateId,
+    });
+    // Enqueue-or-annotate only: the sweep itself never decides a gate.
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.status).toBe("pending");
+    expect(gate?.failureReason).toBeNull();
+  });
+
+  test("leaves a live claim and a reviewed gate alone", async () => {
+    const live = await seedGateForTest({
+      installationExternalId: "9233",
+      repositoryId: 72034,
+      runId: 31004,
+    });
+    const reviewed = await seedGateForTest({
+      installationExternalId: "9234",
+      repositoryId: 72035,
+      runId: 31005,
+    });
+    const db = createDb(env.DB);
+    await claimGateReviewStart(db, live.gateId);
+    await claimGateReviewStart(db, reviewed.gateId);
+    const scanId = crypto.randomUUID();
+    await createScanJob(db, {
+      id: scanId,
+      stageId: `workflow-gate:${reviewed.gateId}`,
+      organizationId: reviewed.organizationId,
+      ownerUserId: reviewed.userId,
+      source: "workflow_gate",
+    });
+    await attachScanToGate(db, reviewed.gateId, scanId, null);
+
+    const { recovery, requeuedIds } = recoveryEnv();
+    // Only just claimed, so neither gate has aged past its lease yet.
+    await recoverAbandonedGateReviews(recovery, db, new Date());
+    expect(requeuedIds()).not.toContain(live.gateId);
+    expect(requeuedIds()).not.toContain(reviewed.gateId);
+
+    // Past the lease, the reviewed gate still must not be swept — it is waiting
+    // on a human, not abandoned.
+    const afterLease = new Date(Date.now() + GATE_REVIEW_CLAIM_LEASE_MS + 1_000);
+    await recoverAbandonedGateReviews(recovery, db, afterLease);
+    expect(requeuedIds()).toContain(live.gateId);
+    expect(requeuedIds()).not.toContain(reviewed.gateId);
+  });
+
+  test("records a single timeout_missed for an abandoned review past the callback window", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9235",
+      repositoryId: 72036,
+      runId: 31006,
+      requestedAt: new Date(Date.now() - 61_000),
+    });
+    const db = createDb(env.DB);
+    await claimGateReviewStart(db, seeded.gateId);
+    const { recovery, sent } = recoveryEnv({ WORKFLOW_GATE_CALLBACK_WINDOW_MS: "60000" });
+
+    const now = new Date(Date.now() + GATE_REVIEW_CLAIM_LEASE_MS + 1_000);
+    await recoverAbandonedGateReviews(recovery, db, now);
+
+    // GitHub already auto-rejected the held deployment, so re-reviewing would
+    // produce a decision with nowhere to post it.
+    expect(sent.map((message) => message.gateId)).not.toContain(seeded.gateId);
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.failureReason).toBe(GATE_TIMEOUT_FAILURE_REASON);
+    expect(gate?.status).toBe("pending");
+
+    const types = await scanEventTypes(seeded.organizationId, seeded.gateId);
+    expect(types).toEqual(["github_workflow_gate.timeout_missed"]);
+
+    // The sweep runs every 15 minutes; the stored reason keeps it from
+    // re-notifying the same dead gate forever.
+    await recoverAbandonedGateReviews(recovery, db, now);
+    const typesAfter = await scanEventTypes(seeded.organizationId, seeded.gateId);
+    expect(typesAfter).toEqual(["github_workflow_gate.timeout_missed"]);
   });
 });
 

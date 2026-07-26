@@ -27,7 +27,7 @@ import {
   retryDelaySeconds,
   type QueueMessage,
 } from "./lib/scan/job";
-import { executeWorkflowGateJob } from "./lib/workflow-gate-job";
+import { executeWorkflowGateJob, recoverAbandonedGateReviews } from "./lib/workflow-gate-job";
 import {
   createStageStartCoordinator,
   discoverAndQueueStagedPublishes,
@@ -446,6 +446,19 @@ async function pruneStaleAuditEvents(env: Cloudflare.Env) {
   }
 }
 
+// Pick up gate reviews whose delivery died mid-batch. Without this nothing ever
+// revisits them: the abandoned claim makes every retry a no-op and the queue
+// message is gone. Never let a recovery failure abort the tick.
+async function sweepAbandonedGateReviews(env: Cloudflare.Env) {
+  try {
+    await recoverAbandonedGateReviews(env);
+  } catch (err) {
+    emitOperationalEvent("error", "github_workflow_gate.recovery_failed", {
+      error: describeOperationalError(err),
+    });
+  }
+}
+
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
@@ -460,6 +473,7 @@ export default {
         error: describeOperationalError(err),
       });
     }
+    await sweepAbandonedGateReviews(env);
     await pruneStaleAuditEvents(env);
   },
   async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
