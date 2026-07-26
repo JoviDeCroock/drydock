@@ -6,7 +6,7 @@ import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
-import { describeAuditEvent } from "../../server/lib/audit-events";
+import { describeAuditEvent } from "../../server/lib/auth/audit-events";
 import { publicReportsRoutes } from "../../server/routes/public-reports";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
