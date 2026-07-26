@@ -73,6 +73,11 @@ export function buildReportExport(detail: ScanDetail) {
     // Advisory release-memory signal. Additive + optional: scans that predate
     // the field (or persisted a malformed blob) export null.
     releaseConsistency: exportReleaseConsistency(summary.releaseConsistency),
+    // Release authority: what was authorized to publish this release, how it
+    // differs from the last approved baseline, and the binding between the
+    // accepted authority and the exact artifact digests. Workflow-gate reviews
+    // only; null everywhere else, and null must be read as "not assessed".
+    releaseAuthority: extractReleaseAuthority(detail.releaseAuthority),
     packageJsonDiff: summary.packageJsonDiff ?? null,
     diff: summary.diff ?? null,
     // Deterministic findings only. A completed AI review's findings are carried
@@ -199,6 +204,27 @@ function extractProvenance(stagedPublish: unknown): ReleaseProvenance | null {
 function extractArtifactIntegrity(stagedPublish: unknown) {
   if (!isRecord(stagedPublish)) return null;
   return parseStagedArtifactIntegrity(stagedPublish.artifactIntegrity);
+}
+
+// The archivable form of the release-authority record. The full snapshot is
+// carried, not just the delta: a report has to stand on its own later, and the
+// delta is only meaningful next to the authority it was computed from. Both
+// halves are re-validated by the tolerant readers on the way in, so a
+// pre-feature or malformed row exports as null rather than partial data.
+function extractReleaseAuthority(record: ScanDetail["releaseAuthority"]) {
+  if (!record) return null;
+  return {
+    capturedAt: toIso(record.createdAt),
+    runId: record.runId,
+    workflowPath: record.workflowPath || null,
+    headSha: record.headSha,
+    // The link between this approval and the exact bytes it accepted.
+    artifactBindingDigest: record.artifactBindingDigest,
+    approvedAt: toIso(record.approvedAt),
+    approvedByUserId: record.approvedByUserId,
+    snapshot: record.snapshot,
+    delta: record.delta,
+  };
 }
 
 // Route through the display helper so invalid/unavailable fallbacks do not

@@ -119,6 +119,7 @@ export interface OrganizationListEntry {
   isPersonal: boolean;
   npmConnectionConfigured: boolean;
   requireTwoFactorForReleaseDecisions: boolean;
+  requireAuthorityChangeApproval: boolean;
   createdAt: Date | string | number;
   updatedAt: Date | string | number;
 }
@@ -135,6 +136,7 @@ export async function listUserOrganizations(
       ownerUserId: organizations.ownerUserId,
       role: organizationMembers.role,
       requireTwoFactorForReleaseDecisions: organizations.requireTwoFactorForReleaseDecisions,
+      requireAuthorityChangeApproval: organizations.requireAuthorityChangeApproval,
       createdAt: organizations.createdAt,
       updatedAt: organizations.updatedAt,
       npmConnectionConfigured: sql<boolean>`exists (
@@ -156,6 +158,7 @@ export async function listUserOrganizations(
       isPersonal: row.id === personalId,
       npmConnectionConfigured: Boolean(row.npmConnectionConfigured),
       requireTwoFactorForReleaseDecisions: Boolean(row.requireTwoFactorForReleaseDecisions),
+      requireAuthorityChangeApproval: Boolean(row.requireAuthorityChangeApproval),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     }))
@@ -240,6 +243,34 @@ export async function setRequireTwoFactorForReleaseDecisions(
   await db
     .update(organizations)
     .set({ requireTwoFactorForReleaseDecisions: enabled, updatedAt: new Date() })
+    .where(eq(organizations.id, organizationId));
+}
+
+/**
+ * Whether this org holds a release gate when the release authority changed
+ * since the last approved baseline. Off by default, so the delta ships as
+ * evidence first and an org opts in once it trusts its own signal rate.
+ */
+export async function organizationRequiresAuthorityChangeApproval(
+  db: AppDb,
+  organizationId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ enabled: organizations.requireAuthorityChangeApproval })
+    .from(organizations)
+    .where(eq(organizations.id, organizationId))
+    .limit(1);
+  return Boolean(row?.enabled);
+}
+
+export async function setRequireAuthorityChangeApproval(
+  db: AppDb,
+  organizationId: string,
+  enabled: boolean,
+) {
+  await db
+    .update(organizations)
+    .set({ requireAuthorityChangeApproval: enabled, updatedAt: new Date() })
     .where(eq(organizations.id, organizationId));
 }
 

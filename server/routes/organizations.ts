@@ -15,6 +15,7 @@ import {
   listNotificationRecipients,
   listUserOrganizations,
   renameOrganization,
+  setRequireAuthorityChangeApproval,
   setRequireTwoFactorForReleaseDecisions,
 } from "../db/organizations";
 import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
@@ -187,6 +188,49 @@ organizationsRoutes.put("/:id/release-two-factor", async (c) => {
     },
   });
   return c.json({ requireTwoFactorForReleaseDecisions: enabled });
+});
+
+// Org policy: hold a release gate whose authority changed since the last
+// approved baseline until a maintainer explicitly accepts the change.
+//
+// Unlike the two-factor policy this needs no step-up in either direction. It
+// only governs whether an *extra* confirmation is demanded before a release,
+// so turning it off restores the default review flow rather than removing a
+// control that already guards a credential.
+organizationsRoutes.put("/:id/authority-change-approval", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { enabled?: unknown };
+  if (typeof body.enabled !== "boolean") {
+    return c.json({ error: "enabled must be a boolean" }, 400);
+  }
+  const enabled = body.enabled;
+
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = c.req.param("id");
+  const owner = await isOrganizationOwner(db, organizationId, session.userId);
+  if (!owner) return c.json({ error: "not found" }, 404);
+
+  try {
+    await enforceRateLimit(db, {
+      key: `organizations:authority-change-approval:${session.userId}`,
+      limit: 30,
+      windowMs: 60 * 60 * 1000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return rateLimitResponse(c, "authority policy rate limit exceeded", err);
+    }
+    throw err;
+  }
+
+  await setRequireAuthorityChangeApproval(db, organizationId, enabled);
+  await recordScanEvent(db, {
+    organizationId,
+    actorUserId: session.userId,
+    type: "organization.authority_change_approval_changed",
+    metadata: { enabled },
+  });
+  return c.json({ requireAuthorityChangeApproval: enabled });
 });
 
 organizationsRoutes.delete("/:id", async (c) => {

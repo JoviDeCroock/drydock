@@ -40,6 +40,7 @@ import { StageCommandDialogHost } from "./StageCommandDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
 import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection";
 import { IntentEnvelopeSection } from "./IntentEnvelopeSection";
+import { ReleaseAuthoritySection } from "./ReleaseAuthoritySection";
 import { ReleaseConsistencyNotice } from "./ReleaseConsistencyNotice";
 import { ReleaseRecommendation } from "./ReleaseRecommendation";
 import { PersistedReportSections } from "./ReportSections";
@@ -231,8 +232,9 @@ export default function ScanDetailPage() {
     decision: WorkflowGateDecision,
     comment: string | null,
     totpCode: string | null,
+    acknowledgeAuthorityChange: boolean,
   ) => {
-    await model.decideGate(decision, comment, totpCode);
+    await model.decideGate(decision, comment, totpCode, acknowledgeAuthorityChange);
     if (model.gateDecisionStatus.peek() === "idle") {
       gateDialogOpen.value = false;
     }
@@ -339,6 +341,11 @@ export default function ScanDetailPage() {
             />
 
             {envelope ? <IntentEnvelopeSection envelope={envelope} /> : null}
+
+            {/* Sits above the diff because it answers the prior question: the
+                diff says what is in the release, this says whether the
+                machinery that produced it is still the agreed one. */}
+            <ReleaseAuthoritySection authority={detail.releaseAuthority} />
 
             {detail.scan.packageName ? (
               <div class="flex flex-col gap-2 border-t border-border pt-3">
@@ -487,6 +494,8 @@ export default function ScanDetailPage() {
             (detail.scan.status === "complete" || detail.scan.status === "failed")
           }
           reviewFailed={detail.scan.status === "failed"}
+          releaseAuthority={model.gateAuthority.value}
+          requireAuthorityAcknowledgement={model.gateRequiresAuthorityApproval.value}
           onSubmit={handleGateDecision}
         />
       ) : null}
