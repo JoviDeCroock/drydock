@@ -64,5 +64,8 @@ for (const failure of failures) {
 
 if (failures.length > 0) {
   process.stdout.write(`\ntest failed: ${failures.map((failure) => failure.name).join(", ")}\n`);
-  process.exit(1);
+  // Not process.exit(): stdout is a pipe under CI, so writes are asynchronous
+  // and exiting here truncates the failure output we just wrote — which is the
+  // only thing that makes a red build diagnosable.
+  process.exitCode = 1;
 }

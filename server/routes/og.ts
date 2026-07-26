@@ -39,6 +39,11 @@ import type { Bindings, Variables } from "../types";
 // tarball.
 export const ogRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
+// Per-IP cold renders per minute. Generous: unfurl crawlers fetch each card
+// once, so only a scripted caller reaches this.
+export const OG_CARD_RATE_LIMIT = 60;
+export const OG_CARD_RATE_WINDOW_MS = 60 * 1000;
+
 type OgContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 
 const STATIC_FALLBACK_PATH = "/og-image.png";
@@ -151,7 +156,13 @@ async function readCachedStats(c: OgContext, spec: CardSpec): Promise<OgCardStat
   }
 }
 
-async function staticFallback(c: OgContext): Promise<Response> {
+// `reason` is on the response because a rate-limited card and a card whose
+// renderer failed are otherwise indistinguishable to both operators and tests —
+// same status, same bytes, very different meaning.
+async function staticFallback(
+  c: OgContext,
+  reason: "rate-limited" | "render-failed",
+): Promise<Response> {
   const assets = c.env.ASSETS;
   if (!assets) return c.json({ error: "not found" }, 404);
   const response = await assets.fetch(new URL(STATIC_FALLBACK_PATH, c.req.url));
@@ -160,6 +171,7 @@ async function staticFallback(c: OgContext): Promise<Response> {
     headers: {
       "content-type": response.headers.get("content-type") ?? "image/png",
       "cache-control": FALLBACK_CACHE_CONTROL,
+      "x-og-card-fallback": reason,
     },
   });
 }
@@ -181,11 +193,13 @@ ogRoutes.get("/diff/*", async (c) => {
   try {
     await enforceRateLimit(createDb(c.env.DB), {
       key: `og-card:${c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || "unknown"}`,
-      limit: 60,
-      windowMs: 60 * 1000,
+      limit: OG_CARD_RATE_LIMIT,
+      windowMs: OG_CARD_RATE_WINDOW_MS,
     });
   } catch (err) {
-    if (err instanceof RateLimitError) return staticFallback(c);
+    // A 429 to a crawler kills the unfurl outright, so a limited request still
+    // gets an image — just the static one, on a short TTL.
+    if (err instanceof RateLimitError) return staticFallback(c, "rate-limited");
     throw err;
   }
 
@@ -207,7 +221,7 @@ ogRoutes.get("/diff/*", async (c) => {
       packageName: spec.packageName,
       error: describeOperationalError(err),
     });
-    return staticFallback(c);
+    return staticFallback(c, "render-failed");
   }
 
   const response = new Response(png as unknown as BodyInit, {
