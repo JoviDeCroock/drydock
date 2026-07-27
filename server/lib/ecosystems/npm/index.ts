@@ -1,4 +1,4 @@
-import type { StagedPublishDetails } from "./staged-publishes";
+import type { NpmStagedDetails } from "./tarball-integrity";
 import type { PackageAdapter } from "../package-adapter";
 import { acquireBaselineNpm, acquireStagedNpm, type NpmAdapterInput } from "./acquire";
 import { createNpmBroker, type NpmBroker } from "./broker";
@@ -37,7 +37,7 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
   runFindings(args) {
     return buildNpmFindings({
       staged: args.staged,
-      details: args.details as StagedPublishDetails | null,
+      details: args.details as NpmStagedDetails | null,
       fileDiff: args.fileDiff,
       manifestDiff: args.manifestDiff,
       stagedManifestText: args.stagedManifestText,
@@ -45,7 +45,7 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
   },
 
   describe({ staged, details, previous }) {
-    const stagedDetails = details as StagedPublishDetails | null;
+    const stagedDetails = details as NpmStagedDetails | null;
     return {
       name: staged.manifest?.name ?? null,
       stagedVersion: staged.manifest?.version ?? null,
@@ -56,7 +56,7 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
 
   summarizeDetails(details) {
     if (!details) return null;
-    const d = details as StagedPublishDetails;
+    const d = details as NpmStagedDetails;
     return {
       id: d.id,
       packageName: d.packageName,
@@ -67,6 +67,10 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
       actorType: d.actorType,
       createdAt: d.createdAt,
       shasum: d.shasum,
+      // Byte-verification verdict for the reviewed tarball. Persisted with the
+      // report so a reviewer reading "file removed" months later can tell
+      // whether the scan proved it was reading the staged bytes.
+      tarballIntegrity: d.tarballIntegrity ?? null,
     };
   },
 };

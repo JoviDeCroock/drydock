@@ -275,6 +275,18 @@ like `*` rather than skipped, and `workspace:`/`catalog:`/`link:`/`portal:` prot
 directly only when both specs are exact registry version keys. Ranges render no direct link because
 their bounds need not have been published; added dependencies use the package-only route that resolves
 a published pair from registry metadata.
+`1.19.0` adds `stage.tarball-digest-mismatch` (critical, npm staged publishes): the sandbox now
+digests each archive's raw wire bytes and the staged adapter compares that digest against the
+`shasum` npm recorded for the stage. The rule exists because the file diff's strongest claim —
+"the publisher removed this file" — reads identically whether the publisher removed it or the
+download was truncated or substituted; the finding says the whole report describes a different
+artifact than the one being released. It is not a package-content rule and has no corpus fixture:
+the corpus engine runs over `FileRecord[]` and carries no stage metadata, so coverage lives in
+`test/npm-tarball-integrity.test.mjs`, `test/npm-acquire.test.mjs`, `test/scan-pipeline.test.mjs`,
+and the `tarball-digest-mismatch` e2e scenario. Verification fails to `unverified` (no finding)
+whenever either digest is missing — a registry that reports no `shasum`, or an archive the sandbox
+could not digest end to end — so absence of evidence never reads as tampering.
+
 `1.20.0` adds `package-json.entrypoint-missing`: a release whose manifest declares a `main`,
 `exports`, or `bin` path the artifact does not contain. The file diff can only say "this path is
 not in the staged tarball", which reads as ordinary content churn until a reviewer notices the

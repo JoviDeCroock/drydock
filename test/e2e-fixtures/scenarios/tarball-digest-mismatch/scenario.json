@@ -1,0 +1,30 @@
+{
+  "stageId": "stage-digest-mismatch-000001",
+  "packageName": "@drydock/e2e-digest",
+  "tag": "latest",
+  "access": "public",
+  "actor": "e2e-bot",
+  "actorType": "automation",
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "previous": {
+    "directory": "previous",
+    "tag": "latest",
+    "publishedAt": "2026-05-20T00:00:00.000Z"
+  },
+  "staged": {
+    "directory": "staged",
+    "shasum": "0000000000000000000000000000000000000000"
+  },
+  "expected": {
+    "releaseRisk": "critical",
+    "packageName": "@drydock/e2e-digest",
+    "stagedVersion": "1.0.1",
+    "previousVersion": "1.0.0",
+    "ruleIds": ["stage.tarball-digest-mismatch"],
+    "baseline": {
+      "version": "1.0.0",
+      "source": "dist-tag",
+      "tag": "latest"
+    }
+  }
+}

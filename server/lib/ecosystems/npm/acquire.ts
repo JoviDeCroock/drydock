@@ -1,6 +1,8 @@
 import { pickBaselineVersion } from "./registry";
 import { parseSandboxErrorDetail } from "../../sandbox";
+import { emitOperationalEvent } from "../../platform/observability";
 import type { PackageJsonSummary } from "../../review";
+import { evaluateStagedTarballIntegrity } from "./tarball-integrity";
 import type { StagedPublishDetails } from "./staged-publishes";
 import type {
   AcquiredArtifact,
@@ -38,13 +40,33 @@ export async function acquireStagedNpm(
     metadataIsTrustworthy ? (stagedDetails?.packageJson ?? null) : null,
   );
 
+  // Bind the review to the bytes it reviewed. Without this the file diff's
+  // strongest claim — "the publisher removed this file" — is indistinguishable
+  // from a truncated or substituted download.
+  const tarballIntegrity = evaluateStagedTarballIntegrity(
+    stagedDetails?.shasum,
+    staged.archiveSha1,
+  );
+  if (tarballIntegrity.status === "mismatch") {
+    emitOperationalEvent("warn", "scan.staged_artifact.digest_mismatch", {
+      stageId: input.stageId,
+      packageName: mergedManifest?.name ?? stagedDetails?.packageName ?? null,
+      version: mergedManifest?.version ?? stagedDetails?.version ?? null,
+      algorithm: tarballIntegrity.algorithm,
+      declaredDigest: tarballIntegrity.declared,
+      computedDigest: tarballIntegrity.computed,
+    });
+  }
+
   return {
     artifact: {
       files: staged.files,
       manifest: mergedManifest,
       suspiciousTarEntries: staged.suspiciousEntries,
     },
-    details: stagedDetails as StagedDetails,
+    details: (stagedDetails
+      ? { ...stagedDetails, tarballIntegrity }
+      : null) as unknown as StagedDetails,
   };
 }
 

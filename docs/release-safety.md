@@ -60,6 +60,9 @@ Current structured events cover:
   completed AI review's rows (matching persisted `scans.finding_count`), with
   `ruleFindingCount` / `aiFindingCount` emitted alongside for the split.
 - `scan.ai_review.completed` / `scan.ai_review.failed` when AI review is enabled.
+- `scan.staged_artifact.digest_mismatch` when a staged npm tarball's bytes do not
+  hash to the digest the registry recorded for the stage (stage id, package,
+  version, and both digests — all registry-declared values, no credentials).
 - `scan.job.completed`, `scan.job.failed`, `scan.job.retryable_failed`, and
   `scan.job.skipped` with scan ID, organization ID, source, attempt, duration,
   and safe error code.

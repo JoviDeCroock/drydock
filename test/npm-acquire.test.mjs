@@ -132,3 +132,69 @@ describe("acquireStagedNpm", () => {
     expect(result.artifact.manifest).toMatchObject({ browser });
   });
 });
+
+describe("acquireStagedNpm tarball verification", () => {
+  const DECLARED = "cf6abd23c6a49417b8e8cd8635a1bba94a6fe5d2";
+  const OTHER = "48283451416861c231a367b872a700c1ef002013";
+
+  function brokerFor({ shasum, archiveSha1 }) {
+    return {
+      dispose() {},
+      fetchPackageMetadata: vi.fn(async () => metadata()),
+      fetchStagedDetails: vi.fn(async () => ({
+        id: "stage-1",
+        packageName: "pkg",
+        version: "2.0.0",
+        tag: "latest",
+        shasum,
+        packageJson: null,
+      })),
+      downloadStaged: vi.fn(async () => ({
+        files: [{ path: "package.json", size: 10, sha256: "a", flags: [] }],
+        packageJson: { name: "pkg", version: "2.0.0" },
+        ...(archiveSha1 === undefined ? {} : { archiveSha1 }),
+      })),
+      downloadPublished: vi.fn(async () => {
+        throw new Error("unused");
+      }),
+    };
+  }
+
+  test.each([
+    ["verified", DECLARED, DECLARED, { status: "verified" }],
+    ["mismatch", DECLARED, OTHER, { status: "mismatch", declared: DECLARED, computed: OTHER }],
+    [
+      "unverified when the sandbox reports no digest",
+      DECLARED,
+      null,
+      { status: "unverified", reason: "computed-digest-unavailable" },
+    ],
+    [
+      "unverified when the registry reports no shasum",
+      null,
+      DECLARED,
+      { status: "unverified", reason: "declared-digest-missing" },
+    ],
+  ])(
+    "records the staged tarball digest verdict: %s",
+    async (_name, shasum, archiveSha1, expected) => {
+      const result = await acquireStagedNpm(
+        {},
+        { stageId: "stage-1" },
+        brokerFor({ shasum, archiveSha1 }),
+      );
+
+      expect(result.details.tarballIntegrity).toMatchObject(expected);
+    },
+  );
+
+  test("keeps details null when the registry has no stage metadata to attach a verdict to", async () => {
+    const broker = brokerFor({ shasum: DECLARED, archiveSha1: DECLARED });
+    broker.fetchStagedDetails = vi.fn(async () => null);
+
+    const result = await acquireStagedNpm({}, { stageId: "stage-1" }, broker);
+
+    expect(result.details).toBeNull();
+    expect(result.artifact.files).toHaveLength(1);
+  });
+});

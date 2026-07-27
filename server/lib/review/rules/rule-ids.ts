@@ -22,6 +22,7 @@ export const DETERMINISTIC_RULE_IDS = {
   dependencyAdded: "dependency.added",
   dependencyMajorBump: "dependency.major-bump",
   stageMetadataMismatch: "stage.metadata-mismatch",
+  stageTarballDigestMismatch: "stage.tarball-digest-mismatch",
   tarSuspiciousEntry: "tar.suspicious-entry",
 } as const;
 

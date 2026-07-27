@@ -196,8 +196,17 @@ export async function sha256Hex(bytes) {
 // and one-shot digests; test fixtures are small, and the sandbox never takes
 // that branch.
 export function createSha256Digester() {
+  return createDigester("SHA-256");
+}
+
+// Incremental digest for any WebCrypto hash name. Split out of
+// createSha256Digester so the archive-level integrity digest (SHA-1, matching
+// npm's `shasum`) shares one streaming implementation with the per-file
+// content hashes. Must stay self-contained: serialized into the sandbox worker
+// via renderTarParserSource.
+export function createDigester(algorithm) {
   if (typeof crypto !== "undefined" && typeof crypto.DigestStream === "function") {
-    const stream = new crypto.DigestStream("SHA-256");
+    const stream = new crypto.DigestStream(algorithm);
     const writer = stream.getWriter();
     return {
       update(chunk) {
@@ -224,7 +233,133 @@ export function createSha256Digester() {
         out.set(chunk, offset);
         offset += chunk.byteLength;
       }
-      return sha256Hex(out);
+      const digest = await crypto.subtle.digest(algorithm, out);
+      return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+    },
+  };
+}
+
+// Hash an archive's raw wire bytes while the parser reads the same stream, so
+// a scan can prove the artifact it reviewed is the artifact the registry
+// recorded. A truncated or substituted download otherwise reads as "the
+// publisher removed these files" — indistinguishable, from the report alone,
+// from a real deletion.
+//
+// The digest is deliberately NOT a tap that finalizes on flush. The tar reader
+// stops at the end-of-archive marker and cancels its stream, leaving the
+// trailing blocks and the gzip footer unread, so an inline tap would only ever
+// see a prefix and would report a mismatch on every healthy scan. Instead the
+// wrapper owns the source reader and finishes the archive itself: `digest()`
+// drains whatever the consumer left behind (it is called once parsing is done,
+// so there is no one left to steal bytes from), and a cancel that propagates up
+// the pipe starts the same drain. Relying on the cancel alone would race —
+// cancellation crosses two transform streams asynchronously, so the digest is
+// usually requested before it arrives, which read as "unverified" on every
+// healthy scan.
+//
+// It reports a digest ONLY when it observed the source's own EOF — an errored
+// or over-cap stream returns null so the caller degrades to "unverified"
+// instead of accusing a publisher of tampering.
+//
+// `maxBytes` bounds the hashed wire bytes: past it the pass-through continues
+// (parsing is bounded separately) but the digest is abandoned, so verification
+// never becomes the reason a large-but-honest artifact costs extra CPU.
+// Must stay self-contained: serialized into the sandbox worker via
+// renderTarParserSource.
+export function digestArchiveStream(body, maxBytes, algorithm) {
+  const reader = body.getReader();
+  const digester = createDigester(algorithm || "SHA-1");
+  const limit = Number.isFinite(maxBytes) ? maxBytes : Infinity;
+  let total = 0;
+  let capped = false;
+  let sawEof = false;
+  let broken = false;
+  let draining = null;
+  // Pass-through pulls and the post-consumer drain both read the same source,
+  // and workerd's ReadableStream rejects a second read while one is pending
+  // ("only supports a single pending read request at a time"), so every read
+  // queues behind the previous one. Chaining also keeps chunks in stream order,
+  // which the digest depends on.
+  let readChain = Promise.resolve();
+
+  function readOnce() {
+    const result = readChain.then(() => reader.read());
+    readChain = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  async function consume(value) {
+    total += value.byteLength;
+    if (capped) return;
+    if (total > limit) {
+      capped = true;
+      return;
+    }
+    await digester.update(value);
+  }
+
+  async function drain() {
+    try {
+      for (;;) {
+        const { value, done } = await readOnce();
+        if (done) {
+          sawEof = true;
+          return;
+        }
+        await consume(value);
+        // Past the cap there is no digest left to complete, so stop paying to
+        // read a tail nobody is parsing either.
+        if (capped) {
+          await reader.cancel().catch(() => undefined);
+          return;
+        }
+      }
+    } catch {
+      broken = true;
+    }
+  }
+
+  const stream = new ReadableStream({
+    async pull(controller) {
+      let chunk;
+      try {
+        chunk = await readOnce();
+      } catch (err) {
+        broken = true;
+        controller.error(err);
+        return;
+      }
+      if (chunk.done) {
+        sawEof = true;
+        controller.close();
+        return;
+      }
+      await consume(chunk.value);
+      controller.enqueue(chunk.value);
+    },
+    cancel() {
+      // The consumer is done with the archive, but verification is not: keep
+      // pulling the source to EOF so the digest covers the whole artifact.
+      return startDrain();
+    },
+  });
+
+  function startDrain() {
+    if (!draining) draining = drain();
+    return draining;
+  }
+
+  return {
+    body: stream,
+    // Call once the consumer has finished with `body`: any bytes it did not
+    // read are pulled here so the digest covers the whole archive.
+    async digest() {
+      if (!sawEof && !broken && !capped) await startDrain();
+      if (broken || capped || !sawEof) return null;
+      return digester.finalize();
     },
   };
 }

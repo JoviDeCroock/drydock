@@ -1246,6 +1246,135 @@ describe("boundedByteStream", () => {
   });
 });
 
+describe("digestArchiveStream", () => {
+  // Binds a scan to the bytes it reviewed: the sandbox hashes the archive's
+  // wire bytes so "the publisher removed this file" can be told apart from
+  // "we did not receive the whole artifact".
+  const CAP = 1 << 20;
+
+  const streamOf = (bytes, chunk = 512) =>
+    new ReadableStream({
+      start(controller) {
+        for (let i = 0; i < bytes.length; i += chunk) {
+          controller.enqueue(bytes.subarray(i, Math.min(i + chunk, bytes.length)));
+        }
+        controller.close();
+      },
+    });
+
+  async function sha1Hex(bytes) {
+    const digest = await crypto.subtle.digest("SHA-1", bytes);
+    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  test("digests the whole stream a consumer reads to the end", async () => {
+    const bytes = new Uint8Array(4096).fill(3);
+    const archive = tarParser.digestArchiveStream(streamOf(bytes), CAP);
+    const passed = new Uint8Array(await new Response(archive.body).arrayBuffer());
+
+    expect(passed).toEqual(bytes);
+    expect(await archive.digest()).toBe(await sha1Hex(bytes));
+  });
+
+  test("keeps draining the source after a consumer stops early and cancels", async () => {
+    // The tar reader's shape: it stops at the end-of-archive marker and
+    // cancels, leaving the trailing blocks and gzip footer unread. An inline
+    // digest tap would hash only that prefix and report a mismatch on every
+    // healthy scan.
+    const bytes = new Uint8Array(4096);
+    crypto.getRandomValues(bytes);
+    const archive = tarParser.digestArchiveStream(streamOf(bytes), CAP);
+    const reader = archive.body.getReader();
+    await reader.read();
+    await reader.cancel();
+
+    expect(await archive.digest()).toBe(await sha1Hex(bytes));
+  });
+
+  test("completes the digest for a consumer that abandons the stream without cancelling", async () => {
+    // The production shape: cancellation crosses boundedByteStream and the
+    // DecompressionStream asynchronously, so the digest is usually requested
+    // before the cancel arrives. digest() must finish the archive itself
+    // rather than report "unverified" on every healthy scan.
+    const bytes = new Uint8Array(4096);
+    crypto.getRandomValues(bytes);
+    const archive = tarParser.digestArchiveStream(streamOf(bytes), CAP);
+    const reader = archive.body.getReader();
+    await reader.read();
+
+    expect(await archive.digest()).toBe(await sha1Hex(bytes));
+  });
+
+  test("digests a real gzipped tar read through readTarStream", async () => {
+    // The exact composition the sandbox tgz branch uses, end to end: the
+    // digest must equal the sha1 of the .tgz wire bytes even though the parser
+    // stops at the end-of-archive marker.
+    const tar = buildTar([
+      { name: "package/package.json", body: encoder.encode('{"name":"demo"}') },
+      { name: "package/index.js", body: encoder.encode("module.exports = 1\n") },
+    ]);
+    const cs = new CompressionStream("gzip");
+    const writer = cs.writable.getWriter();
+    writer.write(tar);
+    writer.close();
+    const compressed = new Uint8Array(await new Response(cs.readable).arrayBuffer());
+
+    const archive = tarParser.digestArchiveStream(streamOf(compressed), CAP);
+    const { files } = await tarParser.readTarStream(
+      tarParser.boundedByteStream(archive.body, CAP).pipeThrough(new DecompressionStream("gzip")),
+      100,
+      CAP,
+      CAP,
+    );
+
+    expect(files.map((file) => file.path)).toEqual(["package.json", "index.js"]);
+    expect(await archive.digest()).toBe(await sha1Hex(compressed));
+  });
+
+  test("reports no digest when the source errors", async () => {
+    const failing = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+        controller.error(new Error("connection reset"));
+      },
+    });
+    const archive = tarParser.digestArchiveStream(failing, CAP);
+
+    await expect(new Response(archive.body).arrayBuffer()).rejects.toThrow();
+    expect(await archive.digest()).toBeNull();
+  });
+
+  test("reports no digest when the archive exceeds the digest cap", async () => {
+    const bytes = new Uint8Array(4096).fill(9);
+    const archive = tarParser.digestArchiveStream(streamOf(bytes), 1024);
+    const passed = new Uint8Array(await new Response(archive.body).arrayBuffer());
+
+    // Passing bytes through is unaffected: only verification is abandoned.
+    expect(passed).toEqual(bytes);
+    expect(await archive.digest()).toBeNull();
+  });
+
+  test("reports no digest when the source fails during the post-cancel drain", async () => {
+    // A download that dies after the parser stopped reading must not be
+    // reported as a digest mismatch: absent evidence is "unverified".
+    let controllerRef;
+    const flaky = new ReadableStream({
+      start(controller) {
+        controllerRef = controller;
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+      },
+    });
+    const archive = tarParser.digestArchiveStream(flaky, CAP);
+    const reader = archive.body.getReader();
+    await reader.read();
+    const cancelled = reader.cancel();
+    controllerRef.error(new Error("connection reset"));
+    await cancelled;
+
+    expect(await archive.digest()).toBeNull();
+  });
+});
+
 describe("rendered sandbox parser source", () => {
   // The dynamic sandbox worker is built by concatenating
   // `Function.toString()` of these parser exports (see
@@ -1268,6 +1397,8 @@ describe("rendered sandbox parser source", () => {
     "describeNonRegularType",
     "sha256Hex",
     "createSha256Digester",
+    "createDigester",
+    "digestArchiveStream",
     "createStreamCursor",
     "shouldSkipTextSample",
     "sniffNativeArtifact",
