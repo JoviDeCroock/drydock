@@ -83,6 +83,7 @@ export function buildVscodeFindings(args: {
   return [
     ...deterministicFindings(args.staged.files, args.fileDiff, args.staged.manifest, {
       codePatternSet: "javascript",
+      entrypointResolution: "vscode",
     }),
     ...packageJsonDiffFindings(args.manifestDiff, args.stagedManifestText),
     ...tarSuspiciousEntryFindings(args.staged.suspiciousTarEntries, {

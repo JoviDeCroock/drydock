@@ -285,14 +285,16 @@ that ran without its build output produces exactly that shape. Severity is high 
 release shipped the path (a regression against a known-good predecessor) and medium when it was
 never there (a manifest that has always over-claimed). The rule is release-scoped: a release that
 cannot load as published is this release's defect, not inherited package context.
-Resolution deliberately errs toward silence, because a false "missing entrypoint" accuses a healthy
-release of being broken: an exact path, an implicit extension (`.js`/`.json`/`.node`/`.cjs`/`.mjs`),
-a directory index, or any file under a directory-shaped target all count as present, and subpath
-patterns (`./*`), protocol specifiers (`node:fs`, `https://…`), package imports (`#dep`), bare
-specifiers, and `null` export blocks are skipped entirely. A single-segment extensionless `main`
-(`"main": "index"`) is treated as a bare specifier and not checked. `module`, `types`, and `browser`
-are excluded: they are tooling fields whose targets are legitimately optional, unlike the paths a
-consumer's `require()` and npm's own bin linking resolve. Four existing fixtures
+Resolution follows each field's consumer semantics: npm `main` supports its CommonJS implicit
+extensions (`.js`/`.json`/`.node`), directory indexes, and nested package manifests, while `exports`
+and `bin` targets must exist exactly as declared. Extensionless single-segment `main` and `bin`
+paths are still package-relative paths and are checked. Export arrays stop after the first valid
+target, condition keys after `default` are unreachable, and subpath patterns (`./*`), protocol
+specifiers (`node:fs`, `https://…`), package imports (`#dep`), invalid bare export targets, and
+`null` export blocks are skipped entirely. The VS Code adapter opts into its own `.js`/`.mjs`/`.cjs`
+entrypoint resolution instead of inheriting npm's rules. `module`, `types`, and npm's `browser`
+field are excluded: they are tooling fields whose targets are legitimately optional, unlike the
+paths a consumer's `require()` and npm's own bin linking resolve. Four existing fixtures
 (`npm-config-auth-token-read`, `npm-lifecycle-env-read`, `obfuscated-dynamic-fetch`,
 `wasm-instantiate-loader`) declared `main: index.js` without shipping it — an artifact of minimal
 synthetic fixtures rather than an intended signal — and now carry an unchanged `index.js` on both

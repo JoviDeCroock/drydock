@@ -191,8 +191,7 @@ function entrypointCandidates(packageJson: PackageJsonSummary | null): string[] 
     }
   }
   candidates.push(...exportTargets(packageJson.exports));
-  const browser = (packageJson as { browser?: unknown }).browser;
-  if (typeof browser === "string") candidates.push(browser);
+  if (typeof packageJson.browser === "string") candidates.push(packageJson.browser);
   return candidates;
 }
 

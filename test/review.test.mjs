@@ -2738,10 +2738,10 @@ describe("package-json.entrypoint-missing", () => {
     textSample: "module.exports={}",
   });
 
-  function findingsFor(manifest, paths, previous = null) {
+  function findingsFor(manifest, paths, previous = null, options = {}) {
     const staged = [manifestFile(manifest), ...paths.map(file)];
     const diff = previous ? createPackageDiff(previous, staged) : [];
-    return deterministicFindings(staged, diff, manifest).filter(
+    return deterministicFindings(staged, diff, manifest, options).filter(
       (finding) => finding.ruleId === "package-json.entrypoint-missing",
     );
   }
@@ -2769,6 +2769,16 @@ describe("package-json.entrypoint-missing", () => {
     expect(findings).toHaveLength(1);
     expect(findings[0].severity).toBe("high");
     expect(findings[0].evidence).toContain("the previous version shipped it");
+  });
+
+  test("escalates when the previous release shipped an implicitly resolved main", () => {
+    const manifest = { name: "pkg", version: "0.1.0", main: "dist/index" };
+    const previous = [manifestFile({ ...manifest, version: "0.0.1" }), file("dist/index.js")];
+
+    const findings = findingsFor(manifest, [], previous);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].severity).toBe("high");
   });
 
   test("is a release-scoped finding so a broken release counts against release risk", () => {
@@ -2810,10 +2820,49 @@ describe("package-json.entrypoint-missing", () => {
   });
 
   test.each([
+    ["extensionless main", { main: "index" }],
+    ["extensionless bin", { bin: { pkg: "cli" } }],
+  ])("flags a missing %s path", (_name, manifest) => {
+    expect(findingsFor({ name: "pkg", version: "1.0.0", ...manifest }, [])).toHaveLength(1);
+  });
+
+  test.each([
+    ["exports", { exports: "./dist/index" }, ["dist/index.js"]],
+    ["bin", { bin: { pkg: "./bin/cli" } }, ["bin/cli.js"]],
+  ])("requires an exact %s target", (_name, manifest, paths) => {
+    expect(findingsFor({ name: "pkg", version: "1.0.0", ...manifest }, paths)).toHaveLength(1);
+  });
+
+  test("does not treat an arbitrary child as a resolvable directory main", () => {
+    expect(
+      findingsFor({ name: "pkg", version: "1.0.0", main: "lib" }, ["lib/thing.js"]),
+    ).toHaveLength(1);
+  });
+
+  test.each(["cjs", "mjs"])("does not implicitly append .%s to an npm main", (extension) => {
+    expect(
+      findingsFor({ name: "pkg", version: "1.0.0", main: "dist/index" }, [
+        `dist/index.${extension}`,
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test.each([
+    ["a later array fallback", { exports: ["./index.js", "./missing.js"] }, ["index.js"]],
+    [
+      "a condition after default",
+      { exports: { default: "./index.js", node: "./missing.js" } },
+      ["index.js"],
+    ],
+  ])("does not flag %s that cannot be selected", (_name, manifest, paths) => {
+    expect(findingsFor({ name: "pkg", version: "1.0.0", ...manifest }, paths)).toEqual([]);
+  });
+
+  test.each([
     ["exact path", { main: "dist/index.js" }, ["dist/index.js"]],
     ["implicit extension", { main: "dist/index" }, ["dist/index.js"]],
     ["directory index", { main: "lib" }, ["lib/index.js"]],
-    ["directory without an index", { main: "lib" }, ["lib/thing.js"]],
+    ["directory package manifest", { main: "lib" }, ["lib/package.json"]],
     ["leading ./", { main: "./index.js" }, ["index.js"]],
     ["bin string form", { bin: "./cli.js" }, ["cli.js"]],
     [
@@ -2824,6 +2873,32 @@ describe("package-json.entrypoint-missing", () => {
     ["exports array fallbacks", { exports: ["./a.js"] }, ["a.js"]],
   ])("stays silent when a declared entrypoint resolves: %s", (_name, manifest, paths) => {
     expect(findingsFor({ name: "pkg", version: "1.0.0", ...manifest }, paths)).toEqual([]);
+  });
+
+  test.each(["cjs", "mjs"])("uses VS Code's implicit .%s entrypoint resolution", (extension) => {
+    expect(
+      findingsFor(
+        { name: "pkg", version: "1.0.0", main: "out/extension" },
+        [`out/extension.${extension}`],
+        null,
+        { entrypointResolution: "vscode" },
+      ),
+    ).toEqual([]);
+  });
+
+  test("reports a missing VS Code browser entrypoint against the browser field", () => {
+    const findings = findingsFor(
+      { name: "pkg", version: "1.0.0", browser: "out/browser" },
+      [],
+      null,
+      { entrypointResolution: "vscode" },
+    );
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      line: 4,
+      evidence: "browser out/browser is not in the package",
+    });
   });
 
   test.each([

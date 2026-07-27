@@ -11,6 +11,7 @@ import { safeJson } from "./helpers";
 
 export interface DeterministicFindingOptions {
   codePatternSet?: CodePatternSet;
+  entrypointResolution?: "npm" | "vscode";
 }
 
 // Resolved inputs shared by every rule family for a single deterministic pass.
@@ -29,6 +30,7 @@ export interface RuleContext {
   consumerReachable: Set<string>;
   patterns: typeof JS_PATTERN_SET;
   codePatternSet: CodePatternSet | undefined;
+  entrypointResolution: "npm" | "vscode";
 }
 
 export function buildRuleContext(
@@ -64,6 +66,7 @@ export function buildRuleContext(
     ),
     patterns: codePatternsFor(options.codePatternSet),
     codePatternSet: options.codePatternSet,
+    entrypointResolution: options.entrypointResolution ?? "npm",
   };
 }
 

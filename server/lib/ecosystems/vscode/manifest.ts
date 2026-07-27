@@ -110,7 +110,7 @@ export function packageJsonSummaryForVscode(manifest: VscodeExtensionManifest): 
       : {}),
     ...(manifest.files ? { files: manifest.files } : {}),
     ...(manifest.main ? { main: manifest.main } : {}),
-    ...(manifest.browser ? { exports: { browser: manifest.browser } } : {}),
+    ...(manifest.browser ? { browser: manifest.browser } : {}),
   };
 }
 
