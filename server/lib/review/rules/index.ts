@@ -4,7 +4,7 @@ import { metadataFindings } from "./metadata";
 import { scriptFindings } from "./scripts";
 import { binaryFindings } from "./binaries";
 import { dependencyDiffFindings } from "./deps";
-import { entrypointDiffFindings } from "./entrypoints";
+import { entrypointDiffFindings, entrypointPresenceFindings } from "./entrypoints";
 
 // Bump when deterministic rule semantics, severities, or coverage change in a
 // way that should invalidate cached scan reports. Stored alongside each finding
@@ -38,7 +38,12 @@ export function deterministicFindings(
   options: DeterministicFindingOptions = {},
 ): Finding[] {
   const ctx = buildRuleContext(files, diff, packageJsonSummary, options);
-  return stampVersion([...metadataFindings(ctx), ...scriptFindings(ctx), ...binaryFindings(ctx)]);
+  return stampVersion([
+    ...metadataFindings(ctx),
+    ...scriptFindings(ctx),
+    ...binaryFindings(ctx),
+    ...entrypointPresenceFindings(ctx),
+  ]);
 }
 
 export function packageJsonDiffFindings(

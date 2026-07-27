@@ -13,6 +13,7 @@ export const DETERMINISTIC_RULE_IDS = {
   installScriptImplicitNodeGyp: "install-script.implicit-node-gyp",
   installScriptGypCommandSubstitution: "install-script.gyp-command-substitution",
   packageJsonParseFailed: "package-json.parse-failed",
+  packageJsonEntrypointMissing: "package-json.entrypoint-missing",
   diffCredentialFileAdded: "diff.credential-file-added",
   diffLargeNewFile: "diff.large-new-file",
   diffBinAdded: "diff.bin-added",

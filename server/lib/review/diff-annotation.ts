@@ -78,6 +78,7 @@ function isReleaseScopedFinding(finding: { ruleId?: string | null }): boolean {
     finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyMajorBump ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffCredentialFileAdded ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffLargeNewFile ||
+    finding.ruleId === DETERMINISTIC_RULE_IDS.packageJsonEntrypointMissing ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.tarSuspiciousEntry,
   );
 }
