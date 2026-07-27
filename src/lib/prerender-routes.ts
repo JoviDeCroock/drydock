@@ -5,6 +5,7 @@ const HYDRATED_PRERENDER_ROUTES = [
   "/docs",
   "/privacy",
   "/diff",
+  "/reports",
 ] as const;
 
 const DASHBOARD_SHELL_ROUTES = [
@@ -21,6 +22,10 @@ export const ADDITIONAL_PRERENDER_ROUTES = [
   "/docs",
   "/privacy",
   "/diff",
+  // Shell for /reports/:token. Without it the SPA fallback serves the
+  // prerendered landing page, so a shared report link unfurls with the
+  // marketing card and flashes marketing copy before client routing.
+  "/reports",
   ...DASHBOARD_SHELL_ROUTES,
 ] as const;
 

@@ -351,6 +351,10 @@ export async function deleteUserAccount(
   await db.batch([
     db.update(scans).set({ ownerUserId: null }).where(eq(scans.ownerUserId, userId)),
     db.update(scans).set({ decidedByUserId: null }).where(eq(scans.decidedByUserId, userId)),
+    db
+      .update(scans)
+      .set({ publicSharedByUserId: null })
+      .where(eq(scans.publicSharedByUserId, userId)),
     db.update(scanEvents).set({ actorUserId: null }).where(eq(scanEvents.actorUserId, userId)),
     db
       .update(npmConnections)

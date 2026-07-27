@@ -155,7 +155,7 @@ describe("scan report JSON export", () => {
       aiReview: unknown;
       findings: Array<{ ruleId: string | null; severity: string }>;
     };
-    expect(body.schema).toBe("drydock.report.v1");
+    expect(body.schema).toBe("drydock.report.v2");
     expect(body.report?.digest).toBe("abc123");
     expect(body.report?.rulesVersion).toBe("1.8.0");
     expect(body.scan.id).toBe(scanId);

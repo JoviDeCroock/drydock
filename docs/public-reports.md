@@ -24,7 +24,7 @@ The unguessable 256-bit share token is the capability; all endpoints are
 rate-limited per IP and return `404` for unknown, malformed, or revoked tokens.
 
 - `GET /public/reports/:token` — the canonical report export
-  (`drydock.report.v1`, same bytes as the authenticated
+  (`drydock.report.v2`, same bytes as the authenticated
   `/api/v1/scans/:id/report.json`). Never includes file samples, scan events,
   or organization/user identifiers.
 - `GET /public/reports/:token/attestation` — DSSE envelope over an in-toto v1
@@ -49,6 +49,15 @@ is an in-toto v1 Statement:
 To verify: fetch the report bytes, hash them, compare with the subject digest,
 then verify the envelope signature against `/public/attestation-key` (match by
 `keyid`).
+
+**Fetch both, and re-fetch on mismatch.** The report route and the attestation
+route are independent reads: each serializes the report from current scan state,
+so the bytes are identical for a given state but the state can change between
+the two requests. A decision recorded in that window (or any later edit to a
+mutable field — `decision`, `riskSummary`, findings) means the digest covers a
+document the consumer never fetched, and verification fails. That is a race, not
+a forgery: re-fetch the report and compare again. An archived pair captured
+together always verifies, which is what matters for the archival use case.
 
 ## Key management
 

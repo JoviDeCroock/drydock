@@ -47,7 +47,7 @@ export function ShareDialog({
       open={open}
       onClose={onClose}
       title="Share report"
-      description="A public link serves this review's canonical report — findings, risk, and manifest changes — to anyone who has it. File contents are never included."
+      description="A public link serves this review's canonical report — findings, risk, and manifest changes — to anyone who has it. Individual file contents are never included; findings still quote the redacted lines they matched."
       footer={
         share ? (
           <>

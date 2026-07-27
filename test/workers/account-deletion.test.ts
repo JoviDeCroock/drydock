@@ -198,6 +198,55 @@ describe("account deletion", () => {
     ).toBe(1);
   });
 
+  test("nulls the share attribution of a scan the leaving member shared", async () => {
+    // Regression: `public_shared_by_user_id` is a user FK on `scans` with
+    // ON DELETE SET NULL, and D1 enforces it. Account deletion nulls every
+    // other user-referencing column before Better Auth deletes the row; when
+    // this one was missed, any admin who had shared a report in an org they did
+    // not own could never delete their account — the FK check failed and the
+    // request 500'd.
+    const owner = await newAccount();
+    const created = await call("POST", "/api/v1/organizations", {
+      body: { name: "Publisher Org" },
+      jar: owner.jar,
+    });
+    expect(created.res.status).toBe(201);
+    const orgId = (created.json?.organization as { id?: string } | undefined)?.id ?? "";
+    expect(orgId).toBeTruthy();
+
+    // An admin in someone else's org: deleting their account never deletes the
+    // org, so the scan row survives holding their id.
+    const admin = await newAccount();
+    const now = Date.now();
+    await env.DB.prepare(
+      "INSERT INTO organization_members (id, organization_id, user_id, role, created_at, updated_at) VALUES (?, ?, ?, 'admin', ?, ?)",
+    )
+      .bind(`member:${orgId}:${admin.userId}`, orgId, admin.userId, now, now)
+      .run();
+    const scanId = `scan-${crypto.randomUUID()}`;
+    await env.DB.prepare(
+      "INSERT INTO scans (id, stage_id, organization_id, risk, status, source, public_share_token, public_shared_at, public_shared_by_user_id, created_at, updated_at) VALUES (?, ?, ?, 'low', 'completed', 'manual', ?, ?, ?, ?, ?)",
+    )
+      .bind(scanId, "stage-share", orgId, `tok-${crypto.randomUUID()}`, now, admin.userId, now, now)
+      .run();
+
+    const del = await call("POST", "/api/auth/delete-user", {
+      body: { password: PASSWORD },
+      jar: admin.jar,
+    });
+    expect(del.res.status).toBe(200);
+    expect(await countRows("SELECT count(*) AS n FROM user WHERE id = ?", admin.userId)).toBe(0);
+
+    // The share itself survives — revoking is the publisher's call, not a side
+    // effect of an unrelated account closing — but the attribution is nulled.
+    expect(
+      await countRows(
+        "SELECT count(*) AS n FROM scans WHERE id = ? AND public_share_token IS NOT NULL AND public_shared_by_user_id IS NULL",
+        scanId,
+      ),
+    ).toBe(1);
+  });
+
   test("rejects deletion when the password is wrong", async () => {
     const { jar, userId } = await newAccount();
 

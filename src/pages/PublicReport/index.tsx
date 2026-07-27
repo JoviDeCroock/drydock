@@ -11,9 +11,12 @@ import { LoadingState } from "../../components/Loading";
 import { PageShell } from "../../components/PageShell";
 import { LinkButton } from "../../components/Button";
 import { EmptyLine, MonoDetail, SectionLabel } from "../../components/Typography";
+import { verdictTextClass } from "../../features/review/verdict";
+import { MarketingHeaderActions } from "../MarketingHeaderActions";
+import { useAuthedSession } from "../useAuthedSession";
 
 // The canonical report export served at /public/reports/:token — the same
-// document `serializeReportExport` produces (schema drydock.report.v1).
+// document `serializeReportExport` produces (schema drydock.report.v2).
 interface PublicReport {
   schema: string;
   scan: {
@@ -55,6 +58,7 @@ const MAX_LISTED_CHANGES = 200;
 export default function PublicReportPage() {
   const route = useRoute();
   const token = route.params.token ?? "";
+  const authed = useAuthedSession();
   const report = useSignal<PublicReport | null>(null);
   const errorState = useSignal<"none" | "not_found" | "failed">("none");
 
@@ -102,7 +106,7 @@ export default function PublicReportPage() {
 
   if (errorState.value === "not_found") {
     return (
-      <PageShell width="doc">
+      <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
         <Alert tone="critical">
           This report link is invalid or has been revoked by the publisher.
         </Alert>
@@ -111,7 +115,7 @@ export default function PublicReportPage() {
   }
   if (errorState.value === "failed") {
     return (
-      <PageShell width="doc">
+      <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
         <Alert tone="critical">The report could not be loaded. Try again in a minute.</Alert>
       </PageShell>
     );
@@ -120,7 +124,7 @@ export default function PublicReportPage() {
   const data = report.value;
   if (!data) {
     return (
-      <PageShell width="doc">
+      <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
         <LoadingState title="Loading public review" detail="fetching report" />
       </PageShell>
     );
@@ -133,7 +137,7 @@ export default function PublicReportPage() {
   const changes = changedFiles.value;
 
   return (
-    <PageShell width="doc">
+    <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
       <header class="flex flex-wrap items-start justify-between gap-4">
         <div class="flex flex-col gap-2 min-w-0">
           <p class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle m-0">
@@ -263,21 +267,4 @@ export default function PublicReportPage() {
       </section>
     </PageShell>
   );
-}
-
-function verdictTextClass(risk: string): string {
-  switch (risk) {
-    case "critical":
-    case "high":
-      return "text-danger-text";
-    case "medium":
-      return "text-warn-text";
-    case "low":
-    case "info":
-      return "text-info-text";
-    case "ok":
-      return "text-ok-text";
-    default:
-      return "text-ink";
-  }
 }

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "00f11faf-874e-4641-97bf-3def02727b1c",
+  "id": "37903981-b812-4498-8c74-65b17ea0f64a",
   "prevId": "4ae5ecc3-cb91-4890-9101-8595c469f920",
   "tables": {
     "account": {
@@ -2096,6 +2096,13 @@
           "name": "scans_decided_by_idx",
           "columns": [
             "decided_by_user_id"
+          ],
+          "isUnique": false
+        },
+        "scans_public_shared_by_idx": {
+          "name": "scans_public_shared_by_idx",
+          "columns": [
+            "public_shared_by_user_id"
           ],
           "isUnique": false
         },

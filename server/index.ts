@@ -94,6 +94,11 @@ function assetFallbackRequest(request: Request): Request {
     url.search = "";
     return new Request(url, request);
   }
+  if (url.pathname.startsWith("/reports/")) {
+    url.pathname = "/reports/";
+    url.search = "";
+    return new Request(url, request);
+  }
   if (
     (url.pathname === "/dashboard" || url.pathname.startsWith("/dashboard/")) &&
     !DASHBOARD_STATIC_ASSET_PATHS.has(url.pathname)
@@ -103,6 +108,14 @@ function assetFallbackRequest(request: Request): Request {
     return new Request(url, request);
   }
   return request;
+}
+
+// A share link's capability *is* its token, so the raw path must never reach a
+// log line. Cloudflare's own invocation logs still capture the full URL — that
+// is inherent to capability URLs and is why revocation is immediate — but
+// nothing Drydock writes should widen that exposure.
+function redactCapabilityPath(path: string): string {
+  return path.replace(/^\/public\/reports\/[^/]+/, "/public/reports/:token");
 }
 
 function applySecurityHeaders(c: { res: Response; req: { path: string } }) {
@@ -286,7 +299,7 @@ app.get("/api", (c) =>
         "GET /api/v1/slack; POST /api/v1/slack/connect; GET /api/v1/slack/callback; GET /api/v1/slack/channels; PUT /api/v1/slack/channel; PATCH /api/v1/slack; DELETE /api/v1/slack; POST /api/v1/slack/test",
       health: "GET /api/health",
     },
-    auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints, which serve only public registry data.",
+    auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints (public registry data only) and /public/reports/* (a share token is the capability; the owning organization opted in per scan).",
     note: "Cloudflare Workers cannot spawn the npm CLI. This service performs the npm stage download equivalent inside a Dynamic Worker by fetching the staged tarball through a locked-down gateway.",
   }),
 );
@@ -360,7 +373,7 @@ function recordMarketingVisit(
 app.onError((err, c) => {
   emitOperationalEvent("error", "request.unhandled_error", {
     method: c.req.method,
-    path: c.req.path,
+    path: redactCapabilityPath(c.req.path),
     error: describeOperationalError(err),
   });
   return c.json({ error: "internal error" }, 500);

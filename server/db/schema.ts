@@ -203,6 +203,9 @@ export const scans = sqliteTable(
     // Account deletion nulls decided_by_user_id by user id, and D1 enforces the
     // user FK on delete; without this index both walk the whole table.
     decidedByIdx: index("scans_decided_by_idx").on(table.decidedByUserId),
+    // Same reasoning for the share attribution column: account deletion nulls it
+    // by user id, and the FK is checked on every user delete.
+    publicSharedByIdx: index("scans_public_shared_by_idx").on(table.publicSharedByUserId),
     publicShareTokenUniqueIdx: uniqueIndex("scans_public_share_token_unique_idx").on(
       table.publicShareToken,
     ),
