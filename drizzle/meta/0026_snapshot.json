@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "82b955aa-1e43-4038-95c1-8ac7482e1a17",
-  "prevId": "00f11faf-874e-4641-97bf-3def02727b1c",
+  "id": "3e6e53aa-9934-48a5-b804-47b2723d0387",
+  "prevId": "37903981-b812-4498-8c74-65b17ea0f64a",
   "tables": {
     "account": {
       "name": "account",
@@ -2070,10 +2070,10 @@
           ],
           "isUnique": false
         },
-        "scans_package_completed_idx": {
-          "name": "scans_package_completed_idx",
+        "scans_public_package_key_completed_idx": {
+          "name": "scans_public_package_key_completed_idx",
           "columns": [
-            "package_name",
+            "public_package_key",
             "completed_at"
           ],
           "isUnique": false
@@ -2121,6 +2121,13 @@
           ],
           "isUnique": false
         },
+        "scans_public_shared_by_idx": {
+          "name": "scans_public_shared_by_idx",
+          "columns": [
+            "public_shared_by_user_id"
+          ],
+          "isUnique": false
+        },
         "scans_public_share_token_unique_idx": {
           "name": "scans_public_share_token_unique_idx",
           "columns": [
@@ -2132,13 +2139,6 @@
           "name": "scans_public_feed_listed_idx",
           "columns": [
             "public_feed_listed_at"
-          ],
-          "isUnique": false
-        },
-        "scans_public_package_key_idx": {
-          "name": "scans_public_package_key_idx",
-          "columns": [
-            "public_package_key"
           ],
           "isUnique": false
         }

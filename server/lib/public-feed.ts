@@ -21,6 +21,17 @@ export function publicPackageNameMax(ecosystem: PublicEcosystem): number {
   return PUBLIC_PACKAGE_NAME_MAX[ecosystem];
 }
 
+/**
+ * Canonical lookup key for a package name, per that ecosystem's own identity
+ * rules. The ecosystem prefix makes a cross-ecosystem collision impossible.
+ *
+ * npm is deliberately *not* case-folded, unlike the other two. Its registry
+ * treats names case-sensitively for existing packages — `JSONStream` and
+ * `jsonstream` are different packages — so folding would merge two real
+ * packages onto one badge. PyPI folds per PEP 503 and the VS Code marketplace
+ * treats extension ids case-insensitively, so for those, *not* folding would
+ * fragment one package across several keys.
+ */
 export function publicPackageLookupKey(ecosystem: PublicEcosystem, packageName: string): string {
   const normalized =
     ecosystem === "pypi"
@@ -66,8 +77,14 @@ export function scanPackageIdentity(source: string): PackageIdentity {
 /**
  * Pick the badge's scan among the (already listed + ecosystem-scoped)
  * candidates: the newest registry-verified review wins over any
- * manifest-claimed one, so a workflow-gate scan claiming someone else's npm
- * name can never override the real maintainer's badge.
+ * manifest-claimed one, so on npm a workflow-gate scan claiming someone else's
+ * name cannot displace the real maintainer's staged review.
+ *
+ * That preference is only a *tiebreak*, and it does not generalize: only npm has
+ * a staged adapter, so every PyPI and VS Code scan is a workflow gate and is
+ * therefore always `manifest-claimed`. There is never a registry-verified row to
+ * prefer. `buildBadgePayload` is what closes the gap — a manifest-claimed pick
+ * is labelled as unverified rather than presented as a plain review.
  */
 export function pickBadgeScan(rows: SharedScanRow[]): SharedScanRow | null {
   return (
@@ -133,12 +150,22 @@ const BADGE_CACHE_SECONDS = 300;
 // Version strings originate in package manifests (attacker-shaped for gate
 // scans); clamp so a hostile version can't balloon the badge message.
 const BADGE_VERSION_MAX = 64;
+// Zero-width and bidirectional-override code points. The badge is rendered into
+// SVG text by shields, so an RLO in a version string reverses the visible run
+// and can make the message read as something it does not say. Same set the tar
+// parser strips from entry names, and the same reasoning.
+const BADGE_INVISIBLE_CHARS = /[\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF\u180E]/g;
+// eslint-disable-next-line no-control-regex -- stripping C0/C1 is the point
+const BADGE_CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F]/g;
 
 function badgeVersion(stagedVersion: string | null): string {
   if (!stagedVersion) return "release";
-  return stagedVersion.length > BADGE_VERSION_MAX
-    ? `${stagedVersion.slice(0, BADGE_VERSION_MAX)}…`
-    : stagedVersion;
+  const cleaned = stagedVersion
+    .replace(BADGE_INVISIBLE_CHARS, "")
+    .replace(BADGE_CONTROL_CHARS, "")
+    .trim();
+  if (!cleaned) return "release";
+  return cleaned.length > BADGE_VERSION_MAX ? `${cleaned.slice(0, BADGE_VERSION_MAX)}…` : cleaned;
 }
 
 const RISK_BADGE_COLOR: Record<string, string> = {
@@ -147,6 +174,21 @@ const RISK_BADGE_COLOR: Record<string, string> = {
   high: "red",
   critical: "red",
 };
+
+/**
+ * A badge is read as an assertion about a package name, by people who will never
+ * open the report behind it. Only a registry-verified review proves the
+ * publisher controls that name; a workflow-gate review proves only that some
+ * organization built an artifact whose manifest claims it. Anyone can do the
+ * latter for any name, and for PyPI and VS Code it is the *only* kind of review
+ * that exists — so the distinction has to be visible on the badge, not just in
+ * the feed entry that a badge viewer never sees.
+ */
+function badgeLabel(row: SharedScanRow): string {
+  return scanPackageIdentity(row.source) === "registry-verified"
+    ? BADGE_LABEL
+    : `${BADGE_LABEL} (unverified)`;
+}
 
 export function buildBadgePayload(row: SharedScanRow | null): BadgePayload {
   if (!row) {
@@ -161,7 +203,7 @@ export function buildBadgePayload(row: SharedScanRow | null): BadgePayload {
   if (row.decision === "no_publish") {
     return {
       schemaVersion: 1,
-      label: BADGE_LABEL,
+      label: badgeLabel(row),
       message: `${badgeVersion(row.stagedVersion)} blocked`,
       color: "red",
       cacheSeconds: BADGE_CACHE_SECONDS,
@@ -170,9 +212,16 @@ export function buildBadgePayload(row: SharedScanRow | null): BadgePayload {
   const risk = sharedScanReleaseRisk(row);
   return {
     schemaVersion: 1,
-    label: BADGE_LABEL,
+    label: badgeLabel(row),
     message: `${badgeVersion(row.stagedVersion)} reviewed · ${risk} risk`,
-    color: RISK_BADGE_COLOR[risk] ?? "lightgrey",
+    // An unverified claim never renders as a clean green pass: the color is the
+    // only thing most readers take from a badge.
+    color:
+      scanPackageIdentity(row.source) === "registry-verified"
+        ? (RISK_BADGE_COLOR[risk] ?? "lightgrey")
+        : risk === "low"
+          ? "lightgrey"
+          : (RISK_BADGE_COLOR[risk] ?? "lightgrey"),
     cacheSeconds: BADGE_CACHE_SECONDS,
   };
 }

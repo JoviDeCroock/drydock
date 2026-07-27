@@ -192,10 +192,11 @@ export const scans = sqliteTable(
     ownerIdx: index("scans_owner_idx").on(table.ownerUserId),
     stageIdx: index("scans_stage_id_idx").on(table.stageId),
     packageIdx: index("scans_package_idx").on(table.packageName),
-    // Serves the badge lookup's ORDER BY completed_at over one package name
-    // without sorting every row that ever carried the name.
-    packageCompletedIdx: index("scans_package_completed_idx").on(
-      table.packageName,
+    // Serves the badge lookup, which filters on the canonical public key (not
+    // package_name) and orders by completed_at. Keyed on the wrong column this
+    // index covered nothing and taxed every write to the busiest table.
+    publicPackageKeyCompletedIdx: index("scans_public_package_key_completed_idx").on(
+      table.publicPackageKey,
       table.completedAt,
     ),
     gateIdx: index("scans_gate_org_idx").on(table.gateId, table.organizationId),
@@ -225,7 +226,8 @@ export const scans = sqliteTable(
       table.publicShareToken,
     ),
     publicFeedListedIdx: index("scans_public_feed_listed_idx").on(table.publicFeedListedAt),
-    publicPackageKeyIdx: index("scans_public_package_key_idx").on(table.publicPackageKey),
+    // No standalone public_package_key index: the composite above has it as a
+    // leading column, so it already serves an equality lookup on the key alone.
   }),
 );
 

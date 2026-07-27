@@ -12,6 +12,7 @@ import {
   buildThreatFeedEntry,
   pickBadgeScan,
   PUBLIC_ECOSYSTEMS,
+  publicPackageLookupKey,
   publicPackageNameMax,
   scanEcosystem,
   THREAT_FEED_SCHEMA,
@@ -82,6 +83,58 @@ function coloCache(): Cache {
   return (caches as unknown as { default: Cache }).default;
 }
 
+/**
+ * Colo-cache key for a cacheable public path. Badge paths collapse to their
+ * canonical package key so `/badge/npm/Foo` and `/badge/npm/Foo` reached via a
+ * different encoding share one entry — and so `purgePublicFeedCache` can delete
+ * that entry by key after a revoke or unlist.
+ */
+export function publicCacheKey(origin: string, routePath: string): Request {
+  const badge = /^\/badge\/([^/]+)\/(.+)$/.exec(routePath);
+  if (badge) {
+    const ecosystem = badge[1] as PublicEcosystem;
+    if (PUBLIC_ECOSYSTEMS.includes(ecosystem)) {
+      let name = badge[2];
+      try {
+        name = decodeURIComponent(name);
+      } catch {
+        // Undecodable name: fall through and key on the raw path.
+      }
+      const key = publicPackageLookupKey(ecosystem, name);
+      return new Request(`${origin}/public/badge-key/${encodeURIComponent(key)}`);
+    }
+  }
+  return new Request(origin + "/public" + routePath);
+}
+
+/**
+ * Drop the colo-cached badge and threat feed after a share is revoked or a
+ * listing is turned off.
+ *
+ * Without this the cached bodies keep asserting "<version> reviewed · low risk"
+ * for up to the cache TTL after the publisher withdrew the report, and the
+ * cached feed still embeds a now-dead share token. The report itself is
+ * `no-store` and 404s immediately; this closes the same window on the two
+ * derived surfaces. Best effort: a failure here only means the old TTL applies.
+ */
+export function purgePublicFeedCache(
+  executionCtx: ExecutionContext,
+  origin: string,
+  publicPackageKey: string | null,
+): void {
+  const keys = [new Request(`${origin}/public/threat-feed.json`)];
+  if (publicPackageKey) {
+    keys.push(new Request(`${origin}/public/badge-key/${encodeURIComponent(publicPackageKey)}`));
+  }
+  for (const key of keys) {
+    executionCtx.waitUntil(
+      coloCache()
+        .delete(key)
+        .catch(() => {}),
+    );
+  }
+}
+
 publicReportsRoutes.use("*", async (c, next) => {
   if (c.req.method !== "GET") return next();
   const routePath = new URL(c.req.url).pathname.replace(/^\/public/, "");
@@ -91,9 +144,12 @@ publicReportsRoutes.use("*", async (c, next) => {
   // of a request-derived origin would be a Host-header poisoning vector, so
   // only cache the feed when the origin is pinned by config.
   if (routePath.startsWith("/threat-feed") && !c.env.BETTER_AUTH_URL) return next();
-  // Key on the path only: responses never vary by query, so a cache-busting
-  // query string can never force a D1 read-through.
-  const cacheKey = new Request(new URL(c.req.path, c.req.url).origin + c.req.path);
+  // Key on the *canonical* path only: responses never vary by query, so a
+  // cache-busting query string can never force a D1 read-through, and folding
+  // badge URLs onto their lookup key means one package has exactly one cache
+  // entry no matter how the embedder cased or encoded the name. That is what
+  // makes the purge below exact rather than best-effort.
+  const cacheKey = publicCacheKey(new URL(c.req.url).origin, routePath);
   let cached: Response | undefined;
   try {
     cached = await coloCache().match(cacheKey);
@@ -178,12 +234,17 @@ publicReportsRoutes.get("/threat-feed.json", async (c) => {
 });
 
 // shields.io endpoint badge for a package's latest publicly shared review.
+// Badge errors are fetched cross-origin by the same proxies as the 200s, so
+// they carry the same CORS header; without it the proxy reports an opaque
+// network failure instead of the actual status.
+const BADGE_ERROR_HEADERS = { "access-control-allow-origin": "*" } as const;
+
 // npm names contain slashes (@scope/name), so the route is a wildcard and the
 // name is everything after the ecosystem segment.
 publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
   const ecosystem = c.req.param("ecosystem") as PublicEcosystem;
   if (!PUBLIC_ECOSYSTEMS.includes(ecosystem)) {
-    return c.json({ error: "unknown ecosystem" }, 404);
+    return c.json({ error: "unknown ecosystem" }, 404, BADGE_ERROR_HEADERS);
   }
   const marker = `/badge/${ecosystem}/`;
   const markerIndex = c.req.path.indexOf(marker);
@@ -192,10 +253,10 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
   try {
     packageName = decodeURIComponent(rawName);
   } catch {
-    return c.json({ error: "invalid package name" }, 400);
+    return c.json({ error: "invalid package name" }, 400, BADGE_ERROR_HEADERS);
   }
   if (!packageName || packageName.length > publicPackageNameMax(ecosystem)) {
-    return c.json({ error: "invalid package name" }, 400);
+    return c.json({ error: "invalid package name" }, 400, BADGE_ERROR_HEADERS);
   }
 
   const db = createDb(c.env.DB);

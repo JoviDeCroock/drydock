@@ -36,6 +36,7 @@ import {
 import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
 import { workerExecutionContext } from "../lib/platform/execution-context";
 import { enablePublicShare, revokePublicShare, setThreatFeedListing } from "../db/scan-share";
+import { purgePublicFeedCache } from "./public-reports";
 import {
   allowInsecureLocalRegistry,
   decryptNpmToken,
@@ -346,6 +347,13 @@ scansRoutes.post("/:id/share", async (c) => {
       // A concurrent revoke can void the share between the enable and the
       // toggle; the stale pre-revoke state must not be reported as current.
       if (!updated) return c.json({ error: "the share link was just revoked" }, 409);
+      // Unlisting (and re-listing) changes what the cached badge and feed
+      // assert; drop both so the change is not delayed by the colo TTL.
+      purgePublicFeedCache(
+        c.executionCtx,
+        new URL(c.req.url).origin,
+        updated.publicPackageKey ?? null,
+      );
       share = updated;
     }
   }
@@ -358,7 +366,7 @@ scansRoutes.delete("/:id/share", async (c) => {
   const { organizationId, role } = await requireActiveOrganizationContext(c, db);
   if (!roleCanManagePublicShares(role)) return c.json({ error: "forbidden" }, 403);
 
-  const revoked = await revokePublicShare(db, {
+  const { revoked, publicPackageKey } = await revokePublicShare(db, {
     scanId: c.req.param("id"),
     organizationId,
     actorUserId: session.userId,
@@ -366,6 +374,8 @@ scansRoutes.delete("/:id/share", async (c) => {
   if (!revoked) {
     const existing = await getScanStatus(db, c.req.param("id"), organizationId);
     if (!existing) return c.json({ error: "not found" }, 404);
+  } else {
+    purgePublicFeedCache(c.executionCtx, new URL(c.req.url).origin, publicPackageKey);
   }
   return c.json({ revoked });
 });

@@ -81,9 +81,18 @@ for the package's most recent **feed-listed** review:
 
 The badge is a name-discoverable index, so it takes the same second opt-in as
 the threat feed — a report shared privately by link never becomes queryable by
-package name. Among listed candidates the newest **registry-verified** review
-wins (see package identity below), so a workflow-gate scan claiming someone
-else's npm name cannot override the real maintainer's badge.
+package name.
+
+**Verified and unverified badges are visibly different.** Among listed
+candidates the newest **registry-verified** review wins (see package identity
+below), so on npm a workflow-gate scan claiming someone else's name cannot
+displace the real maintainer's staged review. That preference is only a
+tiebreak, and it does not generalize: only npm has a staged adapter, so every
+PyPI and VS Code review is a workflow gate and is _always_ manifest-claimed —
+there is never a registry-verified row to prefer. A manifest-claimed pick
+therefore renders as `drydock (unverified)` and never takes the clean green
+low-risk color, because anyone can build an artifact whose manifest claims any
+name, and a badge is read by people who will not open the report behind it.
 
 Embed via
 `https://img.shields.io/endpoint?url=<origin>/public/badge/npm/<package>`
@@ -121,11 +130,17 @@ Each feed entry carries `packageIdentity`:
 ### Caching
 
 Badge and feed responses read through the per-colo Workers cache
-(`caches.default`, keyed on the path with any query string ignored) and declare
-`max-age=300`, so listing or revocation changes can take up to ~5 minutes to
-propagate to these two surfaces. Report and attestation responses are
-deliberately uncached (`no-store`): revoking a share link takes effect
-immediately. Badge cache misses use a rate-limit bucket separate from report
+(`caches.default`) and declare `max-age=300`. The cache key is the canonical
+path with any query string ignored, and badge URLs collapse onto their package
+lookup key, so one package has exactly one entry however an embedder cased or
+encoded the name.
+
+Revoking a share or unlisting a report **purges both entries** rather than
+waiting out the TTL: a withdrawn review must stop being asserted, and a cached
+feed body embeds a now-dead share token. Report and attestation responses are
+uncached (`no-store`) for the same reason. What the TTL still bounds is
+staleness from changes that are not revocations — a decision recorded after the
+badge was cached can take up to ~5 minutes to show as `blocked`. Badge cache misses use a rate-limit bucket separate from report
 reads; a throttled badge still returns an uncached valid shields.io payload so
 shared badge-proxy traffic cannot produce an error badge or exhaust report
 access.

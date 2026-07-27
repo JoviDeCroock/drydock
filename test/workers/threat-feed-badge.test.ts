@@ -7,7 +7,7 @@ import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { describeAuditEvent } from "../../server/lib/auth/audit-events";
-import { publicReportsRoutes } from "../../server/routes/public-reports";
+import { publicCacheKey, publicReportsRoutes } from "../../server/routes/public-reports";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
 
@@ -168,8 +168,11 @@ interface FeedBody {
 // Badge and feed responses read through the colo cache (caches.default), so
 // lifecycle tests that assert on fresh state purge the entry first. Tests that
 // exercise the caching itself skip the purge.
+// Mirrors the route module's keying so the helper purges the entry the Worker
+// actually wrote: badge paths collapse onto their canonical package key.
 function coloCacheKey(path: string): Request {
-  return new Request(`http://test.local${path.split("?")[0]}`);
+  const bare = path.split("?")[0];
+  return publicCacheKey("http://test.local", bare.replace(/^\/public/, ""));
 }
 
 async function purgeColoCache(path: string): Promise<void> {
@@ -271,9 +274,56 @@ describe("shields badge endpoint", () => {
       source: "workflow_gate",
     });
     await share(buildTestApp(spoofer), gateOnly, { threatFeed: true });
-    expect((await fetchBadge(app, "npm", gateOnlyName)).body.message).toBe(
-      "2.0.0 reviewed · low risk",
-    );
+    // A gate-only claim still answers the badge — but says so. The registry
+    // never proved this org can publish under that name.
+    expect((await fetchBadge(app, "npm", gateOnlyName)).body).toMatchObject({
+      label: "drydock (unverified)",
+      message: "2.0.0 reviewed · low risk",
+      color: "lightgrey",
+    });
+  });
+
+  test("PyPI and VS Code badges are always labelled unverified", async () => {
+    // Only npm has a staged adapter, so every PyPI and VS Code review is a
+    // workflow gate and can never be registry-verified. The "verified wins"
+    // tiebreak has nothing to prefer there, which makes the label the only
+    // thing separating a maintainer's review from anyone's claim on the name.
+    for (const ecosystem of ["pypi", "vscode"] as const) {
+      const claimant = await seedUser();
+      const claimantApp = buildTestApp(claimant);
+      const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+      const scanId = await seedCompletedScan(claimant, {
+        packageName,
+        version: "2.99.0",
+        ecosystem,
+        source: "workflow_gate",
+      });
+      await share(claimantApp, scanId, { threatFeed: true });
+
+      const badge = await fetchBadge(claimantApp, ecosystem, packageName);
+      expect(badge.body.label).toBe("drydock (unverified)");
+      expect(badge.body.color).toBe("lightgrey");
+    }
+  });
+
+  test("a hostile version string cannot reshape the rendered badge", async () => {
+    // Versions come from a package manifest, and for gate scans that manifest
+    // is attacker-shaped. shields renders the message into SVG text, so a
+    // right-to-left override would reverse the visible run.
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      version: "1.0.0\u202E ksir hgih\u0007",
+    });
+    await share(app, scanId, { threatFeed: true });
+
+    const badge = await fetchBadge(app, "npm", packageName);
+    expect(badge.body.message).toBe("1.0.0 ksir hgih reviewed · low risk");
+    expect(badge.body.message).not.toMatch(/[\u200B-\u200F\u2028-\u202E\uFEFF]/);
+    // eslint-disable-next-line no-control-regex -- asserting control chars are gone
+    expect(badge.body.message).not.toMatch(/[\u0000-\u001F\u007F-\u009F]/);
   });
 
   test("manifest-claimed scans cannot crowd a verified review out of the candidate page", async () => {
@@ -310,19 +360,15 @@ describe("shields badge endpoint", () => {
     const first = await fetchBadge(app, "npm", packageName);
     expect(first.body.message).toBe("5.0.0 reviewed · low risk");
 
-    // Revoke, then read without purging: the colo cache still serves the old
-    // payload (staleness is bounded by max-age=300 and documented).
-    await request(app, `/api/v1/scans/${scanId}/share`, { method: "DELETE" });
-    const cachedRead = await fetchBadge(app, "npm", packageName, { cached: true });
-    expect(cachedRead.body.message).toBe("5.0.0 reviewed · low risk");
-
-    // Query strings never bypass the cache — the key is the bare path.
+    // Query strings never bypass the cache — the key is the canonical path.
     const busted = await request(app, `/public/badge/npm/${packageName}?bust=${Math.random()}`);
     expect(((await busted.json()) as BadgeBody).message).toBe("5.0.0 reviewed · low risk");
 
-    // A purged (expired) entry recomputes from the database.
-    const fresh = await fetchBadge(app, "npm", packageName);
-    expect(fresh.body.message).toBe("not reviewed");
+    // Revoking purges both derived surfaces, so the withdrawn review stops
+    // being asserted immediately rather than lingering for the cache TTL.
+    await request(app, `/api/v1/scans/${scanId}/share`, { method: "DELETE" });
+    const afterRevoke = await fetchBadge(app, "npm", packageName, { cached: true });
+    expect(afterRevoke.body.message).toBe("not reviewed");
   });
 
   test("hostile version strings are clamped in the badge message", async () => {

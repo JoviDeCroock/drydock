@@ -18,6 +18,13 @@ export interface PublicShareState {
   publicShareToken: string;
   publicSharedAt: Date;
   publicFeedListedAt: Date | null;
+  /**
+   * Canonical badge key this scan occupies, so a caller can purge the colo-
+   * cached badge after a listing change. Present whether or not the scan is
+   * currently listed — an *un*listing is exactly when the cached body goes
+   * stale.
+   */
+  publicPackageKey?: string | null;
 }
 
 /**
@@ -106,7 +113,7 @@ export async function enablePublicShare(
 export async function revokePublicShare(
   db: AppDb,
   input: { scanId: string; organizationId: string; actorUserId: string },
-): Promise<boolean> {
+): Promise<{ revoked: boolean; publicPackageKey: string | null }> {
   const now = new Date();
   const updated = await db
     .update(scans)
@@ -129,8 +136,11 @@ export async function revokePublicShare(
       id: scans.id,
       packageName: scans.packageName,
       stagedVersion: scans.stagedVersion,
+      // `public_package_key` is nulled by this same UPDATE, so the key that
+      // just went stale is recomputed from the (untouched) package name.
+      summaryJson: scans.summaryJson,
     });
-  if (updated.length === 0) return false;
+  if (updated.length === 0) return { revoked: false, publicPackageKey: null };
 
   await recordScanEvent(db, {
     organizationId: input.organizationId,
@@ -139,7 +149,12 @@ export async function revokePublicShare(
     type: "scan.share_revoked",
     metadata: { packageName: updated[0].packageName, stagedVersion: updated[0].stagedVersion },
   });
-  return true;
+  return {
+    revoked: true,
+    publicPackageKey: updated[0].packageName
+      ? publicPackageLookupKey(scanEcosystem(updated[0].summaryJson), updated[0].packageName)
+      : null,
+  };
 }
 
 /**
@@ -195,6 +210,11 @@ export async function setThreatFeedListing(
     metadata: { packageName: row.packageName, stagedVersion: row.stagedVersion },
   });
   return {
+    publicPackageKey:
+      publicPackageKey ??
+      (row.packageName
+        ? publicPackageLookupKey(scanEcosystem(candidate.summaryJson), row.packageName)
+        : null),
     publicShareToken: row.publicShareToken,
     publicSharedAt: row.publicSharedAt,
     publicFeedListedAt: row.publicFeedListedAt,
