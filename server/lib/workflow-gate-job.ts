@@ -453,6 +453,15 @@ async function reviewGatePackages(
       packageName: candidate.package.name,
       stagedVersion: candidate.package.version,
     });
+    // Counted per package scan, not per gate: a monorepo bundle creates several
+    // scans under one gate and each emits its own `scan.completed`, so counting
+    // the gate would make the queued -> completed drop-off unreadable.
+    recordProductEvent(env, {
+      name: "scan.queued",
+      organizationId,
+      ecosystem: candidate.ecosystem,
+      source: "workflow_gate",
+    });
 
     try {
       const result = await runScanPipeline(

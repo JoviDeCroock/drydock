@@ -1,0 +1,66 @@
+{
+  "id": "legit-ci-and-container-bootstrap",
+  "title": "Package ships a Dockerfile and a GitHub workflow that bootstrap toolchains with curl | sh (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-build-infrastructure",
+  "source": "benign-popular",
+  "intent": "Download-and-execute normally skips the executor requirement, because `curl … | bash` has no benign reading in code a consumer installs. Build infrastructure is the exception: a Dockerfile's `RUN` and a workflow's `- run:` execute on a CI runner at build time, never on a consumer's install, and every mainstream toolchain (nodesource, uv, rustup) documents exactly this idiom. Withholding the exemption in those paths leaves the ordinary executor requirement, which these files do not satisfy. This matters most for PyPI, where an sdist ships the whole repository tree and a first gated release has no baseline, so every one of these files reads as `added`.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": { "name": "toolchain-utils", "version": "1.4.0", "main": "index.js" },
+  "stagedPackageJson": { "name": "toolchain-utils", "version": "1.5.0", "main": "index.js" },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 67,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"toolchain-utils\",\"version\":\"1.4.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 48,
+      "sha256": "prev-index-js",
+      "flags": [],
+      "textSample": "export function version() {\n  return \"1.4.0\";\n}\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 67,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"toolchain-utils\",\"version\":\"1.5.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 48,
+      "sha256": "staged-index-js",
+      "flags": [],
+      "textSample": "export function version() {\n  return \"1.5.0\";\n}\n"
+    },
+    {
+      "path": "Dockerfile",
+      "size": 260,
+      "sha256": "dockerfile",
+      "flags": [],
+      "textSample": "FROM debian:bookworm-slim\n\nRUN apt-get update && apt-get install -y curl ca-certificates\nRUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash -\nRUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y\n\nWORKDIR /app\nCOPY . .\n"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "size": 300,
+      "sha256": "workflow-ci",
+      "flags": [],
+      "textSample": "name: ci\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: curl -LsSf https://astral.sh/uv/install.sh | sh\n      - run: curl -fsSL https://get.pnpm.io/install.sh | sh -\n      - run: pnpm install && pnpm test\n"
+    },
+    {
+      "path": "Makefile",
+      "size": 120,
+      "sha256": "makefile",
+      "flags": [],
+      "textSample": "bootstrap:\n\tcurl -sSL https://install.python-poetry.org | python3 -\n\n.PHONY: bootstrap\n"
+    }
+  ]
+}

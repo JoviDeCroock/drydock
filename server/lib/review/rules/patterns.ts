@@ -59,10 +59,17 @@ const SHELL_NETWORK_TOOL_PATTERNS = [
 // command. Unlike a bare shell tool there is no benign reading of these — a
 // release that adds one is fetching and running code it did not ship.
 const SHELL_DOWNLOAD_EXECUTE_PATTERNS = [
-  /\b(?:curl|wget)\b[^\n|;&]*\|\s*(?:sudo\s+)?(?:ba|z|k|da)?sh\b/i,
-  /\b(?:curl|wget)\b[^\n|;&]*\|\s*(?:sudo\s+)?(?:python|perl|ruby|node)\b/i,
+  // The interpreter may sit behind any number of intermediate pipe stages
+  // (`| base64 -d | bash`, `| gunzip | sh` — the standard obfuscated forms), an
+  // absolute path (`| /bin/bash`), and a privilege/environment prefix
+  // (`| sudo -E bash`, `| env bash`). The trailing `\b` is what keeps
+  // `| sha256sum` and `| shasum` out.
+  /\b(?:curl|wget)\b[^\n;&]*\|\s*(?:(?:sudo|env|command|exec|xargs)(?:\s+-{1,2}\w+)*\s+)*(?:\S*\/)?(?:ba|z|k|da)?sh\b/i,
+  /\b(?:curl|wget)\b[^\n;&]*\|\s*(?:(?:sudo|env|command|exec|xargs)(?:\s+-{1,2}\w+)*\s+)*(?:\S*\/)?(?:python[\d.]*|perl|ruby|node)\b/i,
   /\$\(\s*(?:curl|wget)\b/i,
   /<\(\s*(?:curl|wget)\b/i,
+  // Backtick command substitution: `` eval `curl -s https://x` ``.
+  /`\s*(?:curl|wget)\b/i,
   /\bnc\s[^\n]*\s-e\s/,
   /(?:\bInvoke-WebRequest\b|\.DownloadString\s*\(|\biwr\b)[^\n]*\|\s*(?:iex|Invoke-Expression)\b/i,
   /\bpowershell\b[^\n]*\s-(?:enc|EncodedCommand)\b/i,

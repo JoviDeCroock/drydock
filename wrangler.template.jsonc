@@ -33,7 +33,7 @@
 	},
 	// Optional: aggregate product counters (scan volume, latency, failure rate,
 	// AI-reviewer health, public-diff traffic). Writes no PII and nothing from
-	// the browser — see server/lib/analytics.ts. Remove this block to run
+	// the browser — see server/lib/platform/analytics.ts. Remove this block to run
 	// without product analytics; every call site degrades to a no-op.
 	"analytics_engine_datasets": [
 		{

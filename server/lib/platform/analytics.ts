@@ -64,6 +64,23 @@ export type AnalyticsEvent =
       durationMs: number;
     }
   | {
+      /**
+       * A queued scan retired without ever running: currently only an
+       * auto-discovered staged publish whose tarball vanished before the job
+       * claimed it (npm unpublished or replaced the candidate). Separate from
+       * `scan.failed` on purpose — folding a routine race into the failure rate
+       * would make the reviewer's real failure rate unreadable — but still a
+       * terminal event, so every `scan.queued` has exactly one counterpart.
+       */
+      name: "scan.discarded";
+      organizationId: string;
+      ecosystem: string;
+      source: string;
+      /** Stable reason slug, never a raw message. */
+      reason: string;
+      durationMs: number;
+    }
+  | {
       name: "scan.decided";
       organizationId: string;
       ecosystem: string;
@@ -173,6 +190,13 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
         event.organizationId,
         event.ecosystem,
         [event.source, event.code],
+        [event.durationMs],
+      );
+    case "scan.discarded":
+      return base(
+        event.organizationId,
+        event.ecosystem,
+        [event.source, event.reason],
         [event.durationMs],
       );
     case "scan.decided":

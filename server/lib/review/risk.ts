@@ -2,6 +2,7 @@ import type { AiReview } from "../ai-review/types";
 import { displayedAiResult } from "../ai-review/types";
 import type { FindingProfileEntry, ReleaseConsistency } from "../scan/release-memory";
 import { combineRisk, computeRisk, normalizeRisk, type Finding, type RiskLevel } from "./";
+import { DETERMINISTIC_RULE_IDS } from "./rules/rule-ids";
 
 export interface ScanRiskBreakdown {
   artifactRisk: RiskLevel;
@@ -100,6 +101,33 @@ export function computeScanRiskBreakdown(
  * are projected without a `ruleId` (`projectAiReviewFindings`), which is what
  * distinguishes them here.
  */
+/**
+ * Rules that never age into background noise, so an approval never discounts
+ * them.
+ *
+ * The discount's premise is that a *capability* — a test runner spawning
+ * processes, a prebuilt binary that ships every release — is a property of the
+ * package rather than of the release, so re-anchoring the headline on it buries
+ * real signal. That premise does not extend to evidence of an active compromise.
+ * If a release shipping a dropper is ever approved (a compromised maintainer
+ * account, or an approval predating the rule that catches it), the next
+ * README-only release must not report the dropper as settled background: the
+ * profile would match, the finding would move to context, and the headline
+ * would read low forever after.
+ *
+ * Kept scoring: consumer install hooks, embedded secrets, remote-shell
+ * execution, and hostile archive entries.
+ */
+const STANDING_DANGER_RULE_IDS = new Set<string>([
+  DETERMINISTIC_RULE_IDS.installScript,
+  DETERMINISTIC_RULE_IDS.installScriptPreinstall,
+  DETERMINISTIC_RULE_IDS.installScriptImplicitNodeGyp,
+  DETERMINISTIC_RULE_IDS.installScriptGypCommandSubstitution,
+  DETERMINISTIC_RULE_IDS.codeRemoteShell,
+  DETERMINISTIC_RULE_IDS.fileSecretContent,
+  DETERMINISTIC_RULE_IDS.tarSuspiciousEntry,
+]);
+
 function dropPriorApprovedFindings(
   contextFindings: RiskFinding[],
   releaseConsistency: ReleaseConsistency | null | undefined,
@@ -107,7 +135,8 @@ function dropPriorApprovedFindings(
   const none = { kept: contextFindings, approvedCount: 0 };
   if (!releaseConsistency || !releaseConsistency.priorScanId) return none;
 
-  const eligible = (finding: RiskFinding) => Boolean(finding.ruleId);
+  const eligible = (finding: RiskFinding) =>
+    Boolean(finding.ruleId) && !STANDING_DANGER_RULE_IDS.has(finding.ruleId as string);
 
   if (releaseConsistency.status === "match" || releaseConsistency.status === "subset") {
     // Nothing deterministic in this scan is new relative to the approved

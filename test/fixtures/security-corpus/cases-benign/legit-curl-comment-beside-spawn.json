@@ -1,0 +1,53 @@
+{
+  "id": "legit-curl-comment-beside-spawn",
+  "title": "CLI shells out and documents the equivalent curl in a comment in the same file (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-documentation",
+  "source": "benign-popular",
+  "intent": "The executor requirement is satisfied by any spawn API in the same file, so a CLI that legitimately shells out *and* documents a curl equivalent in a comment — the most common real shape of this pair — would raise `code.remote-shell` at high on prose alone. `legit-curl-in-doc-comment` deliberately omits the spawn API and so cannot guard this case. Matching the bare shell-tool patterns against code lines only keeps the documentation out while leaving a genuine `execSync('curl …')` fully covered. The lone `code.process-execution` this file does earn is a real, unchanged capability and de-escalates on its own.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": {
+    "name": "deploy-cli",
+    "version": "2.2.0",
+    "bin": { "deploy-cli": "cli.js" }
+  },
+  "stagedPackageJson": {
+    "name": "deploy-cli",
+    "version": "2.3.0",
+    "bin": { "deploy-cli": "cli.js" }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 84,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"deploy-cli\",\"version\":\"2.2.0\",\"bin\":{\"deploy-cli\":\"cli.js\"}}"
+    },
+    {
+      "path": "cli.js",
+      "size": 190,
+      "sha256": "prev-cli-js",
+      "flags": [],
+      "textSample": "import { execFileSync } from \"node:child_process\";\n\nexport function currentBranch() {\n  return execFileSync(\"git\", [\"rev-parse\", \"--abbrev-ref\", \"HEAD\"]).toString().trim();\n}\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 84,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"deploy-cli\",\"version\":\"2.3.0\",\"bin\":{\"deploy-cli\":\"cli.js\"}}"
+    },
+    {
+      "path": "cli.js",
+      "size": 560,
+      "sha256": "staged-cli-js",
+      "flags": [],
+      "textSample": "import { execFileSync } from \"node:child_process\";\n\nexport function currentBranch() {\n  return execFileSync(\"git\", [\"rev-parse\", \"--abbrev-ref\", \"HEAD\"]).toString().trim();\n}\n\n/*\n * Trigger a deployment.\n *\n * This command wraps the deploys API. The equivalent request is:\n *   curl -X POST https://deploy.example.invalid/v1/deploys \\\n *     -H 'authorization: Bearer $TOKEN' \\\n *     -d '{\"branch\":\"main\"}'\n */\nexport function deploy(branch) {\n  return execFileSync(\"deployctl\", [\"create\", \"--branch\", branch]).toString().trim();\n}\n\n// Older CI images without deployctl can poll with: wget -qO- $(statusUrl id)\nexport function statusUrl(id) {\n  return `https://deploy.example.invalid/v1/deploys/${id}`;\n}\n"
+    }
+  ]
+}

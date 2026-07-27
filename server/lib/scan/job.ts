@@ -146,6 +146,17 @@ export async function executeScanJob(
           durationMs: durationMsSince(startedAtMs),
           error: safe,
         });
+        // Terminal counterpart to this scan's `scan.queued`, so a discovered
+        // candidate that npm withdrew before we could review it does not read
+        // as a scan that queued and vanished.
+        recordProductEvent(env, {
+          name: "scan.discarded",
+          organizationId: message.organizationId,
+          ecosystem: "npm",
+          source: message.source ?? "auto_discovery",
+          reason: "staged_tarball_unavailable",
+          durationMs: durationMsSince(startedAtMs),
+        });
       } else {
         await markScanFailed(db, message.scanId, message.organizationId, safe);
         // Counted only on a terminal failure, so a scan that succeeds on retry

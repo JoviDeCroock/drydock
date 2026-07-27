@@ -1,5 +1,9 @@
 import { hasImplicitNodeGypInstall, isRootGypPath } from "../../tar-parser.js";
-import { firstMatchingLine, firstMatchingSourceLine } from "../../platform/text-utils";
+import {
+  firstMatchingCodeLine,
+  firstMatchingLine,
+  firstMatchingSourceLine,
+} from "../../platform/text-utils";
 import type { Finding } from "..";
 import {
   CONSUMER_INSTALL_LIFECYCLE_SCRIPTS,
@@ -8,7 +12,12 @@ import {
 } from "./patterns";
 import { firstJsonPropertyLine, tag, testScope } from "./helpers";
 import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./context";
-import { isDocumentationPath, isPythonMetadataPath, isTypeDeclarationPath } from "./file-types";
+import {
+  isBuildInfrastructurePath,
+  isDocumentationPath,
+  isPythonMetadataPath,
+  isTypeDeclarationPath,
+} from "./file-types";
 import { scriptCommandTokens, scriptPathCandidates } from "./reachability";
 import { normalizeCodeForScanning } from "./normalize";
 
@@ -158,11 +167,17 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       normalized,
       packedObfuscation,
     );
+    // Comment-blind: a shell command quoted in prose is documentation. See
+    // `firstMatchingCodeLine`. Download-and-execute below keeps the ordinary
+    // matcher, because `curl … | bash` shipped as an instruction still tells
+    // someone to run it — but only outside build infrastructure (below).
     const remoteShell = matchCategory(
       ctx.patterns.remoteShell,
       sample,
       normalized,
       packedObfuscation,
+      false,
+      true,
     );
     const downloadExecute = matchCategory(
       SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
@@ -209,16 +224,26 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       credentialAccess.matched;
 
     // A shell command is only a capability if something in reach can run it.
-    // The patterns match a command *string*, and comments are not stripped
-    // before matching, so an SDK that documents its HTTP API the usual way
-    // (`// equivalent to: curl -X POST …`) would otherwise raise a high finding
-    // on prose. Requiring a spawn API in the same file, or a lifecycle hook
-    // pointing at it, keeps the dropper shape and drops the documentation.
-    // Download-and-execute is exempt: `curl … | bash` has no benign reading
-    // even in a comment, and a package that ships that line as an instruction
-    // is still telling someone to run it.
+    // Requiring a spawn API in the same file, or a lifecycle hook pointing at
+    // it, keeps the dropper shape; `remoteShell` is additionally comment-blind
+    // so an SDK documenting its HTTP API (`// equivalent to: curl -X POST …`)
+    // never reaches here on prose alone.
+    //
+    // Download-and-execute normally skips that requirement: `curl … | bash` has
+    // no benign reading, and a package shipping that line as an instruction is
+    // still telling someone to run it. Build infrastructure is the exception —
+    // a Dockerfile's `RUN curl … | bash` or a workflow's `- run: curl … | sh`
+    // runs on a CI runner at build time, never on a consumer's install, and
+    // every mainstream toolchain documents exactly that idiom. Withholding the
+    // exemption there leaves the ordinary executor requirement, which those
+    // files do not satisfy.
+    const buildInfrastructure = isBuildInfrastructurePath(file.path);
+    // Build infrastructure keeps neither the exemption nor the critical tier:
+    // the same `curl … | bash` that is a dropper in a lifecycle script is a
+    // documented bootstrap step in a Dockerfile.
+    const downloadExecuteCapability = downloadExecute.matched && !buildInfrastructure;
     const shellExecutable =
-      processExecution.matched || lifecycleScriptFile || downloadExecute.matched;
+      processExecution.matched || lifecycleScriptFile || downloadExecuteCapability;
     if (remoteShell.matched && shellExecutable) {
       findings.push(
         testScope(
@@ -227,13 +252,13 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
           tag("codeRemoteShell", {
             // Download-and-execute has no benign reading; a bare shell tool
             // paired with a spawn API does, so it sits one step below.
-            severity: downloadExecute.matched ? "critical" : "high",
+            severity: downloadExecuteCapability ? "critical" : "high",
             file: file.path,
-            line: downloadExecute.matched ? downloadExecute.line : remoteShell.line,
-            evidence: downloadExecute.matched
+            line: downloadExecuteCapability ? downloadExecute.line : remoteShell.line,
+            evidence: downloadExecuteCapability
               ? `${prefix}shell command downloads and executes remote code`
               : `${prefix}shell command with network or inline-interpreter capability`,
-            reason: downloadExecute.matched
+            reason: downloadExecuteCapability
               ? "the command fetches code over the network and pipes it straight into an interpreter, so the package runs bytes it never shipped and no reviewer can see"
               : "shell commands reach the network and re-enter an interpreter outside the language-level APIs the other capability rules model, so this executes code the package did not ship",
             ...(remoteShell.obfuscated ? { obfuscated: true } : {}),
@@ -340,8 +365,13 @@ function matchCategory(
   normalized: string,
   sourceObfuscated = false,
   matchAcrossLines = false,
+  codeLinesOnly = false,
 ): { matched: boolean; line: number | undefined; obfuscated: boolean } {
-  const findLine = matchAcrossLines ? firstMatchingSourceLine : firstMatchingLine;
+  const findLine = codeLinesOnly
+    ? firstMatchingCodeLine
+    : matchAcrossLines
+      ? firstMatchingSourceLine
+      : firstMatchingLine;
   const line = findLine(sample, patterns);
   if (line !== undefined) return { matched: true, line, obfuscated: sourceObfuscated };
   if (normalized !== sample) {

@@ -270,6 +270,46 @@ describe("release memory as a risk input", () => {
     expect(result.priorApprovedContextFindingCount).toBe(1);
   });
 
+  test.each([
+    ["install-script.preinstall"],
+    ["install-script.lifecycle"],
+    ["install-script.implicit-node-gyp"],
+    ["install-script.gyp-command-substitution"],
+    ["code.remote-shell"],
+    ["file.secret-content"],
+    ["tar.suspicious-entry"],
+  ])("an approval never discounts %s", (ruleId) => {
+    // The discount's premise is that a capability is a property of the package
+    // rather than the release. That does not extend to evidence of an active
+    // compromise: if a release shipping a dropper is ever approved (compromised
+    // account, or an approval predating the rule), the next README-only release
+    // must not report it as settled background. Without this carve-out the
+    // profile matches, the finding moves to context, and the headline reads low
+    // for every release thereafter.
+    const result = computeScanRiskBreakdown(
+      [contextFinding(ruleId, "lib/postinstall.js")],
+      makeAiReview(),
+      consistency(),
+    );
+    expect(result.contextRisk).toBe("high");
+    expect(result.artifactRisk).toBe("high");
+    expect(result.priorApprovedContextFindingCount).toBe(0);
+  });
+
+  test("standing-danger rules do not block the discount for the rest", () => {
+    const result = computeScanRiskBreakdown(
+      [
+        contextFinding("file.secret-content", "lib/.env"),
+        contextFinding("file.native-artifact", "lib/cli.node"),
+      ],
+      makeAiReview(),
+      consistency({ currentFindingCount: 3, priorFindingCount: 3 }),
+    );
+    // The native artifact is discounted; the embedded secret keeps scoring.
+    expect(result.priorApprovedContextFindingCount).toBe(1);
+    expect(result.contextRisk).toBe("high");
+  });
+
   test("release-delta findings are never demoted, so the gate cannot move", () => {
     const result = computeScanRiskBreakdown(
       [

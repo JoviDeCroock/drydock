@@ -38,6 +38,61 @@ export function isPythonMetadataPath(path: string): boolean {
   return /(^|\/)[^/]*\.(?:dist-info|egg-info)\/metadata$/.test(normalized);
 }
 
+const BUILD_INFRASTRUCTURE_BASENAMES = new Set([
+  "dockerfile",
+  "containerfile",
+  "jenkinsfile",
+  "makefile",
+  "gnumakefile",
+  "vagrantfile",
+  ".gitlab-ci.yml",
+  ".gitlab-ci.yaml",
+  ".travis.yml",
+  "azure-pipelines.yml",
+  "azure-pipelines.yaml",
+  "cloudbuild.yaml",
+  "appveyor.yml",
+]);
+const BUILD_INFRASTRUCTURE_DIRECTORIES = [
+  ".github/workflows/",
+  ".github/actions/",
+  ".circleci/",
+  ".buildkite/",
+  ".devcontainer/",
+];
+
+/**
+ * CI, container, and build-orchestration configuration shipped inside a package.
+ *
+ * These files describe how the *project* is built on a maintainer's or a CI
+ * runner's machine. Nothing in them executes when a consumer installs the
+ * package, so the standard bootstrap idiom every one of them contains —
+ * `RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash -`,
+ * `- run: curl -LsSf https://astral.sh/uv/install.sh | sh` — is not a
+ * download-and-execute capability against a consumer.
+ *
+ * This matters most for PyPI: an sdist ships the whole repository tree, and a
+ * first gated release has no baseline, so every one of those files reads as
+ * `added` and lands in the release delta. Treating them as executable would
+ * reject a maintainer's first release over their own CI config.
+ *
+ * They are still scanned by every other rule — secret content in a workflow file
+ * is very much a finding — this only withholds the "no benign reading" exemption
+ * that lets download-and-execute skip the executor requirement.
+ */
+export function isBuildInfrastructurePath(path: string): boolean {
+  const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "").toLowerCase();
+  const withoutPackage = normalized.startsWith("package/") ? normalized.slice(8) : normalized;
+  if (BUILD_INFRASTRUCTURE_DIRECTORIES.some((dir) => withoutPackage.includes(dir))) return true;
+
+  const basename = withoutPackage.split("/").at(-1) ?? "";
+  if (!basename) return false;
+  if (BUILD_INFRASTRUCTURE_BASENAMES.has(basename)) return true;
+  // `Dockerfile.alpine`, `Dockerfile.prod`, `Makefile.am`.
+  const stem = basename.split(".")[0];
+  return stem === "dockerfile" || stem === "containerfile" || stem === "makefile";
+}
+
 const TEST_DIRECTORY_SEGMENTS = new Set(["test", "tests", "__tests__", "spec", "specs"]);
 
 // Test-suite files shipped inside a package (a test runner's own test/ tree,

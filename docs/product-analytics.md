@@ -60,8 +60,9 @@ organization has the `ai-review` killswitch off — or any deployment without a
 reviewer is invoked and emits nothing. Read the status breakdown as a share of
 attempts; compare against `scan.completed` to get coverage.
 
-**`double1` is not one quantity.** It is request latency for every event except
-`scan.decided`, where it is a human hold time measured in hours. A dataset-wide
+**`double1` is not one quantity.** It is a machine duration in milliseconds for
+every event except `scan.decided`, where it is a human hold time — also in
+milliseconds, but on a scale of hours or days. A dataset-wide
 `quantile(0.95)(double1)` mixes the two; always filter by `blob2` first.
 
 **Ecosystem on `scan.decided` is the decision path, not the registry.** The
