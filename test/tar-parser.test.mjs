@@ -1305,6 +1305,44 @@ describe("digestArchiveStream", () => {
     expect(await archive.digest()).toBe(await sha1Hex(bytes));
   });
 
+  test("cancels the source without draining it when archive parsing fails", async () => {
+    // A malformed first header must fail fast. The sandbox calls abort() on
+    // this path, so hostile bytes after the parse error are neither downloaded
+    // nor hashed for a verdict that will be discarded.
+    const totalBytes = 4 << 20;
+    const chunkSize = 64 << 10;
+    let emitted = 0;
+    let sourceCancelled = false;
+    const source = new ReadableStream(
+      {
+        pull(controller) {
+          if (emitted >= totalBytes) {
+            controller.close();
+            return;
+          }
+          const chunk = new Uint8Array(Math.min(chunkSize, totalBytes - emitted));
+          if (emitted === 0) chunk.fill(0xff, 124, 136);
+          emitted += chunk.byteLength;
+          controller.enqueue(chunk);
+        },
+        cancel() {
+          sourceCancelled = true;
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const archive = tarParser.digestArchiveStream(source, CAP);
+
+    await expect(tarParser.readTarStream(archive.body, 100, CAP, CAP)).rejects.toThrow(
+      "invalid tar entry size",
+    );
+    await archive.abort();
+
+    expect(sourceCancelled).toBe(true);
+    expect(emitted).toBeLessThanOrEqual(3 * chunkSize);
+    expect(await archive.digest()).toBeNull();
+  });
+
   test("digests a real gzipped tar read through readTarStream", async () => {
     // The exact composition the sandbox tgz branch uses, end to end: the
     // digest must equal the sha1 of the .tgz wire bytes even though the parser

@@ -73,6 +73,8 @@ export interface ArchiveDigestStream {
   body: ReadableStream<Uint8Array>;
   /** Hex digest of the whole wire stream, or null when it could not be verified. */
   digest(): Promise<string | null>;
+  /** Cancel the source without draining it when archive parsing failed. */
+  abort(): Promise<void>;
 }
 export function digestArchiveStream(
   body: ReadableStream<Uint8Array>,

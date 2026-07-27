@@ -249,13 +249,12 @@ export function createDigester(algorithm) {
 // stops at the end-of-archive marker and cancels its stream, leaving the
 // trailing blocks and the gzip footer unread, so an inline tap would only ever
 // see a prefix and would report a mismatch on every healthy scan. Instead the
-// wrapper owns the source reader and finishes the archive itself: `digest()`
-// drains whatever the consumer left behind (it is called once parsing is done,
-// so there is no one left to steal bytes from), and a cancel that propagates up
-// the pipe starts the same drain. Relying on the cancel alone would race —
-// cancellation crosses two transform streams asynchronously, so the digest is
-// usually requested before it arrives, which read as "unverified" on every
-// healthy scan.
+// wrapper owns the source reader until the caller chooses the outcome:
+// `digest()` drains whatever a successful consumer left behind (it is called
+// once parsing is done, so there is no one left to steal bytes from), while
+// `abort()` cancels immediately after a parser/decompression failure. A raw
+// stream cancel cannot choose between those outcomes because both successful
+// tar completion and malformed input cancel the parser-side reader.
 //
 // It reports a digest ONLY when it observed the source's own EOF — an errored
 // or over-cap stream returns null so the caller degrades to "unverified"
@@ -274,7 +273,9 @@ export function digestArchiveStream(body, maxBytes, algorithm) {
   let capped = false;
   let sawEof = false;
   let broken = false;
+  let aborted = false;
   let draining = null;
+  let aborting = null;
   // Pass-through pulls and the post-consumer drain both read the same source,
   // and workerd's ReadableStream rejects a second read while one is pending
   // ("only supports a single pending read request at a time"), so every read
@@ -304,7 +305,9 @@ export function digestArchiveStream(body, maxBytes, algorithm) {
   async function drain() {
     try {
       for (;;) {
+        if (aborted) return;
         const { value, done } = await readOnce();
+        if (aborted) return;
         if (done) {
           sawEof = true;
           return;
@@ -328,22 +331,26 @@ export function digestArchiveStream(body, maxBytes, algorithm) {
       try {
         chunk = await readOnce();
       } catch (err) {
+        if (aborted) return;
         broken = true;
         controller.error(err);
         return;
       }
+      if (aborted) return;
       if (chunk.done) {
         sawEof = true;
         controller.close();
         return;
       }
       await consume(chunk.value);
+      if (aborted) return;
       controller.enqueue(chunk.value);
     },
     cancel() {
-      // The consumer is done with the archive, but verification is not: keep
-      // pulling the source to EOF so the digest covers the whole artifact.
-      return startDrain();
+      // A parser cancel has two meanings that only its caller can distinguish:
+      // a successful tar reader stopped at the end marker, or a malformed
+      // archive failed closed. Leave the source owned but idle until the caller
+      // chooses digest() (drain the valid tail) or abort() (cancel immediately).
     },
   });
 
@@ -357,9 +364,22 @@ export function digestArchiveStream(body, maxBytes, algorithm) {
     // Call once the consumer has finished with `body`: any bytes it did not
     // read are pulled here so the digest covers the whole archive.
     async digest() {
+      if (aborted) return null;
       if (!sawEof && !broken && !capped) await startDrain();
-      if (broken || capped || !sawEof) return null;
+      if (aborted || broken || capped || !sawEof) return null;
       return digester.finalize();
+    },
+    // A failed parse has no review to bind, so cancel the source instead of
+    // draining hostile bytes for a digest the caller will discard.
+    async abort() {
+      aborted = true;
+      if (!aborting) {
+        aborting = reader.cancel().then(
+          () => undefined,
+          () => undefined,
+        );
+      }
+      await aborting;
     },
   };
 }

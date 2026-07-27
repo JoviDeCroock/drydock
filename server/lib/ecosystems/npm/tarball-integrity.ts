@@ -86,8 +86,64 @@ export function evaluateStagedTarballIntegrity(
   };
 }
 
+/**
+ * Re-validate a persisted verdict before displaying or exporting it. Old scans
+ * omit the field, and persisted JSON must not be trusted to claim verification
+ * unless its status agrees with two well-formed digests.
+ */
+export function parseStagedTarballIntegrity(value: unknown): StagedTarballIntegrity | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (record.algorithm !== "sha1") return null;
+
+  const declared = normalizePersistedDigest(record.declared);
+  const computed = normalizePersistedDigest(record.computed);
+  if (declared === undefined || computed === undefined) return null;
+
+  if (record.status === "verified" && declared && computed && declared === computed) {
+    return { algorithm: "sha1", status: "verified", declared, computed };
+  }
+  if (record.status === "mismatch" && declared && computed && declared !== computed) {
+    return { algorithm: "sha1", status: "mismatch", declared, computed };
+  }
+  if (
+    record.status === "unverified" &&
+    record.reason === "declared-digest-missing" &&
+    declared === null
+  ) {
+    return {
+      algorithm: "sha1",
+      status: "unverified",
+      declared: null,
+      computed,
+      reason: "declared-digest-missing",
+    };
+  }
+  if (
+    record.status === "unverified" &&
+    record.reason === "computed-digest-unavailable" &&
+    declared &&
+    computed === null
+  ) {
+    return {
+      algorithm: "sha1",
+      status: "unverified",
+      declared,
+      computed: null,
+      reason: "computed-digest-unavailable",
+    };
+  }
+  return null;
+}
+
 function normalizeDigest(value: string | null | undefined): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim().toLowerCase();
   return /^[0-9a-f]{40}$/.test(trimmed) ? trimmed : null;
+}
+
+function normalizePersistedDigest(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== "string") return undefined;
+  return normalizeDigest(value) ?? undefined;
 }

@@ -4,7 +4,7 @@ vi.mock("cloudflare:workers", () => ({
   WorkerEntrypoint: class {},
 }));
 
-const { evaluateStagedTarballIntegrity } =
+const { evaluateStagedTarballIntegrity, parseStagedTarballIntegrity } =
   await import("../server/lib/ecosystems/npm/tarball-integrity");
 const { buildNpmFindings } = await import("../server/lib/ecosystems/npm/findings");
 
@@ -46,6 +46,34 @@ describe("evaluateStagedTarballIntegrity", () => {
       status: "unverified",
       reason,
     });
+  });
+});
+
+describe("parseStagedTarballIntegrity", () => {
+  test.each([
+    evaluateStagedTarballIntegrity(DECLARED, DECLARED),
+    evaluateStagedTarballIntegrity(DECLARED, OTHER),
+    evaluateStagedTarballIntegrity(DECLARED, null),
+    evaluateStagedTarballIntegrity(null, OTHER),
+  ])("accepts a consistent persisted $status verdict", (integrity) => {
+    expect(parseStagedTarballIntegrity(integrity)).toEqual(integrity);
+  });
+
+  test.each([
+    null,
+    {},
+    { algorithm: "sha256", status: "verified", declared: DECLARED, computed: DECLARED },
+    { algorithm: "sha1", status: "verified", declared: DECLARED, computed: OTHER },
+    { algorithm: "sha1", status: "mismatch", declared: DECLARED, computed: DECLARED },
+    {
+      algorithm: "sha1",
+      status: "unverified",
+      declared: DECLARED,
+      computed: OTHER,
+      reason: "computed-digest-unavailable",
+    },
+  ])("rejects malformed or internally inconsistent persisted data", (value) => {
+    expect(parseStagedTarballIntegrity(value)).toBeNull();
   });
 });
 

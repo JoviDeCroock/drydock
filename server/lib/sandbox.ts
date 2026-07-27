@@ -430,6 +430,7 @@ export default {
       try {
         zip = await readStreamBounded(archive.body, maxTarBytes);
       } catch (err) {
+        await archive.abort();
         const reason = err && err.message === "archive too large" ? "archive too large" : "archive download failed";
         const status = reason === "archive too large" ? 413 : 400;
         return json({ error: reason, status }, status);
@@ -446,6 +447,7 @@ export default {
         files = parsed.files;
         suspiciousEntries = parsed.suspicious;
       } catch (err) {
+        await archive.abort();
         const reason = err && err.tarSafety && err.message ? err.message : "zip parse failed";
         const status = reason === "archive contains too many files" || reason === "archive expands beyond safety limit" ? 413 : 400;
         return json({ error: reason, status }, status);
@@ -460,6 +462,7 @@ export default {
         files = parsed.files;
         suspiciousEntries = parsed.suspicious;
       } catch (err) {
+        await archive.abort();
         // The parser tags its own safety-limit / malformed-archive errors, so
         // anything untagged is an upstream stream failure. This avoids
         // matching on exact message text, which silently drifts on a reword.
@@ -481,6 +484,7 @@ export default {
       files = parsed.files;
       suspiciousEntries = parsed.suspicious;
     } catch (err) {
+      await archive.abort();
       // The parser tags its own safety-limit / malformed-archive errors, so
       // anything untagged is an upstream gzip/stream failure. This avoids
       // matching on exact message text, which silently drifts on a reword.

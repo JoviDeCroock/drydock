@@ -5,6 +5,7 @@ import { normalizeIntentEnvelope } from "../intent-envelope";
 import { normalizeReleaseConsistency } from "./release-memory";
 import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems/package-adapter";
 import { isEcosystemId } from "../ecosystems/labels";
+import { parseStagedTarballIntegrity } from "../ecosystems/npm/tarball-integrity";
 
 // A persisted scan detail, as returned by getScan (never null at the call site).
 type ScanDetail = NonNullable<Awaited<ReturnType<typeof getScan>>>;
@@ -57,6 +58,9 @@ export function buildReportExport(detail: ScanDetail) {
     // Advisory source-binding tier (attested / declared / absent). Additive and
     // optional: scans persisted before the envelope existed export `null`.
     intentEnvelope: normalizeIntentEnvelope(summary.intentEnvelope),
+    // npm staged-publish byte-verification verdict. Null for workflow gates,
+    // legacy scans, and malformed persisted data.
+    tarballIntegrity: extractTarballIntegrity(summary.stagedPublish),
     aiReview: extractAiReview(scan.aiJson),
     riskSummary: detail.riskSummary ?? null,
     // Advisory release-memory signal. Additive + optional: scans that predate
@@ -163,6 +167,11 @@ function extractProvenance(stagedPublish: unknown): ReleaseProvenance | null {
   }
   if (!mapped.length) return null;
   return { ecosystem, mode, artifacts: mapped };
+}
+
+function extractTarballIntegrity(stagedPublish: unknown) {
+  if (!isRecord(stagedPublish)) return null;
+  return parseStagedTarballIntegrity(stagedPublish.tarballIntegrity);
 }
 
 // Route through the display helper so invalid/unavailable fallbacks do not
