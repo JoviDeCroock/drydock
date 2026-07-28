@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { createDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
+import { recordProductEvent } from "../lib/platform/analytics";
 import { getOrganizationRole } from "../db/invitations";
 import {
   type NotificationRecipient,
@@ -60,6 +61,11 @@ organizationsRoutes.post("/", async (c) => {
       type: "organization.created",
       metadata: { name },
     });
+    // Activation, not acquisition: an explicitly created organization means
+    // someone intends to work with other people. Personal workspaces are
+    // excluded — `ensurePersonalOrganization` makes one for every account on
+    // first request, so counting them would restate `user.signed_up`.
+    recordProductEvent(c.env, { name: "organization.created", organizationId: id });
     return c.json({ organization: { id, name } }, 201);
   } catch (err) {
     if (err instanceof RateLimitError) {

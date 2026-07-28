@@ -6,6 +6,7 @@ import { twoFactor } from "better-auth/plugins";
 import { eq } from "drizzle-orm";
 import { type AppDb, createDb } from "../../db/client";
 import { deleteUserAccount, findCoOwnedOrganizations } from "../../db/organizations";
+import { recordProductEvent } from "../platform/analytics";
 import * as schema from "../../db/schema";
 import { sendAccountVerificationEmail } from "../notify/account-email";
 
@@ -122,6 +123,25 @@ export function createAuth(env: Cloudflare.Env) {
       minPasswordLength: 12,
       maxPasswordLength: 256,
       ...(nativeScryptAvailable ? { password: nativeScryptPassword } : {}),
+    },
+    databaseHooks: {
+      user: {
+        create: {
+          // Top of the funnel. Fires once per account row, so it counts real
+          // signups rather than sign-in attempts. Nothing identifying is
+          // recorded — not the email, not the user id (see the privacy posture
+          // in lib/platform/analytics.ts). `emailVerificationEnabled` rides
+          // along as the outcome because an unverified account cannot reach a
+          // scan, and that is the first place the funnel leaks.
+          after: async () => {
+            recordProductEvent(env, {
+              name: "user.signed_up",
+              method: "email_password",
+              outcome: emailVerificationEnabled ? "verification_pending" : "active",
+            });
+          },
+        },
+      },
     },
     user: {
       deleteUser: {

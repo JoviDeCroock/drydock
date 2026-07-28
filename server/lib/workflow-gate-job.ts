@@ -410,6 +410,18 @@ export async function executeWorkflowGateJob(
     timeoutState,
     durationMs: jobDurationMs,
   });
+
+  // The denominator for gate approval rate, and the only place the reviewer's
+  // own recommendation is counted — a decision below records what a human (or
+  // the timeout) actually did with it.
+  recordProductEvent(env, {
+    name: "workflow_gate.reviewed",
+    organizationId,
+    recommendation,
+    timeoutState,
+    durationMs: jobDurationMs,
+    packageCount: reviewed.length,
+  });
 }
 
 interface ReviewedPackage {
@@ -536,6 +548,13 @@ async function rejectGateForArtifactError(
     reportUrl: null,
   });
   if (!decided) return;
+  recordProductEvent(env, {
+    name: "workflow_gate.decided",
+    organizationId: gate.organizationId,
+    surface: "automatic",
+    decision: "rejected",
+    packageCount: 0,
+  });
   try {
     await deliverGateDecision(config, db, decided);
   } catch (err) {

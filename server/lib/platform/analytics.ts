@@ -116,6 +116,74 @@ export type AnalyticsEvent =
       outcome: string;
     }
   | {
+      /**
+       * A new account. Carries no organization (the personal workspace is
+       * created lazily on first use) and, deliberately, no user id — see the
+       * privacy posture above. This is the funnel's numerator and nothing more.
+       */
+      name: "user.signed_up";
+      /** `email_password` — the sign-up method, for when others exist. */
+      method: string;
+      /** `verification_pending` | `active` */
+      outcome: string;
+    }
+  | {
+      /**
+       * An explicitly created organization. Personal workspaces are excluded:
+       * `ensurePersonalOrganization` creates one for every account on first
+       * request, so counting them would just restate `user.signed_up`.
+       */
+      name: "organization.created";
+      organizationId: string;
+    }
+  | {
+      /**
+       * An integration reaching a connected state for the first time — the
+       * activation step between signing up and reviewing anything.
+       *
+       * Distinct from `npm_connection.validated`, which fires on every
+       * revalidation and measures ongoing credential *health*. This one fires
+       * once per connection and measures *activation*.
+       */
+      name: "integration.connected";
+      organizationId: string;
+      /** `npm` | `github` | `slack` */
+      kind: string;
+      /** Integration-specific state slug (e.g. a GitHub installation status). */
+      outcome: string;
+    }
+  | {
+      /** A `deployment_protection_rule` delivery that opened a pending gate. */
+      name: "workflow_gate.opened";
+      organizationId: string;
+    }
+  | {
+      /** The reviewer's recommendation for a gate, before any human acts on it. */
+      name: "workflow_gate.reviewed";
+      organizationId: string;
+      /** `approve` | `reject` | … — the recommendation, not the outcome. */
+      recommendation: string;
+      /** `on_time` | `timed_out` — whether the review beat the gate's deadline. */
+      timeoutState: string;
+      durationMs: number;
+      /** Packages in the release bundle; a monorepo gate reviews several. */
+      packageCount: number;
+    }
+  | {
+      /**
+       * A gate decision reaching GitHub. `surface` separates a maintainer's
+       * click from the automatic block, so approval rate stays measurable
+       * against reviews rather than being diluted by auto-rejections.
+       */
+      name: "workflow_gate.decided";
+      organizationId: string;
+      /** `human` | `automatic` */
+      surface: string;
+      /** `approved` | `rejected` */
+      decision: string;
+      packageCount: number;
+    }
+  | {
       name: "public_diff.viewed";
       ecosystem: string;
       /** Public package/project name — already public in the URL and cache key. */
@@ -125,6 +193,43 @@ export type AnalyticsEvent =
       risk: string;
       durationMs: number;
     };
+
+/**
+ * Every event name, for the privacy test's exhaustiveness check.
+ *
+ * The two assertions below make this list and the union above check each other
+ * at compile time, in both directions. Without that the check degrades into two
+ * hand-maintained lists agreeing with each other while the union quietly grows
+ * a third arm nobody asserted a privacy shape for — which is exactly what
+ * happened to `scan.discarded`.
+ */
+export const ANALYTICS_EVENT_NAMES = [
+  "scan.queued",
+  "scan.completed",
+  "scan.failed",
+  "scan.discarded",
+  "scan.decided",
+  "ai_review.finished",
+  "npm_connection.validated",
+  "public_diff.viewed",
+  "user.signed_up",
+  "organization.created",
+  "integration.connected",
+  "workflow_gate.opened",
+  "workflow_gate.reviewed",
+  "workflow_gate.decided",
+] as const;
+
+// A name in the union but missing from the list, or vice versa, fails here.
+type AssertExtends<A extends B, B> = A;
+type _EveryEventIsListed = AssertExtends<
+  AnalyticsEvent["name"],
+  (typeof ANALYTICS_EVENT_NAMES)[number]
+>;
+type _EveryListedNameExists = AssertExtends<
+  (typeof ANALYTICS_EVENT_NAMES)[number],
+  AnalyticsEvent["name"]
+>;
 
 /**
  * Write one product event. Never throws and never blocks the caller's result:
@@ -215,6 +320,28 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
       );
     case "npm_connection.validated":
       return base(event.organizationId, "npm", [event.outcome], [0]);
+    case "user.signed_up":
+      return base("", "", [event.method, event.outcome], [0]);
+    case "organization.created":
+      return base(event.organizationId, "", [], [0]);
+    case "integration.connected":
+      return base(event.organizationId, event.kind, [event.outcome], [0]);
+    case "workflow_gate.opened":
+      return base(event.organizationId, "", [], [0]);
+    case "workflow_gate.reviewed":
+      return base(
+        event.organizationId,
+        "",
+        [event.recommendation, event.timeoutState],
+        [event.durationMs, event.packageCount],
+      );
+    case "workflow_gate.decided":
+      return base(
+        event.organizationId,
+        "",
+        [event.surface, event.decision],
+        [0, event.packageCount],
+      );
     case "public_diff.viewed":
       return base(
         "",

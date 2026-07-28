@@ -1,5 +1,9 @@
 import { describe, expect, test, vi } from "vitest";
-import { ANALYTICS_SCHEMA_VERSION, recordProductEvent } from "../server/lib/platform/analytics.ts";
+import {
+  ANALYTICS_EVENT_NAMES,
+  ANALYTICS_SCHEMA_VERSION,
+  recordProductEvent,
+} from "../server/lib/platform/analytics.ts";
 
 function fakeDataset() {
   const points = [];
@@ -152,22 +156,44 @@ describe("recordProductEvent", () => {
         durationMs: 50,
         findingCount: 0,
       },
+      {
+        name: "scan.discarded",
+        organizationId: "org_1",
+        ecosystem: "npm",
+        source: "auto_discovery",
+        reason: "staged_tarball_unavailable",
+        durationMs: 12,
+      },
+      { name: "user.signed_up", method: "email_password", outcome: "verification_pending" },
+      { name: "organization.created", organizationId: "org_1" },
+      { name: "integration.connected", organizationId: "org_1", kind: "github", outcome: "active" },
+      { name: "workflow_gate.opened", organizationId: "org_1" },
+      {
+        name: "workflow_gate.reviewed",
+        organizationId: "org_1",
+        recommendation: "approve",
+        timeoutState: "on_time",
+        durationMs: 900,
+        packageCount: 3,
+      },
+      {
+        name: "workflow_gate.decided",
+        organizationId: "org_1",
+        surface: "human",
+        decision: "approved",
+        packageCount: 3,
+      },
     ];
     for (const event of events) recordProductEvent(env, event);
 
     // Exhaustiveness: every arm of the AnalyticsEvent union must be exercised,
     // so adding an event without a privacy assertion fails here rather than
-    // shipping unreviewed. Keep in sync with the union in analytics.ts.
-    const EVENT_NAMES = [
-      "scan.queued",
-      "scan.completed",
-      "scan.failed",
-      "scan.decided",
-      "ai_review.finished",
-      "npm_connection.validated",
-      "public_diff.viewed",
-    ];
-    expect([...new Set(events.map((event) => event.name))].sort()).toEqual([...EVENT_NAMES].sort());
+    // shipping unreviewed. ANALYTICS_EVENT_NAMES is tied to the union by a
+    // compile-time assertion in analytics.ts, so this compares against the real
+    // union rather than a second hand-maintained copy of it.
+    expect([...new Set(events.map((event) => event.name))].sort()).toEqual(
+      [...ANALYTICS_EVENT_NAMES].sort(),
+    );
 
     // Blobs are a fixed positional schema; nothing here may look like an email,
     // an IP address, a bearer token, or a file path from a package.

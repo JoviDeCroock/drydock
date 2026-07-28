@@ -17,6 +17,7 @@ import {
   requireActiveOrganizationContext,
 } from "../lib/auth/active-organization";
 import { rateLimitResponse } from "../lib/platform/http";
+import { recordProductEvent } from "../lib/platform/analytics";
 import { roleCanManageIntegrations } from "../lib/auth/roles";
 import { decryptSlackBotToken, encryptSlackBotToken } from "../lib/platform/secret-box";
 import {
@@ -137,6 +138,12 @@ slackRoutes.get("/callback", async (c) => {
     actorUserId: session.userId,
     type: "organization.slack_connected",
     metadata: { teamId: connection.teamId, teamName: connection.teamName },
+  });
+  recordProductEvent(c.env, {
+    name: "integration.connected",
+    organizationId: claims.organizationId,
+    kind: "slack",
+    outcome: "ok",
   });
 
   return c.redirect(settingsRedirect(c.env, "connected"));

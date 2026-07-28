@@ -156,6 +156,17 @@ npmConnectionRoutes.post("/validate", async (c) => {
       organizationId,
       outcome: validation.ok ? "ok" : "failed",
     });
+    // Activation is a separate question from credential health: this one fires
+    // once, when the token first validates, so the signup -> connected step of
+    // the funnel is not diluted by every later revalidation.
+    if (validation.ok && !connection.validatedAt) {
+      recordProductEvent(c.env, {
+        name: "integration.connected",
+        organizationId,
+        kind: "npm",
+        outcome: "ok",
+      });
+    }
 
     return c.json({ validation, connection: publicNpmConnection(updated) });
   } catch (err) {
