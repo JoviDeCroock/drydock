@@ -2,17 +2,22 @@ import type { CodePatternSet } from "..";
 
 export const CONSUMER_INSTALL_LIFECYCLE_SCRIPTS = ["preinstall", "install", "postinstall"];
 
+// An interpreter handed a command string instead of an argv vector. Real build
+// tooling does this constantly, so it stays inside process-execution — the
+// weak-on-its-own capability — exactly as it did before the remote-shell split.
+const SHELL_INTERPRETER_PATTERNS = [
+  /\b(?:ba|z|k|da)?sh\s+-c\b/,
+  /\bpowershell\s/i,
+  /\bpwsh\s/i,
+  /\bcmd(?:\.exe)?\s+\/c\b/i,
+];
 const JS_PROCESS_EXECUTION_PATTERNS = [
   /\bchild_process\b/,
   /\bexecSync\b/,
   /\bexecFileSync\b/,
   /\bspawn\(/,
   /\bspawnSync\(/,
-  /\bcurl\s/,
-  /\bwget\s/,
-  /\bnc\s/,
-  /\bbash\s+-c/,
-  /\bpowershell\s/,
+  ...SHELL_INTERPRETER_PATTERNS,
 ];
 const PYTHON_PROCESS_EXECUTION_PATTERNS = [
   /\bsubprocess\b/,
@@ -22,6 +27,59 @@ const PYTHON_PROCESS_EXECUTION_PATTERNS = [
   /\bpty\.spawn\s*\(/,
   /\bcommands\.getoutput\s*\(/,
 ];
+
+// Shell *commands*, not spawn *APIs*. The process-execution patterns above match
+// the language-level call that starts a subprocess; these match the command
+// string handed to it. The distinction matters because a lone process spawn is
+// weak evidence (build tooling shells out constantly) while a shell command that
+// reaches the *network* is not — and neither the JS nor the Python network
+// patterns can see it, because both model in-language APIs. So
+// `execSync('curl … | bash')` used to score as a single weak capability and the
+// whole release rolled up to low.
+//
+// Command strings are language-agnostic, so both ecosystems share these sets.
+const SHELL_NETWORK_TOOL_PATTERNS = [
+  /\bcurl\s/,
+  /\bwget\s/,
+  // `nc` requires a flag. Bare `\bnc\s` reads a two-letter identifier as a
+  // reverse shell: `nc` is a ubiquitous variable name in scientific Python
+  // (`nc = netCDF4.Dataset(...)`), and no real netcat invocation omits flags.
+  /\bnc\s+-\w/,
+  /\bnetcat\s/,
+  // bash's virtual TCP device: `exec 3<>/dev/tcp/host/port` is the dependency-
+  // free reverse-shell primitive when curl/nc are unavailable.
+  /\/dev\/tcp\//,
+  /\bInvoke-WebRequest\b/i,
+  // Case-sensitive and call-shaped. PowerShell's is `(New-Object
+  // Net.WebClient).DownloadString(...)`; a case-insensitive bare word also
+  // matched the common JavaScript `downloadString(text, filename)` helper.
+  /\.DownloadString\s*\(/,
+];
+// Download-and-execute: a network tool composed with an interpreter in one
+// command. Unlike a bare shell tool there is no benign reading of these — a
+// release that adds one is fetching and running code it did not ship.
+const SHELL_DOWNLOAD_EXECUTE_PATTERNS = [
+  // The interpreter may sit behind any number of intermediate pipe stages
+  // (`| base64 -d | bash`, `| gunzip | sh` — the standard obfuscated forms), an
+  // absolute path (`| /bin/bash`), and a privilege/environment prefix
+  // (`| sudo -E bash`, `| env bash`). The trailing `\b` is what keeps
+  // `| sha256sum` and `| shasum` out.
+  /\b(?:curl|wget)\b[^\n;&]*\|\s*(?:(?:sudo|env|command|exec|xargs)(?:\s+-{1,2}\w+)*\s+)*(?:\S*\/)?(?:ba|z|k|da)?sh\b/i,
+  /\b(?:curl|wget)\b[^\n;&]*\|\s*(?:(?:sudo|env|command|exec|xargs)(?:\s+-{1,2}\w+)*\s+)*(?:\S*\/)?(?:python[\d.]*|perl|ruby|node)\b/i,
+  /\$\(\s*(?:curl|wget)\b/i,
+  /<\(\s*(?:curl|wget)\b/i,
+  // Backtick command substitution: `` eval `curl -s https://x` ``.
+  /`\s*(?:curl|wget)\b/i,
+  /\bnc\s[^\n]*\s-e\s/,
+  /(?:\bInvoke-WebRequest\b|\.DownloadString\s*\(|\biwr\b)[^\n]*\|\s*(?:iex|Invoke-Expression)\b/i,
+  /\bpowershell\b[^\n]*\s-(?:enc|EncodedCommand)\b/i,
+];
+const SHELL_REMOTE_PATTERNS = [...SHELL_NETWORK_TOOL_PATTERNS, ...SHELL_DOWNLOAD_EXECUTE_PATTERNS];
+
+// Exported for the risk layer: a shell network tool is an egress sink for the
+// credential collect-and-exfiltrate chain exactly like `fetch()` is.
+export const SHELL_NETWORK_TOOL_PATTERN_SET = SHELL_NETWORK_TOOL_PATTERNS;
+export const SHELL_DOWNLOAD_EXECUTE_PATTERN_SET = SHELL_DOWNLOAD_EXECUTE_PATTERNS;
 const JS_NETWORK_ACCESS_PATTERNS = [
   /\brequire\(["'](?:node:)?(?:http|https|net|dns)["']\)/,
   /\bfrom\s+["'](?:node:)?(?:http|https|net|dns)["']/,
@@ -95,12 +153,14 @@ const PYTHON_CREDENTIAL_ACCESS_PATTERNS = [
 
 export const JS_PATTERN_SET = {
   processExecution: JS_PROCESS_EXECUTION_PATTERNS,
+  remoteShell: SHELL_REMOTE_PATTERNS,
   networkAccess: JS_NETWORK_ACCESS_PATTERNS,
   dynamicEvaluation: JS_DYNAMIC_EVALUATION_PATTERNS,
   credentialAccess: JS_CREDENTIAL_ACCESS_PATTERNS,
 };
 export const PYTHON_PATTERN_SET = {
   processExecution: PYTHON_PROCESS_EXECUTION_PATTERNS,
+  remoteShell: SHELL_REMOTE_PATTERNS,
   networkAccess: PYTHON_NETWORK_ACCESS_PATTERNS,
   dynamicEvaluation: PYTHON_DYNAMIC_EVALUATION_PATTERNS,
   credentialAccess: PYTHON_CREDENTIAL_ACCESS_PATTERNS,
@@ -108,9 +168,12 @@ export const PYTHON_PATTERN_SET = {
 
 // Python process-execution, network, and dynamic-evaluation capability in one set.
 // Reused by ecosystem adapters that need to know whether a file executes code
-// (e.g. a PyPI sdist's setup.py, which pip runs at install time).
+// (e.g. a PyPI sdist's setup.py, which pip runs at install time). Shell commands
+// are included: a setup.py that shells out to curl executes code at install time
+// just as surely as one that calls subprocess directly.
 export const PYTHON_EXECUTION_CAPABILITY_PATTERNS = [
   ...PYTHON_PROCESS_EXECUTION_PATTERNS,
+  ...SHELL_REMOTE_PATTERNS,
   ...PYTHON_NETWORK_ACCESS_PATTERNS,
   ...PYTHON_DYNAMIC_EVALUATION_PATTERNS,
 ];

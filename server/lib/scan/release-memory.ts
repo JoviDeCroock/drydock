@@ -5,8 +5,12 @@
 // scan says so instead of presenting the same capability findings as if they
 // were novel (test runners legitimately spawn processes on every release).
 //
-// This signal is display-only context. It never modifies `risk`, the risk
-// breakdown, or any finding — deterministic findings stay authoritative.
+// Findings are never edited, hidden, or re-severitied here — deterministic
+// findings stay authoritative. The one scoring effect lives in `risk.ts`:
+// package-context findings already present in the approved profile stop
+// anchoring the headline risk. Release-delta findings are excluded from that
+// adjustment, so `releaseRisk` (and the workflow gate reading it) cannot move.
+// See docs/release-memory.md.
 
 type ReleaseConsistencyStatus = "match" | "subset" | "diverged" | "none";
 

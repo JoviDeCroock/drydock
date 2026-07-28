@@ -27,6 +27,7 @@ import { PageShell } from "../../components/PageShell";
 import { Select } from "../../components/Select";
 import { EmptyLine, Eyebrow, Muted, SectionLabel } from "../../components/Typography";
 import { UserMenu } from "../../components/UserMenu";
+import { GettingStarted } from "./GettingStarted";
 import { DeleteScanDialog } from "./ScanDetail/DeleteScanDialog";
 import { DecisionDialog } from "./ScanDetail/DecisionDialog";
 
@@ -130,7 +131,14 @@ export default function DashboardPage() {
 
       {workspaceLoaded ? (
         <>
-          {!npm.connection.value ? <NpmSetupCallout /> : null}
+          {/* The getting-started panel supersedes the bare "npm not connected"
+              callout for an organization with no scans: it says the same thing
+              as step 1 and then explains what comes after it. */}
+          {scans.hasAnyScan.value === false ? (
+            <GettingStarted npmConnected={Boolean(npm.connection.value)} />
+          ) : !npm.connection.value ? (
+            <NpmSetupCallout />
+          ) : null}
           <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
         </>
       ) : (
@@ -233,7 +241,11 @@ function RecentReviewsSection({
             size="sm"
             onClick={() => void onDiscover()}
             disabled={discoveryRefreshing || !ready}
-            title="Find staged npm publishes and start reviews"
+            title={
+              ready
+                ? "Find staged npm publishes and start reviews"
+                : "Connect a validated npm token in Settings → Integrations first"
+            }
           >
             {discoveryRefreshing ? "Checking npm…" : "Check npm"}
           </Button>
@@ -282,7 +294,7 @@ function RecentReviewsSection({
           />
         ) : (
           <div class="p-5">
-            <EmptyLine>{emptyStateMessage(scans.filter.value)}</EmptyLine>
+            <EmptyLine>{emptyStateMessage(scans.filter.value, scans.hasAnyScan.value)}</EmptyLine>
           </div>
         )}
       </div>
@@ -380,7 +392,18 @@ function ScanStateSelect({
   );
 }
 
-function emptyStateMessage(filter: ScanDecisionFilter): string {
+// `hasAnyScan` is what keeps this honest. The list defaults to the "undecided"
+// filter, so an organization with no scans at all used to read "Nothing waiting
+// on you. Switch to All to see earlier reviews." — copy that points a brand-new
+// user at a filter which is also empty, and implies a review history they do
+// not have. That sentence is right for an organization that *has* history, so
+// it stays for that case and only the never-scanned case gets its own wording.
+// Per DESIGN.md the empty state is one muted sentence with no CTA inside it —
+// the getting-started panel above carries the affordances.
+function emptyStateMessage(filter: ScanDecisionFilter, hasAnyScan: boolean | null): string {
+  if (hasAnyScan === false) {
+    return "No reviews yet — stage a release, or check npm for one already waiting.";
+  }
   switch (filter) {
     case "undecided":
       return "Nothing waiting on you. Switch to All to see earlier reviews.";

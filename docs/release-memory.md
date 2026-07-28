@@ -9,8 +9,8 @@ presents those findings as if they were novel.
 
 ## What it does
 
-During a scan, after deterministic findings and risk are computed, the
-pipeline looks up the most recent scan in the **same organization**, for the
+During a scan, after deterministic findings are computed and before they are
+scored, the pipeline looks up the most recent scan in the **same organization**, for the
 **same `packageName`**, with `status = 'complete'` and `decision = 'publish'`
 (the in-flight scan id is excluded). Both scans are reduced to a **finding
 profile**: the multiset of `(ruleId, severity, file)` over rule findings.
@@ -37,13 +37,51 @@ the profile matches, is a subset of, or has diverged from the prior approved
 release. This keeps recurring package-context findings from arriving as an
 unexplained high-risk alert while preserving the recorded risk and findings.
 
-## It never changes risk
+## What it changes, and what it must not
 
-Release memory is **advisory display context only**. It does not modify
-`risk`, the risk breakdown, or any finding — deterministic findings stay
-authoritative, exactly like the AI reviewer cannot downgrade them. The UI
-renders it as a positive banner (`match`/`subset`) or a quiet "N findings are
-new since the last approved release" line (`diverged`) next to the
+Release memory has exactly one scoring effect: **package-context findings that
+were already in an approved release stop anchoring `contextRisk` and
+`artifactRisk`.** It never edits, hides, or re-severities a finding — every one
+is still emitted, persisted, and listed in the UI. Only its contribution to the
+headline score is dropped, and `priorApprovedContextFindingCount` on the risk
+breakdown records how many were dropped so the banner can say so. A headline
+that silently falls from high to low is worse than one that never moved.
+
+The boundaries are what make this safe:
+
+- **Release-delta findings are never demoted.** A finding on a file this
+  release changed says something about new bytes, so matching a prior profile
+  entry proves nothing about it. `releaseRisk` is therefore untouched, and
+  because `workflow-gate-job.ts` reads `releaseRisk` for its accept/reject
+  recommendation, a prior approval can never release a held GitHub job.
+- **It cannot escalate.** The adjustment only ever removes findings from a
+  score; it has no path to raise one.
+- **It fails closed.** No prior approved scan, or a `diverged` profile whose
+  `newFindings` list hit the 25-entry cap (so the approved set can't be
+  reconstructed exactly), drops nothing at all.
+- **A skipped baseline disables it entirely.** When the published baseline
+  exceeded the download budget (`BaselineInfo.comparisonSkipped`), every finding
+  is annotated `unknown` package context, so the whole scan would otherwise land
+  in the adjustment's bucket. Release memory's premise is "this evidence was
+  reviewed before _and nothing changed_"; with nothing compared, the second half
+  cannot be established, and a profile match on
+  `(ruleId, severity, file)` does not imply identical bytes. Discounting there
+  would grade an uncompared release as clean — the failure the skipped-baseline
+  handling exists to prevent.
+- **AI output can't reach it, in either direction.** The profile is
+  deterministic-only, so the advisory reviewer cannot influence what counts as
+  previously approved — and, symmetrically, an AI finding is never dropped by
+  the adjustment, because a `match` on the deterministic profile says nothing
+  about what the reviewer found. AI findings are projected without a `ruleId`,
+  which is what makes them ineligible.
+
+The motivating evidence is production: across scans whose release delta was
+clean but whose package context read high, **every single one was published
+anyway.** Re-anchoring a headline on evidence a maintainer already accepted is
+how a real signal ends up buried.
+
+The UI renders it as a positive banner (`match`/`subset`) or a quiet "N findings
+are new since the last approved release" line (`diverged`) next to the
 recommendation; `none` renders nothing.
 
 A `match`/`subset` with **zero current findings** is a vacuous comparison

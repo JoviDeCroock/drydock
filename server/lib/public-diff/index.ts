@@ -103,11 +103,16 @@ export async function loadPublicPackageDiff(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
   input: PublicDiffInput,
+  // Reported before the payload is returned so callers can attribute cost:
+  // /diff is the one surface where cache behaviour, not analysis time,
+  // dominates what a visitor experiences.
+  options: { onCacheOutcome?: (hit: boolean) => void } = {},
 ): Promise<PublicPackageDiff> {
   const adapter = requirePublicDiffAdapter(input.ecosystem);
 
   const cacheKey = await computePublicDiffCacheKey(input);
   const cached = await readPublicDiffCache(env, cacheKey);
+  options.onCacheOutcome?.(Boolean(cached));
   if (cached) return cached;
 
   const sources = await adapter.acquire(env, ctx, input);

@@ -23,7 +23,12 @@ Scan **lifecycle** churn (`scan.started`, `scan.queued`, `scan.backgrounded`,
 `scan.viewed`) and **discovery** churn (`npm_connection.used`,
 `staged_publishes.scans_started`) are **no longer recorded** — they were ~97% of
 all rows and carried no audit value. Operational visibility for those still lives
-in Workers Logs via `emitOperationalEvent`.
+in Workers Logs via `emitOperationalEvent`, and the _measurable_ part of them —
+volume, latency, failure rate — lives in Analytics Engine via
+`recordProductEvent`. See [`product-analytics.md`](./product-analytics.md):
+Workers Logs is a short-retention debugging stream, so without that counter the
+removal left scan volume and failure rate unanswerable rather than just
+un-audited.
 
 Everything else is still written: `scan.decided`, `github_workflow_gate.*`,
 `npm_connection.{upserted,validated,deleted,token_expired}`, `github_app_*`,

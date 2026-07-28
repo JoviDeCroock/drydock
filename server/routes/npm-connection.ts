@@ -13,6 +13,7 @@ import {
   requireActiveOrganizationContext,
 } from "../lib/auth/active-organization";
 import { roleCanManageIntegrations } from "../lib/auth/roles";
+import { recordProductEvent } from "../lib/platform/analytics";
 import {
   allowInsecureLocalRegistry,
   decryptNpmToken,
@@ -147,6 +148,14 @@ npmConnectionRoutes.post("/validate", async (c) => {
         },
       }),
     ]);
+    // The onboarding funnel's one measurable step inside the product: getting a
+    // token validated is the last thing a new organization does before its
+    // first review depends on an external staged publish.
+    recordProductEvent(c.env, {
+      name: "npm_connection.validated",
+      organizationId,
+      outcome: validation.ok ? "ok" : "failed",
+    });
 
     return c.json({ validation, connection: publicNpmConnection(updated) });
   } catch (err) {

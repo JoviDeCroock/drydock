@@ -32,9 +32,10 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 
 - [`security-detection-corpus.md`](./security-detection-corpus.md) — rule/eval fixture layout and expected findings.
 - [`detection-eval.md`](./detection-eval.md) — eval harness, metrics, and gates.
-- [`release-memory.md`](./release-memory.md) — advisory prior-release finding-profile consistency; never changes risk.
+- [`release-memory.md`](./release-memory.md) — advisory prior-release finding-profile consistency; discounts already-approved package context from the artifact-risk headline, and never moves release risk or a gate decision.
 - [`organization-members.md`](./organization-members.md) — organization invitation/membership behavior.
 - [`audit-log.md`](./audit-log.md) — organization audit log surface, visible-event allowlist, and retention.
+- [`product-analytics.md`](./product-analytics.md) — Analytics Engine counters, privacy posture, and the positional event schema.
 - [`two-factor-auth.md`](./two-factor-auth.md) — step-up auth and sensitive actions.
 - [`slack-notifications.md`](./slack-notifications.md) — Slack install and notification flow.
 - [`account-deletion.md`](./account-deletion.md) — account deletion lifecycle.

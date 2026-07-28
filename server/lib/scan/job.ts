@@ -17,6 +17,7 @@ import {
 import { runScanPipeline } from "./pipeline";
 import { sandboxErrorDetail } from "../sandbox";
 import type { ScanInput } from "../../types";
+import { recordProductEvent } from "../platform/analytics";
 
 export interface ScanQueueMessage extends ScanInput {
   scanId: string;
@@ -101,6 +102,7 @@ export async function executeScanJob(
         stageId: message.stageId,
         maxFiles: message.maxFiles,
         organizationId: message.organizationId,
+        source: message.source ?? "manual",
       },
     );
     emitOperationalEvent("info", "scan.job.completed", {
@@ -144,8 +146,29 @@ export async function executeScanJob(
           durationMs: durationMsSince(startedAtMs),
           error: safe,
         });
+        // Terminal counterpart to this scan's `scan.queued`, so a discovered
+        // candidate that npm withdrew before we could review it does not read
+        // as a scan that queued and vanished.
+        recordProductEvent(env, {
+          name: "scan.discarded",
+          organizationId: message.organizationId,
+          ecosystem: "npm",
+          source: message.source ?? "auto_discovery",
+          reason: "staged_tarball_unavailable",
+          durationMs: durationMsSince(startedAtMs),
+        });
       } else {
         await markScanFailed(db, message.scanId, message.organizationId, safe);
+        // Counted only on a terminal failure, so a scan that succeeds on retry
+        // is not filed as a failure in the aggregate.
+        recordProductEvent(env, {
+          name: "scan.failed",
+          organizationId: message.organizationId,
+          ecosystem: "npm",
+          source: message.source ?? "manual",
+          code: safe.code,
+          durationMs: durationMsSince(startedAtMs),
+        });
         emitOperationalEvent("error", "scan.job.failed", {
           scanId: message.scanId,
           organizationId: message.organizationId,

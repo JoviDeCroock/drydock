@@ -52,6 +52,8 @@ interface ScanRiskSummary {
   releaseFindingCount: number;
   contextFindingCount: number;
   unknownFindingCount: number;
+  /** Optional: absent on scans persisted before release memory affected scoring. */
+  priorApprovedContextFindingCount?: number;
 }
 
 export interface ScanListItem {
@@ -219,6 +221,12 @@ export const ScanListModel = createModel(() => {
   const decisionError = signal<string | null>(null);
   const deleteStatus = signal<DeleteStatus>("idle");
   const deleteError = signal<string | null>(null);
+  // Whether this organization has ever had a scan, independent of the active
+  // filter. `null` means not yet determined. The list alone cannot answer this:
+  // the default filter is "undecided", so a maintainer who has decided every
+  // review looks identical to one who has never run a scan — and only the
+  // second should be shown the getting-started panel.
+  const hasAnyScan = signal<boolean | null>(null);
 
   async function refresh(): Promise<void> {
     const currentFilter = filter.peek();
@@ -228,11 +236,39 @@ export const ScanListModel = createModel(() => {
       scans.value = data.scans;
       nextCursor.value = data.nextCursor;
       error.value = null;
+      // Resolved on every refresh rather than latched once, because `refresh`
+      // is also what runs on an organization switch: a stale `true` carried
+      // over from the previous organization would hide the getting-started
+      // panel from a brand-new one.
+      if (data.scans.length > 0) {
+        // Any non-empty page settles it without another request.
+        hasAnyScan.value = true;
+      } else if (currentFilter === "all") {
+        // An empty "all" page is the direct answer.
+        hasAnyScan.value = false;
+      } else {
+        hasAnyScan.value = null;
+        await resolveHasAnyScan();
+      }
     } catch (err) {
       error.value = errorMessage(err);
     } finally {
       loaded.value = true;
       refreshing.value = false;
+    }
+  }
+
+  // One-row probe for the case the filtered list cannot answer: this filter is
+  // empty, but the organization may still have decided reviews. Failure leaves
+  // `hasAnyScan` null, which renders nothing — an onboarding panel is never
+  // worth showing on a guess.
+  async function resolveHasAnyScan(): Promise<void> {
+    if (hasAnyScan.peek() !== null) return;
+    try {
+      const data = await listScans({ filter: "all", limit: 1 });
+      hasAnyScan.value = data.scans.length > 0;
+    } catch {
+      // Leave unknown.
     }
   }
 
@@ -257,6 +293,7 @@ export const ScanListModel = createModel(() => {
     decisionError,
     deleteStatus,
     deleteError,
+    hasAnyScan,
     refresh,
 
     async loadMore(): Promise<void> {
@@ -305,6 +342,15 @@ export const ScanListModel = createModel(() => {
       try {
         await deleteScan(id);
         this.scans.value = this.scans.value.filter((scan) => scan.id !== id);
+        // Deleting the organization's only scan puts it back in the
+        // never-scanned state, so the getting-started panel has to come back.
+        // An emptied list is not enough on its own — the active filter may just
+        // have nothing in it — so re-probe instead of assuming. One row, and it
+        // leaves the list alone.
+        if (this.scans.value.length === 0) {
+          this.hasAnyScan.value = null;
+          await resolveHasAnyScan();
+        }
         this.deleteStatus.value = "idle";
         return true;
       } catch (err) {

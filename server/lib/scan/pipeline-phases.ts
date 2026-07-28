@@ -15,6 +15,7 @@ import {
   durationMsSince,
   emitOperationalEvent,
 } from "../platform/observability";
+import { recordProductEvent } from "../platform/analytics";
 import {
   computeReleaseConsistency,
   noneReleaseConsistency,
@@ -154,12 +155,16 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
 }
 
 // Pure: fold deterministic + AI findings into the artifact/release/context
-// risk breakdown.
+// risk breakdown. `releaseConsistency` only ever removes previously-approved
+// package context from the artifact/context scores; release-delta findings are
+// scored in full regardless, so it cannot move `releaseRisk`.
 export function scoreRisk(
   annotatedFindings: Array<Finding & FindingDiffAnnotation>,
   aiFindings: AiReview,
+  releaseConsistency?: ReleaseConsistency | null,
+  options: { baselineComparisonSkipped?: boolean } = {},
 ): ScanRiskBreakdown {
-  return computeScanRiskBreakdown(annotatedFindings, aiFindings);
+  return computeScanRiskBreakdown(annotatedFindings, aiFindings, releaseConsistency, options);
 }
 
 export interface MergedAiFindings {
@@ -207,9 +212,11 @@ export interface ResolveReleaseConsistencyArgs {
 
 // Side-effecting (db read): release memory. Compare the current deterministic
 // finding profile against the most recent completed scan of the same package,
-// in the same organization, that a maintainer decided "publish". Advisory only:
-// the outcome never feeds risk, the risk breakdown, or any finding — and a
-// lookup failure degrades to "none" instead of failing the scan.
+// in the same organization, that a maintainer decided "publish". The outcome
+// never edits a finding; its only scoring effect is that already-approved
+// package context stops anchoring the headline risk (see `scoreRisk` and
+// docs/release-memory.md). A lookup failure degrades to "none", which scores
+// exactly as it did before release memory existed, instead of failing the scan.
 export async function resolveReleaseConsistency(
   args: ResolveReleaseConsistencyArgs,
 ): Promise<ReleaseConsistency> {
@@ -389,9 +396,14 @@ export interface RecordCompletionArgs {
   baseline: BaselineInfo;
   persisted: boolean;
   pipelineStartedAtMs: number;
+  env?: Cloudflare.Env;
+  source?: string;
 }
 
-// Side-effecting: emit the structured completion observability event.
+// Side-effecting: emit the structured completion observability event plus the
+// aggregate product counter. The log line is for debugging one scan; the
+// counter is what still answers "how many, how fast, how risky" a month later,
+// after the log has aged out.
 export async function recordCompletion(args: RecordCompletionArgs): Promise<void> {
   const { result, identity } = args;
   const riskSummary = result.riskSummary;
@@ -402,13 +414,27 @@ export async function recordCompletion(args: RecordCompletionArgs): Promise<void
   // operator can see how many were advisory.
   const ruleFindingCount = result.ruleFindings.length;
   const aiFindingCount = projectAiReviewFindings(result.aiFindings).length;
+  const durationMs = durationMsSince(args.pipelineStartedAtMs);
+
+  recordProductEvent(args.env, {
+    name: "scan.completed",
+    organizationId: identity.organizationId,
+    ecosystem: args.adapterId,
+    source: args.source ?? "unknown",
+    releaseRisk: riskSummary.releaseRisk,
+    artifactRisk: risk,
+    contextRisk: riskSummary.contextRisk,
+    durationMs,
+    ruleFindingCount,
+    aiFindingCount,
+  });
 
   emitOperationalEvent("info", "scan.pipeline.completed", {
     scanId: identity.scanId,
     organizationId: identity.organizationId,
     stageId: identity.stageId,
     adapterId: args.adapterId,
-    durationMs: durationMsSince(args.pipelineStartedAtMs),
+    durationMs,
     packageName: result.package.name,
     releaseRisk: riskSummary.releaseRisk,
     artifactRisk: risk,

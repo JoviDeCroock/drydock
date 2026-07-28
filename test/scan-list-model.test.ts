@@ -148,3 +148,134 @@ describe("scanMatchesDecisionFilter", () => {
     expect(scanMatchesDecisionFilter({ decision: "no_publish" }, "all")).toBe(true);
   });
 });
+
+describe("ScanListModel hasAnyScan", () => {
+  afterEach(() => {
+    model?.[Symbol.dispose]();
+    model = null;
+    vi.unstubAllGlobals();
+  });
+
+  function listResponse(scans: unknown[]) {
+    return jsonResponse({ scans, nextCursor: null });
+  }
+
+  test("a non-empty page settles the question without a second request", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(listResponse([scanDetail(null).scan])));
+    vi.stubGlobal("fetch", fetchMock);
+
+    model = new ScanListModel();
+    await model.refresh();
+
+    expect(model.hasAnyScan.value).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("an empty undecided page probes 'all' before concluding", async () => {
+    // A maintainer who has decided every review looks identical to one who has
+    // never scanned, on the default filter. Only the second gets onboarding.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(listResponse([]))
+      .mockResolvedValueOnce(listResponse([scanDetail("publish").scan]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    model = new ScanListModel();
+    await model.refresh();
+
+    expect(model.hasAnyScan.value).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("filter=all");
+  });
+
+  test("concludes false only when the probe also comes back empty", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(listResponse([]))),
+    );
+
+    model = new ScanListModel();
+    await model.refresh();
+
+    expect(model.hasAnyScan.value).toBe(false);
+  });
+
+  test("does not carry a stale answer across an organization switch", async () => {
+    // Regression: `hasAnyScan` latched `true` on first resolution, so switching
+    // to a brand-new organization hid its getting-started panel. `refresh` runs
+    // on every switch, so it must re-resolve rather than keep the old answer.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(listResponse([scanDetail(null).scan]))
+      .mockResolvedValueOnce(listResponse([]))
+      .mockResolvedValueOnce(listResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    model = new ScanListModel();
+    await model.refresh();
+    expect(model.hasAnyScan.value).toBe(true);
+
+    await model.refresh(); // the switched-to organization
+    expect(model.hasAnyScan.value).toBe(false);
+  });
+
+  test("stays unknown when the probe fails, so nothing renders on a guess", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(listResponse([]))
+      .mockRejectedValueOnce(new Error("network"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    model = new ScanListModel();
+    await model.refresh();
+
+    expect(model.hasAnyScan.value).toBe(null);
+  });
+});
+
+describe("ScanListModel hasAnyScan after deletion", () => {
+  afterEach(() => {
+    model?.[Symbol.dispose]();
+    model = null;
+    vi.unstubAllGlobals();
+  });
+
+  test("deleting the only scan brings back the never-scanned state", async () => {
+    // Regression: `deleteFailed` emptied the list without touching
+    // `hasAnyScan`, so an organization whose single failed scan was deleted
+    // kept a stale `true` — the getting-started panel never returned and the
+    // empty state offered "Show all reviews" against an equally empty filter.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ ok: true, id: "scan-1" }))
+      .mockResolvedValueOnce(jsonResponse({ scans: [], nextCursor: null }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    model = new ScanListModel();
+    model.hasAnyScan.value = true;
+    model.scans.value = [{ ...scanDetail(null).scan, status: "failed" }];
+
+    await expect(model.deleteFailed("scan-1")).resolves.toBe(true);
+
+    expect(model.scans.value).toEqual([]);
+    expect(model.hasAnyScan.value).toBe(false);
+  });
+
+  test("deleting one of several scans leaves the answer alone", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ ok: true, id: "scan-1" })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    model = new ScanListModel();
+    model.hasAnyScan.value = true;
+    model.scans.value = [
+      { ...scanDetail(null).scan, id: "scan-1", status: "failed" },
+      { ...scanDetail(null).scan, id: "scan-2" },
+    ];
+
+    await expect(model.deleteFailed("scan-1")).resolves.toBe(true);
+
+    expect(model.hasAnyScan.value).toBe(true);
+    // No probe: the list is still non-empty, so only the DELETE was sent.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});

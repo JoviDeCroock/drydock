@@ -11,6 +11,7 @@ import {
   durationMsSince,
   emitOperationalEvent,
 } from "../platform/observability";
+import { recordProductEvent } from "../platform/analytics";
 import {
   computeDiff,
   mergeAiFindings,
@@ -29,6 +30,8 @@ import type { ScanInput, ScanResult } from "../../types";
 export interface ScanPipelineOptions extends ScanInput {
   scanId?: string;
   organizationId: string;
+  /** `manual` | `auto_discovery` | `workflow_gate`; recorded on the product counter. */
+  source?: string;
   // Adapters parse their own input shape off this object (e.g. the PyPI adapter
   // reads `manifest`/`artifacts`), so allow extra keys to flow through untyped.
   [key: string]: unknown;
@@ -82,14 +85,13 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       adapter.codePatternSet,
       Boolean(resolved.baseline.baseline.comparisonSkipped),
     );
-    const riskSummary = scoreRisk(
-      [...findings.annotatedFindings, ...mergedAiFindings.annotatedRecords],
-      aiFindings,
-    );
 
-    // Advisory release-memory lookup (db read) before persistence. It compares
-    // finding profiles only; it never touches risk or findings, and a lookup
-    // failure degrades to "none" inside the phase instead of failing the scan.
+    // Release-memory lookup (db read) before scoring. It compares finding
+    // profiles only and never edits a finding; its one scoring effect is to stop
+    // already-approved *package context* from re-anchoring the headline risk.
+    // Release-delta findings are untouched, so `releaseRisk` — and the workflow
+    // gate that reads it — cannot move. A lookup failure degrades to "none"
+    // inside the phase, which scores exactly as before.
     const releaseConsistency = await resolveReleaseConsistency({
       db,
       env,
@@ -97,6 +99,13 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       packageName: findings.redactedStagedManifest?.name ?? null,
       ruleFindings: findings.ruleFindings,
     });
+
+    const riskSummary = scoreRisk(
+      [...findings.annotatedFindings, ...mergedAiFindings.annotatedRecords],
+      aiFindings,
+      releaseConsistency,
+      { baselineComparisonSkipped: Boolean(resolved.baseline.baseline.comparisonSkipped) },
+    );
 
     const { result, persisted } = await persistResults({
       env,
@@ -123,6 +132,8 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       baseline: resolved.baseline.baseline,
       persisted,
       pipelineStartedAtMs,
+      env,
+      source: input.source,
     });
 
     return result;
@@ -194,6 +205,19 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
       ruleFindings: args.findings.releaseRuleFindings,
       previousVersionAvailable: args.previousVersionAvailable,
     });
+    // A review that returns `invalid`/`unavailable` is handled safely — the
+    // scan floors at medium and `displayedAiResult` refuses to render it as
+    // "low risk / nothing unusual" — but it is silent. Counting the status makes
+    // the reviewer's failure rate a number instead of a thing nobody sees.
+    recordProductEvent(args.env, {
+      name: "ai_review.finished",
+      organizationId: args.identity.organizationId,
+      ecosystem: args.ecosystem,
+      status: review.status,
+      model: review.model ?? "unknown",
+      durationMs: durationMsSince(startedAtMs),
+      findingCount: review.findings.length,
+    });
     emitOperationalEvent("info", "scan.ai_review.completed", {
       scanId: args.identity.scanId,
       organizationId: args.identity.organizationId,
@@ -215,6 +239,15 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
     });
     return review;
   } catch (err) {
+    recordProductEvent(args.env, {
+      name: "ai_review.finished",
+      organizationId: args.identity.organizationId,
+      ecosystem: args.ecosystem,
+      status: "errored",
+      model: AI_MODEL,
+      durationMs: durationMsSince(startedAtMs),
+      findingCount: 0,
+    });
     emitOperationalEvent("error", "scan.ai_review.failed", {
       scanId: args.identity.scanId,
       organizationId: args.identity.organizationId,

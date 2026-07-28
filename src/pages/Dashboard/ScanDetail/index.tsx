@@ -38,6 +38,7 @@ import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection"
 import { ReleaseConsistencyNotice } from "./ReleaseConsistencyNotice";
 import { ReleaseRecommendation } from "./ReleaseRecommendation";
 import { PersistedReportSections } from "./ReportSections";
+import { ReviewerSummary } from "./ReviewerSummary";
 import { ScanDetailHeader, ScanFailureAlert, VersionPickerSkeleton } from "./ScanDetailChrome";
 import { filterDiffEntries, findingCountsByPath } from "../../../features/review/diff-entries";
 import { scanFilesToFileRecords } from "./diff-helpers";
@@ -309,7 +310,12 @@ export default function ScanDetailPage() {
               isWorkflowGate={isWorkflowGate}
             />
 
-            <ReleaseConsistencyNotice value={summary.value.releaseConsistency} />
+            <ReviewerSummary ai={ai.value} />
+
+            <ReleaseConsistencyNotice
+              value={summary.value.releaseConsistency}
+              approvedContextCount={detail.riskSummary?.priorApprovedContextFindingCount ?? 0}
+            />
 
             {detail.scan.packageName ? (
               <div class="flex flex-col gap-2 border-t border-border pt-3">
@@ -394,7 +400,7 @@ export default function ScanDetailPage() {
               />
             ) : null}
 
-            <PersistedReportSections summary={summary.value} ai={ai.value} />
+            <PersistedReportSections summary={summary.value} />
           </>
         ) : detail.scan.status === "pending" || detail.scan.status === "running" ? (
           // While stalled the pulsing line would falsely promise an

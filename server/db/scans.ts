@@ -13,6 +13,7 @@ import {
   type PackageJsonSummary,
 } from "../lib/review";
 import { normalizeScanRiskBreakdown, type ScanRiskBreakdown } from "../lib/review/risk";
+import { recordProductEvent } from "../lib/platform/analytics";
 import {
   deleteScanArtifacts,
   loadScanArtifactFile,
@@ -718,6 +719,10 @@ function computeRiskSummary(
     releaseFindingCount: persistedBreakdown?.releaseFindingCount ?? releaseFindings.length,
     contextFindingCount: persistedBreakdown?.contextFindingCount ?? contextFindings.length,
     unknownFindingCount: persistedBreakdown?.unknownFindingCount ?? unknownFindingCount,
+    // Recomputation can't reconstruct which context findings a prior release
+    // already covered — that needs the release-memory lookup — so an unset value
+    // means "no adjustment", matching how scans written before the field scored.
+    priorApprovedContextFindingCount: persistedBreakdown?.priorApprovedContextFindingCount ?? 0,
   };
 }
 
@@ -741,6 +746,10 @@ function readPersistedListRiskSummary(summaryJson: unknown): ScanRiskBreakdown |
     releaseFindingCount: partial.releaseFindingCount,
     contextFindingCount: partial.contextFindingCount,
     unknownFindingCount: partial.unknownFindingCount,
+    // Deliberately not part of the completeness guard above: scans persisted
+    // before release memory affected scoring have no such field, and requiring
+    // it would drop every one of them back to the recompute path.
+    priorApprovedContextFindingCount: partial.priorApprovedContextFindingCount ?? 0,
   };
 }
 
@@ -756,6 +765,7 @@ export async function recordScanDecision(
   db: AppDb,
   input: RecordScanDecisionInput,
   artifactBucket?: R2Bucket,
+  env?: Cloudflare.Env,
 ) {
   const now = new Date();
   const reason = input.reason?.trim() ? input.reason.trim() : null;
@@ -775,7 +785,12 @@ export async function recordScanDecision(
         eq(scans.status, "complete"),
       ),
     )
-    .returning({ id: scans.id });
+    .returning({
+      id: scans.id,
+      createdAt: scans.createdAt,
+      risk: scans.risk,
+      riskSummaryJson: scans.riskSummaryJson,
+    });
 
   if (updated.length === 0) return null;
 
@@ -787,7 +802,35 @@ export async function recordScanDecision(
     metadata: { decision: input.decision, reason },
   });
 
+  // Always npm here: this is the staged-publish decision route. Gated releases
+  // decide through `recordGatePackageDecision` below and report `gate`.
+  recordDecisionEvent(env, updated[0], {
+    organizationId: input.organizationId,
+    decision: input.decision,
+    ecosystem: "npm",
+    now,
+  });
+
   return getScan(db, input.scanId, input.organizationId, artifactBucket);
+}
+
+function toEpochMs(value: Date | number | string | null): number {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? Date.now() : parsed;
+  }
+  return Date.now();
+}
+
+function readRiskSummaryValue(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
 }
 
 export interface RecordGatePackageDecisionInput extends RecordScanDecisionInput {
@@ -803,6 +846,7 @@ export async function recordGatePackageDecision(
   db: AppDb,
   input: RecordGatePackageDecisionInput,
   artifactBucket?: R2Bucket,
+  env?: Cloudflare.Env,
 ) {
   const now = new Date();
   const reason = input.reason?.trim() ? input.reason.trim() : null;
@@ -831,7 +875,12 @@ export async function recordGatePackageDecision(
         )`,
       ),
     )
-    .returning({ id: scans.id });
+    .returning({
+      id: scans.id,
+      createdAt: scans.createdAt,
+      risk: scans.risk,
+      riskSummaryJson: scans.riskSummaryJson,
+    });
 
   if (updated.length === 0) return null;
 
@@ -843,7 +892,40 @@ export async function recordGatePackageDecision(
     metadata: { decision: input.decision, reason },
   });
 
+  // Gated releases decide here rather than through `recordScanDecision`, so
+  // without this the decision counter saw only the npm staged path — the
+  // ecosystems that release exclusively through a gate were invisible.
+  recordDecisionEvent(env, updated[0], {
+    organizationId: input.organizationId,
+    decision: input.decision,
+    ecosystem: "gate",
+    now,
+  });
+
   return getScan(db, input.scanId, input.organizationId, artifactBucket);
+}
+
+/**
+ * Shared product counter for both decision paths. Time-to-decision is the one
+ * number that says how long a release actually sits held, and the decision-vs-
+ * risk split is the clearest available signal that a risk grade is
+ * miscalibrated — so both paths have to report it the same way.
+ */
+function recordDecisionEvent(
+  env: Cloudflare.Env | undefined,
+  row: { createdAt: Date | number | string | null; risk: string; riskSummaryJson: unknown },
+  input: { organizationId: string; decision: string; ecosystem: string; now: Date },
+): void {
+  const breakdown = normalizeScanRiskBreakdown(readRiskSummaryValue(row.riskSummaryJson));
+  recordProductEvent(env, {
+    name: "scan.decided",
+    organizationId: input.organizationId,
+    ecosystem: input.ecosystem,
+    decision: input.decision,
+    releaseRisk: breakdown?.releaseRisk ?? row.risk,
+    artifactRisk: breakdown?.artifactRisk ?? row.risk,
+    timeToDecisionMs: Math.max(0, input.now.getTime() - toEpochMs(row.createdAt)),
+  });
 }
 
 export async function getScan(

@@ -238,6 +238,34 @@ their holes, so changing `^1.0.0 || ^3.0.0` to `^2.0.0` also fires. A pure narro
 (`>=1.0.0` → `^1.0.0`) stays inside the reviewed intervals and raises nothing, and
 a no-op `|| ` suffix or an unparseable leading branch cannot suppress the comparison. Upper-only
 comparator ranges such as `<=1.9.9` implicitly start at major 0 and participate in the same check.
+`1.19.0` splits `code.remote-shell` out of `code.process-execution` and fixes two roll-up defects it
+exposed. The capability rules matched the language-level call that _starts_ a subprocess
+(`child_process`, `execSync`, `spawn(`) in the same set as the shell _command_ handed to it
+(`curl`, `wget`, `nc`), so `execSync('curl … | bash')` scored as a single `code.process-execution` —
+the weak-on-its-own capability — and de-escalated the whole release to `low`, which made the workflow
+gate recommend approve. Neither network rule could see it either: both model in-language APIs, and a
+shell-mediated download never touches one. Shell commands that reach the network
+(`curl`/`wget`/`nc`/`netcat`/`/dev/tcp/`/`Invoke-WebRequest`/`DownloadString`) now raise
+`code.remote-shell` at high, and the download-and-execute compositions — a fetch piped or
+command-substituted into an interpreter (`curl … | bash`, `$(curl …)`, `<(wget …)`), `nc -e`,
+`powershell -enc`, `iwr … | iex` — raise it at critical, since no benign release fetches and runs code
+it did not ship. A bare shell tool additionally requires an executor in reach — a spawn API in the
+same file, or a lifecycle hook pointing at it — because the patterns match a command _string_ and
+comments are not stripped before matching, so the most common way an API client documents itself
+(`// equivalent to: curl -X POST …`) would otherwise read as a high-severity capability
+(`legit-curl-in-doc-comment` benign hard-negative). Download-and-execute is exempt from that
+requirement: `curl … | bash` has no benign reading even as an instruction. The rule is excluded from the weak-lone de-escalation and counts as an egress sink for
+the same-file credential→network chain, so a token read paired with `curl` is the collect-and-exfiltrate
+shape it always was (`shell-download-execute-dropper` and `shell-credential-exfil` golden cases).
+Inline interpreters with no network tool (`bash -c`, `sh -c`, `powershell`, `cmd /c`) deliberately stay
+inside `code.process-execution`, where a lone capability still de-escalates — ordinary build tooling
+runs make targets through a shell (`legit-shell-interpreter-build` benign hard-negative) — and that set
+gained `sh`/`zsh`/`ksh`/`dash -c`, `pwsh`, and `cmd /c`, which were previously unmodeled. Because
+command strings are language-agnostic, both the JavaScript and Python pattern sets share them, and
+`PYTHON_EXECUTION_CAPABILITY_PATTERNS` picks them up so a `setup.py` that shells out to `curl` counts
+as install-time execution. Separately, the co-occurrence branch of `computeRisk` returned a flat
+`high`, which meant a second capability could _de_-escalate a critical one; co-occurrence is now a
+floor combined with the highest capability severity, never a ceiling.
 An empty spec is treated
 like `*` rather than skipped, and `workspace:`/`catalog:`/`link:`/`portal:` protocols join
 `git:`/`https:`/`file:`/`npm:` as unusual specs (they name no published package). Spec parsing lives in

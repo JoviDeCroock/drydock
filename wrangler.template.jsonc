@@ -31,6 +31,16 @@
 	"ai": {
 		"binding": "AI"
 	},
+	// Optional: aggregate product counters (scan volume, latency, failure rate,
+	// AI-reviewer health, public-diff traffic). Writes no PII and nothing from
+	// the browser — see server/lib/platform/analytics.ts. Remove this block to run
+	// without product analytics; every call site degrades to a no-op.
+	"analytics_engine_datasets": [
+		{
+			"binding": "PRODUCT_ANALYTICS",
+			"dataset": "drydock_product_events"
+		}
+	],
 	// Optional: wires the Cloudflare Flagship `ai-review` killswitch. With it
 	// present the AI reviewer is on by default per organization and can be
 	// switched off per org (or globally) via Flagship. Remove this block to

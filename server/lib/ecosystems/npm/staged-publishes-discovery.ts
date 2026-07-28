@@ -10,6 +10,7 @@ import {
 import { decryptNpmToken, validateNpmCredential, type NpmCredentialValidation } from "./connection";
 import { notifyNpmConnectionExpired } from "../../notify";
 import { executeScanJob, type ScanQueueMessage } from "../../scan/job";
+import { recordProductEvent } from "../../platform/analytics";
 import {
   checkStagedPublishAccess,
   listStagedPublishes,
@@ -257,6 +258,12 @@ export async function discoverAndQueueStagedPublishes(
           stagedVersion: item.version,
         });
         if (!detail) return null;
+        recordProductEvent(env, {
+          name: "scan.queued",
+          organizationId,
+          ecosystem: "npm",
+          source,
+        });
         const startedScan: StartedStagedPublishScan = {
           id: scanId,
           stageId,

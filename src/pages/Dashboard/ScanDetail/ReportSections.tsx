@@ -1,19 +1,12 @@
 import type { ComponentChildren } from "preact";
-import type { DisplayedAiResult } from "../../../../server/lib/ai-review/types";
 import type { ReleaseProvenance } from "../../../../server/types";
 import { ecosystemLabel } from "../../../../server/lib/ecosystems/labels";
-import { Badge, severityTone } from "../../../components/Badge";
+import { Badge } from "../../../components/Badge";
 import { PackageJsonDiffView } from "../../../components/PackageJsonDiffView";
 import { EmptyLine, SectionLabel } from "../../../components/Typography";
 import type { PersistedSummary } from "./types";
 
-export function PersistedReportSections({
-  summary,
-  ai,
-}: {
-  summary: PersistedSummary;
-  ai: DisplayedAiResult | null;
-}) {
+export function PersistedReportSections({ summary }: { summary: PersistedSummary }) {
   return (
     <section class="flex flex-col gap-6">
       <ReportSection title="Manifest changes">
@@ -37,38 +30,10 @@ export function PersistedReportSections({
         </ReportSection>
       ) : null}
 
-      {ai != null && ai.model != null && (
-        <ReportSection title="Reviewer notes">
-          {ai.kind === "complete" ? (
-            <>
-              <div class="flex flex-wrap gap-2">
-                <Badge tone={severityTone(ai.risk)}>{ai.risk}</Badge>
-                <Badge tone={ai.requiresManualReview ? "medium" : "ok"}>
-                  {ai.requiresManualReview ? "manual review" : "no extra review"}
-                </Badge>
-                <Badge tone="neutral">{ai.releaseAssessment.replaceAll("_", " ")}</Badge>
-              </div>
-              {/* The reviewer's findings render once, as assistant-badged cards
-                  in the Risk signals section (they persist as scan_findings
-                  rows). This panel carries only the narrative verdict — summary
-                  plus the assessment badges above — so a finding is never shown
-                  twice on the page. */}
-              {ai.summary ? (
-                <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{ai.summary}</p>
-              ) : null}
-            </>
-          ) : (
-            <>
-              <div class="flex flex-wrap gap-2">
-                <Badge tone="neutral">assistant unavailable</Badge>
-              </div>
-              {ai.summary ? (
-                <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{ai.summary}</p>
-              ) : null}
-            </>
-          )}
-        </ReportSection>
-      )}
+      {/* The reviewer's narrative verdict used to sit here, at the bottom of the
+          page. It moved up to `ReviewerSummary`, directly under the
+          Recommendation — it answers "what is this release?", which is the
+          question the page opens with, not a footnote to it. */}
     </section>
   );
 }

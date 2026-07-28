@@ -8,6 +8,7 @@ import {
   JS_PATTERN_SET,
   PYTHON_PATTERN_SET,
   safeJson,
+  SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
 } from "./rules";
 import type {
   CodePatternSet,
@@ -214,6 +215,16 @@ function patternsForFinding(
   switch (finding.ruleId) {
     case DETERMINISTIC_RULE_IDS.codeProcessExecution:
       return patterns.processExecution;
+    case DETERMINISTIC_RULE_IDS.codeRemoteShell:
+      // Both sets, because the finding's recorded line comes from whichever
+      // matched: `scripts.ts` prefers the download-and-execute line when one
+      // exists and falls back to the bare shell-tool line otherwise. Omitting
+      // this case entirely (the `default: []` below) is not a silent
+      // degradation — it removes the rule from the release delta, so a decoy
+      // `curl` in an untouched comment earlier in the file pins the finding's
+      // line to an unchanged line and the newly added dropper stops counting
+      // toward `releaseRisk`, which is exactly what the gate reads.
+      return [...patterns.remoteShell, ...SHELL_DOWNLOAD_EXECUTE_PATTERN_SET];
     case DETERMINISTIC_RULE_IDS.codeNetworkAccess:
       return patterns.networkAccess;
     case DETERMINISTIC_RULE_IDS.codeDynamicEvaluation:

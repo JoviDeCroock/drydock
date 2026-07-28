@@ -210,3 +210,253 @@ describe("normalizeScanRiskBreakdown", () => {
     expect(result).toBe(null);
   });
 });
+
+describe("release memory as a risk input", () => {
+  // A tape-shaped release: the package's own machinery trips rules on files this
+  // release never touched, while the release delta is clean. These use an anchor
+  // rule (`file.native-artifact`) rather than a `code.*` capability so the
+  // assertions measure release memory and not the lone-capability
+  // de-escalation, which would report "low" either way.
+  const contextFinding = (ruleId, file) => ({
+    ruleId,
+    severity: "high",
+    file,
+    evidence: "e",
+    reason: "r",
+    releaseDelta: false,
+    diffStatus: "unchanged",
+  });
+  const deltaFinding = (ruleId, file) => ({
+    ruleId,
+    severity: "high",
+    file,
+    evidence: "e",
+    reason: "r",
+    releaseDelta: true,
+    diffStatus: "modified",
+  });
+  const consistency = (overrides = {}) => ({
+    status: "match",
+    priorScanId: "scan-prior",
+    priorVersion: "5.10.0",
+    decidedAt: "2026-07-01T00:00:00.000Z",
+    currentFindingCount: 2,
+    priorFindingCount: 2,
+    newFindingCount: 0,
+    newFindings: [],
+    ...overrides,
+  });
+
+  test("without release memory, package context still anchors the headline", () => {
+    const result = computeScanRiskBreakdown(
+      [contextFinding("file.native-artifact", "lib/cli.node")],
+      makeAiReview(),
+    );
+    expect(result.contextRisk).toBe("high");
+    expect(result.artifactRisk).toBe("high");
+    expect(result.priorApprovedContextFindingCount).toBe(0);
+  });
+
+  test("a matching approved profile stops approved context re-anchoring the headline", () => {
+    const result = computeScanRiskBreakdown(
+      [contextFinding("file.native-artifact", "lib/cli.node")],
+      makeAiReview(),
+      consistency(),
+    );
+    expect(result.contextRisk).toBe("low");
+    expect(result.artifactRisk).toBe("low");
+    // The finding is still reported — only its scoring contribution is dropped.
+    expect(result.contextFindingCount).toBe(1);
+    expect(result.priorApprovedContextFindingCount).toBe(1);
+  });
+
+  test.each([
+    ["install-script.preinstall"],
+    ["install-script.lifecycle"],
+    ["install-script.implicit-node-gyp"],
+    ["install-script.gyp-command-substitution"],
+    ["code.remote-shell"],
+    ["file.secret-content"],
+    ["tar.suspicious-entry"],
+  ])("an approval never discounts %s", (ruleId) => {
+    // The discount's premise is that a capability is a property of the package
+    // rather than the release. That does not extend to evidence of an active
+    // compromise: if a release shipping a dropper is ever approved (compromised
+    // account, or an approval predating the rule), the next README-only release
+    // must not report it as settled background. Without this carve-out the
+    // profile matches, the finding moves to context, and the headline reads low
+    // for every release thereafter.
+    const result = computeScanRiskBreakdown(
+      [contextFinding(ruleId, "lib/postinstall.js")],
+      makeAiReview(),
+      consistency(),
+    );
+    expect(result.contextRisk).toBe("high");
+    expect(result.artifactRisk).toBe("high");
+    expect(result.priorApprovedContextFindingCount).toBe(0);
+  });
+
+  test("standing-danger rules do not block the discount for the rest", () => {
+    const result = computeScanRiskBreakdown(
+      [
+        contextFinding("file.secret-content", "lib/.env"),
+        contextFinding("file.native-artifact", "lib/cli.node"),
+      ],
+      makeAiReview(),
+      consistency({ currentFindingCount: 3, priorFindingCount: 3 }),
+    );
+    // The native artifact is discounted; the embedded secret keeps scoring.
+    expect(result.priorApprovedContextFindingCount).toBe(1);
+    expect(result.contextRisk).toBe("high");
+  });
+
+  test("release-delta findings are never demoted, so the gate cannot move", () => {
+    const result = computeScanRiskBreakdown(
+      [
+        contextFinding("file.native-artifact", "lib/cli.node"),
+        deltaFinding("install-script.lifecycle", "package.json"),
+      ],
+      makeAiReview(),
+      consistency(),
+    );
+    // `releaseRisk` is what workflow-gate-job.ts reads for its accept/reject
+    // recommendation. A prior approval must not be able to release a held job.
+    expect(result.releaseRisk).toBe("high");
+    expect(result.artifactRisk).toBe("high");
+    expect(result.priorApprovedContextFindingCount).toBe(1);
+  });
+
+  test("diverged: only findings new since the approval keep scoring", () => {
+    const result = computeScanRiskBreakdown(
+      [
+        contextFinding("file.native-artifact", "lib/cli.node"),
+        contextFinding("file.secret-content", "lib/new.js"),
+      ],
+      makeAiReview(),
+      consistency({
+        status: "diverged",
+        newFindingCount: 1,
+        newFindings: [{ ruleId: "file.secret-content", severity: "high", file: "lib/new.js" }],
+      }),
+    );
+    expect(result.contextRisk).toBe("high");
+    expect(result.priorApprovedContextFindingCount).toBe(1);
+  });
+
+  test("fails closed when the new-finding list was truncated by the cap", () => {
+    // newFindingCount > newFindings.length means the exact approved set can't be
+    // reconstructed. Demoting on a partial list could drop a real finding.
+    const result = computeScanRiskBreakdown(
+      [contextFinding("file.native-artifact", "lib/cli.node")],
+      makeAiReview(),
+      consistency({ status: "diverged", newFindingCount: 40, newFindings: [] }),
+    );
+    expect(result.contextRisk).toBe("high");
+    expect(result.priorApprovedContextFindingCount).toBe(0);
+  });
+
+  test("fails closed when there is no prior approved scan", () => {
+    const result = computeScanRiskBreakdown(
+      [contextFinding("file.native-artifact", "lib/cli.node")],
+      makeAiReview(),
+      consistency({ status: "none", priorScanId: null }),
+    );
+    expect(result.contextRisk).toBe("high");
+    expect(result.priorApprovedContextFindingCount).toBe(0);
+  });
+});
+
+describe("release memory never demotes AI findings", () => {
+  // The release-memory profile is built from deterministic rule findings only,
+  // so a "match" says nothing about what the AI reviewer found. An AI finding is
+  // projected without a ruleId; that is what keeps it out of the adjustment.
+  const aiContextFinding = () => ({
+    severity: "high",
+    file: "lib/vendor.js",
+    evidence: "e",
+    reason: "r",
+    releaseDelta: false,
+    diffStatus: "unchanged",
+  });
+  const matched = {
+    status: "match",
+    priorScanId: "scan-prior",
+    priorVersion: "1.0.0",
+    decidedAt: "2026-07-01T00:00:00.000Z",
+    currentFindingCount: 1,
+    priorFindingCount: 1,
+    newFindingCount: 0,
+    newFindings: [],
+  };
+
+  test("an AI context finding keeps scoring through a matching profile", () => {
+    const result = computeScanRiskBreakdown([aiContextFinding()], makeAiReview(), matched);
+    expect(result.contextRisk).toBe("high");
+    expect(result.priorApprovedContextFindingCount).toBe(0);
+  });
+
+  test("a deterministic finding is dropped while the AI one beside it is not", () => {
+    const result = computeScanRiskBreakdown(
+      [
+        {
+          ruleId: "file.native-artifact",
+          severity: "high",
+          file: "lib/cli.node",
+          evidence: "e",
+          reason: "r",
+          releaseDelta: false,
+          diffStatus: "unchanged",
+        },
+        aiContextFinding(),
+      ],
+      makeAiReview(),
+      matched,
+    );
+    expect(result.priorApprovedContextFindingCount).toBe(1);
+    expect(result.contextRisk).toBe("high");
+  });
+});
+
+describe("release memory and a skipped baseline", () => {
+  // When the published baseline exceeds the download budget the comparison is
+  // skipped and every finding is annotated `unknown` package context, so the
+  // whole scan lands in release memory's bucket. Discounting it on a profile
+  // match would grade an uncompared release as clean — the exact failure the
+  // skipped-baseline handling exists to prevent. The profile is
+  // (ruleId, severity, file); identical bytes are not implied.
+  const uncomparedFinding = (file) => ({
+    ruleId: "file.native-artifact",
+    severity: "high",
+    file,
+    evidence: "e",
+    reason: "r",
+    releaseDelta: false,
+    diffStatus: "unknown",
+  });
+  const matched = {
+    status: "match",
+    priorScanId: "scan-prior",
+    priorVersion: "1.0.0",
+    decidedAt: "2026-07-01T00:00:00.000Z",
+    currentFindingCount: 2,
+    priorFindingCount: 2,
+    newFindingCount: 0,
+    newFindings: [],
+  };
+  const findings = [uncomparedFinding("pkg/_c.pyd"), uncomparedFinding("pkg/_d.pyd")];
+
+  test("a matching profile does not discount an uncompared release", () => {
+    const result = computeScanRiskBreakdown(findings, makeAiReview(), matched, {
+      baselineComparisonSkipped: true,
+    });
+    expect(result.artifactRisk).toBe("high");
+    expect(result.contextRisk).toBe("high");
+    expect(result.priorApprovedContextFindingCount).toBe(0);
+  });
+
+  test("the same scan with a real baseline still discounts", () => {
+    const result = computeScanRiskBreakdown(findings, makeAiReview(), matched);
+    expect(result.artifactRisk).toBe("low");
+    expect(result.priorApprovedContextFindingCount).toBe(2);
+  });
+});
