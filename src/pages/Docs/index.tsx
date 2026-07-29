@@ -364,9 +364,15 @@ export default function DocsPage() {
                 items={[
                   <>Create a Drydock organization for the team that publishes the package.</>,
                   <>
-                    Open <Code>Organization settings → npm access</Code> and paste an automation or
-                    granular npm token that can read the org's packages and list packages in npm
-                    stage publish.
+                    On npmjs.com, generate a granular access token with{" "}
+                    <Code>Packages and scopes: Read-only</Code> on the packages you stage and{" "}
+                    <Code>Organizations: No access</Code>. A scoped package like{" "}
+                    <Code>@nanostores/i18n</Code> is covered by selecting the{" "}
+                    <Code>@nanostores</Code> scope there; the Organizations permission is for member
+                    and settings management, which Drydock never reads.
+                  </>,
+                  <>
+                    Open <Code>Organization settings → npm access</Code> and paste the token.
                   </>,
                   <>
                     Save. Drydock encrypts the token and checks it against the registry right away.

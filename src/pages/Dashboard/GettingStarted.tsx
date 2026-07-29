@@ -29,7 +29,9 @@ export function GettingStarted({ npmConnected }: { npmConnected: boolean }) {
             <>A read-only token is stored for this organization.</>
           ) : (
             <>
-              Store a read-only npm token so Drydock can fetch staged tarballs.{" "}
+              Store an npm token so Drydock can fetch staged tarballs — a granular token with{" "}
+              <strong class="font-medium text-ink">Packages and scopes: Read-only</strong> and{" "}
+              <strong class="font-medium text-ink">Organizations: No access</strong>.{" "}
               <a href="/dashboard/settings?tab=integrations" class="underline">
                 Open settings
               </a>
