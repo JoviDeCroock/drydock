@@ -1,4 +1,5 @@
 import type { SharedScanRow } from "../db/scan-share";
+import { coloCacheDelete } from "./platform/colo-cache";
 
 // Shaping helpers for the two discoverable public surfaces: the shields.io
 // badge endpoint and the threat feed. Both are name-discoverable indexes, so
@@ -40,6 +41,61 @@ export function publicPackageLookupKey(ecosystem: PublicEcosystem, packageName: 
         ? packageName.toLowerCase()
         : packageName;
   return `${ecosystem}:${normalized}`;
+}
+
+// Colo-cache keys for the two cacheable public surfaces. These live here, next
+// to `publicPackageLookupKey`, rather than in a route module: the write side
+// (the badge/feed GETs) and the purge side (the dashboard's share and listing
+// mutations) are different routes, and a route importing another route is how
+// the two drifted onto different origins in the first place.
+function badgeCacheKey(origin: string, packageKey: string): Request {
+  return new Request(`${origin}/public/badge-key/${encodeURIComponent(packageKey)}`);
+}
+
+function threatFeedCacheKey(origin: string): Request {
+  return new Request(`${origin}/public/threat-feed.json`);
+}
+
+/**
+ * Colo-cache key for a cacheable public path. Badge paths collapse to their
+ * canonical package key, so every encoding of one package shares one entry and
+ * `purgePublicFeedCache` can delete it by key after a revoke or unlist.
+ */
+export function publicFeedCacheKey(origin: string, routePath: string): Request {
+  const badge = /^\/badge\/([^/]+)\/(.+)$/.exec(routePath);
+  if (badge) {
+    const ecosystem = badge[1] as PublicEcosystem;
+    if (PUBLIC_ECOSYSTEMS.includes(ecosystem)) {
+      let name = badge[2];
+      try {
+        name = decodeURIComponent(name);
+      } catch {
+        // Undecodable name: fall through and key on the raw path.
+      }
+      return badgeCacheKey(origin, publicPackageLookupKey(ecosystem, name));
+    }
+  }
+  return new Request(origin + "/public" + routePath);
+}
+
+/**
+ * Drop the colo-cached badge and threat feed after a share is revoked or a
+ * listing is turned off, so the withdrawal is not delayed by the TTL.
+ *
+ * **This is colo-local.** It clears the entries in the colo that served the
+ * revoking admin's request and nowhere else; every other region keeps serving
+ * the withdrawn badge until `max-age` expires, and shields.io's own cache
+ * (≥300s) sits in front of that. Revocation of the *report* is immediate —
+ * `no-store` plus a D1 lookup on every request. These two derived surfaces are
+ * eventually consistent by construction, which is why their TTLs are short.
+ */
+export function purgePublicFeedCache(
+  executionCtx: ExecutionContext,
+  origin: string,
+  publicPackageKey: string | null,
+): void {
+  coloCacheDelete(executionCtx, threatFeedCacheKey(origin));
+  if (publicPackageKey) coloCacheDelete(executionCtx, badgeCacheKey(origin, publicPackageKey));
 }
 
 /**
@@ -146,6 +202,10 @@ export interface BadgePayload {
 
 const BADGE_LABEL = "drydock";
 const BADGE_CACHE_SECONDS = 300;
+// Short, because this payload is a statement about Drydock's availability, not
+// about the package. shields enforces a 300s floor of its own, so it cannot be
+// honoured exactly — but nothing here should ask to be remembered.
+const BADGE_UNAVAILABLE_CACHE_SECONDS = 30;
 
 // Version strings originate in package manifests (attacker-shaped for gate
 // scans); clamp so a hostile version can't balloon the badge message.
@@ -188,6 +248,28 @@ function badgeLabel(row: SharedScanRow): string {
   return scanPackageIdentity(row.source) === "registry-verified"
     ? BADGE_LABEL
     : `${BADGE_LABEL} (unverified)`;
+}
+
+/**
+ * The badge for "Drydock could not answer" — throttling, mostly.
+ *
+ * This must never be `buildBadgePayload(null)`. That payload asserts *nobody
+ * reviewed this package*, and shields would cache the assertion for at least
+ * five minutes. Every Drydock badge in the world reaches us through a handful
+ * of shields egress addresses against a per-IP limiter with no per-package
+ * dimension, so an unrelated burst can throttle the request for a package
+ * whose review says `blocked` — and every README rendering that badge would
+ * quietly show neutral grey instead. "We don't know" and "nobody reviewed
+ * this" have to be distinguishable.
+ */
+export function buildUnavailableBadgePayload(): BadgePayload {
+  return {
+    schemaVersion: 1,
+    label: BADGE_LABEL,
+    message: "unavailable",
+    color: "lightgrey",
+    cacheSeconds: BADGE_UNAVAILABLE_CACHE_SECONDS,
+  };
 }
 
 export function buildBadgePayload(row: SharedScanRow | null): BadgePayload {

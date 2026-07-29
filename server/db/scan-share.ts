@@ -28,6 +28,35 @@ export interface PublicShareState {
 }
 
 /**
+ * Read the current share state without creating one. Callers acting on an
+ * *existing* share — notably unlisting from the threat feed — must go through
+ * this rather than `enablePublicShare`, or a withdrawal turns into a
+ * publication when the link was revoked in the meantime.
+ */
+export async function readPublicShare(
+  db: AppDb,
+  input: { scanId: string; organizationId: string },
+): Promise<PublicShareState | null> {
+  const [row] = await db
+    .select({
+      publicShareToken: scans.publicShareToken,
+      publicSharedAt: scans.publicSharedAt,
+      publicFeedListedAt: scans.publicFeedListedAt,
+      publicPackageKey: scans.publicPackageKey,
+    })
+    .from(scans)
+    .where(and(eq(scans.id, input.scanId), eq(scans.organizationId, input.organizationId)))
+    .limit(1);
+  if (!row?.publicShareToken || !row.publicSharedAt) return null;
+  return {
+    publicShareToken: row.publicShareToken,
+    publicSharedAt: row.publicSharedAt,
+    publicFeedListedAt: row.publicFeedListedAt,
+    publicPackageKey: row.publicPackageKey,
+  };
+}
+
+/**
  * Enable (or return the existing) public share link for a completed scan.
  * Idempotent: re-sharing an already-shared scan returns the current token so
  * the UI never rotates a link that may already be distributed.
@@ -255,11 +284,42 @@ const SHARED_SCAN_COLUMNS = {
   completedAt: scans.completedAt,
 } as const;
 
-/** Feed-listed shared scans, newest listing first. */
+export interface ThreatFeedCursor {
+  listedAtMs: number;
+  scanId: string;
+}
+
+/** `<listedAtMs>:<scanId>` — the same shape as the scan list cursor. */
+export function parseThreatFeedCursor(raw: string | undefined): ThreatFeedCursor | null {
+  if (!raw) return null;
+  const sep = raw.indexOf(":");
+  if (sep <= 0) return null;
+  const listedAtMs = Number(raw.slice(0, sep));
+  const scanId = raw.slice(sep + 1);
+  if (!Number.isFinite(listedAtMs) || !scanId) return null;
+  return { listedAtMs, scanId };
+}
+
+export function encodeThreatFeedCursor(cursor: ThreatFeedCursor | null): string | null {
+  return cursor ? `${cursor.listedAtMs}:${cursor.scanId}` : null;
+}
+
+/**
+ * Feed-listed shared scans, newest listing first, keyset-paginated.
+ *
+ * The page is bounded, and without a cursor the bound is the whole story a
+ * consumer can see: one organization listing a batch of its own scans pushes
+ * everything older — including other organizations' `no_publish` releases —
+ * off the end, and a poller that only ever reads page one silently misses
+ * them. `(publicFeedListedAt, id)` is a total order over the listed set, so
+ * `after` walks backwards through it and nothing is ever unreachable.
+ */
 export async function listThreatFeedScans(
   db: AppDb,
-  limit = THREAT_FEED_MAX_ENTRIES,
+  options: { limit?: number; after?: ThreatFeedCursor | null } = {},
 ): Promise<SharedScanRow[]> {
+  const limit = Math.min(options.limit ?? THREAT_FEED_MAX_ENTRIES, THREAT_FEED_MAX_ENTRIES);
+  const after = options.after ?? null;
   return db
     .select(SHARED_SCAN_COLUMNS)
     .from(scans)
@@ -268,10 +328,30 @@ export async function listThreatFeedScans(
         isNotNull(scans.publicFeedListedAt),
         isNotNull(scans.publicShareToken),
         eq(scans.status, "complete"),
+        after
+          ? or(
+              sql`${scans.publicFeedListedAt} < ${after.listedAtMs}`,
+              and(
+                sql`${scans.publicFeedListedAt} = ${after.listedAtMs}`,
+                sql`${scans.id} < ${after.scanId}`,
+              ),
+            )
+          : undefined,
       ),
     )
     .orderBy(desc(scans.publicFeedListedAt), desc(scans.id))
     .limit(limit);
+}
+
+/** The cursor that continues a page, or null when the feed is exhausted. */
+export function threatFeedNextCursor(
+  rows: SharedScanRow[],
+  limit: number,
+): ThreatFeedCursor | null {
+  if (rows.length < limit) return null;
+  const last = rows[rows.length - 1];
+  if (!last?.publicFeedListedAt) return null;
+  return { listedAtMs: last.publicFeedListedAt.getTime(), scanId: last.scanId };
 }
 
 /**

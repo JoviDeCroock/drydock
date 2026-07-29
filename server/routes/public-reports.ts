@@ -2,22 +2,28 @@ import { Hono, type Context } from "hono";
 import { createDb } from "../db/client";
 import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
 import {
+  encodeThreatFeedCursor,
   listBadgeCandidateScans,
   listThreatFeedScans,
+  parseThreatFeedCursor,
   resolvePublicShareToken,
+  threatFeedNextCursor,
+  THREAT_FEED_MAX_ENTRIES,
 } from "../db/scan-share";
 import { getScan } from "../db/scans";
 import {
   buildBadgePayload,
   buildThreatFeedEntry,
+  buildUnavailableBadgePayload,
   pickBadgeScan,
   PUBLIC_ECOSYSTEMS,
-  publicPackageLookupKey,
+  publicFeedCacheKey,
   publicPackageNameMax,
   scanEcosystem,
   THREAT_FEED_SCHEMA,
   type PublicEcosystem,
 } from "../lib/public-feed";
+import { coloCacheMatch, coloCachePut } from "../lib/platform/colo-cache";
 import {
   buildAttestationStatement,
   loadAttestationKey,
@@ -70,102 +76,52 @@ publicReportsRoutes.use("*", async (c, next) => {
 });
 
 // The badge and feed are hot, anonymous, and staleness-tolerant (both already
-// declare max-age=300), so they read through the colo cache (caches.default) —
-// the same pattern as the published-tarball byte cache. Report/attestation
-// reads are deliberately NOT cached: revocation must be immediate. Runs before
-// the rate limiter so cache hits never cost a D1 round trip.
+// declare max-age=300), so they read through the colo cache — the same pattern
+// as the published-tarball byte cache. Report/attestation reads are
+// deliberately NOT cached: revocation must be immediate. Runs before the rate
+// limiter so cache hits never cost a D1 round trip.
 const COLO_CACHED_PATHS = [/^\/badge\//, /^\/threat-feed\.json$/];
 
-// The Workers runtime exposes the colo cache as `caches.default`, but the DOM
-// lib wins the global CacheStorage type in this repo's single tsconfig and
-// doesn't know the property.
-function coloCache(): Cache {
-  return (caches as unknown as { default: Cache }).default;
-}
-
-/**
- * Colo-cache key for a cacheable public path. Badge paths collapse to their
- * canonical package key so `/badge/npm/Foo` and `/badge/npm/Foo` reached via a
- * different encoding share one entry — and so `purgePublicFeedCache` can delete
- * that entry by key after a revoke or unlist.
- */
-export function publicCacheKey(origin: string, routePath: string): Request {
-  const badge = /^\/badge\/([^/]+)\/(.+)$/.exec(routePath);
-  if (badge) {
-    const ecosystem = badge[1] as PublicEcosystem;
-    if (PUBLIC_ECOSYSTEMS.includes(ecosystem)) {
-      let name = badge[2];
-      try {
-        name = decodeURIComponent(name);
-      } catch {
-        // Undecodable name: fall through and key on the raw path.
-      }
-      const key = publicPackageLookupKey(ecosystem, name);
-      return new Request(`${origin}/public/badge-key/${encodeURIComponent(key)}`);
-    }
-  }
-  return new Request(origin + "/public" + routePath);
-}
-
-/**
- * Drop the colo-cached badge and threat feed after a share is revoked or a
- * listing is turned off.
- *
- * Without this the cached bodies keep asserting "<version> reviewed · low risk"
- * for up to the cache TTL after the publisher withdrew the report, and the
- * cached feed still embeds a now-dead share token. The report itself is
- * `no-store` and 404s immediately; this closes the same window on the two
- * derived surfaces. Best effort: a failure here only means the old TTL applies.
- */
-export function purgePublicFeedCache(
-  executionCtx: ExecutionContext,
-  origin: string,
-  publicPackageKey: string | null,
-): void {
-  const keys = [new Request(`${origin}/public/threat-feed.json`)];
-  if (publicPackageKey) {
-    keys.push(new Request(`${origin}/public/badge-key/${encodeURIComponent(publicPackageKey)}`));
-  }
-  for (const key of keys) {
-    executionCtx.waitUntil(
-      coloCache()
-        .delete(key)
-        .catch(() => {}),
-    );
-  }
-}
+// Internal marker: a handler sets it to opt one response out of the colo cache
+// while keeping its downstream `cache-control`. Stripped before the response
+// leaves the Worker.
+const COLO_CACHE_SKIP_HEADER = "x-drydock-colo-cache-skip";
 
 publicReportsRoutes.use("*", async (c, next) => {
   if (c.req.method !== "GET") return next();
   const routePath = new URL(c.req.url).pathname.replace(/^\/public/, "");
   if (!COLO_CACHED_PATHS.some((re) => re.test(routePath))) return next();
-  // The feed body embeds report URLs built from canonicalOrigin, which falls
-  // back to the request origin when BETTER_AUTH_URL is unset — a cached copy
-  // of a request-derived origin would be a Host-header poisoning vector, so
-  // only cache the feed when the origin is pinned by config.
-  if (routePath.startsWith("/threat-feed") && !c.env.BETTER_AUTH_URL) return next();
-  // Key on the *canonical* path only: responses never vary by query, so a
-  // cache-busting query string can never force a D1 read-through, and folding
-  // badge URLs onto their lookup key means one package has exactly one cache
-  // entry no matter how the embedder cased or encoded the name. That is what
-  // makes the purge below exact rather than best-effort.
-  const cacheKey = publicCacheKey(new URL(c.req.url).origin, routePath);
-  let cached: Response | undefined;
-  try {
-    cached = await coloCache().match(cacheKey);
-  } catch {
-    cached = undefined;
+  if (routePath.startsWith("/threat-feed")) {
+    // The feed body embeds report URLs built from canonicalOrigin, which falls
+    // back to the request origin when BETTER_AUTH_URL is unset — a cached copy
+    // of a request-derived origin would be a Host-header poisoning vector, so
+    // only cache the feed when the origin is pinned by config.
+    if (!c.env.BETTER_AUTH_URL) return next();
+    // The cache key is the path alone, and the feed *does* vary by `?after=`.
+    // Only the first page is cacheable; a cursored page must never be served
+    // from, or written into, the entry that page one occupies. Backfill pages
+    // are rare by nature — a consumer walks them once to catch up.
+    if (new URL(c.req.url).search) return next();
   }
+  // Key on the *canonical* origin and path only. Everything still cacheable at
+  // this point ignores its query string, so a cache-busting query can't force a
+  // D1 read-through, and folding badge URLs onto their lookup key means one
+  // package has one entry per colo however the embedder encoded the name. The
+  // origin has to be canonicalOrigin — the same value purgePublicFeedCache uses
+  // from a *dashboard* request — or a deploy bound to a second hostname
+  // (workers.dev, a preview alias) writes entries the purge never visits.
+  const cacheKey = publicFeedCacheKey(canonicalOrigin(c), routePath);
+  const cached = await coloCacheMatch(cacheKey);
   if (cached) return cached;
   await next();
-  if (c.res?.status === 200 && !c.res.headers.get("cache-control")?.includes("no-store")) {
-    const copy = c.res.clone();
-    c.executionCtx.waitUntil(
-      coloCache()
-        .put(cacheKey, copy)
-        .catch(() => {}),
-    );
+  const skip = c.res?.headers.has(COLO_CACHE_SKIP_HEADER);
+  if (c.res?.status === 200 && !skip && !c.res.headers.get("cache-control")?.includes("no-store")) {
+    coloCachePut(c.executionCtx, cacheKey, c.res.clone());
   }
+  // Mutate in place rather than rebuilding: Hono's `c.res` setter copies the
+  // previous response's headers onto the replacement, so a delete-then-reassign
+  // would put the marker straight back.
+  if (skip) c.res.headers.delete(COLO_CACHE_SKIP_HEADER);
 });
 
 publicReportsRoutes.use("*", async (c, next) => {
@@ -187,10 +143,13 @@ publicReportsRoutes.use("*", async (c, next) => {
   } catch (err) {
     if (err instanceof RateLimitError) {
       // Shields proxies many unrelated package badges through shared egress
-      // addresses. Preserve the endpoint-badge contract under throttling and
-      // keep this fallback out of the colo cache so it cannot mask a real review.
+      // addresses. Preserve the endpoint-badge contract under throttling (200,
+      // or proxies render an error) but say "unavailable", never "not
+      // reviewed" — the latter is an assertion about the package that shields
+      // would cache for minutes over a review that may say "blocked". Kept out
+      // of the colo cache for the same reason.
       if (isBadgeRequest) {
-        return c.json(buildBadgePayload(null), 200, {
+        return c.json(buildUnavailableBadgePayload(), 200, {
           "cache-control": "no-store",
           "access-control-allow-origin": "*",
           "retry-after": String(err.retryAfterSeconds),
@@ -220,13 +179,23 @@ publicReportsRoutes.get("/attestation-key", async (c) => {
 // isn't already reachable through those links.
 publicReportsRoutes.get("/threat-feed.json", async (c) => {
   const db = createDb(c.env.DB);
-  const rows = await listThreatFeedScans(db);
+  const after = parseThreatFeedCursor(c.req.query("after"));
+  const requested = Number(c.req.query("limit"));
+  const limit = Number.isFinite(requested)
+    ? Math.min(THREAT_FEED_MAX_ENTRIES, Math.max(1, Math.floor(requested)))
+    : THREAT_FEED_MAX_ENTRIES;
+  const rows = await listThreatFeedScans(db, { limit, after });
   const origin = canonicalOrigin(c);
   return c.json(
     {
       schema: THREAT_FEED_SCHEMA,
       generatedAt: new Date().toISOString(),
       entries: rows.map((row) => buildThreatFeedEntry(row, origin)),
+      // Present whenever more listings exist behind this page. A poller that
+      // reads only page one after a burst of listings misses everything the
+      // burst displaced, so the continuation has to be in the payload rather
+      // than something a consumer has to know to ask for.
+      nextCursor: encodeThreatFeedCursor(threatFeedNextCursor(rows, limit)),
     },
     200,
     { "cache-control": "public, max-age=300", "access-control-allow-origin": "*" },
@@ -270,6 +239,13 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
   return c.json(buildBadgePayload(match), 200, {
     "cache-control": "public, max-age=300",
     "access-control-allow-origin": "*",
+    // Misses stay out of the colo cache. The "not reviewed" body is identical
+    // for every package, so a per-name entry buys nothing on a repeat view that
+    // the downstream `max-age` would not already absorb — while every distinct
+    // name an anonymous client invents writes another entry into the same
+    // `caches.default` namespace that holds the published-tarball bytes. Hits
+    // are the ones worth keeping.
+    ...(match ? {} : { [COLO_CACHE_SKIP_HEADER]: "1" }),
   });
 });
 

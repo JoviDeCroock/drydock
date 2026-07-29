@@ -7,7 +7,8 @@ import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { describeAuditEvent } from "../../server/lib/auth/audit-events";
-import { publicCacheKey, publicReportsRoutes } from "../../server/routes/public-reports";
+import { publicFeedCacheKey } from "../../server/lib/public-feed";
+import { publicReportsRoutes } from "../../server/routes/public-reports";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
 
@@ -153,6 +154,7 @@ async function share(
 
 interface FeedBody {
   schema: string;
+  nextCursor: string | null;
   entries: Array<{
     package: string | null;
     version: string | null;
@@ -170,9 +172,14 @@ interface FeedBody {
 // exercise the caching itself skip the purge.
 // Mirrors the route module's keying so the helper purges the entry the Worker
 // actually wrote: badge paths collapse onto their canonical package key.
+// The canonical origin, not the request origin: the Worker keys cache entries
+// off canonicalOrigin so the badge write and the dashboard-side purge land on
+// the same entry even when the two arrive on different hostnames.
+const CANONICAL_TEST_ORIGIN = new URL(env.BETTER_AUTH_URL as string).origin;
+
 function coloCacheKey(path: string): Request {
   const bare = path.split("?")[0];
-  return publicCacheKey("http://test.local", bare.replace(/^\/public/, ""));
+  return publicFeedCacheKey(CANONICAL_TEST_ORIGIN, bare.replace(/^\/public/, ""));
 }
 
 async function purgeColoCache(path: string): Promise<void> {
@@ -477,24 +484,68 @@ describe("shields badge endpoint", () => {
     expect((await request(app, `/public/badge/npm/${"a".repeat(300)}`)).status).toBe(400);
   });
 
-  test("badge throttling preserves the shields payload contract", async () => {
-    const app = buildTestApp(null);
+  test("a throttled badge says unavailable, never not-reviewed", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    // A package Drydock explicitly blocked. Its badge must never be throttled
+    // into the same payload as a package nobody reviewed: shields honours the
+    // `cacheSeconds` field and enforces a 300s floor of its own, so a "not
+    // reviewed" fallback would render neutral grey over a blocked release in
+    // every README embedding it — and badge proxies multiplex unrelated
+    // packages through shared egress addresses, so an unrelated burst is
+    // enough to trigger it.
+    const packageName = `blocked-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, { packageName, version: "3.0.0", risk: "high" });
+    await share(app, scanId, { threatFeed: true });
+    await request(app, `/api/v1/scans/${scanId}/decision`, {
+      method: "POST",
+      body: JSON.stringify({ decision: "no_publish", reason: "malicious" }),
+    });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 blocked");
+
     const ip = `10.1.0.${Math.floor(Math.random() * 200) + 1}`;
     const headers = { "cf-connecting-ip": ip };
-    let throttled = false;
+    let throttled: BadgeBody | null = null;
     // Distinct package names so every request misses the colo cache and pays
     // the D1 lookup the limiter protects.
     for (let i = 0; i < 125; i += 1) {
       const res = await request(app, `/public/badge/npm/miss-${i}`, { headers });
       expect(res.status).toBe(200);
       if (res.headers.has("retry-after")) {
-        throttled = true;
         expect(res.headers.get("cache-control")).toBe("no-store");
-        expect(((await res.json()) as BadgeBody).message).toBe("not reviewed");
+        throttled = (await res.json()) as BadgeBody;
         break;
       }
     }
-    expect(throttled).toBe(true);
+    expect(throttled).not.toBeNull();
+    // Still a valid shields payload — proxies must not render an error badge.
+    expect(throttled?.schemaVersion).toBe(1);
+    expect(throttled?.message).toBe("unavailable");
+    expect(throttled?.message).not.toBe("not reviewed");
+
+    // And the throttled fallback for the blocked package is distinguishable
+    // from its real badge rather than silently replacing it.
+    const blockedUnderThrottle = await request(
+      app,
+      `/public/badge/npm/${encodeURIComponent(packageName)}`,
+      { headers },
+    );
+    expect(((await blockedUnderThrottle.json()) as BadgeBody).message).not.toBe("not reviewed");
+  });
+
+  test("badge misses are not written to the colo cache", async () => {
+    const app = buildTestApp(null);
+    // Every invented name would otherwise add an entry to the same
+    // caches.default namespace that holds published-tarball bytes.
+    const missName = `never-scanned-${crypto.randomUUID().slice(0, 8)}`;
+    const res = await request(app, `/public/badge/npm/${missName}`);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as BadgeBody).message).toBe("not reviewed");
+    // The internal opt-out marker must not leak to clients.
+    expect(res.headers.get("x-drydock-colo-cache-skip")).toBeNull();
+
+    const cache = (caches as unknown as { default: Cache }).default;
+    expect(await cache.match(coloCacheKey(`/public/badge/npm/${missName}`))).toBeUndefined();
   });
 });
 
@@ -654,5 +705,88 @@ describe("public threat feed", () => {
     expect((await fetchFeed(app)).entries.some((entry) => entry.package === packageName)).toBe(
       false,
     );
+  });
+
+  test("unlisting a revoked share does not republish it", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `feed-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, { packageName });
+    await share(app, scanId, { threatFeed: true });
+
+    // Another admin (or the same user in another tab) revokes the link.
+    const revoke = await request(app, `/api/v1/scans/${scanId}/share`, { method: "DELETE" });
+    expect(revoke.status).toBe(200);
+
+    // The stale dialog still shows the checkbox; unchecking it must not turn a
+    // withdrawal into a fresh publication.
+    const unlist = await request(app, `/api/v1/scans/${scanId}/share`, {
+      method: "POST",
+      body: JSON.stringify({ threatFeed: false }),
+    });
+    expect(unlist.status).toBe(409);
+    expect(await unlist.text()).not.toContain("/reports/");
+
+    // Still revoked: no token was minted on the way through.
+    const detail = (await (await request(app, `/api/v1/scans/${scanId}`)).json()) as {
+      scan: { publicShareUrl: string | null; publicShareToken: string | null };
+    };
+    expect(detail.scan.publicShareUrl).toBeNull();
+    expect(detail.scan.publicShareToken).toBeNull();
+    expect((await fetchFeed(app)).entries.some((entry) => entry.package === packageName)).toBe(
+      false,
+    );
+  });
+
+  test("unlisting a live share still works and leaves the link alone", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `feed-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, { packageName });
+    const { share: listed } = await share(app, scanId, { threatFeed: true });
+
+    const { share: unlisted } = await share(app, scanId, { threatFeed: false });
+    expect(unlisted.token).toBe(listed.token);
+    expect(unlisted.threatFeedListedAt).toBeNull();
+    expect((await fetchFeed(app)).entries.some((entry) => entry.package === packageName)).toBe(
+      false,
+    );
+  });
+
+  test("the feed pages backwards so a burst of listings cannot hide older entries", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageNames = [] as string[];
+    for (let i = 0; i < 3; i += 1) {
+      const packageName = `page-${crypto.randomUUID().slice(0, 8)}`;
+      packageNames.push(packageName);
+      const scanId = await seedCompletedScan(owner, { packageName });
+      await share(app, scanId, { threatFeed: true });
+    }
+
+    // One entry per page, so the cursor is exercised rather than everything
+    // fitting in the first response.
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+    let pages = 0;
+    for (let page = 0; page < 50; page += 1) {
+      const suffix: string = cursor ? `&after=${encodeURIComponent(cursor)}` : "";
+      const res = await request(app, `/public/threat-feed.json?limit=1${suffix}`);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as FeedBody;
+      expect(body.entries.length).toBeLessThanOrEqual(1);
+      pages += 1;
+      for (const entry of body.entries) if (entry.package) seen.add(entry.package);
+      cursor = body.nextCursor;
+      if (!cursor) break;
+    }
+    expect(pages).toBeGreaterThan(1);
+    // Every listing is reachable by walking the cursor, in order.
+    for (const packageName of packageNames) expect(seen.has(packageName)).toBe(true);
+
+    // A malformed cursor is ignored rather than erroring or emptying the feed.
+    const malformed = await request(app, "/public/threat-feed.json?after=not-a-cursor");
+    expect(malformed.status).toBe(200);
+    expect(((await malformed.json()) as FeedBody).entries.length).toBeGreaterThan(0);
   });
 });

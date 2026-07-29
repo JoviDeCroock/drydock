@@ -101,11 +101,23 @@ Embed via
 ## Threat feed
 
 `GET /public/threat-feed.json` is a discoverable index (schema
-`drydock.threat-feed.v1`, capped at 100 entries, newest listings first) meant
+`drydock.threat-feed.v1`, 100 entries per page, newest listings first) meant
 for security partners — Aikido and other ecosystem-intel consumers can poll it.
 Each entry carries package identity, ecosystem, release/artifact risk,
 decision, finding count, timestamps, and a `reportUrl` to the full public
 report.
+
+**Page one is not the whole feed.** The response carries `nextCursor` whenever
+more listings exist behind it; pass it back as `?after=<cursor>` to continue.
+`?limit=` shrinks the page (capped at 100); a malformed `after` or `limit` is
+ignored rather than erroring.
+`(listedAt, scanId)` is a total order over the listed set, so paging is stable
+and nothing is unreachable — which matters because listings are not
+rate-limited: one organization listing a batch of its own scans displaces
+everything older off page one, including other organizations' `no_publish`
+releases. A poller that reads only page one after such a burst silently misses
+them. Read until you reach a listing you have already seen, not until the first
+response ends.
 
 Listing is a **second explicit opt-in** on top of sharing (the checkbox in the
 share dialog, or `POST /api/v1/scans/:id/share { "threatFeed": true|false }`):
@@ -113,6 +125,11 @@ holding a link is capability, appearing in an index is publication, and the two
 must never be conflated. Revoking the share link always unlists the report;
 re-sharing later starts unlisted. Listing changes are audited
 (`scan.feed_listed`, `scan.feed_unlisted`).
+
+`{ "threatFeed": false }` is a _withdrawal_ and never creates a share link. On
+a scan whose link was revoked in the meantime it returns `409` (the dialog
+drops its stale share state and falls back to "create link") rather than
+quietly minting a fresh token and republishing the report.
 
 ### Package identity
 
@@ -131,19 +148,41 @@ Each feed entry carries `packageIdentity`:
 
 Badge and feed responses read through the per-colo Workers cache
 (`caches.default`) and declare `max-age=300`. The cache key is the canonical
-path with any query string ignored, and badge URLs collapse onto their package
-lookup key, so one package has exactly one entry however an embedder cased or
-encoded the name.
+origin plus path, query string ignored, and badge URLs collapse onto their
+package lookup key, so one package has one entry per colo however an embedder
+encoded the name. Case is part of that key for npm — the registry treats
+existing names case-sensitively, so `JSONStream` and `jsonstream` are different
+packages and must not share a badge — while PyPI (PEP 503) and VS Code fold, as
+`publicPackageLookupKey` documents. Two consequences: `/badge/npm/React` is its
+own entry and resolves to "not reviewed", and the origin must be the _canonical_
+one on both the write and the purge, or a second bound hostname builds entries
+the purge never visits.
 
-Revoking a share or unlisting a report **purges both entries** rather than
-waiting out the TTL: a withdrawn review must stop being asserted, and a cached
-feed body embeds a now-dead share token. Report and attestation responses are
-uncached (`no-store`) for the same reason. What the TTL still bounds is
-staleness from changes that are not revocations — a decision recorded after the
-badge was cached can take up to ~5 minutes to show as `blocked`. Badge cache misses use a rate-limit bucket separate from report
-reads; a throttled badge still returns an uncached valid shields.io payload so
-shared badge-proxy traffic cannot produce an error badge or exhaust report
-access.
+Badge **misses** are deliberately not written to the colo cache. The "not
+reviewed" body is identical for every package, so a per-name entry buys nothing
+the downstream `max-age` doesn't already absorb, while every invented name would
+add an entry to the namespace that also holds published-tarball bytes. Cursored
+feed pages (`?after=`) are uncached too, since the key ignores the query.
+
+Revoking a share or unlisting a report purges both entries. **That purge is
+colo-local and best effort**: `caches.default.delete()` clears the entry in the
+colo that handled the revoking request and nowhere else, so other regions keep
+serving the withdrawn badge until `max-age` expires — and shields.io's own cache
+(a ≥300s floor it enforces regardless of what we send) sits in front of that.
+Plan for a withdrawal to take effect on the derived surfaces within roughly ten
+minutes, not instantly. Only the report and attestation routes are immediate,
+via `no-store` plus a D1 lookup on every request; they are the authority, and
+the badge links to them.
+
+The same TTL bounds non-revocation staleness: a decision recorded after the
+badge was cached can take ~5 minutes to render as `blocked`.
+
+Badge reads use a rate-limit bucket separate from report reads, because badge
+proxies multiplex unrelated packages through a handful of egress addresses. A
+throttled badge returns an uncached, valid shields.io payload reading
+`unavailable` — never `not reviewed`, which is an assertion _about the package_
+that shields would cache for minutes, potentially over a review that says
+`blocked`.
 
 ## Key management
 

@@ -35,8 +35,13 @@ import {
 } from "../lib/compare-cache";
 import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
 import { workerExecutionContext } from "../lib/platform/execution-context";
-import { enablePublicShare, revokePublicShare, setThreatFeedListing } from "../db/scan-share";
-import { purgePublicFeedCache } from "./public-reports";
+import { purgePublicFeedCache } from "../lib/public-feed";
+import {
+  enablePublicShare,
+  readPublicShare,
+  revokePublicShare,
+  setThreatFeedListing,
+} from "../db/scan-share";
 import {
   allowInsecureLocalRegistry,
   decryptNpmToken,
@@ -323,14 +328,25 @@ scansRoutes.post("/:id/share", async (c) => {
   const { organizationId, role } = await requireActiveOrganizationContext(c, db);
   if (!roleCanManagePublicShares(role)) return c.json({ error: "forbidden" }, 403);
 
-  let share = await enablePublicShare(db, {
-    scanId: c.req.param("id"),
-    organizationId,
-    actorUserId: session.userId,
-  });
+  // `threatFeed: false` is a *withdrawal*. Routing it through
+  // enablePublicShare would mint a fresh token whenever the scan has none, so
+  // an admin unchecking "List publicly" on a dialog whose link another admin
+  // just revoked would republish the report — the wrong failure direction, and
+  // invisible, because the response then hands back a live URL. Read the
+  // existing share instead and let the 409 below tell the stale dialog to
+  // refresh (the UI drops its share state on 409).
+  const unlisting = body.threatFeed === false;
+  let share = unlisting
+    ? await readPublicShare(db, { scanId: c.req.param("id"), organizationId })
+    : await enablePublicShare(db, {
+        scanId: c.req.param("id"),
+        organizationId,
+        actorUserId: session.userId,
+      });
   if (!share) {
     const existing = await getScanStatus(db, c.req.param("id"), organizationId);
     if (!existing) return c.json({ error: "not found" }, 404);
+    if (unlisting) return c.json({ error: "the share link was just revoked" }, 409);
     return c.json({ error: "only completed scans can be shared publicly" }, 409);
   }
   // Threat-feed listing is a second opt-in layered on the link: only flip it
@@ -348,12 +364,11 @@ scansRoutes.post("/:id/share", async (c) => {
       // toggle; the stale pre-revoke state must not be reported as current.
       if (!updated) return c.json({ error: "the share link was just revoked" }, 409);
       // Unlisting (and re-listing) changes what the cached badge and feed
-      // assert; drop both so the change is not delayed by the colo TTL.
-      purgePublicFeedCache(
-        c.executionCtx,
-        new URL(c.req.url).origin,
-        updated.publicPackageKey ?? null,
-      );
+      // assert; drop both so the change is not delayed by the colo TTL in at
+      // least this region. canonicalOrigin, not the request origin: the badge
+      // writes its entry under the same value, and this request arrives at the
+      // dashboard, which may be a different hostname than the one embedders hit.
+      purgePublicFeedCache(c.executionCtx, canonicalOrigin(c), updated.publicPackageKey ?? null);
       share = updated;
     }
   }
@@ -375,7 +390,7 @@ scansRoutes.delete("/:id/share", async (c) => {
     const existing = await getScanStatus(db, c.req.param("id"), organizationId);
     if (!existing) return c.json({ error: "not found" }, 404);
   } else {
-    purgePublicFeedCache(c.executionCtx, new URL(c.req.url).origin, publicPackageKey);
+    purgePublicFeedCache(c.executionCtx, canonicalOrigin(c), publicPackageKey);
   }
   return c.json({ revoked });
 });
