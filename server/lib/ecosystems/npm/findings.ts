@@ -9,7 +9,7 @@ import {
   type PackageJsonDiff,
   type PackageJsonSummary,
 } from "../../review";
-import type { NpmStagedDetails } from "./tarball-integrity";
+import type { NpmStagedDetails } from "./staged-publishes";
 import type { AcquiredArtifact } from "../package-adapter";
 
 export function buildNpmFindings(args: {
@@ -36,7 +36,7 @@ function createStagedMetadataFindings(
   pkg: PackageJsonSummary | null,
 ): Finding[] {
   if (!details) return [];
-  return [...tarballDigestFindings(details), ...manifestMismatchFindings(details, pkg)];
+  return [...artifactDigestFindings(details), ...manifestMismatchFindings(details, pkg)];
 }
 
 // The staged tarball's bytes did not hash to the digest npm recorded for the
@@ -45,8 +45,8 @@ function createStagedMetadataFindings(
 // review-integrity failure rather than a package-content finding. Only a
 // two-sided comparison reaches here; an unverifiable digest stays silent and
 // is disclosed through the report's staged-publish block instead.
-function tarballDigestFindings(details: NpmStagedDetails): Finding[] {
-  const integrity = details.tarballIntegrity;
+function artifactDigestFindings(details: NpmStagedDetails): Finding[] {
+  const integrity = details.artifactIntegrity;
   if (integrity?.status !== "mismatch") return [];
   return [
     {

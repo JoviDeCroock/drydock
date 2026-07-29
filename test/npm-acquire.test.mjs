@@ -184,9 +184,65 @@ describe("acquireStagedNpm tarball verification", () => {
         brokerFor({ shasum, archiveSha1 }),
       );
 
-      expect(result.details.tarballIntegrity).toMatchObject(expected);
+      expect(result.details.artifactIntegrity).toMatchObject(expected);
     },
   );
+
+  test("confirms a mismatch against a fresh read of the stage record before accusing", async () => {
+    // The bytes and the digest they are checked against come from two
+    // independent requests. A stage rewritten between them (or a replica
+    // serving an older record) would otherwise raise a critical finding about
+    // two artifacts that were each internally consistent.
+    const broker = brokerFor({ shasum: OTHER, archiveSha1: DECLARED });
+    let call = 0;
+    broker.fetchStagedDetails = vi.fn(async () => ({
+      id: "stage-1",
+      packageName: "pkg",
+      version: "2.0.0",
+      tag: "latest",
+      shasum: call++ === 0 ? OTHER : DECLARED,
+      packageJson: null,
+    }));
+
+    const result = await acquireStagedNpm({}, { stageId: "stage-1" }, broker);
+
+    expect(broker.fetchStagedDetails).toHaveBeenCalledTimes(2);
+    expect(result.details.artifactIntegrity).toMatchObject({ status: "verified" });
+  });
+
+  test("keeps the mismatch when the stage record still disagrees on re-read", async () => {
+    const broker = brokerFor({ shasum: OTHER, archiveSha1: DECLARED });
+
+    const result = await acquireStagedNpm({}, { stageId: "stage-1" }, broker);
+
+    expect(broker.fetchStagedDetails).toHaveBeenCalledTimes(2);
+    expect(result.details.artifactIntegrity).toMatchObject({
+      status: "mismatch",
+      declared: OTHER,
+      computed: DECLARED,
+    });
+  });
+
+  test("keeps the mismatch when the confirming read fails", async () => {
+    // Two well-formed digests that disagree are still evidence; a registry
+    // that cannot be re-read is not a reason to drop the finding.
+    const broker = brokerFor({ shasum: OTHER, archiveSha1: DECLARED });
+    let call = 0;
+    const first = broker.fetchStagedDetails;
+    broker.fetchStagedDetails = vi.fn(async () => (call++ === 0 ? first() : null));
+
+    const result = await acquireStagedNpm({}, { stageId: "stage-1" }, broker);
+
+    expect(result.details.artifactIntegrity).toMatchObject({ status: "mismatch" });
+  });
+
+  test("does not re-read the stage record when the digests agree", async () => {
+    const broker = brokerFor({ shasum: DECLARED, archiveSha1: DECLARED });
+
+    await acquireStagedNpm({}, { stageId: "stage-1" }, broker);
+
+    expect(broker.fetchStagedDetails).toHaveBeenCalledTimes(1);
+  });
 
   test("keeps details null when the registry has no stage metadata to attach a verdict to", async () => {
     const broker = brokerFor({ shasum: DECLARED, archiveSha1: DECLARED });

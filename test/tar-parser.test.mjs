@@ -1267,6 +1267,39 @@ describe("digestArchiveStream", () => {
     return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
   }
 
+  // A body whose reader rejects overlapping reads the way workerd's does.
+  // `digestArchiveStream` only ever calls getReader(), so this stands in for a
+  // real stream without node's more permissive queueing hiding the bug.
+  function strictSingleReadSource(bytes, onViolation, chunk = 512) {
+    let offset = 0;
+    let pending = false;
+    return {
+      getReader() {
+        return {
+          async read() {
+            if (pending) {
+              onViolation();
+              throw new TypeError(
+                "This ReadableStream only supports a single pending read request at a time",
+              );
+            }
+            pending = true;
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            pending = false;
+            if (offset >= bytes.length) return { value: undefined, done: true };
+            const value = bytes.subarray(offset, Math.min(offset + chunk, bytes.length));
+            offset += value.byteLength;
+            return { value, done: false };
+          },
+          cancel() {
+            offset = bytes.length;
+            return Promise.resolve();
+          },
+        };
+      },
+    };
+  }
+
   test("digests the whole stream a consumer reads to the end", async () => {
     const bytes = new Uint8Array(4096).fill(3);
     const archive = tarParser.digestArchiveStream(streamOf(bytes), CAP);
@@ -1389,6 +1422,73 @@ describe("digestArchiveStream", () => {
 
     // Passing bytes through is unaffected: only verification is abandoned.
     expect(passed).toEqual(bytes);
+    expect(await archive.digest()).toBeNull();
+  });
+
+  test("never issues two concurrent reads to the source", async () => {
+    // workerd's ReadableStream rejects a second read while one is pending
+    // ("only supports a single pending read request at a time"), and node's
+    // does not — so every unit test here would pass with the read chaining
+    // deleted while the real sandbox returned null on every scan. This source
+    // enforces workerd's rule so the invariant is pinned in the fast suite.
+    const bytes = new Uint8Array(4096);
+    crypto.getRandomValues(bytes);
+    let violations = 0;
+    const source = strictSingleReadSource(bytes, () => violations++);
+
+    const archive = tarParser.digestArchiveStream(source, CAP);
+    const reader = archive.body.getReader();
+    // Read and drain overlap here exactly as they do in the sandbox: a cancel
+    // crossing boundedByteStream and the DecompressionStream lands after
+    // digest() has already started finishing the archive.
+    const firstRead = reader.read();
+    const digested = archive.digest();
+    await firstRead;
+
+    expect(await digested).toBe(await sha1Hex(bytes));
+    expect(violations).toBe(0);
+  });
+
+  test("reports no digest when hashing a chunk fails mid-stream", async () => {
+    // The dangerous shape is not the failure, it is what follows it: if the
+    // hash failure escapes the pass-through's error handling, digest() reads
+    // the rest of the source, observes EOF, and returns a well-formed hash
+    // over the archive minus one chunk — a mismatch accusing a publisher of
+    // bytes they did stage.
+    const unhashable = {
+      get byteLength() {
+        throw new Error("digest failed");
+      },
+    };
+    const source = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(512).fill(1));
+        controller.enqueue(unhashable);
+        controller.enqueue(new Uint8Array(512).fill(2));
+        controller.close();
+      },
+    });
+    const archive = tarParser.digestArchiveStream(source, CAP);
+
+    await expect(new Response(archive.body).arrayBuffer()).rejects.toThrow();
+    expect(await archive.digest()).toBeNull();
+  });
+
+  test("fails a consumer read still in flight when the archive is aborted", async () => {
+    // abort() returns early from every `aborted` guard without enqueuing,
+    // closing, or erroring, so a consumer waiting on `body` would hang rather
+    // than see the abort.
+    const stalled = new ReadableStream({
+      pull() {
+        return new Promise(() => {});
+      },
+    });
+    const archive = tarParser.digestArchiveStream(stalled, CAP);
+    const pending = archive.body.getReader().read();
+
+    await archive.abort();
+
+    await expect(pending).rejects.toThrow();
     expect(await archive.digest()).toBeNull();
   });
 

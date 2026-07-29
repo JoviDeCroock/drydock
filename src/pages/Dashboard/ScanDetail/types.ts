@@ -20,7 +20,7 @@ export interface PersistedSummary {
   // reads the byte-continuity blocks; the rest stays opaque.
   stagedPublish?: {
     provenance?: ReleaseProvenance;
-    tarballIntegrity?: unknown;
+    artifactIntegrity?: unknown;
   };
   // Advisory release-memory blob. Old scans lack it and its shape is only
   // trusted after normalizeReleaseConsistency, so it stays unknown here.

@@ -418,9 +418,12 @@ export default {
     // Digest the wire bytes before anything decompresses or parses them, so
     // the caller can tell "the publisher removed these files" from "we did not
     // receive the whole artifact". The wrapper drains the source itself when a
-    // parser stops early, and yields null rather than a partial digest.
+    // parser stops early, and yields null rather than a partial digest. The cap
+    // is the wire budget the parsers already read under (maxTarBytes only bounds
+    // *decompressed* bytes), so verification covers every archive the sandbox is
+    // willing to review instead of switching itself off above 1/10th of it.
     if (!res.body) return json({ error: "archive download failed", status: 400 }, 400);
-    const archive = digestArchiveStream(res.body, maxTarBytes);
+    const archive = digestArchiveStream(res.body, maxStreamTarBytes);
     if (archiveFormat === "vsix") {
       // VSIX zips are packed by yazl (via vsce), whose streamed entries carry
       // their sizes in data descriptors — only the central directory (what

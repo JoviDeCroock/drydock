@@ -1,4 +1,4 @@
-import type { NpmStagedDetails } from "./tarball-integrity";
+import type { NpmStagedDetails } from "./staged-publishes";
 import type { PackageAdapter } from "../package-adapter";
 import { acquireBaselineNpm, acquireStagedNpm, type NpmAdapterInput } from "./acquire";
 import { createNpmBroker, type NpmBroker } from "./broker";
@@ -67,10 +67,10 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
       actorType: d.actorType,
       createdAt: d.createdAt,
       shasum: d.shasum,
-      // Byte-verification verdict for the reviewed tarball. Persisted with the
+      // Byte-verification verdict for the reviewed artifact. Persisted with the
       // report so a reviewer reading "file removed" months later can tell
       // whether the scan proved it was reading the staged bytes.
-      tarballIntegrity: d.tarballIntegrity ?? null,
+      artifactIntegrity: d.artifactIntegrity ?? null,
     };
   },
 };

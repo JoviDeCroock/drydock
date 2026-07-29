@@ -99,7 +99,7 @@ async function seedCompletedScanWithAi(owner: SeededUser, ai: unknown): Promise<
       },
       diff: [{ path: "package.json", status: "modified" }],
       stagedPublish: {
-        tarballIntegrity: {
+        artifactIntegrity: {
           algorithm: "sha1",
           status: "unverified",
           declared: "a".repeat(40),
@@ -145,7 +145,7 @@ describe("scan report JSON export", () => {
       scan: { id: string; status: string };
       package: { name: string | null; stagedVersion: string | null };
       packageJsonDiff: unknown;
-      tarballIntegrity: {
+      artifactIntegrity: {
         algorithm: string;
         status: string;
         declared: string | null;
@@ -162,7 +162,7 @@ describe("scan report JSON export", () => {
     expect(body.package.name).toBe("@org/pkg");
     expect(body.package.stagedVersion).toBe("1.1.0");
     expect(body.packageJsonDiff).toBeTruthy();
-    expect(body.tarballIntegrity).toEqual({
+    expect(body.artifactIntegrity).toEqual({
       algorithm: "sha1",
       status: "unverified",
       declared: "a".repeat(40),
@@ -451,7 +451,7 @@ describe("scan report JSON export", () => {
       status: "complete",
       summary: {
         stagedPublish: {
-          tarballIntegrity: {
+          artifactIntegrity: {
             algorithm: "sha1",
             status: "verified",
             declared: "a".repeat(40),
@@ -468,8 +468,8 @@ describe("scan report JSON export", () => {
 
     const res = await getReport(buildTestApp(owner), scanId);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { tarballIntegrity: unknown };
-    expect(body.tarballIntegrity).toBeNull();
+    const body = (await res.json()) as { artifactIntegrity: unknown };
+    expect(body.artifactIntegrity).toBeNull();
   });
 
   test("omits provenance for a staged-publish scan with no gate details", async () => {

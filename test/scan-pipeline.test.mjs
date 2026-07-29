@@ -530,7 +530,7 @@ describe("scan pipeline baseline selection", () => {
     );
     // The verdict rides along in the persisted report, so a reviewer reading
     // the report later can tell a proven artifact from an unverified one.
-    expect(persistedInput.summary.stagedPublish.tarballIntegrity).toMatchObject({
+    expect(persistedInput.summary.stagedPublish.artifactIntegrity).toMatchObject({
       algorithm: "sha1",
       status: "mismatch",
       declared: "4f7f5f1d5bcf2f72f6e4d6c4f3b2812d8a2f6c19",
@@ -563,7 +563,7 @@ describe("scan pipeline baseline selection", () => {
     expect(
       result.ruleFindings.filter((finding) => finding.ruleId === "stage.tarball-digest-mismatch"),
     ).toEqual([]);
-    expect(persistedInput.summary.stagedPublish.tarballIntegrity).toMatchObject({
+    expect(persistedInput.summary.stagedPublish.artifactIntegrity).toMatchObject({
       status: "verified",
     });
   });

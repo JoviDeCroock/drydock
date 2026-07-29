@@ -282,7 +282,7 @@ digests each archive's raw wire bytes and the staged adapter compares that diges
 download was truncated or substituted; the finding says the whole report describes a different
 artifact than the one being released. It is not a package-content rule and has no corpus fixture:
 the corpus engine runs over `FileRecord[]` and carries no stage metadata, so coverage lives in
-`test/npm-tarball-integrity.test.mjs`, `test/npm-acquire.test.mjs`, `test/scan-pipeline.test.mjs`,
+`test/staged-artifact-integrity.test.mjs`, `test/npm-acquire.test.mjs`, `test/scan-pipeline.test.mjs`,
 and the `tarball-digest-mismatch` e2e scenario. Verification fails to `unverified` (no finding)
 whenever either digest is missing — a registry that reports no `shasum`, or an archive the sandbox
 could not digest end to end — so absence of evidence never reads as tampering.

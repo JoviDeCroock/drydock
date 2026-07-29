@@ -1,17 +1,14 @@
 import type { ComponentChildren } from "preact";
-import type { ReleaseProvenance } from "../../../../server/types";
+import type { ReleaseProvenance, StagedArtifactIntegrity } from "../../../../server/types";
 import { ecosystemLabel } from "../../../../server/lib/ecosystems/labels";
-import {
-  parseStagedTarballIntegrity,
-  type StagedTarballIntegrity,
-} from "../../../../server/lib/ecosystems/npm/tarball-integrity";
+import { parseStagedArtifactIntegrity } from "../../../../server/lib/ecosystems/artifact-integrity";
 import { Badge } from "../../../components/Badge";
 import { PackageJsonDiffView } from "../../../components/PackageJsonDiffView";
 import { EmptyLine, SectionLabel } from "../../../components/Typography";
 import type { PersistedSummary } from "./types";
 
 export function PersistedReportSections({ summary }: { summary: PersistedSummary }) {
-  const tarballIntegrity = parseStagedTarballIntegrity(summary.stagedPublish?.tarballIntegrity);
+  const artifactIntegrity = parseStagedArtifactIntegrity(summary.stagedPublish?.artifactIntegrity);
   return (
     <section class="flex flex-col gap-6">
       <ReportSection title="Manifest changes">
@@ -40,9 +37,9 @@ export function PersistedReportSections({ summary }: { summary: PersistedSummary
           Recommendation — it answers "what is this release?", which is the
           question the page opens with, not a footnote to it. */}
 
-      {tarballIntegrity ? (
+      {artifactIntegrity ? (
         <ReportSection title="Artifact verification">
-          <TarballIntegrityView integrity={tarballIntegrity} />
+          <ArtifactIntegrityView integrity={artifactIntegrity} />
         </ReportSection>
       ) : null}
     </section>
@@ -66,7 +63,7 @@ function ReportSection({
   );
 }
 
-function TarballIntegrityView({ integrity }: { integrity: StagedTarballIntegrity }) {
+function ArtifactIntegrityView({ integrity }: { integrity: StagedArtifactIntegrity }) {
   const description =
     integrity.status === "verified"
       ? "The reviewed tarball bytes match the SHA-1 npm recorded for this staged release."
@@ -75,12 +72,18 @@ function TarballIntegrityView({ integrity }: { integrity: StagedTarballIntegrity
         : integrity.reason === "declared-digest-missing"
           ? "npm did not provide a valid staged-tarball digest, so Drydock could not bind this review to the staged bytes."
           : "Drydock could not hash the complete tarball stream, so this review is not bound to npm's stage record.";
+  // A registry that published no digest is an absence of evidence, and the
+  // report must not tone it as a warning about the release: that is the same
+  // mistake as raising a finding for it. Only a digest Drydock failed to
+  // compute — something on our side went wrong — reads as amber.
   const tone =
     integrity.status === "verified"
       ? "ok"
       : integrity.status === "mismatch"
         ? "critical"
-        : "medium";
+        : integrity.reason === "declared-digest-missing"
+          ? "neutral"
+          : "medium";
 
   return (
     <div class="flex flex-col gap-3">

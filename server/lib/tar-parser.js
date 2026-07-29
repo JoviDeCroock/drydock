@@ -262,7 +262,10 @@ export function createDigester(algorithm) {
 //
 // `maxBytes` bounds the hashed wire bytes: past it the pass-through continues
 // (parsing is bounded separately) but the digest is abandoned, so verification
-// never becomes the reason a large-but-honest artifact costs extra CPU.
+// never becomes the reason a large-but-honest artifact costs extra CPU. Pass
+// the wire budget the caller already permits, not a tighter one: a cap below
+// what the parser will happily read turns verification off for exactly the
+// large artifacts whose downloads are most likely to be truncated.
 // Must stay self-contained: serialized into the sandbox worker via
 // renderTarParserSource.
 export function digestArchiveStream(body, maxBytes, algorithm) {
@@ -276,6 +279,7 @@ export function digestArchiveStream(body, maxBytes, algorithm) {
   let aborted = false;
   let draining = null;
   let aborting = null;
+  let passThrough = null;
   // Pass-through pulls and the post-consumer drain both read the same source,
   // and workerd's ReadableStream rejects a second read while one is pending
   // ("only supports a single pending read request at a time"), so every read
@@ -326,10 +330,19 @@ export function digestArchiveStream(body, maxBytes, algorithm) {
   }
 
   const stream = new ReadableStream({
+    start(controller) {
+      passThrough = controller;
+    },
     async pull(controller) {
       let chunk;
       try {
         chunk = await readOnce();
+        // Hashing sits inside the same guard as the read: a digester failure
+        // escaping here would leave `broken` false and `sawEof` false, so
+        // digest() would drain the rest of the source and return a
+        // well-formed hash over the archive minus this chunk — a mismatch
+        // accusing a publisher of bytes they did stage.
+        if (!aborted && !chunk.done) await consume(chunk.value);
       } catch (err) {
         if (aborted) return;
         broken = true;
@@ -342,8 +355,6 @@ export function digestArchiveStream(body, maxBytes, algorithm) {
         controller.close();
         return;
       }
-      await consume(chunk.value);
-      if (aborted) return;
       controller.enqueue(chunk.value);
     },
     cancel() {
@@ -373,6 +384,17 @@ export function digestArchiveStream(body, maxBytes, algorithm) {
     // draining hostile bytes for a digest the caller will discard.
     async abort() {
       aborted = true;
+      // Fail the pass-through too. Every `aborted` guard returns without
+      // enqueuing, closing, or erroring, so a consumer with a read in flight
+      // would otherwise hang forever instead of seeing the abort. Erroring a
+      // stream the consumer already cancelled or closed is a no-op.
+      if (passThrough) {
+        try {
+          passThrough.error(new Error("archive stream aborted"));
+        } catch {
+          // Already closed or errored by the consumer.
+        }
+      }
       if (!aborting) {
         aborting = reader.cancel().then(
           () => undefined,

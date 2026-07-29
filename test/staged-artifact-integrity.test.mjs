@@ -4,16 +4,16 @@ vi.mock("cloudflare:workers", () => ({
   WorkerEntrypoint: class {},
 }));
 
-const { evaluateStagedTarballIntegrity, parseStagedTarballIntegrity } =
-  await import("../server/lib/ecosystems/npm/tarball-integrity");
+const { evaluateStagedArtifactIntegrity, parseStagedArtifactIntegrity } =
+  await import("../server/lib/ecosystems/artifact-integrity");
 const { buildNpmFindings } = await import("../server/lib/ecosystems/npm/findings");
 
 const DECLARED = "cf6abd23c6a49417b8e8cd8635a1bba94a6fe5d2";
 const OTHER = "48283451416861c231a367b872a700c1ef002013";
 
-describe("evaluateStagedTarballIntegrity", () => {
+describe("evaluateStagedArtifactIntegrity", () => {
   test("verifies matching digests", () => {
-    expect(evaluateStagedTarballIntegrity(DECLARED, DECLARED)).toEqual({
+    expect(evaluateStagedArtifactIntegrity(DECLARED, DECLARED)).toEqual({
       algorithm: "sha1",
       status: "verified",
       declared: DECLARED,
@@ -22,13 +22,13 @@ describe("evaluateStagedTarballIntegrity", () => {
   });
 
   test("normalizes case and surrounding whitespace before comparing", () => {
-    expect(evaluateStagedTarballIntegrity(` ${DECLARED.toUpperCase()} `, DECLARED)).toMatchObject({
+    expect(evaluateStagedArtifactIntegrity(` ${DECLARED.toUpperCase()} `, DECLARED)).toMatchObject({
       status: "verified",
     });
   });
 
   test("reports a mismatch only when both digests exist", () => {
-    expect(evaluateStagedTarballIntegrity(DECLARED, OTHER)).toEqual({
+    expect(evaluateStagedArtifactIntegrity(DECLARED, OTHER)).toEqual({
       algorithm: "sha1",
       status: "mismatch",
       declared: DECLARED,
@@ -42,21 +42,21 @@ describe("evaluateStagedTarballIntegrity", () => {
     ["neither side has a digest", null, null, "declared-digest-missing"],
     ["declared digest is not sha1 hex", "not-a-digest", DECLARED, "declared-digest-missing"],
   ])("fails to unverified when %s", (_name, declared, computed, reason) => {
-    expect(evaluateStagedTarballIntegrity(declared, computed)).toMatchObject({
+    expect(evaluateStagedArtifactIntegrity(declared, computed)).toMatchObject({
       status: "unverified",
       reason,
     });
   });
 });
 
-describe("parseStagedTarballIntegrity", () => {
+describe("parseStagedArtifactIntegrity", () => {
   test.each([
-    evaluateStagedTarballIntegrity(DECLARED, DECLARED),
-    evaluateStagedTarballIntegrity(DECLARED, OTHER),
-    evaluateStagedTarballIntegrity(DECLARED, null),
-    evaluateStagedTarballIntegrity(null, OTHER),
+    evaluateStagedArtifactIntegrity(DECLARED, DECLARED),
+    evaluateStagedArtifactIntegrity(DECLARED, OTHER),
+    evaluateStagedArtifactIntegrity(DECLARED, null),
+    evaluateStagedArtifactIntegrity(null, OTHER),
   ])("accepts a consistent persisted $status verdict", (integrity) => {
-    expect(parseStagedTarballIntegrity(integrity)).toEqual(integrity);
+    expect(parseStagedArtifactIntegrity(integrity)).toEqual(integrity);
   });
 
   test.each([
@@ -73,7 +73,7 @@ describe("parseStagedTarballIntegrity", () => {
       reason: "computed-digest-unavailable",
     },
   ])("rejects malformed or internally inconsistent persisted data", (value) => {
-    expect(parseStagedTarballIntegrity(value)).toBeNull();
+    expect(parseStagedArtifactIntegrity(value)).toBeNull();
   });
 });
 
@@ -91,7 +91,7 @@ describe("stage.tarball-digest-mismatch", () => {
     manifest: { name: "pkg", version: "1.0.0" },
   };
 
-  function findingsFor(tarballIntegrity) {
+  function findingsFor(artifactIntegrity) {
     return buildNpmFindings({
       staged: stagedArtifact,
       details: {
@@ -105,7 +105,7 @@ describe("stage.tarball-digest-mismatch", () => {
         createdAt: null,
         shasum: DECLARED,
         packageJson: null,
-        tarballIntegrity,
+        artifactIntegrity,
       },
       fileDiff: [],
       manifestDiff: { name: "pkg", bin: [], dependencies: [], scripts: [] },
@@ -114,7 +114,7 @@ describe("stage.tarball-digest-mismatch", () => {
   }
 
   test("raises a critical finding when the reviewed bytes are not the staged bytes", () => {
-    const findings = findingsFor(evaluateStagedTarballIntegrity(DECLARED, OTHER)).filter(
+    const findings = findingsFor(evaluateStagedArtifactIntegrity(DECLARED, OTHER)).filter(
       (finding) => finding.ruleId === "stage.tarball-digest-mismatch",
     );
 
@@ -125,8 +125,8 @@ describe("stage.tarball-digest-mismatch", () => {
   });
 
   test.each([
-    ["verified", evaluateStagedTarballIntegrity(DECLARED, DECLARED)],
-    ["unverified", evaluateStagedTarballIntegrity(DECLARED, null)],
+    ["verified", evaluateStagedArtifactIntegrity(DECLARED, DECLARED)],
+    ["unverified", evaluateStagedArtifactIntegrity(DECLARED, null)],
     ["absent", undefined],
   ])("stays silent when the digest verdict is %s", (_name, integrity) => {
     expect(

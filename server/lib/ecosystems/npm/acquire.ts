@@ -2,7 +2,10 @@ import { pickBaselineVersion } from "./registry";
 import { parseSandboxErrorDetail } from "../../sandbox";
 import { emitOperationalEvent } from "../../platform/observability";
 import type { PackageJsonSummary } from "../../review";
-import { evaluateStagedTarballIntegrity } from "./tarball-integrity";
+import {
+  evaluateStagedArtifactIntegrity,
+  type StagedArtifactIntegrity,
+} from "../artifact-integrity";
 import type { StagedPublishDetails } from "./staged-publishes";
 import type {
   AcquiredArtifact,
@@ -43,18 +46,34 @@ export async function acquireStagedNpm(
   // Bind the review to the bytes it reviewed. Without this the file diff's
   // strongest claim — "the publisher removed this file" — is indistinguishable
   // from a truncated or substituted download.
-  const tarballIntegrity = evaluateStagedTarballIntegrity(
-    stagedDetails?.shasum,
+  const artifactIntegrity = await evaluateStagedArtifact(
+    broker,
+    input.stageId,
+    stagedDetails,
     staged.archiveSha1,
   );
-  if (tarballIntegrity.status === "mismatch") {
+  const packageName = mergedManifest?.name ?? stagedDetails?.packageName ?? null;
+  const version = mergedManifest?.version ?? stagedDetails?.version ?? null;
+  if (artifactIntegrity.status === "mismatch") {
     emitOperationalEvent("warn", "scan.staged_artifact.digest_mismatch", {
       stageId: input.stageId,
-      packageName: mergedManifest?.name ?? stagedDetails?.packageName ?? null,
-      version: mergedManifest?.version ?? stagedDetails?.version ?? null,
-      algorithm: tarballIntegrity.algorithm,
-      declaredDigest: tarballIntegrity.declared,
-      computedDigest: tarballIntegrity.computed,
+      packageName,
+      version,
+      algorithm: artifactIntegrity.algorithm,
+      declaredDigest: artifactIntegrity.declared,
+      computedDigest: artifactIntegrity.computed,
+    });
+  } else if (artifactIntegrity.status === "unverified") {
+    // Verification silently covering nothing looks exactly like verification
+    // working, so an unprovable scan is reported too: a registry that stops
+    // returning digests, or a cap that starts biting, is a coverage outage
+    // rather than a per-scan curiosity.
+    emitOperationalEvent("info", "scan.staged_artifact.digest_unverified", {
+      stageId: input.stageId,
+      packageName,
+      version,
+      algorithm: artifactIntegrity.algorithm,
+      reason: artifactIntegrity.reason ?? null,
     });
   }
 
@@ -65,9 +84,35 @@ export async function acquireStagedNpm(
       suspiciousTarEntries: staged.suspiciousEntries,
     },
     details: (stagedDetails
-      ? { ...stagedDetails, tarballIntegrity }
+      ? { ...stagedDetails, artifactIntegrity }
       : null) as unknown as StagedDetails,
   };
+}
+
+/**
+ * Compare the downloaded bytes against npm's stage record, confirming a
+ * mismatch against a second read of the record before it becomes an
+ * accusation.
+ *
+ * The bytes and the digest they are checked against arrive from two
+ * independent requests, so a stage rewritten between them — or a replica
+ * serving a record from a different generation — would otherwise raise a
+ * critical finding about two artifacts that were each internally consistent.
+ * Only the disagreeing case pays for the extra fetch, and a re-read that fails
+ * leaves the original verdict standing: two well-formed digests that disagree
+ * are still evidence.
+ */
+async function evaluateStagedArtifact(
+  broker: NpmBroker,
+  stageId: string,
+  stagedDetails: StagedPublishDetails | null,
+  computedSha1: string | null | undefined,
+): Promise<StagedArtifactIntegrity> {
+  const verdict = evaluateStagedArtifactIntegrity(stagedDetails?.shasum, computedSha1);
+  if (verdict.status !== "mismatch") return verdict;
+  const confirmation = await broker.fetchStagedDetails(stageId);
+  if (!confirmation) return verdict;
+  return evaluateStagedArtifactIntegrity(confirmation.shasum, computedSha1);
 }
 
 /**
