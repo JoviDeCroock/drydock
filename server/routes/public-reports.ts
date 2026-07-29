@@ -32,6 +32,24 @@ const PUBLIC_READ_RATE = { limit: 120, windowMs: 60 * 1000 };
 
 const SHARE_TOKEN_RE = /^[A-Za-z0-9_-]{40,64}$/;
 
+// CORS on *every* response, not just the 200s. docs/public-reports.md tells
+// consumers to fetch the report and its attestation from the browser and
+// re-fetch on digest mismatch; without these headers on the failure paths a
+// revoked link is an opaque network error indistinguishable from the service
+// being down, and a throttled verifier cannot read `retry-after` to back off.
+// Registered ahead of the rate limiter so the 429 it returns is covered too.
+publicReportsRoutes.use("*", async (c, next) => {
+  await next();
+  const headers = new Headers(c.res.headers);
+  headers.set("access-control-allow-origin", "*");
+  headers.set("access-control-expose-headers", "content-disposition, retry-after");
+  c.res = new Response(c.res.body, {
+    status: c.res.status,
+    statusText: c.res.statusText,
+    headers,
+  });
+});
+
 publicReportsRoutes.use("*", async (c, next) => {
   const ip =
     c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
@@ -60,7 +78,8 @@ publicReportsRoutes.get("/attestation-key", async (c) => {
     { keyId: key.keyId, algorithm: "Ed25519", jwk: key.publicJwk },
     200,
     // The key rotates rarely; consumers cache it and match envelopes by keyid.
-    { "cache-control": "public, max-age=3600", "access-control-allow-origin": "*" },
+    // (CORS comes from the route-wide middleware above.)
+    { "cache-control": "public, max-age=3600" },
   );
 });
 
@@ -80,7 +99,6 @@ publicReportsRoutes.get("/reports/:token", async (c) => {
       // Revocation must be immediate (the UI and docs promise it), so shared
       // caches may never hold a copy past the revoke.
       "cache-control": "no-store",
-      "access-control-allow-origin": "*",
     },
   });
 });
@@ -111,6 +129,7 @@ publicReportsRoutes.get("/reports/:token/attestation", async (c) => {
       reportDigest: detail.scan.reportDigest ?? null,
       completedAt:
         detail.scan.completedAt instanceof Date ? detail.scan.completedAt.toISOString() : null,
+      issuedAt: new Date().toISOString(),
     },
   );
 
@@ -124,7 +143,6 @@ publicReportsRoutes.get("/reports/:token/attestation", async (c) => {
     const filename = reportExportFilename(detail.scan).replace(/\.json$/, ".attestation.json");
     return c.json(envelope, 200, {
       "cache-control": "no-store",
-      "access-control-allow-origin": "*",
       "content-disposition": `attachment; filename="${filename}"`,
     });
   } catch (err) {
@@ -144,11 +162,18 @@ async function loadSharedScanDetail(c: Context<{ Bindings: Bindings; Variables: 
   const db = createDb(c.env.DB);
   const resolved = await resolvePublicShareToken(db, token);
   if (!resolved) return { error: c.json({ error: "not found" }, 404) } as const;
+  // `omit` — not `list` — is load-bearing. The export's `findings[].diffStatus`
+  // is derived from the diff artifact, so anything that changes whether the
+  // artifacts are read changes the serialized bytes, and the attestation's
+  // subject digest is computed over exactly those bytes. `omit` keeps the
+  // report and diff artifacts (identical output to the authenticated export)
+  // and drops only the file-samples payload, which this route never reads.
   const detail = await getScan(
     db,
     resolved.scanId,
     resolved.organizationId,
     scanArtifactReadBucket(c.env),
+    { files: "omit" },
   );
   if (!detail || detail.scan.status !== "complete") {
     return { error: c.json({ error: "not found" }, 404) } as const;

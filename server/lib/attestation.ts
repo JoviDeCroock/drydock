@@ -31,6 +31,14 @@ export interface AttestationPredicate {
   reportSchema: string;
   reportDigest: string | null;
   completedAt: string | null;
+  /**
+   * When this envelope was signed. The attested report is a snapshot of mutable
+   * state — a maintainer can decide "block" after a consumer already archived
+   * an envelope — so two envelopes for the same scan can both verify and still
+   * disagree. This is the field that orders them, inside the signed statement
+   * rather than out of band.
+   */
+  issuedAt: string;
 }
 
 export interface DsseEnvelope {

@@ -1,5 +1,6 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { Hono } from "hono";
+import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { listOrganizationAuditEvents } from "../../server/db/audit-log";
 import { createDb } from "../../server/db/client";
@@ -7,7 +8,6 @@ import { createOrganization, ensurePersonalOrganization } from "../../server/db/
 import { createScanJob, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { describeAuditEvent } from "../../server/lib/auth/audit-events";
-import { base64UrlDecode } from "../../server/lib/platform/crypto-utils";
 import { publicReportsRoutes } from "../../server/routes/public-reports";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
@@ -15,6 +15,34 @@ import type { Bindings, Variables } from "../../server/types";
 interface SeededUser {
   userId: string;
   organizationId: string;
+}
+
+// The signing key is generated per run rather than committed to
+// wrangler.test.jsonc: a real private JWK in the repo is a permanent
+// secret-scanning false positive. The default test env therefore has *no* key,
+// which also makes the degraded path the one you get for free.
+let signingEnvPromise: Promise<typeof env> | null = null;
+function signingEnv(): Promise<typeof env> {
+  signingEnvPromise ??= (async () => {
+    const pair = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
+      "sign",
+      "verify",
+    ])) as CryptoKeyPair;
+    const jwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
+    return { ...env, ATTESTATION_SIGNING_KEY_JWK: JSON.stringify(jwk) } as typeof env;
+  })();
+  return signingEnvPromise;
+}
+
+// Strict standard-base64 decode: rejects the base64url alphabet outright, so a
+// regression away from what sigstore/in-toto verifiers expect fails here rather
+// than sliding through on a payload that happens to contain no `-` or `_`.
+function strictBase64Decode(value: string): Uint8Array {
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value) || value.length % 4 !== 0) {
+    throw new Error(`not standard base64: ${value.slice(0, 32)}…`);
+  }
+  const binary = atob(value);
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
 async function seedUser(): Promise<SeededUser> {
@@ -306,20 +334,128 @@ describe("public report sharing", () => {
       share: { token: string };
     };
 
+    const signer = await signingEnv();
+
     // no-store keeps the "revocation is immediate" promise honest: no shared
     // cache may serve the report past the revoke.
     const report = await request(app, `/public/reports/${share.token}`);
     expect(report.headers.get("cache-control")).toBe("no-store");
     expect(report.headers.get("access-control-allow-origin")).toBe("*");
 
-    const attestation = await request(app, `/public/reports/${share.token}/attestation`);
+    const attestation = await request(
+      app,
+      `/public/reports/${share.token}/attestation`,
+      {},
+      signer,
+    );
     expect(attestation.headers.get("cache-control")).toBe("no-store");
     expect(attestation.headers.get("access-control-allow-origin")).toBe("*");
 
     // The key rotates rarely and is safe to cache.
-    const key = await request(app, `/public/attestation-key`);
+    const key = await request(app, `/public/attestation-key`, {}, signer);
     expect(key.headers.get("cache-control")).toBe("public, max-age=3600");
     expect(key.headers.get("access-control-allow-origin")).toBe("*");
+  });
+
+  test("failure responses are readable cross-origin", async () => {
+    const app = buildTestApp(null);
+
+    // A browser verifier following docs/public-reports.md has to be able to
+    // tell "revoked" from "the service is down"; without CORS on the 404 both
+    // are the same opaque network error.
+    const notFound = await request(app, `/public/reports/${"C".repeat(43)}`);
+    expect(notFound.status).toBe(404);
+    expect(notFound.headers.get("access-control-allow-origin")).toBe("*");
+
+    // No signing key configured in the default test env.
+    const owner = await seedUser();
+    const scanId = await seedCompletedScan(owner);
+    const ownerApp = buildTestApp(owner);
+    const { share } = (await (await enableShare(ownerApp, scanId)).json()) as {
+      share: { token: string };
+    };
+    const degraded = await request(app, `/public/reports/${share.token}/attestation`);
+    expect(degraded.status).toBe(503);
+    expect(degraded.headers.get("access-control-allow-origin")).toBe("*");
+
+    // retry-after has to be reachable from script, or a throttled verifier
+    // cannot back off and just hot-loops.
+    const ip = `10.1.0.${Math.floor(Math.random() * 200) + 1}`;
+    const headers = { "cf-connecting-ip": ip };
+    let throttled: Response | null = null;
+    for (let i = 0; i < 125; i += 1) {
+      const res = await request(app, `/public/reports/${"D".repeat(43)}`, { headers });
+      if (res.status === 429) {
+        throttled = res;
+        break;
+      }
+    }
+    expect(throttled).not.toBeNull();
+    expect(throttled?.headers.get("access-control-allow-origin")).toBe("*");
+    expect(throttled?.headers.get("access-control-expose-headers")).toContain("retry-after");
+    expect(throttled?.headers.get("retry-after")).toBeTruthy();
+  });
+
+  test("concurrent enables settle on a single token", async () => {
+    const owner = await seedUser();
+    const scanId = await seedCompletedScan(owner);
+    const app = buildTestApp(owner);
+
+    // The guarded UPDATE's whole point: the loser re-reads and returns the
+    // winner's token instead of silently rotating a link already in flight.
+    const [first, second] = await Promise.all([enableShare(app, scanId), enableShare(app, scanId)]);
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    const a = (await first.json()) as { share: { token: string } };
+    const b = (await second.json()) as { share: { token: string } };
+    expect(a.share.token).toBe(b.share.token);
+    expect((await request(app, `/public/reports/${a.share.token}`)).status).toBe(200);
+  });
+
+  test("the public export carries no prior-scan identifiers or decision times", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const scanId = await seedCompletedScan(owner);
+    // Release memory recorded against a prior scan the org never shared.
+    await db
+      .update(schema.scans)
+      .set({
+        summaryJson: {
+          report: {
+            version: 1,
+            digest: "abc123",
+            digestAlgorithm: "sha256",
+            generatedAt: "2026-01-01T00:00:00.000Z",
+            rulesVersion: "1.8.0",
+          },
+          releaseConsistency: {
+            status: "subset",
+            priorScanId: "scan_prior_secret",
+            priorVersion: "1.0.0",
+            decidedAt: "2026-03-04T09:12:31.004Z",
+            currentFindingCount: 1,
+            priorFindingCount: 1,
+            newFindingCount: 0,
+            newFindings: [],
+          },
+        },
+      })
+      .where(eq(schema.scans.id, scanId));
+
+    const app = buildTestApp(owner);
+    const { share } = (await (await enableShare(app, scanId)).json()) as {
+      share: { token: string };
+    };
+    const res = await request(app, `/public/reports/${share.token}`);
+    const text = await res.text();
+    expect(text).not.toContain("scan_prior_secret");
+    expect(text).not.toContain("2026-03-04T09:12:31.004Z");
+
+    const consistency = (JSON.parse(text) as { releaseConsistency: Record<string, unknown> })
+      .releaseConsistency;
+    expect(consistency.status).toBe("subset");
+    expect(consistency.priorScanId).toBeUndefined();
+    expect(consistency.decidedAt).toBeUndefined();
   });
 
   test("unknown and malformed tokens return 404", async () => {
@@ -356,10 +492,11 @@ describe("public report attestations", () => {
       share: { token: string };
     };
 
+    const signer = await signingEnv();
     const reportRes = await request(app, `/public/reports/${share.token}`);
     const reportBytes = new Uint8Array(await reportRes.arrayBuffer());
 
-    const attRes = await request(app, `/public/reports/${share.token}/attestation`);
+    const attRes = await request(app, `/public/reports/${share.token}/attestation`, {}, signer);
     expect(attRes.status).toBe(200);
     const envelope = (await attRes.json()) as {
       payloadType: string;
@@ -368,11 +505,8 @@ describe("public report attestations", () => {
     };
     expect(envelope.payloadType).toBe("application/vnd.in-toto+json");
     expect(envelope.signatures).toHaveLength(1);
-    // Standard base64, not base64url — what sigstore/in-toto verifiers expect.
-    expect(envelope.payload).toMatch(/^[A-Za-z0-9+/]+=*$/);
-    expect(envelope.signatures[0].sig).toMatch(/^[A-Za-z0-9+/]+=*$/);
 
-    const keyRes = await request(app, `/public/attestation-key`);
+    const keyRes = await request(app, `/public/attestation-key`, {}, signer);
     expect(keyRes.status).toBe(200);
     const published = (await keyRes.json()) as {
       keyId: string;
@@ -385,17 +519,22 @@ describe("public report attestations", () => {
     expect((published.jwk as { d?: string }).d).toBeUndefined();
 
     // Statement subject digest matches the exact bytes the public route serves.
-    const payloadBytes = base64UrlDecode(envelope.payload);
+    // Decoded strictly as standard base64 — sigstore/in-toto verifiers expect
+    // that alphabet, and a base64url regression must not slide through on a
+    // payload that happens to contain no `-` or `_`.
+    const payloadBytes = strictBase64Decode(envelope.payload);
     const statement = JSON.parse(new TextDecoder().decode(payloadBytes)) as {
       _type: string;
       subject: Array<{ name: string; digest: { sha256: string } }>;
       predicateType: string;
-      predicate: { scanId: string; risk: string; reportSchema: string };
+      predicate: { scanId: string; risk: string; reportSchema: string; issuedAt: string };
     };
     expect(statement._type).toBe("https://in-toto.io/Statement/v1");
     expect(statement.subject[0].name).toBe("@org/pkg@1.1.0");
     expect(statement.predicate.scanId).toBe(scanId);
     expect(statement.predicate.reportSchema).toBe("drydock.report.v2");
+    // Archived envelopes must be orderable without an out-of-band timestamp.
+    expect(Number.isNaN(Date.parse(statement.predicate.issuedAt))).toBe(false);
     const digest = new Uint8Array(
       await crypto.subtle.digest("SHA-256", reportBytes as Uint8Array<ArrayBuffer>),
     );
@@ -421,7 +560,7 @@ describe("public report attestations", () => {
     const valid = await crypto.subtle.verify(
       "Ed25519",
       publicKey,
-      base64UrlDecode(envelope.signatures[0].sig),
+      strictBase64Decode(envelope.signatures[0].sig),
       pae,
     );
     expect(valid).toBe(true);
@@ -435,14 +574,64 @@ describe("public report attestations", () => {
       share: { token: string };
     };
 
-    const bare = { ...env, ATTESTATION_SIGNING_KEY_JWK: undefined } as typeof env;
-    const attRes = await request(app, `/public/reports/${share.token}/attestation`, {}, bare);
+    // The default test env carries no key — the same shape as an operator who
+    // has not run `wrangler secret put ATTESTATION_SIGNING_KEY_JWK`.
+    const attRes = await request(app, `/public/reports/${share.token}/attestation`);
     expect(attRes.status).toBe(503);
-    const keyRes = await request(app, `/public/attestation-key`, {}, bare);
+    const keyRes = await request(app, `/public/attestation-key`);
     expect(keyRes.status).toBe(503);
 
     // The report itself stays available without a key.
-    const reportRes = await request(app, `/public/reports/${share.token}`, {}, bare);
+    const reportRes = await request(app, `/public/reports/${share.token}`);
     expect(reportRes.status).toBe(200);
+  });
+
+  test("a malformed signing key degrades like an absent one", async () => {
+    const owner = await seedUser();
+    const scanId = await seedCompletedScan(owner);
+    const app = buildTestApp(owner);
+    const { share } = (await (await enableShare(app, scanId)).json()) as {
+      share: { token: string };
+    };
+
+    const signer = await signingEnv();
+    const good = JSON.parse(signer.ATTESTATION_SIGNING_KEY_JWK as string) as JsonWebKey;
+    const malformed: Array<Record<string, unknown>> = [
+      { not: "json at all" },
+      { ...good, kty: "EC" },
+      { ...good, crv: "P-256" },
+      { ...good, d: undefined },
+      { ...good, d: "not-valid-base64url-key-material" },
+    ];
+    for (const jwk of malformed) {
+      const broken = { ...env, ATTESTATION_SIGNING_KEY_JWK: JSON.stringify(jwk) } as typeof env;
+      const att = await request(app, `/public/reports/${share.token}/attestation`, {}, broken);
+      expect(att.status).toBe(503);
+      expect((await request(app, `/public/attestation-key`, {}, broken)).status).toBe(503);
+    }
+
+    // Not even a parse failure escapes as a 500.
+    const garbage = { ...env, ATTESTATION_SIGNING_KEY_JWK: "{not json" } as typeof env;
+    expect(
+      (await request(app, `/public/reports/${share.token}/attestation`, {}, garbage)).status,
+    ).toBe(503);
+  });
+
+  test("attestations die with the share link", async () => {
+    const owner = await seedUser();
+    const scanId = await seedCompletedScan(owner);
+    const app = buildTestApp(owner);
+    const { share } = (await (await enableShare(app, scanId)).json()) as {
+      share: { token: string };
+    };
+    const signer = await signingEnv();
+
+    expect(
+      (await request(app, `/public/reports/${share.token}/attestation`, {}, signer)).status,
+    ).toBe(200);
+    await request(app, `/api/v1/scans/${scanId}/share`, { method: "DELETE" });
+    expect(
+      (await request(app, `/public/reports/${share.token}/attestation`, {}, signer)).status,
+    ).toBe(404);
   });
 });

@@ -266,6 +266,12 @@ export async function writeScanArtifacts(
 export async function loadScanArtifacts(
   bucket: R2Bucket | undefined,
   scan: ScanArtifactScanRow,
+  // `includeFileSamples: false` skips the files.json read while keeping the
+  // report + diff artifacts (and therefore findings and their diff annotations)
+  // exactly as they are with it. The file-samples payload is by far the largest
+  // artifact — one redacted sample per file, capped at SCAN_FILE_SAMPLE_LIMIT
+  // each — so callers that never read `files` should not pay for it.
+  options: { includeFileSamples?: boolean } = {},
 ): Promise<ScanArtifactsDetail | null> {
   const manifestDetail = await loadScanArtifactsManifest(bucket, scan);
   if (!manifestDetail) return null;
@@ -283,6 +289,7 @@ export async function loadScanArtifacts(
     return null;
   }
 
+  const includeFileSamples = options.includeFileSamples ?? true;
   try {
     const [reportText, filesText, diffText] = await Promise.all([
       readVerifiedJsonText(bucket as R2Bucket, {
@@ -290,11 +297,13 @@ export async function loadScanArtifacts(
         scanId: scan.id,
         kind: "report",
       }),
-      readVerifiedJsonText(bucket as R2Bucket, {
-        ...manifest.artifacts.files,
-        scanId: scan.id,
-        kind: "files",
-      }),
+      includeFileSamples
+        ? readVerifiedJsonText(bucket as R2Bucket, {
+            ...manifest.artifacts.files,
+            scanId: scan.id,
+            kind: "files",
+          })
+        : null,
       readVerifiedJsonText(bucket as R2Bucket, {
         ...manifest.artifacts.diff,
         scanId: scan.id,
@@ -303,7 +312,7 @@ export async function loadScanArtifacts(
     ]);
 
     const reportFindings = parseReportFindings(reportText, scan.id);
-    const files = parseFilesArtifact(filesText, scan.id);
+    const files = filesText === null ? [] : parseFilesArtifact(filesText, scan.id);
     const diff = parseDiffArtifact(diffText, scan.id);
     if (!files || !diff || !reportFindings) {
       emitArtifactFallback("artifact_payload_invalid", scan);

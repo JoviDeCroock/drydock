@@ -1,6 +1,6 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
-import worker from "../../server";
+import worker, { redactCapabilityPath } from "../../server";
 
 const HSTS_VALUE = "max-age=31536000; includeSubDomains; preload";
 
@@ -42,5 +42,42 @@ describe("worker security headers", () => {
     expect(res.headers.get("Strict-Transport-Security")).toBeNull();
     expect(res.headers.get("Content-Security-Policy")).toBeNull();
     expect(res.headers.get("X-Frame-Options")).toBeNull();
+  });
+
+  // The public report routes are Worker-owned but live outside /api/*, so they
+  // need the locked-down API policy explicitly rather than inheriting the
+  // document policy static assets get.
+  test("serves the API CSP on the unauthenticated /public routes", async () => {
+    const apiHeaders = await fetchHeaders("/api/health");
+    const publicHeaders = await fetchHeaders(`/public/reports/${"A".repeat(43)}`);
+    expect(publicHeaders.get("Content-Security-Policy")).toBe(
+      apiHeaders.get("Content-Security-Policy"),
+    );
+    expect(publicHeaders.get("Strict-Transport-Security")).toBe(HSTS_VALUE);
+    // Still readable by a cross-origin verifier even though it is a 404.
+    expect(publicHeaders.get("access-control-allow-origin")).toBe("*");
+  });
+});
+
+// A share link's capability IS its token, so it must never reach a log line.
+describe("capability path redaction", () => {
+  test("replaces the share token and leaves everything else alone", () => {
+    const token = "A".repeat(43);
+    expect(redactCapabilityPath(`/public/reports/${token}`)).toBe("/public/reports/:token");
+    expect(redactCapabilityPath(`/public/reports/${token}/attestation`)).toBe(
+      "/public/reports/:token/attestation",
+    );
+    // Percent-encoded and otherwise odd tokens are still one path segment.
+    expect(redactCapabilityPath("/public/reports/%2e%2e%2f%2e%2e")).toBe("/public/reports/:token");
+    expect(redactCapabilityPath("/public/reports/")).toBe("/public/reports/");
+    expect(redactCapabilityPath("/public/attestation-key")).toBe("/public/attestation-key");
+    expect(redactCapabilityPath("/api/v1/scans/scan_123")).toBe("/api/v1/scans/scan_123");
+  });
+
+  test("does not leave a token behind when the prefix is not at the start", () => {
+    const token = "B".repeat(43);
+    // Only the anchored prefix is a capability path; anything else must not be
+    // silently treated as redacted when it still carries the token.
+    expect(redactCapabilityPath(`/public/reports/${token}`)).not.toContain(token);
   });
 });

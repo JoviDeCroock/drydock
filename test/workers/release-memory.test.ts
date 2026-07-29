@@ -439,9 +439,14 @@ describe("release memory exposure (API + report export)", () => {
     const res = await fetchWithSession(app, `/api/v1/scans/${withField.scanId}/report.json`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { releaseConsistency: unknown };
-    // The export strips priorScanId — an org-internal reference the export's
-    // consumers (including public share links) have no use for.
-    const { priorScanId: _priorScanId, ...exportedShape } = releaseConsistency;
+    // The export strips priorScanId and decidedAt — both describe a prior scan
+    // the org never chose to share, and these bytes are served verbatim on the
+    // public share route.
+    const {
+      priorScanId: _priorScanId,
+      decidedAt: _decidedAt,
+      ...exportedShape
+    } = releaseConsistency;
     expect(body.releaseConsistency).toEqual(exportedShape);
 
     const legacy = await fetchWithSession(app, `/api/v1/scans/${withoutField.scanId}/report.json`);

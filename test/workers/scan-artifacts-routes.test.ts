@@ -377,7 +377,7 @@ describe("scan artifact backfill route", () => {
 
     const readCounter = createReadCountingBucket(env.ARTIFACTS);
     const metadataOnly = await getScan(db, scanId, owner.organizationId, readCounter.bucket, {
-      includeFileSamples: false,
+      files: "list",
     });
     expect(metadataOnly?.files.find((file) => file.path === "index.js")?.textSample).toBeNull();
     expect(metadataOnly?.findings).toHaveLength(1);

@@ -19,11 +19,11 @@ interface ReportExportFilenameInput {
 // Schema tag for the exported report document. Bump the suffix when the export
 // shape changes in a way consumers must branch on.
 //
-// v2 drops `releaseConsistency.priorScanId` (see `exportReleaseConsistency`).
-// That is a removal from the authenticated `report.json` contract as much as
-// from the public one, so it takes the bump with it: the export is the signing
-// boundary, and a consumer that pinned v1 must not silently receive a document
-// missing a field it read.
+// v2 drops `releaseConsistency.priorScanId` and `releaseConsistency.decidedAt`
+// (see `exportReleaseConsistency`). Those are removals from the authenticated
+// `report.json` contract as much as from the public one, so they take the bump
+// with them: the export is the signing boundary, and a consumer that pinned v1
+// must not silently receive a document missing a field it read.
 export const REPORT_EXPORT_SCHEMA = "drydock.report.v2";
 
 // Build a self-contained, archivable view of a completed review from the data
@@ -148,13 +148,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// The export drops `priorScanId`: it is an org-internal dashboard affordance
-// referencing a scan the org never chose to share, and these bytes are served
-// verbatim on the public report route.
+// The export drops `priorScanId` and `decidedAt`: both describe a *prior* scan
+// the org never chose to share, and these bytes are served verbatim on the
+// public report route. `decidedAt` is the sharper of the two — a precise
+// timestamp of an internal review decision on an unshared release. What stays
+// (`status`, the finding counts, `newFindings`) describes this scan's delta
+// against that history, which is the signal the report is making.
 function exportReleaseConsistency(raw: unknown) {
   const consistency = normalizeReleaseConsistency(raw);
   if (!consistency) return null;
-  const { priorScanId: _priorScanId, ...exported } = consistency;
+  const { priorScanId: _priorScanId, decidedAt: _decidedAt, ...exported } = consistency;
   return exported;
 }
 

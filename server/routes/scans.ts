@@ -375,7 +375,7 @@ scansRoutes.get("/:id", async (c) => {
   const db = createDb(c.env.DB);
   const organizationId = await requireActiveOrganization(c, db);
   const scan = await getScan(db, c.req.param("id"), organizationId, scanArtifactReadBucket(c.env), {
-    includeFileSamples: false,
+    files: "list",
   });
   if (!scan) return c.json({ error: "not found" }, 404);
   return c.json(scan);
@@ -410,12 +410,19 @@ scansRoutes.get("/:id/report.json", async (c) => {
   const organizationId = await resolveReportExportOrganization(c, db);
   if (!organizationId) return c.json({ error: "not found" }, 404);
   // Full-detail export: the findings come from R2 for artifact-backed scans, so
-  // load the artifact bucket (unlike the metadata-only reads below).
+  // load the artifact bucket (unlike the metadata-only reads below). `omit`
+  // skips the file-samples artifact the export never reads, and keeps this
+  // route byte-identical to the public share route by construction — both go
+  // through the same artifact reads, so neither can degrade to the D1 fallback
+  // while the other does not.
   const detail = await getScan(
     db,
     c.req.param("id"),
     organizationId,
     scanArtifactReadBucket(c.env),
+    {
+      files: "omit",
+    },
   );
   if (!detail) return c.json({ error: "not found" }, 404);
   if (detail.scan.status !== "complete") {

@@ -39,6 +39,15 @@ export function App() {
           <Route path="/login" component={LoginPage} />
           <Route path="/register" component={RegisterPage} />
           <Route path="/verify-email" component={VerifyEmailPage} />
+          {/*
+            Both paths, like /diff above. `:token` is a required segment, so it
+            cannot match the prerender URL `/reports` — without the bare route
+            the shell falls through to `default` and every share link serves a
+            200 whose body says "Page not found" until the bundle hydrates.
+            PublicReportPage renders its loading skeleton for an empty token,
+            which is the correct shell.
+          */}
+          <Route path="/reports" component={PublicReportPage} />
           <Route path="/reports/:token" component={PublicReportPage} />
           <Route path="/dashboard" component={DashboardPage} />
           <Route path="/dashboard/scans/:id" component={ScanDetailPage} />

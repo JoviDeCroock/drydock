@@ -114,7 +114,7 @@ function assetFallbackRequest(request: Request): Request {
 // log line. Cloudflare's own invocation logs still capture the full URL — that
 // is inherent to capability URLs and is why revocation is immediate — but
 // nothing Drydock writes should widen that exposure.
-function redactCapabilityPath(path: string): string {
+export function redactCapabilityPath(path: string): string {
   return path.replace(/^\/public\/reports\/[^/]+/, "/public/reports/:token");
 }
 

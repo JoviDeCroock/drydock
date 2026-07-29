@@ -44,7 +44,14 @@ is an in-toto v1 Statement:
   `GET /public/reports/:token`.
 - `predicateType` — `https://drydock.org/attestation/scan-report/v1`.
 - `predicate` — scan id, package identity, risk, decision, finding count,
-  report schema/digest, completion timestamp.
+  report schema/digest, completion timestamp, and `issuedAt` (when the envelope
+  was signed).
+
+`issuedAt` is what orders two envelopes for the same scan. Because the attested
+report is a snapshot of mutable state, a consumer who archived a pair before a
+maintainer recorded "block" and a consumer who archived after both hold envelopes
+that verify and disagree; `issuedAt` says which is newer without an out-of-band
+timestamp. It is inside the signed statement, so it cannot be restamped.
 
 To verify: fetch the report bytes, hash them, compare with the subject digest,
 then verify the envelope signature against `/public/attestation-key` (match by
@@ -81,6 +88,20 @@ issued with.
 - The public payload is the canonical export only — redaction is inherited from
   the report contract, not re-implemented on the public path.
 - Public routes carry the locked-down API CSP and permissive CORS (`*`) — the
-  data is public by construction once shared.
+  data is public by construction once shared. CORS rides on _every_ response,
+  including the 404 for a revoked link, the 503 when no signing key is
+  configured, and the 429 from the rate limiter (whose `retry-after` is exposed
+  via `access-control-expose-headers`). A browser verifier that cannot read a
+  failure cannot tell "revoked" from "offline", and cannot back off politely.
+- The export drops `releaseConsistency.priorScanId` and
+  `releaseConsistency.decidedAt`. Both describe a _prior_ scan the org never
+  chose to share — `decidedAt` most sharply, being a precise timestamp of an
+  internal review decision on an unshared release. The remaining release-memory
+  fields describe this scan's delta against that history.
+- Serving a report reads the report and diff artifacts but not the file-samples
+  artifact (`getScan`'s `files: "omit"` mode). The authenticated `report.json`
+  export takes the same path, so the two cannot diverge: byte-identity is by
+  construction rather than by both happening to succeed at the same R2 reads.
 - Tests: `test/workers/public-reports.test.ts` (routes, roles, revocation,
-  redaction, rate limit, signature verification).
+  redaction, rate limit, CORS on failures, concurrent enables, signature
+  verification, degraded/malformed key handling).
