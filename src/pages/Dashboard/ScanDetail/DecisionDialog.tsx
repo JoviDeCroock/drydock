@@ -2,6 +2,7 @@ import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { formatDateTime } from "../../../lib/format";
 import type { DecisionStatus, ScanDecision } from "../../../models/scan";
+import { openNpmAfterDecision, setOpenNpmAfterDecision } from "../../../models/publish-preferences";
 import { Alert } from "../../../components/Alert";
 import { Badge } from "../../../components/Badge";
 import { Button } from "../../../components/Button";
@@ -31,19 +32,17 @@ export function DecisionDialog({
   onSubmit: (decision: ScanDecision, reason: string | null) => boolean | Promise<boolean>;
 }) {
   const reasonDraft = useSignal("");
-  const openNpmAfterSave = useSignal(false);
   const saving = status === "saving";
 
   useEffect(() => {
     if (open) {
       reasonDraft.value = decisionReason ?? "";
-      openNpmAfterSave.value = false;
     }
   }, [open, decisionReason]);
 
   const submit = async (next: ScanDecision) => {
     if (saving) return;
-    const shouldOpenNpm = Boolean(npmStagedPackagesUrl && openNpmAfterSave.peek());
+    const shouldOpenNpm = Boolean(npmStagedPackagesUrl && openNpmAfterDecision.peek());
     const npmWindow = shouldOpenNpm ? window.open("about:blank", "_blank") : null;
     if (npmWindow) npmWindow.opener = null;
     const trimmed = reasonDraft.value.trim();
@@ -98,14 +97,20 @@ export function DecisionDialog({
       </Field>
 
       {npmStagedPackagesUrl ? (
-        <label class="flex items-center gap-2 text-[13px] text-ink-muted">
+        <label class="flex items-start gap-2 text-[13px] text-ink-muted">
           <input
             type="checkbox"
-            checked={openNpmAfterSave.value}
-            onChange={(e) => (openNpmAfterSave.value = (e.target as HTMLInputElement).checked)}
+            class="mt-1"
+            checked={openNpmAfterDecision.value}
+            onChange={(e) => setOpenNpmAfterDecision((e.target as HTMLInputElement).checked)}
             disabled={saving}
           />
-          Open npm staged packages in a new tab after saving
+          <span class="flex flex-col gap-0.5">
+            Open npm staged packages in a new tab after saving
+            {/* Inside the label so the stickiness is part of the checkbox's
+                accessible name — no id/aria-describedby plumbing needed. */}
+            <span class="text-[12px] text-ink-subtle">Remembered on this browser.</span>
+          </span>
         </label>
       ) : null}
 
