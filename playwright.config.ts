@@ -28,6 +28,7 @@ export default defineConfig({
         "**/two-factor.spec.ts",
         "**/org-switcher.spec.ts",
         "**/slack-selector.spec.ts",
+        "**/npm-scope-guide.spec.ts",
       ],
       use: { ...devices["Desktop Chrome"] },
     },

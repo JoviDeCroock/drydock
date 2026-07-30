@@ -31,6 +31,8 @@ Drydock handles hostile package artifacts, private review evidence, and npm cred
 
 Organizations store their own encrypted npm connection. Operators should recommend read-only, granular, minimally scoped, expiring tokens without publish/write/org-management permission unless npm proves a staged-review endpoint requires more.
 
+In npm's granular-token form that is `Packages and scopes: Read-only` over the staged packages (or their scope) and `Organizations: No access` — an org-scoped package such as `@nanostores/i18n` is reached by selecting the `@nanostores` scope, not by granting the Organizations permission, which covers member and settings management Drydock never reads. The npm connection card in `Organization settings → npm access` states this permission set verbatim; keep the two in sync.
+
 Implementation requirements:
 
 - configure `NPM_CONNECTIONS_ENCRYPTION_KEY` for deployed instances;
