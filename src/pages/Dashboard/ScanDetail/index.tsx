@@ -33,6 +33,7 @@ import { VersionPicker } from "../../../components/VersionPicker";
 import { DeleteScanDialog } from "./DeleteScanDialog";
 import { DecisionDialog } from "./DecisionDialog";
 import { GateContextPanel, GateDecisionDialog, GatePackagesPanel } from "./GateDecisionDialog";
+import { StageCommandDialogHost } from "./StageCommandDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
 import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection";
 import { ReleaseConsistencyNotice } from "./ReleaseConsistencyNotice";
@@ -424,6 +425,7 @@ export default function ScanDetailPage() {
           statusSignal={model.decisionStatus}
           errorSignal={model.decisionError}
           npmStagedPackagesUrlSignal={npmStagedPackagesUrlSignal}
+          scan={detail.scan}
           onSubmit={handleDecisionSubmit}
         />
       ) : null}
@@ -449,6 +451,8 @@ export default function ScanDetailPage() {
           onSubmit={handleGateDecision}
         />
       ) : null}
+
+      <StageCommandDialogHost />
 
       {detail?.scan.status === "failed" ? (
         <DeleteDialogHost

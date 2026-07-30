@@ -1,8 +1,10 @@
 import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { formatDateTime } from "../../../lib/format";
-import type { DecisionStatus, ScanDecision } from "../../../models/scan";
+import type { DecisionStatus, ScanDecision, ScanListItem } from "../../../models/scan";
 import { openNpmAfterDecision, setOpenNpmAfterDecision } from "../../../models/publish-preferences";
+import { showStageCommandPrompt } from "../../../models/stage-command-prompt";
+import { npmStageCommandFor } from "../../../lib/npm-stage-command";
 import { Alert } from "../../../components/Alert";
 import { Badge } from "../../../components/Badge";
 import { Button } from "../../../components/Button";
@@ -19,6 +21,7 @@ export function DecisionDialog({
   status,
   error,
   npmStagedPackagesUrl,
+  scan,
   onSubmit,
 }: {
   open: boolean;
@@ -29,6 +32,8 @@ export function DecisionDialog({
   status: DecisionStatus;
   error: string | null;
   npmStagedPackagesUrl?: string | null;
+  /** Identifies the stage for the follow-up CLI command. */
+  scan: Pick<ScanListItem, "stageId" | "packageName" | "stagedVersion" | "source">;
   onSubmit: (decision: ScanDecision, reason: string | null) => boolean | Promise<boolean>;
 }) {
   const reasonDraft = useSignal("");
@@ -47,10 +52,26 @@ export function DecisionDialog({
     if (npmWindow) npmWindow.opener = null;
     const trimmed = reasonDraft.value.trim();
     const saved = await onSubmit(next, trimmed.length ? trimmed : null);
-    if (saved && npmWindow && npmStagedPackagesUrl) {
-      npmWindow.location.href = npmStagedPackagesUrl;
-    } else if (!saved) {
+    if (!saved) {
       npmWindow?.close();
+      return;
+    }
+    if (npmWindow && npmStagedPackagesUrl) {
+      npmWindow.location.href = npmStagedPackagesUrl;
+      return;
+    }
+    // Nobody is going to npm's web UI for us: either the reviewer finishes in a
+    // terminal, or the tab we tried to open was blocked. Both cases end with the
+    // same open question — what exactly do I run — so answer it.
+    const command = npmStageCommandFor(next, scan);
+    if (command) {
+      showStageCommandPrompt({
+        decision: next,
+        command,
+        packageName: scan.packageName,
+        stagedVersion: scan.stagedVersion,
+        npmStagedPackagesUrl: npmStagedPackagesUrl ?? null,
+      });
     }
   };
 
