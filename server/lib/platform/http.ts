@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { type RateLimitError } from "../../db/rate-limit";
+import { type RateLimitError } from "./rate-limit";
 import type { Bindings, Variables } from "../../types";
 
 type AppContext = Context<{ Bindings: Bindings; Variables: Variables }>;

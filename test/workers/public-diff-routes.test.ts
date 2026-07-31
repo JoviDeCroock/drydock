@@ -1,6 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 import worker from "../../server";
+import { exhaustedRateLimitBindings } from "./rate-limit-doubles";
 
 // The public package-diff endpoints are deliberately anonymous: they must be
 // reachable without a session (mounted before the auth middleware), validate
@@ -262,6 +263,46 @@ describe("public package-diff routes", () => {
         ),
     );
     expect(allowed.map((res) => res.status)).toEqual(Array(10).fill(400));
+    expect(limited.status).toBe(429);
+  });
+
+  test("the anonymous surface reaches D1 on no request path", async () => {
+    // Rate limiting used to be an unconditional D1 upsert plus select on every
+    // request — ahead of the cache read, so a cache hit still cost two writes to
+    // the single D1 writer. The native Rate Limiting binding removed the last
+    // reason for these routes to hold a D1 handle at all; a binding that throws
+    // on use keeps it that way.
+    const forbidden = () => {
+      throw new Error("the anonymous package-diff surface must not use D1");
+    };
+    const noD1Env = {
+      ...env,
+      DB: {
+        prepare: forbidden,
+        batch: forbidden,
+        exec: forbidden,
+        dump: forbidden,
+        withSession: forbidden,
+      } as unknown as D1Database,
+    } satisfies Cloudflare.Env;
+
+    const ip = "10.99.3.1";
+    for (const path of [
+      "/api/public/v1/package-diff?package=!x!",
+      "/api/public/v1/package-diff/versions?package=!x!",
+      "/api/public/v1/package-diff/file?package=!x!&from=1.0.0&to=1.0.1&path=index.js",
+    ]) {
+      const res = await publicDiffFetchWithEnv(path, noD1Env, ip);
+      expect(res.status).toBe(400);
+    }
+
+    // Blocked requests must not fall back to D1 either.
+    const { overrides } = exhaustedRateLimitBindings();
+    const limited = await publicDiffFetchWithEnv(
+      "/api/public/v1/package-diff?package=left-pad&from=1.0.0&to=1.0.1",
+      { ...noD1Env, ...overrides },
+      ip,
+    );
     expect(limited.status).toBe(429);
   });
 });

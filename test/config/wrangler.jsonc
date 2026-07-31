@@ -24,10 +24,28 @@
       "migrations_dir": "../../drizzle",
     },
   ],
+  "kv_namespaces": [
+    {
+      "binding": "AUTH_SESSIONS",
+      "id": "auth-sessions-test",
+    },
+  ],
   "r2_buckets": [
     {
       "binding": "ARTIFACTS",
       "bucket_name": "staged-publish-review-test-artifacts",
     },
+  ],
+  // Mirrors the production tiers in wrangler.jsonc so the Worker suites exercise
+  // the native limiter rather than the D1 fallback. Miniflare's local
+  // implementation is an in-memory fixed-window counter per pool worker, so
+  // tests must use keys unique to the test.
+  "ratelimits": [
+    { "name": "RATE_LIMIT_10_PER_MINUTE", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
+    { "name": "RATE_LIMIT_20_PER_MINUTE", "namespace_id": "1002", "simple": { "limit": 20, "period": 60 } },
+    { "name": "RATE_LIMIT_30_PER_MINUTE", "namespace_id": "1003", "simple": { "limit": 30, "period": 60 } },
+    { "name": "RATE_LIMIT_60_PER_MINUTE", "namespace_id": "1004", "simple": { "limit": 60, "period": 60 } },
+    { "name": "RATE_LIMIT_120_PER_MINUTE", "namespace_id": "1005", "simple": { "limit": 120, "period": 60 } },
+    { "name": "RATE_LIMIT_240_PER_MINUTE", "namespace_id": "1006", "simple": { "limit": 240, "period": 60 } },
   ],
 }

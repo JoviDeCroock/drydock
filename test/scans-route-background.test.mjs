@@ -37,7 +37,7 @@ vi.mock("../server/db/npm-connections.ts", async (importOriginal) => ({
   ...(await importOriginal()),
   ...dbMock,
 }));
-vi.mock("../server/db/rate-limit.ts", async (importOriginal) => ({
+vi.mock("../server/lib/platform/rate-limit.ts", async (importOriginal) => ({
   ...(await importOriginal()),
   ...dbMock,
 }));

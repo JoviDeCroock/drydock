@@ -4,7 +4,11 @@ import { AUDIT_LOG_RETENTION_DAYS, pruneAuditEventsOlderThan } from "./db/audit-
 import { pruneExpiredAuthRows } from "./db/auth-retention";
 import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
 import { getOrganizationOwnerUserId } from "./db/organizations";
-import { RateLimitError, enforceRateLimit } from "./db/rate-limit";
+import {
+  RateLimitError,
+  enforceRateLimit,
+  pruneExpiredRateLimitBuckets,
+} from "./lib/platform/rate-limit";
 import { createAuth, getAuthSession } from "./lib/auth";
 import { rateLimitResponse } from "./lib/platform/http";
 import { allowInsecureLocalRegistry } from "./lib/ecosystems/npm/connection";
@@ -227,7 +231,7 @@ app.use("/api/auth/*", async (c, next) => {
     c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
   if (!ip) return next();
   try {
-    await enforceRateLimit(createDb(c.env.DB), {
+    await enforceRateLimit(c.env, {
       key: `auth:${limit.bucket}:${ip}`,
       limit: limit.max,
       windowMs: limit.windowMs,
@@ -503,6 +507,20 @@ async function pruneStaleAuthRows(env: Cloudflare.Env) {
   }
 }
 
+// Only the windows the native Rate Limiting binding cannot express (the hourly
+// and 15-minute budgets on human-initiated actions) still write D1 buckets, so
+// this sweep is small. It used to run on whichever request happened to cross a
+// per-isolate 5-minute timer, which put an unbounded DELETE on the hot path.
+async function pruneStaleRateLimitBuckets(env: Cloudflare.Env) {
+  try {
+    await pruneExpiredRateLimitBuckets(createDb(env.DB), new Date());
+  } catch (err) {
+    emitOperationalEvent("error", "rate_limits.prune_failed", {
+      error: describeOperationalError(err),
+    });
+  }
+}
+
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
@@ -519,6 +537,7 @@ export default {
     }
     await pruneStaleAuditEvents(env);
     await pruneStaleAuthRows(env);
+    await pruneStaleRateLimitBuckets(env);
   },
   async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
     for (const message of batch.messages) {

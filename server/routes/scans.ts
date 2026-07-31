@@ -3,7 +3,7 @@ import { createDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
 import { getOrganizationRole } from "../db/invitations";
 import { getNpmConnection } from "../db/npm-connections";
-import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
+import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
 import {
   LIST_SCANS_DEFAULT_LIMIT,
   LIST_SCANS_MAX_LIMIT,
@@ -73,7 +73,7 @@ scansRoutes.post("/", async (c) => {
     const db = createDb(c.env.DB);
     const session = c.get("authSession");
     const organizationId = await requireActiveOrganization(c, db);
-    await enforceRateLimit(db, {
+    await enforceRateLimit(c.env, {
       key: `scan:${organizationId}`,
       limit: 10,
       windowMs: 60 * 60 * 1000,
@@ -227,7 +227,7 @@ scansRoutes.post("/artifacts/backfill", async (c) => {
   if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
 
   try {
-    await enforceRateLimit(db, {
+    await enforceRateLimit(c.env, {
       key: `scan-artifact-backfill:${organizationId}`,
       limit: 60,
       windowMs: 60 * 60 * 1000,
@@ -540,7 +540,7 @@ scansRoutes.get("/:id/versions", async (c) => {
   let connection: Awaited<ReturnType<typeof getOrganizationNpmToken>> = null;
   try {
     [, connection] = await Promise.all([
-      enforceRateLimit(db, {
+      enforceRateLimit(c.env, {
         key: `compare-versions:${session.userId}`,
         limit: 60,
         windowMs: 60 * 1000,
@@ -678,7 +678,7 @@ async function loadCompareArchive(
   let connection: Awaited<ReturnType<typeof getOrganizationNpmToken>> = null;
   try {
     [, connection] = await Promise.all([
-      enforceRateLimit(ctx.db, {
+      enforceRateLimit(c.env, {
         key: options.rateLimitKey,
         limit: options.rateLimit,
         windowMs: 60 * 1000,

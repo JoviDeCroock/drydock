@@ -100,7 +100,37 @@ For npm registry tarballs, consumer install lifecycle hooks are `preinstall`, `i
 
 Every non-auth `/api/*` endpoint requires a Better Auth session and organization resolution. Reads and writes for scans, reports, npm connections, Slack installs, release targets, workflow gates, and settings must check organization ownership. UI state is not an authority; server routes make all access-control decisions.
 
-One deliberate exception: the `/api/public/v1/package-diff` endpoints are anonymous by design. They serve only public release data — the public npm registry for `ecosystem=npm` (plus public `pkg.pr.new` preview tarballs), for `ecosystem=pypi` the `pypi.org` JSON API with artifact bytes only from `files.pythonhosted.org`, and for `ecosystem=atpm` the publisher's own AT Protocol identity and PDS (see [`atpm-public-diff.md`](./atpm-public-diff.md)) — never organization resources. They attach no credentials to any fetch, return 404 when `NPM_REGISTRY` is configured to a custom origin (the PyPI mode included), persist no review data to D1, and never run AI review. Their abuse controls are expiring per-IP D1 rate-limit buckets enforced before any validation or fetch, a shared computation budget for cold diff and file requests, anonymous colo caching of published tarball bytes, versioned colo/KV caching of computed results, and the sandbox's archive caps. Any new public endpoint must document the same properties here or require a session.
+One deliberate exception: the `/api/public/v1/package-diff` endpoints are anonymous by design. They serve only public release data — the public npm registry for `ecosystem=npm` (plus public `pkg.pr.new` preview tarballs), for `ecosystem=pypi` the `pypi.org` JSON API with artifact bytes only from `files.pythonhosted.org`, and for `ecosystem=atpm` the publisher's own AT Protocol identity and PDS (see [`atpm-public-diff.md`](./atpm-public-diff.md)) — never organization resources. They attach no credentials to any fetch, return 404 when `NPM_REGISTRY` is configured to a custom origin (the PyPI mode included), persist no review data to D1, and never run AI review. With the Rate Limiting bindings configured they reach D1 on no request path at all — locked by a test that hands the routes a D1 binding which throws on use. Their abuse controls are per-IP rate limits enforced before any validation or fetch, a shared computation budget for cold diff and file requests, anonymous colo caching of published tarball bytes, versioned colo/KV caching of computed results, and the sandbox's archive caps. Any new public endpoint must document the same properties here or require a session.
+
+## Session posture
+
+Sessions are Better Auth sessions in a cookie signed with `BETTER_AUTH_SECRET`. Two caches sit in front of the session store so a burst of authenticated requests does not turn into a burst of D1 reads and refresh writes (`server/lib/auth/index.ts`):
+
+- **Cookie cache.** `session.cookieCache` puts a signed copy of the session and user in the `spr.session_data` cookie for `SESSION_COOKIE_CACHE_SECONDS` (5 minutes). While it is fresh, a request resolves its session with no storage read at all.
+- **KV secondary storage.** When the `AUTH_SESSIONS` KV namespace is bound, the session read/write path moves to KV. `storeSessionInDatabase` stays on, so D1 remains the durable record: Better Auth falls back to the D1 row on a KV miss, sign-out and account deletion still delete a row, and losing the KV namespace cannot sign everyone out.
+
+Only sessions go to KV. Better Auth would also route verification values (email-verification links, password-reset tokens, the two-factor challenge and its attempt counter) through secondary storage, where single-use consumption degrades to a non-atomic get-then-delete; `verification.storeInDatabase` keeps them in D1 so `consumeVerificationValue` stays transactional and a reset token or 2FA challenge cannot be redeemed twice.
+
+The security consequence is a bounded **revocation lag**. After a sign-out, a session revocation, or an account deletion, a request that still presents a fresh `spr.session_data` cookie can be served for up to the cookie-cache lifetime, plus KV's own eventual consistency across colos. Sign-out expires both cookies, so a cookie-following client loses access immediately; the lag matters for a replayed or stolen cookie. Keep `SESSION_COOKIE_CACHE_SECONDS` short.
+
+Nothing that authorizes a release decision is cached. Organization membership and role (`requireActiveOrganization*`), resource ownership, two-factor enrollment (`userHasTwoFactor`), and the TOTP step-up all read D1 on every request, so a member removed from an organization or a policy change takes effect immediately even while a session cookie is still cached.
+
+## Rate limiting
+
+`enforceRateLimit` (`server/lib/platform/rate-limit.ts`) is the single entry point for abuse control. Its backend is Cloudflare's native Rate Limiting binding — a per-colo fixed-window counter that costs no D1 write — so anonymous `/diff` floods and credential-stuffing bursts never reach the D1 single writer.
+
+The binding's `{limit, period}` pair is static per binding and `period` may only be 10 or 60 seconds. `wrangler.jsonc` therefore declares one `ratelimits` binding per per-minute limit the app enforces (`NATIVE_TIERS` in the module), and:
+
+- **Per-minute budgets** (the anonymous `/diff` endpoints, `compare`/`compare-file`/`versions`, GitHub proxy lookups, gate decisions, Slack channel listing, GitHub webhooks) are enforced entirely by the binding.
+- **Longer budgets** — the 15-minute and hourly limits on human-initiated actions such as sign-in, sign-up, password reset, organization creation, invitations, and connecting npm or Slack — cannot be expressed by the binding, so they keep the D1 `rate_limits` counter. Each one first passes a native per-minute burst guard whose limit is at or above the long-window limit, which can only reject traffic the long window would reject anyway while capping how many D1 writes one key can force per minute per colo.
+
+Semantic differences from the previous D1-only scheme, accepted deliberately:
+
+- Counters are **per-colo, not global**. A distributed client gets up to `limit` per colo per window. These are abuse controls, not quotas; the authorization checks above are what protect data.
+- `Retry-After` is derived from the wall-clock window instead of read back from a counter row, because the binding reports only allowed/blocked.
+- Expired D1 buckets are swept by the scheduled handler (`pruneExpiredRateLimitBuckets`) rather than by an unbounded `DELETE` piggybacked on a request that happened to cross a per-isolate timer.
+
+A deployment that omits the `ratelimits` bindings still enforces every limit, through the D1 counter, and logs `rate_limit.tier_missing`. Adding a new per-minute limit at a call site requires a matching tier and binding; without one it silently degrades to D1.
 
 The `/og/diff/**/card.png` share cards are part of the same anonymous surface and inherit its rules: no session, no credentials, the same custom-registry 404 killswitch, and a per-IP rate limit charged only on a cold render. A card never triggers analysis — it reads the public-diff result cache and, on a miss, renders the package name and version pair with no numbers, so an unauthenticated request can never make the Worker download or parse a tarball. Package names and versions reach the card as text: they are XML-escaped and stripped of control characters and bidi overrides before rasterization, and width-fitted so a long name cannot overflow the frame.
 

@@ -175,6 +175,14 @@ dedicated bucket for everything under `/api/auth/two-factor`:
 10 requests per IP per 15-minute window; the 11th returns `429`. The existing origin/CSRF check
 already covers these POSTs.
 
+A 15-minute window is longer than Cloudflare's Rate Limiting binding can express, so this bucket
+is counted in D1 behind a native per-minute burst guard — the 15-minute budget stays the
+authority. See [`security-model.md`](./security-model.md#rate-limiting).
+
+Step-up verification is never served from the session cookie cache: `userHasTwoFactor` and the
+TOTP check read D1 on every request, so enrollment changes and the organization-enforced policy
+take effect immediately. See [`security-model.md`](./security-model.md#session-posture).
+
 ## Tests
 
 - `test/workers/two-factor-routes.test.ts` — drives the real Better Auth handler via

@@ -81,6 +81,41 @@ const nativeScryptAvailable = (() => {
   }
 })();
 
+/**
+ * How long a request may resolve its session from the signed session-data cookie
+ * before Better Auth re-reads the session store.
+ *
+ * This is the revocation lag: after a sign-out, a session revocation, or an
+ * account deletion, a request that still carries a fresh cookie can be served
+ * for up to this long. Kept deliberately short. It never applies to the checks
+ * that matter for a release decision — two-factor enrollment
+ * (`userHasTwoFactor`), organization membership and role, and every ownership
+ * check read D1 directly on every request.
+ */
+const SESSION_COOKIE_CACHE_SECONDS = 5 * 60;
+
+/**
+ * Better Auth secondary storage backed by Workers KV.
+ *
+ * KV is eventually consistent, so a revocation written in one colo can take
+ * additional seconds to be visible in another — on top of the cookie-cache lag
+ * above. Sessions are the only thing stored here; everything Drydock authorizes
+ * on (organization membership, roles, npm connections, scans) stays in D1.
+ */
+function createSessionSecondaryStorage(namespace: KVNamespace | undefined) {
+  if (!namespace) return null;
+  return {
+    get: (key: string) => namespace.get(key),
+    set: (key: string, value: string, ttl?: number) =>
+      // KV rejects a TTL under 60 seconds. Clamp rather than dropping the TTL:
+      // an entry with no expiration would outlive the session it caches.
+      namespace
+        .put(key, value, ttl === undefined ? {} : { expirationTtl: Math.max(60, Math.ceil(ttl)) })
+        .then(() => {}),
+    delete: (key: string) => namespace.delete(key),
+  };
+}
+
 function isLocalAuthUrl(url: string | undefined): boolean {
   if (!url) return false;
   try {
@@ -96,6 +131,7 @@ export function createAuth(env: Cloudflare.Env) {
   if (!env.BETTER_AUTH_SECRET) throw new Error("BETTER_AUTH_SECRET is required");
 
   const db = createDb(env.DB);
+  const secondaryStorage = createSessionSecondaryStorage(env.AUTH_SESSIONS);
   const trustedOrigins = env.BETTER_AUTH_URL ? [env.BETTER_AUTH_URL] : [];
   const emailVerificationEnabled = Boolean(env.SEND_EMAIL) && !isLocalAuthUrl(env.BETTER_AUTH_URL);
   return betterAuth({
@@ -109,6 +145,38 @@ export function createAuth(env: Cloudflare.Env) {
       schema,
       usePlural: false,
     }) as never,
+    ...(secondaryStorage ? { secondaryStorage } : {}),
+    session: {
+      // Every authenticated `/api/*` request resolves a session. Without a cache
+      // that is one D1 read per request (plus a refresh write on GETs) against a
+      // single writer, and the compare/compare-file endpoints a reviewer drives
+      // are allowed hundreds of requests a minute.
+      //
+      // Two layers sit in front of D1:
+      //
+      // 1. `cookieCache` — a short-lived signed copy of the session and user in
+      //    the `spr.session_data` cookie. While it is fresh the session resolves
+      //    with zero storage reads.
+      // 2. `secondaryStorage` (KV, when `AUTH_SESSIONS` is bound) — the session
+      //    read/write path moves to KV, which scales horizontally.
+      //
+      // `storeSessionInDatabase` keeps D1 as the durable record so sessions that
+      // existed before KV was introduced keep working (Better Auth falls back to
+      // the database on a KV miss), account deletion and session revocation still
+      // have rows to delete, and losing the KV namespace cannot log everyone out.
+      cookieCache: {
+        enabled: true,
+        maxAge: SESSION_COOKIE_CACHE_SECONDS,
+      },
+      ...(secondaryStorage ? { storeSessionInDatabase: true } : {}),
+    },
+    // Sessions are the only thing we want in KV. Better Auth also routes
+    // *verification* values (email verification, password-reset tokens, the 2FA
+    // challenge cookie and its attempt counter) through secondary storage, where
+    // single-use consumption would become a non-atomic get-then-delete. Keeping
+    // them in the database means `consumeVerificationValue` stays a transaction,
+    // so a reset token or a 2FA challenge cannot be redeemed twice.
+    ...(secondaryStorage ? { verification: { storeInDatabase: true as const } } : {}),
     emailVerification: {
       autoSignInAfterVerification: true,
       sendOnSignIn: true,

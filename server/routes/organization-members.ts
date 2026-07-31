@@ -21,7 +21,7 @@ import {
   getOrganizationOwnerUserId,
   getUserContact,
 } from "../db/organizations";
-import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
+import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
 import {
   requireActiveOrganization,
   requireActiveOrganizationContext,
@@ -89,7 +89,7 @@ organizationMembersRoutes.post("/invitations", async (c) => {
   if (!roleCanManageMembers(actorRole)) return c.json({ error: "forbidden" }, 403);
 
   try {
-    await enforceRateLimit(db, {
+    await enforceRateLimit(c.env, {
       key: `organizations:invite:${organizationId}`,
       limit: 30,
       windowMs: 60 * 60 * 1000,

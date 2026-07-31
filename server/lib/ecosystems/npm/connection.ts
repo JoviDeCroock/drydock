@@ -158,6 +158,30 @@ function splitCiphertext(value: string): { version: "v0" | "v1"; payload: string
   return { version: "v0", payload: value };
 }
 
+/**
+ * `last_used_at` is a "when did we last touch npm for this org" display field in
+ * the settings UI, not an audit record — the audit log covers that. Writing it on
+ * every token read made one D1 row the hottest write in the app: a reviewer
+ * paging through a diff can issue hundreds of `compare-file` requests a minute,
+ * each of which needs the token. Skipping the write while the stored value is
+ * still recent keeps the surfaced timestamp accurate to within this window at one
+ * write per window instead of one per request.
+ */
+export const NPM_CONNECTION_USE_DEBOUNCE_MS = 5 * 60_000;
+
+export function npmConnectionUseIsStale(
+  lastUsedAt: Date | string | number | null | undefined,
+  nowMs: number = Date.now(),
+): boolean {
+  if (lastUsedAt === null || lastUsedAt === undefined) return true;
+  const lastUsedMs =
+    lastUsedAt instanceof Date ? lastUsedAt.getTime() : new Date(lastUsedAt).getTime();
+  if (Number.isNaN(lastUsedMs)) return true;
+  // A timestamp in the future (clock skew, or a colo running behind the writer)
+  // is still "recent" — never spend a write to correct it.
+  return nowMs - lastUsedMs >= NPM_CONNECTION_USE_DEBOUNCE_MS;
+}
+
 export async function getOrganizationNpmToken(
   db: AppDb,
   env: Cloudflare.Env,
@@ -166,7 +190,11 @@ export async function getOrganizationNpmToken(
   const connection = await getNpmConnection(db, organizationId);
   if (!connection) return null;
   const token = await decryptNpmToken(env, connection);
-  await markNpmConnectionUsed(db, organizationId);
+  // The row we just read already carries `lastUsedAt`, so the debounce costs no
+  // extra query.
+  if (npmConnectionUseIsStale(connection.lastUsedAt)) {
+    await markNpmConnectionUsed(db, organizationId);
+  }
   return { token, registryUrl: connection.registryUrl };
 }
 

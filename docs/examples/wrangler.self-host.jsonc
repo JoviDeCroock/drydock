@@ -83,6 +83,69 @@
 			"binding": "COMPARE_CACHE",
 			// From: pnpm exec wrangler kv namespace create COMPARE_CACHE
 			"id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+		},
+		{
+			// Optional but recommended: Better Auth session store (secondary
+			// storage). Keeps the per-request session lookup off D1. Remove this
+			// block to read and write sessions in D1 only.
+			"binding": "AUTH_SESSIONS",
+			// From: pnpm exec wrangler kv namespace create AUTH_SESSIONS
+			"id": "REPLACE_WITH_YOUR_AUTH_SESSIONS_KV_NAMESPACE_ID"
+		}
+	],
+	// Native Rate Limiting bindings: per-colo fixed-window counters that keep
+	// abuse control off D1. One binding per per-minute limit the app enforces;
+	// see NATIVE_TIERS in server/lib/platform/rate-limit.ts. `namespace_id` is a
+	// per-Worker identifier you choose, not an account resource to provision.
+	// Removing these blocks degrades every limit to the D1 `rate_limits` counter.
+	"ratelimits": [
+		{
+			"name": "RATE_LIMIT_10_PER_MINUTE",
+			"namespace_id": "1001",
+			"simple": {
+				"limit": 10,
+				"period": 60
+			}
+		},
+		{
+			"name": "RATE_LIMIT_20_PER_MINUTE",
+			"namespace_id": "1002",
+			"simple": {
+				"limit": 20,
+				"period": 60
+			}
+		},
+		{
+			"name": "RATE_LIMIT_30_PER_MINUTE",
+			"namespace_id": "1003",
+			"simple": {
+				"limit": 30,
+				"period": 60
+			}
+		},
+		{
+			"name": "RATE_LIMIT_60_PER_MINUTE",
+			"namespace_id": "1004",
+			"simple": {
+				"limit": 60,
+				"period": 60
+			}
+		},
+		{
+			"name": "RATE_LIMIT_120_PER_MINUTE",
+			"namespace_id": "1005",
+			"simple": {
+				"limit": 120,
+				"period": 60
+			}
+		},
+		{
+			"name": "RATE_LIMIT_240_PER_MINUTE",
+			"namespace_id": "1006",
+			"simple": {
+				"limit": 240,
+				"period": 60
+			}
 		}
 	],
 	// Optional: persisted canonical reports and redacted evidence. Remove this

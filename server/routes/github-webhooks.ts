@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { createDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
-import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
+import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
 import {
   GithubAppConfigError,
   isGithubAppConfigured,
@@ -100,24 +100,6 @@ githubWebhookRoutes.post("/github", async (c) => {
     return c.json({ error: "invalid signature" }, 401);
   }
 
-  const db = createDb(c.env.DB);
-  try {
-    await enforceRateLimit(db, {
-      key: `github-webhook:${deliveryId.slice(0, 8)}`,
-      limit: 60,
-      windowMs: 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return c.json(
-        { error: "webhook rate limit exceeded", retryAfterSeconds: err.retryAfterSeconds },
-        429,
-        { "retry-after": String(err.retryAfterSeconds) },
-      );
-    }
-    throw err;
-  }
-
   const parsed = parseGithubWebhookEvent(eventName, rawBody);
   if ("error" in parsed) {
     if (parsed.error === "unsupported_event" || parsed.error === "unsupported_action") {
@@ -138,6 +120,35 @@ githubWebhookRoutes.post("/github", async (c) => {
     return c.json({ error: `invalid webhook payload: ${parsed.error}` }, 400);
   }
 
+  // Keyed on the GitHub App installation, i.e. one budget per customer account
+  // whose repositories can deliver here. The previous key was the first eight
+  // characters of the delivery UUID, which is effectively random per delivery
+  // and so bounded nothing. Runs after parsing because the installation id only
+  // exists in the (signature-verified) payload; the HMAC check above is what
+  // keeps unauthenticated traffic from reaching this far.
+  try {
+    await enforceRateLimit(c.env, {
+      key: `github-webhook:${parsed.installationId}`,
+      limit: 60,
+      windowMs: 60 * 1000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      emitOperationalEvent("warn", "github_webhook.rate_limited", {
+        deliveryId,
+        eventName,
+        installationId: parsed.installationId,
+      });
+      return c.json(
+        { error: "webhook rate limit exceeded", retryAfterSeconds: err.retryAfterSeconds },
+        429,
+        { "retry-after": String(err.retryAfterSeconds) },
+      );
+    }
+    throw err;
+  }
+
+  const db = createDb(c.env.DB);
   try {
     const outcome = await applyGithubWebhookEvent(db, parsed, { deliveryId });
     await recordOutcomeAudit(db, deliveryId, eventName, outcome);
