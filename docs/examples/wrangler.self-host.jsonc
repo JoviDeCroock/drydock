@@ -158,6 +158,15 @@
 	],
 	// Optional: asynchronous scan execution and retries. Without this block,
 	// requests enqueue work with the Worker's waitUntil fallback.
+	// Create every queue before the first deploy:
+	//   pnpm exec wrangler queues create staged-publish-review-scans
+	//   pnpm exec wrangler queues create staged-publish-review-scans-dlq
+	//   pnpm exec wrangler queues create staged-publish-review-discovery
+	// The discovery queue carries one staged-publish sweep per organization,
+	// produced by the 15-minute cron tick. It is separate from the scan queue so
+	// a discovery burst cannot starve scan execution. Sweeps are idempotent and
+	// re-enqueued every tick, so they need no dead-letter queue. Remove the
+	// DISCOVERY_QUEUE producer/consumer pair to sweep inline instead.
 	"queues": {
 		"producers": [
 			{

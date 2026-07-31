@@ -30,7 +30,6 @@ export interface DiscoverStagedPublishesInput {
   source: ScanSource;
   eventSource: string;
   allowInsecureLocalhost?: boolean;
-  stageStartCoordinator?: StageStartCoordinator;
 }
 
 export interface DiscoverStagedPublishesResult {
@@ -42,6 +41,10 @@ export interface DiscoverStagedPublishesResult {
 }
 
 const STAGED_PUBLISH_SCAN_START_CONCURRENCY = 5;
+
+// Cloudflare Queues caps sendBatch at 100 messages. A sweep that discovers more
+// new stages than that sends several batches rather than one send per scan.
+const SCAN_QUEUE_SEND_BATCH_SIZE = 100;
 
 export class InvalidNpmConnectionError extends Error {
   constructor(
@@ -58,8 +61,15 @@ export interface TokenForDiscovery {
   registryUrl: string;
 }
 
-export interface StageStartCoordinator {
-  run<T>(stageId: string, worker: () => Promise<T>): Promise<T>;
+/**
+ * A scan row that exists in D1 but has not been handed to the scan queue yet.
+ * Discovery creates the rows first (so `listExistingScanStageIds` suppresses
+ * duplicates on the next sweep) and dispatches them in batches afterwards.
+ */
+interface PreparedScanStart {
+  scanId: string;
+  message: ScanQueueMessage;
+  startedScan: StartedStagedPublishScan;
 }
 
 /**
@@ -215,16 +225,8 @@ export async function discoverAndQueueStagedPublishes(
   input: DiscoverStagedPublishesInput,
   connection: TokenForDiscovery,
 ): Promise<DiscoverStagedPublishesResult> {
-  const {
-    db,
-    env,
-    executionCtx,
-    organizationId,
-    actorUserId,
-    source,
-    allowInsecureLocalhost,
-    stageStartCoordinator = createStageStartCoordinator(),
-  } = input;
+  const { db, env, executionCtx, organizationId, actorUserId, source, allowInsecureLocalhost } =
+    input;
 
   const stagedItems = await listAllStagedPublishes(connection, {
     perPage: 50,
@@ -234,19 +236,30 @@ export async function discoverAndQueueStagedPublishes(
   const stageIds = stagedItems.map((item) => item.id);
   const existingStageIds = await listExistingScanStageIds(db, organizationId, stageIds);
   const scanCandidates = filterNewStagedPublishesByStageId(stagedItems, existingStageIds);
-  const scanStarts = await mapWithConcurrency(
-    scanCandidates,
-    STAGED_PUBLISH_SCAN_START_CONCURRENCY,
-    (item) =>
-      stageStartCoordinator.run(item.id, async () => {
+  // Each org sweep runs in its own invocation (one discovery-queue message), so
+  // there is no cross-org start coordination here — and none is needed.
+  // `listExistingScanStageIds` above suppresses duplicates within the org, and
+  // the same staged publish being reviewed by two organizations that can both
+  // see it is intended: each gets its own scan row, and the AI gateway cache
+  // absorbs the repeated analysis.
+  // Scan rows are created before anything is dispatched, so every row created by
+  // this sweep is tracked as it happens: if a later candidate throws (a D1
+  // error, a registry probe failure), the rows already written would otherwise
+  // stay `pending` forever with no queue message behind them — invisible work
+  // that also suppresses itself from the next sweep's dedup.
+  const created: PreparedScanStart[] = [];
+  let prepared: (PreparedScanStart | null)[];
+  try {
+    prepared = await mapWithConcurrency<StagedPublishItem, PreparedScanStart | null>(
+      scanCandidates,
+      STAGED_PUBLISH_SCAN_START_CONCURRENCY,
+      async (item) => {
         const stageId = item.id;
         const access = await checkStagedPublishAccess(
           connection.registryUrl,
           connection.token,
           stageId,
-          {
-            allowInsecureLocalhost,
-          },
+          { allowInsecureLocalhost },
         );
         if (!access.allowed) return null;
         const scanId = crypto.randomUUID();
@@ -260,44 +273,38 @@ export async function discoverAndQueueStagedPublishes(
           stagedVersion: item.version,
         });
         if (!detail) return null;
-        recordProductEvent(env, {
-          name: "scan.queued",
-          organizationId,
-          ecosystem: "npm",
-          source,
-        });
-        const startedScan: StartedStagedPublishScan = {
-          id: scanId,
-          stageId,
-          packageName: item.packageName,
-          version: item.version,
-          tag: item.tag,
-          access: item.access,
-          actor: item.actor,
-          createdAt: item.createdAt,
-        };
-
-        const message: ScanQueueMessage = {
-          stageId,
+        const start: PreparedScanStart = {
           scanId,
-          organizationId,
-          actorUserId,
-          source,
+          message: { stageId, scanId, organizationId, actorUserId, source },
+          startedScan: {
+            id: scanId,
+            stageId,
+            packageName: item.packageName,
+            version: item.version,
+            tag: item.tag,
+            access: item.access,
+            actor: item.actor,
+            createdAt: item.createdAt,
+          },
         };
-        if (env.SCAN_QUEUE) {
-          try {
-            await env.SCAN_QUEUE.send(message);
-          } catch (err) {
-            await deletePendingScanJob(db, scanId, organizationId);
-            throw err;
-          }
-        } else {
-          executionCtx.waitUntil(runScanInline(env, executionCtx, message, db));
-        }
-        return startedScan;
-      }),
-  );
-  const startedScans = scanStarts.filter(isStartedStagedPublishScan);
+        created.push(start);
+        return start;
+      },
+    );
+  } catch (err) {
+    await deletePendingScans(db, organizationId, created);
+    throw err;
+  }
+  const preparedStarts = prepared.filter(isPreparedScanStart);
+  await dispatchPreparedScans({
+    db,
+    env,
+    executionCtx,
+    organizationId,
+    source,
+    prepared: preparedStarts,
+  });
+  const startedScans = preparedStarts.map((start) => start.startedScan);
 
   return {
     found: stageIds.length,
@@ -336,26 +343,67 @@ async function listAllStagedPublishes(
 
 export { StagedPublishesFetchError };
 
-export function createStageStartCoordinator(): StageStartCoordinator {
-  const tails = new Map<string, Promise<void>>();
-  return {
-    async run(stageId, worker) {
-      const previous = tails.get(stageId) ?? Promise.resolve();
-      let release: () => void;
-      const current = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      const tail = previous.catch(() => undefined).then(() => current);
-      tails.set(stageId, tail);
-      await previous.catch(() => undefined);
-      try {
-        return await worker();
-      } finally {
-        release!();
-        if (tails.get(stageId) === tail) tails.delete(stageId);
-      }
-    },
-  };
+/**
+ * Hand the prepared scans to the scan queue in batches of at most
+ * `SCAN_QUEUE_SEND_BATCH_SIZE`, so a sweep that discovers 60 new stages costs
+ * one queue round trip instead of 60.
+ *
+ * Rollback semantics are unchanged from the per-message version: a scan row
+ * that never reached the queue would otherwise sit pending forever and suppress
+ * itself from the next sweep's dedup, so on a send failure every row this sweep
+ * created that is not already on the queue is deleted before rethrowing. Rows
+ * from batches that were already accepted stay — those scans are running.
+ */
+async function dispatchPreparedScans(input: {
+  db: AppDb;
+  env: Cloudflare.Env;
+  executionCtx: ExecutionContext;
+  organizationId: string;
+  source: ScanSource;
+  prepared: readonly PreparedScanStart[];
+}): Promise<void> {
+  const { db, env, executionCtx, organizationId, source, prepared } = input;
+  if (!prepared.length) return;
+
+  const queue = env.SCAN_QUEUE;
+  if (!queue) {
+    // Local/dev fallback: no queue binding, so run each scan on the invocation.
+    for (const start of prepared) {
+      recordScanQueuedEvent(env, organizationId, source);
+      executionCtx.waitUntil(runScanInline(env, executionCtx, start.message, db));
+    }
+    return;
+  }
+
+  for (let offset = 0; offset < prepared.length; offset += SCAN_QUEUE_SEND_BATCH_SIZE) {
+    const batch = prepared.slice(offset, offset + SCAN_QUEUE_SEND_BATCH_SIZE);
+    try {
+      await queue.sendBatch(batch.map((start) => ({ body: start.message })));
+    } catch (err) {
+      await deletePendingScans(db, organizationId, prepared.slice(offset));
+      throw err;
+    }
+    batch.forEach(() => recordScanQueuedEvent(env, organizationId, source));
+  }
+}
+
+/** Drop scan rows that were created but never handed to the scan queue. */
+async function deletePendingScans(
+  db: AppDb,
+  organizationId: string,
+  starts: readonly PreparedScanStart[],
+): Promise<void> {
+  for (const start of starts) {
+    await deletePendingScanJob(db, start.scanId, organizationId);
+  }
+}
+
+function recordScanQueuedEvent(
+  env: Cloudflare.Env,
+  organizationId: string,
+  source: ScanSource,
+): void {
+  recordProductEvent(env, { name: "scan.queued", organizationId, ecosystem: "npm", source });
 }
 
 function filterNewStagedPublishesByStageId(
@@ -370,10 +418,8 @@ function filterNewStagedPublishesByStageId(
   });
 }
 
-function isStartedStagedPublishScan(
-  scan: StartedStagedPublishScan | null,
-): scan is StartedStagedPublishScan {
-  return scan !== null;
+function isPreparedScanStart(start: PreparedScanStart | null): start is PreparedScanStart {
+  return start !== null;
 }
 
 /**

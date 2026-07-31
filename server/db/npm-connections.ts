@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
 import type { AppDb } from "./client";
 import { npmConnections } from "./schema";
 
@@ -71,11 +71,38 @@ export async function getNpmConnection(db: AppDb, organizationId: string) {
   return connection ?? null;
 }
 
-export async function listAutoDiscoveryNpmConnections(db: AppDb) {
+/**
+ * A connection eligible for a scheduled discovery sweep. Only identifiers are
+ * selected: the sweep consumer re-reads the full row (including the encrypted
+ * token) from D1 when it runs, so no credential material has to travel through
+ * a queue message.
+ */
+export interface AutoDiscoveryNpmConnectionRef {
+  id: string;
+  organizationId: string;
+}
+
+/**
+ * One page of sweep-eligible connections, ordered by `id` so the caller can
+ * resume from the last id it saw. Keyset pagination (rather than OFFSET) keeps
+ * each page a bounded index range no matter how many organizations exist, and
+ * `npm_connections_validation_status_idx` covers both the filter and the order.
+ *
+ * There is no separate auto-discovery flag: a connection is eligible while its
+ * validation status is `valid` or `unvalidated`. `invalid` (expired/revoked
+ * token, or discovery deliberately switched off) drops out of the sweep.
+ */
+export async function listAutoDiscoveryNpmConnectionRefs(
+  db: AppDb,
+  options: { limit: number; afterId?: string | null },
+): Promise<AutoDiscoveryNpmConnectionRef[]> {
+  const eligible = inArray(npmConnections.validationStatus, ["valid", "unvalidated"]);
   return db
-    .select()
+    .select({ id: npmConnections.id, organizationId: npmConnections.organizationId })
     .from(npmConnections)
-    .where(inArray(npmConnections.validationStatus, ["valid", "unvalidated"]));
+    .where(options.afterId ? and(eligible, gt(npmConnections.id, options.afterId)) : eligible)
+    .orderBy(npmConnections.id)
+    .limit(options.limit);
 }
 
 export async function updateNpmConnectionValidation(
