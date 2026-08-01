@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import * as schema from "../../server/db/schema";
 import {
@@ -92,18 +92,41 @@ describe("enforceRateLimit — native binding", () => {
     ).resolves.toBeUndefined();
   });
 
-  test("reports a retry-after inside the fixed window", async () => {
-    const { overrides } = exhaustedRateLimitBindings();
-    const error = await enforceRateLimit(envWithoutD1(overrides), {
-      key: uniqueKey("test-native-retry-after"),
-      limit: 30,
-      windowMs: MINUTE_MS,
-    }).catch((err: unknown) => err);
+  test("reports the seconds left in the current wall-clock minute", async () => {
+    // Pin the clock so the expected value is computed independently of the
+    // implementation rather than re-derived from it.
+    vi.useFakeTimers();
+    try {
+      // 20 seconds past a minute boundary, so 40 seconds remain.
+      vi.setSystemTime(new Date("2026-07-15T00:03:20.000Z"));
+      const { overrides } = exhaustedRateLimitBindings();
+      const error = await enforceRateLimit(envWithoutD1(overrides), {
+        key: uniqueKey("test-native-retry-after"),
+        limit: 30,
+        windowMs: MINUTE_MS,
+      }).catch((err: unknown) => err);
 
-    expect(error).toBeInstanceOf(RateLimitError);
-    const retryAfterSeconds = (error as RateLimitError).retryAfterSeconds;
-    expect(retryAfterSeconds).toBeGreaterThanOrEqual(1);
-    expect(retryAfterSeconds).toBeLessThanOrEqual(60);
+      expect(error).toBeInstanceOf(RateLimitError);
+      expect((error as RateLimitError).retryAfterSeconds).toBe(40);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("fails closed when the limiter binding throws", async () => {
+    // A limiter that errors must propagate, not read as "allowed", and must not
+    // silently fall back to the D1 counter it was introduced to replace.
+    const throwing = {
+      limit: () => Promise.reject(new Error("rate limiter unavailable")),
+    } as unknown as RateLimit;
+
+    await expect(
+      enforceRateLimit(envWithoutD1({ RATE_LIMIT_10_PER_MINUTE: throwing }), {
+        key: uniqueKey("test-native-throws"),
+        limit: 10,
+        windowMs: MINUTE_MS,
+      }),
+    ).rejects.toThrow("rate limiter unavailable");
   });
 
   test("consults the tier matching the requested limit", async () => {
@@ -174,6 +197,28 @@ describe("enforceRateLimit — windows the binding cannot express", () => {
     ).rejects.toBeInstanceOf(RateLimitError);
     // limit 5 has no exact tier; the smallest tier at or above it guards it.
     expect(limiter.keys).toEqual([`burst:${key}`]);
+  });
+
+  test("a burst guard rejection reports the long window, not its own minute", async () => {
+    // Every request the guard admitted this minute also spent the long-window
+    // budget, so telling the caller to retry in under a minute would only earn a
+    // second 429. Main reported the long window here and so must this.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-07-15T00:03:20.000Z"));
+      const { overrides } = exhaustedRateLimitBindings();
+      const error = await enforceRateLimit(envWithoutD1(overrides), {
+        key: uniqueKey("test-hourly-retry-after"),
+        limit: 10,
+        windowMs: HOUR_MS,
+      }).catch((err: unknown) => err);
+
+      expect(error).toBeInstanceOf(RateLimitError);
+      // 56 minutes 40 seconds remain in the hour bucket.
+      expect((error as RateLimitError).retryAfterSeconds).toBe(56 * 60 + 40);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

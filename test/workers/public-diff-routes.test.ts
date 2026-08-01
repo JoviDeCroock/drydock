@@ -1,7 +1,36 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 import worker from "../../server";
+import { PUBLIC_NPM_REGISTRY } from "../../server/lib/ecosystems/npm/public-diff";
+import {
+  computePublicDiffCacheKey,
+  writePublicDiffCache,
+  type PublicPackageDiff,
+} from "../../server/lib/public-diff";
 import { exhaustedRateLimitBindings } from "./rate-limit-doubles";
+
+function cachedPayload(packageName: string): PublicPackageDiff {
+  const textSample = "export const value = 1;\n";
+  return {
+    ecosystem: "npm",
+    packageName,
+    fromVersion: "1.0.0",
+    toVersion: "1.0.1",
+    fromPackageJson: null,
+    toPackageJson: null,
+    fromFiles: [
+      { path: "index.js", size: textSample.length, sha256: "before", flags: [], textSample },
+    ],
+    toFiles: [
+      { path: "index.js", size: textSample.length, sha256: "after", flags: [], textSample },
+    ],
+    diff: [{ path: "index.js", status: "modified", flags: [] }],
+    packageJsonDiff: {},
+    findings: [],
+    risk: { artifactRisk: "low", releaseRisk: "low", contextRisk: "low", aiRisk: "low" },
+    cachedAt: "2026-07-15T00:00:00.000Z",
+  };
+}
 
 // The public package-diff endpoints are deliberately anonymous: they must be
 // reachable without a session (mounted before the auth middleware), validate
@@ -304,5 +333,59 @@ describe("public package-diff routes", () => {
       ip,
     );
     expect(limited.status).toBe(429);
+
+    // The paths above all reject early. The one that matters most is the one
+    // that succeeds: serve a real cached pair and assert it renders a 200
+    // without D1 either.
+    const packageName = `no-d1-${crypto.randomUUID()}`;
+    const payload = cachedPayload(packageName);
+    await writePublicDiffCache(
+      env,
+      await computePublicDiffCacheKey({
+        ecosystem: "npm",
+        registryUrl: PUBLIC_NPM_REGISTRY,
+        packageName,
+        fromVersion: payload.fromVersion,
+        toVersion: payload.toVersion,
+      }),
+      payload,
+    );
+
+    const served = await publicDiffFetchWithEnv(
+      `/api/public/v1/package-diff?package=${packageName}&from=1.0.0&to=1.0.1`,
+      noD1Env,
+      "10.99.3.2",
+    );
+    expect(served.status).toBe(200);
+    expect(await served.json()).toMatchObject({ packageName, toVersion: "1.0.1" });
+
+    const servedFile = await publicDiffFetchWithEnv(
+      `/api/public/v1/package-diff/file?package=${packageName}&from=1.0.0&to=1.0.1&path=index.js`,
+      noD1Env,
+      "10.99.3.2",
+    );
+    expect(servedFile.status).toBe(200);
+    expect(await servedFile.json()).toMatchObject({ path: "index.js" });
+  });
+
+  test("fails closed when the rate limiter itself is broken", async () => {
+    // A limiter that throws must never read as "allowed". The route has no
+    // fallback that could quietly serve the request, so the only correct answer
+    // is a 5xx.
+    const throwing = {
+      limit: () => Promise.reject(new Error("rate limiter unavailable")),
+    } as unknown as RateLimit;
+    const brokenEnv = {
+      ...env,
+      RATE_LIMIT_10_PER_MINUTE: throwing,
+    } satisfies Cloudflare.Env;
+
+    const res = await publicDiffFetchWithEnv(
+      "/api/public/v1/package-diff?package=left-pad&from=1.0.0&to=1.0.1",
+      brokenEnv,
+      "10.99.4.1",
+    );
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "internal error" });
   });
 });

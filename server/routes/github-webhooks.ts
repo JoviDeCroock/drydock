@@ -8,6 +8,7 @@ import {
   readGithubAppConfig,
 } from "../lib/github-app/config";
 import {
+  type ParsedGithubEvent,
   type WebhookOutcome,
   applyGithubWebhookEvent,
   parseGithubWebhookEvent,
@@ -23,6 +24,24 @@ export const githubWebhookRoutes = new Hono<{ Bindings: Bindings; Variables: Var
 // GitHub deliveries are well under 256KB; anything bigger is either misconfigured
 // or hostile, so we don't want to spend Worker CPU on it.
 const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
+
+// Per-minute budget per GitHub App installation, per event kind.
+//
+// GitHub does not retry a webhook delivery we answer with 429, so every
+// rejection here is a *lost* event: a dropped `deployment_protection_rule`
+// leaves a workflow waiting on a gate that will never be reviewed, and a dropped
+// `installation` leaves Drydock holding a stale installation record. These
+// budgets are therefore sized as a runaway-loop backstop, not as a queueing
+// control, and the two kinds get separate buckets so a monorepo's gate fan-out
+// can never starve the (rare, human-initiated) lifecycle events behind it.
+//
+// A repository releasing many packages from one workflow run fans out one
+// delivery per environment; 240/min is far above any realistic matrix, and
+// tripping it is logged at error because it means we dropped work.
+const WEBHOOK_RATE_LIMITS: Record<ParsedGithubEvent["kind"], number> = {
+  deployment_protection_rule: 240,
+  installation: 60,
+};
 
 githubWebhookRoutes.post("/github", async (c) => {
   if (!isGithubAppConfigured(c.env)) {
@@ -123,21 +142,24 @@ githubWebhookRoutes.post("/github", async (c) => {
   // Keyed on the GitHub App installation, i.e. one budget per customer account
   // whose repositories can deliver here. The previous key was the first eight
   // characters of the delivery UUID, which is effectively random per delivery
-  // and so bounded nothing. Runs after parsing because the installation id only
-  // exists in the (signature-verified) payload; the HMAC check above is what
-  // keeps unauthenticated traffic from reaching this far.
+  // and so bounded nothing. Runs after parsing because the installation id and
+  // the event kind only exist in the (signature-verified) payload; the HMAC
+  // check above is what keeps unauthenticated traffic from reaching this far.
+  const webhookLimit = WEBHOOK_RATE_LIMITS[parsed.kind];
   try {
     await enforceRateLimit(c.env, {
-      key: `github-webhook:${parsed.installationId}`,
-      limit: 60,
+      key: `github-webhook:${parsed.kind}:${parsed.installationId}`,
+      limit: webhookLimit,
       windowMs: 60 * 1000,
     });
   } catch (err) {
     if (err instanceof RateLimitError) {
-      emitOperationalEvent("warn", "github_webhook.rate_limited", {
+      emitOperationalEvent("error", "github_webhook.rate_limited", {
         deliveryId,
         eventName,
+        kind: parsed.kind,
         installationId: parsed.installationId,
+        limit: webhookLimit,
       });
       return c.json(
         { error: "webhook rate limit exceeded", retryAfterSeconds: err.retryAfterSeconds },

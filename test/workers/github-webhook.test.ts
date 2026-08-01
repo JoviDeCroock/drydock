@@ -13,7 +13,7 @@ import {
   markGateErrored,
 } from "../../server/lib/github-app/webhook-gates";
 import { githubWebhookRoutes } from "../../server/routes/github-webhooks";
-import { exhaustedRateLimitBindings } from "./rate-limit-doubles";
+import { exhaustedRateLimitBindings, rateLimiterDouble } from "./rate-limit-doubles";
 import type { Bindings, Variables } from "../../server/types";
 
 const WEBHOOK_SECRET = "webhook-secret-value-1234567890";
@@ -169,7 +169,51 @@ describe("POST /webhooks/github", () => {
 
     expect(res.status).toBe(429);
     expect(res.headers.get("retry-after")).toBeTruthy();
-    expect(limiter.keys).toEqual(["github-webhook:9090"]);
+    expect(limiter.keys).toEqual(["github-webhook:deployment_protection_rule:9090"]);
+  });
+
+  test("gate deliveries and installation lifecycle events use separate buckets", async () => {
+    // GitHub does not retry a delivery we 429, so a rejection loses the event.
+    // A monorepo's gate fan-out must not be able to starve the (rare) lifecycle
+    // events that keep installation records accurate.
+    const { overrides, limiter } = exhaustedRateLimitBindings();
+    await sendWebhook({
+      eventName: "deployment_protection_rule",
+      body: buildRequestedPayload({ installationId: "9191", repositoryId: 5252 }),
+      envOverrides: overrides,
+    });
+    await sendWebhook({
+      eventName: "installation",
+      body: { action: "suspend", installation: { id: 9191 } },
+      envOverrides: overrides,
+    });
+
+    expect(limiter.keys).toEqual([
+      "github-webhook:deployment_protection_rule:9191",
+      "github-webhook:installation:9191",
+    ]);
+  });
+
+  test("the gate budget is sized above realistic monorepo fan-out", async () => {
+    // 60/min was low enough for a busy release matrix to hit, and every rejected
+    // delivery is a workflow left hanging on its gate.
+    const limiter = rateLimiterDouble(true);
+    const seen: number[] = [];
+    const counting = {
+      limit: async ({ key }: { key: string }) => {
+        seen.push(key.length);
+        return limiter.limit({ key });
+      },
+    };
+    await sendWebhook({
+      eventName: "deployment_protection_rule",
+      body: buildRequestedPayload({ installationId: "9292", repositoryId: 5353 }),
+      // Only the 240/min tier may be consulted for a gate delivery.
+      envOverrides: { RATE_LIMIT_240_PER_MINUTE: counting as never },
+    });
+
+    expect(limiter.keys).toEqual(["github-webhook:deployment_protection_rule:9292"]);
+    expect(seen).toHaveLength(1);
   });
 
   test("an event we do not act on is ignored before any rate-limit or D1 work", async () => {

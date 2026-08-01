@@ -86,6 +86,15 @@ function nativeLimiter(env: Cloudflare.Env, binding: NativeTierBinding): RateLim
   return candidate && typeof candidate.limit === "function" ? candidate : null;
 }
 
+/**
+ * Seconds until the end of the wall-clock-aligned window containing `nowMs`.
+ *
+ * Exact for the D1 counter, which buckets on exactly this boundary. For the
+ * native binding it is best-effort: the binding reports only allowed/blocked and
+ * does not expose where its window starts, so we assume the same alignment its
+ * local implementation uses. A `Retry-After` that is off by part of a window is
+ * a hint, never a correctness boundary — the next call is re-checked anyway.
+ */
 function retryAfterSecondsFor(windowMs: number, nowMs: number): number {
   return Math.max(1, Math.ceil((windowMs - (nowMs % windowMs)) / 1000));
 }
@@ -115,7 +124,13 @@ export async function enforceRateLimit(env: Cloudflare.Env, input: RateLimitInpu
     const limiter = guard ? nativeLimiter(env, guard.binding) : null;
     if (limiter) {
       const { success } = await limiter.limit({ key: `burst:${input.key}` });
-      if (!success) throw new RateLimitError(retryAfterSecondsFor(NATIVE_WINDOW_MS, nowMs));
+      // Report the *long* window, not the guard's minute. Every request the
+      // guard let through this minute also incremented the D1 counter, and the
+      // guard's limit is >= the long-window limit, so by the time the guard
+      // rejects, the long-window budget is necessarily spent too — the D1
+      // counter would answer with this same value. Reporting the minute instead
+      // would invite a retry that can only earn a second 429.
+      if (!success) throw new RateLimitError(retryAfterSecondsFor(input.windowMs, nowMs));
     }
   }
 
