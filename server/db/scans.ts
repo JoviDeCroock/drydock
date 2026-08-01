@@ -1052,9 +1052,46 @@ export async function getScanFile(
   return mergeArtifactFiles(file ? [file] : [], [artifactFile], id)[0] ?? null;
 }
 
+/**
+ * Single indexed row read for the poll path (`GET /api/v1/scans/:id/status`)
+ * and for routes that only need the scan's identity.
+ *
+ * Deliberately a column projection rather than `select()`: the three JSON blobs
+ * on the row (`summary_json`, `ai_json`, `error_json`) carry the whole file diff
+ * and the AI review envelope, so a completed scan's row is large — and the poll
+ * that observes the terminal transition would otherwise ship all of it, only
+ * for the client to immediately fetch the full detail anyway. Every field the
+ * status response and the versions route read is below; whatever needs the
+ * blobs uses `getScan`.
+ */
 export async function getScanStatus(db: AppDb, id: string, organizationId: string) {
   const [scan] = await db
-    .select()
+    .select({
+      id: scans.id,
+      stageId: scans.stageId,
+      organizationId: scans.organizationId,
+      ownerUserId: scans.ownerUserId,
+      gateId: scans.gateId,
+      packageName: scans.packageName,
+      stagedVersion: scans.stagedVersion,
+      previousVersion: scans.previousVersion,
+      risk: scans.risk,
+      status: scans.status,
+      source: scans.source,
+      decision: scans.decision,
+      decisionReason: scans.decisionReason,
+      decidedByUserId: scans.decidedByUserId,
+      decidedAt: scans.decidedAt,
+      changedFileCount: scans.changedFileCount,
+      findingCount: scans.findingCount,
+      riskSummaryJson: scans.riskSummaryJson,
+      reportVersion: scans.reportVersion,
+      reportDigest: scans.reportDigest,
+      startedAt: scans.startedAt,
+      completedAt: scans.completedAt,
+      createdAt: scans.createdAt,
+      updatedAt: scans.updatedAt,
+    })
     .from(scans)
     .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
     .limit(1);
