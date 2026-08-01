@@ -165,6 +165,52 @@ describe("cached npm packument reads", () => {
     expect(metadata["dist-tags"]).toEqual({ latest: "1.1.0" });
   });
 
+  test("falls back to the plain document when a registry rejects the vendor type", async () => {
+    // A custom registry that answers 406 to `application/vnd.npm.install-v1+json`
+    // must not cost the scan its baseline: the broker maps a metadata failure to
+    // "no baseline", which silently reports every file as added.
+    const calls: FetchCall[] = [];
+    const kv = fakeKv();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const request = new Request(input as RequestInfo, init as RequestInit);
+      const accept = request.headers.get("accept");
+      calls.push({ url: request.url, accept, authorization: null });
+      if (accept?.includes("vnd.npm.install-v1+json")) {
+        return new Response("Not Acceptable", { status: 406 });
+      }
+      return new Response(JSON.stringify(PRIVATE_PACKUMENT), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const metadata = await cachedFetch(kv.binding, {
+      cacheScope: "org:org-a",
+      abbreviated: true,
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.accept).toBe("application/json");
+    expect(metadata.versions?.["1.1.0"]?.dist?.tarball).toContain("private-1.1.0.tgz");
+    // The recovered document is cached, so the retry is paid once per TTL.
+    expect(kv.store.size).toBe(1);
+  });
+
+  test("does not retry a definitive 404", async () => {
+    const calls: FetchCall[] = [];
+    const kv = fakeKv();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const request = new Request(input as RequestInfo, init as RequestInit);
+      calls.push({ url: request.url, accept: request.headers.get("accept"), authorization: null });
+      return new Response("not found", { status: 404 });
+    });
+
+    await expect(
+      cachedFetch(kv.binding, { cacheScope: "org:org-a", abbreviated: true }),
+    ).rejects.toThrow();
+    expect(calls).toHaveLength(1);
+  });
+
   test("a fetch failure is not cached", async () => {
     const kv = fakeKv();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope", { status: 500 }));
