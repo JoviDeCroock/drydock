@@ -317,7 +317,7 @@ const persistedAiFindingSchema = z.object({
 });
 
 const persistedAiReviewSchema = z.object({
-  status: z.enum(["complete", "invalid", "unavailable"]),
+  status: z.enum(["complete", "invalid", "unavailable", "pending"]),
   risk: riskSchema,
   releaseAssessment: z.enum([
     "nothing_unusual",

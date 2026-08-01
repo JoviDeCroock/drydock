@@ -1,5 +1,5 @@
 import type { DisplayedAiResult } from "../../../../server/lib/ai-review/types";
-import { SectionLabel } from "../../../components/Typography";
+import { LoadingLine, SectionLabel } from "../../../components/Typography";
 
 // The reviewer's narrative verdict, directly under the Recommendation.
 //
@@ -25,7 +25,10 @@ import { SectionLabel } from "../../../components/Typography";
  * — this is the same predicate that section used.
  */
 export function reviewerSummaryVisible(ai: DisplayedAiResult | null): boolean {
-  return Boolean(ai && ai.model != null);
+  // A pending review has no model yet — it has not picked one — but the reader
+  // still has to be told the advisory pass is on its way, otherwise a report
+  // whose reviewer section appears minutes later looks like it changed itself.
+  return Boolean(ai && (ai.model != null || ai.kind === "pending"));
 }
 
 export function ReviewerSummary({ ai }: { ai: DisplayedAiResult | null }) {
@@ -40,6 +43,9 @@ export function ReviewerSummary({ ai }: { ai: DisplayedAiResult | null }) {
           twice. The narrative is the part that was missing from the top of the
           page, so the narrative is all this adds. */}
       <SectionLabel as="h2">Reviewer</SectionLabel>
+      {ai.kind === "pending" ? (
+        <LoadingLine size="inline">Assistant review running</LoadingLine>
+      ) : null}
       {ai.summary ? (
         <p class="m-0 text-[13px] leading-[1.6] text-ink-muted max-w-[720px]">{ai.summary}</p>
       ) : null}

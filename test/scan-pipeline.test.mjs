@@ -444,6 +444,168 @@ describe("scan pipeline baseline selection", () => {
     });
   });
 
+  describe("deferred AI review", () => {
+    // Every artifact write is read back and digest-verified, so the fake has to
+    // actually store bytes.
+    const artifactBucket = () => {
+      const objects = new Map();
+      return {
+        objects,
+        put: vi.fn(async (key, body) => {
+          objects.set(key, body);
+          return {};
+        }),
+        get: vi.fn(async (key) => {
+          const body = objects.get(key);
+          if (body === undefined) return null;
+          return {
+            async arrayBuffer() {
+              return new TextEncoder().encode(body).buffer;
+            },
+          };
+        }),
+        delete: vi.fn(async (key) => {
+          objects.delete(key);
+        }),
+      };
+    };
+
+    test("persists a reviewable scan and enqueues the review instead of awaiting it", async () => {
+      const sendAiReviewMessage = vi.fn(async () => undefined);
+      const context = {
+        ...baseContext,
+        env: {
+          ...baseContext.env,
+          FLAGS: { getBooleanValue: vi.fn(async (_flag, fallback) => fallback) },
+          // Deferral needs somewhere to keep the evidence. The write itself is
+          // exercised in test/workers; here it only has to succeed.
+          ARTIFACTS: artifactBucket(),
+        },
+      };
+
+      const result = await runScanPipeline(
+        context,
+        npmAdapter,
+        { scanId: "scan_ai_deferred", stageId: "stage-beta-123", organizationId: "org_1" },
+        { aiReview: "deferred", sendAiReviewMessage },
+      );
+
+      // The queue slot is released without ever calling the reviewer.
+      expect(aiReviewMock.runSelectiveAiReview).not.toHaveBeenCalled();
+      expect(sendAiReviewMessage).toHaveBeenCalledWith({
+        kind: "ai_review",
+        scanId: "scan_ai_deferred",
+        stageId: "stage-beta-123",
+        organizationId: "org_1",
+        ecosystem: "npm",
+        source: undefined,
+      });
+
+      // Pending is neither a completed review nor a failed one: no findings, and
+      // the deterministic grade stands rather than being floored at medium.
+      expect(result.aiFindings).toMatchObject({ status: "pending", model: null, findings: [] });
+      expect(result.risk).toBe("low");
+      expect(result.riskSummary.artifactRisk).toBe("low");
+
+      const persisted = dbMock.persistScan.mock.calls[0]?.[1];
+      expect(persisted.status).toBe("complete");
+      expect(persisted.ai).toMatchObject({ status: "pending" });
+      expect(persisted.aiFindingRecords).toEqual([]);
+      // The evidence descriptor rides along in the summary so the follow-up —
+      // which carries identifiers only — can find and verify it.
+      expect(persisted.summary.aiReviewInput).toMatchObject({
+        key: expect.stringContaining("/ai-input.json"),
+        digest: expect.any(String),
+        size: expect.any(Number),
+      });
+    });
+
+    test("falls back to an inline review when there is nowhere to defer to", async () => {
+      aiReviewMock.runSelectiveAiReview.mockResolvedValue({
+        review: {
+          status: "complete",
+          risk: "low",
+          releaseAssessment: "nothing_unusual",
+          summary: "Nothing unusual in the staged release.",
+          findings: [],
+          requiresManualReview: false,
+          model: "@cf/moonshotai/kimi-k2.7-code",
+        },
+        usage: null,
+      });
+      const context = {
+        ...baseContext,
+        // No ARTIFACTS binding: the evidence snapshot cannot be written, so the
+        // review must still happen rather than being silently dropped.
+        env: {
+          ...baseContext.env,
+          FLAGS: { getBooleanValue: vi.fn(async (_flag, fallback) => fallback) },
+        },
+      };
+
+      const result = await runScanPipeline(
+        context,
+        npmAdapter,
+        { scanId: "scan_ai_no_bucket", stageId: "stage-beta-123", organizationId: "org_1" },
+        { aiReview: "deferred", sendAiReviewMessage: vi.fn(async () => undefined) },
+      );
+
+      expect(aiReviewMock.runSelectiveAiReview).toHaveBeenCalled();
+      expect(result.aiFindings).toMatchObject({ status: "complete" });
+    });
+
+    test("keeps the killswitch authoritative over deferral", async () => {
+      const sendAiReviewMessage = vi.fn(async () => undefined);
+      const context = {
+        ...baseContext,
+        env: {
+          ...baseContext.env,
+          FLAGS: { getBooleanValue: vi.fn(async () => false) },
+          ARTIFACTS: artifactBucket(),
+        },
+      };
+
+      const result = await runScanPipeline(
+        context,
+        npmAdapter,
+        { scanId: "scan_ai_deferred_off", stageId: "stage-beta-123", organizationId: "org_1" },
+        { aiReview: "deferred", sendAiReviewMessage },
+      );
+
+      expect(sendAiReviewMessage).not.toHaveBeenCalled();
+      expect(aiReviewMock.runSelectiveAiReview).not.toHaveBeenCalled();
+      expect(result.aiFindings).toMatchObject({
+        status: "unavailable",
+        summary: "AI review is disabled.",
+      });
+    });
+
+    test("does not enqueue a follow-up for a scan that was already terminal", async () => {
+      dbMock.persistScan.mockResolvedValueOnce({ persisted: false, reason: "already_terminal" });
+      const sendAiReviewMessage = vi.fn(async () => undefined);
+      const bucket = artifactBucket();
+      const context = {
+        ...baseContext,
+        env: {
+          ...baseContext.env,
+          FLAGS: { getBooleanValue: vi.fn(async (_flag, fallback) => fallback) },
+          ARTIFACTS: bucket,
+        },
+      };
+
+      await runScanPipeline(
+        context,
+        npmAdapter,
+        { scanId: "scan_ai_deferred_dup", stageId: "stage-beta-123", organizationId: "org_1" },
+        { aiReview: "deferred", sendAiReviewMessage },
+      );
+
+      expect(sendAiReviewMessage).not.toHaveBeenCalled();
+      // ...and the evidence it would have reviewed is cleaned up.
+      expect(bucket.delete).toHaveBeenCalledWith(expect.stringContaining("/ai-input.json"));
+    });
+  });
+
   test("preserves diff-scoped deterministic findings from the npm adapter", async () => {
     stagedMock.fetchStagedPublishDetails.mockResolvedValue({
       id: "stage-diff123",

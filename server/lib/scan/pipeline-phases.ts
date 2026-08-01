@@ -48,6 +48,7 @@ import {
   maybeWriteScanArtifacts,
   projectAiReviewFindings,
   scanArtifactReadBucket,
+  type AiReviewInputDescriptor,
 } from "./artifacts";
 import { sha256Hex, stableJson } from "../platform/stable-json";
 import type { ScanResult } from "../../types";
@@ -319,8 +320,11 @@ export interface MergedAiFindings {
 // nothing (its fail-safe risk handling lives in computeScanRisk).
 export function mergeAiFindings(
   aiReview: AiReview,
-  findings: DeterministicFindings,
-  diff: ComputedDiff,
+  // Structural minimums rather than the full phase outputs: the deferred-review
+  // follow-up (`ai-review-job.ts`) replays this from the persisted evidence
+  // snapshot, where these four fields are all that survives.
+  findings: Pick<DeterministicFindings, "redactedStagedFiles" | "redactedPreviousFiles">,
+  diff: Pick<ComputedDiff, "fileDiff">,
   codePatternSet?: CodePatternSet,
   baselineComparisonSkipped = false,
 ): MergedAiFindings {
@@ -403,6 +407,12 @@ export interface PersistResultsArgs<TInput, TBroker extends AdapterBroker> {
   // Advisory source-binding classification computed by the pipeline; persisted
   // with the scan but never allowed to influence risk or findings.
   intentEnvelope: IntentEnvelope;
+  /**
+   * Where the deferred review's evidence was written. Recorded in `summary_json`
+   * so the follow-up message — which carries identifiers only — can find and
+   * digest-verify it. Null for an inline (or disabled) review.
+   */
+  aiReviewInput?: AiReviewInputDescriptor | null;
 }
 
 export interface PersistedScanOutcome {
@@ -511,6 +521,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
       releaseConsistency: args.releaseConsistency,
       intentEnvelope: args.intentEnvelope,
       safety: result.safety,
+      ...(args.aiReviewInput ? { aiReviewInput: args.aiReviewInput } : {}),
     },
     ai: args.aiFindings,
     files: findings.redactedStagedFiles,

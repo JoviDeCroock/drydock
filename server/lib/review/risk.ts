@@ -27,6 +27,12 @@ type RiskFinding = Finding & {
 export function computeScanRisk(ruleFindings: Finding[], aiReview: AiReview): RiskLevel {
   const ai = displayedAiResult(aiReview);
   const deterministicRisk = computeRisk(ruleFindings);
+  // A deferred review that has not run yet contributes nothing: the grade is
+  // the deterministic one until the follow-up lands, and because the AI only
+  // ever enters through `combineRisk` (a max), the patched grade can rise but
+  // never fall. Flooring at medium here instead would make the risk visibly
+  // *drop* the moment a clean review completed.
+  if (ai?.kind === "pending") return deterministicRisk;
   if (ai?.kind !== "complete") {
     // Fail safe: a review that was attempted but didn't complete (model id
     // present) escalates to manual review so a release can't read as clean by

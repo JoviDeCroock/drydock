@@ -151,6 +151,12 @@ export const scans = sqliteTable(
     decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
     summaryJson: text("summary_json", { mode: "json" }),
     aiJson: text("ai_json", { mode: "json" }),
+    // Lifecycle of the advisory AI review, mirroring `ai_json.status`
+    // (`pending` | `complete` | `invalid` | `unavailable`). Null on scans that
+    // never reached a terminal state and on rows written before the review was
+    // split out of the scan's critical path. Denormalized so the list view and
+    // the status poll can show "AI review pending" without reading `ai_json`.
+    aiStatus: text("ai_status"),
     errorJson: text("error_json", { mode: "json" }),
     changedFileCount: integer("changed_file_count"),
     findingCount: integer("finding_count"),
@@ -228,6 +234,13 @@ export const scans = sqliteTable(
     publicFeedListedIdx: index("scans_public_feed_listed_idx").on(table.publicFeedListedAt),
     // No standalone public_package_key index: the composite above has it as a
     // leading column, so it already serves an equality lookup on the key alone.
+    // The stuck-scan reaper sweeps non-terminal rows across every organization
+    // by age each cron tick, so it needs a status-leading index that is not
+    // organization-scoped.
+    statusStartedIdx: index("scans_status_started_idx").on(table.status, table.startedAt),
+    // Same sweep, for scans whose deterministic report landed but whose deferred
+    // AI review never came back.
+    aiStatusIdx: index("scans_ai_status_idx").on(table.aiStatus, table.completedAt),
   }),
 );
 

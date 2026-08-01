@@ -5,6 +5,7 @@ import {
   type FileRecord,
   type Finding,
   type FindingDiffAnnotation,
+  type PackageJsonDiff,
 } from "../review";
 import { parsePersistedAiReview } from "../ai-review/contract";
 import { displayedAiResult, type AiReview } from "../ai-review/types";
@@ -65,6 +66,13 @@ interface ScanArtifactFindingRow {
 export interface ScanArtifactScanRow {
   id: string;
   organizationId: string | null;
+  /**
+   * The persisted `ai_json`, when the caller has it. D1 is authoritative for the
+   * advisory review: a deferred review is patched into this column and into a
+   * republished report, and if that republish ever failed the column is the one
+   * that is right. Absent falls back to the report's own `aiFindings` envelope.
+   */
+  aiJson?: unknown;
   reportDigest: string | null;
   artifactStorageVersion: number | null;
   artifactManifestKey: string | null;
@@ -206,21 +214,36 @@ export async function writeScanArtifacts(
     diff: input.diff,
   });
 
-  const descriptors = {
-    report: await putVerifiedJson(bucket, keys.report, input.reportJson, input.reportDigest, {
+  // The three payloads are independent objects under the same scan prefix, and
+  // each put is a network round trip followed by a verifying read. Awaiting them
+  // in sequence tripled the wall-clock cost of the persistence phase for no
+  // ordering benefit: the manifest below is what makes the set readable, and it
+  // is written only after all three resolve. A rejection still fails the whole
+  // phase (`maybeWriteScanArtifacts` retries, then fails closed).
+  const [reportDescriptor, filesDescriptor, diffDescriptor] = await Promise.all([
+    putVerifiedJson(bucket, keys.report, input.reportJson, input.reportDigest, {
       scanId: input.scanId,
       artifactKind: "report",
     }),
-    files: await putVerifiedJson(bucket, keys.files, filesJson, await sha256Hex(filesJson), {
-      scanId: input.scanId,
-      artifactKind: "files",
-      count: String(files.length),
-    }),
-    diff: await putVerifiedJson(bucket, keys.diff, diffJson, await sha256Hex(diffJson), {
-      scanId: input.scanId,
-      artifactKind: "diff",
-      count: String(input.diff.length),
-    }),
+    sha256Hex(filesJson).then((digest) =>
+      putVerifiedJson(bucket, keys.files, filesJson, digest, {
+        scanId: input.scanId,
+        artifactKind: "files",
+        count: String(files.length),
+      }),
+    ),
+    sha256Hex(diffJson).then((digest) =>
+      putVerifiedJson(bucket, keys.diff, diffJson, digest, {
+        scanId: input.scanId,
+        artifactKind: "diff",
+        count: String(input.diff.length),
+      }),
+    ),
+  ]);
+  const descriptors = {
+    report: reportDescriptor,
+    files: filesDescriptor,
+    diff: diffDescriptor,
   };
 
   const manifest: ScanArtifactsManifest = {
@@ -264,6 +287,184 @@ export async function writeScanArtifacts(
     reportArtifactKey: descriptors.report.key,
     fileSamplesArtifactKey: descriptors.files.key,
     diffArtifactKey: descriptors.diff.key,
+  };
+}
+
+/** Bump when the deferred-review evidence envelope changes shape. */
+export const AI_REVIEW_INPUT_VERSION = 1;
+
+/**
+ * Evidence snapshot for a deferred AI review, plus everything the follow-up
+ * needs to re-score the scan without re-downloading or re-parsing anything.
+ *
+ * This is post-sandbox, post-redaction data — byte-for-byte the same records the
+ * inline reviewer would have been handed, and the same trust level as
+ * `files.json`. It is deliberately *not* raw package bytes and carries nothing
+ * credential-derived. It is deleted as soon as the review reaches a terminal
+ * state.
+ */
+export interface AiReviewInputPayload {
+  version: number;
+  scanId: string;
+  stageId: string;
+  ecosystem: string;
+  codePatternSet?: string;
+  previousVersionAvailable: boolean;
+  baselineComparisonSkipped: boolean;
+  files: FileRecord[];
+  previousFiles: FileRecord[];
+  diff: DiffEntry[];
+  packageJsonDiff: PackageJsonDiff;
+  releaseRuleFindings: Finding[];
+  /** Deterministic findings with their persisted diff annotations, for re-scoring. */
+  annotatedFindings: Array<Finding & FindingDiffAnnotation>;
+  releaseConsistency: unknown;
+}
+
+export interface AiReviewInputDescriptor {
+  key: string;
+  digest: string;
+  size: number;
+}
+
+export async function writeAiReviewInput(
+  bucket: R2Bucket,
+  organizationId: string,
+  payload: AiReviewInputPayload,
+): Promise<AiReviewInputDescriptor> {
+  const key = artifactKeys(organizationId, payload.scanId).aiInput;
+  const body = stableJson(payload);
+  const digest = await sha256Hex(body);
+  const descriptor = await putVerifiedJson(bucket, key, body, digest, {
+    scanId: payload.scanId,
+    artifactKind: "ai-input",
+  });
+  return { key: descriptor.key, digest: descriptor.digest, size: descriptor.size };
+}
+
+export async function loadAiReviewInput(
+  bucket: R2Bucket,
+  scanId: string,
+  descriptor: AiReviewInputDescriptor,
+): Promise<AiReviewInputPayload | null> {
+  const text = await readVerifiedJsonText(bucket, {
+    ...descriptor,
+    scanId,
+    kind: "ai-input",
+  });
+  const parsed = parseJsonObject(text);
+  if (!parsed) return null;
+  if (parsed.version !== AI_REVIEW_INPUT_VERSION || parsed.scanId !== scanId) return null;
+  if (
+    !Array.isArray(parsed.files) ||
+    !Array.isArray(parsed.previousFiles) ||
+    !Array.isArray(parsed.diff) ||
+    !Array.isArray(parsed.releaseRuleFindings) ||
+    !Array.isArray(parsed.annotatedFindings)
+  ) {
+    return null;
+  }
+  return parsed as unknown as AiReviewInputPayload;
+}
+
+export async function deleteAiReviewInput(
+  bucket: R2Bucket | undefined,
+  organizationId: string,
+  scanId: string,
+): Promise<void> {
+  if (!bucket) return;
+  try {
+    await bucket.delete(artifactKeys(organizationId, scanId).aiInput);
+  } catch (err) {
+    // A leaked evidence object is recoverable by the per-scan prefix sweep; it
+    // must never turn a finished review into a failed queue message.
+    emitOperationalEvent("warn", "scan.artifacts.ai_input_delete_failed", {
+      scanId,
+      organizationId,
+      error: describeOperationalError(err),
+    });
+  }
+}
+
+export interface RewrittenReportArtifacts {
+  reportDigest: string;
+  reportArtifactKey: string;
+  artifactManifestKey: string;
+  artifactManifestDigest: string;
+  artifactManifestSize: number;
+}
+
+/**
+ * Republish `report.json` + `manifest.json` for a scan whose deferred AI review
+ * just landed, under **content-addressed keys** rather than in place.
+ *
+ * In-place rewriting has a window where R2 holds bytes whose digest is not the
+ * one D1 recorded, and the read path (correctly) refuses that pair — a
+ * compacted, artifact-backed scan would serve metadata only until D1 caught up.
+ * Writing new keys keeps the old pair valid and intact until
+ * `applyAiReviewPatch` flips every reference in one statement, so a reader sees
+ * either the pre-AI report or the patched one and never a mismatch. Two
+ * concurrent follow-ups cannot collide either: different reviews hash to
+ * different keys.
+ *
+ * `mutate` receives the parsed canonical report payload and returns the patched
+ * one; the caller is responsible for keeping it canonical (stable ordering is
+ * re-applied here through `stableJson`).
+ */
+export async function rewriteReportWithAiReview(
+  bucket: R2Bucket,
+  scan: ScanArtifactScanRow,
+  mutate: (report: Record<string, unknown>) => Record<string, unknown>,
+): Promise<RewrittenReportArtifacts | null> {
+  if (!hasArtifactMetadata(scan)) return null;
+  const manifestDetail = await loadScanArtifactsManifest(bucket, scan);
+  if (!manifestDetail) return null;
+  const { manifest } = manifestDetail;
+  if (manifest.artifacts.report.digest !== scan.reportDigest) {
+    emitArtifactFallback("report_digest_mismatch", scan, {
+      expectedDigest: scan.reportDigest,
+      actualDigest: manifest.artifacts.report.digest,
+    });
+    return null;
+  }
+
+  const reportText = await readVerifiedJsonText(bucket, {
+    ...manifest.artifacts.report,
+    scanId: scan.id,
+    kind: "report",
+  });
+  const current = parseJsonObject(reportText);
+  if (!current) return null;
+
+  const nextJson = stableJson(mutate(current));
+  const nextDigest = await sha256Hex(nextJson);
+  const base = artifactKeys(manifest.organizationId, scan.id);
+  const reportKey = base.revisedReport(nextDigest);
+  const reportDescriptor = await putVerifiedJson(bucket, reportKey, nextJson, nextDigest, {
+    scanId: scan.id,
+    artifactKind: "report",
+  });
+
+  const nextManifest: ScanArtifactsManifest = {
+    ...manifest,
+    artifacts: { ...manifest.artifacts, report: reportDescriptor },
+  };
+  const manifestJson = stableJson(nextManifest);
+  const manifestDigest = await sha256Hex(manifestJson);
+  const manifestDescriptor = await putVerifiedJson(
+    bucket,
+    base.revisedManifest(nextDigest),
+    manifestJson,
+    manifestDigest,
+    { scanId: scan.id, artifactKind: "manifest" },
+  );
+
+  return {
+    reportDigest: nextDigest,
+    reportArtifactKey: reportDescriptor.key,
+    artifactManifestKey: manifestDescriptor.key,
+    artifactManifestDigest: manifestDescriptor.digest,
+    artifactManifestSize: manifestDescriptor.size,
   };
 }
 
@@ -315,7 +516,7 @@ export async function loadScanArtifacts(
       }),
     ]);
 
-    const reportFindings = parseReportFindings(reportText, scan.id);
+    const reportFindings = parseReportFindings(reportText, scan.id, scan.aiJson);
     const files = filesText === null ? [] : parseFilesArtifact(filesText, scan.id);
     const diff = parseDiffArtifact(diffText, scan.id);
     if (!files || !diff || !reportFindings) {
@@ -347,7 +548,7 @@ export async function loadScanArtifactMetadata(
       scanId: scan.id,
       kind: "report",
     });
-    const detail = parseReportArtifactMetadata(reportText, scan.id);
+    const detail = parseReportArtifactMetadata(reportText, scan.id, scan.aiJson);
     if (!detail) {
       emitArtifactFallback("artifact_payload_invalid", scan);
       return null;
@@ -569,6 +770,14 @@ function artifactKeys(organizationId: string, scanId: string) {
     files: `${base}/files.json`,
     diff: `${base}/diff.json`,
     manifest: `${base}/manifest.json`,
+    // Deferred-review evidence. Same prefix so the existing per-scan and
+    // per-organization delete sweeps reclaim it without knowing about it.
+    aiInput: `${base}/ai-input.json`,
+    // Content-addressed republications, written when a deferred AI review is
+    // patched in. The digest is in the key so a rewrite never overwrites bytes
+    // D1 still points at, and so a duplicated follow-up is idempotent.
+    revisedReport: (digest: string) => `${base}/report.${digest.slice(0, 16)}.json`,
+    revisedManifest: (digest: string) => `${base}/manifest.${digest.slice(0, 16)}.json`,
   };
 }
 
@@ -690,10 +899,14 @@ function parseFilesArtifact(text: string, scanId: string): ScanArtifactFileRow[]
   return files;
 }
 
-function parseReportArtifactMetadata(text: string, scanId: string): ScanArtifactsDetail | null {
+function parseReportArtifactMetadata(
+  text: string,
+  scanId: string,
+  aiReviewOverride?: unknown,
+): ScanArtifactsDetail | null {
   const parsed = parseJsonObject(text);
   if (!parsed) return null;
-  const reportFindings = parseReportFindingsObject(parsed, scanId);
+  const reportFindings = parseReportFindingsObject(parsed, scanId, aiReviewOverride);
   const diff = parseDiffEntries(parsed.diff);
   if (!diff || !reportFindings) return null;
   return {
@@ -772,15 +985,17 @@ function artifactFindingId(scanId: string, index: number): string {
 function parseReportFindings(
   text: string,
   scanId: string,
+  aiReviewOverride?: unknown,
 ): { findings: ScanArtifactFindingRow[]; annotations: Map<string, FindingDiffAnnotation> } | null {
   const parsed = parseJsonObject(text);
   if (!parsed) return null;
-  return parseReportFindingsObject(parsed, scanId);
+  return parseReportFindingsObject(parsed, scanId, aiReviewOverride);
 }
 
 function parseReportFindingsObject(
   parsed: Record<string, unknown>,
   scanId: string,
+  aiReviewOverride?: unknown,
 ): { findings: ScanArtifactFindingRow[]; annotations: Map<string, FindingDiffAnnotation> } | null {
   const rawFindings = parsed?.ruleFindings;
   if (!Array.isArray(rawFindings)) return null;
@@ -814,12 +1029,17 @@ function parseReportFindingsObject(
 
   // A completed AI review's findings are rows too, appended after the rule
   // findings — the same combined order persistResults indexes its
-  // findingAnnotations over. Derived from the report's aiFindings envelope
-  // rather than duplicated JSON, so pre-existing reports (whose annotations
-  // only cover rule indices) gain their AI rows on read as well; those rows
-  // fall back to read-time diff annotation. A malformed or incomplete review
-  // parses to null/unavailable and contributes nothing.
-  for (const finding of aiFindingRowsFromReport(parsed.aiFindings)) {
+  // findingAnnotations over. Derived from the review envelope rather than
+  // duplicated JSON, so pre-existing reports (whose annotations only cover rule
+  // indices) gain their AI rows on read as well; those rows fall back to
+  // read-time diff annotation. A malformed or incomplete review parses to
+  // null/unavailable and contributes nothing.
+  //
+  // `aiReviewOverride` is the caller's `scans.ai_json`. It takes precedence
+  // because a deferred review is patched into D1 and into a republished report,
+  // and only D1's write is the atomic one: if the republish failed, the column
+  // still has the review and the reader should still see its findings.
+  for (const finding of aiFindingRowsFromReport(aiReviewOverride ?? parsed.aiFindings)) {
     findings.push({
       id: artifactFindingId(scanId, findings.length),
       scanId,

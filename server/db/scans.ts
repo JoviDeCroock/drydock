@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import {
   annotateFindingsWithDiffStatus,
@@ -215,8 +215,266 @@ export async function markScanFailed(
     );
 }
 
-export async function discardScanAttempt(db: AppDb, scanId: string, organizationId: string) {
-  await db.delete(scans).where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)));
+/**
+ * Terminal state for a stage that vanished before it could be reviewed (npm
+ * withdrew the staged publish, so its tarball 404s for a token that is
+ * otherwise authorized).
+ *
+ * This used to be a DELETE. Deleting the row made `listExistingScanStageIds`
+ * forget the stage id, so the next 15-minute discovery tick rediscovered the
+ * same withdrawn stage, created a scan, queued it, downloaded nothing, and
+ * discarded it again — forever, once per tick, per organization. A tombstone
+ * keeps the suppression while staying out of the reviewer's list.
+ */
+const DISCARDED_SCAN_STATUS = "discarded";
+
+export async function discardScanAttempt(
+  db: AppDb,
+  scanId: string,
+  organizationId: string,
+  reason = "staged_tarball_unavailable",
+) {
+  const now = new Date();
+  await db
+    .update(scans)
+    .set({
+      status: DISCARDED_SCAN_STATUS,
+      risk: "unknown",
+      errorJson: {
+        code: reason,
+        message: "The staged publish was withdrawn before it could be reviewed.",
+        retryable: false,
+      },
+      completedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(scans.id, scanId),
+        eq(scans.organizationId, organizationId),
+        inArray(scans.status, [...NON_TERMINAL_STATUSES]),
+      ),
+    );
+}
+
+/**
+ * How long a scan may sit non-terminal before the scheduled reaper calls it
+ * dead. Nothing else sweeps these rows: an OOM-killed worker, a message that
+ * exhausted its retries into the DLQ, or an isolate that died mid-pipeline all
+ * leave the row exactly as it was, and `claimScanForRun` accepts `running`
+ * again, so the row is neither retried nor closed. The UI polls it forever and
+ * the reviewer is never told the review is not coming.
+ *
+ * 30 minutes is comfortably past the worst legitimate case: three queue attempts
+ * with quadratic backoff (max 60s) around a pipeline bounded by the sandbox's
+ * own download/parse budgets.
+ */
+export const STALLED_SCAN_TIMEOUT_MS = 30 * 60 * 1000;
+
+/** Rows closed per sweep. Bounded so one tick cannot blow the CPU budget. */
+export const STALLED_SCAN_SWEEP_LIMIT = 50;
+
+export interface StalledScanSweep {
+  /** `running` rows: the pipeline started and never reported back. */
+  running: number;
+  /** `pending` rows: the queue message never reached a consumer. */
+  pending: number;
+}
+
+/**
+ * Close scans stranded in a non-terminal state. Bounded per call and safe to run
+ * concurrently with a live pipeline: the UPDATE re-checks the status it read, so
+ * a scan that finishes between the SELECT and the UPDATE is left alone.
+ */
+export async function failStalledScans(
+  db: AppDb,
+  options: { now?: Date; timeoutMs?: number; limit?: number } = {},
+): Promise<StalledScanSweep> {
+  const now = options.now ?? new Date();
+  const timeoutMs = options.timeoutMs ?? STALLED_SCAN_TIMEOUT_MS;
+  const limit = Math.max(1, Math.floor(options.limit ?? STALLED_SCAN_SWEEP_LIMIT));
+  const cutoffMs = now.getTime() - timeoutMs;
+
+  const stalled = await db
+    .select({ id: scans.id, status: scans.status })
+    .from(scans)
+    .where(
+      and(
+        inArray(scans.status, [...NON_TERMINAL_STATUSES]),
+        // `started_at` is null until the job claims the row, so a `pending` scan
+        // ages from creation. Both columns are epoch-ms integers.
+        sql`coalesce(${scans.startedAt}, ${scans.createdAt}) < ${cutoffMs}`,
+      ),
+    )
+    .orderBy(asc(scans.createdAt))
+    .limit(limit);
+  if (!stalled.length) return { running: 0, pending: 0 };
+
+  const sweep: StalledScanSweep = { running: 0, pending: 0 };
+  for (const status of NON_TERMINAL_STATUSES) {
+    const ids = stalled.filter((row) => row.status === status).map((row) => row.id);
+    if (!ids.length) continue;
+    const error =
+      status === "running"
+        ? {
+            code: "scan_stalled",
+            message:
+              "The review did not finish. It was closed automatically after stalling; start a new review to retry.",
+            retryable: false,
+          }
+        : {
+            code: "scan_never_started",
+            message:
+              "The review never started. It was closed automatically after stalling; start a new review to retry.",
+            retryable: false,
+          };
+    // One bound parameter per id, plus the status/error/timestamp values.
+    for (const chunk of chunkForD1(ids, 1, 8)) {
+      const closed = await db
+        .update(scans)
+        .set({
+          status: "failed",
+          risk: "unknown",
+          errorJson: error,
+          completedAt: now,
+          updatedAt: now,
+        })
+        .where(and(inArray(scans.id, chunk), eq(scans.status, status)))
+        .returning({ id: scans.id });
+      if (status === "running") sweep.running += closed.length;
+      else sweep.pending += closed.length;
+    }
+  }
+  return sweep;
+}
+
+/**
+ * Scans whose deterministic report landed but whose deferred AI review never
+ * came back (its follow-up message was lost or exhausted its retries). Returned
+ * for the caller to close through the normal patch path so `ai_json`, the risk
+ * summary, and the report artifact stay consistent with each other.
+ */
+export async function listStalledAiReviewScans(
+  db: AppDb,
+  options: { now?: Date; timeoutMs?: number; limit?: number } = {},
+): Promise<Array<{ id: string; organizationId: string }>> {
+  const now = options.now ?? new Date();
+  const timeoutMs = options.timeoutMs ?? STALLED_SCAN_TIMEOUT_MS;
+  const limit = Math.max(1, Math.floor(options.limit ?? STALLED_SCAN_SWEEP_LIMIT));
+  const cutoffMs = now.getTime() - timeoutMs;
+  const rows = await db
+    .select({ id: scans.id, organizationId: scans.organizationId })
+    .from(scans)
+    .where(
+      and(
+        eq(scans.aiStatus, "pending"),
+        sql`coalesce(${scans.completedAt}, ${scans.updatedAt}) < ${cutoffMs}`,
+      ),
+    )
+    .orderBy(asc(scans.completedAt))
+    .limit(limit);
+  return rows.flatMap((row) =>
+    row.organizationId ? [{ id: row.id, organizationId: row.organizationId }] : [],
+  );
+}
+
+export interface AiReviewPatchInput {
+  scanId: string;
+  organizationId: string;
+  /** The finished (or terminally failed) review, persisted to `ai_json`. */
+  ai: unknown;
+  aiStatus: string;
+  /** `artifactRisk` — the value `scans.risk` carries. */
+  risk: string;
+  riskSummary: ScanRiskBreakdown;
+  findingCount: number;
+  /** Updated `summary_json` (risk breakdown, and finding annotations for D1-backed scans). */
+  summary: unknown;
+  /**
+   * New artifact references when the report was rewritten with the AI overlay.
+   * Written in the same statement that flips `ai_status`, so D1 never points at
+   * a report whose digest it does not also record.
+   */
+  report?: {
+    reportDigest: string;
+    reportArtifactKey: string;
+    artifactManifestKey: string;
+    artifactManifestDigest: string;
+    artifactManifestSize: number;
+  } | null;
+  /**
+   * Findings to add as `source: "ai"` rows — D1-backed (degraded) scans only, since
+   * artifact-backed scans read their findings from the rewritten report. Row ids
+   * come from the caller so the same ids can be recorded in
+   * `summary_json.findingAnnotations`.
+   */
+  aiFindingRows?: Array<Finding & { id: string }>;
+}
+
+/**
+ * Apply a completed deferred AI review to an already-persisted scan.
+ *
+ * The guarded UPDATE is the claim: only the first patch for a scan sees a
+ * returned row, so a duplicated follow-up message cannot double-count AI
+ * findings. The R2 report rewrite must already have happened (under a
+ * content-addressed key) before this runs — flipping the D1 references last is
+ * what makes the swap atomic for readers.
+ */
+export async function applyAiReviewPatch(
+  db: AppDb,
+  input: AiReviewPatchInput,
+): Promise<{ patched: boolean }> {
+  const now = new Date();
+  const claimed = await db
+    .update(scans)
+    .set({
+      aiJson: input.ai,
+      aiStatus: input.aiStatus,
+      risk: input.risk,
+      riskSummaryJson: input.riskSummary,
+      findingCount: input.findingCount,
+      summaryJson: input.summary,
+      ...(input.report
+        ? {
+            reportDigest: input.report.reportDigest,
+            reportArtifactKey: input.report.reportArtifactKey,
+            artifactManifestKey: input.report.artifactManifestKey,
+            artifactManifestDigest: input.report.artifactManifestDigest,
+            artifactManifestSize: input.report.artifactManifestSize,
+          }
+        : {}),
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(scans.id, input.scanId),
+        eq(scans.organizationId, input.organizationId),
+        eq(scans.status, "complete"),
+        eq(scans.aiStatus, "pending"),
+      ),
+    )
+    .returning({ id: scans.id });
+  if (!claimed.length) return { patched: false };
+
+  const rows = input.aiFindingRows ?? [];
+  if (rows.length) {
+    const findingRows: ScanFindingInsertRow[] = rows.map((finding) => ({
+      id: finding.id,
+      scanId: input.scanId,
+      severity: finding.severity,
+      file: finding.file,
+      evidence: finding.evidence,
+      reason: finding.reason,
+      line: finding.line ?? null,
+      source: "ai",
+      ruleId: finding.ruleId ?? null,
+      ruleVersion: finding.ruleVersion ?? null,
+    }));
+    for (const chunk of chunkForD1(findingRows, 10)) {
+      await db.insert(scanFindings).values(chunk);
+    }
+  }
+  return { patched: true };
 }
 
 /**
@@ -308,6 +566,10 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     status: input.status,
     summaryJson: withFindingAnnotations(input.summary, findingAnnotations),
     aiJson: input.ai,
+    // Mirrors `ai_json.status` so the list view and the status poll can show
+    // "AI review pending" (and the reaper can find abandoned follow-ups)
+    // without reading the review blob.
+    aiStatus: readAiReviewStatus(input.ai),
     errorJson: null,
     changedFileCount,
     findingCount,
@@ -350,6 +612,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
           status: scanValues.status,
           summaryJson: scanValues.summaryJson,
           aiJson: scanValues.aiJson,
+          aiStatus: scanValues.aiStatus,
           errorJson: scanValues.errorJson,
           changedFileCount: scanValues.changedFileCount,
           findingCount: scanValues.findingCount,
@@ -497,6 +760,12 @@ function insertScanFindingsWhenClaimed(
   );
 }
 
+function readAiReviewStatus(ai: unknown): string | null {
+  if (!ai || typeof ai !== "object" || Array.isArray(ai)) return null;
+  const status = (ai as { status?: unknown }).status;
+  return typeof status === "string" && status ? status : null;
+}
+
 function withFindingAnnotations(
   summary: unknown,
   annotations: Array<{ id: string; diffStatus: string; releaseDelta: boolean }>,
@@ -554,6 +823,7 @@ export interface ListScansResult {
     changedFileCount: number;
     findingCount: number;
     riskSummary: ScanRiskSummary | null;
+    aiStatus: string | null;
     reportVersion: number | null;
     reportDigest: string | null;
     startedAt: Date | null;
@@ -578,7 +848,15 @@ export async function listScans(
   );
   const decisionFilter = options.decisionFilter ?? "undecided";
 
-  const conditions = [eq(scans.organizationId, organizationId)];
+  // Withdrawn stages are tombstoned rather than deleted (see
+  // `discardScanAttempt`) purely so discovery stops rediscovering them. They
+  // carry no report and were never a review, so they stay out of every list —
+  // including the "all" filter and the has-ever-scanned probe behind the
+  // getting-started panel.
+  const conditions = [
+    eq(scans.organizationId, organizationId),
+    ne(scans.status, DISCARDED_SCAN_STATUS),
+  ];
   if (decisionFilter === "undecided") conditions.push(isNull(scans.decision));
   else if (decisionFilter === "publish") conditions.push(eq(scans.decision, "publish"));
   else if (decisionFilter === "no_publish") conditions.push(eq(scans.decision, "no_publish"));
@@ -612,6 +890,7 @@ export async function listScans(
       changedFileCount: scans.changedFileCount,
       findingCount: scans.findingCount,
       riskSummaryJson: scans.riskSummaryJson,
+      aiStatus: scans.aiStatus,
       reportVersion: scans.reportVersion,
       reportDigest: scans.reportDigest,
       startedAt: scans.startedAt,
@@ -651,6 +930,7 @@ export async function listScans(
       changedFileCount: row.changedFileCount ?? 0,
       findingCount: row.findingCount ?? 0,
       riskSummary: row.status === "complete" ? readScanRiskBreakdown(row.riskSummaryJson) : null,
+      aiStatus: row.aiStatus,
       reportVersion: row.reportVersion,
       reportDigest: row.reportDigest,
       startedAt: row.startedAt,

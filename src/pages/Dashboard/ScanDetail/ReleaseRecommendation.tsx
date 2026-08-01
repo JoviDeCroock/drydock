@@ -84,6 +84,7 @@ export function ReleaseRecommendation({
             {artifactRisk !== releaseRisk ? (
               <Badge tone="neutral">artifact {artifactRisk}</Badge>
             ) : null}
+            {ai?.kind === "pending" ? <Badge tone="neutral">ai review pending</Badge> : null}
             {ai?.model != null &&
               (ai.kind === "complete" ? (
                 <>

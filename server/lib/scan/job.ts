@@ -1,11 +1,6 @@
 import { type AppDb, type WorkspaceSession, createDb } from "../../db/client";
 import { getNpmConnection, markNpmConnectionUsed } from "../../db/npm-connections";
-import {
-  type ScanSource,
-  claimScanForRun,
-  discardScanAttempt,
-  markScanFailed,
-} from "../../db/scans";
+import { claimScanForRun, discardScanAttempt, markScanFailed } from "../../db/scans";
 import { getStagedAdapter } from "../ecosystems";
 import { errorMessage } from "../platform/errors";
 import { notifyScanCompletion } from "../notify";
@@ -16,33 +11,11 @@ import {
 } from "../platform/observability";
 import { runScanPipeline } from "./pipeline";
 import { sandboxErrorDetail } from "../sandbox";
-import type { ScanInput } from "../../types";
+import type { ScanQueueMessage } from "./job-messages";
 import { recordProductEvent } from "../platform/analytics";
 
-export interface ScanQueueMessage extends ScanInput {
-  scanId: string;
-  organizationId: string;
-  actorUserId: string;
-  source?: ScanSource;
-}
-
-/**
- * A resolved PyPI workflow gate to review. The gate row already holds the
- * installation, release target, run, and callback URL, so the message only
- * needs to point at it. `kind` discriminates this from the npm scan messages
- * that flow over the same queue.
- */
-export interface WorkflowGateQueueMessage {
-  kind: "workflow_gate";
-  organizationId: string;
-  gateId: string;
-}
-
-export type QueueMessage = ScanQueueMessage | WorkflowGateQueueMessage;
-
-export function isWorkflowGateMessage(message: QueueMessage): message is WorkflowGateQueueMessage {
-  return "kind" in message && message.kind === "workflow_gate";
-}
+export type { QueueMessage, ScanQueueMessage, WorkflowGateQueueMessage } from "./job-messages";
+export { isAiReviewMessage, isWorkflowGateMessage } from "./job-messages";
 
 export const MAX_SCAN_JOB_ATTEMPTS = 3;
 
@@ -104,6 +77,11 @@ export async function executeScanJob(
         organizationId: message.organizationId,
         source: message.source ?? "manual",
       },
+      // Staged-publish scans release their queue slot as soon as the
+      // deterministic report is persisted; the advisory review follows on its
+      // own message. Nothing downstream of this call consumes the AI verdict
+      // synchronously — the reviewer opens the workbench and the UI polls.
+      { aiReview: "deferred" },
     );
     emitOperationalEvent("info", "scan.job.completed", {
       scanId: message.scanId,

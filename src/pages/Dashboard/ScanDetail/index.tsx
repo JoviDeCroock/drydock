@@ -313,6 +313,16 @@ export default function ScanDetailPage() {
       {detail?.scan.status === "failed" ? (
         <ScanFailureAlert errorJson={detail.scan.errorJson} />
       ) : null}
+      {/* A withdrawn stage is kept as a tombstone so discovery stops
+          rediscovering it every 15 minutes. It is filtered out of the reviews
+          list, but a bookmarked link still resolves here and has to say why
+          there is no report. */}
+      {detail?.scan.status === "discarded" ? (
+        <Alert tone="warn">
+          This staged publish was withdrawn from the registry before it could be reviewed, so no
+          report was produced.
+        </Alert>
+      ) : null}
 
       {!detail && !error ? (
         <LoadingState title="Loading saved review" detail="fetching report · normalizing diff" />

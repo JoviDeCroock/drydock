@@ -28,11 +28,19 @@ import {
 import {
   classifyScanError,
   executeScanJob,
+  isAiReviewMessage,
   isWorkflowGateMessage,
   MAX_SCAN_JOB_ATTEMPTS,
   retryDelaySeconds,
   type QueueMessage,
 } from "./lib/scan/job";
+import { closeAbandonedAiReview, executeAiReviewJob } from "./lib/scan/ai-review-job";
+import {
+  failStalledScans,
+  listStalledAiReviewScans,
+  STALLED_SCAN_SWEEP_LIMIT,
+  STALLED_SCAN_TIMEOUT_MS,
+} from "./db/scans";
 import { executeWorkflowGateJob } from "./lib/workflow-gate-job";
 import {
   createStageStartCoordinator,
@@ -526,6 +534,62 @@ async function pruneStaleRateLimitBuckets(env: Cloudflare.Env) {
   }
 }
 
+/**
+ * Close out scans nothing else will ever finish.
+ *
+ * Two shapes of stranded row exist. A scan stuck `pending`/`running` — the
+ * worker was evicted, the isolate OOMed, or the message exhausted its retries
+ * into the DLQ — is never retried (`claimScanForRun` would accept it, but no
+ * message remains to do the claiming) and never closed, so the UI polls it
+ * forever. And a scan whose deterministic report landed but whose deferred AI
+ * review message was lost sits `ai_status = "pending"` with the same symptom.
+ *
+ * Both are swept here, bounded per tick, and never allowed to abort the rest of
+ * the cron.
+ */
+async function reapStalledScans(env: Cloudflare.Env) {
+  const db = createDb(env.DB);
+  try {
+    const sweep = await failStalledScans(db, {
+      timeoutMs: STALLED_SCAN_TIMEOUT_MS,
+      limit: STALLED_SCAN_SWEEP_LIMIT,
+    });
+    if (sweep.running > 0 || sweep.pending > 0) {
+      emitOperationalEvent("warn", "scans.stalled_reaped", {
+        running: sweep.running,
+        pending: sweep.pending,
+        timeoutMs: STALLED_SCAN_TIMEOUT_MS,
+      });
+    }
+  } catch (err) {
+    emitOperationalEvent("error", "scans.stalled_reap_failed", {
+      error: describeOperationalError(err),
+    });
+  }
+
+  try {
+    const abandoned = await listStalledAiReviewScans(db, {
+      timeoutMs: STALLED_SCAN_TIMEOUT_MS,
+      limit: STALLED_SCAN_SWEEP_LIMIT,
+    });
+    let closed = 0;
+    for (const scan of abandoned) {
+      if (await closeAbandonedAiReview(env, db, scan.id, scan.organizationId)) closed += 1;
+    }
+    if (closed > 0) {
+      emitOperationalEvent("warn", "scans.abandoned_ai_reviews_closed", {
+        closed,
+        candidates: abandoned.length,
+        timeoutMs: STALLED_SCAN_TIMEOUT_MS,
+      });
+    }
+  } catch (err) {
+    emitOperationalEvent("error", "scans.abandoned_ai_review_sweep_failed", {
+      error: describeOperationalError(err),
+    });
+  }
+}
+
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
@@ -543,6 +607,7 @@ export default {
     await pruneStaleAuditEvents(env);
     await pruneStaleAuthRows(env);
     await pruneStaleRateLimitBuckets(env);
+    await reapStalledScans(env);
   },
   async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
     for (const message of batch.messages) {
@@ -577,6 +642,48 @@ export default {
               error: describeOperationalError(err),
             });
             throw err;
+          }
+        }
+        continue;
+      }
+      if (isAiReviewMessage(message.body)) {
+        const aiMessage = message.body;
+        try {
+          const result = await executeAiReviewJob(env, aiMessage, undefined, {
+            attempt: message.attempts,
+            finalAttempt: message.attempts >= MAX_SCAN_JOB_ATTEMPTS,
+          });
+          emitOperationalEvent("info", "scan.ai_review.queue.message.completed", {
+            scanId: aiMessage.scanId,
+            organizationId: aiMessage.organizationId,
+            ecosystem: aiMessage.ecosystem,
+            attempt: message.attempts,
+            outcome: result.outcome,
+            durationMs: durationMsSince(messageStartedAtMs),
+          });
+        } catch (err) {
+          // The scan itself is complete and readable, so a failed review is
+          // never re-run past the attempt budget: the last delivery writes the
+          // fail-safe `unavailable` result instead, and the scheduled reaper
+          // closes anything that never gets a last delivery at all.
+          if (message.attempts < MAX_SCAN_JOB_ATTEMPTS) {
+            message.retry({ delaySeconds: retryDelaySeconds(message.attempts) });
+            emitOperationalEvent("warn", "scan.ai_review.queue.retry_scheduled", {
+              scanId: aiMessage.scanId,
+              organizationId: aiMessage.organizationId,
+              attempt: message.attempts,
+              nextDelaySeconds: retryDelaySeconds(message.attempts),
+              durationMs: durationMsSince(messageStartedAtMs),
+              error: describeOperationalError(err),
+            });
+          } else {
+            emitOperationalEvent("error", "scan.ai_review.queue.message_failed", {
+              scanId: aiMessage.scanId,
+              organizationId: aiMessage.organizationId,
+              attempt: message.attempts,
+              durationMs: durationMsSince(messageStartedAtMs),
+              error: describeOperationalError(err),
+            });
           }
         }
         continue;

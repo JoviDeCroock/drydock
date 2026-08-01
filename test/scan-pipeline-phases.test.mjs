@@ -22,6 +22,8 @@ const {
   recordCompletion,
 } = await import("../server/lib/scan/pipeline-phases");
 
+const { pendingAiReview } = await import("../server/lib/ai-review/types");
+
 const NPM_TOKEN = "npm_abcdefghijklmnopqrstuvwxyz0123";
 
 const baselineArtifact = {
@@ -471,6 +473,42 @@ describe("scoreRisk", () => {
     expect(summary.contextRisk).toBe("medium");
     expect(summary.releaseFindingCount).toBe(1);
     expect(summary.contextFindingCount).toBe(1);
+  });
+
+  test("a pending review contributes nothing and never floors the grade", () => {
+    const annotated = [
+      {
+        severity: "low",
+        file: "a",
+        evidence: "",
+        reason: "",
+        releaseDelta: true,
+        diffStatus: "added",
+      },
+    ];
+
+    const pending = scoreRisk(annotated, pendingAiReview());
+
+    // Not the medium floor an attempted-and-failed review gets: the review is
+    // still on its way, so the deterministic grade stands and the follow-up can
+    // only raise it.
+    expect(pending.artifactRisk).toBe("low");
+    expect(pending.releaseRisk).toBe("low");
+    expect(pending).toEqual(scoreRisk(annotated, disabledAi));
+
+    const failed = scoreRisk(annotated, { ...disabledAi, model: "test-model" });
+    expect(failed.artifactRisk).toBe("medium");
+  });
+
+  test("a pending review projects no findings", () => {
+    const adapter = makeAdapter();
+    const diff = computeDiff(resolved);
+    const findings = runDeterministicFindings(adapter, resolved, diff);
+
+    const merged = mergeAiFindings(pendingAiReview(), findings, diff, "javascript");
+
+    expect(merged.records).toEqual([]);
+    expect(merged.annotatedRecords).toEqual([]);
   });
 });
 

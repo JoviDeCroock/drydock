@@ -74,6 +74,12 @@ export interface ScanListItem {
   changedFileCount?: number;
   findingCount?: number;
   riskSummary?: ScanRiskSummary | null;
+  /**
+   * Lifecycle of the advisory AI review, mirroring `aiJson.status`
+   * (`pending` | `complete` | `invalid` | `unavailable`). Absent on scans that
+   * predate the deferred reviewer, and on scans that never completed.
+   */
+  aiStatus?: string | null;
   reportVersion?: number | null;
   reportDigest?: string | null;
   startedAt?: string | number | Date | null;
@@ -453,7 +459,13 @@ export const ScanDetailModel = createModel((id: string) => {
 
   const isWorkflowGate = computed(() => detail.value?.scan.source === "workflow_gate");
   const status = computed(() => detail.value?.scan.status ?? null);
-  const isPolling = computed(() => status.value === "pending" || status.value === "running");
+  // The advisory review runs after the scan is persisted as complete, so a
+  // complete scan can still have work in flight. Keep polling through it or the
+  // reviewer would have to reload the page to see the review land.
+  const aiReviewPending = computed(() => detail.value?.scan.aiStatus === "pending");
+  const isPolling = computed(
+    () => status.value === "pending" || status.value === "running" || aiReviewPending.value,
+  );
   const isDefaultComparison = computed(() => {
     const selected = selectedVersion.value;
     const v = versions.value;
@@ -517,7 +529,15 @@ export const ScanDetailModel = createModel((id: string) => {
     try {
       const data = await getScanStatus(id);
       const current = detail.peek();
-      if (data.scan.status === "pending" || data.scan.status === "running") {
+      // While the AI review is still pending the report itself cannot change, so
+      // the cheap status row is enough; refetching the full detail every 10s
+      // would re-read the scan's R2 artifacts for nothing. The full detail is
+      // fetched once, on the poll that sees the review land.
+      const metadataOnly =
+        data.scan.status === "pending" ||
+        data.scan.status === "running" ||
+        (data.scan.aiStatus === "pending" && current !== null && current.files.length > 0);
+      if (metadataOnly) {
         detail.value = current
           ? {
               ...current,
@@ -588,6 +608,7 @@ export const ScanDetailModel = createModel((id: string) => {
     gateRetryError,
     isWorkflowGate,
     status,
+    aiReviewPending,
     isPolling,
     isDefaultComparison,
     compare,

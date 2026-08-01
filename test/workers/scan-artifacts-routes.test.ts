@@ -406,7 +406,11 @@ describe("scan artifact backfill route", () => {
 
     expect(metadata?.artifactStorageVersion).toBe(1);
     expect(metadata?.artifactManifestKey).toContain(`/scans/${input.scanId}/v1/manifest.json`);
-    expect(fake.putCalls()).toBe(6);
+    // report/files/diff are written concurrently, so a failed attempt re-puts all
+    // three rather than resuming where it stopped: 3 + 3 payload puts, then the
+    // manifest. Puts are keyed by content path and each is read-back verified, so
+    // repeating one is wasted work, never corruption.
+    expect(fake.putCalls()).toBe(7);
   });
 
   test("exhausted artifact write failures fail closed", async () => {
@@ -417,7 +421,8 @@ describe("scan artifact backfill route", () => {
     await expect(maybeWriteScanArtifacts(fake.bucket, input)).rejects.toThrow(
       "simulated R2 write failure",
     );
-    expect(fake.putCalls()).toBe(SCAN_ARTIFACT_WRITE_ATTEMPTS);
+    // One wave of three concurrent payload puts per attempt.
+    expect(fake.putCalls()).toBe(SCAN_ARTIFACT_WRITE_ATTEMPTS * 3);
   });
 
   test("new artifact-backed scans serve metadata from report artifacts and file bodies from R2", async () => {

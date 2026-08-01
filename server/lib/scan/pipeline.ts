@@ -1,5 +1,6 @@
 import { type AppDb, type WorkspaceSession } from "../../db/client";
 import type { AiReview } from "../ai-review/types";
+import { pendingAiReview } from "../ai-review/types";
 import type {
   AdapterBroker,
   AdapterConnectionRef,
@@ -17,6 +18,12 @@ import { recordProductEvent } from "../platform/analytics";
 import { releaseFingerprintFindings } from "../release-fingerprint";
 import type { Finding } from "../review";
 import {
+  AI_REVIEW_INPUT_VERSION,
+  deleteAiReviewInput,
+  writeAiReviewInput,
+  type AiReviewInputDescriptor,
+} from "./artifacts";
+import {
   analyzeRelease,
   mergeAiFindings,
   persistResults,
@@ -28,6 +35,7 @@ import {
   type PipelineIdentity,
   type ResolvedArtifacts,
 } from "./pipeline-phases";
+import type { AiReviewQueueMessage } from "./job-messages";
 import type { ScanInput, ScanResult } from "../../types";
 
 export interface ScanPipelineOptions extends ScanInput {
@@ -54,10 +62,30 @@ export interface ScanPipelineContext {
   session: WorkspaceSession;
 }
 
+export interface ScanPipelineSettings {
+  /**
+   * `deferred` finishes the deterministic report, persists the scan as complete
+   * and reviewable with `ai_json.status = "pending"`, and hands the advisory
+   * review to a follow-up queue message. This is what keeps a scan from holding
+   * a queue-consumer slot through an agentic review (up to two models × three
+   * attempts × MAX_AGENT_STEPS with backoff) that cannot change any
+   * deterministic finding.
+   *
+   * `inline` (the default) awaits the review before persisting. The workflow-gate
+   * path uses it deliberately: the gate's aggregate recommendation is computed
+   * from `releaseRisk` the moment every package scan returns, so a deferred
+   * review would be missing from the number a maintainer releases GitHub on.
+   */
+  aiReview?: "inline" | "deferred";
+  /** Enqueue the deferred follow-up. Defaults to `env.SCAN_QUEUE.send`. */
+  sendAiReviewMessage?: (message: AiReviewQueueMessage) => Promise<void>;
+}
+
 export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
   context: ScanPipelineContext,
   adapter: PackageAdapter<TInput, TBroker>,
   input: ScanPipelineOptions,
+  settings: ScanPipelineSettings = {},
 ): Promise<ScanResult> {
   const { env, executionCtx, db, session } = context;
   const adapterCtx: AdapterContext = { env, executionCtx, db, session };
@@ -84,14 +112,24 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       broker,
       (resolved) => collectReleaseFingerprintFindings(db, identity, resolved),
     );
-    const aiFindings = await maybeRunAiReview({
-      env,
-      identity,
-      ecosystem: adapter.id,
-      previousVersionAvailable: facts.previousVersionAvailable,
-      findings,
-      diff,
-    });
+    const plan = await planAiReview(env, identity, settings);
+    // A deferred review contributes nothing to this scan's risk yet: the
+    // deterministic grade is what gets persisted, and because AI only ever
+    // enters through `combineRisk` (a max), the follow-up patch can raise the
+    // grade but never lower it. Pending therefore reads as "not complete", not
+    // as a clean review and not as a failed one.
+    const aiFindings: AiReview =
+      plan === "deferred"
+        ? pendingAiReview()
+        : await maybeRunAiReview({
+            env,
+            identity,
+            ecosystem: adapter.id,
+            previousVersionAvailable: facts.previousVersionAvailable,
+            findings,
+            diff,
+            enabled: plan === "inline",
+          });
     // AI findings persist alongside rule findings (as `source: "ai"` rows) and
     // count into the risk breakdown. Additive only: computeScanRisk folds them
     // in through combineRisk (a max), so they can escalate the deterministic
@@ -133,6 +171,28 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       declaredRepository: facts.declaredRepository,
     });
 
+    // Evidence snapshot for the follow-up, written before the scan is persisted
+    // so the D1 row never advertises a pending review whose evidence is missing.
+    const aiReviewInput =
+      plan === "deferred" && env.ARTIFACTS
+        ? await writeAiReviewInput(env.ARTIFACTS, identity.organizationId, {
+            version: AI_REVIEW_INPUT_VERSION,
+            scanId: identity.scanId,
+            stageId: identity.stageId,
+            ecosystem: adapter.id,
+            codePatternSet: adapter.codePatternSet,
+            previousVersionAvailable: facts.previousVersionAvailable,
+            baselineComparisonSkipped: facts.baselineComparisonSkipped,
+            files: findings.redactedStagedFiles,
+            previousFiles: findings.redactedPreviousFiles,
+            diff: diff.fileDiff,
+            packageJsonDiff: diff.manifestDiff,
+            releaseRuleFindings: findings.releaseRuleFindings,
+            annotatedFindings: findings.annotatedFindings,
+            releaseConsistency,
+          })
+        : null;
+
     const { result, persisted } = await persistResults({
       env,
       db,
@@ -147,6 +207,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       riskSummary,
       releaseConsistency,
       intentEnvelope,
+      aiReviewInput,
     });
 
     await recordCompletion({
@@ -161,6 +222,18 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       env,
       source: input.source,
     });
+
+    if (plan === "deferred") {
+      await handleDeferredAiReview({
+        env,
+        identity,
+        adapterId: adapter.id,
+        source: input.source,
+        persisted,
+        aiReviewInput,
+        settings,
+      });
+    }
 
     return result;
   } catch (err) {
@@ -217,6 +290,89 @@ async function collectReleaseFingerprintFindings(
   }
 }
 
+type AiReviewPlan = "disabled" | "inline" | "deferred";
+
+/**
+ * Resolve the killswitch once and decide where the review runs.
+ *
+ * AI review is gated by the Cloudflare Flagship `ai-review` flag in the
+ * `drydock` app, evaluated per-organization. The flag is a killswitch: the
+ * reviewer is on by default, and Flagship returning false for an organization
+ * (or globally) disables it. Without a Flagship binding the reviewer stays off.
+ *
+ * Deferral additionally needs somewhere to put the evidence (`ARTIFACTS`) and
+ * something to carry the follow-up (`SCAN_QUEUE`). Without either — local dev,
+ * self-hosted deployments without R2, the `waitUntil()` submit path — the review
+ * runs inline exactly as it did before, rather than being silently dropped.
+ */
+async function planAiReview(
+  env: Cloudflare.Env,
+  identity: PipelineIdentity,
+  settings: ScanPipelineSettings,
+): Promise<AiReviewPlan> {
+  const enabled = env.FLAGS
+    ? await env.FLAGS.getBooleanValue("ai-review", true, {
+        targetingKey: identity.organizationId,
+        organizationId: identity.organizationId,
+      })
+    : false;
+  if (!enabled) return "disabled";
+  if (settings.aiReview !== "deferred") return "inline";
+  const canSend = Boolean(settings.sendAiReviewMessage || env.SCAN_QUEUE);
+  return canSend && env.ARTIFACTS ? "deferred" : "inline";
+}
+
+interface DeferredAiReviewArgs {
+  env: Cloudflare.Env;
+  identity: PipelineIdentity;
+  adapterId: string;
+  source?: string;
+  persisted: boolean;
+  aiReviewInput: AiReviewInputDescriptor | null;
+  settings: ScanPipelineSettings;
+}
+
+async function handleDeferredAiReview(args: DeferredAiReviewArgs): Promise<void> {
+  const { env, identity, aiReviewInput } = args;
+  // The scan was already terminal (a duplicate run), so nothing is waiting on a
+  // review and the evidence we just wrote is dead weight.
+  if (!args.persisted || !aiReviewInput) {
+    await deleteAiReviewInput(env.ARTIFACTS, identity.organizationId, identity.scanId);
+    return;
+  }
+
+  const message: AiReviewQueueMessage = {
+    kind: "ai_review",
+    scanId: identity.scanId,
+    stageId: identity.stageId,
+    organizationId: identity.organizationId,
+    ecosystem: args.adapterId,
+    source: args.source,
+  };
+  const send =
+    args.settings.sendAiReviewMessage ??
+    (env.SCAN_QUEUE ? (body: AiReviewQueueMessage) => env.SCAN_QUEUE!.send(body) : null);
+  if (!send) return;
+  try {
+    await send(message);
+    emitOperationalEvent("info", "scan.ai_review.deferred", {
+      scanId: identity.scanId,
+      organizationId: identity.organizationId,
+      ecosystem: args.adapterId,
+    });
+  } catch (err) {
+    // The report is complete and readable; only the advisory overlay is at
+    // risk. Leave the row `pending` and let the scheduled reaper close it out
+    // rather than failing (and retrying) a scan that already succeeded.
+    emitOperationalEvent("error", "scan.ai_review.enqueue_failed", {
+      scanId: identity.scanId,
+      organizationId: identity.organizationId,
+      ecosystem: args.adapterId,
+      error: describeOperationalError(err),
+    });
+  }
+}
+
 interface AiReviewArgs {
   env: Cloudflare.Env;
   identity: PipelineIdentity;
@@ -224,13 +380,11 @@ interface AiReviewArgs {
   previousVersionAvailable: boolean;
   findings: DeterministicFindings;
   diff: ComputedDiff;
+  /** Resolved `ai-review` killswitch value; false persists the disabled sentinel. */
+  enabled: boolean;
 }
 
 async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
-  // AI review is gated by the Cloudflare Flagship `ai-review` flag in the
-  // `drydock` app, evaluated per-organization. The flag is a killswitch: the
-  // reviewer is on by default, and Flagship returning false for an organization
-  // (or globally) disables it. Without a Flagship binding the reviewer stays off.
   const disabled: AiReview = {
     status: "unavailable",
     risk: "low",
@@ -241,13 +395,7 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
     model: null,
     reviewerVersion: null,
   };
-  const aiReviewEnabled = args.env.FLAGS
-    ? await args.env.FLAGS.getBooleanValue("ai-review", true, {
-        targetingKey: args.identity.organizationId,
-        organizationId: args.identity.organizationId,
-      })
-    : false;
-  if (!aiReviewEnabled) return disabled;
+  if (!args.enabled) return disabled;
 
   // Loaded lazily so the Vercel AI SDK + workers-ai-provider stay out of the
   // Worker's boot graph: this path is skipped whenever the killswitch is off or

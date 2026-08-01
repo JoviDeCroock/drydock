@@ -837,6 +837,27 @@ describe("displayedAiResult", () => {
     });
   });
 
+  test("a deferred review reads as pending, not as unavailable", () => {
+    const result = displayedAiResult({
+      status: "pending",
+      risk: "low",
+      releaseAssessment: "not_assessed",
+      summary: "AI review is still running; the deterministic findings below are final.",
+      findings: [],
+      requiresManualReview: false,
+      model: null,
+    });
+    // Collapsing this into `unavailable` would tell the reader the reviewer
+    // failed and would floor the scan at medium for a review still in flight.
+    expect(result).toEqual({
+      kind: "pending",
+      model: null,
+      summary: "AI review is still running; the deterministic findings below are final.",
+    });
+    expect(result).not.toHaveProperty("risk");
+    expect(result).not.toHaveProperty("findings");
+  });
+
   test("complete review exposes risk/assessment", () => {
     const result = displayedAiResult({
       status: "complete",

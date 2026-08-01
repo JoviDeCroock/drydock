@@ -103,6 +103,32 @@ Registry packument reads on this path are cached for 5 minutes in `COMPARE_CACHE
 
 The UI polls `GET /api/v1/scans/:id/status` — one indexed row read, projected to the lifecycle columns and excluding `summary_json`/`ai_json`/`error_json` — and fetches the full `GET /api/v1/scans/:id` detail once, on the transition to a terminal status.
 
+### Advisory AI review is off the critical path
+
+Staged-publish scans do **not** hold a queue-consumer slot through the AI review. `runScanPipeline` takes an `aiReview: "inline" | "deferred"` setting:
+
+- **`deferred`** (the staged-publish queue path) finishes the deterministic pipeline — baseline, diff, deterministic findings, release memory, risk — persists the scan as `complete` and fully reviewable with `ai_json.status = "pending"`, writes the reviewer's evidence to R2 as `ai-input.json`, and enqueues `{ kind: "ai_review", scanId, … }` on the same queue. The consumer's slot is released as soon as that returns, instead of being held through an agentic review that can run two models × three attempts × `MAX_AGENT_STEPS` with backoff. `executeAiReviewJob` (`server/lib/scan/ai-review-job.ts`) then runs the review and patches it in.
+- **`inline`** (the default, and what the workflow-gate runner uses) awaits the review before persisting. This is deliberate for gates: the gate's aggregate recommendation is computed from every package scan's `releaseRisk` the moment the batch returns, so a deferred review would be missing from the number a maintainer releases the held GitHub job on.
+
+Deferral degrades to `inline` when there is nowhere to defer to — no `ARTIFACTS` bucket to hold the evidence, or no `SCAN_QUEUE` to carry the follow-up (local dev, the `waitUntil()` submit path) — so the review is never silently dropped. The per-organization `ai-review` Flagship killswitch is resolved once before this decision and re-evaluated in the follow-up, so an organization that turns the reviewer off in between gets the disabled sentinel rather than a review.
+
+Risk semantics while pending:
+
+- `ai_json.status = "pending"` is its own state, distinct from `unavailable`. `computeScanRisk` scores it as **no contribution**: the grade is the deterministic one. It is deliberately not floored at medium the way an _attempted and failed_ review is — that would make the risk visibly drop when a clean review landed.
+- Because AI enters risk only through `combineRisk` (a max), the patch can raise `artifactRisk`/`releaseRisk` and never lower them. The patch additionally floors its recomputed breakdown against the persisted one, so the guarantee does not depend on two computations agreeing.
+- `scans.ai_status` mirrors `ai_json.status` so the list view and `GET /api/v1/scans/:id/status` can show "AI review pending" without reading the review blob. The UI keeps polling while it is `pending` and refetches the full detail once it is not.
+
+See [`artifact-storage.md`](./artifact-storage.md) for how the review is patched into `report.json` and the D1 rows.
+
+### Stalled scans and withdrawn stages
+
+Two terminal-state gaps are closed on the cron tick (`reapStalledScans` in `server/index.ts`):
+
+- A scan stranded `pending`/`running` — evicted worker, OOMed isolate, or a message that exhausted its retries into the DLQ — is retried by nothing and closed by nothing, so the UI polls it forever. Rows older than `STALLED_SCAN_TIMEOUT_MS` (30 minutes) are failed with a distinct `errorJson.code`: `scan_stalled` for `running`, `scan_never_started` for `pending`. Bounded per tick, and the UPDATE re-checks the status it read so a scan that finishes mid-sweep is left alone.
+- A completed scan whose deferred review never came back (`ai_status = "pending"` past the same window) is closed through the normal patch path with the `unavailable` fail-safe, so `ai_json`, the risk summary, and the report stay consistent.
+
+A staged publish npm withdraws before it can be reviewed is a **`discarded` tombstone**, not a deleted row. Deleting it made `listExistingScanStageIds` forget the stage id, so the next 15-minute discovery tick rediscovered the same withdrawn stage, queued it, failed to download it, and discarded it again — indefinitely. The tombstone keeps discovery suppressed while staying out of every list view (including the `all` filter that backs the getting-started probe); the scan-detail page explains it if a bookmarked link resolves to one.
+
 Baseline selection is tag-aware rather than simply highest-semver; see [`diff-baseline.md`](./diff-baseline.md).
 
 ## Workflow gates
@@ -112,6 +138,8 @@ Workflow gates reuse the scan pipeline when the registry cannot stage a release 
 ## Scheduled discovery
 
 Cron-triggered npm discovery finds staged publishes for organizations with validated npm connections and creates scans using the same pipeline. Token-expiry and validation issues should surface through settings/UI status and redacted observability events.
+
+The same tick also prunes the audit log and reaps stalled scans (above). Each of the three is independently wrapped: a failure in one is logged and never aborts the others.
 
 A per-org sweep failure is logged as `staged_publishes.cron.org_failed` with a `transient` field. Registry transport failures (status `0` — timeout, DNS, TLS) and 408/429/5xx responses are classified transient by `isTransientSweepFailure` and logged at **warn**: `reliableFetch` has already retried, discovery is idempotent, and the next 15-minute tick re-sweeps the org, so the cost is at most one cycle of detection latency. Everything else — unexpected statuses, D1 failures, bugs in the sweep — stays at **error**. Expired tokens never reach this log; they take the `recordExpiredNpmConnection` path instead. Repeated transient failures for one org are deliberately not escalated here; that would need failure counting across ticks.
 

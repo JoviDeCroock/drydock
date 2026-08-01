@@ -228,8 +228,11 @@ function extractAiReview(aiJson: unknown) {
       })),
     };
   }
+  // A deferred review that has not landed yet exports as `pending`, not as a
+  // failed review: the export is a snapshot, and re-exporting after the
+  // follow-up completes carries the finished review.
   return {
-    status: displayed.status,
+    status: displayed.kind === "pending" ? "pending" : displayed.status,
     model: displayed.model,
     summary: displayed.summary,
     risk: null,

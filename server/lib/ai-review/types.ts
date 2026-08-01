@@ -9,7 +9,15 @@ interface AiFinding {
   recommendation: string;
 }
 
-export type AiReviewStatus = "complete" | "invalid" | "unavailable";
+/**
+ * `pending` is the deferred-review placeholder: the deterministic report is
+ * finished and readable, and the advisory review runs afterwards on its own
+ * queue message (see docs/architecture.md "Scan pipeline"). It is deliberately
+ * *not* a failure — `computeScanRisk` scores a pending review as no
+ * contribution at all, so the risk a maintainer sees is the deterministic one
+ * and the follow-up can only ever raise it.
+ */
+export type AiReviewStatus = "complete" | "invalid" | "unavailable" | "pending";
 
 type AiReleaseAssessment = "nothing_unusual" | "review_recommended" | "suspicious" | "blocked";
 
@@ -65,10 +73,15 @@ export type DisplayedAiResult =
       requiresManualReview: boolean;
     }
   | {
+      kind: "pending";
+      model: string | null;
+      summary: string;
+    }
+  | {
       kind: "unavailable";
       model: string | null;
       summary: string;
-      status: Exclude<AiReviewStatus, "complete">;
+      status: Exclude<AiReviewStatus, "complete" | "pending">;
     };
 
 // Single safe accessor for AiReview consumers. The fallback shape returned when
@@ -78,6 +91,13 @@ export type DisplayedAiResult =
 // Always route AiReview through this helper before rendering or computing risk.
 export function displayedAiResult(review: AiReview | null | undefined): DisplayedAiResult | null {
   if (!review) return null;
+  // A deferred review that has not run yet is its own state. Collapsing it into
+  // `unavailable` would be wrong in both directions: the reader would be told
+  // the reviewer failed, and `computeScanRisk` would floor the scan at medium
+  // for a review that is still on its way.
+  if (review.status === "pending") {
+    return { kind: "pending", model: review.model, summary: review.summary };
+  }
   if (review.status === "complete" && review.releaseAssessment !== "not_assessed") {
     return {
       kind: "complete",
@@ -94,5 +114,26 @@ export function displayedAiResult(review: AiReview | null | undefined): Displaye
     model: review.model,
     summary: review.summary,
     status: review.status === "complete" ? "invalid" : review.status,
+  };
+}
+
+const AI_REVIEW_PENDING_SUMMARY =
+  "AI review is still running; the deterministic findings below are final.";
+
+/**
+ * The placeholder persisted when the advisory review is deferred to its own
+ * queue message. `model` is null on purpose — no model has been picked yet, and
+ * a non-null model is what tells `computeScanRisk` a review was *attempted and
+ * failed*.
+ */
+export function pendingAiReview(): AiReview {
+  return {
+    status: "pending",
+    risk: "low",
+    releaseAssessment: "not_assessed",
+    summary: AI_REVIEW_PENDING_SUMMARY,
+    findings: [],
+    requiresManualReview: false,
+    model: null,
   };
 }
