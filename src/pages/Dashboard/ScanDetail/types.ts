@@ -24,6 +24,10 @@ export interface PersistedSummary {
   // Advisory release-memory blob. Old scans lack it and its shape is only
   // trusted after normalizeReleaseConsistency, so it stays unknown here.
   releaseConsistency?: unknown;
+  // Advisory source-binding envelope. Untyped here because persisted blobs
+  // predate the feature or may be malformed; readers re-validate through
+  // `normalizeIntentEnvelope`.
+  intentEnvelope?: unknown;
 }
 
 export type PersistedFinding = PersistedScanDetail["findings"][number];

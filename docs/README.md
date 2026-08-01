@@ -16,6 +16,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`architecture.md`](./architecture.md) — Worker, sandbox, adapters, storage, org model, and API shape.
 - [`workflow-gates.md`](./workflow-gates.md) — GitHub Environment gate flow for PyPI, npm, and VS Code workflow-gated releases.
 - [`diff-baseline.md`](./diff-baseline.md) — default previous-version comparison strategy.
+- [`intent-envelope.md`](./intent-envelope.md) — advisory source-binding tiers (attested / declared / absent) persisted with every scan.
 - [`artifact-storage.md`](./artifact-storage.md) — D1/R2 report and artifact persistence.
 
 ## Operations and setup
