@@ -84,6 +84,14 @@ so reviewers who always finish in npm opt in once — it is a UI convenience wit
 server state and no bearing on the step-up rules.
 Maintainers without 2FA enabled decide gates without a code, as before.
 
+When that npm tab is _not_ opened (the checkbox is off, or the browser blocked the
+popup), a follow-up dialog (`StageCommandDialog`) shows the equivalent CLI command for
+the stage — `npm stage approve|reject <stage-id>`, built by
+`src/lib/npm-stage-command.ts` — as copyable text. It is display only: Drydock never
+runs npm, and npm still asks the maintainer for proof-of-presence. The stage id is
+validated against npm's stage-id shape before it is placed in that string, so
+registry-supplied text cannot smuggle shell metacharacters into a copy-paste.
+
 ### Org-enforced step-up (organization policy)
 
 By default the step-up is per-user: enrolled maintainers step up, others decide without a

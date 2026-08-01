@@ -30,6 +30,7 @@ import { UserMenu } from "../../components/UserMenu";
 import { GettingStarted } from "./GettingStarted";
 import { DeleteScanDialog } from "./ScanDetail/DeleteScanDialog";
 import { DecisionDialog } from "./ScanDetail/DecisionDialog";
+import { StageCommandDialogHost } from "./ScanDetail/StageCommandDialog";
 
 export default function DashboardPage() {
   const location = useLocation();
@@ -321,10 +322,12 @@ function RecentReviewsSection({
             status={scans.decisionStatus.value}
             error={scans.decisionError.value}
             npmStagedPackagesUrl={npmStagedPackagesUrlFor(scan)}
+            scan={scan}
             onSubmit={onQuickDecisionSubmit}
           />
         )}
       </Show>
+      <StageCommandDialogHost />
       <Show<ScanListItem | null> when={deleteScan}>
         {(scan) => (
           <DeleteScanDialog

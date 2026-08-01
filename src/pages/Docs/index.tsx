@@ -407,8 +407,10 @@ export default function DocsPage() {
                     when possible, so beta and maintenance releases compare against the right line.
                   </>,
                   <>
-                    Record your decision and reason in Drydock. Then open npm's staged-packages page
-                    and complete or decline the publish with your normal npm 2FA.
+                    Record your decision and reason in Drydock. Then finish on npm with your normal
+                    2FA — either on npm's staged-packages page, or with the{" "}
+                    <Code>npm stage approve</Code> / <Code>npm stage reject</Code> command Drydock
+                    shows you after saving.
                   </>,
                 ]}
               />
