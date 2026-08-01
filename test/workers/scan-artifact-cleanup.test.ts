@@ -153,8 +153,25 @@ describe("scan artifact deletion helpers", () => {
   });
 
   test("a missing bucket is a no-op rather than a throw", async () => {
-    await expect(deleteOrganizationArtifacts(undefined, "org_x")).resolves.toBeUndefined();
-    await expect(deleteScanArtifacts(undefined, "org_x", "scan_x")).resolves.toBeUndefined();
+    // `ok: false` because nothing was swept — the retention sweep reads that to
+    // hold a D1 delete back rather than strand objects.
+    await expect(deleteOrganizationArtifacts(undefined, "org_x")).resolves.toEqual({
+      ok: false,
+      objectsDeleted: 0,
+    });
+    await expect(deleteScanArtifacts(undefined, "org_x", "scan_x")).resolves.toEqual({
+      ok: false,
+      objectsDeleted: 0,
+    });
+  });
+
+  test("a successful sweep reports ok with the object count", async () => {
+    const org = `org_${crypto.randomUUID()}`;
+    await seedScanArtifacts(org, "scan_reported");
+    await expect(deleteScanArtifacts(env.ARTIFACTS, org, "scan_reported")).resolves.toEqual({
+      ok: true,
+      objectsDeleted: OBJECTS_PER_SCAN,
+    });
   });
 });
 

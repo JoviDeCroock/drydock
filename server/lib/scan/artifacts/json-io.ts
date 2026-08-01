@@ -1,6 +1,7 @@
 import {
   ARTIFACT_CONTENT_TYPE,
   SCAN_ARTIFACT_STORAGE_VERSION,
+  type ArtifactSweepResult,
   type ScanArtifactDescriptor,
   type ScanArtifactScanRow,
 } from "./types";
@@ -100,9 +101,9 @@ export async function deleteArtifactsByPrefix(
   bucket: R2Bucket,
   prefix: string,
   logFields: Record<string, unknown>,
-): Promise<void> {
+): Promise<ArtifactSweepResult> {
+  let deleted = 0;
   try {
-    let deleted = 0;
     let cursor: string | undefined;
     do {
       const listed = await bucket.list({ prefix, limit: ARTIFACT_LIST_PAGE, cursor });
@@ -119,11 +120,17 @@ export async function deleteArtifactsByPrefix(
         objectsDeleted: deleted,
       });
     }
+    return { ok: true, objectsDeleted: deleted };
   } catch (err) {
     emitOperationalEvent("error", "scan.artifacts.delete_failed", {
       ...logFields,
       error: describeOperationalError(err),
     });
+    // Still fail-soft: teardown callers must not have their D1 batch aborted by a
+    // cache-layer failure. `ok: false` lets the retention sweep — the one caller
+    // that would otherwise strand evidence with no metadata pointing at it — hold
+    // the D1 delete back for a later tick instead.
+    return { ok: false, objectsDeleted: deleted };
   }
 }
 

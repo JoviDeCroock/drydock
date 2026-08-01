@@ -18,6 +18,7 @@ import {
 } from "../lib/review";
 import type { ScanRiskBreakdown } from "../lib/review/risk";
 import { scanFileRowsForArtifacts, type ScanArtifactMetadata } from "../lib/scan/artifacts";
+import { buildPersistedFindingProfile } from "../lib/scan/release-memory";
 import type { AppDb } from "./client";
 import { chunkForD1 } from "./d1-chunk";
 import { NON_TERMINAL_STATUSES } from "./scan-jobs";
@@ -100,6 +101,10 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
   }));
 
   const isComplete = input.status === "complete";
+  // Deterministic rule findings only — release memory's profile must never see
+  // the advisory AI rows (docs/release-memory.md), so this reads `input.findings`
+  // rather than the combined `findingRows`.
+  const findingProfile = isComplete ? buildPersistedFindingProfile(input.findings) : null;
   const changedFileCount = isComplete ? countChangedFileEntries(input.diff) : null;
   const findingCount = isComplete ? findingRows.length : null;
   const riskSummary: ScanRiskBreakdown | null = isComplete
@@ -118,12 +123,21 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     previousVersion: input.previousPackageJson?.version || null,
     risk: input.risk,
     status: input.status,
-    summaryJson: withFindingAnnotations(input.summary, findingAnnotations),
+    // The per-row annotations are keyed by `scan_findings.id`. When the scan is
+    // artifact-backed those rows are never inserted (the detail lives in R2 and
+    // the read path re-derives annotations from report.json's `findingAnnotations`
+    // by index), so embedding them here would persist one entry per finding whose
+    // id matches nothing. Only the degraded path, which does write the rows and
+    // whose reader joins on those ids, needs them.
+    summaryJson: input.artifacts
+      ? asSummaryRecord(input.summary)
+      : withFindingAnnotations(input.summary, findingAnnotations),
     aiJson: input.ai,
     errorJson: null,
     changedFileCount,
     findingCount,
     riskSummaryJson: riskSummary,
+    findingProfileJson: findingProfile,
     reportVersion: input.report?.version ?? null,
     reportDigest: input.report?.digest ?? null,
     artifactStorageVersion: input.artifacts?.artifactStorageVersion ?? null,
@@ -166,6 +180,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
           changedFileCount: scanValues.changedFileCount,
           findingCount: scanValues.findingCount,
           riskSummaryJson: scanValues.riskSummaryJson,
+          findingProfileJson: scanValues.findingProfileJson,
           reportVersion: scanValues.reportVersion,
           artifactStorageVersion: scanValues.artifactStorageVersion,
           artifactManifestKey: scanValues.artifactManifestKey,
@@ -309,13 +324,15 @@ function insertScanFindingsWhenClaimed(
   );
 }
 
+function asSummaryRecord(summary: unknown): Record<string, unknown> {
+  return summary && typeof summary === "object" && !Array.isArray(summary)
+    ? (summary as Record<string, unknown>)
+    : {};
+}
+
 function withFindingAnnotations(
   summary: unknown,
   annotations: Array<{ id: string; diffStatus: string; releaseDelta: boolean }>,
 ): Record<string, unknown> {
-  const base =
-    summary && typeof summary === "object" && !Array.isArray(summary)
-      ? (summary as Record<string, unknown>)
-      : {};
-  return { ...base, findingAnnotations: annotations };
+  return { ...asSummaryRecord(summary), findingAnnotations: annotations };
 }

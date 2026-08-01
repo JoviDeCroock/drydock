@@ -143,7 +143,11 @@ export default function ScanDetailPage() {
       const stagedRecords = scanFilesToFileRecords(detail.files);
       return createPackageDiff(compare.files, stagedRecords);
     }
-    const persistedDiff = persistedSummary.diff ?? [];
+    // `detail.diff` is the server-read diff (complete, from R2, for
+    // artifact-backed scans). The summary embed is the fallback: full on
+    // legacy/degraded rows, the compacted release delta when an artifact read
+    // failed closed.
+    const persistedDiff = detail.diff?.length ? detail.diff : (persistedSummary.diff ?? []);
     if (persistedDiff.length) return persistedDiff;
     return detail.files.map((file) => ({
       path: file.path,

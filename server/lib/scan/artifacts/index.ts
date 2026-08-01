@@ -16,6 +16,7 @@
 export {
   SCAN_ARTIFACT_WRITE_ATTEMPTS,
   SCAN_FILE_SAMPLE_LIMIT,
+  type ArtifactSweepResult,
   type ScanArtifactFileRow,
   type ScanArtifactMetadata,
 } from "./types";

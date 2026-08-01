@@ -148,6 +148,27 @@ afterEach(() => {
   dbMock.recordScanEvent.mockClear();
 });
 
+// Minimal in-memory R2 stand-in: writeScanArtifacts reads every object back and
+// checks its byte size + sha256, so the stub has to return exactly what it stored.
+function memoryBucket() {
+  const objects = new Map();
+  return {
+    async put(key, body) {
+      objects.set(key, body);
+      return {};
+    },
+    async get(key) {
+      const body = objects.get(key);
+      if (body === undefined) return null;
+      return {
+        async arrayBuffer() {
+          return new TextEncoder().encode(body).buffer;
+        },
+      };
+    },
+  };
+}
+
 describe("resolveBaseline", () => {
   test("acquires the staged artifact, then the baseline it is threaded into", async () => {
     const adapter = makeAdapter();
@@ -724,6 +745,68 @@ describe("persistResults", () => {
     expect(persistArg.findings).toEqual(findings.ruleFindings);
     expect(persistArg.aiFindingRecords).toEqual(mergedAiFindings.records);
     expect(persistArg.riskSummary.artifactRisk).toBe("critical");
+  });
+
+  test("embeds the FULL diff in summary_json on the degraded (no-R2) path", async () => {
+    const adapter = makeAdapter();
+    const diff = computeDiff(resolved);
+    const findings = runDeterministicFindings(adapter, resolved, diff);
+
+    await persistResults({
+      db: {},
+      session: { userId: "user-1" },
+      adapter,
+      adapterInput: { stageId: "stage-1" },
+      identity: { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" },
+      resolved,
+      diff,
+      findings,
+      aiFindings: disabledAi,
+      riskSummary: scoreRisk(findings.annotatedFindings, disabledAi),
+      releaseConsistency: noneConsistency,
+    });
+
+    const persistArg = dbMock.persistScan.mock.calls[0][1];
+    // D1 is the only copy here, and the artifact backfill reconstructs a
+    // digest-identical report.json from this embed, so it must stay complete.
+    expect(persistArg.summary.diff).toEqual(diff.fileDiff);
+    expect(persistArg.summary.diffStats).toMatchObject({ compacted: false, totalCount: 3 });
+    expect(persistArg.artifacts).toBeNull();
+  });
+
+  test("compacts the summary diff once R2 holds the authoritative copy", async () => {
+    const adapter = makeAdapter();
+    const diff = computeDiff(resolved);
+    const findings = runDeterministicFindings(adapter, resolved, diff);
+    // package.json + index.js are modified, added.js is added — no unchanged
+    // entry in this fixture, so pin the compaction by its shape instead.
+    expect(diff.fileDiff.some((entry) => entry.stagedSha256)).toBe(true);
+
+    await persistResults({
+      env: { ARTIFACTS: memoryBucket() },
+      db: {},
+      session: { userId: "user-1" },
+      adapter,
+      adapterInput: { stageId: "stage-1" },
+      identity: { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" },
+      resolved,
+      diff,
+      findings,
+      aiFindings: disabledAi,
+      riskSummary: scoreRisk(findings.annotatedFindings, disabledAi),
+      releaseConsistency: noneConsistency,
+    });
+
+    const persistArg = dbMock.persistScan.mock.calls[0][1];
+    expect(persistArg.artifacts).not.toBeNull();
+    expect(persistArg.summary.diffStats).toMatchObject({ compacted: true, totalCount: 3 });
+    for (const entry of persistArg.summary.diff) {
+      expect(entry).not.toHaveProperty("previousSha256");
+      expect(entry).not.toHaveProperty("stagedSha256");
+    }
+    // The full diff still reaches R2 and the report digest through the separate
+    // `diff` argument — only the D1 embed is reduced.
+    expect(persistArg.diff).toEqual(diff.fileDiff);
   });
 
   test("propagates a non-persisted outcome from persistScan", async () => {

@@ -24,7 +24,7 @@ Completed scans can be artifact-backed when these `scans` columns are set:
 - `file_samples_artifact_key`
 - `diff_artifact_key`
 
-D1 still keeps scan status/lifecycle fields, ownership, package/version metadata, decisions, compact list summaries (including `risk_summary_json` and the summary-embedded diff), and report digest/version. The per-row detail — `scan_files` and `scan_findings` — is **no longer duplicated into D1 for artifact-backed scans**: once the R2 write succeeds, `persistScan` skips those inserts entirely and the detail (file metadata, redacted samples, diff, deterministic findings) is read back from `files.json` / `diff.json` / `report.json`. The detail rows are written only on the degraded path (no `ARTIFACTS` binding, so the R2 write was skipped and the scan falls back to D1). Legacy rows written before this change keep their historical `scan_files` / `scan_findings` content; the read path prefers R2 for any scan that carries artifact metadata.
+D1 still keeps scan status/lifecycle fields, ownership, package/version metadata, decisions, compact list summaries (including `risk_summary_json`, `finding_profile_json`, and the [compacted summary diff](#summary-diff-compaction)), and report digest/version. The per-row detail — `scan_files` and `scan_findings` — is **no longer duplicated into D1 for artifact-backed scans**: once the R2 write succeeds, `persistScan` skips those inserts entirely and the detail (file metadata, redacted samples, diff, deterministic findings) is read back from `files.json` / `diff.json` / `report.json`. The detail rows are written only on the degraded path (no `ARTIFACTS` binding, so the R2 write was skipped and the scan falls back to D1). Legacy rows written before this change keep their historical `scan_files` / `scan_findings` content; the read path prefers R2 for any scan that carries artifact metadata.
 
 ## Object Layout
 
@@ -61,6 +61,21 @@ Both the detail read and the file-body read shadow-read R2 when all artifact met
 - each object's size + digest against the manifest descriptor, and the file/diff payload shape.
 
 Any mismatch, missing object, invalid payload, or R2 read failure logs `scan.artifacts.fallback_read` and returns the D1-backed detail instead. For scans created before D1 detail compaction (or written on the degraded path), that fallback still returns the D1 `scan_files` / `scan_findings` rows. For compacted artifact-backed scans the detail rows do not exist in D1, so a fallback read returns the scan metadata, risk summary, and the summary-embedded diff but no file samples or findings — the read degrades gracefully rather than failing. This is the single-source-of-truth tradeoff the compaction accepts; `SCAN_ARTIFACT_READS_DISABLED` is not a recovery path for these rows because the data is no longer in D1.
+
+When the artifact read succeeds, the scan-detail response also carries the R2-sourced diff as its own `diff` field. That is the complete file diff (from `report.json` / `diff.json`); readers prefer it and fall back to the summary embed, which is the whole diff on legacy/degraded rows and the compacted release delta on artifact-backed ones.
+
+## Summary Diff Compaction
+
+`scans.summary_json` used to embed the whole file diff — one entry per file including every unchanged one, up to the parser's file cap, each carrying two sha256 hex digests. For an artifact-backed scan that is duplication of large immutable data in the metadata store, but it is not dead: it is the last-resort copy behind the fallback read above. So it is compacted rather than dropped (`server/lib/scan/summary-diff.ts`):
+
+- `summary.diff` keeps only the release delta — `added` / `removed` / `modified` entries — with `path`, `status`, the two optional sizes, and `flags`. `previousSha256` / `stagedSha256` are dropped: no reader consumes them off a diff entry, and `files.json` / `scan_files` already carry per-file hashes.
+- Retained entries are capped at `SUMMARY_DIFF_MAX_ENTRIES`. The cap matters for the _first_ scan of a package, which has no baseline and therefore reads every file as `added`.
+- `summary.diffStats` records the shape of the real diff — per-status counts, `totalCount`, `changedCount`, and `omittedChangedCount` — so a reader can describe the diff without holding it. Rows written before the field have no `diffStats`; `normalizeSummaryDiffStats` reads that as null.
+- `summary.diff` stays a `DiffEntry[]`, so every existing reader keeps working against a shorter array rather than needing a new shape.
+
+The **degraded path keeps the full embed.** When there is no `ARTIFACTS` binding the R2 write is skipped, D1 is the only copy, and the [artifact backfill](#backfill) reconstructs a digest-identical `report.json` from that embed — a compacted embed would make those rows permanently un-backfillable.
+
+Artifact-backed rows also stop embedding `summary.findingAnnotations`. Those entries are keyed by `scan_findings.id`, and an artifact-backed scan never writes those rows, so the ids matched nothing; the read path re-derives annotations from `report.json`'s index-based `findingAnnotations`. The degraded path still writes them, because its reader joins on exactly those ids.
 
 ## Backfill
 
@@ -103,9 +118,28 @@ R2 artifacts are torn down whenever the D1 rows that point at them are deleted, 
 - **Gate re-run discard** (`discardGateScans`) deletes the per-scan prefixes `orgs/{organizationId}/scans/{scanId}/` for the scans it discards, since a prior attempt may have completed some packages and written their artifacts.
 - **Failed-scan deletion** (`DELETE /api/v1/scans/:id`) conditionally deletes only an organization-owned `failed` row, cascades its D1 detail/events, records an organization audit event, and sweeps the per-scan R2 prefix.
 
-Deletion uses the raw `ARTIFACTS` binding, not the read-gated bucket: `SCAN_ARTIFACT_READS_DISABLED` is a read kill-switch and must not strand objects. The delete prefixes intentionally stop before the `v{N}` segment so a cleanup removes every storage version. Cleanup is fail-soft — a delete error is logged (`scan.artifacts.delete_failed`) but never thrown, so it cannot abort the surrounding D1 teardown; a leaked object is recoverable by re-running the prefix sweep. A successful sweep logs `scan.artifacts.deleted` with the object count. Pending/running scans that are discarded before completion (`discardScanAttempt`, `deletePendingScanJob`) carry no artifacts, so they skip R2 cleanup.
+- **Time-based retention** (the scheduled sweep below) sweeps the per-scan prefix _before_ deleting the row, and skips the row when the sweep fails.
 
-Time-based retention (a TTL sweep that deletes old scans on a schedule) is not yet implemented and is tracked separately.
+Deletion uses the raw `ARTIFACTS` binding, not the read-gated bucket: `SCAN_ARTIFACT_READS_DISABLED` is a read kill-switch and must not strand objects. The delete prefixes intentionally stop before the `v{N}` segment so a cleanup removes every storage version. Cleanup is fail-soft — a delete error is logged (`scan.artifacts.delete_failed`) but never thrown, so it cannot abort the surrounding D1 teardown; a leaked object is recoverable by re-running the prefix sweep. `deleteScanArtifacts` / `deleteOrganizationArtifacts` return `{ ok, objectsDeleted }` so a caller that must not strand objects can branch on the outcome without the sweep ever throwing. A successful sweep logs `scan.artifacts.deleted` with the object count. Pending/running scans that are discarded before completion (`discardScanAttempt`, `deletePendingScanJob`) carry no artifacts, so they skip R2 cleanup.
+
+## Time-Based Retention
+
+`server/lib/retention.ts` runs on every scheduled tick, after the discovery sweep. Three of its sweeps are unconditional storage hygiene — audit events past `AUDIT_LOG_RETENTION_DAYS` (see [`audit-log.md`](./audit-log.md)), expired Better Auth `session` rows, and expired `verification` tokens. The fourth deletes reviews, so it is **off unless an operator opts in**:
+
+| Setting               | Default         | Meaning                                                                         |
+| --------------------- | --------------- | ------------------------------------------------------------------------------- |
+| `SCAN_RETENTION_DAYS` | unset (**off**) | Delete scans created more than N days ago. Must be ≥ `SCAN_RETENTION_MIN_DAYS`. |
+
+Unset, unparseable, non-positive, or below the floor all mean "delete nothing" and log `retention.scans.misconfigured`. Scan deletion is irreversible and the review history is what release memory reads, so a mistyped window fails safe instead of emptying the table.
+
+When enabled, each tick deletes at most `SCAN_RETENTION_MAX_PER_TICK` scans (oldest first, via the `scans_created_idx` index); a backlog drains across ticks. Per scan the sweep:
+
+1. Sweeps the per-scan R2 prefix. **If the sweep fails, the D1 row is left in place** (counted as `deferred`) and the next tick retries. Deleting the row first would leave objects that no row points at — the deletion-lifecycle rule above, inverted.
+2. Deletes `scan_events`, `scan_findings`, and `scan_files` explicitly and only then the organization-scoped `scans` row, so redacted evidence goes before the metadata describing it rather than relying on cascade ordering.
+
+The sweep **requires the `ARTIFACTS` binding**: without it there is no way to reach a scan's objects, so it logs `retention.scans.skipped` and deletes nothing. Every sweep is bounded (LIMIT + iterate with a per-tick batch cap) and independently wrapped, so one failure neither stops the others nor throws into the scheduled handler.
+
+Deleting a `publish`-decided scan also removes it from release memory: a later release of the same package will find no prior approved scan and score as it did before release memory existed. That is inherent to a retention window, not a regression.
 
 ## Rollback
 

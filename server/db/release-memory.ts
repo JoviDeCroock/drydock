@@ -1,6 +1,7 @@
 import { and, desc, eq, ne } from "drizzle-orm";
 import { loadScanArtifacts } from "../lib/scan/artifacts";
-import type { ProfileFindingInput } from "../lib/scan/release-memory";
+import { readPersistedFindingProfile, type ProfileFindingInput } from "../lib/scan/release-memory";
+import { emitOperationalEvent } from "../lib/platform/observability";
 import type { AppDb } from "./client";
 import { scanFindings, scans } from "./schema";
 
@@ -24,9 +25,13 @@ export interface PriorApprovedScanFindings {
  * findings. Organization scoping is mandatory: release memory must never leak
  * another organization's review history.
  *
- * Findings for artifact-backed scans live in the digest-verified R2 report.json
- * (persistScan stopped duplicating them into `scan_findings`), so pass the
- * artifact bucket to read those; legacy/degraded scans fall back to the D1 rows.
+ * Scans completed after `finding_profile_json` was added carry the profile on the
+ * row itself, which is all this lookup needs — that is the fast path and it costs
+ * one D1 read. Rows written before the column fall back to projecting the
+ * profile out of the prior scan's artifacts: for artifact-backed scans those
+ * findings live in the digest-verified R2 report.json (persistScan stopped
+ * duplicating them into `scan_findings`), so pass the artifact bucket to read
+ * those; legacy/degraded scans fall back further to the D1 rows.
  */
 export async function getPriorApprovedScanFindings(
   db: AppDb,
@@ -39,6 +44,7 @@ export async function getPriorApprovedScanFindings(
       organizationId: scans.organizationId,
       stagedVersion: scans.stagedVersion,
       decidedAt: scans.decidedAt,
+      findingProfileJson: scans.findingProfileJson,
       reportDigest: scans.reportDigest,
       artifactStorageVersion: scans.artifactStorageVersion,
       artifactManifestKey: scans.artifactManifestKey,
@@ -63,6 +69,29 @@ export async function getPriorApprovedScanFindings(
 
   const prior = rows[0];
   if (!prior) return null;
+
+  // Fast path: the profile the prior scan recorded at completion. Every scan used
+  // to download and digest-verify the prior release's ENTIRE artifact bundle
+  // (report.json + files.json + diff.json) just to project (ruleId, severity,
+  // file) out of it — three fields per finding, off tens of MiB of evidence.
+  const persistedProfile = readPersistedFindingProfile(prior.findingProfileJson);
+  if (persistedProfile) {
+    return {
+      scanId: prior.id,
+      stagedVersion: prior.stagedVersion,
+      decidedAt: prior.decidedAt,
+      findings: persistedProfile,
+    };
+  }
+  if (prior.findingProfileJson !== null) {
+    // A stored-but-unreadable profile is a bug or a shape change, not a normal
+    // legacy row: surface it, then fall through to the artifact projection rather
+    // than trusting a blob we could not parse.
+    emitOperationalEvent("warn", "scan.release_memory.profile_unreadable", {
+      scanId: prior.id,
+      organizationId: prior.organizationId,
+    });
+  }
 
   const artifactDetail = await loadScanArtifacts(artifactBucket, prior);
   // An artifact-backed prior keeps NO scan_findings rows in D1, so if its report

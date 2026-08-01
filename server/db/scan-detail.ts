@@ -6,7 +6,7 @@
  * hide that split — callers ask for a scan detail and get the same shape either
  * way, with artifact rows merged over whatever D1 still holds.
  */
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, getTableColumns } from "drizzle-orm";
 import {
   annotateFindingsWithDiffStatus,
   type FindingDiffAnnotation,
@@ -22,6 +22,14 @@ import type { AppDb } from "./client";
 import { redactScanEventForClient } from "./events";
 import { computeRiskSummary, readPersistedRiskBreakdown } from "./scan-risk";
 import { scanEvents, scanFiles, scanFindings, scans } from "./schema";
+
+// `finding_profile_json` is an internal release-memory lookup cache, up to 256
+// KiB. Ordinary detail/status/file/compare reads never consume it, so omit it in
+// SQL rather than reading and deserializing the blob only to strip it from the
+// response afterward. The release-memory query selects it explicitly.
+const { findingProfileJson: _findingProfileJsonColumn, ...scanReadColumns } =
+  getTableColumns(scans);
+type ScanReadRow = Omit<typeof scans.$inferSelect, "findingProfileJson">;
 
 /**
  * How much of the file table a `getScan` caller needs:
@@ -45,7 +53,7 @@ export async function getScan(
 ) {
   const [scanRows, files, findings, events] = await Promise.all([
     db
-      .select()
+      .select(scanReadColumns)
       .from(scans)
       .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
       .limit(1),
@@ -82,6 +90,13 @@ export async function getScan(
     scan,
     files: responseFiles,
     findings: annotatedFindings,
+    // The scan's file diff, sourced from R2 for artifact-backed scans. It used to
+    // reach readers only through the full copy embedded in `summary_json`; that
+    // embed is now compacted to the release delta for artifact-backed scans, so
+    // the authoritative full diff travels here instead. Null for legacy/degraded
+    // rows (their `summary.diff` is still the full copy) and for an artifact read
+    // that failed closed — both cases leave readers on the summary embed.
+    diff: artifactDetail?.diff ?? null,
     riskSummary:
       scan.status === "complete"
         ? computeRiskSummary(
@@ -103,7 +118,7 @@ export async function getScanFile(
 ) {
   const [scanRows, fileRows] = await Promise.all([
     db
-      .select()
+      .select(scanReadColumns)
       .from(scans)
       .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
       .limit(1),
@@ -127,11 +142,11 @@ export async function getScanFile(
  * Single indexed row read for the poll path (`GET /api/v1/scans/:id/status`)
  * and for routes that only need the scan's identity.
  *
- * Deliberately a column projection rather than `select()`: the three JSON blobs
- * on the row (`summary_json`, `ai_json`, `error_json`) carry the whole file diff
- * and the AI review envelope, so a completed scan's row is large — and the poll
- * that observes the terminal transition would otherwise ship all of it, only
- * for the client to immediately fetch the full detail anyway.
+ * Deliberately a column projection rather than `select()`: the JSON blobs on the
+ * row (`summary_json`, `ai_json`, `error_json`, and `finding_profile_json`) carry
+ * compacted diff/review data that can still make a completed scan's row large —
+ * and the poll that observes the terminal transition would otherwise ship all
+ * of it, only for the client to immediately fetch the full detail anyway.
  *
  * The projection is an allowlist, so it also drops the R2 artifact keys and the
  * public-share columns. That is safe for today's callers — the poll only holds
@@ -183,7 +198,7 @@ export async function getScanCompareData(
 ) {
   const [scanRows, files, findings] = await Promise.all([
     db
-      .select()
+      .select(scanReadColumns)
       .from(scans)
       .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
       .limit(1),
@@ -201,7 +216,7 @@ export async function getScanCompareData(
 }
 
 function needsArtifactMetadataFallback(
-  scan: typeof scans.$inferSelect,
+  scan: ScanReadRow,
   files: Array<typeof scanFiles.$inferSelect>,
   findings: Array<typeof scanFindings.$inferSelect>,
 ): boolean {
@@ -210,7 +225,7 @@ function needsArtifactMetadataFallback(
   return typeof scan.findingCount === "number" && findings.length < scan.findingCount;
 }
 
-function hasArtifactReferences(scan: typeof scans.$inferSelect): boolean {
+function hasArtifactReferences(scan: ScanReadRow): boolean {
   return (
     scan.artifactStorageVersion !== null &&
     scan.artifactManifestKey !== null &&
