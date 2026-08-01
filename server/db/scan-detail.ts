@@ -7,7 +7,7 @@
  * cannot be read degrades to metadata only (empty files/findings) rather than
  * failing: the risk summary and the summary-embedded diff still render.
  */
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, getTableColumns } from "drizzle-orm";
 import { annotateFindingsWithDiffStatus } from "../lib/review";
 import {
   loadScanArtifactFile,
@@ -18,6 +18,11 @@ import type { AppDb } from "./client";
 import { redactScanEventForClient } from "./events";
 import { computeRiskSummary, readPersistedRiskBreakdown } from "./scan-risk";
 import { scanEvents, scans } from "./schema";
+
+// The release-memory profile is internal maintenance data and can be large.
+// Ordinary detail/file/compare reads do not need it, so omit it in SQL.
+const { findingProfileJson: _findingProfileJsonColumn, ...scanReadColumns } =
+  getTableColumns(scans);
 
 /**
  * How much of the scan body a `getScan` caller needs:
@@ -46,7 +51,7 @@ export async function getScan(
 ) {
   const [scanRows, events] = await Promise.all([
     db
-      .select()
+      .select(scanReadColumns)
       .from(scans)
       .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
       .limit(1),
@@ -80,6 +85,9 @@ export async function getScan(
     scan,
     files: responseFiles,
     findings: annotatedFindings,
+    // The authoritative full diff lives in R2; summary_json may contain only
+    // the compact release delta for artifact-backed scans.
+    diff: artifactDetail?.diff ?? null,
     riskSummary:
       scan.status === "complete"
         ? computeRiskSummary(
@@ -100,7 +108,7 @@ export async function getScanFile(
   artifactBucket?: R2Bucket,
 ) {
   const [scan] = await db
-    .select()
+    .select(scanReadColumns)
     .from(scans)
     .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
     .limit(1);
@@ -167,7 +175,7 @@ export async function getScanCompareData(
   artifactBucket?: R2Bucket,
 ) {
   const [scan] = await db
-    .select()
+    .select(scanReadColumns)
     .from(scans)
     .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
     .limit(1);

@@ -79,7 +79,11 @@ export function buildReportExport(detail: ScanDetail) {
     // the field (or persisted a malformed blob) export null.
     releaseConsistency: exportReleaseConsistency(summary.releaseConsistency),
     packageJsonDiff: summary.packageJsonDiff ?? null,
-    diff: summary.diff ?? null,
+    // Prefer the artifact-sourced diff: for artifact-backed scans the
+    // summary-embedded copy is compacted to the release delta, while R2's
+    // report.json/diff.json keep the complete file diff the export promises.
+    // Legacy/degraded rows carry no artifact diff and their embed is still full.
+    diff: detail.diff ?? summary.diff ?? null,
     // Deterministic findings only. A completed AI review's findings are carried
     // by `aiReview.findings` above; including the persisted `source: "ai"` rows
     // here too would double-count them in this array and break the invariant

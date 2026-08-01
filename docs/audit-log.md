@@ -61,11 +61,25 @@ still applies to anything the summarizer reads.
 ## Retention
 
 Flat 90-day window (`AUDIT_LOG_RETENTION_DAYS`). `pruneAuditEventsOlderThan`
-(`server/db/audit-log.ts`) runs each scheduled tick from the Worker's `scheduled`
-handler, after the discovery sweep. Because lifecycle/discovery churn is no
-longer written, retention is a single age sweep across all rows rather than a
-type-restricted one. The sweep's bare `createdAt` predicate is backed by the
-`scan_events_created_idx` index, so it never scans the whole table.
+(`server/db/audit-log.ts`) runs each scheduled tick as part of the retention pass
+(`server/lib/retention.ts`), after the discovery sweep. Because
+lifecycle/discovery churn is no longer written, retention is a single age sweep
+across all rows rather than a type-restricted one. The sweep's bare `createdAt`
+predicate is backed by the `scan_events_created_idx` index, so it never scans the
+whole table.
+
+The sweep is bounded for real: it deletes at most `batchSize` rows per statement
+(selected through that index) and stops after `maxBatches`, reporting
+`moreRemaining` so the next tick picks up a backlog. It was previously described
+as bounded but issued one unbounded `DELETE`, whose size was whatever the table
+had accumulated — on a scheduled invocation with a fixed CPU budget that could be
+cut off mid-flight. Failures log `retention.audit_events.prune_failed` and never
+stop the other sweeps in the pass.
+
+Rows also leave through cascade: deleting an organization or a scan removes its
+events, including via the opt-in scan retention window described in
+[`artifact-storage.md`](./artifact-storage.md#time-based-retention). That sweep
+deletes a scan's `scan_events` explicitly, before the scan row itself.
 
 The same tick also prunes expired Better Auth rows (`pruneExpiredAuthRows`,
 `server/db/auth-retention.ts`), which the Drizzle adapter never removes on its
@@ -91,4 +105,5 @@ to the originating scan when present.
 
 `test/workers/audit-events-route.test.ts` covers visible-only filtering, metadata
 non-leakage, org scoping, cursor pagination, and the member-403 / admin-200 role
-gate.
+gate. `test/workers/retention-sweep.test.ts` covers the bounded prune (batch
+counts, the batch cap, and that recent rows survive).

@@ -321,6 +321,15 @@ describe("release memory (prior-release consistency)", () => {
       decision: "publish",
     });
 
+    // Simulate a row written before `finding_profile_json` existed: the fast path
+    // is unavailable, so this exercises the artifact projection and its
+    // fail-closed behavior. (A row that DOES carry the profile resolves without
+    // any bucket at all — asserted separately below.)
+    await db
+      .update(schema.scans)
+      .set({ findingProfileJson: null })
+      .where(eq(schema.scans.id, scanId));
+
     // Prior is artifact-backed (its findings live only in R2, never in D1). With
     // no artifact bucket the report can't be read, so the profile is unknown —
     // the helper must return null (caller degrades to "none") rather than

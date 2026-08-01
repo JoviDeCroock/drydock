@@ -1,6 +1,7 @@
 import { and, desc, eq, ne } from "drizzle-orm";
 import { loadScanArtifacts } from "../lib/scan/artifacts";
-import type { ProfileFindingInput } from "../lib/scan/release-memory";
+import { emitOperationalEvent } from "../lib/platform/observability";
+import { readPersistedFindingProfile, type ProfileFindingInput } from "../lib/scan/release-memory";
 import type { AppDb } from "./client";
 import { scans } from "./schema";
 
@@ -24,9 +25,9 @@ export interface PriorApprovedScanFindings {
  * findings. Organization scoping is mandatory: release memory must never leak
  * another organization's review history.
  *
- * Findings live in the digest-verified R2 report.json, so the artifact bucket is
- * required to build a profile at all; without a readable report this returns
- * null and the caller degrades to "none".
+ * New scans cache the small deterministic profile on the metadata row. Legacy
+ * rows fall back to the digest-verified R2 report; an unreadable report returns
+ * null so the caller degrades to "none" rather than inventing an empty profile.
  */
 export async function getPriorApprovedScanFindings(
   db: AppDb,
@@ -39,6 +40,7 @@ export async function getPriorApprovedScanFindings(
       organizationId: scans.organizationId,
       stagedVersion: scans.stagedVersion,
       decidedAt: scans.decidedAt,
+      findingProfileJson: scans.findingProfileJson,
       reportDigest: scans.reportDigest,
       artifactStorageVersion: scans.artifactStorageVersion,
       artifactManifestKey: scans.artifactManifestKey,
@@ -63,6 +65,22 @@ export async function getPriorApprovedScanFindings(
 
   const prior = rows[0];
   if (!prior) return null;
+
+  const persistedProfile = readPersistedFindingProfile(prior.findingProfileJson);
+  if (persistedProfile) {
+    return {
+      scanId: prior.id,
+      stagedVersion: prior.stagedVersion,
+      decidedAt: prior.decidedAt,
+      findings: persistedProfile,
+    };
+  }
+  if (prior.findingProfileJson !== null) {
+    emitOperationalEvent("warn", "scan.release_memory.profile_unreadable", {
+      scanId: prior.id,
+      organizationId: prior.organizationId,
+    });
+  }
 
   const artifactDetail = await loadScanArtifacts(artifactBucket, prior);
   // The prior's findings live only in its report.json, so a report that could

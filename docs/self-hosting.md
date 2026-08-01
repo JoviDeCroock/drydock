@@ -135,6 +135,14 @@ Required non-secret vars:
 - `AI_CACHE_AFFINITY` — stable prefix-cache affinity string for Workers AI
 - `PNPM_VERSION` — used by the runtime where npm tooling parity matters
 
+Optional retention:
+
+- `SCAN_RETENTION_DAYS` — delete scans (plus their D1 detail/events and R2
+  artifacts) older than N days on the scheduled tick. **Unset by default, which
+  means nothing is deleted**; scan deletion is irreversible, so enabling it is an
+  explicit decision and a value below the floor is refused. See
+  [`artifact-storage.md`](artifact-storage.md#time-based-retention).
+
 Optional integrations:
 
 - Email: `SEND_EMAIL` binding plus `EMAIL_FROM_ADDRESS` and `EMAIL_FROM_NAME`
@@ -248,6 +256,10 @@ See [`artifact-storage.md`](artifact-storage.md) for object layout and rollback.
 
 ## Operational notes
 
+- The scheduled tick also runs a retention pass: the audit-log window, expired
+  Better Auth `session` / `verification` rows, and — only when
+  `SCAN_RETENTION_DAYS` is set — time-based scan deletion. Every sweep is bounded
+  and independently wrapped; watch `retention.*` events.
 - Do not retain raw tarballs by default.
 - Keep organization-scoped npm tokens narrowly scoped and rotated.
 - Treat all package contents as sensitive, even after redaction.

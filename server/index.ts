@@ -1,8 +1,7 @@
 import { Hono } from "hono";
 import { createDb } from "./db/client";
-import { AUDIT_LOG_RETENTION_DAYS, pruneAuditEventsOlderThan } from "./db/audit-log";
-import { pruneExpiredAuthRows } from "./db/auth-retention";
 import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
+import { runRetentionSweep } from "./lib/retention";
 import { getOrganizationOwnerUserId } from "./db/organizations";
 import {
   RateLimitError,
@@ -509,44 +508,6 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
   });
 }
 
-// Flat-window retention for the organization audit log. Runs each tick; a
-// bounded DELETE keeps the sweep cheap. Never let pruning failures abort the
-// discovery cron.
-async function pruneStaleAuditEvents(env: Cloudflare.Env) {
-  const cutoff = new Date(Date.now() - AUDIT_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000);
-  try {
-    await pruneAuditEventsOlderThan(createDb(env.DB), cutoff);
-    emitOperationalEvent("info", "audit_events.pruned", {
-      retentionDays: AUDIT_LOG_RETENTION_DAYS,
-      cutoff: cutoff.toISOString(),
-    });
-  } catch (err) {
-    emitOperationalEvent("error", "audit_events.prune_failed", {
-      error: describeOperationalError(err),
-    });
-  }
-}
-
-// Better Auth never removes its own expired rows, so `session` grows with every
-// sign-in and holds each dead session's IP address and user agent forever. Sweep
-// them on the same tick as the audit log, and on the same terms: a prune failure
-// is logged, never thrown, so it can't take the cron down with it.
-async function pruneStaleAuthRows(env: Cloudflare.Env) {
-  try {
-    const pruned = await pruneExpiredAuthRows(createDb(env.DB));
-    if (pruned.sessions > 0 || pruned.verifications > 0) {
-      emitOperationalEvent("info", "auth_rows.pruned", {
-        sessions: pruned.sessions,
-        verifications: pruned.verifications,
-      });
-    }
-  } catch (err) {
-    emitOperationalEvent("error", "auth_rows.prune_failed", {
-      error: describeOperationalError(err),
-    });
-  }
-}
-
 // Only the windows the native Rate Limiting binding cannot express (the hourly
 // and 15-minute budgets on human-initiated actions) still write D1 buckets, so
 // this sweep is small. It used to run on whichever request happened to cross a
@@ -575,8 +536,18 @@ export default {
         error: describeOperationalError(err),
       });
     }
-    await pruneStaleAuditEvents(env);
-    await pruneStaleAuthRows(env);
+    // Storage hygiene: audit-log window, expired auth sessions/verification
+    // tokens, and — only when SCAN_RETENTION_DAYS is set — time-based scan
+    // retention. Every sweep inside is individually wrapped and bounded; the
+    // outer guard is for the setup around them, so a scheduled invocation can
+    // never end on an uncaught exception.
+    try {
+      await runRetentionSweep(env);
+    } catch (err) {
+      emitOperationalEvent("error", "retention.failed", {
+        error: describeOperationalError(err),
+      });
+    }
     await pruneStaleRateLimitBuckets(env);
   },
   async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {

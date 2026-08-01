@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, lt, or } from "drizzle-orm";
 import type { AppDb } from "./client";
+import { runBoundedSweep, type BoundedSweepOptions, type BoundedSweepResult } from "./retention";
 import { scanEvents, user } from "./schema";
 import { AUDIT_VISIBLE_TYPES } from "../lib/auth/audit-events";
 
@@ -93,8 +94,36 @@ export async function listOrganizationAuditEvents(
   return { events: page, nextCursor };
 }
 
-// Delete audit events recorded before `cutoff`. The only delete path for the
-// table besides org/scan cascade, and it is a flat age sweep.
-export async function pruneAuditEventsOlderThan(db: AppDb, cutoff: Date): Promise<void> {
-  await db.delete(scanEvents).where(lt(scanEvents.createdAt, cutoff));
+/**
+ * Delete audit events recorded before `cutoff`. The only delete path for the
+ * table besides org/scan cascade, and it is a flat age sweep.
+ *
+ * Bounded for real: the sweep runs on a scheduled invocation with a fixed CPU
+ * budget, and this used to be a single unbounded DELETE. On the first tick after
+ * a retention window is reached — or after any backlog — that statement's size is
+ * whatever the table happened to accumulate, so it could exceed the tick and be
+ * cut off mid-flight. Each batch deletes at most `batchSize` rows, selected
+ * through the `scan_events_created_idx` index, and the sweep stops after
+ * `maxBatches` and reports whether more remain for the next tick.
+ */
+export async function pruneAuditEventsOlderThan(
+  db: AppDb,
+  cutoff: Date,
+  options: BoundedSweepOptions = {},
+): Promise<BoundedSweepResult> {
+  return runBoundedSweep(options, (limit) =>
+    db
+      .delete(scanEvents)
+      .where(
+        inArray(
+          scanEvents.id,
+          db
+            .select({ id: scanEvents.id })
+            .from(scanEvents)
+            .where(lt(scanEvents.createdAt, cutoff))
+            .limit(limit),
+        ),
+      )
+      .returning({ id: scanEvents.id }),
+  );
 }

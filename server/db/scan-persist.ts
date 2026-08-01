@@ -21,6 +21,7 @@ import {
 } from "../lib/review";
 import type { ScanRiskBreakdown } from "../lib/review/risk";
 import type { ScanArtifactMetadata } from "../lib/scan/artifacts";
+import { buildPersistedFindingProfile } from "../lib/scan/release-memory";
 import type { AppDb } from "./client";
 import { NON_TERMINAL_STATUSES } from "./scan-jobs";
 import {
@@ -89,6 +90,9 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     codePatternSet: input.codePatternSet,
   });
   const isComplete = input.status === "complete";
+  // Release memory is deterministic-only: advisory AI findings must never
+  // affect the profile used to compare a later release.
+  const findingProfile = isComplete ? buildPersistedFindingProfile(input.findings) : null;
   const changedFileCount = isComplete ? countChangedFileEntries(input.diff) : null;
   const findingCount = isComplete ? findingRows.length : null;
   const riskSummary: ScanRiskBreakdown | null = isComplete
@@ -113,6 +117,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     changedFileCount,
     findingCount,
     riskSummaryJson: riskSummary,
+    findingProfileJson: findingProfile,
     reportVersion: input.report?.version ?? null,
     reportDigest: input.report?.digest ?? null,
     artifactStorageVersion: input.artifacts?.artifactStorageVersion ?? null,
@@ -152,6 +157,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
           changedFileCount: scanValues.changedFileCount,
           findingCount: scanValues.findingCount,
           riskSummaryJson: scanValues.riskSummaryJson,
+          findingProfileJson: scanValues.findingProfileJson,
           reportVersion: scanValues.reportVersion,
           artifactStorageVersion: scanValues.artifactStorageVersion,
           artifactManifestKey: scanValues.artifactManifestKey,

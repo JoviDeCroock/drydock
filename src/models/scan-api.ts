@@ -6,6 +6,7 @@
  * polling and selection state.
  */
 import type {
+  DiffEntry,
   FileRecord,
   FindingDiffAnnotation,
   FindingDiffStatus,
@@ -102,6 +103,13 @@ export interface PersistedScanDetail {
     startedAt?: string | number | Date | null;
     completedAt?: string | number | Date | null;
   };
+  /**
+   * The scan's file diff as the server read it, complete for artifact-backed
+   * scans. Null for legacy/degraded rows and for an artifact read that failed
+   * closed; readers then fall back to `scan.summaryJson.diff`, which is the full
+   * copy on those rows and the compacted release delta on artifact-backed ones.
+   */
+  diff?: DiffEntry[] | null;
   riskSummary?: ScanRiskSummary | null;
   files: Array<{
     path: string;
