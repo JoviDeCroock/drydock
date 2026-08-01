@@ -26,13 +26,7 @@ import {
 } from "../lib/auth/active-organization";
 import { backfillScanArtifactsBatch } from "../lib/scan/artifact-backfill";
 import { deleteScanArtifacts, scanArtifactReadBucket } from "../lib/scan/artifacts";
-import {
-  computeCompareMetadataCacheKey,
-  loadCompare,
-  readCompareMetadataCache,
-  stripTextSamples,
-  writeCompareMetadataCache,
-} from "../lib/compare-cache";
+import { loadCompare, stripTextSamples } from "../lib/compare-cache";
 import { rateLimitResponse } from "../lib/platform/http";
 import {
   allowInsecureLocalRegistry,
@@ -40,12 +34,8 @@ import {
   getOrganizationNpmToken,
 } from "../lib/ecosystems/npm/connection";
 import { isPublishedTarballUrlAllowed } from "../lib/ecosystems/npm/published-tarball";
-import {
-  compareSemver,
-  fetchPackageMetadata,
-  pickPreviousVersion,
-  type RegistryMetadata,
-} from "../lib/ecosystems/npm/registry";
+import { compareSemver, pickPreviousVersion } from "../lib/ecosystems/npm/registry";
+import { fetchPackageMetadataCached } from "../lib/ecosystems/npm/registry-cache";
 import { annotateFindingsWithDiffStatus, createPackageDiff, type FileRecord } from "../lib/review";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import { parseScanInput } from "../lib/scan/input";
@@ -418,7 +408,9 @@ scansRoutes.get("/:id/versions", async (c) => {
   }
 
   const registryUrl = connection?.registryUrl || c.env.NPM_REGISTRY || "https://registry.npmjs.org";
-  const metadata = await fetchPackageMetadataCached(c, {
+  // Full packument: this response renders per-version publish dates, which
+  // only the full document carries.
+  const metadata = await fetchPackageMetadataCached(c.env, c.executionCtx, {
     packageName: scan.packageName,
     registryUrl,
     cacheScope: `org:${organizationId}`,
@@ -556,11 +548,13 @@ async function loadCompareArchive(
   }
 
   const registryUrl = connection?.registryUrl || c.env.NPM_REGISTRY || "https://registry.npmjs.org";
-  const metadata = await fetchPackageMetadataCached(c, {
+  const metadata = await fetchPackageMetadataCached(c.env, c.executionCtx, {
     packageName: ctx.packageName,
     registryUrl,
     cacheScope: `org:${ctx.organizationId}`,
     npmToken: connection?.token,
+    // Only the selected version's tarball URL is read here.
+    abbreviated: true,
   }).catch((err) => {
     emitOperationalEvent("warn", "registry.metadata_fetch_failed", {
       packageName: ctx.packageName,
@@ -587,27 +581,6 @@ async function loadCompareArchive(
   });
 
   return { cached } as const;
-}
-
-async function fetchPackageMetadataCached(
-  c: import("hono").Context<{ Bindings: Bindings; Variables: Variables }>,
-  input: {
-    packageName: string;
-    registryUrl: string;
-    cacheScope: string;
-    npmToken?: string;
-  },
-): Promise<RegistryMetadata> {
-  const key = await computeCompareMetadataCacheKey(input);
-  const cached = await readCompareMetadataCache(c.env, key);
-  if (cached) return cached;
-
-  const metadata = await fetchPackageMetadata(c.env, input.packageName, {
-    npmToken: input.npmToken,
-    npmRegistry: input.registryUrl,
-  });
-  await writeCompareMetadataCache(c.env, c.executionCtx, key, metadata);
-  return metadata;
 }
 
 function buildCompareFindingAnnotations(

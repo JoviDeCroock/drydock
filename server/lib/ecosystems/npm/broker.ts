@@ -3,7 +3,8 @@ import { type AppDb, createDb } from "../../../db/client";
 import { getNpmConnection } from "../../../db/npm-connections";
 import { allowInsecureLocalRegistry, decryptNpmToken } from "./connection";
 import { downloadPublishedTarball } from "./published-tarball";
-import { fetchPackageMetadata, type RegistryMetadata } from "./registry";
+import { fetchPackageMetadataCached } from "./registry-cache";
+import type { RegistryMetadata } from "./registry";
 import { downloadInSandbox, sandboxErrorDetail, type DownloadResult } from "../../sandbox";
 import { fetchStagedPublishDetails, type StagedPublishDetails } from "./staged-publishes";
 import type { AdapterBroker, AdapterContext, AdapterConnectionRef } from "../package-adapter";
@@ -44,9 +45,13 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
 
   async fetchPackageMetadata(name: string): Promise<RegistryMetadata | null> {
     const creds = await this.resolveCredentials();
-    return fetchPackageMetadata(this.env, name, {
+    return fetchPackageMetadataCached(this.env, this.ctx, {
+      packageName: name,
+      registryUrl: creds.registry,
+      cacheScope: `org:${this.ctx.props.organizationId}`,
       npmToken: creds.token,
-      npmRegistry: creds.registry,
+      // The pipeline reads tarball URLs and dist-tags only.
+      abbreviated: true,
     }).catch(() => null);
   }
 
@@ -135,9 +140,12 @@ class LocalNpmBroker implements NpmBroker {
 
   async fetchPackageMetadata(name: string): Promise<RegistryMetadata | null> {
     const creds = await this.resolve();
-    return fetchPackageMetadata(this.ctx.env, name, {
+    return fetchPackageMetadataCached(this.ctx.env, this.ctx.executionCtx, {
+      packageName: name,
+      registryUrl: creds.registry,
+      cacheScope: `org:${this.props.organizationId}`,
       npmToken: creds.token,
-      npmRegistry: creds.registry,
+      abbreviated: true,
     }).catch(() => null);
   }
 
