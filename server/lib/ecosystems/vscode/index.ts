@@ -4,7 +4,7 @@ import {
   redactFindings,
   summarizePackageJsonDiff,
 } from "../../review";
-import { BASELINE_TEXT_SAMPLE_LIMIT } from "../../scan/sample-retention";
+import { BASELINE_TEXT_SAMPLE_LIMIT } from "../../sample-retention";
 import type {
   AcquiredArtifact,
   BaselineInfo,

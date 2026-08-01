@@ -9,6 +9,7 @@ import {
 import { parsePersistedAiReview } from "../ai-review/contract";
 import { displayedAiResult, type AiReview } from "../ai-review/types";
 import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
+import { SCAN_FILE_SAMPLE_LIMIT } from "../sample-retention";
 import { sha256Hex, stableJson, utf8Size } from "../platform/stable-json";
 
 const SCAN_ARTIFACT_STORAGE_VERSION = 1;
@@ -23,8 +24,6 @@ const ARTIFACT_CONTENT_TYPE = "application/json; charset=utf-8";
 // than pinned to a hunk. Lives in `sample-retention.ts` next to the baseline
 // wire cap it is sized against; re-exported here because this is where the clip
 // is applied.
-import { SCAN_FILE_SAMPLE_LIMIT } from "./sample-retention";
-
 export { SCAN_FILE_SAMPLE_LIMIT };
 
 export interface ScanArtifactMetadata {
