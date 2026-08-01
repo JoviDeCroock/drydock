@@ -105,7 +105,7 @@ interface AdapterDescribeArgs<TInput> {
   previous: AcquiredArtifact | null;
 }
 
-interface AdapterPackageSummary {
+export interface AdapterPackageSummary {
   name: string | null;
   stagedVersion: string | null;
   stagedTag: string | null;

@@ -12,6 +12,9 @@ const {
   resolveBaseline,
   computeDiff,
   runDeterministicFindings,
+  summarizeResolvedArtifacts,
+  releaseResolvedArtifacts,
+  analyzeRelease,
   scoreRisk,
   mergeAiFindings,
   resolveReleaseConsistency,
@@ -204,6 +207,100 @@ describe("runDeterministicFindings", () => {
 
     expect(out.redactedPreviousFiles).toEqual([]);
     expect(out.redactedPreviousManifest).toBeNull();
+  });
+});
+
+describe("summarizeResolvedArtifacts", () => {
+  test("projects the package summary + counts so later phases need no raw artifact", () => {
+    const adapter = makeAdapter();
+
+    const facts = summarizeResolvedArtifacts(adapter, { stageId: "stage-1" }, resolved);
+
+    expect(facts).toEqual({
+      packageSummary: {
+        name: "pkg",
+        stagedVersion: "1.0.1",
+        stagedTag: "latest",
+        previousVersion: "1.0.0",
+      },
+      fileCount: 3,
+      previousFileCount: 2,
+      baseline: baselineInfo,
+      previousVersionAvailable: true,
+      baselineComparisonSkipped: false,
+    });
+    // Nothing in the facts carries file text: that is the whole point.
+    expect(JSON.stringify(facts)).not.toContain(NPM_TOKEN);
+    expect(JSON.stringify(facts)).not.toContain("export const value");
+  });
+});
+
+describe("analyzeRelease", () => {
+  function clonedResolved() {
+    return {
+      staged: {
+        artifact: {
+          files: stagedArtifact.files.map((file) => ({ ...file })),
+          manifest: { ...stagedArtifact.manifest },
+          suspiciousTarEntries: [{ kind: "duplicate", path: "index.js", detail: "dupe" }],
+        },
+        details: { stageId: "stage-1" },
+      },
+      baseline: {
+        artifact: {
+          files: baselineArtifact.files.map((file) => ({ ...file })),
+          manifest: { ...baselineArtifact.manifest },
+        },
+        baseline: baselineInfo,
+      },
+    };
+  }
+
+  test("runs findings on raw text, then releases both sides' unredacted files", async () => {
+    const acquired = clonedResolved();
+    // Captured inside runFindings: the arrays it is handed are the ones that get
+    // released afterwards, so the sample has to be read at call time.
+    let scannedStagedSample = null;
+    let scannedBaselineFileCount = null;
+    const base = makeAdapter();
+    const adapter = makeAdapter({
+      acquireStaged: vi.fn(async () => acquired.staged),
+      acquireBaseline: vi.fn(async () => acquired.baseline),
+      runFindings: vi.fn((args) => {
+        scannedStagedSample = args.staged.files.find((f) => f.path === "index.js").textSample;
+        scannedBaselineFileCount = args.baseline.files.length;
+        return base.runFindings(args);
+      }),
+    });
+    const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user-1" } };
+
+    const out = await analyzeRelease(adapter, ctx, { stageId: "stage-1" }, { dispose() {} });
+
+    // Order invariant: rules see the unredacted body, redaction happens after.
+    expect(scannedStagedSample).toContain(NPM_TOKEN);
+    expect(scannedBaselineFileCount).toBe(2);
+    expect(
+      out.findings.redactedStagedFiles.find((f) => f.path === "index.js").textSample,
+    ).toContain("[REDACTED_NPM_TOKEN]");
+
+    // Raw arrays are gone once findings have run: only the redacted copies and
+    // the metadata-only diff survive into report assembly.
+    expect(acquired.staged.artifact.files).toEqual([]);
+    expect(acquired.staged.artifact.suspiciousTarEntries).toBeUndefined();
+    expect(acquired.baseline.artifact.files).toEqual([]);
+    expect(out.findings.redactedStagedFiles).toHaveLength(3);
+    expect(out.findings.redactedPreviousFiles).toHaveLength(2);
+    expect(out.facts.fileCount).toBe(3);
+    expect(out.facts.previousFileCount).toBe(2);
+    expect(out.diff.fileDiff.length).toBe(3);
+  });
+
+  test("releaseResolvedArtifacts tolerates a scan with no baseline artifact", () => {
+    const acquired = clonedResolved();
+    acquired.baseline = { artifact: null, baseline: baselineInfo };
+
+    expect(() => releaseResolvedArtifacts(acquired)).not.toThrow();
+    expect(acquired.staged.artifact.files).toEqual([]);
   });
 });
 
@@ -414,9 +511,8 @@ describe("persistResults", () => {
       db: {},
       session: { userId: "user-1" },
       adapter,
-      adapterInput: { stageId: "stage-1" },
       identity,
-      resolved,
+      facts: summarizeResolvedArtifacts(adapter, { stageId: "stage-1" }, resolved),
       diff,
       findings,
       aiFindings: disabledAi,
@@ -470,9 +566,8 @@ describe("persistResults", () => {
       db: {},
       session: { userId: "user-1" },
       adapter,
-      adapterInput: { stageId: "stage-1" },
       identity: { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" },
-      resolved,
+      facts: summarizeResolvedArtifacts(adapter, { stageId: "stage-1" }, resolved),
       diff,
       findings,
       aiFindings: aiReview,
@@ -499,9 +594,8 @@ describe("persistResults", () => {
       db: {},
       session: { userId: "user-1" },
       adapter,
-      adapterInput: { stageId: "stage-1" },
       identity: { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" },
-      resolved,
+      facts: summarizeResolvedArtifacts(adapter, { stageId: "stage-1" }, resolved),
       diff,
       findings,
       aiFindings: disabledAi,

@@ -6,6 +6,7 @@ import type {
   AcquiredArtifact,
   AdapterBroker,
   AdapterContext,
+  AdapterPackageSummary,
   BaselineInfo,
   PackageAdapter,
   StagedDetails,
@@ -67,6 +68,22 @@ interface FindingAnnotationRecord {
   findingIndex: number;
   diffStatus: FindingDiffAnnotation["diffStatus"];
   releaseDelta: boolean;
+}
+
+/**
+ * Everything later phases need from the *raw* acquired artifacts, so the raw
+ * file arrays (unredacted text of both package sides) can be released as soon
+ * as deterministic findings have run. Nothing here carries file text: the only
+ * text that survives this boundary is the redacted evidence on
+ * `DeterministicFindings`.
+ */
+export interface ArtifactFacts {
+  packageSummary: AdapterPackageSummary;
+  fileCount: number;
+  previousFileCount: number;
+  baseline: BaselineInfo;
+  previousVersionAvailable: boolean;
+  baselineComparisonSkipped: boolean;
 }
 
 export interface DeterministicFindings {
@@ -152,6 +169,76 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
     annotatedFindings,
     releaseRuleFindings,
   };
+}
+
+// Pure: project the raw artifacts into the compact facts later phases need
+// (package summary, file counts, baseline). Must run while the raw artifacts
+// are still alive — that is, before `releaseResolvedArtifacts`.
+export function summarizeResolvedArtifacts<TInput, TBroker extends AdapterBroker>(
+  adapter: PackageAdapter<TInput, TBroker>,
+  adapterInput: TInput,
+  resolved: ResolvedArtifacts,
+): ArtifactFacts {
+  const { staged, baseline } = resolved;
+  return {
+    packageSummary: adapter.describe({
+      input: adapterInput,
+      staged: staged.artifact,
+      details: staged.details,
+      baseline: baseline.baseline,
+      previous: baseline.artifact,
+    }),
+    fileCount: staged.artifact.files.length,
+    previousFileCount: baseline.artifact?.files.length ?? 0,
+    baseline: baseline.baseline,
+    previousVersionAvailable: baseline.artifact !== null,
+    baselineComparisonSkipped: Boolean(baseline.baseline.comparisonSkipped),
+  };
+}
+
+// Drop the unredacted file records of both package sides. Peak memory is what
+// caps reviewable package size: up to this point the isolate holds the raw
+// staged + baseline text (as parsed off the sandbox response) *and* the
+// redacted copies of both, and the phases that follow — AI review, report
+// assembly, artifact serialization — only ever read the redacted set. Findings
+// must already have run (they scan raw text; see `runDeterministicFindings`),
+// so this is the first point at which the raw text is dead weight.
+export function releaseResolvedArtifacts(resolved: ResolvedArtifacts): void {
+  resolved.staged.artifact.files = [];
+  resolved.staged.artifact.suspiciousTarEntries = undefined;
+  if (resolved.baseline.artifact) {
+    resolved.baseline.artifact.files = [];
+    resolved.baseline.artifact.suspiciousTarEntries = undefined;
+  }
+}
+
+export interface ReleaseAnalysis {
+  diff: ComputedDiff;
+  findings: DeterministicFindings;
+  facts: ArtifactFacts;
+}
+
+/**
+ * Acquire both package sides, diff them, run deterministic findings over raw
+ * text, then release the raw text. `ResolvedArtifacts` never escapes this
+ * function, which is what makes the release effective: no later phase can hold
+ * a reference to an unredacted file array because none of them is given one.
+ *
+ * Order is load-bearing: findings run on raw text (a redacted sample would let
+ * a rule miss what redaction rewrote), and only redacted evidence flows out.
+ */
+export async function analyzeRelease<TInput, TBroker extends AdapterBroker>(
+  adapter: PackageAdapter<TInput, TBroker>,
+  ctx: AdapterContext,
+  adapterInput: TInput,
+  broker: TBroker,
+): Promise<ReleaseAnalysis> {
+  const resolved = await resolveBaseline(adapter, ctx, adapterInput, broker);
+  const diff = computeDiff(resolved);
+  const findings = runDeterministicFindings(adapter, resolved, diff);
+  const facts = summarizeResolvedArtifacts(adapter, adapterInput, resolved);
+  releaseResolvedArtifacts(resolved);
+  return { diff, findings, facts };
 }
 
 // Pure: fold deterministic + AI findings into the artifact/release/context
@@ -248,9 +335,14 @@ export interface PersistResultsArgs<TInput, TBroker extends AdapterBroker> {
   db: AppDb;
   session: WorkspaceSession;
   adapter: PackageAdapter<TInput, TBroker>;
-  adapterInput: TInput;
   identity: PipelineIdentity;
-  resolved: ResolvedArtifacts;
+  /**
+   * Compact projection of the acquired artifacts. Deliberately not
+   * `ResolvedArtifacts`: by the time this phase runs the raw (unredacted) file
+   * arrays have been released, so persistence cannot reach them even by
+   * accident.
+   */
+  facts: ArtifactFacts;
   diff: ComputedDiff;
   findings: DeterministicFindings;
   aiFindings: AiReview;
@@ -270,27 +362,19 @@ export interface PersistedScanOutcome {
 export async function persistResults<TInput, TBroker extends AdapterBroker>(
   args: PersistResultsArgs<TInput, TBroker>,
 ): Promise<PersistedScanOutcome> {
-  const { db, session, adapter, adapterInput, identity, resolved, diff, findings } = args;
-  const { staged, baseline } = resolved;
+  const { db, session, adapter, identity, facts, diff, findings } = args;
   const mergedAi = args.mergedAiFindings ?? { records: [], annotatedRecords: [] };
   const risk = args.riskSummary.artifactRisk;
 
   const safety = pipelineSafety();
-  const packageSummary = adapter.describe({
-    input: adapterInput,
-    staged: staged.artifact,
-    details: staged.details,
-    baseline: baseline.baseline,
-    previous: baseline.artifact,
-  });
 
   const result: ScanResult = {
     id: identity.scanId,
     stageId: identity.stageId,
-    package: packageSummary,
-    baseline: baseline.baseline,
-    fileCount: staged.artifact.files.length,
-    previousFileCount: baseline.artifact?.files.length ?? 0,
+    package: facts.packageSummary,
+    baseline: facts.baseline,
+    fileCount: facts.fileCount,
+    previousFileCount: facts.previousFileCount,
     packageJson: findings.redactedStagedManifest,
     packageJsonDiff: diff.manifestDiff,
     diff: diff.fileDiff,
@@ -321,7 +405,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     stageId: identity.stageId,
     stagedPublish: findings.redactedDetails,
     package: result.package,
-    baseline: baseline.baseline,
+    baseline: facts.baseline,
     fileCount: result.fileCount,
     previousFileCount: result.previousFileCount,
     packageJson: findings.redactedStagedManifest,
@@ -368,7 +452,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
       diff: diff.fileDiff,
       risk: args.riskSummary,
       stagedPublish: findings.redactedDetails,
-      baseline: baseline.baseline,
+      baseline: facts.baseline,
       releaseConsistency: args.releaseConsistency,
       safety: result.safety,
     },

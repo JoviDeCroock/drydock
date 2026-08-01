@@ -13,13 +13,11 @@ import {
 } from "../platform/observability";
 import { recordProductEvent } from "../platform/analytics";
 import {
-  computeDiff,
+  analyzeRelease,
   mergeAiFindings,
   persistResults,
   recordCompletion,
-  resolveBaseline,
   resolveReleaseConsistency,
-  runDeterministicFindings,
   scoreRisk,
   type ComputedDiff,
   type DeterministicFindings,
@@ -57,9 +55,17 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
   const pipelineStartedAtMs = Date.now();
 
   try {
-    const resolved = await resolveBaseline(adapter, adapterCtx, adapterInput, broker);
-    const diff = computeDiff(resolved);
-    const findings = runDeterministicFindings(adapter, resolved, diff);
+    // Acquire → diff → deterministic findings → release the raw artifacts. The
+    // unredacted file arrays of both package sides stay inside this call, so
+    // the AI review, risk scoring, and persistence below run while only the
+    // redacted copies are reachable — peak memory is what caps reviewable
+    // package size.
+    const { diff, findings, facts } = await analyzeRelease(
+      adapter,
+      adapterCtx,
+      adapterInput,
+      broker,
+    );
 
     const identity: PipelineIdentity = {
       scanId: input.scanId || crypto.randomUUID(),
@@ -70,7 +76,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       env,
       identity,
       ecosystem: adapter.id,
-      previousVersionAvailable: resolved.baseline.artifact !== null,
+      previousVersionAvailable: facts.previousVersionAvailable,
       findings,
       diff,
     });
@@ -83,7 +89,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       findings,
       diff,
       adapter.codePatternSet,
-      Boolean(resolved.baseline.baseline.comparisonSkipped),
+      facts.baselineComparisonSkipped,
     );
 
     // Release-memory lookup (db read) before scoring. It compares finding
@@ -104,7 +110,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       [...findings.annotatedFindings, ...mergedAiFindings.annotatedRecords],
       aiFindings,
       releaseConsistency,
-      { baselineComparisonSkipped: Boolean(resolved.baseline.baseline.comparisonSkipped) },
+      { baselineComparisonSkipped: facts.baselineComparisonSkipped },
     );
 
     const { result, persisted } = await persistResults({
@@ -112,9 +118,8 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       db,
       session,
       adapter,
-      adapterInput,
       identity,
-      resolved,
+      facts,
       diff,
       findings,
       aiFindings,
@@ -129,7 +134,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       identity,
       adapterId: adapter.id,
       result,
-      baseline: resolved.baseline.baseline,
+      baseline: facts.baseline,
       persisted,
       pipelineStartedAtMs,
       env,
