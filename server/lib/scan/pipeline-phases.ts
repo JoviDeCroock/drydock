@@ -196,13 +196,18 @@ export function summarizeResolvedArtifacts<TInput, TBroker extends AdapterBroker
   };
 }
 
-// Drop the unredacted file records of both package sides. Peak memory is what
-// caps reviewable package size: up to this point the isolate holds the raw
-// staged + baseline text (as parsed off the sandbox response) *and* the
-// redacted copies of both, and the phases that follow — AI review, report
-// assembly, artifact serialization — only ever read the redacted set. Findings
-// must already have run (they scan raw text; see `runDeterministicFindings`),
-// so this is the first point at which the raw text is dead weight.
+// Drop the unredacted file records of both package sides once findings have run
+// (they scan raw text; see `runDeterministicFindings`).
+//
+// Scope, precisely: this frees the record wrappers and the two arrays, not the
+// sample text. `redactFileRecords` spreads each record and runs `String.replace`
+// over its sample, and a replace that matches nothing returns the receiver — so
+// for the overwhelmingly common clean file the raw and redacted records point at
+// the *same* string instance, and the text only becomes collectable when the
+// redacted set does. What this buys is (a) the wrapper objects and arrays for
+// both sides, (b) the raw text of files redaction actually rewrote, and (c) an
+// enforced structure: no phase after this one is handed an unredacted body, so
+// a future change cannot start reading one by accident.
 export function releaseResolvedArtifacts(resolved: ResolvedArtifacts): void {
   resolved.staged.artifact.files = [];
   resolved.staged.artifact.suspiciousTarEntries = undefined;
@@ -220,12 +225,21 @@ export interface ReleaseAnalysis {
 
 /**
  * Acquire both package sides, diff them, run deterministic findings over raw
- * text, then release the raw text. `ResolvedArtifacts` never escapes this
+ * text, then release the raw records. `ResolvedArtifacts` never escapes this
  * function, which is what makes the release effective: no later phase can hold
  * a reference to an unredacted file array because none of them is given one.
  *
  * Order is load-bearing: findings run on raw text (a redacted sample would let
- * a rule miss what redaction rewrote), and only redacted evidence flows out.
+ * a rule miss what redaction rewrote), and every field that crosses this
+ * boundary is redacted — including `ComputedDiff.stagedManifestText`, which is
+ * raw manifest text the rules need and nothing downstream reads, so it is
+ * dropped here rather than carried out unredacted.
+ *
+ * Note for the workflow-gate path: the staged bytes there were parsed before the
+ * pipeline ran and are still held by the gate's `PreparedGatePackage` list for
+ * the whole gate run, so this release does not shorten their lifetime. It is
+ * effective for registry-staged scans, where this pipeline owns the only
+ * reference.
  */
 export async function analyzeRelease<TInput, TBroker extends AdapterBroker>(
   adapter: PackageAdapter<TInput, TBroker>,
@@ -238,6 +252,9 @@ export async function analyzeRelease<TInput, TBroker extends AdapterBroker>(
   const findings = runDeterministicFindings(adapter, resolved, diff);
   const facts = summarizeResolvedArtifacts(adapter, adapterInput, resolved);
   releaseResolvedArtifacts(resolved);
+  // Raw manifest text; only `adapter.runFindings` reads it, and it has run.
+  // `findings.redactedStagedManifest` is the redacted form later phases persist.
+  diff.stagedManifestText = null;
   return { diff, findings, facts };
 }
 
