@@ -5,7 +5,7 @@ import {
   downloadInSandboxStream,
   SandboxError,
 } from "../../server/lib/sandbox";
-import { BASELINE_TEXT_SAMPLE_LIMIT } from "../../server/lib/scan/sample-retention";
+import { BASELINE_TEXT_SAMPLE_LIMIT } from "../../server/lib/sample-retention";
 
 interface LoaderRecord {
   globalOutboundProps: unknown;

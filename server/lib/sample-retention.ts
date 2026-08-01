@@ -1,6 +1,11 @@
-// Sample-retention budgets. Dependency-free on purpose: ecosystem brokers (some
-// of which are imported by node-env logic tests) and the persistence layer both
-// read these, and neither should have to pull in the sandbox module to do it.
+// Sample-retention budgets: how much of a parsed file body each side of a
+// review keeps, from the sandbox parser through to persistence.
+//
+// Lives at `lib/` root beside the sandbox boundary it configures rather than
+// under `scan/`, because ecosystem adapters read it and an `ecosystems/ → scan/`
+// import would invert the layering. Dependency-free on purpose: brokers imported
+// by node-env logic tests must not have to pull in the sandbox module (and its
+// `cloudflare:workers` import) to learn a number.
 
 /**
  * Per-file display sample bound applied at persistence. Deterministic detection

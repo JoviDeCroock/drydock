@@ -6,7 +6,7 @@ vi.mock("cloudflare:workers", () => ({
 
 const { acquireBaselineNpm } = await import("../server/lib/ecosystems/npm/acquire");
 const { SandboxError } = await import("../server/lib/sandbox");
-const { BASELINE_TEXT_SAMPLE_LIMIT } = await import("../server/lib/scan/sample-retention");
+const { BASELINE_TEXT_SAMPLE_LIMIT } = await import("../server/lib/sample-retention");
 
 function stagedArtifact() {
   return {

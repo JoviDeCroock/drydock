@@ -1,5 +1,5 @@
 import { pickBaselineVersion } from "./registry";
-import { BASELINE_TEXT_SAMPLE_LIMIT } from "../../scan/sample-retention";
+import { BASELINE_TEXT_SAMPLE_LIMIT } from "../../sample-retention";
 import { parseSandboxErrorDetail } from "../../sandbox";
 import type { PackageJsonSummary } from "../../review";
 import type { StagedPublishDetails } from "./staged-publishes";
