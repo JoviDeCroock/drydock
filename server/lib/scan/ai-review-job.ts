@@ -1,5 +1,6 @@
 import { type AppDb, createDb } from "../../db/client";
 import { applyAiReviewPatch, getScanStatus } from "../../db/scans";
+import { AI_MODEL } from "../ai-review/models";
 import type { AiReview } from "../ai-review/types";
 import { displayedAiResult } from "../ai-review/types";
 import {
@@ -137,7 +138,7 @@ async function runReview(
 ): Promise<AiReview> {
   // Lazily imported for the same reason the inline path does it: the AI SDK and
   // workers-ai-provider must stay out of the Worker's boot graph.
-  const { runSelectiveAiReview, AI_MODEL } = await import("../ai-review");
+  const { runSelectiveAiReview } = await import("../ai-review");
   const startedAtMs = Date.now();
   try {
     const { review, usage } = await runSelectiveAiReview(env, {
@@ -326,7 +327,13 @@ export async function applyAiReviewToScan(args: ApplyAiReviewArgs): Promise<AiRe
 
   await deleteAiReviewInput(env.ARTIFACTS, message.organizationId, message.scanId);
 
-  if (!patched) return skip(message, "not_pending");
+  if (!patched) {
+    // Another follow-up (or the reaper) claimed the scan first, so the report we
+    // republished a moment ago is referenced by nothing. Content-addressed keys
+    // make the race safe; they do not make it tidy.
+    await deleteOrphanedReportRevision(env.ARTIFACTS, report, message);
+    return skip(message, "not_pending");
+  }
   await notifyDeferredScanCompletion(env, db, scan);
   emitOperationalEvent("info", "scan.ai_review.patched", {
     scanId: message.scanId,
@@ -364,8 +371,8 @@ async function closeUnavailable(
   // medium, while a null model means "switched off" and stays neutral. A review
   // that was scheduled and never came back is the former — the same fail-safe an
   // inline reviewer crash gets, so a release cannot read as clean because the
-  // reviewer never ran over it.
-  const { AI_MODEL } = await import("../ai-review");
+  // reviewer never ran over it. The constant comes from the dependency-free
+  // module so the reaper does not load the AI SDK to read a string.
   const review: AiReview = {
     status: "unavailable",
     risk: "low",
@@ -440,6 +447,25 @@ async function notifyDeferredScanCompletion(
     emitOperationalEvent("error", "scan.ai_review.notify_failed", {
       scanId: scan.id,
       organizationId: scan.organizationId,
+      error: describeOperationalError(err),
+    });
+  }
+}
+
+async function deleteOrphanedReportRevision(
+  bucket: R2Bucket | undefined,
+  report: RewrittenReportArtifacts | null,
+  message: AiReviewQueueMessage,
+): Promise<void> {
+  if (!bucket || !report) return;
+  try {
+    await bucket.delete([report.reportArtifactKey, report.artifactManifestKey]);
+  } catch (err) {
+    // Recoverable by the per-scan prefix sweep; never worth failing a message
+    // that has already done its job.
+    emitOperationalEvent("warn", "scan.ai_review.orphan_cleanup_failed", {
+      scanId: message.scanId,
+      organizationId: message.organizationId,
       error: describeOperationalError(err),
     });
   }

@@ -13,7 +13,8 @@ import {
   listScans,
   listStalledAiReviewScans,
   persistScan,
-  STALLED_SCAN_TIMEOUT_MS,
+  STALLED_QUEUED_TIMEOUT_MS,
+  STALLED_RUNNING_TIMEOUT_MS,
 } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { pendingAiReview } from "../../server/lib/ai-review/types";
@@ -72,7 +73,7 @@ describe("stalled scan reaper", () => {
     await claimScanForRun(db, fresh, owner.organizationId);
     await ageScan(stalled, 45);
 
-    const sweep = await failStalledScans(db, { timeoutMs: STALLED_SCAN_TIMEOUT_MS });
+    const sweep = await failStalledScans(db, { runningTimeoutMs: STALLED_RUNNING_TIMEOUT_MS });
     expect(sweep).toEqual({ running: 1, pending: 0 });
 
     const closed = await getScanStatus(db, stalled, owner.organizationId);
@@ -88,13 +89,26 @@ describe("stalled scan reaper", () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
     const stranded = await newScan(owner, "stranded");
-    await ageScan(stranded, 45);
+    await ageScan(stranded, 8 * 60);
 
-    const sweep = await failStalledScans(db, { timeoutMs: STALLED_SCAN_TIMEOUT_MS });
+    const sweep = await failStalledScans(db);
     expect(sweep).toEqual({ running: 0, pending: 1 });
     const closed = await getScanStatus(db, stranded, owner.organizationId);
     expect(closed?.status).toBe("failed");
     expect(closed?.errorJson).toMatchObject({ code: "scan_never_started" });
+  });
+
+  test("leaves a queued scan alone while a backlog could still be draining", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const queued = await newScan(owner, "backlog");
+    // Well past the running timeout, but this row was never claimed: it is the
+    // tail of a backlog, and reaping it would be the wrong answer to load.
+    await ageScan(queued, 90);
+
+    expect(await failStalledScans(db)).toEqual({ running: 0, pending: 0 });
+    expect((await getScanStatus(db, queued, owner.organizationId))?.status).toBe("pending");
+    expect(STALLED_QUEUED_TIMEOUT_MS).toBeGreaterThan(STALLED_RUNNING_TIMEOUT_MS);
   });
 
   test("never touches terminal scans and honors the per-sweep limit", async () => {
@@ -117,9 +131,9 @@ describe("stalled scan reaper", () => {
       diff: [],
       findings: [],
     });
-    await ageScan(first, 45);
-    await ageScan(second, 45);
-    await ageScan(done, 45);
+    await ageScan(first, 8 * 60);
+    await ageScan(second, 8 * 60);
+    await ageScan(done, 8 * 60);
 
     expect(await failStalledScans(db, { limit: 1 })).toEqual({ running: 0, pending: 1 });
     expect(await failStalledScans(db, { limit: 5 })).toEqual({ running: 0, pending: 1 });
@@ -148,9 +162,9 @@ describe("stalled scan reaper", () => {
         findings: [],
       });
     }
-    await ageScan(scanId, 45);
+    await ageScan(scanId, 8 * 60);
 
-    const abandoned = await listStalledAiReviewScans(db, { timeoutMs: STALLED_SCAN_TIMEOUT_MS });
+    const abandoned = await listStalledAiReviewScans(db);
     expect(abandoned.map((row) => row.id)).toEqual([scanId]);
     // A completed scan whose review is still in flight is not a candidate.
     expect((await getScanStatus(db, fresh, owner.organizationId))?.aiStatus).toBe("pending");
@@ -170,7 +184,7 @@ describe("withdrawn stage tombstones", () => {
 
     const discarded = await getScanStatus(db, scanId, owner.organizationId);
     expect(discarded?.status).toBe("discarded");
-    expect(discarded?.errorJson).toMatchObject({ code: "staged_tarball_unavailable" });
+    expect(discarded?.errorJson).toMatchObject({ code: "staged_tarball_withdrawn" });
 
     // The whole point of the tombstone: discovery still sees the stage id as
     // known, so the next cron tick does not re-create and re-queue the scan.

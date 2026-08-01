@@ -65,7 +65,19 @@ not add one casually.
 organization has the `ai-review` killswitch off — or any deployment without a
 `FLAGS` binding, where the reviewer is off for everything — returns before the
 reviewer is invoked and emits nothing. Read the status breakdown as a share of
-attempts; compare against `scan.completed` to get coverage.
+attempts; compare against `scan.completed` to get coverage. It is emitted from
+whichever reviewer ran: `maybeRunAiReview` for an inline review, the deferred
+follow-up job (`server/lib/scan/ai-review-job.ts`) for a staged-publish one.
+
+**`scan.completed` risk and finding counts exclude a deferred AI review.** On
+the staged-publish path the review runs after the scan is persisted (see
+[`architecture.md`](architecture.md#advisory-ai-review-is-off-the-critical-path)),
+and `recordCompletion` fires before it exists — so `releaseRisk`/`artifactRisk`
+are the deterministic grades and `aiFindingCount` is 0, even for scans the
+review later escalates. The counter is not re-emitted afterwards, because that
+would double-count scan volume. Read it as "the deterministic grade at
+completion"; AI escalation is not currently answerable from this dataset and
+would need its own event.
 
 **`ai_review.decided` is feedback, not ground truth.** A publish can accept
 known risk, and a discard can be unrelated to the review. Use it to find
@@ -110,7 +122,7 @@ low-volume one out of the dataset.
 | `scan.failed`              | `executeScanJob`, gate runner | failure rate by error code                  |
 | `scan.discarded`           | `executeScanJob`              | queued scans retired before they ever ran   |
 | `scan.decided`             | both decision paths           | time-to-decision; agreement with the grade  |
-| `ai_review.finished`       | `maybeRunAiReview`            | reviewer health — the silent-failure rate   |
+| `ai_review.finished`       | inline + deferred reviewers   | reviewer health — the silent-failure rate   |
 | `ai_review.decided`        | both decision paths           | feedback by assessment and reviewer version |
 | `npm_connection.validated` | npm connection validation     | onboarding funnel                           |
 | `public_diff.viewed`       | `loadRequestedDiff`           | growth-loop traffic, cache hit rate         |

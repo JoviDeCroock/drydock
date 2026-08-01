@@ -57,9 +57,17 @@ Current structured events cover:
 
 - `scan.pipeline.completed` / `scan.pipeline.failed` with adapter, duration,
   file counts, finding count, and risk. `findingCount` counts rule rows plus a
-  completed AI review's rows (matching persisted `scans.finding_count`), with
-  `ruleFindingCount` / `aiFindingCount` emitted alongside for the split.
-- `scan.ai_review.completed` / `scan.ai_review.failed` when AI review is enabled.
+  completed AI review's rows, with `ruleFindingCount` / `aiFindingCount` emitted
+  alongside for the split. It matches persisted `scans.finding_count` for an
+  inline review; when the review is deferred, the event reports the rule-only
+  count and pre-AI risk, and D1 is patched later.
+- `scan.ai_review.completed` / `scan.ai_review.failed` when AI review is enabled
+  (both carry `deferred: true` from the follow-up job), plus
+  `scan.ai_review.deferred`, `scan.ai_review.patched`,
+  `scan.ai_review.skipped`, and `scan.ai_review.closed_unavailable` for the
+  deferred lifecycle.
+- `scans.stalled_reaped` and `scans.abandoned_ai_reviews_closed` from the cron
+  reaper, with the counts closed and the timeouts applied.
 - `scan.staged_artifact.digest_mismatch` when a staged npm tarball's bytes do not
   hash to the digest the registry recorded for the stage (stage id, package,
   version, and both digests — all registry-declared values, no credentials).

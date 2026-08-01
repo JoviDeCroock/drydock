@@ -321,10 +321,10 @@ describe("executeScanJob idempotency", () => {
     });
   });
 
-  test("discards auto-discovered scans when the org's token cannot access the tarball", async () => {
+  test("discards auto-discovered scans whose staged publish was withdrawn", async () => {
     dbMock.claimScanForRun.mockResolvedValue(true);
     pipelineMock.runScanPipeline.mockRejectedValue(
-      new SandboxError(JSON.stringify({ error: "denied", status: 403 })),
+      new SandboxError(JSON.stringify({ error: "not found", status: 404 })),
     );
 
     await expect(
@@ -344,6 +344,33 @@ describe("executeScanJob idempotency", () => {
       message.organizationId,
     );
     expect(notifyMock.notifyScanCompletion).not.toHaveBeenCalled();
+  });
+
+  test("keeps a token-scope 403 as a visible failure rather than a tombstone", async () => {
+    dbMock.claimScanForRun.mockResolvedValue(true);
+    pipelineMock.runScanPipeline.mockRejectedValue(
+      new SandboxError(JSON.stringify({ error: "denied", status: 403 })),
+    );
+
+    await expect(
+      executeScanJob(
+        env,
+        ctx,
+        { ...message, source: "auto_discovery" },
+        {},
+        { attempt: 1, finalAttempt: true },
+      ),
+    ).rejects.toBeInstanceOf(SandboxError);
+
+    // A discard is now a permanent tombstone, so it is reserved for a stage that
+    // is really gone. A scope blip or a mid-propagation 403 must stay a `failed`
+    // row the maintainer can see, act on, and delete.
+    expect(dbMock.discardScanAttempt).not.toHaveBeenCalled();
+    expect(dbMock.markScanFailed).toHaveBeenCalledWith({}, message.scanId, message.organizationId, {
+      code: "staged_tarball_unavailable",
+      message: "The staged tarball could not be accessed with this organization's npm token.",
+      retryable: false,
+    });
   });
 
   test("still marks auto-discovered scans failed for non-tarball-access errors", async () => {

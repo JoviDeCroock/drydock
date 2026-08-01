@@ -112,7 +112,58 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       broker,
       (resolved) => collectReleaseFingerprintFindings(db, identity, resolved),
     );
-    const plan = await planAiReview(env, identity, settings);
+
+    // Release-memory lookup (db read) before scoring. It compares finding
+    // profiles only and never edits a finding; its one scoring effect is to stop
+    // already-approved *package context* from re-anchoring the headline risk.
+    // Release-delta findings are untouched, so `releaseRisk` — and the workflow
+    // gate that reads it — cannot move. A lookup failure degrades to "none"
+    // inside the phase, which scores exactly as before. It runs before the AI
+    // step because the deferred review's evidence snapshot carries it, and it
+    // does not depend on the review either way.
+    const releaseConsistency = await resolveReleaseConsistency({
+      db,
+      env,
+      identity,
+      packageName: findings.redactedStagedManifest?.name ?? null,
+      ruleFindings: findings.ruleFindings,
+    });
+
+    // Evidence snapshot for the follow-up, written before the scan is persisted
+    // so the D1 row never advertises a pending review whose evidence is missing.
+    const requestedPlan = await planAiReview(env, identity, settings);
+    const aiReviewInput =
+      requestedPlan === "deferred" && env.ARTIFACTS
+        ? await writeAiReviewInput(env.ARTIFACTS, identity.organizationId, {
+            version: AI_REVIEW_INPUT_VERSION,
+            scanId: identity.scanId,
+            stageId: identity.stageId,
+            ecosystem: adapter.id,
+            codePatternSet: adapter.codePatternSet,
+            previousVersionAvailable: facts.previousVersionAvailable,
+            baselineComparisonSkipped: facts.baselineComparisonSkipped,
+            files: findings.redactedStagedFiles,
+            previousFiles: findings.redactedPreviousFiles,
+            diff: diff.fileDiff,
+            packageJsonDiff: diff.manifestDiff,
+            releaseRuleFindings: findings.releaseRuleFindings,
+            annotatedFindings: findings.annotatedFindings,
+            releaseConsistency,
+          }).catch((err) => {
+            // The evidence artifact is advisory scaffolding. Failing the scan
+            // over it would throw away a fully computed deterministic report and
+            // re-download and re-parse both tarballs on retry. Fall back to
+            // reviewing inline instead.
+            emitOperationalEvent("warn", "scan.ai_review.evidence_write_failed", {
+              scanId: identity.scanId,
+              organizationId: identity.organizationId,
+              error: describeOperationalError(err),
+            });
+            return null;
+          })
+        : null;
+    const plan: AiReviewPlan =
+      requestedPlan === "deferred" && !aiReviewInput ? "inline" : requestedPlan;
     // A deferred review contributes nothing to this scan's risk yet: the
     // deterministic grade is what gets persisted, and because AI only ever
     // enters through `combineRisk` (a max), the follow-up patch can raise the
@@ -142,20 +193,6 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       facts.baselineComparisonSkipped,
     );
 
-    // Release-memory lookup (db read) before scoring. It compares finding
-    // profiles only and never edits a finding; its one scoring effect is to stop
-    // already-approved *package context* from re-anchoring the headline risk.
-    // Release-delta findings are untouched, so `releaseRisk` — and the workflow
-    // gate that reads it — cannot move. A lookup failure degrades to "none"
-    // inside the phase, which scores exactly as before.
-    const releaseConsistency = await resolveReleaseConsistency({
-      db,
-      env,
-      identity,
-      packageName: findings.redactedStagedManifest?.name ?? null,
-      ruleFindings: findings.ruleFindings,
-    });
-
     const riskSummary = scoreRisk(
       [...findings.annotatedFindings, ...mergedAiFindings.annotatedRecords],
       aiFindings,
@@ -170,29 +207,6 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       workflowGate: input.gateContext ?? null,
       declaredRepository: facts.declaredRepository,
     });
-
-    // Evidence snapshot for the follow-up, written before the scan is persisted
-    // so the D1 row never advertises a pending review whose evidence is missing.
-    const aiReviewInput =
-      plan === "deferred" && env.ARTIFACTS
-        ? await writeAiReviewInput(env.ARTIFACTS, identity.organizationId, {
-            version: AI_REVIEW_INPUT_VERSION,
-            scanId: identity.scanId,
-            stageId: identity.stageId,
-            ecosystem: adapter.id,
-            codePatternSet: adapter.codePatternSet,
-            previousVersionAvailable: facts.previousVersionAvailable,
-            baselineComparisonSkipped: facts.baselineComparisonSkipped,
-            files: findings.redactedStagedFiles,
-            previousFiles: findings.redactedPreviousFiles,
-            diff: diff.fileDiff,
-            packageJsonDiff: diff.manifestDiff,
-            releaseRuleFindings: findings.releaseRuleFindings,
-            annotatedFindings: findings.annotatedFindings,
-            releaseConsistency,
-          })
-        : null;
-
     const { result, persisted } = await persistResults({
       env,
       db,

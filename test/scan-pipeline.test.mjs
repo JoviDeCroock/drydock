@@ -520,6 +520,52 @@ describe("scan pipeline baseline selection", () => {
       });
     });
 
+    test("falls back to an inline review when the evidence snapshot cannot be written", async () => {
+      aiReviewMock.runSelectiveAiReview.mockResolvedValue({
+        review: {
+          status: "complete",
+          risk: "low",
+          releaseAssessment: "nothing_unusual",
+          summary: "Nothing unusual in the staged release.",
+          findings: [],
+          requiresManualReview: false,
+          model: "@cf/moonshotai/kimi-k2.7-code",
+        },
+        usage: null,
+      });
+      const sendAiReviewMessage = vi.fn(async () => undefined);
+      const bucket = artifactBucket();
+      const put = bucket.put;
+      // Only the evidence snapshot fails. The scan's own artifacts must still
+      // fail closed if *they* cannot be written; that is a different rule.
+      bucket.put = vi.fn(async (key, body) => {
+        if (key.endsWith("/ai-input.json")) throw new Error("r2 unavailable");
+        return put(key, body);
+      });
+      const context = {
+        ...baseContext,
+        env: {
+          ...baseContext.env,
+          FLAGS: { getBooleanValue: vi.fn(async (_flag, fallback) => fallback) },
+          ARTIFACTS: bucket,
+        },
+      };
+
+      const result = await runScanPipeline(
+        context,
+        npmAdapter,
+        { scanId: "scan_ai_evidence_fail", stageId: "stage-beta-123", organizationId: "org_1" },
+        { aiReview: "deferred", sendAiReviewMessage },
+      );
+
+      // A transient failure writing an *advisory* side artifact must not throw
+      // away a fully computed deterministic report and re-download both tarballs
+      // on retry.
+      expect(result.aiFindings).toMatchObject({ status: "complete" });
+      expect(sendAiReviewMessage).not.toHaveBeenCalled();
+      expect(dbMock.persistScan).toHaveBeenCalled();
+    });
+
     test("falls back to an inline review when there is nowhere to defer to", async () => {
       aiReviewMock.runSelectiveAiReview.mockResolvedValue({
         review: {

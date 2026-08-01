@@ -232,7 +232,7 @@ export async function discardScanAttempt(
   db: AppDb,
   scanId: string,
   organizationId: string,
-  reason = "staged_tarball_unavailable",
+  reason = "staged_tarball_withdrawn",
 ) {
   const now = new Date();
   await db
@@ -258,27 +258,56 @@ export async function discardScanAttempt(
 }
 
 /**
- * How long a scan may sit non-terminal before the scheduled reaper calls it
- * dead. Nothing else sweeps these rows: an OOM-killed worker, a message that
- * exhausted its retries into the DLQ, or an isolate that died mid-pipeline all
- * leave the row exactly as it was, and `claimScanForRun` accepts `running`
- * again, so the row is neither retried nor closed. The UI polls it forever and
- * the reviewer is never told the review is not coming.
+ * How long a *running* scan may sit before the scheduled reaper calls it dead.
+ * Nothing else sweeps these rows: an OOM-killed worker, a message that exhausted
+ * its retries into the DLQ, or an isolate that died mid-pipeline all leave the
+ * row exactly as it was, and `claimScanForRun` accepts `running` again, so the
+ * row is neither retried nor closed. The UI polls it forever and the reviewer is
+ * never told the review is not coming.
  *
- * 30 minutes is comfortably past the worst legitimate case: three queue attempts
- * with quadratic backoff (max 60s) around a pipeline bounded by the sandbox's
- * own download/parse budgets.
+ * 30 minutes is comfortably past the worst legitimate case for a row that has
+ * actually been claimed: one pipeline run, bounded by the sandbox's own
+ * download/parse budgets.
  */
-export const STALLED_SCAN_TIMEOUT_MS = 30 * 60 * 1000;
+export const STALLED_RUNNING_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * How long a scan may sit *queued* — `pending`, or complete with a deferred AI
+ * review still outstanding — before it is treated as lost.
+ *
+ * Deliberately much longer than the running timeout, because this clock measures
+ * queue latency rather than one unit of work. With `max_concurrency` 10, a burst
+ * of several thousand scans is legitimately still draining tens of minutes
+ * later, and reaping the tail of a backlog is exactly the wrong response to
+ * load. Six hours is unambiguously broken and still closes the UI's endless poll
+ * within the day.
+ */
+export const STALLED_QUEUED_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 /** Rows closed per sweep. Bounded so one tick cannot blow the CPU budget. */
 export const STALLED_SCAN_SWEEP_LIMIT = 50;
+
+/**
+ * Abandoned reviews closed per sweep. Much smaller than the row sweep above,
+ * because closing one is not a single UPDATE: it reads the scan, patches D1,
+ * deletes an R2 object, and sends the held-back completion notification (email +
+ * Slack). Ten per tick is ~960/day, far past any plausible abandonment rate, and
+ * leaves the scheduled handler's budget to the discovery sweep it shares.
+ */
+export const ABANDONED_AI_REVIEW_SWEEP_LIMIT = 10;
 
 export interface StalledScanSweep {
   /** `running` rows: the pipeline started and never reported back. */
   running: number;
   /** `pending` rows: the queue message never reached a consumer. */
   pending: number;
+}
+
+export interface StalledScanSweepOptions {
+  now?: Date;
+  runningTimeoutMs?: number;
+  queuedTimeoutMs?: number;
+  limit?: number;
 }
 
 /**
@@ -288,22 +317,26 @@ export interface StalledScanSweep {
  */
 export async function failStalledScans(
   db: AppDb,
-  options: { now?: Date; timeoutMs?: number; limit?: number } = {},
+  options: StalledScanSweepOptions = {},
 ): Promise<StalledScanSweep> {
   const now = options.now ?? new Date();
-  const timeoutMs = options.timeoutMs ?? STALLED_SCAN_TIMEOUT_MS;
   const limit = Math.max(1, Math.floor(options.limit ?? STALLED_SCAN_SWEEP_LIMIT));
-  const cutoffMs = now.getTime() - timeoutMs;
+  const runningCutoffMs = now.getTime() - (options.runningTimeoutMs ?? STALLED_RUNNING_TIMEOUT_MS);
+  const queuedCutoffMs = now.getTime() - (options.queuedTimeoutMs ?? STALLED_QUEUED_TIMEOUT_MS);
 
   const stalled = await db
     .select({ id: scans.id, status: scans.status })
     .from(scans)
     .where(
-      and(
-        inArray(scans.status, [...NON_TERMINAL_STATUSES]),
-        // `started_at` is null until the job claims the row, so a `pending` scan
-        // ages from creation. Both columns are epoch-ms integers.
-        sql`coalesce(${scans.startedAt}, ${scans.createdAt}) < ${cutoffMs}`,
+      or(
+        // `started_at` is null until the job claims the row, so a claimed scan
+        // ages from its claim and an unclaimed one from creation. Both columns
+        // are epoch-ms integers.
+        and(
+          eq(scans.status, "running"),
+          sql`coalesce(${scans.startedAt}, ${scans.createdAt}) < ${runningCutoffMs}`,
+        ),
+        and(eq(scans.status, "pending"), lt(scans.createdAt, new Date(queuedCutoffMs))),
       ),
     )
     .orderBy(asc(scans.createdAt))
@@ -353,13 +386,17 @@ export async function failStalledScans(
  * came back (its follow-up message was lost or exhausted its retries). Returned
  * for the caller to close through the normal patch path so `ai_json`, the risk
  * summary, and the report artifact stay consistent with each other.
+ *
+ * Uses the queued timeout: the follow-up rides the same queue as every scan, so
+ * this clock measures backlog too. The scan itself is complete and readable
+ * throughout — only the advisory overlay is outstanding, and the UI says so.
  */
 export async function listStalledAiReviewScans(
   db: AppDb,
   options: { now?: Date; timeoutMs?: number; limit?: number } = {},
 ): Promise<Array<{ id: string; organizationId: string }>> {
   const now = options.now ?? new Date();
-  const timeoutMs = options.timeoutMs ?? STALLED_SCAN_TIMEOUT_MS;
+  const timeoutMs = options.timeoutMs ?? STALLED_QUEUED_TIMEOUT_MS;
   const limit = Math.max(1, Math.floor(options.limit ?? STALLED_SCAN_SWEEP_LIMIT));
   const cutoffMs = now.getTime() - timeoutMs;
   const rows = await db

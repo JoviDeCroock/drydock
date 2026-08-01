@@ -115,8 +115,10 @@ export async function executeScanJob(
   } catch (err) {
     const safe = classifyScanError(err);
     if (!safe.retryable || options.finalAttempt) {
-      const skip =
-        message.source === "auto_discovery" && safe.code === "staged_tarball_unavailable";
+      // Only a withdrawn stage is discarded. It is the one case where there is
+      // nothing to review and never will be, which is what makes a permanent
+      // tombstone the right record of it.
+      const skip = message.source === "auto_discovery" && safe.code === "staged_tarball_withdrawn";
       if (skip) {
         await discardScanAttempt(db, message.scanId, message.organizationId);
         emitOperationalEvent("warn", "scan.job.skipped", {
@@ -125,7 +127,7 @@ export async function executeScanJob(
           stageId: message.stageId,
           source: message.source,
           attempt,
-          reason: "staged_tarball_unavailable",
+          reason: "staged_tarball_withdrawn",
           durationMs: durationMsSince(startedAtMs),
           error: safe,
         });
@@ -137,7 +139,7 @@ export async function executeScanJob(
           organizationId: message.organizationId,
           ecosystem: "npm",
           source: message.source ?? "auto_discovery",
-          reason: "staged_tarball_unavailable",
+          reason: "staged_tarball_withdrawn",
           durationMs: durationMsSince(startedAtMs),
         });
       } else {
@@ -237,7 +239,20 @@ function parseSandboxDetail(detail: string) {
       retryable: true,
     };
   }
-  if (status && [401, 403, 404].includes(status)) {
+  // 404 and 401/403 are different failures and must not share a code: only the
+  // first is "this stage no longer exists", and only the first is safe to
+  // tombstone. A 403 from a token-scope blip or a mid-propagation change used to
+  // self-heal on the next discovery tick when the row was deleted; with the
+  // tombstone it would suppress that stage permanently, so it stays a visible
+  // `failed` scan with the token guidance the UI already has for it.
+  if (status === 404) {
+    return {
+      code: "staged_tarball_withdrawn",
+      message: "The staged publish is no longer available in the registry.",
+      retryable: false,
+    };
+  }
+  if (status && [401, 403].includes(status)) {
     return {
       code: "staged_tarball_unavailable",
       message: "The staged tarball could not be accessed with this organization's npm token.",

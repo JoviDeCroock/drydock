@@ -423,6 +423,13 @@ export const ScanListModel = createModel(() => {
 export const SCAN_POLL_BASE_DELAY_MS = 10_000;
 export const SCAN_POLL_MAX_DELAY_MS = 30_000;
 export const SCAN_POLL_STALL_AFTER_MS = 10 * 60_000;
+// A complete scan whose advisory review has not landed keeps polling on a much
+// longer leash and never latches the stalled warning: the report is already on
+// screen, so "automatic refresh stopped without the review finishing" would be
+// both alarming and wrong. The review rides a shared queue and can legitimately
+// sit behind a backlog, so this window is generous; past it the page simply
+// stops asking and the "ai pending" marker stays as the honest state.
+export const SCAN_AI_POLL_STOP_AFTER_MS = 30 * 60_000;
 
 export const ScanDetailModel = createModel((id: string) => {
   const scanId = signal(id);
@@ -430,6 +437,9 @@ export const ScanDetailModel = createModel((id: string) => {
   const selectedPath = signal<string | null>(null);
   const error = signal<string | null>(null);
   const pollingStalled = signal(false);
+  // Whether a full `GET /scans/:id` has ever landed for this scan. Distinct from
+  // "the detail has files": a degraded artifact read returns neither.
+  const fullDetailLoaded = signal(false);
   const versions = signal<ScanVersionsResponse | null>(null);
   const selectedVersion = signal<string | null>(null);
   const compareCache = signal<Record<string, ScanCompareResponse>>({});
@@ -489,6 +499,9 @@ export const ScanDetailModel = createModel((id: string) => {
   effect(() => {
     const polling = isPolling.value;
     const stalled = pollingStalled.value;
+    // Read unconditionally: which deadline applies depends on whether the scan
+    // itself is still running or only its review is outstanding.
+    const awaitingReviewOnly = aiReviewPending.value && status.value === "complete";
     if (!polling || stalled) return;
 
     let disposed = false;
@@ -496,7 +509,9 @@ export const ScanDetailModel = createModel((id: string) => {
     const startedAt = Date.now();
 
     const tick = async () => {
-      if (Date.now() - startedAt >= SCAN_POLL_STALL_AFTER_MS) {
+      if (awaitingReviewOnly) {
+        if (Date.now() - startedAt >= SCAN_AI_POLL_STOP_AFTER_MS) return;
+      } else if (Date.now() - startedAt >= SCAN_POLL_STALL_AFTER_MS) {
         pollingStalled.value = true;
         return;
       }
@@ -536,7 +551,10 @@ export const ScanDetailModel = createModel((id: string) => {
       const metadataOnly =
         data.scan.status === "pending" ||
         data.scan.status === "running" ||
-        (data.scan.aiStatus === "pending" && current !== null && current.files.length > 0);
+        // `fullDetailLoaded`, not `files.length`: a compacted artifact-backed
+        // scan whose R2 read degraded legitimately has no files, and keying off
+        // that would re-fetch (and re-read R2) on every single poll.
+        (data.scan.aiStatus === "pending" && fullDetailLoaded.peek());
       if (metadataOnly) {
         detail.value = current
           ? {
@@ -551,6 +569,7 @@ export const ScanDetailModel = createModel((id: string) => {
             };
       } else {
         detail.value = await getScan(id, { poll: true });
+        fullDetailLoaded.value = true;
       }
       error.value = null;
       const updated = detail.peek();
@@ -619,6 +638,7 @@ export const ScanDetailModel = createModel((id: string) => {
         const data = await getScan(id);
         batch(() => {
           this.detail.value = data;
+          fullDetailLoaded.value = true;
           this.share.value = data.scan.publicShareToken
             ? {
                 token: data.scan.publicShareToken,

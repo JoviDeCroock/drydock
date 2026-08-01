@@ -36,10 +36,12 @@ import {
 } from "./lib/scan/job";
 import { closeAbandonedAiReview, executeAiReviewJob } from "./lib/scan/ai-review-job";
 import {
+  ABANDONED_AI_REVIEW_SWEEP_LIMIT,
   failStalledScans,
   listStalledAiReviewScans,
+  STALLED_QUEUED_TIMEOUT_MS,
+  STALLED_RUNNING_TIMEOUT_MS,
   STALLED_SCAN_SWEEP_LIMIT,
-  STALLED_SCAN_TIMEOUT_MS,
 } from "./db/scans";
 import { executeWorkflowGateJob } from "./lib/workflow-gate-job";
 import {
@@ -551,14 +553,16 @@ async function reapStalledScans(env: Cloudflare.Env) {
   const db = createDb(env.DB);
   try {
     const sweep = await failStalledScans(db, {
-      timeoutMs: STALLED_SCAN_TIMEOUT_MS,
+      runningTimeoutMs: STALLED_RUNNING_TIMEOUT_MS,
+      queuedTimeoutMs: STALLED_QUEUED_TIMEOUT_MS,
       limit: STALLED_SCAN_SWEEP_LIMIT,
     });
     if (sweep.running > 0 || sweep.pending > 0) {
       emitOperationalEvent("warn", "scans.stalled_reaped", {
         running: sweep.running,
         pending: sweep.pending,
-        timeoutMs: STALLED_SCAN_TIMEOUT_MS,
+        runningTimeoutMs: STALLED_RUNNING_TIMEOUT_MS,
+        queuedTimeoutMs: STALLED_QUEUED_TIMEOUT_MS,
       });
     }
   } catch (err) {
@@ -569,8 +573,8 @@ async function reapStalledScans(env: Cloudflare.Env) {
 
   try {
     const abandoned = await listStalledAiReviewScans(db, {
-      timeoutMs: STALLED_SCAN_TIMEOUT_MS,
-      limit: STALLED_SCAN_SWEEP_LIMIT,
+      timeoutMs: STALLED_QUEUED_TIMEOUT_MS,
+      limit: ABANDONED_AI_REVIEW_SWEEP_LIMIT,
     });
     let closed = 0;
     for (const scan of abandoned) {
@@ -580,7 +584,7 @@ async function reapStalledScans(env: Cloudflare.Env) {
       emitOperationalEvent("warn", "scans.abandoned_ai_reviews_closed", {
         closed,
         candidates: abandoned.length,
-        timeoutMs: STALLED_SCAN_TIMEOUT_MS,
+        timeoutMs: STALLED_QUEUED_TIMEOUT_MS,
       });
     }
   } catch (err) {
