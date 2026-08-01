@@ -81,6 +81,18 @@ Archive parsing is shared by the sandbox and tests rather than copied as strings
 
 The sandbox also digests each archive's raw wire bytes as they stream past (`digestArchiveStream`). SHA-1 is the default because npm publishes it as `shasum`; adapters opt into additional algorithms only when their release contract needs them. atpm requests SHA-256 for its content-addressed blob CID and SHA-512 for npm-compatible SRI. The sandbox returns the selected results as `DownloadResult.archiveSha1` / `archiveSha256` / `archiveSha512`. This binds a review to the artifact it reviewed: the npm staged-publish adapter compares SHA-1 against the digest npm recorded for the stage (`evaluateStagedArtifactIntegrity`, in the ecosystem-free `lib/ecosystems/artifact-integrity.ts` so the report export and UI can re-validate the persisted verdict without reaching into an ecosystem directory), while atpm requires SHA-256 to match the release blob's CID and any declared SHA-512 `dist.integrity` to match the archive. A truncated or substituted download therefore cannot be reported as a publisher deleting files. The digester is deliberately not an inline tap that finalizes on flush — the tar reader stops at the end-of-archive marker and cancels, so the wrapper owns the source reader until its caller chooses the outcome: a successful parse calls `digest()` to drain the valid tar tail, while a parser/decompression failure calls `abort()` to cancel immediately instead of hashing hostile bytes for a discarded verdict. It reports digests only when it observed the source's own EOF, and null (never a partial digest) when the stream was cancelled upstream, errored, or ran past the digest cap. The digest cap is the _wire_ budget the parsers already read under (`SANDBOX_MAX_STREAM_TAR_BYTES`), not the decompressed-bytes cap: a tighter cap would switch verification off for exactly the large artifacts whose downloads are most likely to be truncated.
 
+Retained bodies cross the sandbox-to-parent hop as one buffered JSON response,
+so retained text also contributes to parent memory. The reviewed staged or
+gated side always retains whole bodies because deterministic rules scan that
+text and clipping it would recreate the truncation hole from issue #191. The
+baseline side instead uses the opt-in `BASELINE_TEXT_SAMPLE_LIMIT` from
+`server/lib/scan/sample-retention.ts` (1 MiB per file), plumbed through
+`maxTextSampleChars` to the sandbox. Baseline text is never persisted and only
+feeds diff context, baseline fingerprints, and AI context, which degrade toward
+more release-delta findings when shortened. Manifests are exempt; clipped text
+ends on a line boundary while size, sha256, and binary classification still
+cover every byte. See [`diff-baseline.md`](./diff-baseline.md).
+
 ## Scan pipeline
 
 `server/lib/scan/pipeline.ts` is the canonical orchestration layer. It accepts a `PackageAdapter` from `server/lib/ecosystems/package-adapter.ts`, then delegates ecosystem-specific behavior:
