@@ -297,6 +297,29 @@ describe("analyzeRelease", () => {
     expect(out.diff.fileDiff.length).toBe(3);
   });
 
+  test("drops the raw staged manifest text once the rules have read it", async () => {
+    const acquired = clonedResolved();
+    let manifestTextSeenByRules;
+    const base = makeAdapter();
+    const adapter = makeAdapter({
+      acquireStaged: vi.fn(async () => acquired.staged),
+      acquireBaseline: vi.fn(async () => acquired.baseline),
+      runFindings: vi.fn((args) => {
+        manifestTextSeenByRules = args.stagedManifestText;
+        return base.runFindings(args);
+      }),
+    });
+    const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user-1" } };
+
+    const out = await analyzeRelease(adapter, ctx, { stageId: "stage-1" }, { dispose() {} });
+
+    // Rules get the raw manifest; nothing downstream does — the redacted
+    // summary on `findings` is what persistence uses.
+    expect(manifestTextSeenByRules).toBe(JSON.stringify({ name: "pkg", version: "1.0.1" }));
+    expect(out.diff.stagedManifestText).toBeNull();
+    expect(out.findings.redactedStagedManifest).toMatchObject({ name: "pkg", version: "1.0.1" });
+  });
+
   test("releaseResolvedArtifacts tolerates a scan with no baseline artifact", () => {
     const acquired = clonedResolved();
     acquired.baseline = { artifact: null, baseline: baselineInfo };
