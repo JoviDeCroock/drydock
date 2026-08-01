@@ -94,7 +94,12 @@ export async function executeScanJob(
       releaseRisk: result.riskSummary.releaseRisk,
       artifactRisk: result.risk,
     });
-    if (message.source !== "workflow_gate") {
+    // A deferred review is notified by the follow-up job instead: the email and
+    // Slack message quote the release risk, and sending them now would quote a
+    // grade the AI patch can still raise. Notification latency is not what the
+    // deferral is protecting — the queue slot is — so the message waits for the
+    // final grade rather than announcing a provisional one.
+    if (message.source !== "workflow_gate" && result.aiFindings?.status !== "pending") {
       executionCtx.waitUntil(
         notifyScanCompletion({
           env,

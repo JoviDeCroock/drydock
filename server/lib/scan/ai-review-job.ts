@@ -25,6 +25,7 @@ import {
   rewriteReportWithAiReview,
   type AiReviewInputDescriptor,
   type AiReviewInputPayload,
+  type RewrittenReportArtifacts,
 } from "./artifacts";
 import type { AiReviewQueueMessage } from "./job-messages";
 import { mergeAiFindings } from "./pipeline-phases";
@@ -310,7 +311,7 @@ export async function applyAiReviewToScan(args: ApplyAiReviewArgs): Promise<AiRe
     risk: riskSummary.artifactRisk,
     riskSummary,
     findingCount: annotatedDeterministic.length + merged.records.length,
-    summary: patchedSummary(scan.summaryJson, riskSummary, aiFindingRows),
+    summary: patchedSummary(scan.summaryJson, riskSummary, aiFindingRows, report),
     report,
     aiFindingRows: aiFindingRows.map(({ annotation: _annotation, ...row }) => row),
   });
@@ -318,6 +319,7 @@ export async function applyAiReviewToScan(args: ApplyAiReviewArgs): Promise<AiRe
   await deleteAiReviewInput(env.ARTIFACTS, message.organizationId, message.scanId);
 
   if (!patched) return skip(message, "not_pending");
+  await notifyDeferredScanCompletion(env, db, scan);
   emitOperationalEvent("info", "scan.ai_review.patched", {
     scanId: message.scanId,
     organizationId: message.organizationId,
@@ -385,10 +387,11 @@ async function closeUnavailable(
     risk: riskSummary.artifactRisk,
     riskSummary,
     findingCount: scan.findingCount ?? 0,
-    summary: patchedSummary(scan.summaryJson, riskSummary, []),
+    summary: patchedSummary(scan.summaryJson, riskSummary, [], null),
     report: null,
   });
   await deleteAiReviewInput(env.ARTIFACTS, message.organizationId, message.scanId);
+  if (patched) await notifyDeferredScanCompletion(env, db, scan);
   emitOperationalEvent(patched ? "warn" : "info", "scan.ai_review.closed_unavailable", {
     scanId: message.scanId,
     organizationId: message.organizationId,
@@ -397,6 +400,41 @@ async function closeUnavailable(
     durationMs: durationMsSince(startedAtMs),
   });
   return patched ? { outcome: "patched", status: review.status } : skip(message, "not_pending");
+}
+
+/**
+ * Send the scan-completion notification the queue job held back because the
+ * review was deferred. Reaching here means the scan just became final, so this
+ * is the first and only completion message for it — including when the reaper
+ * closes an abandoned review, which is why it lives on the patch path rather
+ * than in the queue consumer.
+ *
+ * Fail-soft: a notification failure must not fail (and retry) a patch that
+ * already landed.
+ */
+async function notifyDeferredScanCompletion(
+  env: Cloudflare.Env,
+  db: AppDb,
+  scan: ScanRow,
+): Promise<void> {
+  if (scan.source === "workflow_gate" || !scan.organizationId || !scan.ownerUserId) return;
+  try {
+    const { notifyScanCompletion } = await import("../notify");
+    await notifyScanCompletion({
+      env,
+      db,
+      scanId: scan.id,
+      organizationId: scan.organizationId,
+      ownerUserId: scan.ownerUserId,
+      outcome: "complete",
+    });
+  } catch (err) {
+    emitOperationalEvent("error", "scan.ai_review.notify_failed", {
+      scanId: scan.id,
+      organizationId: scan.organizationId,
+      error: describeOperationalError(err),
+    });
+  }
 }
 
 /** The risk a non-complete review contributes: see `computeScanRisk`. */
@@ -410,6 +448,7 @@ function patchedSummary(
   summaryJson: unknown,
   riskSummary: ScanRiskBreakdown,
   aiFindingRows: Array<{ id: string; annotation?: FindingDiffAnnotation }>,
+  report: RewrittenReportArtifacts | null,
 ): Record<string, unknown> {
   const base =
     summaryJson && typeof summaryJson === "object" && !Array.isArray(summaryJson)
@@ -419,6 +458,12 @@ function patchedSummary(
   // must not survive in the summary.
   delete base.aiReviewInput;
   base.risk = riskSummary;
+  // `summary.report` is the byte-continuity record the JSON export carries. A
+  // republished report has a new digest, so leaving the old one here would ship
+  // an export whose digest names bytes that no longer describe the review.
+  if (report && base.report && typeof base.report === "object" && !Array.isArray(base.report)) {
+    base.report = { ...(base.report as Record<string, unknown>), digest: report.reportDigest };
+  }
   if (aiFindingRows.length) {
     const existing = Array.isArray(base.findingAnnotations) ? base.findingAnnotations : [];
     base.findingAnnotations = [

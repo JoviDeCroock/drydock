@@ -248,6 +248,31 @@ describe("executeScanJob idempotency", () => {
     );
   });
 
+  test("defers the completion notification when the AI review is still pending", async () => {
+    dbMock.claimScanForRun.mockResolvedValue(true);
+    pipelineMock.runScanPipeline.mockResolvedValue({
+      id: message.scanId,
+      risk: "low",
+      riskSummary: { releaseRisk: "low" },
+      package: { name: "@scope/pkg" },
+      aiFindings: { status: "pending" },
+    });
+
+    await executeScanJob(env, ctx, message, {}, { attempt: 1 });
+
+    // The email and Slack message quote the release risk, which the AI patch can
+    // still raise. The follow-up job sends it once the grade is final.
+    expect(notifyMock.notifyScanCompletion).not.toHaveBeenCalled();
+  });
+
+  test("runs the staged-publish pipeline with the review deferred", async () => {
+    dbMock.claimScanForRun.mockResolvedValue(true);
+
+    await executeScanJob(env, ctx, message, {}, { attempt: 1 });
+
+    expect(pipelineMock.runScanPipeline.mock.calls[0]?.[3]).toEqual({ aiReview: "deferred" });
+  });
+
   test("marks the scan failed on a terminal error in the final attempt", async () => {
     dbMock.claimScanForRun.mockResolvedValue(true);
     pipelineMock.runScanPipeline.mockRejectedValue(

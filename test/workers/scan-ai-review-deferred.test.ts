@@ -309,6 +309,11 @@ describe("deferred AI review", () => {
     // The pre-AI report is left untouched, which is what makes the swap atomic.
     expect(await env.ARTIFACTS.get(`${keyPrefix(owner, scanId)}/report.json`)).not.toBeNull();
 
+    // The JSON export's byte-continuity record names the republished bytes, not
+    // the superseded ones.
+    const summary = detail!.scan.summaryJson as { report?: { digest?: string } };
+    expect(summary.report?.digest).toBe(detail!.scan.reportDigest);
+
     // No duplicate D1 rows for an artifact-backed scan.
     const rows = await db
       .select()

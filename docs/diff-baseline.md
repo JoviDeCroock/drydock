@@ -23,7 +23,15 @@ The selected baseline is a _published_ `.tgz`, and it is **not** downloaded thro
 
 Published tarball fetches read through a colo-level byte cache (`caches.default`, keyed by tarball URL). The cache is shared across organizations, which is safe because of how it is written: entries are only ever populated by a background **anonymous** re-fetch of the same URL (`ctx.waitUntil`), so the cache can only hold bytes any unauthenticated client could download — private tarballs 404 the anonymous warm fetch and are never stored. Token-bearing requests may read the cache only for `registry.npmjs.org`, where anonymous and authenticated bytes for a given tarball URL are identical; custom registries only participate for unauthenticated fetches, and the fake-registry e2e path (`allowInsecureLocalhost`) bypasses the cache entirely. The warm fetch is deliberately a second download rather than a tee of the serving stream, preserving the never-buffered-in-the-parent invariant above.
 
-The parsed compare payloads in the `COMPARE_CACHE` KV namespace are immutable once written (keys are content-addressed by org scope + registry + tarball URL), so reads pass `cacheTtl` to serve repeat diff browsing — one read of the same key per file view — from KV's colo cache instead of its central stores.
+The parsed compare payloads in the `COMPARE_CACHE` KV namespace are immutable once written (keys are content-addressed by org scope + registry + tarball URL), so reads pass `cacheTtl` to serve repeat diff browsing — one read of the same key per file view — from KV's colo cache instead of its central stores. Note what that cache stores: `redactFileRecords(downloaded.files)`. Every store in the system holds package text only **after** redaction.
+
+### Why the scan pipeline has no parse cache
+
+Caching the sandbox's parsed output — keyed by the staged shasum, or by tarball URL + integrity for published baselines — would let a retry skip both the download and the parse. It is deliberately not implemented, because the thing that would have to be cached is the **pre-redaction** `DownloadResult`.
+
+Deterministic detection runs over raw text and redaction happens after it (`runDeterministicFindings`), so a cache holding redacted samples would silently weaken detection on every hit, and a cache holding useful samples would be the first place unredacted package content — including any secret a package ships — comes to rest in our infrastructure. That is a trust-boundary change, not a performance change, and it is not one to make inside a throughput fix. The tarball byte cache is safe precisely because it can only ever hold bytes an unauthenticated client could already download; a staged tarball is a private pre-publication candidate and has no such argument.
+
+The safe version, if this is picked up later: split the per-artifact deterministic rules from the diff-dependent ones, run the per-artifact pass at cache-write time, and cache `{ redactedFiles, manifest, suspiciousEntries, perArtifactFindings }` keyed by content digest **plus** the sandbox parser version and the deterministic rules version (so a parser or rule change invalidates every entry). That keeps findings derived from raw text while persisting only redacted evidence. The payloads run to tens of MB, so R2 rather than KV.
 
 ## npm staged metadata
 
