@@ -49,6 +49,7 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.digestArchiveStream,
   tarParser.createStreamCursor,
   tarParser.shouldSkipTextSample,
+  tarParser.clipTextSample,
   tarParser.sniffNativeArtifact,
   tarParser.createHeadCapture,
   tarParser.summarizeFile,
@@ -227,6 +228,14 @@ export interface DownloadOptions {
   archiveFormat?: "tgz" | "zip" | "vsix";
   publicArtifactUrls?: string[];
   maxFiles?: number;
+  /**
+   * Optional per-file text-sample cap applied *inside* the sandbox parser, so
+   * the sample never crosses the wire at full length. 0/undefined means
+   * unbounded, which is what every staged/reviewed parse uses: clipping the
+   * scanned text is a detection hole (issue #191). Baseline parses opt in with
+   * `BASELINE_TEXT_SAMPLE_LIMIT`; manifests stay exempt in the parser.
+   */
+  maxTextSampleChars?: number;
   npmToken?: string;
   npmRegistry?: string;
   /** Defaults to SHA-1; content-addressed adapters opt into stronger digests. */
@@ -290,12 +299,16 @@ export interface InlineDownloadOptions {
   bytes: Uint8Array;
   format: "tgz" | "zip" | "vsix";
   maxFiles?: number;
+  /** See `DownloadOptions.maxTextSampleChars`. */
+  maxTextSampleChars?: number;
 }
 
 export interface StreamDownloadOptions {
   body: ReadableStream<Uint8Array>;
   format: "tgz" | "zip" | "vsix";
   maxFiles?: number;
+  /** See `DownloadOptions.maxTextSampleChars`. */
+  maxTextSampleChars?: number;
 }
 
 /**
@@ -325,7 +338,9 @@ export async function downloadInSandboxInline(
   }
   const body = new ArrayBuffer(options.bytes.byteLength);
   new Uint8Array(body).set(options.bytes);
-  return parseInCredentialsFreeSandbox(env, ctx, body, options.format, options.maxFiles);
+  return parseInCredentialsFreeSandbox(env, ctx, body, options.format, options.maxFiles, {
+    maxTextSampleChars: options.maxTextSampleChars,
+  });
 }
 
 /**
@@ -341,7 +356,9 @@ export async function downloadInSandboxStream(
   ctx: ExecutionContext,
   options: StreamDownloadOptions,
 ): Promise<DownloadResult> {
-  return parseInCredentialsFreeSandbox(env, ctx, options.body, options.format, options.maxFiles);
+  return parseInCredentialsFreeSandbox(env, ctx, options.body, options.format, options.maxFiles, {
+    maxTextSampleChars: options.maxTextSampleChars,
+  });
 }
 
 async function parseInCredentialsFreeSandbox(
@@ -350,6 +367,7 @@ async function parseInCredentialsFreeSandbox(
   body: ArrayBuffer | ReadableStream<Uint8Array>,
   format: "tgz" | "zip" | "vsix",
   maxFiles?: number,
+  retention: { maxTextSampleChars?: number } = {},
 ): Promise<DownloadResult> {
   const sandbox = env.LOADER.load({
     compatibilityDate: "2026-05-20",
@@ -363,6 +381,7 @@ async function parseInCredentialsFreeSandbox(
       MAX_TAR_BYTES,
       MAX_STREAM_TAR_BYTES,
       ARCHIVE_DIGEST_ALGORITHMS: serializeArchiveDigestAlgorithms(),
+      MAX_TEXT_SAMPLE_CHARS: normalizeTextSampleCap(retention.maxTextSampleChars),
     },
     globalOutbound: (
       ctx as unknown as {
@@ -429,6 +448,7 @@ export async function downloadInSandbox(
       MAX_TAR_BYTES,
       MAX_STREAM_TAR_BYTES,
       ARCHIVE_DIGEST_ALGORITHMS: serializeArchiveDigestAlgorithms(options.archiveDigestAlgorithms),
+      MAX_TEXT_SAMPLE_CHARS: normalizeTextSampleCap(options.maxTextSampleChars),
     },
     globalOutbound: (
       ctx as unknown as {
@@ -458,7 +478,20 @@ export async function downloadInSandbox(
   return (await response.json()) as DownloadResult;
 }
 
-function sandboxSource() {
+// 0 means "no cap" in the sandbox, so a negative or non-finite request must
+// normalize to 0 rather than silently becoming a tiny cap.
+function normalizeTextSampleCap(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return 0;
+  return Math.floor(value);
+}
+
+/**
+ * Source of the dynamic Worker module the sandbox runs. Exported so tests can
+ * execute the rendered module itself — the parser exports are unit-tested
+ * directly, but the wiring between the sandbox `env` (caps) and the readers only
+ * exists in this string.
+ */
+export function sandboxSource() {
   return `${renderTarParserSource()}
 
 const STAGE_ID_RE = new RegExp(${JSON.stringify(`^${STAGE_ID_PATTERN}$`)});
@@ -467,6 +500,8 @@ export default {
   async fetch(request, env) {
     const inlineFormat = request.headers.get("x-archive-format");
     const maxTarBytes = env.MAX_TAR_BYTES || 26214400;
+    // Per-file text-sample cap; 0 = unbounded (every staged/reviewed parse).
+    const maxTextSampleChars = env.MAX_TEXT_SAMPLE_CHARS || 0;
     const archiveFormat = inlineFormat || env.ARCHIVE_FORMAT || "tgz";
     let res;
     if (inlineFormat) {
@@ -525,6 +560,7 @@ export default {
           env.MAX_FILES || 2_500,
           maxTarBytes,
           env.MAX_ENTRIES || env.MAX_FILES || 2_500,
+          maxTextSampleChars,
         );
         files = parsed.files;
         suspiciousEntries = parsed.suspicious;
@@ -541,7 +577,7 @@ export default {
       let files;
       let suspiciousEntries;
       try {
-        const parsed = await readZipStream(archive.body, env.MAX_FILES || 2_500, maxTarBytes, maxStreamTarBytes, env.MAX_ENTRIES || env.MAX_FILES || 2_500);
+        const parsed = await readZipStream(archive.body, env.MAX_FILES || 2_500, maxTarBytes, maxStreamTarBytes, env.MAX_ENTRIES || env.MAX_FILES || 2_500, maxTextSampleChars);
         files = parsed.files;
         suspiciousEntries = parsed.suspicious;
       } catch (err) {
@@ -564,7 +600,7 @@ export default {
       // almost nothing, so the decompressed budget inside readTarStream does
       // not bound download size or inflater CPU on its own.
       const tarStream = boundedByteStream(archive.body, maxStreamTarBytes).pipeThrough(new DecompressionStream("gzip"));
-      const parsed = await readTarStream(tarStream, env.MAX_FILES || 2_500, maxTarBytes, maxStreamTarBytes, env.MAX_ENTRIES || env.MAX_FILES || 2_500);
+      const parsed = await readTarStream(tarStream, env.MAX_FILES || 2_500, maxTarBytes, maxStreamTarBytes, env.MAX_ENTRIES || env.MAX_FILES || 2_500, maxTextSampleChars);
       files = parsed.files;
       suspiciousEntries = parsed.suspicious;
     } catch (err) {

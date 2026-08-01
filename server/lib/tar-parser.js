@@ -586,7 +586,7 @@ export function createHeadCapture(limit) {
   };
 }
 
-export async function summarizeFile(path, body) {
+export async function summarizeFile(path, body, maxTextSampleChars = 0) {
   const flags = [];
   const skipTextSample = shouldSkipTextSample(path);
   if (skipTextSample) flags.push("text-sample-skipped");
@@ -602,20 +602,41 @@ export async function summarizeFile(path, body) {
     };
   }
   // Decode the WHOLE file, not a fixed-size head. Deterministic detection runs
-  // over textSample in the parent worker, so clipping here is exactly the
-  // truncation hole that lets an attacker bury a payload past a fixed window
-  // (issue #191). The persisted/display sample is bounded separately at the
-  // persistence layer; per-body work is bounded by the per-file cap and total
-  // retained bytes by the streaming reader's retention budget and MAX_FILES.
+  // over textSample in the parent worker, so clipping the *scanned* text is
+  // exactly the truncation hole that lets an attacker bury a payload past a
+  // fixed window (issue #191). The persisted/display sample is bounded
+  // separately at the persistence layer; per-body work is bounded by the
+  // per-file cap and total retained bytes by the streaming reader's retention
+  // budget and MAX_FILES.
+  //
+  // `maxTextSampleChars` is opt-in and 0 (unbounded) for every reviewed/staged
+  // parse. It exists for baseline (already-published) parses, whose samples are
+  // never scanned as the release under review and never persisted — see
+  // BASELINE_TEXT_SAMPLE_LIMIT. Binary/control-character classification always
+  // reads the full body, so the `binary` flag and the hash stay identical to an
+  // uncapped parse; only how much of the decoded text is carried changes.
   const text = decodeText(body);
   if (!text) flags.push("binary");
+  const limit = maxTextSampleChars > 0 && !isRetainedManifestPath(path) ? maxTextSampleChars : 0;
+  const clipped = limit > 0 && text.length > limit ? clipTextSample(text, limit) : text;
+  if (clipped !== text) flags.push("truncated");
   return {
     path,
     size: body.length,
     sha256: hash,
     flags,
-    ...(text ? { textSample: text } : {}),
+    ...(clipped ? { textSample: clipped } : {}),
   };
+}
+
+// Cut a decoded body back to the last complete line inside `limit` characters.
+// Line-granular so the clipped tail cannot make the last retained line of a
+// baseline file read as modified purely because it was cut mid-line. Falls back
+// to the hard character cut when the limit lands inside one very long line.
+export function clipTextSample(text, limit) {
+  const head = text.slice(0, limit);
+  const lastBreak = head.lastIndexOf("\n");
+  return lastBreak > 0 ? head.slice(0, lastBreak + 1) : head;
 }
 
 export function shouldSkipTextSample(path) {
@@ -695,9 +716,16 @@ export function tarError(message) {
   return err;
 }
 
-export async function readTar(buffer, maxFiles, maxTarBytes) {
+export async function readTar(buffer, maxFiles, maxTarBytes, maxTextSampleChars = 0) {
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-  return readTarStream(new Response(bytes).body, maxFiles, maxTarBytes, Infinity);
+  return readTarStream(
+    new Response(bytes).body,
+    maxFiles,
+    maxTarBytes,
+    Infinity,
+    undefined,
+    maxTextSampleChars,
+  );
 }
 
 // Streaming tar reader. Walks entries sequentially as decompressed bytes
@@ -717,7 +745,14 @@ export async function readTar(buffer, maxFiles, maxTarBytes) {
 // 8k+ files) parse instead of failing; files past the full-inspection tier are
 // still hashed and native-sniffed, so the diff layer can prove them identical
 // to (or diverged from) the baseline.
-export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes, maxEntries) {
+export async function readTarStream(
+  body,
+  maxFiles,
+  maxTarBytes,
+  maxStreamBytes,
+  maxEntries,
+  maxTextSampleChars = 0,
+) {
   const nul = String.fromCharCode(0);
   if (!body) throw tarError("tarball decompression failed");
   const cursor = createStreamCursor(body, maxStreamBytes);
@@ -865,7 +900,7 @@ export async function readTarStream(body, maxFiles, maxTarBytes, maxStreamBytes,
         let contributed = 0;
         if (path && retainBody) {
           if (!(await fill(size))) throw tarError("truncated tar entry");
-          summarized = await summarizeFile(path, take(size));
+          summarized = await summarizeFile(path, take(size), maxTextSampleChars);
           contributed = size;
           retainedTextCount += 1;
         } else {
@@ -1053,7 +1088,13 @@ export async function readZipArchive(buffer, maxFiles, maxArchiveBytes) {
 // exactly the way VS Code / yauzl do. Wheels and sdists never need this:
 // Python's zipfile writes sizes in local headers, so they take the streaming
 // reader instead of paying the buffer.
-export async function readZipArchiveBuffered(buffer, maxFiles, maxArchiveBytes, maxEntries) {
+export async function readZipArchiveBuffered(
+  buffer,
+  maxFiles,
+  maxArchiveBytes,
+  maxEntries,
+  maxTextSampleChars = 0,
+) {
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   const eocd = findZipEndOfCentralDirectory(bytes);
   if (eocd < 0) throw tarError("zip central directory not found");
@@ -1131,7 +1172,7 @@ export async function readZipArchiveBuffered(buffer, maxFiles, maxArchiveBytes, 
     expandedBytes += body.length;
     const tierFull = retainedTextCount >= maxFiles;
     if (!tierFull || isRetainedManifestPath(path)) {
-      files.push(await summarizeFile(path, body));
+      files.push(await summarizeFile(path, body, maxTextSampleChars));
       retainedTextCount += 1;
     } else {
       files.push(
@@ -1284,7 +1325,14 @@ export async function inflateRetainedZipEntry(cursor, compressedSize, uncompress
 // encrypted (bit 0), and zip64 entries are rejected: Python's zipfile never
 // writes them for wheels/sdists, and each would make the local view
 // unverifiable.
-export async function readZipStream(body, maxFiles, maxTarBytes, maxStreamBytes, maxEntries) {
+export async function readZipStream(
+  body,
+  maxFiles,
+  maxTarBytes,
+  maxStreamBytes,
+  maxEntries,
+  maxTextSampleChars = 0,
+) {
   if (!body) throw tarError("archive download failed");
   const cursor = createStreamCursor(body, maxStreamBytes);
   const expansionLimit = Number.isFinite(maxStreamBytes) ? maxStreamBytes : Infinity;
@@ -1426,7 +1474,7 @@ export async function readZipStream(body, maxFiles, maxTarBytes, maxStreamBytes,
           } else {
             bodyBytes = await inflateRetainedZipEntry(cursor, compressedSize, uncompressedSize);
           }
-          summarized = await summarizeFile(path, bodyBytes);
+          summarized = await summarizeFile(path, bodyBytes, maxTextSampleChars);
           contributed = uncompressedSize;
           retainedTextCount += 1;
         } else {

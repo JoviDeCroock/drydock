@@ -282,6 +282,8 @@ export async function downloadPkgPrNewTarball(
 
 export interface DownloadPublishedTarballOptions extends PublishedTarballFetchOptions {
   maxFiles?: number;
+  /** See `DownloadOptions.maxTextSampleChars` in `lib/sandbox.ts`. */
+  maxTextSampleChars?: number;
 }
 
 /**
@@ -303,5 +305,6 @@ export async function downloadPublishedTarball(
     body,
     format: "tgz",
     maxFiles: options.maxFiles,
+    maxTextSampleChars: options.maxTextSampleChars,
   });
 }

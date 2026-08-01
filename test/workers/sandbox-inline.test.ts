@@ -6,6 +6,7 @@ import {
   downloadInSandboxStream,
   SandboxError,
 } from "../../server/lib/sandbox";
+import { BASELINE_TEXT_SAMPLE_LIMIT } from "../../server/lib/scan/sample-retention";
 
 interface LoaderRecord {
   globalOutboundProps: unknown;
@@ -172,5 +173,81 @@ describe("downloadInSandboxStream", () => {
     expect(record.subRequestsLimit).toBe(0);
     expect(record.receivedHeaders?.get("x-archive-format")).toBe("tgz");
     expect(record.receivedBody).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
+  });
+});
+
+describe("sandbox retention caps", () => {
+  function emptyRecord(): LoaderRecord {
+    return {
+      globalOutboundProps: undefined,
+      subRequestsLimit: undefined,
+      receivedHeaders: null,
+      receivedBody: null,
+    };
+  }
+
+  test("defaults the per-file text-sample cap to 0 (unbounded) and carries no credentials", async () => {
+    const record = emptyRecord();
+    const ctx = buildCtxWithGateway(record);
+    const sandboxEnv = {
+      ...env,
+      LOADER: buildLoader(record) as unknown as WorkerLoader,
+    } as Cloudflare.Env;
+
+    await downloadInSandboxInline(sandboxEnv, ctx, {
+      bytes: new TextEncoder().encode("archive"),
+      format: "tgz",
+    });
+
+    // 0 means "no cap": the reviewed side is always scanned whole (issue #191).
+    expect(record.loaderEnv?.MAX_TEXT_SAMPLE_CHARS).toBe(0);
+    expect(
+      Object.keys(record.loaderEnv ?? {})
+        .join(",")
+        .toLowerCase(),
+    ).not.toContain("token");
+    expect(JSON.stringify(record.loaderEnv)).not.toContain("npm_");
+  });
+
+  test("passes an opted-in baseline cap through to the sandbox env", async () => {
+    const record = emptyRecord();
+    const ctx = buildCtxWithGateway(record);
+    const sandboxEnv = {
+      ...env,
+      LOADER: buildLoader(record) as unknown as WorkerLoader,
+    } as Cloudflare.Env;
+
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+        controller.close();
+      },
+    });
+    await downloadInSandboxStream(sandboxEnv, ctx, {
+      body,
+      format: "tgz",
+      maxTextSampleChars: BASELINE_TEXT_SAMPLE_LIMIT,
+    });
+
+    expect(record.loaderEnv?.MAX_TEXT_SAMPLE_CHARS).toBe(BASELINE_TEXT_SAMPLE_LIMIT);
+  });
+
+  test("normalizes a nonsense cap to unbounded rather than a tiny window", async () => {
+    for (const requested of [-1, 0, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const record = emptyRecord();
+      const ctx = buildCtxWithGateway(record);
+      const sandboxEnv = {
+        ...env,
+        LOADER: buildLoader(record) as unknown as WorkerLoader,
+      } as Cloudflare.Env;
+
+      await downloadInSandboxInline(sandboxEnv, ctx, {
+        bytes: new TextEncoder().encode("archive"),
+        format: "tgz",
+        maxTextSampleChars: requested,
+      });
+
+      expect(record.loaderEnv?.MAX_TEXT_SAMPLE_CHARS, `cap ${requested}`).toBe(0);
+    }
   });
 });

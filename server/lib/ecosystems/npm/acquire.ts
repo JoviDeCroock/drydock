@@ -1,4 +1,5 @@
 import { pickBaselineVersion } from "./registry";
+import { BASELINE_TEXT_SAMPLE_LIMIT } from "../../scan/sample-retention";
 import { parseSandboxErrorDetail } from "../../sandbox";
 import { emitOperationalEvent } from "../../platform/observability";
 import type { PackageJsonSummary } from "../../review";
@@ -199,6 +200,10 @@ export async function acquireBaselineNpm(
   try {
     previous = await broker.downloadPublished(tarballUrl, {
       maxFiles: input.maxFiles,
+      // The baseline's text samples are diff/annotation context only — never
+      // the reviewed release, never persisted — so they are clipped inside the
+      // sandbox instead of shipping whole bodies of both package sides.
+      maxTextSampleChars: BASELINE_TEXT_SAMPLE_LIMIT,
     });
   } catch (err) {
     // A baseline the sandbox rejects on a safety limit degrades to a no-baseline

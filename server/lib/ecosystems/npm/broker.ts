@@ -17,6 +17,12 @@ export interface NpmBroker extends AdapterBroker {
 
 export interface NpmBrokerDownloadOptions {
   maxFiles?: number;
+  /**
+   * Per-file text-sample cap the sandbox applies before the parsed files cross
+   * the wire. Only the baseline download sets it (see
+   * BASELINE_TEXT_SAMPLE_LIMIT); the staged side is always unbounded.
+   */
+  maxTextSampleChars?: number;
 }
 
 interface NpmBrokerProps {
@@ -74,6 +80,7 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
         npmToken: creds.token,
         allowInsecureLocalhost: allowInsecureLocalRegistry(this.env),
         maxFiles: opts.maxFiles,
+        maxTextSampleChars: opts.maxTextSampleChars,
       }),
     );
   }
@@ -161,6 +168,7 @@ class LocalNpmBroker implements NpmBroker {
       npmToken: creds.token,
       allowInsecureLocalhost: allowInsecureLocalRegistry(this.ctx.env),
       maxFiles: opts.maxFiles,
+      maxTextSampleChars: opts.maxTextSampleChars,
     });
   }
 

@@ -4,6 +4,7 @@ import {
   redactFindings,
   summarizePackageJsonDiff,
 } from "../../review";
+import { BASELINE_TEXT_SAMPLE_LIMIT } from "../../scan/sample-retention";
 import type {
   AcquiredArtifact,
   BaselineInfo,
@@ -58,7 +59,12 @@ export const vscodeAdapter: PackageAdapter<VscodeAdapterInput, VscodeBroker> = {
       }
 
       try {
-        const downloaded = await broker.downloadPublicArtifact({ url: selected.url });
+        const downloaded = await broker.downloadPublicArtifact(
+          { url: selected.url },
+          // Baseline samples are diff/annotation context only; the reviewed
+          // VSIX is parsed uncapped. `extension/package.json` is manifest-exempt.
+          { maxTextSampleChars: BASELINE_TEXT_SAMPLE_LIMIT },
+        );
         const acquired = acquireVscodeArtifact(input.manifest, {
           path: `${input.manifest.package}-${selected.version}.vsix`,
           sha256: UNKNOWN_BASELINE_SHA256,

@@ -190,6 +190,107 @@ describe("readTar regular files", () => {
   });
 });
 
+describe("readTar baseline text-sample cap", () => {
+  // The cap is opt-in and applies only to baseline (already published) parses;
+  // every staged/reviewed parse passes 0 and keeps the whole-body behavior the
+  // test above pins (issue #191).
+  const CAP = 1024;
+
+  async function parseCapped(tar, cap = CAP) {
+    const result = await readTar(tar.buffer, PARSE_LIMITS.maxFiles, PARSE_LIMITS.maxTarBytes, cap);
+    return result.files;
+  }
+
+  test("is off by default: the same archive keeps its whole body", async () => {
+    const body = "// pad\n".repeat(500); // 3500 chars
+    const tar = buildTar([{ name: "package/big.js", body }]);
+
+    const [uncapped] = await parse(tar);
+
+    expect(uncapped.textSample).toBe(body);
+    expect(uncapped.flags).not.toContain("truncated");
+  });
+
+  test("clips the retained sample, flags it, and keeps size + hash of the full body", async () => {
+    const filler = "// pad\n".repeat(500); // 3500 chars, well past the cap
+    const payload = "eval(process.env.SECRET);\n";
+    const bodyText = filler + payload;
+    const tar = buildTar([{ name: "package/big.js", body: bodyText }]);
+
+    const [uncapped] = await parse(tar);
+    const [capped] = await parseCapped(tar);
+
+    expect(capped.flags).toContain("truncated");
+    expect(capped.textSample.length).toBeLessThanOrEqual(CAP);
+    expect(bodyText.startsWith(capped.textSample)).toBe(true);
+    // Identity is unaffected: the digest still covers every byte, so the diff
+    // layer can still prove whether the file changed.
+    expect(capped.sha256).toBe(uncapped.sha256);
+    expect(capped.size).toBe(uncapped.size);
+  });
+
+  test("clips on a line boundary so the last retained line is complete", async () => {
+    const line = "a".repeat(99) + "\n"; // 100 chars per line
+    const tar = buildTar([{ name: "package/lines.js", body: line.repeat(50) }]);
+
+    const [capped] = await parseCapped(tar, 250);
+
+    expect(capped.textSample).toBe(line.repeat(2));
+  });
+
+  test("falls back to a hard cut when one line is longer than the cap", async () => {
+    const body = "b".repeat(4_000);
+    const tar = buildTar([{ name: "package/one-line.js", body }]);
+
+    const [capped] = await parseCapped(tar, 500);
+
+    expect(capped.textSample).toBe("b".repeat(500));
+    expect(capped.flags).toContain("truncated");
+  });
+
+  test("exempts manifests: structural manifest diffing needs the whole document", async () => {
+    const manifest = JSON.stringify({
+      name: "pkg",
+      version: "1.0.0",
+      description: "x".repeat(4_000),
+    });
+    const tar = buildTar([
+      { name: "package/package.json", body: manifest },
+      { name: "package/nested/dep/package.json", body: manifest },
+      { name: "package/PKG-INFO", body: `Name: pkg\n${"# ".repeat(2_000)}\n` },
+      { name: "package/other.js", body: "x".repeat(4_000) },
+    ]);
+
+    const files = await parseCapped(tar);
+    const byPath = Object.fromEntries(files.map((file) => [file.path, file]));
+
+    expect(byPath["package.json"].textSample).toBe(manifest);
+    expect(byPath["package.json"].flags).not.toContain("truncated");
+    expect(byPath["nested/dep/package.json"].textSample).toBe(manifest);
+    expect(byPath["PKG-INFO"].flags).not.toContain("truncated");
+    expect(byPath["other.js"].flags).toContain("truncated");
+    // A capped manifest would null out package identity downstream.
+    expect(parsePackageJson(files)).toMatchObject({ name: "pkg", version: "1.0.0" });
+  });
+
+  test("classifies binary bodies from the whole body, not the retained prefix", async () => {
+    // The NUL that proves this file is binary sits past the cap. Classification
+    // must still see it, otherwise a capped parse would emit a bogus text
+    // sample for a binary file and change what the `binary` flag means.
+    const head = new TextEncoder().encode("MZ" + "text".repeat(1_000));
+    const body = new Uint8Array(head.length + 4);
+    body.set(head, 0);
+    body.set([0, 0, 0, 0], head.length);
+    const tar = buildTar([{ name: "package/bin/tool", body }]);
+
+    const [capped] = await parseCapped(tar);
+
+    expect(capped.flags).toContain("binary");
+    expect(capped.flags).not.toContain("truncated");
+    expect(capped.textSample).toBeUndefined();
+  });
+});
+
 describe("readTar path safety", () => {
   test("drops entries with traversal paths but keeps siblings", async () => {
     const tar = buildTar([
@@ -1565,6 +1666,7 @@ describe("rendered sandbox parser source", () => {
     "digestArchiveStream",
     "createStreamCursor",
     "shouldSkipTextSample",
+    "clipTextSample",
     "sniffNativeArtifact",
     "createHeadCapture",
     "summarizeFile",
