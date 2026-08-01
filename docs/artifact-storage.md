@@ -77,11 +77,35 @@ R2 artifacts are torn down whenever the D1 rows that point at them are deleted, 
 
 Deletion uses the raw `ARTIFACTS` binding, not the read-gated bucket: `SCAN_ARTIFACT_READS_DISABLED` is a read kill-switch and must not strand objects. The delete prefixes intentionally stop before the `v{N}` segment so a cleanup removes every storage version. Cleanup is fail-soft — a delete error is logged (`scan.artifacts.delete_failed`) but never thrown, so it cannot abort the surrounding D1 teardown; a leaked object is recoverable by re-running the prefix sweep. A successful sweep logs `scan.artifacts.deleted` with the object count. Pending/running scans that are discarded before completion (`discardScanAttempt`, `deletePendingScanJob`) carry no artifacts, so they skip R2 cleanup.
 
-Time-based retention (a TTL sweep that deletes old scans on a schedule) is not yet implemented and is tracked separately.
+## Time-Based Retention
+
+`server/lib/retention.ts` runs on every scheduled tick, after the discovery sweep. Three of its sweeps are unconditional storage hygiene — audit events past `AUDIT_LOG_RETENTION_DAYS` (see [`audit-log.md`](./audit-log.md)), expired Better Auth `session` rows, and expired `verification` tokens. The fourth deletes reviews, so it is **off unless an operator opts in**:
+
+| Setting               | Default         | Meaning                                                                         |
+| --------------------- | --------------- | ------------------------------------------------------------------------------- |
+| `SCAN_RETENTION_DAYS` | unset (**off**) | Delete scans created more than N days ago. Must be ≥ `SCAN_RETENTION_MIN_DAYS`. |
+
+Unset, unparseable, non-positive, or below the floor all mean "delete nothing" and log `retention.scans.misconfigured`. Scan deletion is irreversible and the review history is what release memory reads, so a mistyped window fails safe instead of emptying the table.
+
+When enabled, each tick deletes at most `SCAN_RETENTION_MAX_PER_TICK` scans (oldest first, via the `scans_created_idx` index); a backlog drains across ticks. Per scan the sweep:
+
+1. Clears the artifact-metadata columns, so the row stops claiming objects that are about to be deleted.
+2. Sweeps the per-scan R2 prefix. **If the sweep fails, the D1 row is left in place** (counted as `deferred`) and the next tick retries.
+3. Preserves audit events still inside their retention window, then deletes the organization-scoped `scans` row.
+
+Step 1 is what makes step 3 survivable. Sweeping R2 first and then failing the row delete would leave a row that still claims to be artifact-backed while its evidence is gone. An orphaned R2 object is recoverable by re-running a prefix sweep; a scan that reads clean because its evidence was deleted is not. With this ordering the worst residual state is a metadata-only row that is honest about having no detail and that the next tick finishes.
+
+Each candidate is wrapped individually, so one failure cannot abort the rest of the backlog. Two kinds of row are excluded from the candidate query rather than deferred, because a permanently-deferred row at the head of a fixed-size oldest-first page would starve every deletable row behind it: scans with no `organization_id` (the org was deleted, so there is no prefix to sweep and no scope for the delete) and scans attached to a **still-pending** workflow gate (deleting one would null a live gate's `scan_id`). Transiently deferred rows are paged past within the same tick for the same reason.
+
+`scan_events` is handled separately, because it doubles as the organization audit log on its own flat 90-day window: only events already past **that** window are deleted with the scan. Newer ones are detached (`scan_id` set to null) so a recent `scan.decided` entry is not deleted at one day old just because its scan aged out. See [`audit-log.md`](./audit-log.md#retention).
+
+The sweep **requires the `ARTIFACTS` binding**: without it there is no way to reach a scan's objects, so it logs `retention.scans.skipped` and deletes nothing. Every sweep is bounded (LIMIT + iterate with a per-tick batch cap) and independently wrapped, so one failure neither stops the others nor throws into the scheduled handler.
+
+Deleting a `publish`-decided scan also removes it from release memory: a later release of the same package will find no prior approved scan and score as it did before release memory existed. That is inherent to a retention window, not a regression.
 
 ## Rollback
 
-`SCAN_ARTIFACT_READS_DISABLED=true` (or `1`) stops scan-detail reads from touching R2 while leaving the objects untouched. There is no D1 copy to fall back to, so every completed scan then renders as metadata only — no file samples, no findings. Treat it as a containment switch for a suspect bucket, not a rollback. The routine lever for a suspect object is the per-object digest/size verification, which already fails closed to the same metadata view.
+`SCAN_ARTIFACT_READS_DISABLED=true` (or `1`) stops scan-detail reads from touching R2 while leaving the objects untouched. There is no D1 detail copy to fall back to, so completed scans render as metadata only. Their diff falls back to the [compacted summary embed](#summary-diff-compaction), which is the capped release delta and is labelled as truncated; the headline changed-file count still comes from `scans.changed_file_count`. Treat the setting as a containment switch for a suspect bucket, not a rollback. The routine lever for a suspect object is digest/size verification, which already fails closed to the same metadata view.
 
 ## D1 Detail Removal
 

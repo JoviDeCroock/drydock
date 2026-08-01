@@ -236,6 +236,24 @@ describe("release-memory finding profile column", () => {
     ]);
   });
 
+  test("an oversized profile is not stored, and the artifact path serves it", async () => {
+    const owner = await seedUser();
+    // Above FINDING_PROFILE_MAX_ENTRIES. Storing a truncated profile would be
+    // indistinguishable from a genuinely smaller one, so the column stays null
+    // and the (correct, complete) artifact projection is used instead.
+    const many = Array.from({ length: 2001 }, (_unused, index) =>
+      finding("code.network-access", `src/file-${index}.js`, "medium"),
+    );
+    const { db, scanId } = await seedApprovedScan(owner, { findings: many });
+
+    const [row] = await db.select().from(schema.scans).where(eq(schema.scans.id, scanId));
+    expect(row.findingProfileJson).toBeNull();
+
+    const prior = await lookup(db, owner, env.ARTIFACTS);
+    expect(prior?.scanId).toBe(scanId);
+    expect(prior?.findings).toHaveLength(2001);
+  });
+
   test("a malformed stored profile falls back rather than reporting an empty one", async () => {
     const owner = await seedUser();
     const { db, scanId } = await seedApprovedScan(owner, {

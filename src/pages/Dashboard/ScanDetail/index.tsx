@@ -7,6 +7,7 @@ import {
   useSignal,
   useSignalEffect,
 } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
 import { useLocation, useRoute } from "preact-iso";
 import { npmStagedPackagesUrlFor } from "../../../lib/npm-staged-url";
 import { getDashboardReturnUrl, useQuerySignal } from "../../../lib/query-state";
@@ -157,6 +158,31 @@ export default function ScanDetailPage() {
       stagedSha256: file.sha256 ?? undefined,
       flags: Array.isArray(file.flagsJson) ? (file.flagsJson as string[]) : [],
     }));
+  });
+
+  // The tree is rendering the summary-embedded diff rather than the real one:
+  // an artifact-backed scan whose R2 read failed closed. That embed is the
+  // release delta only, and capped, so the counts on screen are a floor — say so
+  // instead of letting "500 changed files" read as the whole release.
+  const diffTruncation = useComputed(() => {
+    const detail = model.detail.value;
+    const isDefault = model.isDefaultComparison.value;
+    const persistedSummary = summary.value;
+    const stats = persistedSummary.diffStats;
+    const shown = persistedSummary.diff?.length ?? 0;
+    if (!detail || !isDefault || detail.diff?.length || !stats?.compacted) return null;
+    if (stats.changedCount <= shown && stats.totalCount <= shown) return null;
+    return { shown, changed: stats.changedCount, total: stats.totalCount };
+  });
+
+  // The persisted count is computed from the complete diff at scan time, so it
+  // stays right even when the tree is rendering a truncated fallback. Only a
+  // non-default comparison (recomputed client-side) has to count entries.
+  const changedFileCount = useComputed(() => {
+    const persisted = model.detail.value?.scan.changedFileCount;
+    const isDefault = model.isDefaultComparison.value;
+    const computed = diffEntries.value.filter((entry) => entry.status !== "unchanged").length;
+    return isDefault && typeof persisted === "number" ? persisted : computed;
   });
 
   const selectedEntry = useComputed(() => {
@@ -337,7 +363,7 @@ export default function ScanDetailPage() {
               detail={detail}
               summary={summary.value}
               ai={ai.value}
-              diffCount={diffEntries.value.filter((entry) => entry.status !== "unchanged").length}
+              diffCount={changedFileCount.value}
               findingsWithDiffStatus={findingsWithDiffStatus.value}
               usePersistedRiskSummary={model.isDefaultComparison.value || !compare}
               isWorkflowGate={isWorkflowGate}
@@ -401,6 +427,15 @@ export default function ScanDetailPage() {
                     {visibleDiffEntries.value.length} / {diffEntries.value.length}
                   </span>
                 </div>
+                <Show when={diffTruncation}>
+                  {(truncation) => (
+                    <p class="m-0 text-[12px] leading-[1.5] text-warn-text">
+                      Stored evidence for this review could not be read, so the tree falls back to a
+                      partial record: {truncation.shown} of {truncation.changed} changed files, out
+                      of {truncation.total} in the release.
+                    </p>
+                  )}
+                </Show>
                 <div class="flex flex-col overflow-y-auto flex-1 min-h-0 border-t border-border pt-2">
                   <FileTree
                     entries={visibleDiffEntries.value}

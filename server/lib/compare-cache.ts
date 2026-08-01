@@ -118,13 +118,20 @@ export function serializeCompareCachePayload(
     : { serialized: bareJson, samplesOmitted: true };
 }
 
+/**
+ * Write the compare payload to KV and hand back exactly what a later reader will
+ * get. Returning the cached (possibly shed) copy rather than the in-memory one
+ * matters: otherwise the request that populates the cache renders every file body
+ * with no `sample-omitted` flags, and the very next navigation — served from KV —
+ * shows a different, sparser view of the same version.
+ */
 export async function writeCompareCache(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
   key: string,
   payload: CachedCompare,
-) {
-  if (!env.COMPARE_CACHE) return;
+): Promise<CachedCompare> {
+  if (!env.COMPARE_CACHE) return payload;
   const { serialized, samplesOmitted } = serializeCompareCachePayload(payload);
   const cachedBytes = utf8ByteLength(serialized);
   if (cachedBytes > CACHE_MAX_PAYLOAD_BYTES) {
@@ -137,7 +144,8 @@ export async function writeCompareCache(
       cachedBytes,
       maxBytes: CACHE_MAX_PAYLOAD_BYTES,
     });
-    return;
+    // Nothing was cached, so nothing is shed for this request either.
+    return payload;
   }
   if (samplesOmitted) {
     emitOperationalEvent("info", "compare_cache.samples_shed", {
@@ -161,6 +169,7 @@ export async function writeCompareCache(
     return undefined;
   });
   ctx.waitUntil(write);
+  return samplesOmitted ? (JSON.parse(serialized) as CachedCompare) : payload;
 }
 
 export async function loadCompare(
@@ -195,8 +204,9 @@ export async function loadCompare(
     packageJson: redactJson(downloaded.packageJson ?? null),
     cachedAt: new Date().toISOString(),
   };
-  await writeCompareCache(env, ctx, key, payload);
-  return payload;
+  // The cached copy, so the populating request sees the same file bodies (and the
+  // same `sample-omitted` flags) every later request will.
+  return writeCompareCache(env, ctx, key, payload);
 }
 
 export function stripTextSamples(files: FileRecord[]): FileRecord[] {

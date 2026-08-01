@@ -107,7 +107,7 @@ describe("expired auth row retention", () => {
 
     const pruned = await pruneExpiredAuthRows(createDb(env.DB), now);
 
-    expect(pruned).toEqual({ sessions: 1, verifications: 1 });
+    expect(pruned).toEqual({ sessions: 1, verifications: 1, moreRemaining: false });
     expect((await sessionIds([live, justExpired, longExpired])).sort()).toEqual(
       [live, justExpired].sort(),
     );
@@ -138,6 +138,8 @@ describe("expired auth row retention", () => {
     expect(await pruneExpiredAuthRows(createDb(env.DB), now)).toEqual({
       sessions: 0,
       verifications: 0,
+      // Both sweeps are batched now; nothing eligible means nothing left over.
+      moreRemaining: false,
     });
   });
 

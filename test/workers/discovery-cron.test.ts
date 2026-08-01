@@ -425,6 +425,6 @@ describe("staged publishes discovery cron", () => {
     expect(events).toContain("staged_publishes.cron.failed");
     // Pruning still ran (and failed against the same broken binding) instead
     // of being skipped by an uncaught sweep exception.
-    expect(events).toContain("retention.audit_events.prune_failed");
+    expect(events).toContain("audit_events.prune_failed");
   });
 });
