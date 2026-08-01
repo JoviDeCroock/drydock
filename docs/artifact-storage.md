@@ -134,8 +134,15 @@ Unset, unparseable, non-positive, or below the floor all mean "delete nothing" a
 
 When enabled, each tick deletes at most `SCAN_RETENTION_MAX_PER_TICK` scans (oldest first, via the `scans_created_idx` index); a backlog drains across ticks. Per scan the sweep:
 
-1. Sweeps the per-scan R2 prefix. **If the sweep fails, the D1 row is left in place** (counted as `deferred`) and the next tick retries. Deleting the row first would leave objects that no row points at — the deletion-lifecycle rule above, inverted.
-2. Deletes `scan_events`, `scan_findings`, and `scan_files` explicitly and only then the organization-scoped `scans` row, so redacted evidence goes before the metadata describing it rather than relying on cascade ordering.
+1. Clears the artifact-metadata columns, so the row stops claiming objects that are about to be deleted.
+2. Sweeps the per-scan R2 prefix. **If the sweep fails, the D1 row is left in place** (counted as `deferred`) and the next tick retries.
+3. Deletes `scan_findings` and `scan_files`, then the organization-scoped `scans` row.
+
+Step 1 is what makes step 3 survivable. Sweeping R2 first and then failing the row delete would leave a row that still claims to be artifact-backed while its evidence is gone — and because a compacted row has no `scan_files` / `scan_findings` either, and `SCAN_ARTIFACT_READS_DISABLED` is not a recovery path for those rows, it would render as a completed scan with zero files and zero findings. An orphaned R2 object is recoverable by re-running a prefix sweep; a scan that reads clean because its evidence was deleted is not. With this ordering the worst residual state is a metadata-only row that is honest about having no detail and that the next tick finishes.
+
+Each candidate is wrapped individually, so one failure cannot abort the rest of the backlog. Two kinds of row are excluded from the candidate query rather than deferred, because a permanently-deferred row at the head of a fixed-size oldest-first page would starve every deletable row behind it: scans with no `organization_id` (the org was deleted, so there is no prefix to sweep and no scope for the delete) and scans attached to a **still-pending** workflow gate (deleting one would null a live gate's `scan_id`). Transiently deferred rows are paged past within the same tick for the same reason.
+
+`scan_events` is handled separately, because it doubles as the organization audit log on its own flat 90-day window: only events already past **that** window are deleted with the scan. Newer ones are detached (`scan_id` set to null) so a recent `scan.decided` entry is not deleted at one day old just because its scan aged out. See [`audit-log.md`](./audit-log.md#retention).
 
 The sweep **requires the `ARTIFACTS` binding**: without it there is no way to reach a scan's objects, so it logs `retention.scans.skipped` and deletes nothing. Every sweep is bounded (LIMIT + iterate with a per-tick batch cap) and independently wrapped, so one failure neither stops the others nor throws into the scheduled handler.
 
@@ -143,7 +150,7 @@ Deleting a `publish`-decided scan also removes it from release memory: a later r
 
 ## Rollback
 
-Set `SCAN_ARTIFACT_READS_DISABLED=true` (or `1`) to force scan-detail reads back to D1 while leaving R2 artifacts untouched. Do not delete R2 objects during rollback. This restores D1-backed detail for legacy/degraded rows that still have `scan_files` / `scan_findings` content. It does **not** recover detail for compacted artifact-backed scans (the rows were never written), so disabling reads for those rows shows metadata only — keep R2 reads enabled for them. The safe operational lever for a suspect R2 read remains the per-object digest/size verification, which already fails closed to the metadata view.
+Set `SCAN_ARTIFACT_READS_DISABLED=true` (or `1`) to force scan-detail reads back to D1 while leaving R2 artifacts untouched. Do not delete R2 objects during rollback. This restores D1-backed detail for legacy/degraded rows that still have `scan_files` / `scan_findings` content. It does **not** recover detail for compacted artifact-backed scans (the rows were never written), so disabling reads for those rows shows metadata only — keep R2 reads enabled for them. Their diff also degrades rather than disappearing: the workbench falls back to the [compacted summary embed](#summary-diff-compaction), which is the release delta only and capped at `SUMMARY_DIFF_MAX_ENTRIES`. That is a **truncated** view, and it is labelled as one in the release tree ("… of N changed files, out of M in the release"); the headline changed-file count keeps coming from `scans.changed_file_count`, which was computed from the complete diff at scan time. The safe operational lever for a suspect R2 read remains the per-object digest/size verification, which already fails closed to the metadata view.
 
 ## D1 Detail Compaction
 

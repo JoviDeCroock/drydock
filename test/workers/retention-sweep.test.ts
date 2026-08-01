@@ -4,15 +4,14 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { AUDIT_LOG_RETENTION_DAYS, pruneAuditEventsOlderThan } from "../../server/db/audit-log";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
-import {
-  pruneExpiredSessions,
-  pruneExpiredVerifications,
-  listScansOlderThan,
-} from "../../server/db/retention";
+import { AUTH_ROW_RETENTION_GRACE_MS, pruneExpiredAuthRows } from "../../server/db/auth-retention";
+import { listScansOlderThan } from "../../server/db/retention";
 import { createScanJob, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
+import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
 import {
   parseScanRetentionDays,
+  resetRetentionMisconfigurationLatch,
   runRetentionSweep,
   SCAN_RETENTION_MIN_DAYS,
 } from "../../server/lib/retention";
@@ -21,6 +20,7 @@ import { sha256Hex, stableJson } from "../../server/lib/platform/stable-json";
 import type { DiffEntry, FileRecord } from "../../server/lib/review";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const GRACE_MS = AUTH_ROW_RETENTION_GRACE_MS;
 
 function safeSegment(value: string): string {
   return encodeURIComponent(value).replace(/%/g, "~");
@@ -103,6 +103,57 @@ async function seedAgedScan(
   return scanId;
 }
 
+/**
+ * A pending workflow gate pointing at `scanId`. `scans.gate_id` and
+ * `github_workflow_gates.scan_id` are enforced FKs in the test D1, so the whole
+ * installation → release-target → gate chain has to exist.
+ */
+async function seedPendingGate(
+  owner: { db: ReturnType<typeof createDb>; organizationId: string },
+  scanId: string,
+): Promise<string> {
+  const installation = await upsertInstallation(owner.db, {
+    organizationId: owner.organizationId,
+    installationId: `inst_${crypto.randomUUID()}`,
+    accountLogin: "octo",
+    accountType: "Organization",
+    targetType: "Organization",
+    status: "active",
+    createdByUserId: null,
+  });
+  const releaseTarget = await createReleaseTarget(owner.db, {
+    organizationId: owner.organizationId,
+    installationRowId: installation.id,
+    repositoryId: 1234,
+    repositoryFullName: "octo/pkg",
+    environment: "release",
+    ecosystem: null,
+    artifactName: null,
+    createdByUserId: null,
+  });
+  const now = new Date();
+  const gateId = `gate_${crypto.randomUUID()}`;
+  await owner.db.insert(schema.githubWorkflowGates).values({
+    id: gateId,
+    organizationId: owner.organizationId,
+    installationRowId: installation.id,
+    releaseTargetId: releaseTarget.id,
+    deliveryId: `delivery_${crypto.randomUUID()}`,
+    repositoryId: 1234,
+    repositoryFullName: "octo/pkg",
+    environment: "release",
+    runId: 99,
+    deploymentCallbackUrl: "https://api.github.com/callback",
+    eventAction: "requested",
+    status: "pending",
+    scanId,
+    requestedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+  return gateId;
+}
+
 async function scanKeys(organizationId: string, scanId: string): Promise<string[]> {
   const listed = await env.ARTIFACTS.list({
     prefix: `orgs/${safeSegment(organizationId)}/scans/${safeSegment(scanId)}/`,
@@ -120,12 +171,14 @@ async function countRows(table: string): Promise<number> {
 // deliberately global (no organization scoping), so each test needs the tables it
 // sweeps to start empty — the per-file reset in setup.ts is not enough.
 beforeEach(async () => {
+  resetRetentionMisconfigurationLatch();
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
 
   const db = createDb(env.DB);
   await db.delete(schema.scanEvents);
+  await db.delete(schema.githubWorkflowGates);
   await db.delete(schema.scans);
   await db.delete(schema.session);
   await db.delete(schema.verification);
@@ -166,24 +219,29 @@ describe("parseScanRetentionDays", () => {
 });
 
 describe("bounded auth sweeps", () => {
-  test("expired sessions are deleted in bounded batches and live ones are kept", async () => {
+  // The grace period and the "what is eligible" rules live in
+  // test/workers/auth-retention.test.ts; these cover the batching this phase added
+  // on top of them.
+  test("expired auth rows are deleted in bounded batches and live ones are kept", async () => {
     const { db, userId } = await seedUser();
     const now = new Date();
-    const rows = Array.from({ length: 7 }, (_unused, index) => ({
-      id: `sess_${crypto.randomUUID()}`,
-      token: `tok_${crypto.randomUUID()}`,
-      userId,
-      expiresAt: new Date(now.getTime() + (index < 2 ? DAY_MS : -DAY_MS)),
-      createdAt: now,
-      updatedAt: now,
-    }));
-    await db.insert(schema.session).values(rows);
+    const expired = new Date(now.getTime() - 2 * GRACE_MS);
+    const live = new Date(now.getTime() + DAY_MS);
+    await db.insert(schema.session).values(
+      Array.from({ length: 7 }, (_unused, index) => ({
+        id: `sess_${crypto.randomUUID()}`,
+        token: `tok_${crypto.randomUUID()}`,
+        userId,
+        expiresAt: index < 2 ? live : expired,
+        createdAt: now,
+        updatedAt: now,
+      })),
+    );
 
     // batchSize 2 over 5 expired rows: three statements, and the sweep reports
     // that it drained rather than that it hit the cap.
-    const outcome = await pruneExpiredSessions(db, now, { batchSize: 2, maxBatches: 10 });
-    expect(outcome.deleted).toBe(5);
-    expect(outcome.batches).toBe(3);
+    const outcome = await pruneExpiredAuthRows(db, now, { batchSize: 2, maxBatches: 10 });
+    expect(outcome.sessions).toBe(5);
     expect(outcome.moreRemaining).toBe(false);
     expect(await countRows("session")).toBe(2);
   });
@@ -196,44 +254,60 @@ describe("bounded auth sweeps", () => {
         id: `sess_${crypto.randomUUID()}`,
         token: `tok_${crypto.randomUUID()}`,
         userId,
-        expiresAt: new Date(now.getTime() - DAY_MS),
+        expiresAt: new Date(now.getTime() - 2 * GRACE_MS),
         createdAt: now,
         updatedAt: now,
       })),
     );
 
-    const outcome = await pruneExpiredSessions(db, now, { batchSize: 2, maxBatches: 2 });
-    expect(outcome.deleted).toBe(4);
+    const outcome = await pruneExpiredAuthRows(db, now, { batchSize: 2, maxBatches: 2 });
+    expect(outcome.sessions).toBe(4);
     expect(outcome.moreRemaining).toBe(true);
     expect(await countRows("session")).toBe(2);
   });
 
-  test("expired verification tokens are swept, unexpired ones are not", async () => {
-    const db = createDb(env.DB);
+  test("a row inside the refresh grace period is not touched", async () => {
+    const { db, userId } = await seedUser();
     const now = new Date();
-    await db.insert(schema.verification).values([
-      {
-        id: `ver_${crypto.randomUUID()}`,
-        identifier: "stale@example.com",
-        value: "token-a",
-        expiresAt: new Date(now.getTime() - DAY_MS),
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        id: `ver_${crypto.randomUUID()}`,
-        identifier: "fresh@example.com",
-        value: "token-b",
-        expiresAt: new Date(now.getTime() + DAY_MS),
-        createdAt: now,
-        updatedAt: now,
-      },
-    ]);
+    // Expired seconds ago: Better Auth refreshes by rewriting expires_at on the
+    // same row, so this may be mid-refresh.
+    await db.insert(schema.session).values({
+      id: `sess_${crypto.randomUUID()}`,
+      token: `tok_${crypto.randomUUID()}`,
+      userId,
+      expiresAt: new Date(now.getTime() - 1000),
+      createdAt: now,
+      updatedAt: now,
+    });
 
-    const outcome = await pruneExpiredVerifications(db, now);
-    expect(outcome.deleted).toBe(1);
-    const remaining = await db.select().from(schema.verification);
-    expect(remaining.map((row) => row.identifier)).toEqual(["fresh@example.com"]);
+    expect(await pruneExpiredAuthRows(db, now)).toMatchObject({ sessions: 0 });
+    expect(await countRows("session")).toBe(1);
+  });
+
+  test("the scheduled pass sweeps auth rows through the graced helper", async () => {
+    const { db, userId } = await seedUser();
+    const now = new Date();
+    await db.insert(schema.session).values({
+      id: `sess_${crypto.randomUUID()}`,
+      token: `tok_${crypto.randomUUID()}`,
+      userId,
+      expiresAt: new Date(now.getTime() - 2 * GRACE_MS),
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.verification).values({
+      id: `ver_${crypto.randomUUID()}`,
+      identifier: "stale@example.com",
+      value: "token-a",
+      expiresAt: new Date(now.getTime() - 2 * GRACE_MS),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const result = await runRetentionSweep(env as unknown as Cloudflare.Env);
+    expect(result.authRows).toMatchObject({ sessions: 1, verifications: 1 });
+    expect(await countRows("session")).toBe(0);
+    expect(await countRows("verification")).toBe(0);
   });
 
   test("audit-event pruning is bounded instead of one unbounded DELETE", async () => {
@@ -293,12 +367,183 @@ describe("scan retention", () => {
     const remaining = await owner.db.select({ id: schema.scans.id }).from(schema.scans);
     expect(remaining.map((row) => row.id)).toEqual([kept]);
     // Children go with the parent, evidence first.
-    expect(
-      await owner.db.select().from(schema.scanEvents).where(eq(schema.scanEvents.scanId, doomed)),
-    ).toEqual([]);
+    expect(await countRows("scan_files")).toBe(0);
+    expect(await countRows("scan_findings")).toBe(0);
     // And no redacted evidence outlives the metadata that pointed at it.
     expect(await scanKeys(owner.organizationId, doomed)).toEqual([]);
     expect(await scanKeys(owner.organizationId, kept)).toHaveLength(4);
+  });
+
+  test("keeps audit events that are younger than the audit window", async () => {
+    const owner = await seedUser();
+    const doomed = await seedAgedScan(owner, 400);
+    // The scan is 400 days old; this decision was recorded yesterday. The two
+    // retention windows are independent, so a one-day-old audit row must not be
+    // deleted just because its scan aged out.
+    const recent = `evt_${crypto.randomUUID()}`;
+    await owner.db.insert(schema.scanEvents).values({
+      id: recent,
+      organizationId: owner.organizationId,
+      scanId: doomed,
+      type: "scan.decided",
+      metadataJson: { decision: "publish" },
+      createdAt: new Date(Date.now() - DAY_MS),
+    });
+    // ...while this one is past the audit window and goes with the scan.
+    const stale = `evt_${crypto.randomUUID()}`;
+    await owner.db.insert(schema.scanEvents).values({
+      id: stale,
+      organizationId: owner.organizationId,
+      scanId: doomed,
+      type: "scan.decided",
+      metadataJson: { decision: "publish" },
+      createdAt: new Date(Date.now() - (AUDIT_LOG_RETENTION_DAYS + 5) * DAY_MS),
+    });
+
+    await runRetentionSweep({
+      ...env,
+      SCAN_RETENTION_DAYS: "365",
+    } as unknown as Cloudflare.Env);
+
+    const events = await owner.db.select().from(schema.scanEvents);
+    const ids = events.map((row) => row.id);
+    expect(ids).toContain(recent);
+    expect(ids).not.toContain(stale);
+    // Detached rather than cascaded away: the deep link is gone because the scan
+    // is, but the audit record survives to its own 90-day window.
+    const survivor = events.find((row) => row.id === recent);
+    expect(survivor?.scanId).toBeNull();
+    expect(survivor?.organizationId).toBe(owner.organizationId);
+    // Nothing still points at the deleted scan.
+    expect(events.every((row) => row.scanId === null)).toBe(true);
+  });
+
+  test("clears artifact metadata before the R2 sweep, so a failed row delete stays honest", async () => {
+    const owner = await seedUser();
+    const scanId = await seedAgedScan(owner, 400);
+    // Let the metadata update and the R2 sweep through, then fail the row delete.
+    // This is the ordering that used to leave an artifact-backed row whose
+    // evidence was already gone, rendering as a clean, finding-free scan.
+    const prepare = env.DB.prepare.bind(env.DB);
+    const failingDb = {
+      prepare(query: string) {
+        if (/^\s*delete\s+from\s+"?scans"?/i.test(query)) {
+          throw new Error("D1_ERROR: simulated outage");
+        }
+        return prepare(query);
+      },
+      batch: env.DB.batch?.bind(env.DB),
+      dump: env.DB.dump?.bind(env.DB),
+      exec: env.DB.exec?.bind(env.DB),
+    } as unknown as D1Database;
+
+    const result = await runRetentionSweep({
+      ...env,
+      DB: failingDb,
+      SCAN_RETENTION_DAYS: "365",
+    } as unknown as Cloudflare.Env);
+
+    expect(result.scans).toMatchObject({ deleted: 0, deferred: 1 });
+    const [row] = await owner.db.select().from(schema.scans).where(eq(schema.scans.id, scanId));
+    // The row survives, but it no longer claims artifacts it does not have — so
+    // no reader chases R2 for deleted evidence, and the next tick finishes.
+    expect(row).toBeDefined();
+    expect(row?.artifactStorageVersion).toBeNull();
+    expect(row?.reportArtifactKey).toBeNull();
+    expect(row?.diffArtifactKey).toBeNull();
+  });
+
+  test("a deferred scan does not starve the deletable ones behind it", async () => {
+    const owner = await seedUser();
+    const stuck = await seedAgedScan(owner, 500);
+    const deletable = await seedAgedScan(owner, 400);
+    // The oldest candidate's prefix can never be swept. Without paging past it,
+    // an oldest-first fixed-size window would return it forever and nothing
+    // behind it would ever be deleted.
+    const partialBucket = {
+      list: async (options: R2ListOptions) => {
+        if (options?.prefix?.includes(stuck)) throw new Error("R2 unavailable");
+        return env.ARTIFACTS.list(options);
+      },
+      delete: async (keys: string | string[]) => env.ARTIFACTS.delete(keys),
+    } as unknown as R2Bucket;
+
+    const result = await runRetentionSweep({
+      ...env,
+      ARTIFACTS: partialBucket,
+      SCAN_RETENTION_DAYS: "365",
+    } as unknown as Cloudflare.Env);
+
+    expect(result.scans).toMatchObject({ deleted: 1, deferred: 1 });
+    const remaining = await owner.db.select({ id: schema.scans.id }).from(schema.scans);
+    expect(remaining.map((row) => row.id)).toEqual([stuck]);
+    expect(await scanKeys(owner.organizationId, deletable)).toEqual([]);
+  });
+
+  test("skips scans with no organization instead of deferring them forever", async () => {
+    const owner = await seedUser();
+    const orphan = await seedAgedScan(owner, 500);
+    await seedAgedScan(owner, 400);
+    // An org deletion already swept this scan's artifacts and nulled its owner;
+    // the sweep can neither scope a delete nor derive a prefix for it.
+    await env.ARTIFACTS.delete(await scanKeys(owner.organizationId, orphan));
+    await owner.db
+      .update(schema.scans)
+      .set({ organizationId: null })
+      .where(eq(schema.scans.id, orphan));
+
+    const result = await runRetentionSweep({
+      ...env,
+      SCAN_RETENTION_DAYS: "365",
+    } as unknown as Cloudflare.Env);
+
+    // The orphan is never even a candidate, so it cannot occupy a slot each tick.
+    expect(result.scans).toMatchObject({ candidates: 1, deleted: 1, deferred: 0 });
+    const remaining = await owner.db.select({ id: schema.scans.id }).from(schema.scans);
+    expect(remaining.map((row) => row.id)).toEqual([orphan]);
+  });
+
+  test("leaves a scan attached to a still-pending workflow gate alone", async () => {
+    const owner = await seedUser();
+    const gated = await seedAgedScan(owner, 400);
+    const gateId = await seedPendingGate(owner, gated);
+
+    const pending = await runRetentionSweep({
+      ...env,
+      SCAN_RETENTION_DAYS: "365",
+    } as unknown as Cloudflare.Env);
+    expect(pending.scans).toMatchObject({ candidates: 0, deleted: 0 });
+    expect(await scanKeys(owner.organizationId, gated)).toHaveLength(4);
+
+    // Once the gate is decided the scan is eligible again.
+    await owner.db
+      .update(schema.githubWorkflowGates)
+      .set({ status: "approved" })
+      .where(eq(schema.githubWorkflowGates.id, gateId));
+    const decided = await runRetentionSweep({
+      ...env,
+      SCAN_RETENTION_DAYS: "365",
+    } as unknown as Cloudflare.Env);
+    expect(decided.scans).toMatchObject({ candidates: 1, deleted: 1 });
+  });
+
+  test("a misconfigured window is reported once, not on every tick", async () => {
+    // beforeEach already installed a console spy for this file, and vitest hands
+    // back the same one; clear it so only this test's calls are counted.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    errorSpy.mockClear();
+    const misconfigured = { ...env, SCAN_RETENTION_DAYS: "7" } as unknown as Cloudflare.Env;
+
+    await runRetentionSweep(misconfigured);
+    await runRetentionSweep(misconfigured);
+    await runRetentionSweep(misconfigured);
+
+    // The cron fires every 15 minutes; a standing misconfiguration must not
+    // contribute ~96 identical error lines a day.
+    const reports = errorSpy.mock.calls.filter(
+      (call) => call[0] === "retention.scans.misconfigured",
+    );
+    expect(reports).toHaveLength(1);
   });
 
   test("holds the D1 delete back when the R2 prefix cannot be swept", async () => {
@@ -377,8 +622,7 @@ describe("scan retention", () => {
       DB: brokenDb,
     } as unknown as Cloudflare.Env);
     expect(result.auditEvents).toBeNull();
-    expect(result.sessions).toBeNull();
-    expect(result.verifications).toBeNull();
+    expect(result.authRows).toBeNull();
     expect(result.scans).toBeNull();
   });
 });

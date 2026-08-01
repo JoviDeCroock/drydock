@@ -73,13 +73,18 @@ The sweep is bounded for real: it deletes at most `batchSize` rows per statement
 `moreRemaining` so the next tick picks up a backlog. It was previously described
 as bounded but issued one unbounded `DELETE`, whose size was whatever the table
 had accumulated — on a scheduled invocation with a fixed CPU budget that could be
-cut off mid-flight. Failures log `retention.audit_events.prune_failed` and never
-stop the other sweeps in the pass.
+cut off mid-flight. The same batching now applies to `pruneExpiredAuthRows`.
 
-Rows also leave through cascade: deleting an organization or a scan removes its
-events, including via the opt-in scan retention window described in
-[`artifact-storage.md`](./artifact-storage.md#time-based-retention). That sweep
-deletes a scan's `scan_events` explicitly, before the scan row itself.
+Rows also leave through cascade: deleting an organization removes its events. The
+opt-in scan retention window
+([`artifact-storage.md`](./artifact-storage.md#time-based-retention)) deletes a
+scan's events explicitly, before the scan row itself — but only the ones already
+past **this** window. The two ages are independent: a scan created 400 days ago
+can carry a `scan.decided` row written yesterday, and cascading that away would
+delete a one-day-old audit entry because the scan was old. Events newer than the
+audit cutoff are detached instead (`scan_id` set to null), so they survive as
+organization audit rows — without a deep link to a scan that no longer exists —
+until this sweep collects them on their own schedule.
 
 The same tick also prunes expired Better Auth rows (`pruneExpiredAuthRows`,
 `server/db/auth-retention.ts`), which the Drizzle adapter never removes on its
