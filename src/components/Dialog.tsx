@@ -3,6 +3,18 @@ import { useEffect, useId, useRef } from "preact/hooks";
 import { CloseButton } from "./CloseButton";
 import { cn } from "./cn";
 
+/**
+ * `sm` fits the prose-and-buttons default. `md` is for dialogs whose body
+ * carries a fixed-width payload — a shell command, a key — that reads as
+ * cramped when wrapped or scrolled at the default width.
+ */
+type DialogSize = "sm" | "md";
+
+const SIZE_CLASS: Record<DialogSize, string> = {
+  sm: "w-[min(92vw,440px)] max-w-[440px]",
+  md: "w-[min(92vw,560px)] max-w-[560px]",
+};
+
 interface DialogProps {
   open: boolean;
   onClose: () => void;
@@ -10,6 +22,7 @@ interface DialogProps {
   description?: string;
   children: ComponentChildren;
   footer?: ComponentChildren;
+  size?: DialogSize;
   class?: string;
 }
 
@@ -20,6 +33,7 @@ export function Dialog({
   description,
   children,
   footer,
+  size = "sm",
   class: className,
 }: DialogProps) {
   const ref = useRef<HTMLDialogElement | null>(null);
@@ -65,7 +79,7 @@ export function Dialog({
       onClick={onBackdropClick}
       class={cn(
         "p-0 m-auto bg-surface text-ink border border-border rounded-lg shadow-md",
-        "w-[min(92vw,440px)] max-w-[440px]",
+        SIZE_CLASS[size],
         "backdrop:bg-black/40",
         className,
       )}
