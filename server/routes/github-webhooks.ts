@@ -13,6 +13,7 @@ import {
   parseGithubWebhookEvent,
   verifyGithubWebhookSignature,
 } from "../lib/github-app/webhook";
+import { recordProductEvent } from "../lib/platform/analytics";
 import { emitOperationalEvent } from "../lib/platform/observability";
 import type { Bindings, Variables } from "../types";
 
@@ -144,6 +145,12 @@ githubWebhookRoutes.post("/github", async (c) => {
     // posts the deployment decision. Guarded because the binding is optional in
     // tests/local; GitHub retries a non-2xx delivery and the consumer is
     // idempotent (it re-checks the gate status), so a re-enqueue is safe.
+    if (outcome.kind === "gate_pending") {
+      recordProductEvent(c.env, {
+        name: "workflow_gate.opened",
+        organizationId: outcome.gate.organizationId,
+      });
+    }
     if (outcome.kind === "gate_pending" && c.env.SCAN_QUEUE) {
       await c.env.SCAN_QUEUE.send({
         kind: "workflow_gate",

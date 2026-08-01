@@ -100,6 +100,12 @@ low-volume one out of the dataset.
 | `ai_review.finished`       | `maybeRunAiReview`            | reviewer health — the silent-failure rate  |
 | `npm_connection.validated` | npm connection validation     | onboarding funnel                          |
 | `public_diff.viewed`       | `loadRequestedDiff`           | growth-loop traffic, cache hit rate        |
+| `user.signed_up`           | Better Auth user-create hook  | acquisition — the funnel's numerator       |
+| `organization.created`     | `POST /api/v1/organizations`  | teams, excluding lazy personal workspaces  |
+| `integration.connected`    | npm / GitHub / Slack connect  | activation, by integration kind            |
+| `workflow_gate.opened`     | `deployment_protection_rule`  | gate volume                                |
+| `workflow_gate.reviewed`   | gate runner                   | recommendation mix; review latency         |
+| `workflow_gate.decided`    | human route + auto-block path | approval rate, human vs automatic          |
 
 `scan.failed` fires only on a terminal failure, so a scan that succeeds on retry
 is not filed as a failure. Both the npm queue path and the workflow-gate runner
