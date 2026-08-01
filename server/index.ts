@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { createDb } from "./db/client";
 import { AUDIT_LOG_RETENTION_DAYS, pruneAuditEventsOlderThan } from "./db/audit-log";
+import { pruneExpiredAuthRows } from "./db/auth-retention";
 import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
 import { getOrganizationOwnerUserId } from "./db/organizations";
 import { RateLimitError, enforceRateLimit } from "./db/rate-limit";
@@ -446,6 +447,26 @@ async function pruneStaleAuditEvents(env: Cloudflare.Env) {
   }
 }
 
+// Better Auth never removes its own expired rows, so `session` grows with every
+// sign-in and holds each dead session's IP address and user agent forever. Sweep
+// them on the same tick as the audit log, and on the same terms: a prune failure
+// is logged, never thrown, so it can't take the cron down with it.
+async function pruneStaleAuthRows(env: Cloudflare.Env) {
+  try {
+    const pruned = await pruneExpiredAuthRows(createDb(env.DB));
+    if (pruned.sessions > 0 || pruned.verifications > 0) {
+      emitOperationalEvent("info", "auth_rows.pruned", {
+        sessions: pruned.sessions,
+        verifications: pruned.verifications,
+      });
+    }
+  } catch (err) {
+    emitOperationalEvent("error", "auth_rows.prune_failed", {
+      error: describeOperationalError(err),
+    });
+  }
+}
+
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
@@ -461,6 +482,7 @@ export default {
       });
     }
     await pruneStaleAuditEvents(env);
+    await pruneStaleAuthRows(env);
   },
   async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
     for (const message of batch.messages) {
