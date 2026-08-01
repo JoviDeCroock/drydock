@@ -66,6 +66,14 @@ export async function executeAiReviewJob(
   const startedAtMs = Date.now();
   const scan = await getScanStatus(db, message.scanId, message.organizationId);
   if (!scan) return skip(message, "scan_not_found");
+  if (scan.status === "pending" || scan.status === "running") {
+    // The row is not the completed scan this message is for. The producer writes
+    // it before enqueueing, so this means the read raced that write (or the scan
+    // is being re-run) — a redelivery, not a reason to drop the review. The last
+    // attempt gives up rather than looping, and the reaper closes anything left.
+    if (!options.finalAttempt) throw new Error("scan is not yet complete");
+    return skip(message, "scan_not_complete");
+  }
   if (scan.status !== "complete" || scan.aiStatus !== "pending") {
     return skip(message, "not_pending");
   }

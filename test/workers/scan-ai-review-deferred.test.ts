@@ -442,6 +442,27 @@ describe("deferred AI review", () => {
     expect(outcome).toEqual({ outcome: "skipped", reason: "not_pending" });
   });
 
+  test("retries rather than dropping the review when the scan row is not complete yet", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const scanId = `scan_${crypto.randomUUID()}`;
+    await createScanJob(db, {
+      id: scanId,
+      stageId: `stage-${scanId.slice(-12)}`,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+    });
+
+    // A redelivery that arrives before the deterministic write is visible must
+    // come back, not silently drop the advisory review.
+    await expect(executeAiReviewJob(env, messageFor(scanId, owner), db)).rejects.toThrow(
+      /not yet complete/,
+    );
+    expect(
+      await executeAiReviewJob(env, messageFor(scanId, owner), db, { finalAttempt: true }),
+    ).toEqual({ outcome: "skipped", reason: "scan_not_complete" });
+  });
+
   test("a lost evidence snapshot closes the review at the manual-review floor", async () => {
     const owner = await seedUser();
     const { db, scanId, aiReviewInput } = await seedPendingScan(owner, { artifactBacked: true });

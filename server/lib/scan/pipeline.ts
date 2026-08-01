@@ -210,6 +210,21 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       aiReviewInput,
     });
 
+    // Before `recordCompletion`, which only emits telemetry: the follow-up is
+    // the side effect the scan's advisory half depends on, so it must not be
+    // skipped by a failure in an observability call.
+    if (plan === "deferred") {
+      await handleDeferredAiReview({
+        env,
+        identity,
+        adapterId: adapter.id,
+        source: input.source,
+        persisted,
+        aiReviewInput,
+        settings,
+      });
+    }
+
     await recordCompletion({
       db,
       session,
@@ -222,18 +237,6 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       env,
       source: input.source,
     });
-
-    if (plan === "deferred") {
-      await handleDeferredAiReview({
-        env,
-        identity,
-        adapterId: adapter.id,
-        source: input.source,
-        persisted,
-        aiReviewInput,
-        settings,
-      });
-    }
 
     return result;
   } catch (err) {

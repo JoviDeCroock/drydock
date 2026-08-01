@@ -550,7 +550,17 @@ function ScanRiskCell({ scan }: { scan: ScanListItem }) {
     return <span class="font-mono text-xs text-ink-subtle">—</span>;
   }
   const releaseRisk = scan.riskSummary?.releaseRisk ?? scan.risk;
-  return <Badge tone={severityTone(releaseRisk)}>{releaseRisk}</Badge>;
+  return (
+    <span class="flex items-center gap-2 whitespace-nowrap">
+      <Badge tone={severityTone(releaseRisk)}>{releaseRisk}</Badge>
+      {/* The advisory review runs after the report is persisted and can raise
+          this grade (never lower it). Triage happens in this column, so a grade
+          that is not final yet has to say so here, not only on the detail page. */}
+      {scan.aiStatus === "pending" ? (
+        <span class="font-mono text-[11px] text-ink-subtle">ai pending</span>
+      ) : null}
+    </span>
+  );
 }
 
 function ScanChangedCell({ scan }: { scan: ScanListItem }) {
