@@ -7,11 +7,7 @@ import type {
   PackageAdapter,
 } from "../ecosystems/package-adapter";
 import { loadReleaseFingerprintHistory } from "../../db/release-fingerprint";
-import {
-  computeIntentEnvelope,
-  extractDeclaredRepository,
-  type WorkflowGateIntent,
-} from "../intent-envelope";
+import { computeIntentEnvelope, type WorkflowGateIntent } from "../intent-envelope";
 import {
   describeOperationalError,
   durationMsSince,
@@ -21,13 +17,11 @@ import { recordProductEvent } from "../platform/analytics";
 import { releaseFingerprintFindings } from "../release-fingerprint";
 import type { Finding } from "../review";
 import {
-  computeDiff,
+  analyzeRelease,
   mergeAiFindings,
   persistResults,
   recordCompletion,
-  resolveBaseline,
   resolveReleaseConsistency,
-  runDeterministicFindings,
   scoreRisk,
   type ComputedDiff,
   type DeterministicFindings,
@@ -73,24 +67,28 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
   const pipelineStartedAtMs = Date.now();
 
   try {
-    const resolved = await resolveBaseline(adapter, adapterCtx, adapterInput, broker);
-    const diff = computeDiff(resolved);
-
     const identity: PipelineIdentity = {
       scanId: input.scanId || crypto.randomUUID(),
       stageId: input.stageId,
       organizationId: input.organizationId,
     };
-    // Release-process fingerprint findings (release.*) compare this release's
-    // arrival against org/package history. Appended here so they flow through
-    // annotation, risk scoring, and persistence exactly like adapter findings.
-    const releaseProcessFindings = await collectReleaseFingerprintFindings(db, identity, resolved);
-    const findings = runDeterministicFindings(adapter, resolved, diff, releaseProcessFindings);
+    // Acquire → diff → deterministic findings → release the raw artifacts. The
+    // unredacted file arrays of both package sides stay inside this call, so
+    // the AI review, risk scoring, and persistence below run while only the
+    // redacted copies are reachable — peak memory is what caps reviewable
+    // package size.
+    const { diff, findings, facts } = await analyzeRelease(
+      adapter,
+      adapterCtx,
+      adapterInput,
+      broker,
+      (resolved) => collectReleaseFingerprintFindings(db, identity, resolved),
+    );
     const aiFindings = await maybeRunAiReview({
       env,
       identity,
       ecosystem: adapter.id,
-      previousVersionAvailable: resolved.baseline.artifact !== null,
+      previousVersionAvailable: facts.previousVersionAvailable,
       findings,
       diff,
     });
@@ -103,7 +101,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       findings,
       diff,
       adapter.codePatternSet,
-      Boolean(resolved.baseline.baseline.comparisonSkipped),
+      facts.baselineComparisonSkipped,
     );
 
     // Release-memory lookup (db read) before scoring. It compares finding
@@ -124,7 +122,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       [...findings.annotatedFindings, ...mergedAiFindings.annotatedRecords],
       aiFindings,
       releaseConsistency,
-      { baselineComparisonSkipped: Boolean(resolved.baseline.baseline.comparisonSkipped) },
+      { baselineComparisonSkipped: facts.baselineComparisonSkipped },
     );
 
     // Advisory source-binding classification. Computed from the gate context
@@ -132,10 +130,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
     // repository declaration; it never influences risk or findings.
     const intentEnvelope = computeIntentEnvelope({
       workflowGate: input.gateContext ?? null,
-      declaredRepository: extractDeclaredRepository({
-        manifestText: diff.stagedManifestText,
-        files: resolved.staged.artifact.files,
-      }),
+      declaredRepository: facts.declaredRepository,
     });
 
     const { result, persisted } = await persistResults({
@@ -143,9 +138,8 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       db,
       session,
       adapter,
-      adapterInput,
       identity,
-      resolved,
+      facts,
       diff,
       findings,
       aiFindings,
@@ -161,7 +155,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       identity,
       adapterId: adapter.id,
       result,
-      baseline: resolved.baseline.baseline,
+      baseline: facts.baseline,
       persisted,
       pipelineStartedAtMs,
       env,
