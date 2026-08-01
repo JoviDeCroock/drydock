@@ -19,6 +19,8 @@ interface VscodeMarketplaceFile {
 
 interface VscodeBrokerDownloadOptions {
   maxFiles?: number;
+  /** See `DownloadOptions.maxTextSampleChars` in `lib/sandbox.ts`. */
+  maxTextSampleChars?: number;
 }
 
 interface VscodePublicArtifactRef {
@@ -76,6 +78,7 @@ export function createVscodeBroker(ctx: AdapterContext, _ref: AdapterConnectionR
         archiveFormat: "vsix",
         publicArtifactUrls: [artifact.url],
         maxFiles: opts?.maxFiles,
+        maxTextSampleChars: opts?.maxTextSampleChars,
       });
     },
 

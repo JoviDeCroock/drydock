@@ -93,7 +93,12 @@ export interface HeadCapture {
   bytes(): Uint8Array;
 }
 export function createHeadCapture(limit: number): HeadCapture;
-export function summarizeFile(path: string, body: Uint8Array): Promise<ParsedFile>;
+export function summarizeFile(
+  path: string,
+  body: Uint8Array,
+  maxTextSampleChars?: number,
+): Promise<ParsedFile>;
+export function clipTextSample(text: string, limit: number): string;
 export function summarizeSkippedFile(
   path: string,
   size: number,
@@ -107,6 +112,7 @@ export function readTar(
   buffer: ArrayBuffer | Uint8Array,
   maxFiles: number,
   maxTarBytes: number,
+  maxTextSampleChars?: number,
 ): Promise<ReadTarResult>;
 export function readTarStream(
   body: ReadableStream<Uint8Array> | null,
@@ -114,6 +120,7 @@ export function readTarStream(
   maxTarBytes: number,
   maxStreamBytes: number,
   maxEntries?: number,
+  maxTextSampleChars?: number,
 ): Promise<ReadTarResult>;
 export function readUint16Le(bytes: Uint8Array, offset: number): number;
 export function readUint32Le(bytes: Uint8Array, offset: number): number;
@@ -129,6 +136,7 @@ export function readZipArchiveBuffered(
   maxFiles: number,
   maxArchiveBytes: number,
   maxEntries?: number,
+  maxTextSampleChars?: number,
 ): Promise<ReadTarResult>;
 export function boundedByteStream(
   body: ReadableStream<Uint8Array>,
@@ -157,6 +165,7 @@ export function readZipStream(
   maxTarBytes: number,
   maxStreamBytes: number,
   maxEntries?: number,
+  maxTextSampleChars?: number,
 ): Promise<ReadTarResult>;
 export function readStreamBounded(
   body: ReadableStream<Uint8Array> | null,
