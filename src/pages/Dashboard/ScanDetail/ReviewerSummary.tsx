@@ -31,7 +31,14 @@ export function reviewerSummaryVisible(ai: DisplayedAiResult | null): boolean {
   return Boolean(ai && (ai.model != null || ai.kind === "pending"));
 }
 
-export function ReviewerSummary({ ai }: { ai: DisplayedAiResult | null }) {
+export function ReviewerSummary({
+  ai,
+  polling = true,
+}: {
+  ai: DisplayedAiResult | null;
+  /** False once the page has stopped checking for a review that never landed. */
+  polling?: boolean;
+}) {
   if (!reviewerSummaryVisible(ai) || !ai) return null;
 
   return (
@@ -44,7 +51,15 @@ export function ReviewerSummary({ ai }: { ai: DisplayedAiResult | null }) {
           page, so the narrative is all this adds. */}
       <SectionLabel as="h2">Reviewer</SectionLabel>
       {ai.kind === "pending" ? (
-        <LoadingLine size="inline">Assistant review running</LoadingLine>
+        polling ? (
+          <LoadingLine size="inline">Assistant review running</LoadingLine>
+        ) : (
+          // Nothing is watching for it any more, so the pulsing line would be a
+          // promise the page cannot keep. Reload picks it up if it did land.
+          <p class="m-0 font-mono text-[12px] text-ink-subtle">
+            Assistant review has not reported back. Reload to check again.
+          </p>
+        )
       ) : null}
       {ai.summary ? (
         <p class="m-0 text-[13px] leading-[1.6] text-ink-muted max-w-[720px]">{ai.summary}</p>

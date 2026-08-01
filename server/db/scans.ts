@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import {
   annotateFindingsWithDiffStatus,
@@ -228,6 +228,28 @@ export async function markScanFailed(
  */
 const DISCARDED_SCAN_STATUS = "discarded";
 
+/**
+ * Drop an attempt with no trace, so discovery can find the stage again.
+ *
+ * The counterpart to `discardScanAttempt`: use this when the reason the scan
+ * could not run is *recoverable* (the organization's token cannot reach the
+ * tarball right now). Any surviving row — failed or tombstoned — suppresses
+ * rediscovery, because `listExistingScanStageIds` matches on stage id and
+ * ignores status, so leaving one behind would permanently retire a staged
+ * publish over a token problem the maintainer can fix in a minute.
+ */
+export async function deleteScanAttempt(db: AppDb, scanId: string, organizationId: string) {
+  await db
+    .delete(scans)
+    .where(
+      and(
+        eq(scans.id, scanId),
+        eq(scans.organizationId, organizationId),
+        inArray(scans.status, [...NON_TERMINAL_STATUSES]),
+      ),
+    );
+}
+
 export async function discardScanAttempt(
   db: AppDb,
   scanId: string,
@@ -405,6 +427,12 @@ export async function listStalledAiReviewScans(
     .where(
       and(
         eq(scans.aiStatus, "pending"),
+        // Must match `closeAbandonedAiReview`'s own guard exactly. A candidate it
+        // refuses is one this query hands back every tick forever, and with an
+        // ordered, limited sweep a handful of them starve every real candidate
+        // queued behind them.
+        eq(scans.status, "complete"),
+        isNotNull(scans.organizationId),
         sql`coalesce(${scans.completedAt}, ${scans.updatedAt}) < ${cutoffMs}`,
       ),
     )
@@ -439,23 +467,19 @@ export interface AiReviewPatchInput {
     artifactManifestDigest: string;
     artifactManifestSize: number;
   } | null;
-  /**
-   * Findings to add as `source: "ai"` rows — D1-backed (degraded) scans only, since
-   * artifact-backed scans read their findings from the rewritten report. Row ids
-   * come from the caller so the same ids can be recorded in
-   * `summary_json.findingAnnotations`.
-   */
-  aiFindingRows?: Array<Finding & { id: string }>;
 }
 
 /**
  * Apply a completed deferred AI review to an already-persisted scan.
  *
- * The guarded UPDATE is the claim: only the first patch for a scan sees a
- * returned row, so a duplicated follow-up message cannot double-count AI
- * findings. The R2 report rewrite must already have happened (under a
+ * The guarded UPDATE is the claim, and it is the *whole* write: only the first
+ * patch for a scan sees a returned row, so a duplicated follow-up message cannot
+ * double-count AI findings, and there is no second statement that could land
+ * without it. The R2 report rewrite must already have happened (under a
  * content-addressed key) before this runs — flipping the D1 references last is
- * what makes the swap atomic for readers.
+ * what makes the swap atomic for readers. Findings are not written here: the
+ * caller refuses to patch a scan that is not artifact-backed, so the rewritten
+ * report is the only place a deferred review's findings live.
  */
 export async function applyAiReviewPatch(
   db: AppDb,
@@ -491,27 +515,7 @@ export async function applyAiReviewPatch(
       ),
     )
     .returning({ id: scans.id });
-  if (!claimed.length) return { patched: false };
-
-  const rows = input.aiFindingRows ?? [];
-  if (rows.length) {
-    const findingRows: ScanFindingInsertRow[] = rows.map((finding) => ({
-      id: finding.id,
-      scanId: input.scanId,
-      severity: finding.severity,
-      file: finding.file,
-      evidence: finding.evidence,
-      reason: finding.reason,
-      line: finding.line ?? null,
-      source: "ai",
-      ruleId: finding.ruleId ?? null,
-      ruleVersion: finding.ruleVersion ?? null,
-    }));
-    for (const chunk of chunkForD1(findingRows, 10)) {
-      await db.insert(scanFindings).values(chunk);
-    }
-  }
-  return { patched: true };
+  return { patched: claimed.length > 0 };
 }
 
 /**

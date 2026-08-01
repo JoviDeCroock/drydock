@@ -1,6 +1,11 @@
 import { type AppDb, type WorkspaceSession, createDb } from "../../db/client";
 import { getNpmConnection, markNpmConnectionUsed } from "../../db/npm-connections";
-import { claimScanForRun, discardScanAttempt, markScanFailed } from "../../db/scans";
+import {
+  claimScanForRun,
+  deleteScanAttempt,
+  discardScanAttempt,
+  markScanFailed,
+} from "../../db/scans";
 import { getStagedAdapter } from "../ecosystems";
 import { errorMessage } from "../platform/errors";
 import { notifyScanCompletion } from "../notify";
@@ -115,19 +120,32 @@ export async function executeScanJob(
   } catch (err) {
     const safe = classifyScanError(err);
     if (!safe.retryable || options.finalAttempt) {
-      // Only a withdrawn stage is discarded. It is the one case where there is
-      // nothing to review and never will be, which is what makes a permanent
-      // tombstone the right record of it.
-      const skip = message.source === "auto_discovery" && safe.code === "staged_tarball_withdrawn";
-      if (skip) {
-        await discardScanAttempt(db, message.scanId, message.organizationId);
+      // Two different auto-discovery outcomes, and the difference is whether
+      // the stage can ever come back.
+      //
+      //   404 — npm withdrew it. Nothing to review, ever. Tombstone it, which is
+      //   what stops discovery rediscovering it every 15 minutes.
+      //
+      //   401/403 — the token cannot reach it *right now*. That is recoverable,
+      //   and any surviving row (failed or tombstoned) suppresses rediscovery
+      //   just as effectively, because `listExistingScanStageIds` matches on
+      //   stage id regardless of status. So the row is deleted: discovery
+      //   re-probes the stage on the next tick and picks it up by itself once
+      //   the token is fixed. Manual scans keep their visible `failed` row —
+      //   nothing rediscovers those, and the UI has token guidance for the code.
+      const autoDiscovery = message.source === "auto_discovery";
+      const withdrawn = autoDiscovery && safe.code === "staged_tarball_withdrawn";
+      const inaccessible = autoDiscovery && safe.code === "staged_tarball_unavailable";
+      if (withdrawn || inaccessible) {
+        if (withdrawn) await discardScanAttempt(db, message.scanId, message.organizationId);
+        else await deleteScanAttempt(db, message.scanId, message.organizationId);
         emitOperationalEvent("warn", "scan.job.skipped", {
           scanId: message.scanId,
           organizationId: message.organizationId,
           stageId: message.stageId,
           source: message.source,
           attempt,
-          reason: "staged_tarball_withdrawn",
+          reason: safe.code,
           durationMs: durationMsSince(startedAtMs),
           error: safe,
         });
@@ -139,7 +157,7 @@ export async function executeScanJob(
           organizationId: message.organizationId,
           ecosystem: "npm",
           source: message.source ?? "auto_discovery",
-          reason: "staged_tarball_withdrawn",
+          reason: safe.code,
           durationMs: durationMsSince(startedAtMs),
         });
       } else {

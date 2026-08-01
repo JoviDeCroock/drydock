@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
+  SCAN_AI_POLL_STOP_AFTER_MS,
   SCAN_POLL_BASE_DELAY_MS,
   SCAN_POLL_MAX_DELAY_MS,
   SCAN_POLL_STALL_AFTER_MS,
@@ -23,6 +24,16 @@ function runningDetail(): PersistedScanDetail {
     files: [],
     findings: [],
     events: [],
+  };
+}
+
+// A finished report whose advisory review has not landed yet: the scan itself is
+// complete and on screen, only `ai_status` is outstanding.
+function aiPendingDetail(): PersistedScanDetail {
+  const detail = runningDetail();
+  return {
+    ...detail,
+    scan: { ...detail.scan, status: "complete", aiStatus: "pending" },
   };
 }
 
@@ -139,6 +150,40 @@ describe("ScanDetailModel polling", () => {
     expect(callsAtStall).toBeGreaterThan(0);
     await vi.advanceTimersByTimeAsync(10 * SCAN_POLL_MAX_DELAY_MS);
     expect(fetchMock.mock.calls.length).toBe(callsAtStall);
+  });
+
+  test("keeps polling a complete scan while its review is pending, without the stalled warning", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ scan: aiPendingDetail().scan })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    model = new ScanDetailModel("scan-1");
+    model.detail.value = aiPendingDetail();
+
+    // Past the window that would have latched a *running* scan as stalled. The
+    // report is complete and rendered, so "automatic refresh stopped without the
+    // review finishing" would be both alarming and wrong.
+    await vi.advanceTimersByTimeAsync(SCAN_POLL_STALL_AFTER_MS);
+    expect(model.pollingStalled.value).toBe(false);
+    expect(model.aiPollingStopped.value).toBe(false);
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
+  });
+
+  test("latches aiPollingStopped once it gives up on a pending review", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ scan: aiPendingDetail().scan })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    model = new ScanDetailModel("scan-1");
+    model.detail.value = aiPendingDetail();
+
+    await vi.advanceTimersByTimeAsync(SCAN_AI_POLL_STOP_AFTER_MS);
+    // `isPolling` stays true while ai_status is pending, so the latch is what
+    // stops the UI claiming a review is in flight that nothing is watching.
+    expect(model.aiPollingStopped.value).toBe(true);
+    expect(model.pollingStalled.value).toBe(false);
+
+    const callsAtStop = fetchMock.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(10 * SCAN_POLL_MAX_DELAY_MS);
+    expect(fetchMock.mock.calls.length).toBe(callsAtStop);
   });
 
   test("resumePolling refetches immediately and restarts the chain", async () => {

@@ -341,7 +341,7 @@ export default function ScanDetailPage() {
               isWorkflowGate={isWorkflowGate}
             />
 
-            <ReviewerSummary ai={ai.value} />
+            <ReviewerSummary ai={ai.value} polling={!model.aiPollingStopped.value} />
 
             <ReleaseConsistencyNotice
               value={summary.value.releaseConsistency}

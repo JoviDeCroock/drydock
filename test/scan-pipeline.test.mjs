@@ -9,6 +9,21 @@ const dbMock = vi.hoisted(() => ({
   recordScanEvent: vi.fn(async () => undefined),
   getNpmConnection: vi.fn(),
   createDb: vi.fn(() => ({})),
+  // Read by the deferred-review close path when a follow-up cannot be enqueued.
+  getScanStatus: vi.fn(async () => ({
+    id: "scan",
+    status: "complete",
+    aiStatus: "pending",
+    organizationId: "org_1",
+    ownerUserId: "user_1",
+    source: "manual",
+    stageId: "stage-beta-123",
+    risk: "low",
+    riskSummaryJson: null,
+    summaryJson: {},
+    findingCount: 1,
+  })),
+  applyAiReviewPatch: vi.fn(async () => ({ patched: true })),
 }));
 const registryMock = vi.hoisted(() => ({
   fetchPackageMetadata: vi.fn(),
@@ -129,6 +144,8 @@ describe("scan pipeline baseline selection", () => {
     dbMock.recordScanEvent.mockClear();
     dbMock.getNpmConnection.mockReset();
     npmConnectionMock.decryptNpmToken.mockReset();
+    dbMock.getScanStatus.mockClear();
+    dbMock.applyAiReviewPatch.mockClear();
     registryMock.fetchPackageMetadata.mockReset();
     sandboxMock.downloadInSandbox.mockReset();
     publishedTarballMock.downloadPublishedTarball.mockReset();
@@ -624,6 +641,43 @@ describe("scan pipeline baseline selection", () => {
         status: "unavailable",
         summary: "AI review is disabled.",
       });
+    });
+
+    test("closes the review immediately when the follow-up cannot be enqueued", async () => {
+      const sendAiReviewMessage = vi.fn(async () => {
+        throw new Error("queue unavailable");
+      });
+      const bucket = artifactBucket();
+      const context = {
+        ...baseContext,
+        env: {
+          ...baseContext.env,
+          FLAGS: { getBooleanValue: vi.fn(async (_flag, fallback) => fallback) },
+          ARTIFACTS: bucket,
+        },
+      };
+
+      await runScanPipeline(
+        context,
+        npmAdapter,
+        { scanId: "scan_ai_enqueue_fail", stageId: "stage-beta-123", organizationId: "org_1" },
+        { aiReview: "deferred", sendAiReviewMessage },
+      );
+
+      // The failure is known synchronously. Leaving the row pending would mean
+      // hours of "AI review pending" with no fail-safe floor and no completion
+      // notification, so the scan is closed on the spot instead.
+      expect(dbMock.getScanStatus).toHaveBeenCalledWith({}, "scan_ai_enqueue_fail", "org_1");
+      expect(dbMock.applyAiReviewPatch).toHaveBeenCalledWith(
+        {},
+        expect.objectContaining({
+          scanId: "scan_ai_enqueue_fail",
+          aiStatus: "unavailable",
+          risk: "medium",
+        }),
+      );
+      // ...and the evidence it would have reviewed is cleaned up.
+      expect(bucket.delete).toHaveBeenCalledWith(expect.stringContaining("/ai-input.json"));
     });
 
     test("does not enqueue a follow-up for a scan that was already terminal", async () => {

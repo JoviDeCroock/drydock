@@ -322,29 +322,32 @@ describe("deferred AI review", () => {
     expect(rows).toHaveLength(0);
   });
 
-  test("patching a D1-backed (degraded) scan writes the AI finding as a row", async () => {
+  test("refuses to patch a scan that is not artifact-backed", async () => {
     const owner = await seedUser();
-    const { db, scanId } = await seedPendingScan(owner, { artifactBacked: false });
+    const { db, scanId, reportDigest } = await seedPendingScan(owner, { artifactBacked: false });
     const scan = await getScanStatus(db, scanId, owner.organizationId);
 
-    await applyAiReviewToScan(applyArgs(owner, scan!, criticalReview));
+    const outcome = await applyAiReviewToScan(applyArgs(owner, scan!, criticalReview));
+
+    // `scans.report_digest` covers a payload that embeds the AI review envelope.
+    // A D1-backed scan has no report object to republish, so recording the review
+    // would leave the digest permanently disagreeing with what the row
+    // reconstructs to, and the artifact backfill would refuse the row forever.
+    // The review is dropped on the fail-safe path rather than half-recorded.
+    expect(outcome).toEqual({ outcome: "patched", status: "unavailable" });
 
     const rows = await db
       .select()
       .from(schema.scanFindings)
       .where(eq(schema.scanFindings.scanId, scanId));
-    expect(rows).toHaveLength(2);
-    expect(rows.filter((row) => row.source === "ai")).toHaveLength(1);
+    expect(rows.filter((row) => row.source === "ai")).toHaveLength(0);
 
     const detail = await getScan(db, scanId, owner.organizationId, env.ARTIFACTS);
-    expect(detail?.scan.aiStatus).toBe("complete");
-    expect(detail?.scan.risk).toBe("critical");
-    expect(detail?.scan.findingCount).toBe(2);
-    const aiFinding = detail?.findings.find((finding) => finding.source === "ai");
-    expect(aiFinding).toMatchObject({ file: "setup.js", severity: "critical" });
-    // The row's annotation was persisted with it rather than being re-derived
-    // from a read that has no baseline files.
-    expect(aiFinding?.releaseDelta).toBe(true);
+    expect(detail?.scan.aiStatus).toBe("unavailable");
+    expect(detail?.scan.findingCount).toBe(1);
+    expect(detail?.scan.reportDigest).toBe(reportDigest);
+    // Fail-safe floor, not a downgrade.
+    expect(detail?.scan.risk).toBe("medium");
   });
 
   test("a clean AI review never lowers the persisted deterministic grade", async () => {
@@ -366,21 +369,20 @@ describe("deferred AI review", () => {
 
   test("a replayed follow-up cannot patch the same scan twice", async () => {
     const owner = await seedUser();
-    const { db, scanId } = await seedPendingScan(owner, { artifactBacked: false });
+    const { db, scanId } = await seedPendingScan(owner);
     const scan = await getScanStatus(db, scanId, owner.organizationId);
 
     await applyAiReviewToScan(applyArgs(owner, scan!, criticalReview));
+    const patched = await getScanStatus(db, scanId, owner.organizationId);
     // Same stale row, as a duplicated queue delivery would carry.
     const second = await applyAiReviewToScan(applyArgs(owner, scan!, criticalReview));
     expect(second).toEqual({ outcome: "skipped", reason: "not_pending" });
 
-    const rows = await db
-      .select()
-      .from(schema.scanFindings)
-      .where(eq(schema.scanFindings.scanId, scanId));
-    expect(rows.filter((row) => row.source === "ai")).toHaveLength(1);
     const updated = await getScanStatus(db, scanId, owner.organizationId);
     expect(updated?.findingCount).toBe(2);
+    expect(updated?.updatedAt).toEqual(patched?.updatedAt);
+    const detail = await getScan(db, scanId, owner.organizationId, env.ARTIFACTS);
+    expect(detail?.findings.filter((finding) => finding.source === "ai")).toHaveLength(1);
   });
 
   test("a duplicate delivery with identical output cannot delete the live report", async () => {

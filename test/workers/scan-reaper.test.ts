@@ -169,6 +169,24 @@ describe("stalled scan reaper", () => {
     // A completed scan whose review is still in flight is not a candidate.
     expect((await getScanStatus(db, fresh, owner.organizationId))?.aiStatus).toBe("pending");
   });
+
+  test("does not return candidates the closer would refuse", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    // `ai_status = "pending"` on a row that is not `complete` — a scan that was
+    // re-run and failed, say. `closeAbandonedAiReview` refuses it, so returning
+    // it would hand back the same row every tick and, with an ordered `limit`,
+    // starve every real candidate queued behind it.
+    const notComplete = await newScan(owner, "ai-not-complete");
+    await db
+      .update(schema.scans)
+      .set({ aiStatus: "pending", status: "failed" })
+      .where(eq(schema.scans.id, notComplete));
+    await ageScan(notComplete, 8 * 60);
+
+    const candidates = await listStalledAiReviewScans(db);
+    expect(candidates.map((row) => row.id)).not.toContain(notComplete);
+  });
 });
 
 describe("withdrawn stage tombstones", () => {

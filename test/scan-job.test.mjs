@@ -7,6 +7,7 @@ vi.mock("cloudflare:workers", () => ({
 const dbMock = vi.hoisted(() => ({
   claimScanForRun: vi.fn(),
   createDb: vi.fn(() => ({})),
+  deleteScanAttempt: vi.fn(),
   discardScanAttempt: vi.fn(),
   getNpmConnection: vi.fn(),
   markNpmConnectionUsed: vi.fn(),
@@ -346,7 +347,7 @@ describe("executeScanJob idempotency", () => {
     expect(notifyMock.notifyScanCompletion).not.toHaveBeenCalled();
   });
 
-  test("keeps a token-scope 403 as a visible failure rather than a tombstone", async () => {
+  test("leaves no trace for an auto-discovered scan the token cannot reach", async () => {
     dbMock.claimScanForRun.mockResolvedValue(true);
     pipelineMock.runScanPipeline.mockRejectedValue(
       new SandboxError(JSON.stringify({ error: "denied", status: 403 })),
@@ -362,10 +363,31 @@ describe("executeScanJob idempotency", () => {
       ),
     ).rejects.toBeInstanceOf(SandboxError);
 
-    // A discard is now a permanent tombstone, so it is reserved for a stage that
-    // is really gone. A scope blip or a mid-propagation 403 must stay a `failed`
-    // row the maintainer can see, act on, and delete.
+    // 403 is recoverable, and *any* surviving row suppresses rediscovery
+    // (listExistingScanStageIds ignores status). Deleting is what lets the next
+    // tick re-probe and pick the stage up once the token is fixed.
+    expect(dbMock.deleteScanAttempt).toHaveBeenCalledWith(
+      {},
+      message.scanId,
+      message.organizationId,
+    );
     expect(dbMock.discardScanAttempt).not.toHaveBeenCalled();
+    expect(dbMock.markScanFailed).not.toHaveBeenCalled();
+  });
+
+  test("keeps a manual token-scope 403 as a visible failure", async () => {
+    dbMock.claimScanForRun.mockResolvedValue(true);
+    pipelineMock.runScanPipeline.mockRejectedValue(
+      new SandboxError(JSON.stringify({ error: "denied", status: 403 })),
+    );
+
+    await expect(
+      executeScanJob(env, ctx, message, {}, { attempt: 1, finalAttempt: true }),
+    ).rejects.toBeInstanceOf(SandboxError);
+
+    // Nothing rediscovers a manual scan, so the maintainer keeps a row that
+    // explains itself and carries the token guidance.
+    expect(dbMock.deleteScanAttempt).not.toHaveBeenCalled();
     expect(dbMock.markScanFailed).toHaveBeenCalledWith({}, message.scanId, message.organizationId, {
       code: "staged_tarball_unavailable",
       message: "The staged tarball could not be accessed with this organization's npm token.",
@@ -390,6 +412,7 @@ describe("executeScanJob idempotency", () => {
     ).rejects.toBeInstanceOf(SandboxError);
 
     expect(dbMock.discardScanAttempt).not.toHaveBeenCalled();
+    expect(dbMock.deleteScanAttempt).not.toHaveBeenCalled();
     expect(dbMock.markScanFailed).toHaveBeenCalledTimes(1);
     expect(notifyMock.notifyScanCompletion).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: "failed" }),

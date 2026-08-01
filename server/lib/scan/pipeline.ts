@@ -35,6 +35,7 @@ import {
   type PipelineIdentity,
   type ResolvedArtifacts,
 } from "./pipeline-phases";
+import { closeAbandonedAiReview } from "./ai-review-job";
 import type { AiReviewQueueMessage } from "./job-messages";
 import type { ScanInput, ScanResult } from "../../types";
 
@@ -230,6 +231,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
     if (plan === "deferred") {
       await handleDeferredAiReview({
         env,
+        db,
         identity,
         adapterId: adapter.id,
         source: input.source,
@@ -341,6 +343,7 @@ async function planAiReview(
 
 interface DeferredAiReviewArgs {
   env: Cloudflare.Env;
+  db: AppDb;
   identity: PipelineIdentity;
   adapterId: string;
   source?: string;
@@ -378,15 +381,29 @@ async function handleDeferredAiReview(args: DeferredAiReviewArgs): Promise<void>
       ecosystem: args.adapterId,
     });
   } catch (err) {
-    // The report is complete and readable; only the advisory overlay is at
-    // risk. Leave the row `pending` and let the scheduled reaper close it out
-    // rather than failing (and retrying) a scan that already succeeded.
+    // The report is complete and readable; only the advisory overlay is lost.
+    // Don't fail (and retry) a scan that already succeeded — but don't leave the
+    // row `pending` for the reaper either: the failure is known *here*, and
+    // waiting six hours would mean six hours of a scan showing "AI review
+    // pending" with no fail-safe floor and no completion notification (the queue
+    // job holds that back while a review is outstanding). Close it now, on the
+    // same path the reaper would have used.
     emitOperationalEvent("error", "scan.ai_review.enqueue_failed", {
       scanId: identity.scanId,
       organizationId: identity.organizationId,
       ecosystem: args.adapterId,
       error: describeOperationalError(err),
     });
+    await closeAbandonedAiReview(args.env, args.db, identity.scanId, identity.organizationId).catch(
+      (closeErr) => {
+        emitOperationalEvent("error", "scan.ai_review.enqueue_close_failed", {
+          scanId: identity.scanId,
+          organizationId: identity.organizationId,
+          error: describeOperationalError(closeErr),
+        });
+        return false;
+      },
+    );
   }
 }
 

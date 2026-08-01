@@ -3,12 +3,7 @@ import { applyAiReviewPatch, getScanStatus } from "../../db/scans";
 import { AI_MODEL } from "../ai-review/models";
 import type { AiReview } from "../ai-review/types";
 import { displayedAiResult } from "../ai-review/types";
-import {
-  combineRisk,
-  normalizeRisk,
-  type CodePatternSet,
-  type FindingDiffAnnotation,
-} from "../review";
+import { combineRisk, normalizeRisk, type CodePatternSet } from "../review";
 import {
   computeScanRiskBreakdown,
   normalizeScanRiskBreakdown,
@@ -279,38 +274,42 @@ export async function applyAiReviewToScan(args: ApplyAiReviewArgs): Promise<AiRe
     }),
   );
 
-  // D1-backed (degraded) scans keep their findings as rows, so the AI findings
-  // become rows too — appended after the rule rows, matching the order the
-  // report's index-based annotations use. Artifact-backed scans read findings
-  // from the rewritten report instead and must not get duplicate rows.
+  // Deferral requires an `ARTIFACTS` bucket, and a bucket means `persistResults`
+  // wrote the artifact set or threw — so a pending review always belongs to an
+  // artifact-backed scan. If that ever stops holding, patching anyway is the
+  // wrong move rather than a degraded one: `scans.report_digest` covers a
+  // payload that embeds the AI review envelope, and a D1-backed scan has no
+  // report object to republish, so the digest would permanently disagree with
+  // what the row reconstructs to and the artifact backfill would refuse it
+  // forever. Close it on the fail-safe path instead, loudly.
   const artifactBacked = scan.artifactStorageVersion !== null && scan.reportArtifactKey !== null;
-  const aiFindingRows = artifactBacked
-    ? []
-    : merged.records.map((finding, index) => ({
-        ...finding,
-        id: crypto.randomUUID(),
-        annotation: merged.annotatedRecords[index],
-      }));
+  if (!artifactBacked) {
+    emitOperationalEvent("error", "scan.ai_review.not_artifact_backed", {
+      scanId: message.scanId,
+      organizationId: message.organizationId,
+      reviewStatus: review.status,
+    });
+    return closeUnavailable(env, db, scan, message, "not_artifact_backed", startedAtMs);
+  }
 
-  const report = artifactBacked
-    ? await rewriteReportWithAiReview(env.ARTIFACTS as R2Bucket, scan, (current) => ({
-        ...current,
-        aiFindings: review,
-        risk: riskSummary,
-        findingAnnotations,
-      })).catch((err) => {
-        // The report artifact keeps its pre-AI bytes and its digest still matches
-        // D1, so the detail read stays intact; only the report's copy of the
-        // advisory overlay is missing. Patch D1 anyway — that is what the UI and
-        // the export read.
-        emitOperationalEvent("warn", "scan.ai_review.report_rewrite_failed", {
-          scanId: message.scanId,
-          organizationId: message.organizationId,
-          error: describeOperationalError(err),
-        });
-        return null;
-      })
-    : null;
+  const report = await rewriteReportWithAiReview(env.ARTIFACTS as R2Bucket, scan, (current) => ({
+    ...current,
+    aiFindings: review,
+    risk: riskSummary,
+    findingAnnotations,
+  })).catch((err) => {
+    // The report artifact keeps its pre-AI bytes and its digest still matches
+    // D1, so the detail read stays intact; only the report's copy of the
+    // advisory overlay is missing. Patch D1 anyway — that is what the UI and the
+    // export read, and the read path prefers `ai_json` over the report envelope
+    // for exactly this case.
+    emitOperationalEvent("warn", "scan.ai_review.report_rewrite_failed", {
+      scanId: message.scanId,
+      organizationId: message.organizationId,
+      error: describeOperationalError(err),
+    });
+    return null;
+  });
 
   const { patched } = await applyAiReviewPatch(db, {
     scanId: message.scanId,
@@ -320,9 +319,8 @@ export async function applyAiReviewToScan(args: ApplyAiReviewArgs): Promise<AiRe
     risk: riskSummary.artifactRisk,
     riskSummary,
     findingCount: annotatedDeterministic.length + merged.records.length,
-    summary: patchedSummary(scan.summaryJson, riskSummary, aiFindingRows, report),
+    summary: patchedSummary(scan.summaryJson, riskSummary, report),
     report,
-    aiFindingRows: aiFindingRows.map(({ annotation: _annotation, ...row }) => row),
   });
 
   await deleteAiReviewInput(env.ARTIFACTS, message.organizationId, message.scanId);
@@ -384,10 +382,14 @@ async function closeUnavailable(
   };
   const persisted = normalizeScanRiskBreakdown(scan.riskSummaryJson);
   const floor = aiRiskFloor(review);
+  // Every fallback is `scans.risk` — the grade the scan is actually displaying —
+  // not "low". An unreadable `risk_summary_json` is a reason to keep the
+  // persisted verdict, not a reason to publish a quieter one.
+  const persistedRisk = normalizeRisk(scan.risk);
   const riskSummary: ScanRiskBreakdown = {
-    artifactRisk: combineRisk(normalizeRisk(persisted?.artifactRisk ?? scan.risk), floor),
-    releaseRisk: combineRisk(normalizeRisk(persisted?.releaseRisk ?? scan.risk), floor),
-    contextRisk: normalizeRisk(persisted?.contextRisk ?? "low"),
+    artifactRisk: combineRisk(normalizeRisk(persisted?.artifactRisk ?? persistedRisk), floor),
+    releaseRisk: combineRisk(normalizeRisk(persisted?.releaseRisk ?? persistedRisk), floor),
+    contextRisk: normalizeRisk(persisted?.contextRisk ?? persistedRisk),
     releaseFindingCount: persisted?.releaseFindingCount ?? 0,
     contextFindingCount: persisted?.contextFindingCount ?? 0,
     unknownFindingCount: persisted?.unknownFindingCount ?? 0,
@@ -402,7 +404,7 @@ async function closeUnavailable(
     risk: riskSummary.artifactRisk,
     riskSummary,
     findingCount: scan.findingCount ?? 0,
-    summary: patchedSummary(scan.summaryJson, riskSummary, [], null),
+    summary: patchedSummary(scan.summaryJson, riskSummary, null),
     report: null,
   });
   await deleteAiReviewInput(env.ARTIFACTS, message.organizationId, message.scanId);
@@ -505,7 +507,6 @@ function aiRiskFloor(review: AiReview): "low" | "medium" {
 function patchedSummary(
   summaryJson: unknown,
   riskSummary: ScanRiskBreakdown,
-  aiFindingRows: Array<{ id: string; annotation?: FindingDiffAnnotation }>,
   report: RewrittenReportArtifacts | null,
 ): Record<string, unknown> {
   const base =
@@ -521,17 +522,6 @@ function patchedSummary(
   // an export whose digest names bytes that no longer describe the review.
   if (report && base.report && typeof base.report === "object" && !Array.isArray(base.report)) {
     base.report = { ...(base.report as Record<string, unknown>), digest: report.reportDigest };
-  }
-  if (aiFindingRows.length) {
-    const existing = Array.isArray(base.findingAnnotations) ? base.findingAnnotations : [];
-    base.findingAnnotations = [
-      ...existing,
-      ...aiFindingRows.map((row) => ({
-        id: row.id,
-        diffStatus: row.annotation?.diffStatus ?? "unknown",
-        releaseDelta: Boolean(row.annotation?.releaseDelta),
-      })),
-    ];
   }
   return base;
 }

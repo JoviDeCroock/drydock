@@ -437,6 +437,10 @@ export const ScanDetailModel = createModel((id: string) => {
   const selectedPath = signal<string | null>(null);
   const error = signal<string | null>(null);
   const pollingStalled = signal(false);
+  // Set when the page stops polling for a review that has not landed. Distinct
+  // from `pollingStalled`: the report is complete and on screen, so the UI drops
+  // the running indicator rather than warning that a review never finished.
+  const aiPollingStopped = signal(false);
   // Whether a full `GET /scans/:id` has ever landed for this scan. Distinct from
   // "the detail has files": a degraded artifact read returns neither.
   const fullDetailLoaded = signal(false);
@@ -510,7 +514,13 @@ export const ScanDetailModel = createModel((id: string) => {
 
     const tick = async () => {
       if (awaitingReviewOnly) {
-        if (Date.now() - startedAt >= SCAN_AI_POLL_STOP_AFTER_MS) return;
+        if (Date.now() - startedAt >= SCAN_AI_POLL_STOP_AFTER_MS) {
+          // Latch it: `isPolling` stays true while `ai_status` is pending, so
+          // without this the page would keep claiming a review is in flight that
+          // nothing is still checking on.
+          aiPollingStopped.value = true;
+          return;
+        }
       } else if (Date.now() - startedAt >= SCAN_POLL_STALL_AFTER_MS) {
         pollingStalled.value = true;
         return;
@@ -628,6 +638,7 @@ export const ScanDetailModel = createModel((id: string) => {
     isWorkflowGate,
     status,
     aiReviewPending,
+    aiPollingStopped,
     isPolling,
     isDefaultComparison,
     compare,
@@ -732,6 +743,7 @@ export const ScanDetailModel = createModel((id: string) => {
     // the latch so the polling effect restarts a fresh backoff chain.
     resumePolling(): void {
       this.pollingStalled.value = false;
+      this.aiPollingStopped.value = false;
       void pollDetail();
     },
 

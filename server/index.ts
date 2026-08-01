@@ -601,6 +601,11 @@ export default {
     // try/catch, so a transient D1 failure here used to surface as an uncaught
     // exception and skip audit pruning. The sweep is idempotent and the next
     // tick is 15 minutes away — log and move on instead of throwing.
+    // Reaper first. It is bounded and cheap, while the discovery sweep it shares
+    // this invocation with scales with organization count — putting the reaper
+    // last means a heavy sweep that runs out of budget starves the only thing
+    // that closes stranded scans, tick after tick.
+    await reapStalledScans(env);
     try {
       await runStagedPublishesDiscoveryCron(env, ctx);
     } catch (err) {
@@ -611,7 +616,6 @@ export default {
     await pruneStaleAuditEvents(env);
     await pruneStaleAuthRows(env);
     await pruneStaleRateLimitBuckets(env);
-    await reapStalledScans(env);
   },
   async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
     for (const message of batch.messages) {

@@ -77,6 +77,18 @@ Security posture: this is post-sandbox, post-redaction data at the same trust le
 
 **Report republication.** When the review lands, the report has to change: `aiFindings`, `risk`, and the index-based `findingAnnotations` all move. The patch writes a **new, content-addressed** `report.{digest16}.json` + `manifest.{digest16}.json` instead of rewriting in place, then flips `report_digest`, `report_artifact_key`, `artifact_manifest_key`, `artifact_manifest_digest`, and `artifact_manifest_size` in the same statement that flips `ai_status`. Rewriting in place would leave a window where R2 holds bytes whose digest is not the one D1 recorded, and the read path (correctly) refuses that pair — a compacted artifact-backed scan would serve metadata only until D1 caught up. With new keys the old pair stays valid until the single D1 write swaps it, so a reader sees either the pre-AI report or the patched one. Two concurrent follow-ups cannot collide either, since different reviews hash to different keys. The pre-AI `report.json` is left in place (it is small, and it is reclaimed by the per-scan prefix sweep).
 
+**Retention.** A patched scan keeps its superseded pre-AI `report.json` and
+`manifest.json` alongside the republished pair — roughly 2x the report objects
+(the report holds findings, diff, and manifest metadata, not file samples, so
+this is tens of KB per scan, not the bulk of a scan's storage). They are left in
+place deliberately: deleting the old pair the moment D1 flips would race a
+concurrent reader mid-verification for no meaningful saving. Both are reclaimed
+by the per-scan and per-organization prefix sweeps on scan or organization
+deletion, which stop before the `v{N}` segment and so match every revision. A
+losing concurrent follow-up also reclaims the revision it wrote — but only after
+re-reading the row and confirming D1 does not reference those keys, because two
+deliveries that produce identical bytes produce identical keys.
+
 **Which store wins.** D1's `ai_json` is authoritative for the advisory review: the artifact read path derives `source: "ai"` finding rows from `scans.ai_json` when the caller has it, falling back to the report's own `aiFindings` envelope otherwise. That ordering matters only in one case — the D1 patch succeeded but the republication did not — and there the column is the one that is right. On the degraded (no `ARTIFACTS` binding) path the AI findings are inserted as `scan_findings` rows after the rule rows, with their annotations appended to `summary_json.findingAnnotations` so they are not re-derived by a read that has no baseline files. Deferral requires an `ARTIFACTS` bucket, so in practice a deferred review always patches the artifact-backed path; the row path stays supported for D1-backed scans.
 
 The patch is claimed by `ai_status = "pending"`: only the first follow-up for a scan sees a returned row, so a duplicated or replayed message cannot double-count AI findings. `finding_count`, `risk`, `risk_summary_json`, and `summary_json.risk` are all updated in that same statement.
