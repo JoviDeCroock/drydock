@@ -251,8 +251,9 @@ export function DiffView({
   const binary = hasFlag(before, "binary") || hasFlag(after, "binary");
   const contentSkipped = hasFlag(before, "content-skipped") || hasFlag(after, "content-skipped");
   const truncated = hasFlag(before, "truncated") || hasFlag(after, "truncated");
-  // SAMPLE_OMITTED_FLAG in server/lib/public-diff.ts: the parser did capture a
-  // body, but it did not fit the public diff's cached sample budget.
+  // SAMPLE_OMITTED_FLAG in server/lib/review/sample-budget.ts: the parser did
+  // capture a body, but it did not fit a cached payload's sample budget (the
+  // anonymous /diff payload or the authed compare payload).
   const sampleOmitted = hasFlag(before, "sample-omitted") || hasFlag(after, "sample-omitted");
   const native = nativeBadge(after) ?? nativeBadge(before);
   const showDiffOptions = !binary && !contentSkipped && Boolean(beforeSample && afterSample);

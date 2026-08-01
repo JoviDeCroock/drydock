@@ -70,6 +70,12 @@ export {
 } from "./rules";
 export { annotateFindingsWithDiffStatus, normalizeFindingDiffStatus } from "./diff-annotation";
 export { redactFileRecords, redactFindings, redactJson, redactText } from "./redaction";
+export {
+  applySampleRetention,
+  retainedSamplePaths,
+  SAMPLE_OMITTED_FLAG,
+  sampleCandidates,
+} from "./sample-budget";
 
 const RISK_RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 

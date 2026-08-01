@@ -4,14 +4,11 @@ import { computeCompareMetadataCacheKey } from "../../server/lib/compare-cache";
 import { atpmPublicDiff } from "../../server/lib/ecosystems/atpm/public-diff";
 import {
   computePublicDiffCacheKey,
-  jsonStringByteLength,
   loadPublicPackageDiff,
   payloadCacheTtlSeconds,
   PublicDiffError,
   readPublicDiffCache,
-  SAMPLE_OMITTED_FLAG,
   serializePublicDiffCachePayload,
-  utf8ByteLength,
   writePublicDiffCache,
   type PublicPackageDiff,
 } from "../../server/lib/public-diff";
@@ -20,7 +17,9 @@ import {
   readPublicDiffDisplayName,
   writePublicDiffDisplayName,
 } from "../../server/lib/public-diff/display-metadata";
-import { DETERMINISTIC_RULES_VERSION } from "../../server/lib/review";
+// Shared with the authed compare cache, so they live outside public-diff now.
+import { jsonStringByteLength, utf8ByteLength } from "../../server/lib/platform/json-size";
+import { DETERMINISTIC_RULES_VERSION, SAMPLE_OMITTED_FLAG } from "../../server/lib/review";
 
 function payload(textSample = "export const value = 1;\n"): PublicPackageDiff {
   return {
