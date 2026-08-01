@@ -1,5 +1,6 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
+import * as OTPAuth from "otpauth";
 import worker from "../../server";
 import { createDb } from "../../server/db/client";
 import * as schema from "../../server/db/schema";
@@ -139,6 +140,126 @@ describe("session secondary storage", () => {
 
     const res = await call("GET", "/api/health", { jar });
     expect(res.status).toBe(200);
+  });
+});
+
+describe("session secondary storage contents", () => {
+  test(
+    "no verification record reaches the session KV namespace, and the 2FA challenge still resolves",
+    { timeout: 30_000 },
+    async () => {
+      // Better Auth has no per-model opt-out for secondary storage: with one
+      // configured it writes verification records too, keyed
+      // `verification:<identifier>` — which for a password reset would put the
+      // token itself in a KV key *name*, readable by anything with list access.
+      // Only session records may live in AUTH_SESSIONS.
+      await clearSessionKv();
+
+      const email = `kv-guard-${crypto.randomUUID()}@example.test`;
+      const jar: Jar = new Map();
+      const signUpRes = await call("POST", "/api/auth/sign-up/email", {
+        body: { name: "KV Guard Tester", email, password: PASSWORD },
+        jar,
+      });
+      expect(signUpRes.status).toBe(200);
+
+      const enable = await call("POST", "/api/auth/two-factor/enable", {
+        body: { password: PASSWORD },
+        jar,
+      });
+      expect(enable.status).toBe(200);
+      const totp = OTPAuth.URI.parse(
+        ((await enable.json()) as { totpURI: string }).totpURI,
+      ) as OTPAuth.TOTP;
+      expect(
+        (
+          await call("POST", "/api/auth/two-factor/verify-totp", {
+            body: { code: totp.generate() },
+            jar,
+          })
+        ).status,
+      ).toBe(200);
+
+      // Sign in again to leave a *pending* two-factor challenge — the shortest
+      // path to a live single-use verification record.
+      await call("POST", "/api/auth/sign-out", { jar });
+      const challengeJar: Jar = new Map();
+      const signIn = await call("POST", "/api/auth/sign-in/email", {
+        body: { email, password: PASSWORD },
+        jar: challengeJar,
+      });
+      expect(signIn.status).toBe(200);
+      expect(await signIn.json()).toMatchObject({ twoFactorRedirect: true });
+
+      // The challenge exists — in D1, where consumption is transactional — and
+      // nothing namespaced was written to KV to mirror it. (Sign-out cleared the
+      // session keys, so KV may legitimately be empty right here.)
+      const verifications = await createDb(env.DB).select().from(schema.verification);
+      expect(verifications.length).toBeGreaterThan(0);
+      const pending = await env.AUTH_SESSIONS!.list();
+      expect(pending.keys.map((key) => key.name).filter((name) => name.includes(":"))).toEqual([]);
+
+      // The guard suppresses reads as well as writes, so completing the
+      // handshake has to work entirely off D1.
+      const challenge = await call("POST", "/api/auth/two-factor/verify-totp", {
+        body: { code: totp.generate() },
+        jar: challengeJar,
+      });
+      expect(challenge.status).toBe(200);
+
+      // And the namespace ends up holding sessions, only sessions.
+      const listed = await env.AUTH_SESSIONS!.list();
+      expect(listed.keys.length).toBeGreaterThan(0);
+      expect(listed.keys.map((key) => key.name).filter((name) => name.includes(":"))).toEqual([]);
+    },
+  );
+});
+
+describe("a session that outlives its user", () => {
+  test("answers 401, not 500, on an organization-scoped request", async () => {
+    // A cached session cookie can outlive the account by up to the cache
+    // lifetime. The first organization-scoped request from the other device used
+    // to reach ensurePersonalOrganization, which inserted an organization owned
+    // by a user row that no longer exists — a foreign-key failure surfacing as a
+    // 500 with a stack in the logs instead of the 401 the caller has earned.
+    const email = `ghost-${crypto.randomUUID()}@example.test`;
+    const deviceA: Jar = new Map();
+    expect(
+      (
+        await call("POST", "/api/auth/sign-up/email", {
+          body: { name: "Ghost", email, password: PASSWORD },
+          jar: deviceA,
+        })
+      ).status,
+    ).toBe(200);
+
+    const deviceB: Jar = new Map();
+    expect(
+      (
+        await call("POST", "/api/auth/sign-in/email", {
+          body: { email, password: PASSWORD },
+          jar: deviceB,
+        })
+      ).status,
+    ).toBe(200);
+    expect(deviceB.get(SESSION_DATA_COOKIE)).toBeTruthy();
+
+    const deleted = await call("POST", "/api/auth/delete-user", {
+      body: { password: PASSWORD },
+      jar: deviceA,
+    });
+    expect(deleted.status).toBe(200);
+
+    // Device B never saw the sign-out, so its cookie cache is still warm.
+    for (const path of ["/api/v1/organizations", "/api/v1/scans"]) {
+      const res = await call("GET", path, { jar: deviceB });
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: "unauthorized" });
+    }
+
+    // And nothing was created on the way out.
+    const orphans = await createDb(env.DB).select().from(schema.organizations);
+    expect(orphans.some((row) => row.name === "Ghost")).toBe(false);
   });
 });
 

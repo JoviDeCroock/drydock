@@ -59,10 +59,11 @@
 		},
 		{
 			// Better Auth session store (secondary storage). Keeps the
-			// per-request session lookup off the D1 single writer. Create with:
-			// pnpm exec wrangler kv namespace create AUTH_SESSIONS
+			// per-request session lookup off the D1 single writer. Holds only
+			// session records: see createSessionSecondaryStorage in
+			// server/lib/auth/index.ts, which refuses to write anything else.
 			"binding": "AUTH_SESSIONS",
-			"id": "REPLACE_WITH_AUTH_SESSIONS_KV_ID"
+			"id": "8e9b2f4496c44bc383151fb6e1582e53"
 		}
 	],
 	// Native Rate Limiting bindings: per-colo fixed-window counters that keep

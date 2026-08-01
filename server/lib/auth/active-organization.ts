@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { type AppDb } from "../../db/client";
 import { ensurePersonalOrganization } from "../../db/organizations";
 import { organizationMembers } from "../../db/schema";
-import { personalOrganizationId } from "./ownership";
+import { UnauthorizedError } from "../platform/errors";
 import type { OrganizationRole } from "./roles";
 import type { Bindings, Variables } from "../../types";
 
@@ -28,8 +28,9 @@ export async function requireActiveOrganization(
       .limit(1);
     if (membership) return requested;
   }
-  await ensurePersonalOrganization(db, session);
-  return personalOrganizationId(session.userId);
+  const organizationId = await ensurePersonalOrganization(db, session);
+  if (!organizationId) throw new UnauthorizedError();
+  return organizationId;
 }
 
 export interface ActiveOrganizationContext {
@@ -67,5 +68,6 @@ export async function requireActiveOrganizationContext(
     }
   }
   const organizationId = await ensurePersonalOrganization(db, session);
+  if (!organizationId) throw new UnauthorizedError();
   return { organizationId, role: "owner" };
 }

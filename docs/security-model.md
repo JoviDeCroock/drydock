@@ -109,11 +109,18 @@ Sessions are Better Auth sessions in a cookie signed with `BETTER_AUTH_SECRET`. 
 - **Cookie cache.** `session.cookieCache` puts a signed copy of the session and user in the `spr.session_data` cookie for `SESSION_COOKIE_CACHE_SECONDS` (5 minutes). While it is fresh, a request resolves its session with no storage read at all.
 - **KV secondary storage.** When the `AUTH_SESSIONS` KV namespace is bound, the session read/write path moves to KV. `storeSessionInDatabase` stays on, so D1 remains the durable record: Better Auth falls back to the D1 row on a KV miss, sign-out and account deletion still delete a row, and losing the KV namespace cannot sign everyone out.
 
-Only sessions go to KV. Better Auth would also route verification values (email-verification links, password-reset tokens, the two-factor challenge and its attempt counter) through secondary storage, where single-use consumption degrades to a non-atomic get-then-delete; `verification.storeInDatabase` keeps them in D1 so `consumeVerificationValue` stays transactional and a reset token or 2FA challenge cannot be redeemed twice.
+**Only session records reach KV, and that is enforced in code.** Better Auth has no per-model opt-out for secondary storage: once it is configured, its writer also runs for _verification_ records — email-verification links, password-reset tokens, the two-factor challenge and its attempt counter — and it names the KV key after the identifier, so `verification:reset-password:<token>` would put a live single-use credential in a KV key _name_, readable by anything with list access to the namespace. Two settings close this:
+
+- `verification.storeInDatabase` keeps D1 authoritative, so `consumeVerificationValue` stays a transaction and a reset token or 2FA challenge cannot be redeemed twice (in KV it degrades to a non-atomic get-then-delete).
+- `isSessionStoreKeyAllowed` in `server/lib/auth/index.ts` refuses to read, write, or delete any namespaced (`<namespace>:<identifier>`) key. Session keys — the raw token and `active-sessions-<userId>` — carry no colon, so the guard passes sessions and blocks verification records and any namespace a future Better Auth version adds. It is fail-safe: because D1 stays authoritative for both record kinds, a suppressed write costs a cache miss, never correctness.
+
+Better Auth's own request limiter also silently switches from in-isolate memory to secondary storage when one is configured. It is pinned back to `memory`, so enabling the session cache adds no KV round-trip to `/api/auth/*` and the limiter does not inherit KV's eventual consistency under the load it exists to shed. Drydock's per-IP limits below are the real control.
 
 The security consequence is a bounded **revocation lag**. After a sign-out, a session revocation, or an account deletion, a request that still presents a fresh `spr.session_data` cookie can be served for up to the cookie-cache lifetime, plus KV's own eventual consistency across colos. Sign-out expires both cookies, so a cookie-following client loses access immediately; the lag matters for a replayed or stolen cookie. Keep `SESSION_COOKIE_CACHE_SECONDS` short.
 
-Nothing that authorizes a release decision is cached. Organization membership and role (`requireActiveOrganization*`), resource ownership, two-factor enrollment (`userHasTwoFactor`), and the TOTP step-up all read D1 on every request, so a member removed from an organization or a policy change takes effect immediately even while a session cookie is still cached.
+Nothing that authorizes a release decision is cached. Organization membership and role (`requireActiveOrganization*`), resource ownership, two-factor enrollment (`userHasTwoFactor`), the organization's two-factor policy, and the encrypted TOTP secret all read D1 on every request, so a member removed from an organization or a policy change takes effect immediately even while a session cookie is still cached.
+
+A cached session can outlive its user by up to the cache lifetime, so `ensurePersonalOrganization` verifies the user row still exists before lazily creating an organization for it. Without that check the first organization-scoped request from a deleted account's second device would trip the `owner_user_id` foreign key and answer 500; it now raises `UnauthorizedError`, which `app.onError` renders as 401.
 
 ## Rate limiting
 
@@ -129,6 +136,8 @@ Semantic differences from the previous D1-only scheme, accepted deliberately:
 - Counters are **per-colo, not global**. A distributed client gets up to `limit` per colo per window. These are abuse controls, not quotas; the authorization checks above are what protect data.
 - `Retry-After` is derived from the wall-clock window instead of read back from a counter row, because the binding reports only allowed/blocked.
 - Expired D1 buckets are swept by the scheduled handler (`pruneExpiredRateLimitBuckets`) rather than by an unbounded `DELETE` piggybacked on a request that happened to cross a per-isolate timer.
+
+GitHub webhook deliveries are the one place where a 429 destroys work rather than deferring it: GitHub does not retry a delivery we reject, so a dropped `deployment_protection_rule` leaves a workflow waiting on a gate nobody will review, and a dropped `installation` leaves a stale installation record. Those budgets are sized as a runaway-loop backstop rather than a queueing control (240/min for gate deliveries, far above any realistic monorepo fan-out), the two event kinds get separate buckets so gate traffic cannot starve lifecycle events, and a rejection is logged at error because it means work was lost.
 
 A deployment that omits the `ratelimits` bindings still enforces every limit, through the D1 counter, and logs `rate_limit.tier_missing`. Adding a new per-minute limit at a call site requires a matching tier and binding; without one it silently degrades to D1.
 

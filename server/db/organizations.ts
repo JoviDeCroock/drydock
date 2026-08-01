@@ -20,7 +20,21 @@ import {
   user,
 } from "./schema";
 
-export async function ensurePersonalOrganization(db: AppDb, session: WorkspaceSession) {
+/**
+ * Resolve (and lazily create) the caller's personal organization.
+ *
+ * Returns `null` when the session's user row is gone. A deleted account can
+ * still present a valid signed session cookie from another device until the
+ * cookie's session cache expires; without this check the first organization-
+ * scoped request would try to create an organization owned by a user that no
+ * longer exists, trip the `owner_user_id` foreign key, and surface as a 500
+ * instead of the 401 the caller has earned. The extra read only happens on the
+ * create path — an existing membership returns before it.
+ */
+export async function ensurePersonalOrganization(
+  db: AppDb,
+  session: WorkspaceSession,
+): Promise<string | null> {
   const organizationId = personalOrganizationId(session.userId);
   const [existing] = await db
     .select({ organizationId: organizationMembers.organizationId })
@@ -33,6 +47,13 @@ export async function ensurePersonalOrganization(db: AppDb, session: WorkspaceSe
     )
     .limit(1);
   if (existing) return organizationId;
+
+  const [owner] = await db
+    .select({ id: user.id })
+    .from(user)
+    .where(eq(user.id, session.userId))
+    .limit(1);
+  if (!owner) return null;
 
   const now = new Date();
   const name = session.name || session.email || "Personal workspace";

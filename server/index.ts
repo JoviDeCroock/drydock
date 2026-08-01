@@ -10,6 +10,7 @@ import {
   pruneExpiredRateLimitBuckets,
 } from "./lib/platform/rate-limit";
 import { createAuth, getAuthSession } from "./lib/auth";
+import { UnauthorizedError } from "./lib/platform/errors";
 import { rateLimitResponse } from "./lib/platform/http";
 import { allowInsecureLocalRegistry } from "./lib/ecosystems/npm/connection";
 import { isPackageDiffDetailPath, rewritePackageDiffMetadata } from "./lib/public-diff/page";
@@ -337,6 +338,10 @@ app.notFound(async (c) => {
 });
 
 app.onError((err, c) => {
+  // A session that resolved from the cookie cache can outlive its user by up to
+  // the cache lifetime. Helpers that discover the missing principal raise this
+  // instead of threading a nullable identity through every return type.
+  if (err instanceof UnauthorizedError) return c.json({ error: "unauthorized" }, 401);
   emitOperationalEvent("error", "request.unhandled_error", {
     method: c.req.method,
     path: redactCapabilityPath(c.req.path),

@@ -35,7 +35,9 @@ export const organizationsRoutes = new Hono<{ Bindings: Bindings; Variables: Var
 organizationsRoutes.get("/", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
-  await ensurePersonalOrganization(db, session);
+  if (!(await ensurePersonalOrganization(db, session))) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
   const organizations = await listUserOrganizations(db, session.userId);
   return c.json({ organizations });
 });
