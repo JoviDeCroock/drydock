@@ -383,6 +383,51 @@ describe("deferred AI review", () => {
     expect(updated?.findingCount).toBe(2);
   });
 
+  test("a duplicate delivery with identical output cannot delete the live report", async () => {
+    const owner = await seedUser();
+    const { db, scanId } = await seedPendingScan(owner);
+    const scan = await getScanStatus(db, scanId, owner.organizationId);
+
+    // Two deliveries of the same message that produce the same review — the
+    // killswitch-off sentinel, the final-attempt fail-safe, and an AI Gateway
+    // cache hit all do this. Identical bytes hash to identical keys, so the
+    // loser's cleanup is pointed straight at the winner's live objects.
+    const first = await applyAiReviewToScan(applyArgs(owner, scan!, criticalReview));
+    expect(first.outcome).toBe("patched");
+    const second = await applyAiReviewToScan(applyArgs(owner, scan!, criticalReview));
+    expect(second).toEqual({ outcome: "skipped", reason: "not_pending" });
+
+    const detail = await getScan(db, scanId, owner.organizationId, env.ARTIFACTS);
+    expect(detail?.scan.reportArtifactKey).toMatch(/\/report\.[0-9a-f]{16}\.json$/);
+    // Still there, still verifying: a compacted scan has no D1 copy of this.
+    expect(await env.ARTIFACTS.get(detail!.scan.reportArtifactKey!)).not.toBeNull();
+    expect(await env.ARTIFACTS.get(detail!.scan.artifactManifestKey!)).not.toBeNull();
+    expect(detail?.findings.map((finding) => finding.source)).toEqual(["rule", "ai"]);
+    expect(detail?.files.map((file) => file.path)).toEqual(["index.js", "setup.js"]);
+  });
+
+  test("a duplicate delivery with different output reclaims only its own revision", async () => {
+    const owner = await seedUser();
+    const { db, scanId } = await seedPendingScan(owner);
+    const scan = await getScanStatus(db, scanId, owner.organizationId);
+
+    await applyAiReviewToScan(applyArgs(owner, scan!, criticalReview));
+    const live = (await getScanStatus(db, scanId, owner.organizationId))!;
+    // A different review hashes to different keys, so the loser's revision is
+    // genuinely unreferenced and is reclaimed.
+    const loser = await applyAiReviewToScan(applyArgs(owner, scan!, lowReview));
+    expect(loser).toEqual({ outcome: "skipped", reason: "not_pending" });
+
+    const after = (await getScanStatus(db, scanId, owner.organizationId))!;
+    expect(after.reportArtifactKey).toBe(live.reportArtifactKey);
+    expect(await env.ARTIFACTS.get(after.reportArtifactKey!)).not.toBeNull();
+    const listed = await env.ARTIFACTS.list({ prefix: `${keyPrefix(owner, scanId)}/report.` });
+    const revisions = listed.objects
+      .map((object) => object.key)
+      .filter((key) => /\/report\.[0-9a-f]{16}\.json$/.test(key));
+    expect(revisions).toEqual([after.reportArtifactKey]);
+  });
+
   test("the evidence snapshot round-trips and is deleted once the review lands", async () => {
     const owner = await seedUser();
     const { db, scanId, aiReviewInput } = await seedPendingScan(owner);

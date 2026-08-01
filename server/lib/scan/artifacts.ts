@@ -403,9 +403,14 @@ export interface RewrittenReportArtifacts {
  * compacted, artifact-backed scan would serve metadata only until D1 caught up.
  * Writing new keys keeps the old pair valid and intact until
  * `applyAiReviewPatch` flips every reference in one statement, so a reader sees
- * either the pre-AI report or the patched one and never a mismatch. Two
- * concurrent follow-ups cannot collide either: different reviews hash to
- * different keys.
+ * either the pre-AI report or the patched one and never a mismatch.
+ *
+ * Note what content addressing does and does not give you here. Two concurrent
+ * follow-ups that produce *different* reviews write different keys and cannot
+ * corrupt each other. Two that produce *identical* bytes — the killswitch-off
+ * sentinel, the fail-safe result, an AI Gateway cache hit — write the same
+ * keys, which is also safe (the bytes are equal) but means the losing delivery
+ * must not treat those objects as its own garbage to collect.
  *
  * `mutate` receives the parsed canonical report payload and returns the patched
  * one; the caller is responsible for keeping it canonical (stable ordering is

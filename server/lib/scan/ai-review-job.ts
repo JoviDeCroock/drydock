@@ -329,9 +329,9 @@ export async function applyAiReviewToScan(args: ApplyAiReviewArgs): Promise<AiRe
 
   if (!patched) {
     // Another follow-up (or the reaper) claimed the scan first, so the report we
-    // republished a moment ago is referenced by nothing. Content-addressed keys
-    // make the race safe; they do not make it tidy.
-    await deleteOrphanedReportRevision(env.ARTIFACTS, report, message);
+    // republished a moment ago is probably referenced by nothing — but only
+    // probably, which is why the cleanup re-reads the row before deleting.
+    await deleteSupersededReportRevision(env.ARTIFACTS, db, report, message);
     return skip(message, "not_pending");
   }
   await notifyDeferredScanCompletion(env, db, scan);
@@ -452,13 +452,37 @@ async function notifyDeferredScanCompletion(
   }
 }
 
-async function deleteOrphanedReportRevision(
+/**
+ * Reclaim a report revision this delivery wrote and then lost the claim for.
+ *
+ * The keys are content-addressed, so two deliveries that produce **identical
+ * bytes** produce identical keys — and that is a common case, not an exotic
+ * one: the killswitch-off sentinel, the final-attempt fail-safe, and an AI
+ * Gateway cache hit all make two concurrent deliveries agree exactly. Deleting
+ * "our" objects would then delete the objects the winner's D1 row points at,
+ * and a compacted artifact-backed scan keeps no D1 copy of its findings, files,
+ * or diff to fall back to — that is unrecoverable loss of a completed review
+ * (see docs/artifact-storage.md). So the row is re-read first and the delete
+ * only happens once it proves the row references something else.
+ */
+async function deleteSupersededReportRevision(
   bucket: R2Bucket | undefined,
+  db: AppDb,
   report: RewrittenReportArtifacts | null,
   message: AiReviewQueueMessage,
 ): Promise<void> {
   if (!bucket || !report) return;
   try {
+    const current = await getScanStatus(db, message.scanId, message.organizationId);
+    if (
+      !current ||
+      current.reportArtifactKey === report.reportArtifactKey ||
+      current.artifactManifestKey === report.artifactManifestKey
+    ) {
+      // The winner wrote byte-identical bytes to the same keys (or the row is
+      // gone and there is nothing to reason about). These objects are live.
+      return;
+    }
     await bucket.delete([report.reportArtifactKey, report.artifactManifestKey]);
   } catch (err) {
     // Recoverable by the per-scan prefix sweep; never worth failing a message
