@@ -77,6 +77,8 @@ New scan reports persist this split as a risk breakdown in `summary_json.risk`:
 
 When a modified-file finding cannot be resolved against line-level diff evidence (no recorded line, or no usable text samples to diff), the annotator falls back to finding-set baselining: it re-runs the deterministic rules over the baseline files and classifies the finding as package context when the same rule already fired on the same file in the baseline version. Without a baseline counterpart the classification still fails open to release delta, so missing baseline data can only make the report louder, never quieter.
 
+That fail-open direction is what licenses the baseline-side sample cap described in [`architecture.md`](./architecture.md): baseline bodies are retained up to `BASELINE_TEXT_SAMPLE_LIMIT` per file (manifests exempt) rather than whole, because a short baseline body can only cost baseline evidence — fewer baseline fingerprints and more lines reading as added — which classifies _more_ findings as release deltas. The reviewed side is never capped, and baseline text is never persisted: the workbench's "previous version" pane is served by the separate `/compare` path, which downloads and caches the published tarball on its own.
+
 The `scans.risk` column stores `artifactRisk` for new reports. Older reports without `summary_json.risk` are interpreted the same way, and release/context risk is derived from persisted finding annotations.
 
 This keeps the staged-publish review centered on the actual release delta without allowing contextual high-risk deterministic evidence to downgrade the primary scan verdict.
