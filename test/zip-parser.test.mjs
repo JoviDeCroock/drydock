@@ -485,13 +485,13 @@ describe("zip baseline text-sample cap", () => {
     const byPath = Object.fromEntries(capped.files.map((file) => [file.path, file]));
     const uncappedByPath = Object.fromEntries(uncapped.files.map((file) => [file.path, file]));
 
-    expect(byPath["demo/__init__.py"].flags).toContain("truncated");
+    expect(byPath["demo/__init__.py"].flags).toContain("baseline-truncated");
     expect(byPath["demo/__init__.py"].textSample.length).toBeLessThanOrEqual(CAP);
     expect(byPath["demo/__init__.py"].sha256).toBe(uncappedByPath["demo/__init__.py"].sha256);
     expect(byPath["demo/__init__.py"].size).toBe(uncappedByPath["demo/__init__.py"].size);
 
     expect(byPath["demo-1.0.0.dist-info/METADATA"].textSample).toBe(metadata);
-    expect(byPath["demo-1.0.0.dist-info/METADATA"].flags).not.toContain("truncated");
+    expect(byPath["demo-1.0.0.dist-info/METADATA"].flags).not.toContain("baseline-truncated");
   });
 
   test("readZipArchiveBuffered clips retained samples and exempts the VSIX manifest", async () => {
@@ -511,8 +511,8 @@ describe("zip baseline text-sample cap", () => {
     const byPath = Object.fromEntries(files.map((file) => [file.path, file]));
 
     expect(byPath["extension/package.json"].textSample).toBe(manifest);
-    expect(byPath["extension/package.json"].flags).not.toContain("truncated");
-    expect(byPath["extension/extension.js"].flags).toContain("truncated");
+    expect(byPath["extension/package.json"].flags).not.toContain("baseline-truncated");
+    expect(byPath["extension/extension.js"].flags).toContain("baseline-truncated");
     expect(byPath["extension/extension.js"].textSample.length).toBeLessThanOrEqual(CAP);
   });
 
@@ -523,7 +523,7 @@ describe("zip baseline text-sample cap", () => {
     const { files } = await readZipStream(chunkedStream(zip), 100, 1 << 20, 1 << 20, 100);
 
     expect(files[0].textSample).toBe(long);
-    expect(files[0].flags).not.toContain("truncated");
+    expect(files[0].flags).not.toContain("baseline-truncated");
   });
 });
 

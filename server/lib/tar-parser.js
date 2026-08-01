@@ -612,14 +612,20 @@ export async function summarizeFile(path, body, maxTextSampleChars = 0) {
   // `maxTextSampleChars` is opt-in and 0 (unbounded) for every reviewed/staged
   // parse. It exists for baseline (already-published) parses, whose samples are
   // never scanned as the release under review and never persisted — see
-  // BASELINE_TEXT_SAMPLE_LIMIT. Binary/control-character classification always
-  // reads the full body, so the `binary` flag and the hash stay identical to an
-  // uncapped parse; only how much of the decoded text is carried changes.
+  // BASELINE_TEXT_SAMPLE_LIMIT. A clipped body is flagged `baseline-truncated`,
+  // not `truncated`, so the reviewed side's display-truncation flag keeps its
+  // meaning. Binary/control-character classification always reads the full body,
+  // so the `binary` flag and the hash stay identical to an uncapped parse; only
+  // how much of the decoded text is carried changes.
   const text = decodeText(body);
   if (!text) flags.push("binary");
   const limit = maxTextSampleChars > 0 && !isRetainedManifestPath(path) ? maxTextSampleChars : 0;
   const clipped = limit > 0 && text.length > limit ? clipTextSample(text, limit) : text;
-  if (clipped !== text) flags.push("truncated");
+  // Deliberately NOT the `truncated` flag the persistence layer adds to a
+  // reviewed file's display sample: only baseline parses set a cap, and
+  // `createPackageDiff` unions both sides' flags into the canonical diff entry,
+  // where a bare `truncated` would read as "the reviewed body was clipped".
+  if (clipped !== text) flags.push("baseline-truncated");
   return {
     path,
     size: body.length,

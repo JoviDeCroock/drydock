@@ -99,7 +99,7 @@ describe("rendered sandbox module: per-file sample retention", () => {
     const cappedIndex = capped.files.find((file) => file.path === "index.js");
     const uncappedIndex = uncapped.files.find((file) => file.path === "index.js");
     expect(cappedIndex?.textSample?.length ?? 0).toBeLessThanOrEqual(1024);
-    expect(cappedIndex?.flags).toContain("truncated");
+    expect(cappedIndex?.flags).toContain("baseline-truncated");
     // Identity is still computed over every byte, so the diff can still prove
     // whether the file changed against the other side.
     expect(cappedIndex?.sha256).toBe(uncappedIndex?.sha256);
@@ -123,7 +123,7 @@ describe("rendered sandbox module: per-file sample retention", () => {
 
     const packageJson = parsed.files.find((file) => file.path === "package.json");
     expect(packageJson?.textSample).toBe(manifest);
-    expect(packageJson?.flags).not.toContain("truncated");
+    expect(packageJson?.flags).not.toContain("baseline-truncated");
     expect(parsed.packageJson).toMatchObject({ name: "pkg", version: "1.0.0" });
   });
 

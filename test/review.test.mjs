@@ -120,6 +120,66 @@ describe("review", () => {
     expect(diff.find((entry) => entry.path === "bin/native.node")?.status).toBe("modified");
   });
 
+  test("a clipped baseline sample stays out of the canonical diff entry", () => {
+    // DiffEntry.flags is report data (summary_json.diff, R2 diff.json, the
+    // exported report.json). The baseline-side retention cap is a fact about the
+    // published version's parse, not about the reviewed release, so a big
+    // unchanged file must not come back looking clipped.
+    const hash = "c".repeat(64);
+    const before = [
+      {
+        path: "dist/bundle.js",
+        size: 3 * 1024 * 1024,
+        sha256: hash,
+        flags: ["baseline-truncated"],
+        textSample: "export const value = 1;\n",
+      },
+    ];
+    const staged = [
+      {
+        path: "dist/bundle.js",
+        size: 3 * 1024 * 1024,
+        sha256: hash,
+        flags: [],
+        textSample: "export const value = 1;\n",
+      },
+    ];
+
+    const diff = createPackageDiff(before, staged);
+
+    expect(diff.find((entry) => entry.path === "dist/bundle.js")).toMatchObject({
+      status: "unchanged",
+      flags: [],
+    });
+  });
+
+  test("a modified file keeps its own flags while dropping baseline retention flags", () => {
+    const before = [
+      {
+        path: "dist/bundle.js",
+        size: 3 * 1024 * 1024,
+        sha256: "a".repeat(64),
+        flags: ["baseline-truncated"],
+      },
+    ];
+    const staged = [
+      {
+        path: "dist/bundle.js",
+        size: 3 * 1024 * 1024,
+        sha256: "b".repeat(64),
+        flags: ["truncated"],
+      },
+    ];
+
+    const diff = createPackageDiff(before, staged);
+
+    // The staged side's display truncation is real and still reported.
+    expect(diff.find((entry) => entry.path === "dist/bundle.js")).toMatchObject({
+      status: "modified",
+      flags: ["truncated"],
+    });
+  });
+
   test("deterministic policy escalates risky new staged changes", () => {
     const staged = [
       {
