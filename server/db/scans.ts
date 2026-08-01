@@ -20,11 +20,12 @@ export {
   claimScanForRun,
   createScanJob,
   deleteFailedScan,
-  deletePendingScanJob,
+  deletePendingScanJobs,
   discardGateScans,
   discardScanAttempt,
   listExistingScanStageIds,
   markScanFailed,
+  scanExists,
   type ScanSource,
 } from "./scan-jobs";
 

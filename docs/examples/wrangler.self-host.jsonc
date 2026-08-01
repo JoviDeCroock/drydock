@@ -165,13 +165,19 @@
 	// The discovery queue carries one staged-publish sweep per organization,
 	// produced by the 15-minute cron tick. It is separate from the scan queue so
 	// a discovery burst cannot starve scan execution. Sweeps are idempotent and
-	// re-enqueued every tick, so they need no dead-letter queue. Remove the
-	// DISCOVERY_QUEUE producer/consumer pair to sweep inline instead.
+	// re-enqueued every tick, so they need no dead-letter queue. The discovery
+	// consumer deliberately omits max_concurrency: sweeps are independent and
+	// I/O-bound, so a fixed cap would become the drain bottleneck under backlog.
+	// Remove the DISCOVERY_QUEUE producer/consumer pair to sweep inline instead.
 	"queues": {
 		"producers": [
 			{
 				"binding": "SCAN_QUEUE",
 				"queue": "staged-publish-review-scans"
+			},
+			{
+				"binding": "DISCOVERY_QUEUE",
+				"queue": "staged-publish-review-discovery"
 			}
 		],
 		"consumers": [
@@ -182,6 +188,12 @@
 				"max_concurrency": 10,
 				"max_retries": 3,
 				"dead_letter_queue": "staged-publish-review-scans-dlq"
+			},
+			{
+				"queue": "staged-publish-review-discovery",
+				"max_batch_size": 1,
+				"max_batch_timeout": 5,
+				"max_retries": 1
 			}
 		]
 	},

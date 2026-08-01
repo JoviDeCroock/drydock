@@ -6,7 +6,7 @@ vi.mock("cloudflare:workers", () => ({
 
 const dbMock = vi.hoisted(() => ({
   createScanJob: vi.fn(),
-  deletePendingScanJob: vi.fn(),
+  deletePendingScanJobs: vi.fn(),
   listExistingScanStageIds: vi.fn(),
   markNpmConnectionUsed: vi.fn(),
   recordScanEvent: vi.fn(),
@@ -578,20 +578,19 @@ describe("discoverAndQueueStagedPublishes", () => {
       ),
     ).rejects.toThrow("queue unavailable");
 
-    expect(dbMock.deletePendingScanJob).toHaveBeenCalledTimes(40);
-    // Only the accepted batch's scan rows survive; the rejected batch's 40 are
-    // exactly the deleted ones.
+    // One batched delete, not 40 sequential ones. Only the accepted batch's scan
+    // rows survive; the rejected batch's 40 are exactly the deleted ones.
+    expect(dbMock.deletePendingScanJobs).toHaveBeenCalledTimes(1);
     const acceptedScanIds = new Set(
       env.SCAN_QUEUE.sendBatch.mock.calls[0][0].map((entry) => entry.body.scanId),
     );
     const rejectedScanIds = env.SCAN_QUEUE.sendBatch.mock.calls[1][0].map(
       (entry) => entry.body.scanId,
     );
-    expect(dbMock.deletePendingScanJob.mock.calls.map((call) => call[1])).toEqual(rejectedScanIds);
-    for (const call of dbMock.deletePendingScanJob.mock.calls) {
-      expect(acceptedScanIds.has(call[1])).toBe(false);
-      expect(call[2]).toBe("org_a");
-    }
+    const [, deletedScanIds, deletedOrganizationId] = dbMock.deletePendingScanJobs.mock.calls[0];
+    expect(deletedScanIds).toEqual(rejectedScanIds);
+    expect(deletedOrganizationId).toBe("org_a");
+    for (const scanId of deletedScanIds) expect(acceptedScanIds.has(scanId)).toBe(false);
   });
 
   test("removes the pending scan when queue dispatch fails", async () => {
@@ -619,7 +618,7 @@ describe("discoverAndQueueStagedPublishes", () => {
     ).rejects.toThrow("queue unavailable");
 
     const createdScanId = dbMock.createScanJob.mock.calls[0]?.[1]?.id;
-    expect(dbMock.deletePendingScanJob).toHaveBeenCalledWith(db, createdScanId, "org_a");
+    expect(dbMock.deletePendingScanJobs).toHaveBeenCalledWith(db, [createdScanId], "org_a");
   });
 
   test("removes rows already created when a later candidate fails before dispatch", async () => {
@@ -655,8 +654,8 @@ describe("discoverAndQueueStagedPublishes", () => {
 
     expect(env.SCAN_QUEUE.sendBatch).not.toHaveBeenCalled();
     const createdScanId = dbMock.createScanJob.mock.calls[0]?.[1]?.id;
-    expect(dbMock.deletePendingScanJob).toHaveBeenCalledTimes(1);
-    expect(dbMock.deletePendingScanJob).toHaveBeenCalledWith(db, createdScanId, "org_a");
+    expect(dbMock.deletePendingScanJobs).toHaveBeenCalledTimes(1);
+    expect(dbMock.deletePendingScanJobs).toHaveBeenCalledWith(db, [createdScanId], "org_a");
   });
 
   test("starts nothing when every discovered stage is already known", async () => {

@@ -12,6 +12,7 @@ const dbMock = vi.hoisted(() => ({
   markNpmConnectionUsed: vi.fn(),
   markScanFailed: vi.fn(),
   recordScanEvent: vi.fn(),
+  scanExists: vi.fn(),
 }));
 const pipelineMock = vi.hoisted(() => ({ runScanPipeline: vi.fn() }));
 const npmConnectionMock = vi.hoisted(() => ({ decryptNpmToken: vi.fn() }));
@@ -194,6 +195,8 @@ describe("executeScanJob idempotency", () => {
 
   test("returns null without running the pipeline when claim is rejected", async () => {
     dbMock.claimScanForRun.mockResolvedValue(false);
+    dbMock.scanExists.mockResolvedValue(true);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const result = await executeScanJob(env, ctx, message, {}, { attempt: 2 });
 
@@ -201,6 +204,28 @@ describe("executeScanJob idempotency", () => {
     expect(pipelineMock.runScanPipeline).not.toHaveBeenCalled();
     expect(dbMock.recordScanEvent).not.toHaveBeenCalled();
     expect(dbMock.markScanFailed).not.toHaveBeenCalled();
+    expect(warnSpy.mock.calls.find((call) => call[0] === "scan.job.skipped")?.[1]).toMatchObject({
+      reason: "already_terminal",
+    });
+  });
+
+  test("reports a rolled-back scan row as scan_row_missing, not already_terminal", async () => {
+    // Discovery deletes a scan row when its sendBatch is rejected. The reject can
+    // still have been delivered, so the consumer can receive a message pointing
+    // at a row that no longer exists; calling that "already terminal" sent
+    // whoever read the log looking for a completed scan that never ran.
+    dbMock.claimScanForRun.mockResolvedValue(false);
+    dbMock.scanExists.mockResolvedValue(false);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await executeScanJob(env, ctx, message, {}, { attempt: 1 });
+
+    expect(result).toBeNull();
+    expect(pipelineMock.runScanPipeline).not.toHaveBeenCalled();
+    expect(warnSpy.mock.calls.find((call) => call[0] === "scan.job.skipped")?.[1]).toMatchObject({
+      scanId: message.scanId,
+      reason: "scan_row_missing",
+    });
   });
 
   test("runs the pipeline exactly once after a successful claim", async () => {

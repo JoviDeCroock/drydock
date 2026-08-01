@@ -150,7 +150,6 @@
 				"queue": "staged-publish-review-discovery",
 				"max_batch_size": 1,
 				"max_batch_timeout": 5,
-				"max_concurrency": 10,
 				"max_retries": 1
 			}
 		]

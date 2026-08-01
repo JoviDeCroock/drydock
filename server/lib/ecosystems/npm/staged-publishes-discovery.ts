@@ -5,7 +5,7 @@ import { markNpmConnectionUsed, updateNpmConnectionValidation } from "../../../d
 import {
   type ScanSource,
   createScanJob,
-  deletePendingScanJob,
+  deletePendingScanJobs,
   listExistingScanStageIds,
 } from "../../../db/scans";
 import { decryptNpmToken, validateNpmCredential, type NpmCredentialValidation } from "./connection";
@@ -348,11 +348,21 @@ export { StagedPublishesFetchError };
  * `SCAN_QUEUE_SEND_BATCH_SIZE`, so a sweep that discovers 60 new stages costs
  * one queue round trip instead of 60.
  *
- * Rollback semantics are unchanged from the per-message version: a scan row
- * that never reached the queue would otherwise sit pending forever and suppress
- * itself from the next sweep's dedup, so on a send failure every row this sweep
- * created that is not already on the queue is deleted before rethrowing. Rows
- * from batches that were already accepted stay — those scans are running.
+ * The invariant is the same as the per-message version — never leave a scan row
+ * pending with no queue message behind it, because that row is invisible work
+ * that also suppresses itself from the next sweep's dedup — but batching changes
+ * the semantics in two ways worth stating:
+ *
+ * 1. Failure is coarser. Rows are created for every candidate before anything is
+ *    sent, so a failure while preparing discards the whole sweep, where the old
+ *    send-per-scan version kept the candidates it had already queued. The next
+ *    tick rediscovers them; losing one cycle beats leaking rows.
+ * 2. A rejected `sendBatch` does not prove nothing was delivered — the failure
+ *    may be on the response path. Rolling the row back after the message was in
+ *    fact delivered leaves a message pointing at a deleted scan, which the
+ *    consumer reports as a `scan_row_missing` skip (see `executeScanJob`)
+ *    rather than the misleading `already_terminal`. Benign, but it is a real
+ *    at-least-once artifact, not an impossibility.
  */
 async function dispatchPreparedScans(input: {
   db: AppDb;
@@ -393,9 +403,11 @@ async function deletePendingScans(
   organizationId: string,
   starts: readonly PreparedScanStart[],
 ): Promise<void> {
-  for (const start of starts) {
-    await deletePendingScanJob(db, start.scanId, organizationId);
-  }
+  await deletePendingScanJobs(
+    db,
+    starts.map((start) => start.scanId),
+    organizationId,
+  );
 }
 
 function recordScanQueuedEvent(

@@ -26,6 +26,18 @@ export interface DiscoverySweepQueueMessage {
   organizationId: string;
 }
 
+/**
+ * The queue discovery sweeps are delivered on. The Worker refuses to run a
+ * sweep body that arrives on any other queue (and refuses non-sweep bodies on
+ * this one), so a message published to the wrong queue is logged and dropped
+ * instead of fanning out scan work from the wrong consumer.
+ *
+ * Keep this in sync with `queues.consumers[].queue` in `wrangler.jsonc` /
+ * `wrangler.template.jsonc`. Renaming the queue without renaming this constant
+ * shows up as error-level `queue.message.unknown_kind` logs naming both.
+ */
+export const DISCOVERY_SWEEP_QUEUE_NAME = "staged-publish-review-discovery";
+
 export function isDiscoverySweepMessage(message: unknown): message is DiscoverySweepQueueMessage {
   return (
     typeof message === "object" &&
@@ -39,14 +51,19 @@ export function isDiscoverySweepMessage(message: unknown): message is DiscoveryS
 // turns into exactly one send.
 const DISCOVERY_SWEEP_BATCH_SIZE = 100;
 
-// Hard stop on the producer loop so a pagination bug can never spin the
-// scheduled invocation. 100k eligible organizations is far past the point where
-// the 15-minute cadence itself needs rethinking.
-const DISCOVERY_SWEEP_MAX_PAGES = 1000;
+// Hard stop on the producer loop. The real ceiling is not CPU but the
+// 1000-subrequest budget of a single invocation: each page costs two (one D1
+// read, one sendBatch), and the same invocation still has to run the audit
+// prune afterwards. 450 pages ≈ 900 subrequests ≈ 45k organizations, which is
+// far past the point where the 15-minute cadence itself needs rethinking.
+const DISCOVERY_SWEEP_MAX_PAGES = 450;
 
-// Only used by the inline fallback below (no DISCOVERY_QUEUE binding, i.e.
-// local dev and tests). The deployed path runs one org per queue message, so
-// its parallelism is the queue consumer's `max_concurrency`, not this constant.
+// Only used by the inline fallback below, i.e. when no DISCOVERY_QUEUE binding
+// exists: the Vitest Workers pool, the e2e dev server, and self-hosted
+// deployments that drop the queue block. `pnpm run dev` reads wrangler.jsonc and
+// therefore *does* bind the queue, so local dev exercises the deployed producer
+// path under miniflare. On that path per-org parallelism is the queue consumer's
+// concurrency, not this constant.
 const INLINE_SWEEP_CONCURRENCY = 5;
 
 /**
@@ -55,18 +72,22 @@ const INLINE_SWEEP_CONCURRENCY = 5;
  * page read plus one `sendBatch` per 100 orgs — instead of running every sweep
  * inside the scheduled invocation's bounded CPU budget.
  *
- * Without a `DISCOVERY_QUEUE` binding (local dev, `pnpm run dev`, tests,
- * self-hosted deployments that skip the queue) it falls back to sweeping inline
- * with bounded concurrency, mirroring how the scan path falls back to
+ * Without a `DISCOVERY_QUEUE` binding it falls back to sweeping inline with
+ * bounded concurrency, mirroring how the scan path falls back to
  * `waitUntil(executeScanJob)` when `SCAN_QUEUE` is absent. That fallback keeps
- * the old O(orgs) shape by definition; it is a dev convenience, not the
- * production path.
+ * the old O(orgs) shape by definition; it exists for configurations without the
+ * queue (Worker tests, the e2e dev server, self-hosters who dropped the block),
+ * not as the shape local dev runs.
  */
 export async function enqueueDiscoverySweeps(
   env: Cloudflare.Env,
   executionCtx: ExecutionContext,
+  // Lowering the page budget is how tests reach the guard without seeding 45k
+  // organizations; production always uses DISCOVERY_SWEEP_MAX_PAGES.
+  options: { maxPages?: number } = {},
 ): Promise<void> {
   const startedAtMs = Date.now();
+  const maxPages = options.maxPages ?? DISCOVERY_SWEEP_MAX_PAGES;
   const db = createDb(env.DB);
   const queue = env.DISCOVERY_QUEUE;
   if (!queue) {
@@ -79,14 +100,14 @@ export async function enqueueDiscoverySweeps(
   let cursor: string | null = null;
   let organizations = 0;
   let batches = 0;
-  let truncated = true;
-  for (let page = 0; page < DISCOVERY_SWEEP_MAX_PAGES; page++) {
+  let exhaustedPageBudget = true;
+  for (let page = 0; page < maxPages; page++) {
     const refs = await listAutoDiscoveryNpmConnectionRefs(db, {
       limit: DISCOVERY_SWEEP_BATCH_SIZE,
       afterId: cursor,
     });
     if (!refs.length) {
-      truncated = false;
+      exhaustedPageBudget = false;
       break;
     }
     await queue.sendBatch(
@@ -98,10 +119,17 @@ export async function enqueueDiscoverySweeps(
     batches += 1;
     cursor = refs[refs.length - 1]!.id;
     if (refs.length < DISCOVERY_SWEEP_BATCH_SIZE) {
-      truncated = false;
+      exhaustedPageBudget = false;
       break;
     }
   }
+
+  // Running out of pages on an exact page boundary is not truncation: an org
+  // count that happens to be a multiple of the page size would otherwise raise a
+  // false alarm every tick. One extra bounded read settles it.
+  const truncated = exhaustedPageBudget
+    ? (await listAutoDiscoveryNpmConnectionRefs(db, { limit: 1, afterId: cursor })).length > 0
+    : false;
 
   emitOperationalEvent(truncated ? "error" : "info", "staged_publishes.cron.enqueued", {
     organizations,

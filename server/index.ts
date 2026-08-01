@@ -25,6 +25,7 @@ import {
 import {
   classifyScanError,
   executeScanJob,
+  isScanQueueMessage,
   isWorkflowGateMessage,
   MAX_SCAN_JOB_ATTEMPTS,
   retryDelaySeconds,
@@ -32,6 +33,7 @@ import {
 } from "./lib/scan/job";
 import { executeWorkflowGateJob } from "./lib/workflow-gate-job";
 import {
+  DISCOVERY_SWEEP_QUEUE_NAME,
   enqueueDiscoverySweeps,
   isDiscoverySweepMessage,
   runDiscoverySweep,
@@ -422,11 +424,47 @@ export default {
     env: Cloudflare.Env,
     ctx: ExecutionContext,
   ) {
+    // Discovery sweeps have their own queue so a discovery burst cannot starve
+    // scan execution. The pairing is enforced in both directions: a sweep body
+    // is only honored on the discovery queue, and the discovery queue only
+    // carries sweep bodies. Anything else — including a body with an
+    // unrecognized `kind` from a future or rolled-back deploy — is dropped by
+    // the guard below instead of falling through to the scan handler, which
+    // would run `executeScanJob` with undefined ids.
+    const isDiscoveryQueue = batch.queue === DISCOVERY_SWEEP_QUEUE_NAME;
+    const dropUnroutableMessage = (
+      body: unknown,
+      attempts: number,
+      startedAtMs: number,
+      reason: string,
+    ) => {
+      emitOperationalEvent("error", "queue.message.unknown_kind", {
+        queue: batch.queue ?? null,
+        kind:
+          typeof body === "object" && body !== null && "kind" in body
+            ? String((body as { kind: unknown }).kind)
+            : null,
+        reason,
+        attempt: attempts,
+        durationMs: durationMsSince(startedAtMs),
+      });
+      // Acked, not retried: redelivering a message no handler claims only burns
+      // the consumer, and on the discovery queue (no dead-letter queue) it would
+      // be dropped anyway — with no record of why.
+    };
+
     for (const message of batch.messages) {
       const messageStartedAtMs = Date.now();
-      // Discovery sweeps arrive on their own queue so a discovery burst cannot
-      // starve scan execution; the message kind is the dispatch key either way.
       if (isDiscoverySweepMessage(message.body)) {
+        if (!isDiscoveryQueue) {
+          dropUnroutableMessage(
+            message.body,
+            message.attempts,
+            messageStartedAtMs,
+            "sweep_off_discovery_queue",
+          );
+          continue;
+        }
         const sweepMessage = message.body;
         // runDiscoverySweep classifies and logs every failure itself, so the
         // message always acks: a broken token or a flaky registry is re-swept
@@ -437,6 +475,15 @@ export default {
           attempt: message.attempts,
           durationMs: durationMsSince(messageStartedAtMs),
         });
+        continue;
+      }
+      if (isDiscoveryQueue) {
+        dropUnroutableMessage(
+          message.body,
+          message.attempts,
+          messageStartedAtMs,
+          "non_sweep_on_discovery_queue",
+        );
         continue;
       }
       if (isWorkflowGateMessage(message.body)) {
@@ -473,16 +520,26 @@ export default {
         }
         continue;
       }
+      if (!isScanQueueMessage(message.body)) {
+        dropUnroutableMessage(
+          message.body,
+          message.attempts,
+          messageStartedAtMs,
+          "unrecognized_body",
+        );
+        continue;
+      }
+      const scanMessage = message.body;
       try {
-        await executeScanJob(env, ctx, message.body, undefined, {
+        await executeScanJob(env, ctx, scanMessage, undefined, {
           attempt: message.attempts,
           finalAttempt: message.attempts >= MAX_SCAN_JOB_ATTEMPTS,
         });
         emitOperationalEvent("info", "scan.queue.message.completed", {
-          scanId: message.body.scanId,
-          organizationId: message.body.organizationId,
-          stageId: message.body.stageId,
-          source: message.body.source ?? "manual",
+          scanId: scanMessage.scanId,
+          organizationId: scanMessage.organizationId,
+          stageId: scanMessage.stageId,
+          source: scanMessage.source ?? "manual",
           attempt: message.attempts,
           durationMs: durationMsSince(messageStartedAtMs),
         });
@@ -491,10 +548,10 @@ export default {
         if (safe.retryable && message.attempts < MAX_SCAN_JOB_ATTEMPTS) {
           message.retry({ delaySeconds: retryDelaySeconds(message.attempts) });
           emitOperationalEvent("warn", "scan.queue.retry_scheduled", {
-            scanId: message.body.scanId,
-            organizationId: message.body.organizationId,
-            stageId: message.body.stageId,
-            source: message.body.source ?? "manual",
+            scanId: scanMessage.scanId,
+            organizationId: scanMessage.organizationId,
+            stageId: scanMessage.stageId,
+            source: scanMessage.source ?? "manual",
             attempt: message.attempts,
             nextDelaySeconds: retryDelaySeconds(message.attempts),
             durationMs: durationMsSince(messageStartedAtMs),
@@ -502,10 +559,10 @@ export default {
           });
         } else {
           emitOperationalEvent("error", "scan.queue.message_failed", {
-            scanId: message.body.scanId,
-            organizationId: message.body.organizationId,
-            stageId: message.body.stageId,
-            source: message.body.source ?? "manual",
+            scanId: scanMessage.scanId,
+            organizationId: scanMessage.organizationId,
+            stageId: scanMessage.stageId,
+            source: scanMessage.source ?? "manual",
             attempt: message.attempts,
             exhausted: safe.retryable,
             durationMs: durationMsSince(messageStartedAtMs),

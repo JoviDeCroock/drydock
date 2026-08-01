@@ -6,7 +6,10 @@ import { getNpmConnection } from "../../server/db/npm-connections";
 import { listScans } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
-import type { DiscoverySweepQueueMessage } from "../../server/lib/discovery/sweep-queue";
+import {
+  enqueueDiscoverySweeps,
+  type DiscoverySweepQueueMessage,
+} from "../../server/lib/discovery/sweep-queue";
 import worker from "../../server";
 
 const REGISTRY_URL = "https://registry.npmjs.org";
@@ -213,6 +216,47 @@ describe("discovery sweep producer", () => {
     expect(enqueued).toHaveLength(101);
     expect(new Set(enqueued).size).toBe(101);
     expect(new Set(enqueued)).toEqual(new Set(expected));
+  });
+
+  test("flags truncation only when the page budget actually leaves orgs behind", async () => {
+    // Exhausting the page budget on an exact page boundary is not truncation:
+    // an org count that happens to be a multiple of the page size must not raise
+    // an error-level alarm every tick. One page of budget, then exactly one full
+    // page of orgs, then one more org so the same budget really does truncate.
+    for (let index = 0; index < 100; index++) {
+      await seedOrg({
+        index,
+        validationStatus: "valid",
+        connectionId: `npmconn_${String(index).padStart(4, "0")}`,
+      });
+    }
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const sendBatch = vi.fn(async () => undefined);
+    const queueEnv = { ...env, DISCOVERY_QUEUE: { sendBatch } } as unknown as Cloudflare.Env;
+
+    const ctx = createExecutionContext();
+    await enqueueDiscoverySweeps(queueEnv, ctx, { maxPages: 1 });
+    await waitOnExecutionContext(ctx);
+
+    const boundaryLog = logSpy.mock.calls.find(
+      (call) => call[0] === "staged_publishes.cron.enqueued",
+    );
+    expect(boundaryLog![1]).toMatchObject({ organizations: 100, batches: 1, truncated: false });
+    expect(
+      errorSpy.mock.calls.find((call) => call[0] === "staged_publishes.cron.enqueued"),
+    ).toBeUndefined();
+
+    await seedOrg({ index: 100, validationStatus: "valid", connectionId: "npmconn_0100" });
+    const secondCtx = createExecutionContext();
+    await enqueueDiscoverySweeps(queueEnv, secondCtx, { maxPages: 1 });
+    await waitOnExecutionContext(secondCtx);
+
+    const truncatedLog = errorSpy.mock.calls.find(
+      (call) => call[0] === "staged_publishes.cron.enqueued",
+    );
+    expect(truncatedLog).toBeDefined();
+    expect(truncatedLog![1]).toMatchObject({ organizations: 100, batches: 1, truncated: true });
   });
 
   test("logs and completes the tick when the enumeration read fails", async () => {
@@ -475,5 +519,117 @@ describe("discovery sweep consumer", () => {
       reason: "npm_connection_invalid",
     });
     expect(errorSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("queue message routing guard", () => {
+  beforeEach(async () => {
+    await createDb(env.DB).delete(schema.npmConnections);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function batchOn(queue: string, body: unknown) {
+    return {
+      queue,
+      messages: [
+        { id: "msg-0", timestamp: new Date(), attempts: 1, body, retry: vi.fn(), ack() {} },
+      ],
+      retryAll() {},
+      ackAll() {},
+    } as unknown as MessageBatch<DiscoverySweepQueueMessage>;
+  }
+
+  test("drops an unrecognized message kind instead of running the scan handler", async () => {
+    // Before the explicit guard this body fell through to executeScanJob and ran
+    // it with undefined ids — and on the discovery queue (no dead-letter queue)
+    // it would then be dropped with no record of why.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = vi.fn(async () => new Response("unexpected", { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const ctx = createExecutionContext();
+    await worker.queue(
+      batchOn("staged-publish-review-scans", { kind: "release_sentinel", organizationId: "org_x" }),
+      env as Cloudflare.Env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    const dropped = errorSpy.mock.calls.find((call) => call[0] === "queue.message.unknown_kind");
+    expect(dropped).toBeDefined();
+    expect(dropped![1]).toMatchObject({
+      queue: "staged-publish-review-scans",
+      kind: "release_sentinel",
+      reason: "unrecognized_body",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    // No scan handler ran, so no scan lifecycle event was logged either.
+    expect(
+      errorSpy.mock.calls.find((call) => call[0] === "scan.queue.message_failed"),
+    ).toBeUndefined();
+  });
+
+  test("refuses a discovery sweep that arrives on the scan queue", async () => {
+    const org = await seedOrg({ index: 0, validationStatus: "valid" });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchMock = vi.fn(async () => new Response("unexpected", { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const ctx = createExecutionContext();
+    await worker.queue(
+      batchOn("staged-publish-review-scans", {
+        kind: "discovery_sweep",
+        organizationId: org.organizationId,
+      }),
+      env as Cloudflare.Env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    // The sweep must not run from the wrong consumer: no registry traffic.
+    expect(fetchMock).not.toHaveBeenCalled();
+    const dropped = errorSpy.mock.calls.find((call) => call[0] === "queue.message.unknown_kind");
+    expect(dropped![1]).toMatchObject({
+      queue: "staged-publish-review-scans",
+      kind: "discovery_sweep",
+      reason: "sweep_off_discovery_queue",
+    });
+  });
+
+  test("refuses a scan message that arrives on the discovery queue", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const ctx = createExecutionContext();
+    await worker.queue(
+      batchOn("staged-publish-review-discovery", {
+        scanId: "scan_x",
+        organizationId: "org_x",
+        stageId: "stage_x",
+        actorUserId: "user_x",
+      }),
+      env as Cloudflare.Env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    const dropped = errorSpy.mock.calls.find((call) => call[0] === "queue.message.unknown_kind");
+    expect(dropped![1]).toMatchObject({
+      queue: "staged-publish-review-discovery",
+      kind: null,
+      reason: "non_sweep_on_discovery_queue",
+    });
+    // The scan handler never claimed it, so no skip/failure event was emitted.
+    expect([...errorSpy.mock.calls].some((call) => String(call[0]).startsWith("scan."))).toBe(
+      false,
+    );
   });
 });
