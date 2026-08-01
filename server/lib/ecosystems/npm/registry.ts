@@ -28,8 +28,9 @@ export function isValidNpmPackageName(name: string): boolean {
 // drops readmes and every per-version manifest field we do not read, which for
 // a long-lived package is the difference between a multi-megabyte document and
 // a small one. `application/json` stays in the Accept list so a registry that
-// does not implement the abbreviated form answers with the full document
-// instead of 406 — both project to the same shape below.
+// negotiates content answers with the full document rather than refusing; one
+// that refuses anyway is caught by the retry below. Both project to the same
+// shape, so callers cannot tell which arrived.
 const ABBREVIATED_PACKUMENT_ACCEPT =
   "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8";
 
@@ -57,15 +58,33 @@ export async function fetchPackageMetadata(
     env.NPM_REGISTRY ||
     "https://registry.npmjs.org"
   ).replace(/\/$/, "");
-  const headers = new Headers({
-    accept: options.abbreviated ? ABBREVIATED_PACKUMENT_ACCEPT : "application/json",
-  });
-  if (options.npmToken) headers.set("authorization", `Bearer ${options.npmToken}`);
-  const res = await reliableFetch(`${registry}/${encodeURIComponent(name).replace(/^%40/, "@")}`, {
-    headers,
-  });
+  const url = `${registry}/${encodeURIComponent(name).replace(/^%40/, "@")}`;
+  const fetchWith = (accept: string) => {
+    const headers = new Headers({ accept });
+    if (options.npmToken) headers.set("authorization", `Bearer ${options.npmToken}`);
+    return reliableFetch(url, { headers });
+  };
+
+  let res = await fetchWith(
+    options.abbreviated ? ABBREVIATED_PACKUMENT_ACCEPT : "application/json",
+  );
+  if (!res.ok && options.abbreviated && mayRejectVendorMediaType(res.status)) {
+    // A registry that refuses the vendor media type must not silently cost the
+    // scan its baseline: the broker maps a metadata failure to "no baseline",
+    // which reports every file as added. Custom registries are a supported
+    // deployment, so fall back to the plain document once before giving up.
+    res = await fetchWith("application/json");
+  }
   if (!res.ok) throw new Error(`metadata fetch failed: ${res.status}`);
   return projectRegistryMetadata(await res.json());
+}
+
+// Statuses a registry might answer with when it does not understand
+// `application/vnd.npm.install-v1+json`. 401/403/404 are definitive answers
+// about the request itself, and 5xx has already been retried by reliableFetch,
+// so neither is worth a second round trip.
+function mayRejectVendorMediaType(status: number): boolean {
+  return status === 400 || status === 406 || status === 415 || status === 422;
 }
 
 /**
