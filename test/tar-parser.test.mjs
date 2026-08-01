@@ -208,7 +208,7 @@ describe("readTar baseline text-sample cap", () => {
     const [uncapped] = await parse(tar);
 
     expect(uncapped.textSample).toBe(body);
-    expect(uncapped.flags).not.toContain("truncated");
+    expect(uncapped.flags).not.toContain("baseline-truncated");
   });
 
   test("clips the retained sample, flags it, and keeps size + hash of the full body", async () => {
@@ -220,7 +220,7 @@ describe("readTar baseline text-sample cap", () => {
     const [uncapped] = await parse(tar);
     const [capped] = await parseCapped(tar);
 
-    expect(capped.flags).toContain("truncated");
+    expect(capped.flags).toContain("baseline-truncated");
     expect(capped.textSample.length).toBeLessThanOrEqual(CAP);
     expect(bodyText.startsWith(capped.textSample)).toBe(true);
     // Identity is unaffected: the digest still covers every byte, so the diff
@@ -245,7 +245,7 @@ describe("readTar baseline text-sample cap", () => {
     const [capped] = await parseCapped(tar, 500);
 
     expect(capped.textSample).toBe("b".repeat(500));
-    expect(capped.flags).toContain("truncated");
+    expect(capped.flags).toContain("baseline-truncated");
   });
 
   test("exempts manifests: structural manifest diffing needs the whole document", async () => {
@@ -265,10 +265,10 @@ describe("readTar baseline text-sample cap", () => {
     const byPath = Object.fromEntries(files.map((file) => [file.path, file]));
 
     expect(byPath["package.json"].textSample).toBe(manifest);
-    expect(byPath["package.json"].flags).not.toContain("truncated");
+    expect(byPath["package.json"].flags).not.toContain("baseline-truncated");
     expect(byPath["nested/dep/package.json"].textSample).toBe(manifest);
-    expect(byPath["PKG-INFO"].flags).not.toContain("truncated");
-    expect(byPath["other.js"].flags).toContain("truncated");
+    expect(byPath["PKG-INFO"].flags).not.toContain("baseline-truncated");
+    expect(byPath["other.js"].flags).toContain("baseline-truncated");
     // A capped manifest would null out package identity downstream.
     expect(parsePackageJson(files)).toMatchObject({ name: "pkg", version: "1.0.0" });
   });
@@ -286,7 +286,7 @@ describe("readTar baseline text-sample cap", () => {
     const [capped] = await parseCapped(tar);
 
     expect(capped.flags).toContain("binary");
-    expect(capped.flags).not.toContain("truncated");
+    expect(capped.flags).not.toContain("baseline-truncated");
     expect(capped.textSample).toBeUndefined();
   });
 });

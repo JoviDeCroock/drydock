@@ -136,6 +136,10 @@ export function createAiReviewTools(
           staged: staged ? fileMetadata(staged) : null,
           content: taken.text,
           truncated: taken.truncated || rendered.truncated,
+          // A rendered diff can carry a caveat about how it was produced (a
+          // capped baseline sample makes its tail render as additions); without
+          // this the note was only ever surfaced when there was no diff at all.
+          ...(rendered.note ? { note: rendered.note } : {}),
         };
       }
     }
@@ -171,7 +175,7 @@ export function createAiReviewTools(
       previous: previous ? fileMetadata(previous) : null,
       staged: staged ? fileMetadata(staged) : null,
       content: taken.text,
-      truncated: taken.truncated || file.flags.includes("truncated"),
+      truncated: taken.truncated || isSampleTruncated(file.flags),
     };
   };
 
@@ -507,13 +511,13 @@ function renderDiffText(
   if (!previous?.textSample) {
     return {
       text: prefixLines(staged?.textSample ?? "", "+"),
-      truncated: Boolean(staged?.flags.includes("truncated")),
+      truncated: Boolean(staged && isSampleTruncated(staged.flags)),
     };
   }
   if (!staged?.textSample) {
     return {
       text: prefixLines(previous.textSample, "-"),
-      truncated: previous.flags.includes("truncated"),
+      truncated: isSampleTruncated(previous.flags),
     };
   }
   if (previous.flags.includes("binary") || staged.flags.includes("binary")) {
@@ -528,8 +532,26 @@ function renderDiffText(
 
   return {
     text,
-    truncated: previous.flags.includes("truncated") || staged.flags.includes("truncated"),
+    truncated: isSampleTruncated(previous.flags) || isSampleTruncated(staged.flags),
+    // A baseline body retained only up to the sandbox cap makes everything past
+    // that point render as an addition even where the two versions are
+    // identical. Say so instead of letting the model read phantom `+` lines as
+    // this release's changes.
+    ...(previous.flags.includes(BASELINE_TRUNCATED_FLAG)
+      ? {
+          note: `The previous version's text sample was capped at ${previous.textSample.length} characters, so lines after that point show as added even if they were unchanged. Judge them against the staged file itself, not against this diff.`,
+        }
+      : {}),
   };
+}
+
+const BASELINE_TRUNCATED_FLAG = "baseline-truncated";
+
+// Either kind of clipped sample: `truncated` is the persisted display clip on a
+// reviewed file, `baseline-truncated` is the sandbox retention cap on a baseline
+// body. Both mean the model is not looking at the whole file.
+function isSampleTruncated(flags: string[]): boolean {
+  return flags.includes("truncated") || flags.includes(BASELINE_TRUNCATED_FLAG);
 }
 
 // Collapse long unchanged runs to DIFF_CONTEXT_LINES of context around each
