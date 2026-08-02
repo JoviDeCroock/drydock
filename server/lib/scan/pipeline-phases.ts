@@ -11,7 +11,7 @@ import type {
   PackageAdapter,
   StagedDetails,
 } from "../ecosystems/package-adapter";
-import type { IntentEnvelope } from "../intent-envelope";
+import { extractDeclaredRepository, type IntentEnvelope } from "../intent-envelope";
 import {
   describeOperationalError,
   durationMsSince,
@@ -85,6 +85,13 @@ export interface ArtifactFacts {
   baseline: BaselineInfo;
   previousVersionAvailable: boolean;
   baselineComparisonSkipped: boolean;
+  /**
+   * Raw repository declaration read off the staged evidence, for the advisory
+   * intent envelope. A fact rather than something `runScanPipeline` derives:
+   * both of its inputs — the staged manifest text and the PyPI core-metadata
+   * body — are gone once `analyzeRelease` returns.
+   */
+  declaredRepository: unknown;
 }
 
 export interface DeterministicFindings {
@@ -119,9 +126,14 @@ export function computeDiff(resolved: ResolvedArtifacts): ComputedDiff {
   const manifestDiff = redactJson(
     summarizePackageJsonDiff(baseline.artifact?.manifest, staged.artifact.manifest),
   );
-  const stagedManifestText =
-    staged.artifact.files.find((file) => file.path === "package.json")?.textSample ?? null;
-  return { fileDiff, manifestDiff, stagedManifestText };
+  return { fileDiff, manifestDiff, stagedManifestText: readStagedManifestText(staged.artifact) };
+}
+
+// The staged `package.json` body, unredacted. Shared by `computeDiff` and
+// `summarizeResolvedArtifacts` so the two cannot drift over which file counts
+// as the manifest.
+function readStagedManifestText(staged: AcquiredArtifact): string | null {
+  return staged.files.find((file) => file.path === "package.json")?.textSample ?? null;
 }
 
 // Pure: run the adapter's deterministic rules, redact evidence, and annotate
@@ -194,6 +206,10 @@ export function summarizeResolvedArtifacts<TInput, TBroker extends AdapterBroker
     baseline: baseline.baseline,
     previousVersionAvailable: baseline.artifact !== null,
     baselineComparisonSkipped: Boolean(baseline.baseline.comparisonSkipped),
+    declaredRepository: extractDeclaredRepository({
+      manifestText: readStagedManifestText(staged.artifact),
+      files: staged.artifact.files,
+    }),
   };
 }
 
@@ -233,8 +249,11 @@ export interface ReleaseAnalysis {
  * Order is load-bearing: findings run on raw text (a redacted sample would let
  * a rule miss what redaction rewrote), and every field that crosses this
  * boundary is redacted — including `ComputedDiff.stagedManifestText`, which is
- * raw manifest text the rules need and nothing downstream reads, so it is
- * dropped here rather than carried out unredacted.
+ * raw manifest text the rules need and no later phase reads, so it is dropped
+ * here rather than carried out unredacted. The one thing downstream still wants
+ * from it — the declared repository for the intent envelope — is extracted into
+ * `ArtifactFacts` while the raw evidence is alive, so dropping it cannot
+ * silently blank the envelope.
  *
  * Note for the workflow-gate path: the staged bytes there were parsed before the
  * pipeline ran and are still held by the gate's `PreparedGatePackage` list for

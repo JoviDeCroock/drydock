@@ -6,11 +6,7 @@ import type {
   AdapterContext,
   PackageAdapter,
 } from "../ecosystems/package-adapter";
-import {
-  computeIntentEnvelope,
-  extractDeclaredRepository,
-  type WorkflowGateIntent,
-} from "../intent-envelope";
+import { computeIntentEnvelope, type WorkflowGateIntent } from "../intent-envelope";
 import {
   describeOperationalError,
   durationMsSince,
@@ -130,10 +126,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
     // repository declaration; it never influences risk or findings.
     const intentEnvelope = computeIntentEnvelope({
       workflowGate: input.gateContext ?? null,
-      declaredRepository: extractDeclaredRepository({
-        manifestText: diff.stagedManifestText,
-        files: resolved.staged.artifact.files,
-      }),
+      declaredRepository: facts.declaredRepository,
     });
 
     const { result, persisted } = await persistResults({
