@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   classifyTrafficSource,
   marketingSurfaceForPath,
-  referralDay,
   TRAFFIC_SOURCES,
 } from "../server/lib/platform/traffic-source";
 
@@ -63,8 +62,8 @@ describe("classifyTrafficSource", () => {
   });
 
   it("collapses unknown utm_source values instead of creating new buckets", () => {
-    // Otherwise a crafted ?utm_source= would let anyone write unbounded
-    // distinct rows into the counter table.
+    // Otherwise a crafted ?utm_source= would create unbounded analytics
+    // dimension cardinality.
     const source = classifyTrafficSource({
       campaignSource: "totally-made-up-channel",
       selfHostname: SELF,
@@ -121,12 +120,5 @@ describe("marketingSurfaceForPath", () => {
     ]) {
       expect(marketingSurfaceForPath(path)).toBeNull();
     }
-  });
-});
-
-describe("referralDay", () => {
-  it("buckets by UTC day", () => {
-    expect(referralDay(Date.UTC(2026, 6, 25, 23, 59, 59))).toBe("2026-07-25");
-    expect(referralDay(Date.UTC(2026, 6, 26, 0, 0, 0))).toBe("2026-07-26");
   });
 });

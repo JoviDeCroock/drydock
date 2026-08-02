@@ -3,7 +3,6 @@ import {
   text,
   integer,
   index,
-  primaryKey,
   uniqueIndex,
   type AnySQLiteColumn,
 } from "drizzle-orm/sqlite-core";
@@ -522,25 +521,5 @@ export const twoFactor = sqliteTable(
   },
   (table) => ({
     userIdx: index("two_factor_user_idx").on(table.userId),
-  }),
-);
-
-// Per-day traffic attribution for the public marketing surfaces (landing, docs,
-// package diff). Deliberately a counter table, not an event log: the row key is
-// (UTC day, surface, channel) and the only payload is a count, so there is no
-// per-visitor record to leak, subpoena, or de-anonymize. Nothing is written for
-// authenticated product routes. See server/lib/traffic-source.ts.
-export const marketingReferrals = sqliteTable(
-  "marketing_referrals",
-  {
-    day: text("day").notNull(),
-    surface: text("surface").notNull(),
-    source: text("source").notNull(),
-    views: integer("views").notNull().default(0),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
-  },
-  (table) => ({
-    pk: primaryKey({ columns: [table.day, table.surface, table.source] }),
-    dayIdx: index("marketing_referrals_day_idx").on(table.day),
   }),
 );

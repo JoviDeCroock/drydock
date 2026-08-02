@@ -145,9 +145,3 @@ export function marketingSurfaceForPath(pathname: string): MarketingSurface | nu
   if (path.startsWith("/diff/")) return "diff";
   return null;
 }
-
-// UTC day bucket. Counts are aggregated per day so a row can never narrow down
-// to a single visit's timing.
-export function referralDay(nowMs: number): string {
-  return new Date(nowMs).toISOString().slice(0, 10);
-}

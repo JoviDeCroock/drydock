@@ -2,22 +2,14 @@ import { Hono, type Context } from "hono";
 import { createDb } from "./db/client";
 import { AUDIT_LOG_RETENTION_DAYS, pruneAuditEventsOlderThan } from "./db/audit-log";
 import { pruneExpiredAuthRows } from "./db/auth-retention";
-import {
-  MARKETING_REFERRAL_RETENTION_DAYS,
-  pruneMarketingReferralsOlderThan,
-  recordMarketingReferral,
-} from "./db/marketing-referrals";
 import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
 import { getOrganizationOwnerUserId } from "./db/organizations";
 import { RateLimitError, enforceRateLimit } from "./db/rate-limit";
 import { createAuth, getAuthSession } from "./lib/auth";
+import { recordProductEvent } from "./lib/platform/analytics";
 import { rateLimitResponse } from "./lib/platform/http";
 import { allowInsecureLocalRegistry } from "./lib/ecosystems/npm/connection";
-import {
-  classifyTrafficSource,
-  marketingSurfaceForPath,
-  referralDay,
-} from "./lib/platform/traffic-source";
+import { classifyTrafficSource, marketingSurfaceForPath } from "./lib/platform/traffic-source";
 import { isPackageDiffDetailPath, rewritePackageDiffMetadata } from "./lib/public-diff/page";
 import {
   API_CSP,
@@ -318,9 +310,9 @@ app.notFound(async (c) => {
 // diff page's own API calls carry a same-origin referrer and would attribute
 // every visit to ourselves.
 //
-// Fire-and-forget and best-effort by construction: a failed counter write must
-// never turn a page view into an error, and nothing about the visitor beyond a
-// channel bucket is derived or stored (see server/lib/traffic-source.ts).
+// Best-effort by construction: a failed analytics write must never turn a page
+// view into an error, and nothing about the visitor beyond a channel bucket is
+// derived or stored (see server/lib/platform/traffic-source.ts).
 function recordMarketingVisit(
   c: Context<{ Bindings: Bindings; Variables: Variables }>,
   response: Response,
@@ -345,17 +337,9 @@ function recordMarketingVisit(
       selfHostname: url.hostname,
     });
 
-    c.executionCtx.waitUntil(
-      recordMarketingReferral(createDb(c.env.DB), { surface, source }).catch((err) => {
-        emitOperationalEvent("warn", "marketing_referral.record_failed", {
-          surface,
-          source,
-          error: describeOperationalError(err),
-        });
-      }),
-    );
+    recordProductEvent(c.env, { name: "marketing_page.viewed", surface, source });
   } catch (err) {
-    emitOperationalEvent("warn", "marketing_referral.record_failed", {
+    emitOperationalEvent("warn", "marketing_attribution.classification_failed", {
       surface,
       error: describeOperationalError(err),
     });
@@ -533,21 +517,6 @@ async function pruneStaleAuthRows(env: Cloudflare.Env) {
   }
 }
 
-// Same flat-window retention shape as the audit log, on a day-string cutoff
-// because the counter table is keyed by UTC day rather than a timestamp.
-async function pruneStaleMarketingReferrals(env: Cloudflare.Env) {
-  const cutoffDay = referralDay(
-    Date.now() - MARKETING_REFERRAL_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-  );
-  try {
-    await pruneMarketingReferralsOlderThan(createDb(env.DB), cutoffDay);
-  } catch (err) {
-    emitOperationalEvent("error", "marketing_referrals.prune_failed", {
-      error: describeOperationalError(err),
-    });
-  }
-}
-
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
@@ -564,7 +533,6 @@ export default {
     }
     await pruneStaleAuditEvents(env);
     await pruneStaleAuthRows(env);
-    await pruneStaleMarketingReferrals(env);
   },
   async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
     for (const message of batch.messages) {

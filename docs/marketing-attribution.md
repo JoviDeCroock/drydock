@@ -1,63 +1,70 @@
 # Marketing attribution
 
-Coarse, per-day channel attribution for the public marketing surfaces. It exists to answer one operational question — _which channel is actually sending people to the package diff_ — without building visitor analytics.
+Coarse channel attribution for the public marketing surfaces. It exists to answer one operational question — _which channel is actually sending people to the package diff_ — without building visitor analytics.
 
 ## What is recorded
 
-One counter row per `(UTC day, surface, channel)`:
+One `marketing_page.viewed` Analytics Engine point per document request:
 
-| Column       | Meaning                                                  |
-| ------------ | -------------------------------------------------------- |
-| `day`        | UTC date, `YYYY-MM-DD`                                   |
-| `surface`    | `landing`, `docs`, `diff_index`, or `diff`               |
-| `source`     | Channel bucket from the closed list in `TRAFFIC_SOURCES` |
-| `views`      | Number of document requests in that bucket               |
-| `updated_at` | Last increment                                           |
+| Analytics slot | Meaning                                                  |
+| -------------- | -------------------------------------------------------- |
+| `index1`       | `marketing_page.viewed`, the event and sampling key      |
+| `blob1`        | Analytics schema version                                 |
+| `blob2`        | `marketing_page.viewed`                                  |
+| `blob3–4`      | Empty: no organization or ecosystem is attached          |
+| `blob5`        | `landing`, `docs`, `diff_index`, or `diff`               |
+| `blob6`        | Channel bucket from the closed list in `TRAFFIC_SOURCES` |
 
-Nothing else. No IP address, no full referrer URL, no user agent, no session or visitor identifier, and no per-visit row — so a row can never be narrowed to a person. Authenticated routes (`/dashboard/**`) and the auth flow (`/login`, `/register`, `/verify-email`) are never recorded at all.
+Nothing else. No IP address, full referrer URL, user agent, session or visitor identifier, package name, or version. Authenticated routes (`/dashboard/**`) and the auth flow (`/login`, `/register`, `/verify-email`) are never recorded at all.
 
 ## How a channel is decided
 
-`server/lib/traffic-source.ts` classifies each document request, in this order:
+`server/lib/platform/traffic-source.ts` classifies each document request, in this order:
 
 1. **Bot** — the user agent matches a crawler pattern. Unfurl crawlers are labeled rather than dropped: a `bot` row is the signal that a link was actually posted somewhere, and keeping it labeled means human counts can exclude it instead of silently absorbing it.
-2. **Campaign** — an explicit `utm_source`, mapped through an allowlist. An unrecognized value collapses to `other`, so a crafted link cannot invent unbounded distinct storage keys.
+2. **Campaign** — an explicit `utm_source`, mapped through an allowlist. An unrecognized value collapses to `other`, so a crafted link cannot create unbounded analytics dimension cardinality.
 3. **Referrer host** — mapped to a bucket (`bluesky`, `x`, `linkedin`, `hackernews`, `reddit`, `youtube`, `github`, `search`, `registry`, `chat`). Our own hostname resolves to `internal`.
 4. **Direct** — no referrer at all.
 
-Attribution runs on the **document** request, in the asset-serving path in `server/index.ts`. That is the only place an external `Referer` survives: the diff page's own API calls carry a same-origin referrer and would attribute every visit to ourselves. The write is fire-and-forget through `waitUntil` and swallows its own errors — a counter must never turn a page view into an error.
+Attribution runs on the **document** request, in the asset-serving path in `server/index.ts`. That is the only place an external `Referer` survives: the diff page's own API calls carry a same-origin referrer and would attribute every visit to ourselves. `recordProductEvent` is synchronous, non-throwing, and a no-op without the optional binding — analytics must never turn a page view into an error.
 
 ## Reading it
 
-```bash
+```sh
 # Last 30 days by channel, humans only, for the package diff.
-npx wrangler d1 execute staged-publish-review --remote --json --command "
-  SELECT source, SUM(views) AS views
-  FROM marketing_referrals
-  WHERE surface IN ('diff', 'diff_index')
-    AND source != 'bot'
-    AND day >= date('now', '-30 days')
-  GROUP BY source
-  ORDER BY views DESC"
+curl "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/analytics_engine/sql" \
+  -H "Authorization: Bearer $CF_API_TOKEN" \
+  -d "SELECT blob6 AS source, SUM(_sample_interval) AS views
+      FROM drydock_product_events
+      WHERE index1 = 'marketing_page.viewed'
+        AND blob5 IN ('diff', 'diff_index')
+        AND blob6 != 'bot'
+        AND timestamp > NOW() - INTERVAL '30' DAY
+      GROUP BY source
+      ORDER BY views DESC"
 ```
 
-```bash
+```sh
 # Day-by-day for one channel, to line a spike up against a post.
-npx wrangler d1 execute staged-publish-review --remote --json --command "
-  SELECT day, surface, views
-  FROM marketing_referrals
-  WHERE source = 'bluesky'
-  ORDER BY day DESC
-  LIMIT 30"
+curl "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/analytics_engine/sql" \
+  -H "Authorization: Bearer $CF_API_TOKEN" \
+  -d "SELECT
+        toStartOfInterval(timestamp, INTERVAL '1' DAY) AS day,
+        blob5 AS surface,
+        SUM(_sample_interval) AS views
+      FROM drydock_product_events
+      WHERE index1 = 'marketing_page.viewed'
+        AND blob6 = 'bluesky'
+        AND timestamp > NOW() - INTERVAL '30' DAY
+      GROUP BY day, surface
+      ORDER BY day DESC"
 ```
 
 Always filter `source != 'bot'` for human traffic. Crawler fetches scale with the number of platforms a link was posted to, not with interest.
 
 ## Retention and scale
 
-Rows are pruned after `MARKETING_REFERRAL_RETENTION_DAYS` (400 days) by the same cron tick that prunes the audit log — long enough to compare a channel across months.
-
-The write is one upsert per marketing page view. At current traffic that is a rounding error next to the existing per-request rate-limit writes. If page views ever reach a scale where that matters, the fix is per-isolate coalescing (accumulate in module scope, flush on a threshold), not sampling: a sampled counter cannot be compared against an unsampled earlier period.
+Retention follows the configured Analytics Engine dataset rather than an application cron. Queries must use `SUM(_sample_interval)` for counts so they remain correct when Analytics Engine samples high-volume events. Keeping attribution in the existing analytics dataset also avoids a D1 write and a shared hot counter row on every public page view.
 
 ## Share cards
 

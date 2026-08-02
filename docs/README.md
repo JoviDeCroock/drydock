@@ -35,7 +35,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`detection-eval.md`](./detection-eval.md) — eval harness, metrics, and gates.
 - [`release-memory.md`](./release-memory.md) — advisory prior-release finding-profile consistency; discounts already-approved package context from the artifact-risk headline, and never moves release risk or a gate decision.
 - [`organization-members.md`](./organization-members.md) — organization invitation/membership behavior.
-- [`marketing-attribution.md`](./marketing-attribution.md) — coarse per-day channel counters for the public marketing surfaces, and the share-card surface they measure.
+- [`marketing-attribution.md`](./marketing-attribution.md) — coarse Analytics Engine channel attribution for the public marketing surfaces, and the share-card surface it measures.
 - [`audit-log.md`](./audit-log.md) — organization audit log surface, visible-event allowlist, and retention.
 - [`product-analytics.md`](./product-analytics.md) — Analytics Engine counters, privacy posture, and the positional event schema.
 - [`two-factor-auth.md`](./two-factor-auth.md) — step-up auth and sensitive actions.
