@@ -295,6 +295,7 @@ function readPackageJsonSummary(
     ...(readString(value.main) ? { main: readString(value.main)! } : {}),
     ...(readString(value.module) ? { module: readString(value.module)! } : {}),
     ...(readString(value.types) ? { types: readString(value.types)! } : {}),
+    ...(readString(value.browser) ? { browser: readString(value.browser)! } : {}),
     ...("exports" in value ? { exports: value.exports } : {}),
   };
   const hasPackageData = Boolean(
@@ -309,6 +310,7 @@ function readPackageJsonSummary(
     summary.main ||
     summary.module ||
     summary.types ||
+    summary.browser ||
     "exports" in summary ||
     typeof summary.gypfile === "boolean",
   );

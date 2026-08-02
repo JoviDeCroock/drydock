@@ -103,7 +103,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.20.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.21.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -308,6 +308,14 @@ array) alongside every shape that cannot be reduced to a file. Four existing fix
 `wasm-instantiate-loader`) declared `main: index.js` without shipping it — an artifact of minimal
 synthetic fixtures rather than an intended signal — and now carry an unchanged `index.js` on both
 sides so they model a package that could actually load.
+
+`1.21.0` completes npm's CommonJS `main` resolution with Node's final package-root
+`index.js`/`index.json`/`index.node` fallback. A release that removes its declared `main` but still
+ships one of those root indexes remains loadable (with Node's invalid-main deprecation warning), so
+`package-json.entrypoint-missing` no longer raises a high release finding for that shape. The
+`legit-main-root-index-fallback` benign hard-negative locks down the regression. This release also
+preserves the string-form `browser` field through staged npm metadata parsing and manifest merging,
+so browser-only entrypoint changes reach package-json diffing and AI reviewer selection.
 
 ### Fixture format
 

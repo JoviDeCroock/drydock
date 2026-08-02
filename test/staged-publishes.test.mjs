@@ -114,6 +114,7 @@ describe("staged publish metadata", () => {
           scripts: { install: "node-gyp rebuild" },
           gypfile: true,
           dependencies: { leftpad: "1.3.0" },
+          browser: "dist/browser.js",
         },
       },
     });
@@ -124,6 +125,7 @@ describe("staged publish metadata", () => {
       scripts: { install: "node-gyp rebuild" },
       gypfile: true,
       dependencies: { leftpad: "1.3.0" },
+      browser: "dist/browser.js",
     });
   });
 

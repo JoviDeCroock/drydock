@@ -30,6 +30,7 @@ export function entrypointDiffFindings(
 }
 
 const NPM_MAIN_EXTENSIONS = [".js", ".json", ".node"];
+const NPM_MAIN_ROOT_FALLBACKS = ["index.js", "index.json", "index.node"];
 const VSCODE_ENTRYPOINT_EXTENSIONS = [".js", ".mjs", ".cjs", ".json"];
 const TOOLING_EXPORT_CONDITIONS = new Set(["types", "typings"]);
 
@@ -254,5 +255,12 @@ function entrypointCandidates(
     resolution === "vscode"
       ? [".js", ".mjs", ".cjs"].map((extension) => `${path}/index${extension}`)
       : extensions.map((extension) => `${path}/index${extension}`);
-  return [path, ...extensions.map((extension) => `${path}${extension}`), ...directoryIndexes];
+  // CommonJS LOAD_AS_DIRECTORY makes one final LOAD_INDEX attempt at the
+  // package root when a declared main cannot resolve.
+  return [
+    path,
+    ...extensions.map((extension) => `${path}${extension}`),
+    ...directoryIndexes,
+    ...(resolution === "npm" && declared.kind === "main" ? NPM_MAIN_ROOT_FALLBACKS : []),
+  ];
 }
