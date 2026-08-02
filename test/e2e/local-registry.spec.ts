@@ -115,6 +115,23 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
       fullPage: true,
     });
 
+    // Record a decision without the "open npm" hand-off. The reviewer still has
+    // to finish the publish on npm, so the follow-up hands them the exact CLI
+    // command for this stage instead of leaving them to look it up.
+    await page.getByRole("button", { name: "Decide" }).click();
+    const decisionDialog = page.getByRole("dialog").filter({ hasText: "Publish decision" });
+    await expect(decisionDialog).toBeVisible();
+    const openNpmToggle = decisionDialog.getByRole("checkbox");
+    if (await openNpmToggle.isChecked()) await openNpmToggle.uncheck();
+    await decisionDialog.getByRole("button", { name: "Approve publish" }).click();
+
+    const commandDialog = page.getByRole("dialog").filter({ hasText: "Finish the publish on npm" });
+    await expect(commandDialog).toBeVisible({ timeout: 30_000 });
+    await expect(commandDialog.getByText(`npm stage approve ${uiStageId}`)).toBeVisible();
+    await page.screenshot({ path: path.join(artifactsDir, "stage-command-dialog.png") });
+    await commandDialog.getByRole("button", { name: "Done" }).click();
+    await expect(commandDialog).toBeHidden();
+
     // Now exercise Check npm as the live entry point. The button kicks off
     // discovery and we wait only for the "Started N new reviews" message —
     // the resulting background scans are exercised by the scenarios below.

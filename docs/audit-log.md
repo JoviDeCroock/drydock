@@ -67,6 +67,17 @@ longer written, retention is a single age sweep across all rows rather than a
 type-restricted one. The sweep's bare `createdAt` predicate is backed by the
 `scan_events_created_idx` index, so it never scans the whole table.
 
+The same tick also prunes expired Better Auth rows (`pruneExpiredAuthRows`,
+`server/db/auth-retention.ts`), which the Drizzle adapter never removes on its
+own: `session` otherwise grows with every sign-in and keeps each dead session's
+`ip_address` and `user_agent` forever, and `verification` accumulates consumed or
+abandoned email-verification and password-reset values. A row is deleted only
+once its own `expires_at` is more than `AUTH_ROW_RETENTION_GRACE_MS` (one day)
+in the past, which keeps the sweep clear of Better Auth's session refresh. This
+cannot sign anyone out — an expired row already authenticates nothing. Both
+prunes are wrapped so a failure is logged (`audit_events.prune_failed`,
+`auth_rows.prune_failed`) and never aborts the cron.
+
 ## UI
 
 The **Audit log** tab in organization settings

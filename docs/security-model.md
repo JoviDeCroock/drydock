@@ -58,6 +58,8 @@ Do not retain raw tarballs by default. Persist redacted, reviewable evidence:
 
 Avoid storing raw staged/baseline tarballs, unredacted full source, binary payload contents, or rendered package assets unless a future explicit short-TTL org setting is added.
 
+Session records carry an IP address and user agent, so they are not kept past their usefulness: the scheduled tick deletes Better Auth `session` and `verification` rows once they expired more than a day ago (`pruneExpiredAuthRows`, see [`audit-log.md`](./audit-log.md)). Better Auth's Drizzle adapter does not do this itself.
+
 ## Sandbox and broker posture
 
 The sandbox parses untrusted bytes under archive/file/expanded-size caps and returns evidence only. Direct Internet egress is intercepted. Registry/artifact fetches go through constrained brokers:

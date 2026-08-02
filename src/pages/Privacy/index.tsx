@@ -4,7 +4,7 @@ import { PageShell } from "../../components/PageShell";
 import { Eyebrow, SectionLabel } from "../../components/Typography";
 import { privacyPageSeo, PageSeo } from "../../lib/seo";
 
-const EFFECTIVE_DATE = "2026-06-16";
+const EFFECTIVE_DATE = "2026-07-28";
 
 const PRIVACY_MAILTO =
   "mailto:privacy@drydock.org?subject=Drydock%20privacy%20request&body=Tell%20us%20what%20you%27d%20like%20us%20to%20do%20with%20your%20data%3A%0A%0A";
@@ -56,6 +56,17 @@ export default function PrivacyPage() {
                 kept for reliability, abuse prevention, and debugging. We redact secrets and never
                 log raw credentials, headers, or package contents.
               </>,
+              <>
+                <Strong>Product usage.</Strong> Aggregate counts of a few milestones — an account
+                created, an integration connected, a review completed, a release decision recorded —
+                so we can tell whether the product works. These are recorded on our own servers and
+                carry no personal data at all: no email address, no user identifier, no organization
+                name, no package names or repositories. An internal organization ID is the only
+                identifier attached, so we can see how many organizations are active without
+                identifying a person. The one exception is our public diff tool, which is anonymous
+                and records the public registry package being compared, with no account attached.
+                There is no third-party analytics service and no tracking script in the app.
+              </>,
             ]}
           />
         </Section>
@@ -70,6 +81,7 @@ export default function PrivacyPage() {
                 connect to the registries and code hosts you authorize, and report decisions back;
               </>,
               <>keep the service secure, prevent abuse, and diagnose problems;</>,
+              <>measure, in aggregate, how the product is used so we can improve it;</>,
               <>send you transactional messages such as verification and review notifications.</>,
             ]}
           />

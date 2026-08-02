@@ -276,6 +276,76 @@ describe("scan pipeline baseline selection", () => {
     });
   });
 
+  test("computes a declared intent envelope from the staged manifest repository", async () => {
+    sandboxMock.downloadInSandbox.mockResolvedValue({
+      files: [
+        {
+          path: "package.json",
+          size: 96,
+          sha256: "staged-pkg",
+          flags: [],
+          textSample: JSON.stringify({
+            name: "@scope/pkg",
+            version: "2.0.0-beta.3",
+            repository: { type: "git", url: "git+https://github.com/scope/pkg.git" },
+          }),
+        },
+      ],
+      packageJson: { name: "@scope/pkg", version: "2.0.0-beta.3" },
+    });
+
+    const result = await runScanPipeline(baseContext, npmAdapter, {
+      scanId: "scan_envelope_declared",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
+
+    expect(result.intentEnvelope).toEqual({
+      tier: "declared",
+      repository: "https://github.com/scope/pkg",
+      signals: [
+        {
+          kind: "manifest-repository",
+          detail:
+            "manifest declares https://github.com/scope/pkg — claimed by the package, not verified",
+        },
+      ],
+    });
+    expect(dbMock.persistScan.mock.calls[0]?.[1].summary.intentEnvelope).toEqual(
+      result.intentEnvelope,
+    );
+  });
+
+  test("marks scans placed with a gate context as attested", async () => {
+    const result = await runScanPipeline(baseContext, npmAdapter, {
+      scanId: "scan_envelope_attested",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+      gateContext: { repositoryFullName: "scope/pkg", runId: 4242, environment: "release" },
+    });
+
+    expect(result.intentEnvelope).toEqual({
+      tier: "attested",
+      repository: "https://github.com/scope/pkg",
+      signals: [{ kind: "workflow-gate", detail: "repo scope/pkg, run 4242, environment release" }],
+    });
+    expect(dbMock.persistScan.mock.calls[0]?.[1].summary.intentEnvelope).toEqual(
+      result.intentEnvelope,
+    );
+  });
+
+  test("staged scans without a manifest repository read as absent", async () => {
+    const result = await runScanPipeline(baseContext, npmAdapter, {
+      scanId: "scan_envelope_absent",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
+
+    // Staged registry metadata carries no provenance attestation today, so a
+    // staged publish can never reach "attested" (see server/lib/intent-envelope.ts).
+    expect(result.intentEnvelope).toEqual({ tier: "absent", repository: null, signals: [] });
+  });
+
   test("persists deterministic results when enabled AI review fails", async () => {
     aiReviewMock.runSelectiveAiReview.mockRejectedValue(new Error("workers ai unavailable"));
     const context = {

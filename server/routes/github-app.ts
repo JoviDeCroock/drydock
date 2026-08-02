@@ -11,6 +11,7 @@ import {
 import { userHasTwoFactor, verifyTotpStepUp } from "../lib/auth";
 import { roleCanManageIntegrations } from "../lib/auth/roles";
 import { rateLimitResponse } from "../lib/platform/http";
+import { recordProductEvent } from "../lib/platform/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import { scanArtifactReadBucket } from "../lib/scan/artifacts";
 import {
@@ -184,6 +185,12 @@ githubAppRoutes.post("/install/callback", async (c) => {
         accountType: record.accountType,
         status: record.status,
       },
+    });
+    recordProductEvent(c.env, {
+      name: "integration.connected",
+      organizationId,
+      kind: "github",
+      outcome: record.status,
     });
     return c.json({ installation: publicInstallation(record) }, 201);
   } catch (err) {
@@ -638,6 +645,16 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   // GitHub instead of getting stuck behind a future 409.
   const message = { kind: "workflow_gate" as const, organizationId, gateId };
   c.executionCtx.waitUntil(deliverGateDecisionJob(c, db, message));
+
+  // Counted separately from the automatic block below, so approval rate stays
+  // measurable against reviews instead of being diluted by auto-rejections.
+  recordProductEvent(c.env, {
+    name: "workflow_gate.decided",
+    organizationId,
+    surface: "human",
+    decision: gateDecision,
+    packageCount: packages.length,
+  });
 
   try {
     await recordScanEvent(db, {

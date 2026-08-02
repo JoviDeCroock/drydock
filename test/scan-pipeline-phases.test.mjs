@@ -94,6 +94,8 @@ const disabledAi = {
   model: null,
 };
 
+const absentIntentEnvelope = { tier: "absent", repository: null, signals: [] };
+
 function makeAdapter(overrides = {}) {
   return {
     id: "fake",
@@ -541,6 +543,7 @@ describe("persistResults", () => {
       aiFindings: disabledAi,
       riskSummary,
       releaseConsistency: noneConsistency,
+      intentEnvelope: absentIntentEnvelope,
     });
 
     expect(persisted).toBe(true);
@@ -572,6 +575,9 @@ describe("persistResults", () => {
     // Release memory rides the result + persisted summary, advisory only.
     expect(result.releaseConsistency).toEqual(noneConsistency);
     expect(persistArg.summary.releaseConsistency).toEqual(noneConsistency);
+    // The advisory envelope rides the summary blob and the scan result verbatim.
+    expect(persistArg.summary.intentEnvelope).toEqual(absentIntentEnvelope);
+    expect(result.intentEnvelope).toEqual(absentIntentEnvelope);
   });
 
   test("persists AI finding records after the rule findings with combined annotations", async () => {
@@ -624,6 +630,7 @@ describe("persistResults", () => {
       aiFindings: disabledAi,
       riskSummary,
       releaseConsistency: noneConsistency,
+      intentEnvelope: absentIntentEnvelope,
     });
 
     expect(persisted).toBe(false);
