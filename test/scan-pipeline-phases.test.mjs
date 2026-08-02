@@ -71,6 +71,23 @@ const stagedArtifact = {
   manifest: { name: "pkg", version: "1.0.1" },
 };
 
+// Same staged side, but the manifest declares a repository. The declared
+// repository has to survive `analyzeRelease` dropping the raw manifest text.
+const stagedArtifactWithRepository = {
+  ...stagedArtifact,
+  files: [
+    {
+      ...stagedArtifact.files[0],
+      textSample: JSON.stringify({
+        name: "pkg",
+        version: "1.0.1",
+        repository: "git+https://github.com/acme/pkg.git",
+      }),
+    },
+    ...stagedArtifact.files.slice(1),
+  ],
+};
+
 const baselineInfo = {
   version: "1.0.0",
   tag: "latest",
@@ -230,10 +247,52 @@ describe("summarizeResolvedArtifacts", () => {
       baseline: baselineInfo,
       previousVersionAvailable: true,
       baselineComparisonSkipped: false,
+      declaredRepository: null,
     });
     // Nothing in the facts carries file text: that is the whole point.
     expect(JSON.stringify(facts)).not.toContain(NPM_TOKEN);
     expect(JSON.stringify(facts)).not.toContain("export const value");
+  });
+
+  test("carries the staged manifest's declared repository", () => {
+    const facts = summarizeResolvedArtifacts(
+      makeAdapter(),
+      { stageId: "stage-1" },
+      {
+        ...resolved,
+        staged: { ...resolved.staged, artifact: stagedArtifactWithRepository },
+      },
+    );
+
+    expect(facts.declaredRepository).toBe("git+https://github.com/acme/pkg.git");
+  });
+
+  test("falls back to PyPI core metadata when there is no package.json", () => {
+    const facts = summarizeResolvedArtifacts(
+      makeAdapter(),
+      { stageId: "stage-1" },
+      {
+        ...resolved,
+        staged: {
+          ...resolved.staged,
+          artifact: {
+            files: [
+              {
+                path: "pkg-1.0.1/PKG-INFO",
+                size: 80,
+                sha256: "pkg-info",
+                flags: [],
+                textSample:
+                  "Metadata-Version: 2.1\nName: pkg\nProject-URL: Source, https://github.com/acme/pkg\n",
+              },
+            ],
+            manifest: null,
+          },
+        },
+      },
+    );
+
+    expect(facts.declaredRepository).toBe("https://github.com/acme/pkg");
   });
 });
 
@@ -318,6 +377,27 @@ describe("analyzeRelease", () => {
     expect(manifestTextSeenByRules).toBe(JSON.stringify({ name: "pkg", version: "1.0.1" }));
     expect(out.diff.stagedManifestText).toBeNull();
     expect(out.findings.redactedStagedManifest).toMatchObject({ name: "pkg", version: "1.0.1" });
+  });
+
+  test("surfaces the declared repository even though the raw evidence is gone", async () => {
+    const acquired = clonedResolved();
+    acquired.staged.artifact.files = stagedArtifactWithRepository.files.map((file) => ({
+      ...file,
+    }));
+    const adapter = makeAdapter({
+      acquireStaged: vi.fn(async () => acquired.staged),
+      acquireBaseline: vi.fn(async () => acquired.baseline),
+    });
+    const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user-1" } };
+
+    const out = await analyzeRelease(adapter, ctx, { stageId: "stage-1" }, { dispose() {} });
+
+    // Both inputs the extraction needs are dead by the time `analyzeRelease`
+    // returns, so the fact has to be projected inside the boundary. Reading it
+    // from the caller is what silently blanks every intent envelope.
+    expect(out.diff.stagedManifestText).toBeNull();
+    expect(acquired.staged.artifact.files).toEqual([]);
+    expect(out.facts.declaredRepository).toBe("git+https://github.com/acme/pkg.git");
   });
 
   test("releaseResolvedArtifacts tolerates a scan with no baseline artifact", () => {

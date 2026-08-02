@@ -6,8 +6,12 @@ source repository and a release intent. It is groundwork for a future
 "Release Contract" feature and **never changes risk levels or findings** — it
 only describes what an origin claim could later be verified against.
 
-Computed in `server/lib/scan-pipeline.ts` via the pure module
-`server/lib/intent-envelope.ts`, persisted inside the scan's `summaryJson`
+Computed in `server/lib/scan/pipeline.ts` via the pure module
+`server/lib/intent-envelope.ts`. The declared repository it reads is not
+extracted there: `extractDeclaredRepository` needs the raw staged manifest text
+and, on PyPI, the core-metadata body, and both die at the `analyzeRelease`
+boundary — so the extraction runs inside that boundary and arrives as
+`ArtifactFacts.declaredRepository`. The envelope is persisted inside the scan's `summaryJson`
 blob (`summary.intentEnvelope`, no dedicated column), returned on
 `ScanResult`, exported in the `drydock.report.v2` report as the optional
 `intentEnvelope` field, and rendered as the "Source binding" row on the scan
