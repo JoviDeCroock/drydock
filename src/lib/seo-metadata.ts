@@ -1,4 +1,4 @@
-import { packageDiffPath, type DiffEcosystem } from "./package-diff-path";
+import { packageDiffCardPath, packageDiffPath, type DiffEcosystem } from "./package-diff-path";
 import { diffRefLabel } from "./pkg-pr-new";
 
 export const SITE_NAME = "Drydock";
@@ -7,10 +7,35 @@ export const OG_IMAGE_URL = `${SITE_URL}/og-image.png`;
 export const OG_IMAGE_ALT =
   "Drydock — pre-publish package review for npm, PyPI, and VS Code maintainers";
 
+// Standard 1.91:1 share-card ratio, matching server/lib/og-card.ts. The static
+// site-wide card is 1200x800; per-diff cards are generated at 1200x630.
+export const OG_CARD_IMAGE_WIDTH = 1200;
+export const OG_CARD_IMAGE_HEIGHT = 630;
+
 export interface PageSeoMetadata {
   title: string;
   description: string;
   path: string;
+}
+
+// Per-diff share card. Every shared diff otherwise unfurls with the same
+// site-wide image, so a timeline reader cannot tell which package a link is
+// about without clicking it.
+export function packageDiffOgImageUrl(
+  packageName: string,
+  fromVersion: string,
+  toVersion: string,
+  ecosystem: DiffEcosystem = "npm",
+): string {
+  return `${SITE_URL}${packageDiffCardPath(ecosystem, packageName, fromVersion, toVersion)}`;
+}
+
+export function packageDiffOgImageAlt(
+  packageName: string,
+  fromVersion: string,
+  toVersion: string,
+): string {
+  return `Drydock package diff card for ${packageName} ${diffRefLabel(fromVersion)} to ${diffRefLabel(toVersion)}`;
 }
 
 export const homePageSeo: PageSeoMetadata = {

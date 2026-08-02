@@ -38,6 +38,7 @@
     "@fontsource-variable/geist": "^5.2.9",
     "@fontsource-variable/geist-mono": "^5.2.8",
     "@preact/signals": "^2.9.2",
+    "@resvg/resvg-wasm": "^2.6.2",
     "ai": "^6.0.207",
     "better-auth": "^1.6.23",
     "diff": "^9.0.0",

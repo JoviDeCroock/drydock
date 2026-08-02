@@ -1,4 +1,5 @@
 import { parsePkgPrNewUrl } from "../../../../src/lib/pkg-pr-new";
+import { coloCache } from "../../platform/http";
 import { registryProtocolAllowed } from "./connection";
 import { reliableFetch } from "../../platform/reliable-fetch";
 import {
@@ -74,13 +75,6 @@ function publishedTarballCacheEligible(
   } catch {
     return false;
   }
-}
-
-// The Workers runtime exposes the colo cache as `caches.default`, but the DOM
-// lib wins the global CacheStorage type in this repo's single tsconfig and
-// doesn't know the property.
-function coloCache(): Cache {
-  return (caches as unknown as { default: Cache }).default;
 }
 
 async function matchPublishedTarballCache(

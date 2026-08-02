@@ -18,6 +18,8 @@
 //   - Public-diff events record only the package name, which is already public
 //     data in the request URL, the response cache key, and the page's own
 //     Open Graph metadata.
+//   - Marketing-page events record only an allowlisted surface and channel
+//     bucket. The raw referrer and user agent are discarded before this layer.
 //   - Nothing is written from the browser. There is no client script, no
 //     beacon endpoint, no cookie, and therefore no new anonymous surface to
 //     rate-limit. Every event below is emitted by the Worker while it is
@@ -31,6 +33,7 @@
 // review the security model requires for one.
 
 import { emitOperationalEvent } from "./observability";
+import type { MarketingSurface, TrafficSource } from "./traffic-source";
 
 /** Bump when blob/double positions change meaning; queries key off it. */
 export const ANALYTICS_SCHEMA_VERSION = "1";
@@ -192,6 +195,13 @@ export type AnalyticsEvent =
       cache: string;
       risk: string;
       durationMs: number;
+    }
+  | {
+      /** A document request for one of the anonymous marketing surfaces. */
+      name: "marketing_page.viewed";
+      surface: MarketingSurface;
+      /** Coarse allowlisted channel bucket; never the raw referrer. */
+      source: TrafficSource;
     };
 
 /**
@@ -218,6 +228,7 @@ export const ANALYTICS_EVENT_NAMES = [
   "workflow_gate.opened",
   "workflow_gate.reviewed",
   "workflow_gate.decided",
+  "marketing_page.viewed",
 ] as const;
 
 // A name in the union but missing from the list, or vice versa, fails here.
@@ -349,5 +360,7 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
         [event.packageName, event.cache, event.risk],
         [event.durationMs],
       );
+    case "marketing_page.viewed":
+      return base("", "", [event.surface, event.source], [0]);
   }
 }

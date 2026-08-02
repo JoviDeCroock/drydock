@@ -48,5 +48,6 @@ for (const failure of failures) {
 
 if (failures.length > 0) {
   process.stdout.write(`\nverify failed: ${failures.map((f) => f.name).join(", ")}\n`);
-  process.exit(1);
+  // See scripts/test.mjs: process.exit() truncates buffered stdout on a pipe.
+  process.exitCode = 1;
 }
