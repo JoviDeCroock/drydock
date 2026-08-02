@@ -103,7 +103,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.21.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.22.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -275,7 +275,7 @@ like `*` rather than skipped, and `workspace:`/`catalog:`/`link:`/`portal:` prot
 directly only when both specs are exact registry version keys. Ranges render no direct link because
 their bounds need not have been published; added dependencies use the package-only route that resolves
 a published pair from registry metadata.
-`1.19.0` adds `stage.tarball-digest-mismatch` (critical, npm staged publishes): the sandbox now
+`1.22.0` adds `stage.tarball-digest-mismatch` (critical, npm staged publishes): the sandbox now
 digests each archive's raw wire bytes and the staged adapter compares that digest against the
 `shasum` npm recorded for the stage. The rule exists because the file diff's strongest claim —
 "the publisher removed this file" — reads identically whether the publisher removed it or the
