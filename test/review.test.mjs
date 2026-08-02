@@ -2721,3 +2721,255 @@ describe("code.remote-shell download-and-execute coverage", () => {
     expect(findings[0].severity).toBe("high");
   });
 });
+
+describe("package-json.entrypoint-missing", () => {
+  const manifestFile = (manifest) => ({
+    path: "package.json",
+    size: 120,
+    sha256: "pkg",
+    flags: [],
+    textSample: JSON.stringify(manifest, null, 2),
+  });
+  const file = (path) => ({
+    path,
+    size: 10,
+    sha256: path,
+    flags: [],
+    textSample: "module.exports={}",
+  });
+
+  function findingsFor(manifest, paths, previous = null, options = {}) {
+    const staged = [manifestFile(manifest), ...paths.map(file)];
+    const diff = previous ? createPackageDiff(previous, staged) : [];
+    return deterministicFindings(staged, diff, manifest, {
+      entrypointResolution: "npm",
+      ...options,
+    }).filter((finding) => finding.ruleId === "package-json.entrypoint-missing");
+  }
+
+  test("flags a main the package does not ship", () => {
+    const findings = findingsFor({ name: "pkg", version: "1.0.0", main: "index.cjs" }, []);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ severity: "medium", file: "package.json" });
+    expect(findings[0].evidence).toContain("index.cjs");
+  });
+
+  test("escalates when the previous release shipped the entrypoint", () => {
+    // The scan 163a1e40-c049-4587-8525-85b4393d2eed shape: the build output
+    // left the tarball while the manifest kept pointing at it.
+    const manifest = { name: "pkg", version: "0.1.0", main: "index.cjs" };
+    const previous = [
+      manifestFile({ name: "pkg", version: "0.0.1", main: "index.cjs" }),
+      file("index.cjs"),
+      file("acorn.wasm"),
+    ];
+
+    const findings = findingsFor(manifest, [], previous);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].severity).toBe("high");
+    expect(findings[0].evidence).toContain("the previous version shipped it");
+  });
+
+  test("escalates when the previous release shipped an implicitly resolved main", () => {
+    const manifest = { name: "pkg", version: "0.1.0", main: "dist/index" };
+    const previous = [manifestFile({ ...manifest, version: "0.0.1" }), file("dist/index.js")];
+
+    const findings = findingsFor(manifest, [], previous);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].severity).toBe("high");
+  });
+
+  function annotate(manifest, previous) {
+    const staged = [manifestFile(manifest)];
+    const diff = createPackageDiff(previous, staged);
+    const findings = deterministicFindings(staged, diff, manifest, {
+      entrypointResolution: "npm",
+    }).filter((finding) => finding.ruleId === "package-json.entrypoint-missing");
+
+    return annotateFindingsWithDiffStatus(findings, diff, {
+      previousFiles: previous,
+      stagedFiles: staged,
+    });
+  }
+
+  test("is a release-scoped finding so a broken release counts against release risk", () => {
+    const manifest = { name: "pkg", version: "0.1.0", main: "index.cjs" };
+    const previous = [manifestFile({ ...manifest, version: "0.0.1" }), file("index.cjs")];
+
+    const [annotated] = annotate(manifest, previous);
+
+    expect(annotated).toMatchObject({ severity: "high", releaseDelta: true });
+  });
+
+  test("does not scope an always-over-claimed entrypoint to the release", () => {
+    // The predecessor did not ship it either, so the manifest has been stale
+    // for at least a release: package context, not this release's regression.
+    const manifest = { name: "pkg", version: "0.1.0", main: "index.cjs" };
+    const previous = [manifestFile({ ...manifest, version: "0.0.1" })];
+
+    const [annotated] = annotate(manifest, previous);
+
+    expect(annotated).toMatchObject({ severity: "medium", releaseDelta: false });
+  });
+
+  test("stays silent for an ecosystem that did not opt into entrypoint resolution", () => {
+    // A Python sdist that bundles JS assets carries a root package.json; it must
+    // not be held to npm's require() semantics.
+    const manifest = { name: "pkg", version: "1.0.0", main: "lib/index.js" };
+    const staged = [manifestFile(manifest), file("setup.py")];
+
+    expect(
+      deterministicFindings(staged, [], manifest, { codePatternSet: "python" }).filter(
+        (finding) => finding.ruleId === "package-json.entrypoint-missing",
+      ),
+    ).toEqual([]);
+  });
+
+  test("flags every missing bin command and exports target once per path", () => {
+    const findings = findingsFor(
+      {
+        name: "pkg",
+        version: "1.0.0",
+        main: "dist/index.js",
+        bin: { pkg: "./bin/cli.js", "pkg-dev": "./bin/cli.js" },
+        exports: { ".": { require: "./dist/index.cjs", import: "./dist/index.mjs" } },
+      },
+      [],
+    );
+
+    // Two bin commands point at the same file: one path, one finding.
+    expect(findings.map((finding) => finding.evidence).sort()).toEqual([
+      "bin pkg bin/cli.js is not in the package",
+      "exports dist/index.cjs is not in the package",
+      "exports dist/index.mjs is not in the package",
+      "main dist/index.js is not in the package",
+    ]);
+  });
+
+  test.each([
+    ["extensionless main", { main: "index" }],
+    ["extensionless bin", { bin: { pkg: "cli" } }],
+  ])("flags a missing %s path", (_name, manifest) => {
+    expect(findingsFor({ name: "pkg", version: "1.0.0", ...manifest }, [])).toHaveLength(1);
+  });
+
+  test.each([
+    ["exports", { exports: "./dist/index" }, ["dist/index.js"]],
+    ["bin", { bin: { pkg: "./bin/cli" } }, ["bin/cli.js"]],
+  ])("requires an exact %s target", (_name, manifest, paths) => {
+    expect(findingsFor({ name: "pkg", version: "1.0.0", ...manifest }, paths)).toHaveLength(1);
+  });
+
+  test("does not treat an arbitrary child as a resolvable directory main", () => {
+    expect(
+      findingsFor({ name: "pkg", version: "1.0.0", main: "lib" }, ["lib/thing.js"]),
+    ).toHaveLength(1);
+  });
+
+  test.each(["cjs", "mjs"])("does not implicitly append .%s to an npm main", (extension) => {
+    expect(
+      findingsFor({ name: "pkg", version: "1.0.0", main: "dist/index" }, [
+        `dist/index.${extension}`,
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test.each([
+    ["a later array fallback", { exports: ["./index.js", "./missing.js"] }, ["index.js"]],
+    [
+      "a condition after default",
+      { exports: { default: "./index.js", node: "./missing.js" } },
+      ["index.js"],
+    ],
+  ])("does not flag %s that cannot be selected", (_name, manifest, paths) => {
+    expect(findingsFor({ name: "pkg", version: "1.0.0", ...manifest }, paths)).toEqual([]);
+  });
+
+  test.each([
+    ["exact path", { main: "dist/index.js" }, ["dist/index.js"]],
+    ["implicit extension", { main: "dist/index" }, ["dist/index.js"]],
+    ["directory index", { main: "lib" }, ["lib/index.js"]],
+    ["directory package manifest", { main: "lib" }, ["lib/package.json"]],
+    ["leading ./", { main: "./index.js" }, ["index.js"]],
+    ["bin string form", { bin: "./cli.js" }, ["cli.js"]],
+    [
+      "nested exports conditions",
+      { exports: { ".": { node: { require: "./a.cjs" } } } },
+      ["a.cjs"],
+    ],
+    ["exports array fallbacks", { exports: ["./a.js"] }, ["a.js"]],
+  ])("stays silent when a declared entrypoint resolves: %s", (_name, manifest, paths) => {
+    expect(findingsFor({ name: "pkg", version: "1.0.0", ...manifest }, paths)).toEqual([]);
+  });
+
+  test.each(["cjs", "mjs"])("uses VS Code's implicit .%s entrypoint resolution", (extension) => {
+    expect(
+      findingsFor(
+        { name: "pkg", version: "1.0.0", main: "out/extension" },
+        [`out/extension.${extension}`],
+        null,
+        { entrypointResolution: "vscode" },
+      ),
+    ).toEqual([]);
+  });
+
+  test("reports a missing VS Code browser entrypoint against the browser field", () => {
+    const findings = findingsFor(
+      { name: "pkg", version: "1.0.0", browser: "out/browser" },
+      [],
+      null,
+      { entrypointResolution: "vscode" },
+    );
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      line: 4,
+      evidence: "browser out/browser is not in the package",
+    });
+  });
+
+  test.each([
+    [
+      "a types condition",
+      { exports: { ".": { types: "./dist/index.d.ts", default: "./dist/index.js" } } },
+      ["dist/index.js"],
+    ],
+    [
+      "a typings condition",
+      { exports: { ".": { typings: "./dist/index.d.ts", default: "./dist/index.js" } } },
+      ["dist/index.js"],
+    ],
+    ["a legacy exports folder mapping", { exports: { "./lib/": "./lib/" } }, ["lib/thing.js"]],
+    ["a folder mapping consuming its array slot", { exports: ["./lib/", "./missing.js"] }, []],
+  ])("does not flag %s", (_name, manifest, paths) => {
+    expect(findingsFor({ name: "pkg", version: "1.0.0", ...manifest }, paths)).toEqual([]);
+  });
+
+  test.each([
+    ["subpath patterns", { exports: { "./*": "./dist/*.js" } }],
+    ["node: builtins", { exports: { node: "node:fs" } }],
+    ["URL targets", { main: "https://example.invalid/index.js" }],
+    ["package imports", { main: "#internal" }],
+    ["bare specifiers", { exports: { default: "lodash" } }],
+    ["blocked exports (null)", { exports: { "./private": null } }],
+    ["paths escaping the package root", { main: "../outside.js" }],
+  ])("does not treat %s as a packaged path", (_name, manifest) => {
+    expect(findingsFor({ name: "pkg", version: "1.0.0", ...manifest }, [])).toEqual([]);
+  });
+
+  test("stays silent when the artifact has no manifest file to compare against", () => {
+    // A metadata-only manifest (or a parse that produced no package.json) would
+    // otherwise report every declared path as missing.
+    const staged = [{ path: "index.js", size: 10, sha256: "a", flags: [], textSample: "" }];
+    const manifest = { name: "pkg", version: "1.0.0", main: "missing.js" };
+
+    expect(
+      deterministicFindings(staged, [], manifest).filter(
+        (finding) => finding.ruleId === "package-json.entrypoint-missing",
+      ),
+    ).toEqual([]);
+  });
+});

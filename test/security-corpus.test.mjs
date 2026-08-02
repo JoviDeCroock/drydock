@@ -46,7 +46,9 @@ describe("security detection golden corpus", () => {
         fixture.stagedPackageJson,
       );
       const findings = [
-        ...deterministicFindings(stagedFiles, diff, fixture.stagedPackageJson),
+        ...deterministicFindings(stagedFiles, diff, fixture.stagedPackageJson, {
+          entrypointResolution: "npm",
+        }),
         ...packageJsonDiffFindings(packageJsonDiff),
       ];
 

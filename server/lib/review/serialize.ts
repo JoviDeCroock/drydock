@@ -14,6 +14,7 @@ export interface PackageJsonSummary {
   main?: string;
   module?: string;
   types?: string;
+  browser?: string;
   exports?: unknown;
 }
 
@@ -74,6 +75,7 @@ export function summarizePackageJsonDiff(
         previousPkg?.main,
         previousPkg?.module,
         previousPkg?.types,
+        previousPkg?.browser,
         previousPkg?.exports,
       ]) !==
       JSON.stringify([
@@ -81,6 +83,7 @@ export function summarizePackageJsonDiff(
         stagedPkg?.main,
         stagedPkg?.module,
         stagedPkg?.types,
+        stagedPkg?.browser,
         stagedPkg?.exports,
       ]),
   };

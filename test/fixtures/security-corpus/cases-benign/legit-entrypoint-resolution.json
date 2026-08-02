@@ -1,0 +1,131 @@
+{
+  "id": "legit-entrypoint-resolution",
+  "title": "Ordinary dual-format package whose declared entrypoints all resolve (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-entrypoint-declaration",
+  "source": "benign-popular",
+  "intent": "Measures false-positive precision for package-json.entrypoint-missing, which reads a manifest's declared paths against the packed files. This fixture carries the manifest shapes that resolve to a real file without matching one literally, and the ones that cannot be reduced to a file at all: an extensionless main resolved through a directory index, a bin path with a leading ./, an exports fallback array, a types condition whose .d.ts the package deliberately does not pack, a legacy folder mapping, and a subpath pattern. None of them is a missing entrypoint, so none may raise a finding.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": {
+    "name": "dualformat",
+    "version": "3.1.0",
+    "main": "lib",
+    "bin": { "dualformat": "./bin/cli.js" },
+    "exports": {
+      ".": {
+        "types": "./types/index.d.ts",
+        "import": "./lib/index.mjs",
+        "default": "./lib/index.js"
+      },
+      "./compat/": "./compat/",
+      "./plugins/*": "./plugins/*.js",
+      "./polyfill": ["./lib/polyfill.js", "./lib/polyfill-legacy.js"]
+    }
+  },
+  "stagedPackageJson": {
+    "name": "dualformat",
+    "version": "3.2.0",
+    "main": "lib",
+    "bin": { "dualformat": "./bin/cli.js" },
+    "exports": {
+      ".": {
+        "types": "./types/index.d.ts",
+        "import": "./lib/index.mjs",
+        "default": "./lib/index.js"
+      },
+      "./compat/": "./compat/",
+      "./plugins/*": "./plugins/*.js",
+      "./polyfill": ["./lib/polyfill.js", "./lib/polyfill-legacy.js"]
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 402,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"dualformat\",\"version\":\"3.1.0\",\"main\":\"lib\",\"bin\":{\"dualformat\":\"./bin/cli.js\"}}"
+    },
+    {
+      "path": "lib/index.js",
+      "size": 62,
+      "sha256": "prev-lib-index-js",
+      "flags": [],
+      "textSample": "module.exports = require('./core.js');\n"
+    },
+    {
+      "path": "lib/index.mjs",
+      "size": 44,
+      "sha256": "prev-lib-index-mjs",
+      "flags": [],
+      "textSample": "export { core } from './core.js';\n"
+    },
+    {
+      "path": "lib/polyfill.js",
+      "size": 30,
+      "sha256": "prev-lib-polyfill",
+      "flags": [],
+      "textSample": "module.exports = {};\n"
+    },
+    {
+      "path": "bin/cli.js",
+      "size": 58,
+      "sha256": "prev-bin-cli",
+      "flags": [],
+      "textSample": "#!/usr/bin/env node\nrequire('../lib/index.js');\n"
+    },
+    {
+      "path": "compat/legacy.js",
+      "size": 30,
+      "sha256": "prev-compat-legacy",
+      "flags": [],
+      "textSample": "module.exports = {};\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 402,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"dualformat\",\"version\":\"3.2.0\",\"main\":\"lib\",\"bin\":{\"dualformat\":\"./bin/cli.js\"}}"
+    },
+    {
+      "path": "lib/index.js",
+      "size": 64,
+      "sha256": "staged-lib-index-js",
+      "flags": [],
+      "textSample": "module.exports = require('./core.js');\n"
+    },
+    {
+      "path": "lib/index.mjs",
+      "size": 46,
+      "sha256": "staged-lib-index-mjs",
+      "flags": [],
+      "textSample": "export { core } from './core.js';\n"
+    },
+    {
+      "path": "lib/polyfill.js",
+      "size": 30,
+      "sha256": "staged-lib-polyfill",
+      "flags": [],
+      "textSample": "module.exports = {};\n"
+    },
+    {
+      "path": "bin/cli.js",
+      "size": 58,
+      "sha256": "staged-bin-cli",
+      "flags": [],
+      "textSample": "#!/usr/bin/env node\nrequire('../lib/index.js');\n"
+    },
+    {
+      "path": "compat/legacy.js",
+      "size": 30,
+      "sha256": "staged-compat-legacy",
+      "flags": [],
+      "textSample": "module.exports = {};\n"
+    }
+  ]
+}

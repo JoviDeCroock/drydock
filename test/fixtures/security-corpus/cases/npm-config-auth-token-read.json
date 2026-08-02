@@ -20,6 +20,13 @@
       "sha256": "prev-package-json",
       "flags": [],
       "textSample": "{\"name\":\"npm-config-auth-token-read\",\"version\":\"1.0.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 21,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "module.exports = {};\n"
     }
   ],
   "stagedFiles": [
@@ -29,6 +36,13 @@
       "sha256": "staged-package-json",
       "flags": [],
       "textSample": "{\"name\":\"npm-config-auth-token-read\",\"version\":\"1.0.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 21,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "module.exports = {};\n"
     },
     {
       "path": "collect.js",

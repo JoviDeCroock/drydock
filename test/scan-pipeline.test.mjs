@@ -549,6 +549,74 @@ describe("scan pipeline baseline selection", () => {
     );
   });
 
+  test("flags a staged release that dropped the entrypoint its manifest declares", async () => {
+    // Scan 163a1e40-c049-4587-8525-85b4393d2eed: npm always packs
+    // package.json and README, so a pack that ran without its build output
+    // ships exactly this and the diff alone only says "files removed".
+    const stagedManifest = {
+      name: "@scope/pkg",
+      version: "2.0.0-beta.3",
+      main: "index.cjs",
+      files: ["README.md", "index.cjs", "acorn.wasm"],
+    };
+    sandboxMock.downloadInSandbox.mockResolvedValueOnce({
+      files: [
+        {
+          path: "package.json",
+          size: 120,
+          sha256: "staged-pkg",
+          flags: [],
+          textSample: JSON.stringify(stagedManifest, null, 2),
+        },
+        { path: "README.md", size: 40, sha256: "staged-readme", flags: [], textSample: "# pkg\n" },
+      ],
+      packageJson: stagedManifest,
+    });
+    publishedTarballMock.downloadPublishedTarball.mockResolvedValueOnce({
+      files: [
+        {
+          path: "package.json",
+          size: 120,
+          sha256: "prev-pkg",
+          flags: [],
+          textSample: JSON.stringify({ ...stagedManifest, version: "2.0.0-beta.2" }, null, 2),
+        },
+        { path: "README.md", size: 38, sha256: "prev-readme", flags: [], textSample: "# pkg\n" },
+        {
+          path: "index.cjs",
+          size: 90,
+          sha256: "prev-index",
+          flags: [],
+          textSample: "module.exports={}",
+        },
+        {
+          path: "acorn.wasm",
+          size: 3350928,
+          sha256: "prev-wasm",
+          flags: ["native-wasm", "binary"],
+        },
+      ],
+      packageJson: { ...stagedManifest, version: "2.0.0-beta.2" },
+    });
+
+    const result = await runScanPipeline(baseContext, npmAdapter, {
+      scanId: "scan_entrypoint",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
+
+    expect(result.ruleFindings).toContainEqual(
+      expect.objectContaining({
+        severity: "high",
+        file: "package.json",
+        ruleId: "package-json.entrypoint-missing",
+      }),
+    );
+    // A release that cannot load as published is this release's defect, not
+    // inherited package context.
+    expect(result.riskSummary.releaseRisk).toBe("high");
+  });
+
   test("surfaces npm's implicit node-gyp install when a staged tarball adds root binding.gyp", async () => {
     const stagedFiles = [
       {

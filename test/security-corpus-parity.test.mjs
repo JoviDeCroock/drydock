@@ -41,7 +41,9 @@ function runNpm(fixture) {
     fixture.stagedPackageJson,
   );
   return [
-    ...deterministicFindings(stagedFiles, diff, fixture.stagedPackageJson),
+    ...deterministicFindings(stagedFiles, diff, fixture.stagedPackageJson, {
+      entrypointResolution: "npm",
+    }),
     ...packageJsonDiffFindings(packageJsonDiff),
   ];
 }

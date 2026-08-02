@@ -20,7 +20,13 @@ import type {
 } from "./";
 
 export function annotateFindingsWithDiffStatus<
-  T extends { id?: string; file: string; line?: number | null; ruleId?: string | null },
+  T extends {
+    id?: string;
+    file: string;
+    line?: number | null;
+    ruleId?: string | null;
+    severity?: string | null;
+  },
 >(
   findings: T[],
   diff: Array<{ path: string; status?: unknown }>,
@@ -67,7 +73,16 @@ export function annotateFindingsWithDiffStatus<
   });
 }
 
-function isReleaseScopedFinding(finding: { ruleId?: string | null }): boolean {
+function isReleaseScopedFinding(finding: {
+  ruleId?: string | null;
+  severity?: string | null;
+}): boolean {
+  // Only the regression variant is about this release: a manifest that has
+  // always over-claimed an entrypoint (medium) is package context, and scoping
+  // it to the release would raise release risk on every rescan of that package.
+  if (finding.ruleId === DETERMINISTIC_RULE_IDS.packageJsonEntrypointMissing) {
+    return finding.severity === "high";
+  }
   return Boolean(
     finding.ruleId?.startsWith("stage.") ||
     finding.ruleId?.startsWith("pypi.") ||

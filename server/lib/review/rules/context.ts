@@ -9,8 +9,17 @@ import {
 import { isTestPath } from "./file-types";
 import { safeJson } from "./helpers";
 
+export type EntrypointResolution = "npm" | "vscode";
+
 export interface DeterministicFindingOptions {
   codePatternSet?: CodePatternSet;
+  /**
+   * Opt an ecosystem into manifest-entrypoint resolution. Deliberately has no
+   * default: the rule reads `package.json` semantics, and an ecosystem that
+   * merely happens to carry a root `package.json` (a Python sdist bundling JS
+   * assets) must not inherit npm's `require()` rules by omission.
+   */
+  entrypointResolution?: EntrypointResolution;
 }
 
 // Resolved inputs shared by every rule family for a single deterministic pass.
@@ -29,6 +38,7 @@ export interface RuleContext {
   consumerReachable: Set<string>;
   patterns: typeof JS_PATTERN_SET;
   codePatternSet: CodePatternSet | undefined;
+  entrypointResolution: EntrypointResolution | null;
 }
 
 export function buildRuleContext(
@@ -64,6 +74,7 @@ export function buildRuleContext(
     ),
     patterns: codePatternsFor(options.codePatternSet),
     codePatternSet: options.codePatternSet,
+    entrypointResolution: options.entrypointResolution ?? null,
   };
 }
 

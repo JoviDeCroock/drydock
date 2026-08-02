@@ -1,0 +1,77 @@
+{
+  "id": "entrypoint-dropped-from-release",
+  "title": "Release ships only its manifest and README, dropping the entrypoint and wasm binary it declares",
+  "category": "manifest-artifact-mismatch",
+  "intent": "A release whose tarball no longer contains the files the manifest declares reads as ordinary content churn in the file diff alone. npm always packs package.json and README regardless of the files allowlist, so a pack that ran without its build output produces exactly this shape (observed on scan 163a1e40-c049-4587-8525-85b4393d2eed, where the diff reported acorn.wasm and index.cjs removed and no deterministic rule fired). The declared main is what a consumer's require() resolves, so its absence is a release defect the review must state, not leave to a reader comparing the diff against the manifest by eye.",
+  "previousPackageJson": {
+    "name": "acorn-rs-wasm",
+    "version": "0.0.1",
+    "main": "index.cjs",
+    "exports": { ".": "./index.cjs" },
+    "files": ["README.md", "acorn.wasm", "index.cjs"]
+  },
+  "stagedPackageJson": {
+    "name": "acorn-rs-wasm",
+    "version": "0.1.0",
+    "main": "index.cjs",
+    "exports": { ".": "./index.cjs" },
+    "files": ["README.md", "acorn.wasm", "index.cjs"]
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 168,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\n  \"name\": \"acorn-rs-wasm\",\n  \"version\": \"0.0.1\",\n  \"main\": \"index.cjs\",\n  \"exports\": { \".\": \"./index.cjs\" },\n  \"files\": [\"README.md\", \"acorn.wasm\", \"index.cjs\"]\n}\n"
+    },
+    {
+      "path": "README.md",
+      "size": 48,
+      "sha256": "prev-readme",
+      "flags": [],
+      "textSample": "# acorn-rs-wasm\n\nRust wasm build of the parser.\n"
+    },
+    {
+      "path": "index.cjs",
+      "size": 96,
+      "sha256": "prev-index-cjs",
+      "flags": [],
+      "textSample": "const fs = require('fs')\nconst wasm = fs.readFileSync(__dirname + '/acorn.wasm')\nmodule.exports = { wasm }\n"
+    },
+    {
+      "path": "acorn.wasm",
+      "size": 3350928,
+      "sha256": "prev-acorn-wasm",
+      "flags": ["native-wasm", "binary"]
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 168,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\n  \"name\": \"acorn-rs-wasm\",\n  \"version\": \"0.1.0\",\n  \"main\": \"index.cjs\",\n  \"exports\": { \".\": \"./index.cjs\" },\n  \"files\": [\"README.md\", \"acorn.wasm\", \"index.cjs\"]\n}\n"
+    },
+    {
+      "path": "README.md",
+      "size": 52,
+      "sha256": "staged-readme",
+      "flags": [],
+      "textSample": "# acorn-rs-wasm\n\nRust wasm build of the acorn parser.\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "package-json.entrypoint-missing",
+      "severity": "high",
+      "file": "package.json"
+    }
+  ],
+  "coverageGaps": [
+    "The dropped acorn.wasm raises nothing on its own: file rules run over the staged artifact, so a binary that leaves a release is only visible as a removed diff entry. Only the declared entrypoint is provable from the manifest.",
+    "A release that drops a file listed in `files` but never referenced by main/exports/bin is still not flagged; `files` entries are globs whose absence can be legitimate (an optional platform build)."
+  ]
+}
