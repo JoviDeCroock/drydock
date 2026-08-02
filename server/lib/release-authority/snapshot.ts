@@ -218,13 +218,17 @@ export async function buildReleaseAuthoritySnapshot(
 
   for (const source of sources) {
     const projection = projectWorkflow(source);
-    triggers.push(...projection.triggers);
-    permissions.push(...projection.permissions);
-    environments.push(...projection.environments);
-    actions.push(...projection.actions);
-    publishSteps.push(...projection.publishSteps);
-    safeguards.push(...projection.safeguards);
-    artifactFlow.push(...projection.artifactFlow);
+    // Hash the full authority projection before bounding display fields. If a
+    // long command changes after the persisted prefix, the digest must still
+    // move; otherwise the raw digest alone would misclassify it as cosmetic.
+    const persistedProjection = boundProjectionDetails(projection);
+    triggers.push(...persistedProjection.triggers);
+    permissions.push(...persistedProjection.permissions);
+    environments.push(...persistedProjection.environments);
+    actions.push(...persistedProjection.actions);
+    publishSteps.push(...persistedProjection.publishSteps);
+    safeguards.push(...persistedProjection.safeguards);
+    artifactFlow.push(...persistedProjection.artifactFlow);
     if (!source.documentComplete) {
       unresolved.push({ path: source.path, reason: "partially_parsed" });
     }
@@ -243,32 +247,48 @@ export async function buildReleaseAuthoritySnapshot(
     schema: RELEASE_AUTHORITY_SCHEMA,
     run: input.run,
     workflows: workflows.sort(byKey((item) => `${item.role}\u0000${item.path}`)),
-    triggers: capped(triggers.sort(byKey((item) => `${item.workflow}\u0000${item.event}`))),
-    permissions: capped(
+    triggers: cappedWithCoverage(
+      triggers.sort(byKey((item) => `${item.workflow}\u0000${item.event}`)),
+      "triggers",
+      unresolved,
+    ),
+    permissions: cappedWithCoverage(
       permissions.sort(
         byKey((item) => `${item.workflow}\u0000${item.job ?? ""}\u0000${item.scope}`),
       ),
+      "permissions",
+      unresolved,
     ),
-    environments: capped(
+    environments: cappedWithCoverage(
       environments.sort(byKey((item) => `${item.workflow}\u0000${item.job}\u0000${item.name}`)),
+      "environments",
+      unresolved,
     ),
-    actions: capped(
+    actions: cappedWithCoverage(
       actions.sort(byKey((item) => `${item.workflow}\u0000${item.job}\u0000${item.uses}`)),
+      "actions",
+      unresolved,
     ),
-    publishSteps: capped(
+    publishSteps: cappedWithCoverage(
       publishSteps.sort(byKey((item) => `${item.workflow}\u0000${item.job}\u0000${item.detail}`)),
+      "publish steps",
+      unresolved,
     ),
-    safeguards: capped(
+    safeguards: cappedWithCoverage(
       safeguards.sort(byKey((item) => `${item.workflow}\u0000${item.job}\u0000${item.detail}`)),
+      "safeguards",
+      unresolved,
     ),
-    artifactFlow: capped(
+    artifactFlow: cappedWithCoverage(
       artifactFlow.sort(
         byKey(
           (item) => `${item.workflow}\u0000${item.job}\u0000${item.direction}\u0000${item.name}`,
         ),
       ),
+      "artifact flow entries",
+      unresolved,
     ),
-    artifacts: capped(
+    artifacts: cappedWithCoverage(
       input.artifacts
         .map((artifact) => ({
           name: artifact.name,
@@ -276,6 +296,8 @@ export async function buildReleaseAuthoritySnapshot(
           sha256: artifact.sha256.toLowerCase(),
         }))
         .sort(byKey((item) => `${item.name}\u0000${item.sha256}`)),
+      "artifacts",
+      unresolved,
     ),
     coverage: {
       complete: unresolved.length === 0,
@@ -378,11 +400,11 @@ function readStep(
     projection.actions.push(readActionRef(workflow, job, uses, step.secrets));
     const actionName = actionIdentity(uses);
     if (isPublishAction(actionName)) {
-      projection.publishSteps.push({ workflow, job, kind: "action", detail: truncate(uses) });
+      projection.publishSteps.push({ workflow, job, kind: "action", detail: uses });
     }
     const safeguard = safeguardForAction(actionName);
     if (safeguard) {
-      projection.safeguards.push({ workflow, job, kind: safeguard, detail: truncate(uses) });
+      projection.safeguards.push({ workflow, job, kind: safeguard, detail: uses });
     }
     const flow = artifactFlowForAction(actionName, inputs);
     if (flow) projection.artifactFlow.push({ workflow, job, ...flow });
@@ -399,7 +421,7 @@ function readStep(
         workflow,
         job,
         kind: "attestation",
-        detail: truncate(`with.attestations=${enabled ?? "true"}`),
+        detail: `with.attestations=${enabled ?? "true"}`,
       });
     }
     if (normalizedKey === "provenance" && enabled !== "false") {
@@ -407,14 +429,14 @@ function readStep(
         workflow,
         job,
         kind: "provenance",
-        detail: truncate(`with.provenance=${enabled ?? "true"}`),
+        detail: `with.provenance=${enabled ?? "true"}`,
       });
     }
   }
 
   if (run) {
     for (const command of publishCommands(run)) {
-      projection.publishSteps.push({ workflow, job, kind: "run", detail: truncate(command) });
+      projection.publishSteps.push({ workflow, job, kind: "run", detail: command });
     }
     for (const safeguard of safeguardCommands(run)) {
       projection.safeguards.push({ workflow, job, ...safeguard });
@@ -459,7 +481,7 @@ function normalizeTriggerFilter(config: YamlValue): string {
     if (values.length === 0) continue;
     parts.push(`${key}=[${[...values].sort().join(",")}]`);
   }
-  return truncate(parts.join(";"));
+  return parts.join(";");
 }
 
 function readPermissions(
@@ -514,7 +536,7 @@ function readActionRef(
   return {
     workflow,
     job,
-    uses: truncate(trimmed),
+    uses: trimmed,
     ref,
     // A local path rides the same commit as the caller, so it moves only when
     // the caller's commit does. Everything else is pinned only by a full sha.
@@ -602,7 +624,7 @@ function safeguardCommands(
     const command = line.trim();
     if (!command || command.startsWith("#")) continue;
     for (const { pattern, kind } of SAFEGUARD_COMMAND_PATTERNS) {
-      if (pattern.test(command)) found.push({ kind, detail: truncate(command) });
+      if (pattern.test(command)) found.push({ kind, detail: command });
     }
   }
   return found;
@@ -621,19 +643,50 @@ function artifactFlowForAction(
   if (!direction) return null;
   return {
     direction,
-    name: truncate(asString(inputs?.name ?? null) ?? ""),
-    path: truncate(asString(inputs?.path ?? null) ?? ""),
+    name: asString(inputs?.name ?? null) ?? "",
+    path: asString(inputs?.path ?? null) ?? "",
   };
 }
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
 
+function boundProjectionDetails(projection: WorkflowProjection): WorkflowProjection {
+  return {
+    triggers: projection.triggers.map((item) => ({ ...item, filter: truncate(item.filter) })),
+    permissions: projection.permissions,
+    environments: projection.environments,
+    actions: projection.actions.map((item) => ({ ...item, uses: truncate(item.uses) })),
+    publishSteps: projection.publishSteps.map((item) => ({
+      ...item,
+      detail: truncate(item.detail),
+    })),
+    safeguards: projection.safeguards.map((item) => ({
+      ...item,
+      detail: truncate(item.detail),
+    })),
+    artifactFlow: projection.artifactFlow.map((item) => ({
+      ...item,
+      name: truncate(item.name),
+      path: truncate(item.path),
+    })),
+  };
+}
+
 function truncate(value: string): string {
   return value.length > MAX_DETAIL_LENGTH ? value.slice(0, MAX_DETAIL_LENGTH) : value;
 }
 
-function capped<T>(items: T[]): T[] {
-  return items.length > MAX_ENTRIES_PER_LIST ? items.slice(0, MAX_ENTRIES_PER_LIST) : items;
+function cappedWithCoverage<T>(
+  items: T[],
+  category: string,
+  unresolved: AuthorityUnresolved[],
+): T[] {
+  if (items.length <= MAX_ENTRIES_PER_LIST) return items;
+  unresolved.push({
+    path: `+${items.length - MAX_ENTRIES_PER_LIST} ${category}`,
+    reason: "limit_reached",
+  });
+  return items.slice(0, MAX_ENTRIES_PER_LIST);
 }
 
 function byKey<T>(key: (item: T) => string): (a: T, b: T) => number {

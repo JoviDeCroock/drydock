@@ -149,6 +149,22 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
     expect(kinds(delta.changes)).toEqual(["workflow_content_changed"]);
   });
 
+  it("does not treat a long authority value changed past its display bound as cosmetic", async () => {
+    const prefix = `npm publish --tag ${"x".repeat(320)}`;
+    const prior = BASE_WORKFLOW.replace(
+      "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+      `      - run: ${prefix}-stable\n`,
+    );
+    const current = prior.replace(`${prefix}-stable`, `${prefix}-latest`);
+
+    const delta = await deltaBetween(prior, current);
+
+    expect(delta.status).toBe("changed");
+    expect(delta.requiresApproval).toBe(true);
+    expect(kinds(delta.changes)).toContain("workflow_authority_changed");
+    expect(kinds(delta.changes)).not.toContain("workflow_content_changed");
+  });
+
   it("flags a widened permission", async () => {
     const delta = await deltaBetween(
       BASE_WORKFLOW,
@@ -515,6 +531,22 @@ jobs:
       expect(delta.status).toBe("unchanged");
       // Still visible as a standing limitation rather than disappearing.
       expect(delta.standing.coverageComplete).toBe(false);
+    });
+
+    it("marks capped snapshot evidence as incomplete instead of silently omitting it", async () => {
+      const current = await makeSnapshot({
+        artifacts: Array.from({ length: 257 }, (_, index) => ({
+          name: `artifact-${String(index).padStart(3, "0")}.tgz`,
+          kind: "npm",
+          sha256: String(index),
+        })),
+      });
+
+      expect(current.artifacts).toHaveLength(256);
+      expect(current.coverage).toMatchObject({
+        complete: false,
+        unresolved: [{ path: "+1 artifacts", reason: "limit_reached" }],
+      });
     });
   });
 

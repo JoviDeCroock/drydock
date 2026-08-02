@@ -15,7 +15,12 @@
 
 export type YamlValue = string | null | YamlValue[] | { [key: string]: YamlValue };
 
-export type YamlErrorCode = "too_large" | "too_many_lines" | "too_deep" | "too_many_nodes";
+export type YamlErrorCode =
+  | "too_large"
+  | "too_many_lines"
+  | "too_deep"
+  | "too_many_nodes"
+  | "unsupported_syntax";
 
 export class WorkflowYamlError extends Error {
   constructor(
@@ -176,6 +181,9 @@ function parseMapping(state: ParseState, indent: number, depth: number): YamlVal
       }
       break;
     }
+    if (entry.mergeKey) {
+      throw new WorkflowYamlError("unsupported_syntax", "workflow merge keys are not supported");
+    }
     sawKey = true;
     countNode(state);
     state.index += 1;
@@ -245,6 +253,7 @@ function parseSequence(state: ParseState, indent: number, depth: number): YamlVa
 interface KeyLine {
   key: string;
   rest: string;
+  mergeKey: boolean;
 }
 
 /**
@@ -282,9 +291,10 @@ function splitKey(text: string): KeyLine | null {
     if (char !== ":" || flow > 0) continue;
     const next = text[i + 1];
     if (next !== undefined && next !== " " && next !== "\t") continue;
-    const key = unquoteScalar(text.slice(0, i).trim());
+    const rawKey = text.slice(0, i).trim();
+    const key = unquoteScalar(rawKey);
     if (!key) return null;
-    return { key, rest: stripComment(text.slice(i + 1).trim()) };
+    return { key, rest: stripComment(text.slice(i + 1).trim()), mergeKey: rawKey === "<<" };
   }
   return null;
 }
@@ -373,7 +383,13 @@ function startsIndented(line: string): boolean {
 function parseFlowScalar(text: string): YamlValue {
   const trimmed = text.trim();
   if (trimmed.length === 0) return null;
-  if (trimmed.length > MAX_FLOW_LENGTH) return trimmed.slice(0, MAX_FLOW_LENGTH);
+  if (trimmed.length > MAX_FLOW_LENGTH) {
+    throw new WorkflowYamlError(
+      "too_large",
+      `inline workflow value exceeds ${MAX_FLOW_LENGTH} characters`,
+    );
+  }
+  rejectUnsupportedNodeToken(trimmed);
   if (trimmed === "~" || trimmed === "null") return null;
   if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
     const parsed = parseFlowCollection(trimmed);
@@ -497,8 +513,12 @@ function readFlowMapping(cursor: FlowCursor): YamlValue | undefined {
       cursor.depth -= 1;
       return map;
     }
+    const keyStartsQuoted = cursor.text[cursor.index] === '"' || cursor.text[cursor.index] === "'";
     const key = readFlowToken(cursor);
     if (key === undefined || key === null) return undefined;
+    if (key === "<<" && !keyStartsQuoted) {
+      throw new WorkflowYamlError("unsupported_syntax", "workflow merge keys are not supported");
+    }
     skipFlowSpace(cursor);
     if (cursor.text[cursor.index] !== ":") return undefined;
     cursor.index += 1;
@@ -535,8 +555,17 @@ function readFlowToken(cursor: FlowCursor): YamlValue | undefined {
   const token = cursor.text.slice(start, i).trim();
   cursor.index = i;
   if (token.length === 0) return undefined;
+  rejectUnsupportedNodeToken(token);
   if (token === "~" || token === "null") return null;
   return token;
+}
+
+function rejectUnsupportedNodeToken(value: string): void {
+  if (!/^[&*!](?:[^\s,[\]{}]+)(?:\s|$)/.test(value)) return;
+  throw new WorkflowYamlError(
+    "unsupported_syntax",
+    "workflow anchors, aliases, and tags are not supported",
+  );
 }
 
 function skipFlowSpace(cursor: FlowCursor): void {

@@ -153,6 +153,15 @@ key with spaces: plain
     expect(doc["quoted-key"]).toBe("value");
   });
 
+  it("keeps a quoted merge-looking key as ordinary text", () => {
+    const doc = parseWorkflowYaml('"<<": value\nflow: { "<<": value }\n').value as Record<
+      string,
+      unknown
+    >;
+    expect(doc["<<"]).toBe("value");
+    expect(doc.flow).toEqual({ "<<": "value" });
+  });
+
   it("reads only the first document of a stream", () => {
     const doc = parseWorkflowYaml(`
 ---
@@ -179,6 +188,26 @@ name: second
   it("rejects documents past the size limit", () => {
     const oversized = `name: x\n${"# pad\n".repeat(MAX_WORKFLOW_BYTES)}`;
     expect(() => parseWorkflowYaml(oversized)).toThrow(WorkflowYamlError);
+  });
+
+  it("rejects an oversized inline value instead of silently comparing its prefix", () => {
+    const oversized = `run: npm publish --tag ${"x".repeat(9_000)}\n`;
+
+    expect(() => parseWorkflowYaml(oversized)).toThrow(
+      expect.objectContaining({ code: "too_large" }),
+    );
+  });
+
+  it.each([
+    ["anchor", "defaults: &defaults value\n"],
+    ["alias", "permissions: *defaults\n"],
+    ["tag", "permissions: !custom value\n"],
+    ["merge key", "permissions:\n  <<: *defaults\n"],
+    ["flow merge key", "permissions: { <<: *defaults }\n"],
+  ])("rejects unsupported YAML %s instead of reporting complete coverage", (_label, source) => {
+    expect(() => parseWorkflowYaml(source)).toThrow(
+      expect.objectContaining({ code: "unsupported_syntax" }),
+    );
   });
 
   it("rejects documents nested past the depth limit", () => {

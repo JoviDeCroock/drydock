@@ -12,6 +12,7 @@ import {
   organizationNotificationRecipients,
   organizationSlackConnections,
   organizations,
+  releaseAuthoritySnapshots,
   scanEvents,
   scanFiles,
   scanFindings,
@@ -299,6 +300,9 @@ export async function deleteOrganization(
     db.delete(scanFindings).where(inArray(scanFindings.scanId, orgScans)),
     db.delete(scanFiles).where(inArray(scanFiles.scanId, orgScans)),
     db.delete(scanEvents).where(eq(scanEvents.organizationId, organizationId)),
+    db
+      .delete(releaseAuthoritySnapshots)
+      .where(eq(releaseAuthoritySnapshots.organizationId, organizationId)),
     db.delete(scans).where(eq(scans.organizationId, organizationId)),
     db.delete(githubWorkflowGates).where(eq(githubWorkflowGates.organizationId, organizationId)),
     db.delete(githubReleaseTargets).where(eq(githubReleaseTargets.organizationId, organizationId)),
@@ -424,6 +428,10 @@ export async function deleteUserAccount(
       .update(githubReleaseTargets)
       .set({ createdByUserId: null })
       .where(eq(githubReleaseTargets.createdByUserId, userId)),
+    db
+      .update(releaseAuthoritySnapshots)
+      .set({ approvedByUserId: null })
+      .where(eq(releaseAuthoritySnapshots.approvedByUserId, userId)),
     db
       .update(organizationNotificationRecipients)
       .set({ createdByUserId: null })

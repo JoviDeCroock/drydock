@@ -82,6 +82,18 @@ async function readReleasePolicy(
   ).organizations.find((o) => o.id === orgId)?.requireTwoFactorForReleaseDecisions;
 }
 
+async function readAuthorityPolicy(
+  session: { userId: string },
+  orgId: string,
+): Promise<boolean | undefined> {
+  const list = await call(buildTestApp(session), "GET", "/api/v1/organizations");
+  return (
+    (await list.json()) as {
+      organizations: Array<{ id: string; requireAuthorityChangeApproval: boolean }>;
+    }
+  ).organizations.find((o) => o.id === orgId)?.requireAuthorityChangeApproval;
+}
+
 // Flip Better Auth's enrollment flag directly. The stub harness has no real
 // `auth` to run TOTP enrollment through, but enabling the policy only checks
 // enrollment (no fresh code), so the column is all these specs need.
@@ -302,6 +314,51 @@ describe("organizations routes", () => {
       { body: { enabled: "yes" } },
     );
     expect(res.status).toBe(400);
+  });
+
+  test("PUT /:id/authority-change-approval is owner-only and persists a boolean policy", async () => {
+    const owner = await seedUser();
+    const admin = await seedUser();
+    const stranger = await seedUser();
+    const db = createDb(env.DB);
+    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
+      body: { name: "authority-policy-org" },
+    });
+    const orgId = ((await create.json()) as { organization: { id: string } }).organization.id;
+    await addOrganizationMember(db, { organizationId: orgId, userId: admin.userId, role: "admin" });
+
+    expect(await readAuthorityPolicy(owner, orgId)).toBe(false);
+
+    const invalid = await call(
+      buildTestApp(owner),
+      "PUT",
+      `/api/v1/organizations/${orgId}/authority-change-approval`,
+      { body: { enabled: "yes" } },
+    );
+    expect(invalid.status).toBe(400);
+
+    for (const caller of [admin, stranger]) {
+      const forbidden = await call(
+        buildTestApp(caller),
+        "PUT",
+        `/api/v1/organizations/${orgId}/authority-change-approval`,
+        { body: { enabled: true } },
+      );
+      expect(forbidden.status).toBe(404);
+    }
+    expect(await readAuthorityPolicy(owner, orgId)).toBe(false);
+
+    const enabled = await call(
+      buildTestApp(owner),
+      "PUT",
+      `/api/v1/organizations/${orgId}/authority-change-approval`,
+      { body: { enabled: true } },
+    );
+    expect(enabled.status).toBe(200);
+    expect((await enabled.json()) as unknown).toMatchObject({
+      requireAuthorityChangeApproval: true,
+    });
+    expect(await readAuthorityPolicy(owner, orgId)).toBe(true);
   });
 
   test("x-organization-id header scopes npm-connection writes to that org", async () => {
@@ -628,6 +685,62 @@ describe("organization deletion", () => {
       type: "scan.decided",
       createdAt: now,
     });
+    const installationRowId = `installation_${crypto.randomUUID()}`;
+    const releaseTargetId = `target_${crypto.randomUUID()}`;
+    const gateId = `gate_${crypto.randomUUID()}`;
+    const repositoryId = Number.parseInt(crypto.randomUUID().slice(0, 8), 16);
+    await db.insert(schema.githubAppInstallations).values({
+      id: installationRowId,
+      organizationId: orgId,
+      installationId: String(crypto.randomUUID()),
+      accountLogin: "doomed-org",
+      accountType: "Organization",
+      createdByUserId: owner.userId,
+      installedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.githubReleaseTargets).values({
+      id: releaseTargetId,
+      organizationId: orgId,
+      installationRowId,
+      repositoryId,
+      repositoryFullName: "doomed-org/package",
+      environment: "release",
+      createdByUserId: owner.userId,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.githubWorkflowGates).values({
+      id: gateId,
+      organizationId: orgId,
+      installationRowId,
+      releaseTargetId,
+      deliveryId: `delivery_${crypto.randomUUID()}`,
+      repositoryId,
+      repositoryFullName: "doomed-org/package",
+      environment: "release",
+      runId: 1,
+      deploymentCallbackUrl: "https://api.github.com/repos/doomed-org/package/actions/runs/1",
+      eventAction: "requested",
+      requestedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.releaseAuthoritySnapshots).values({
+      id: `authority_${crypto.randomUUID()}`,
+      organizationId: orgId,
+      releaseTargetId,
+      gateId,
+      runId: 1,
+      workflowPath: ".github/workflows/release.yml",
+      snapshotJson: {},
+      deltaJson: {},
+      approvedAt: now,
+      approvedByUserId: owner.userId,
+      createdAt: now,
+      updatedAt: now,
+    });
 
     const res = await call(buildTestApp(owner), "DELETE", `/api/v1/organizations/${orgId}`);
     expect(res.status).toBe(200);
@@ -651,6 +764,12 @@ describe("organization deletion", () => {
     ).toHaveLength(0);
     expect(
       await db.select().from(schema.scanEvents).where(eq(schema.scanEvents.organizationId, orgId)),
+    ).toHaveLength(0);
+    expect(
+      await db
+        .select()
+        .from(schema.releaseAuthoritySnapshots)
+        .where(eq(schema.releaseAuthoritySnapshots.organizationId, orgId)),
     ).toHaveLength(0);
   });
 

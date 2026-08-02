@@ -143,6 +143,22 @@ describe("fetchReleaseAuthoritySources", () => {
     ]);
   });
 
+  it("records unsupported YAML authority as unparseable coverage", async () => {
+    mockGithub((url) => {
+      if (url.pathname.endsWith("/actions/runs/4242")) return runResponse();
+      if (url.pathname.includes("/contents/")) {
+        return new Response("permissions: *defaults\n");
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+
+    const sources = await fetchReleaseAuthoritySourcesWithToken("ghs_token", INPUT);
+    expect(sources.workflows).toEqual([]);
+    expect(sources.unresolved).toEqual([
+      { path: ".github/workflows/release.yml", reason: "unparseable" },
+    ]);
+  });
+
   it("refuses a referenced path outside .github/workflows without fetching it", async () => {
     const seen = mockGithub((url) => {
       if (url.pathname.endsWith("/actions/runs/4242")) {

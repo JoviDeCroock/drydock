@@ -58,7 +58,9 @@ Two distinctions carry most of the signal quality.
 `authorityDigest` over its projected authority, which does not move for
 comments, key reordering, or formatting. A release where raw digests moved but
 authority digests did not reports `cosmetic` and never raises a high-signal
-warning.
+warning. The authority digest covers the full bounded workflow projection before
+long values are shortened for storage and display, so a change beyond a visible
+prefix cannot be mislabeled cosmetic.
 
 **Changed vs standing.** A reference that has _always_ been mutable
 (`actions/checkout@v4`) is a standing property of this release path, not a
@@ -80,9 +82,10 @@ network or the database.
   subset. Workflow definitions are repository content and are treated as
   hostile evidence: read and projected, never evaluated. It has no anchors,
   aliases, merge keys, tags, or custom types, and refuses anything past its
-  size/line/depth/node limits. It is deliberately stricter than GitHub's parser,
-  so it reports `complete: false` rather than silently dropping a job it could
-  not read.
+  size/line/depth/node limits, including oversized inline values. It is
+  deliberately stricter than GitHub's parser, so it reports incomplete coverage
+  rather than silently comparing a truncated workflow or dropping a job it
+  could not read.
 - `snapshot.ts` — projects fetched definitions, run context, and reviewed
   artifact digests into the canonical `drydock.release-authority.v1` snapshot.
 - `delta.ts` — compares a snapshot against an approved baseline.
@@ -120,6 +123,9 @@ snapshot is never presented as "no authority change".
 
 If the capture fails entirely, no record is written at all and the review shows
 **not assessed** — which is deliberately a different thing from **unchanged**.
+Per-category snapshot limits follow the same rule: excess entries are omitted
+only after a `limit_reached` coverage record is added, so a bounded snapshot can
+never claim that its authority graph is complete.
 
 ## What counts as a change
 
