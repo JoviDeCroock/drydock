@@ -2741,9 +2741,10 @@ describe("package-json.entrypoint-missing", () => {
   function findingsFor(manifest, paths, previous = null, options = {}) {
     const staged = [manifestFile(manifest), ...paths.map(file)];
     const diff = previous ? createPackageDiff(previous, staged) : [];
-    return deterministicFindings(staged, diff, manifest, options).filter(
-      (finding) => finding.ruleId === "package-json.entrypoint-missing",
-    );
+    return deterministicFindings(staged, diff, manifest, {
+      entrypointResolution: "npm",
+      ...options,
+    }).filter((finding) => finding.ruleId === "package-json.entrypoint-missing");
   }
 
   test("flags a main the package does not ship", () => {
@@ -2781,21 +2782,50 @@ describe("package-json.entrypoint-missing", () => {
     expect(findings[0].severity).toBe("high");
   });
 
-  test("is a release-scoped finding so a broken release counts against release risk", () => {
-    const manifest = { name: "pkg", version: "0.1.0", main: "index.cjs" };
+  function annotate(manifest, previous) {
     const staged = [manifestFile(manifest)];
-    const previous = [manifestFile({ ...manifest, version: "0.0.1" }), file("index.cjs")];
     const diff = createPackageDiff(previous, staged);
-    const findings = deterministicFindings(staged, diff, manifest).filter(
-      (finding) => finding.ruleId === "package-json.entrypoint-missing",
-    );
+    const findings = deterministicFindings(staged, diff, manifest, {
+      entrypointResolution: "npm",
+    }).filter((finding) => finding.ruleId === "package-json.entrypoint-missing");
 
-    const [annotated] = annotateFindingsWithDiffStatus(findings, diff, {
+    return annotateFindingsWithDiffStatus(findings, diff, {
       previousFiles: previous,
       stagedFiles: staged,
     });
+  }
 
-    expect(annotated.releaseDelta).toBe(true);
+  test("is a release-scoped finding so a broken release counts against release risk", () => {
+    const manifest = { name: "pkg", version: "0.1.0", main: "index.cjs" };
+    const previous = [manifestFile({ ...manifest, version: "0.0.1" }), file("index.cjs")];
+
+    const [annotated] = annotate(manifest, previous);
+
+    expect(annotated).toMatchObject({ severity: "high", releaseDelta: true });
+  });
+
+  test("does not scope an always-over-claimed entrypoint to the release", () => {
+    // The predecessor did not ship it either, so the manifest has been stale
+    // for at least a release: package context, not this release's regression.
+    const manifest = { name: "pkg", version: "0.1.0", main: "index.cjs" };
+    const previous = [manifestFile({ ...manifest, version: "0.0.1" })];
+
+    const [annotated] = annotate(manifest, previous);
+
+    expect(annotated).toMatchObject({ severity: "medium", releaseDelta: false });
+  });
+
+  test("stays silent for an ecosystem that did not opt into entrypoint resolution", () => {
+    // A Python sdist that bundles JS assets carries a root package.json; it must
+    // not be held to npm's require() semantics.
+    const manifest = { name: "pkg", version: "1.0.0", main: "lib/index.js" };
+    const staged = [manifestFile(manifest), file("setup.py")];
+
+    expect(
+      deterministicFindings(staged, [], manifest, { codePatternSet: "python" }).filter(
+        (finding) => finding.ruleId === "package-json.entrypoint-missing",
+      ),
+    ).toEqual([]);
   });
 
   test("flags every missing bin command and exports target once per path", () => {
@@ -2899,6 +2929,23 @@ describe("package-json.entrypoint-missing", () => {
       line: 4,
       evidence: "browser out/browser is not in the package",
     });
+  });
+
+  test.each([
+    [
+      "a types condition",
+      { exports: { ".": { types: "./dist/index.d.ts", default: "./dist/index.js" } } },
+      ["dist/index.js"],
+    ],
+    [
+      "a typings condition",
+      { exports: { ".": { typings: "./dist/index.d.ts", default: "./dist/index.js" } } },
+      ["dist/index.js"],
+    ],
+    ["a legacy exports folder mapping", { exports: { "./lib/": "./lib/" } }, ["lib/thing.js"]],
+    ["a folder mapping consuming its array slot", { exports: ["./lib/", "./missing.js"] }, []],
+  ])("does not flag %s", (_name, manifest, paths) => {
+    expect(findingsFor({ name: "pkg", version: "1.0.0", ...manifest }, paths)).toEqual([]);
   });
 
   test.each([

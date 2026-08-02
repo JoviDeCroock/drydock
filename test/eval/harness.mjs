@@ -110,7 +110,9 @@ function detect(record, fxOverride) {
   const diff = createPackageDiff(previousFiles, stagedFiles);
   const packageJsonDiff = summarizePackageJsonDiff(fx.previousPackageJson, fx.stagedPackageJson);
   const findings = [
-    ...deterministicFindings(stagedFiles, diff, fx.stagedPackageJson),
+    ...deterministicFindings(stagedFiles, diff, fx.stagedPackageJson, {
+      entrypointResolution: "npm",
+    }),
     ...packageJsonDiffFindings(packageJsonDiff),
   ];
   return { risk: computeRisk(findings), findings };

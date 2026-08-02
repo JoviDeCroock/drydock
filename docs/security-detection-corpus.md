@@ -103,7 +103,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.19.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.20.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -275,7 +275,7 @@ like `*` rather than skipped, and `workspace:`/`catalog:`/`link:`/`portal:` prot
 directly only when both specs are exact registry version keys. Ranges render no direct link because
 their bounds need not have been published; added dependencies use the package-only route that resolves
 a published pair from registry metadata.
-`1.19.0` adds `package-json.entrypoint-missing`: a release whose manifest declares a `main`,
+`1.20.0` adds `package-json.entrypoint-missing`: a release whose manifest declares a `main`,
 `exports`, or `bin` path the artifact does not contain. The file diff can only say "this path is
 not in the staged tarball", which reads as ordinary content churn until a reviewer notices the
 manifest still claims to ship it — the `entrypoint-dropped-from-release` golden case, taken from a
@@ -283,18 +283,27 @@ real scan where a wasm binary and the `main` entrypoint left the tarball and no 
 fired. npm always packs `package.json` and README regardless of the `files` allowlist, so a pack
 that ran without its build output produces exactly that shape. Severity is high when the previous
 release shipped the path (a regression against a known-good predecessor) and medium when it was
-never there (a manifest that has always over-claimed). The rule is release-scoped: a release that
-cannot load as published is this release's defect, not inherited package context.
+never there (a manifest that has always over-claimed). Only the high variant is release-scoped: a
+release that dropped a path its predecessor shipped is this release's defect, while a manifest that
+has been stale for at least a release is package context and must not raise release risk on every
+rescan.
 Resolution follows each field's consumer semantics: npm `main` supports its CommonJS implicit
 extensions (`.js`/`.json`/`.node`), directory indexes, and nested package manifests, while `exports`
 and `bin` targets must exist exactly as declared. Extensionless single-segment `main` and `bin`
 paths are still package-relative paths and are checked. Export arrays stop after the first valid
-target, condition keys after `default` are unreachable, and subpath patterns (`./*`), protocol
-specifiers (`node:fs`, `https://…`), package imports (`#dep`), invalid bare export targets, and
-`null` export blocks are skipped entirely. The VS Code adapter opts into its own `.js`/`.mjs`/`.cjs`
-entrypoint resolution instead of inheriting npm's rules. `module`, `types`, and npm's `browser`
-field are excluded: they are tooling fields whose targets are legitimately optional, unlike the
-paths a consumer's `require()` and npm's own bin linking resolve. Four existing fixtures
+target, condition keys after `default` are unreachable, and subpath patterns (`./*`), folder
+mappings (`"./compat/": "./compat/"`), protocol specifiers (`node:fs`, `https://…`), package imports
+(`#dep`), invalid bare export targets, and `null` export blocks are skipped entirely — a target that
+names a directory rather than a file still consumes its fallback-array slot. Each ecosystem opts
+into a resolution mode explicitly and there is no default: the VS Code adapter selects its own
+`.js`/`.mjs`/`.cjs` entrypoint resolution rather than inheriting npm's rules, and PyPI selects none,
+so a Python sdist that bundles JS assets under a root `package.json` is never held to npm's
+`require()` semantics. `module`, `types`, and npm's `browser` field are excluded, as are the
+`types`/`typings` conditions inside `exports`: they are tooling fields resolved by a type checker,
+whose targets are legitimately optional, unlike the paths a consumer's `require()` and npm's own bin
+linking resolve. The `legit-entrypoint-resolution` benign hard-negative carries every shape that
+resolves without matching literally (directory-index `main`, `./`-prefixed `bin`, export fallback
+array) alongside every shape that cannot be reduced to a file. Four existing fixtures
 (`npm-config-auth-token-read`, `npm-lifecycle-env-read`, `obfuscated-dynamic-fetch`,
 `wasm-instantiate-loader`) declared `main: index.js` without shipping it — an artifact of minimal
 synthetic fixtures rather than an intended signal — and now carry an unchanged `index.js` on both

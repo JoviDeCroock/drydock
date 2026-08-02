@@ -20,7 +20,9 @@ export function buildNpmFindings(args: {
   stagedManifestText: string | null;
 }): Finding[] {
   return [
-    ...deterministicFindings(args.staged.files, args.fileDiff, args.staged.manifest),
+    ...deterministicFindings(args.staged.files, args.fileDiff, args.staged.manifest, {
+      entrypointResolution: "npm",
+    }),
     ...packageJsonDiffFindings(args.manifestDiff, args.stagedManifestText),
     ...createStagedMetadataFindings(args.details, args.staged.manifest),
     ...tarSuspiciousEntryFindings(args.staged.suspiciousTarEntries, {

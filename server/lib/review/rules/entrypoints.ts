@@ -1,6 +1,6 @@
 import type { Finding, PackageJsonDiff, PackageJsonSummary } from "..";
 import { firstJsonPropertyLine, tag } from "./helpers";
-import type { RuleContext } from "./context";
+import type { EntrypointResolution, RuleContext } from "./context";
 
 // Entrypoint-surface rules derived from the package.json diff. The high-signal
 // case is a newly added `bin` command: npm symlinks every bin entry into the
@@ -31,6 +31,7 @@ export function entrypointDiffFindings(
 
 const NPM_MAIN_EXTENSIONS = [".js", ".json", ".node"];
 const VSCODE_ENTRYPOINT_EXTENSIONS = [".js", ".mjs", ".cjs", ".json"];
+const TOOLING_EXPORT_CONDITIONS = new Set(["types", "typings"]);
 
 interface DeclaredEntrypoint {
   kind: "main" | "bin" | "browser" | "exports";
@@ -56,11 +57,17 @@ interface DeclaredEntrypoint {
  *
  * Resolution is field-specific: npm `main` gets CommonJS extension/directory
  * lookup, while npm `exports` and `bin` are exact paths. VS Code opts into the
- * entrypoint suffixes its adapter already uses. Subpath patterns (`./*`) and
- * non-path targets (`node:` builtins, URLs) stay skipped because this rule
- * cannot prove which packaged file they should resolve to.
+ * entrypoint suffixes its adapter already uses. Subpath patterns (`./*`),
+ * directory targets, and non-path targets (`node:` builtins, URLs) stay skipped
+ * because this rule cannot prove which packaged file they should resolve to.
+ *
+ * Runs only for an ecosystem that opted into a resolution mode, so a non-npm
+ * artifact that happens to carry a root `package.json` is never held to npm's
+ * `require()` semantics.
  */
 export function entrypointPresenceFindings(ctx: RuleContext): Finding[] {
+  const resolution = ctx.entrypointResolution;
+  if (!resolution) return [];
   const packageJson = ctx.packageJson;
   if (!packageJson) return [];
   // Without the manifest file in the artifact we are not looking at a normal
@@ -71,15 +78,16 @@ export function entrypointPresenceFindings(ctx: RuleContext): Finding[] {
 
   const findings: Finding[] = [];
   const reported = new Set<string>();
-  for (const declared of declaredEntrypoints(packageJson, ctx.entrypointResolution)) {
+  for (const declared of declaredEntrypoints(packageJson, resolution)) {
     if (reported.has(declared.path)) continue;
-    if (resolvesToPackagedFile(declared, files, ctx.entrypointResolution)) continue;
+    if (resolvesToPackagedFile(declared, files, resolution)) continue;
     reported.add(declared.path);
     // A path the previous release shipped and this one dropped is a release
     // regression with a known-good predecessor; one that was never there is a
     // manifest that has always over-claimed, which is worth surfacing but is
-    // not evidence about this release's delta.
-    const removed = entrypointCandidates(declared, ctx.entrypointResolution).some(
+    // not evidence about this release's delta — `isReleaseScopedFinding` scopes
+    // the two severities accordingly.
+    const removed = entrypointCandidates(declared, resolution).some(
       (path) => ctx.diffByPath.get(path)?.status === "removed",
     );
     findings.push(
@@ -100,7 +108,7 @@ export function entrypointPresenceFindings(ctx: RuleContext): Finding[] {
 
 function declaredEntrypoints(
   packageJson: PackageJsonSummary,
-  resolution: RuleContext["entrypointResolution"],
+  resolution: EntrypointResolution,
 ): DeclaredEntrypoint[] {
   const declared: DeclaredEntrypoint[] = [];
   const add = (kind: DeclaredEntrypoint["kind"], field: string, key: string, value: unknown) => {
@@ -144,8 +152,8 @@ function exportSelection(value: unknown, depth: number, root: boolean): ExportSe
   if (typeof value === "string") {
     const path = normalizeEntrypointPath(value, "exports");
     if (path) return { paths: [path], terminal: true };
-    // Wildcard targets are valid but cannot be checked without a requested
-    // subpath. They still consume their fallback-array position.
+    // Wildcard and folder-mapping targets are valid but cannot be reduced to a
+    // single file. They still consume their fallback-array position.
     if (isValidUncheckableExportTarget(value)) return { paths: [], terminal: true };
     return { paths: [], terminal: false };
   }
@@ -171,6 +179,10 @@ function exportSelection(value: unknown, depth: number, root: boolean): ExportSe
 
   const paths: string[] = [];
   for (const [condition, target] of entries) {
+    // Type-declaration conditions are resolved by a type checker, never by a
+    // consumer's `require()`, and are the same legitimately-optional tooling
+    // target the top-level `types` field is excluded for.
+    if (TOOLING_EXPORT_CONDITIONS.has(condition)) continue;
     const selected = exportSelection(target, depth + 1, false);
     paths.push(...selected.paths);
     // `default` always matches. Later condition keys are unreachable, while a
@@ -186,7 +198,8 @@ function exportSelection(value: unknown, depth: number, root: boolean): ExportSe
  * Reduce a declared target to a package-relative path, or null when it is not a
  * path this rule can check: subpath patterns, protocol specifiers (`node:fs`,
  * `https://…`), package imports (`#dep`), bare package specifiers used as
- * fallbacks, and anything escaping the package root.
+ * fallbacks, directory targets for the fields resolved as exact paths, and
+ * anything escaping the package root.
  */
 function normalizeEntrypointPath(value: unknown, kind: DeclaredEntrypoint["kind"]): string | null {
   if (typeof value !== "string") return null;
@@ -196,6 +209,11 @@ function normalizeEntrypointPath(value: unknown, kind: DeclaredEntrypoint["kind"
   }
   if (path.startsWith("/")) return null;
   if (kind === "exports" && !path.startsWith("./")) return null;
+  // A trailing slash names a directory, not a file. The entrypoint fields get a
+  // directory-index lookup and resolve one, but `exports` and `bin` are matched
+  // exactly, and legacy `exports` folder mappings ("./lib/": "./lib/") would
+  // otherwise read as a missing file on every package that still carries one.
+  if (path.endsWith("/") && (kind === "exports" || kind === "bin")) return null;
   while (path.startsWith("./")) path = path.slice(2);
   if (!path || path.startsWith("../") || path.includes("/../")) return null;
   const segments = path.split("/").filter((segment) => segment && segment !== ".");
@@ -205,13 +223,14 @@ function normalizeEntrypointPath(value: unknown, kind: DeclaredEntrypoint["kind"
 
 function isValidUncheckableExportTarget(value: string): boolean {
   const path = value.trim();
-  return path.startsWith("./") && path.includes("*") && !path.startsWith("../");
+  if (!path.startsWith("./") || path.startsWith("../")) return false;
+  return path.includes("*") || path.endsWith("/");
 }
 
 function resolvesToPackagedFile(
   declared: DeclaredEntrypoint,
   files: Set<string>,
-  resolution: RuleContext["entrypointResolution"],
+  resolution: EntrypointResolution,
 ): boolean {
   if (entrypointCandidates(declared, resolution).some((path) => files.has(path))) return true;
   // A nested package manifest can redirect a directory-shaped npm `main`.
@@ -225,7 +244,7 @@ function resolvesToPackagedFile(
 
 function entrypointCandidates(
   declared: DeclaredEntrypoint,
-  resolution: RuleContext["entrypointResolution"],
+  resolution: EntrypointResolution,
 ): string[] {
   const { path } = declared;
   if (resolution === "npm" && declared.kind !== "main") return [path];
