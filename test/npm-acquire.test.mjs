@@ -195,19 +195,26 @@ describe("acquireStagedNpm tarball verification", () => {
     // two artifacts that were each internally consistent.
     const broker = brokerFor({ shasum: OTHER, archiveSha1: DECLARED });
     let call = 0;
-    broker.fetchStagedDetails = vi.fn(async () => ({
-      id: "stage-1",
-      packageName: "pkg",
-      version: "2.0.0",
-      tag: "latest",
-      shasum: call++ === 0 ? OTHER : DECLARED,
-      packageJson: null,
-    }));
+    broker.fetchStagedDetails = vi.fn(async () => {
+      const current = call++;
+      return {
+        id: "stage-1",
+        packageName: "pkg",
+        version: "2.0.0",
+        tag: current === 0 ? "stale-tag" : "fresh-tag",
+        shasum: current === 0 ? OTHER : DECLARED,
+        packageJson: {
+          dependencies: current === 0 ? { stale: "1.0.0" } : { fresh: "2.0.0" },
+        },
+      };
+    });
 
     const result = await acquireStagedNpm({}, { stageId: "stage-1" }, broker);
 
     expect(broker.fetchStagedDetails).toHaveBeenCalledTimes(2);
     expect(result.details.artifactIntegrity).toMatchObject({ status: "verified" });
+    expect(result.details).toMatchObject({ tag: "fresh-tag", shasum: DECLARED });
+    expect(result.artifact.manifest.dependencies).toEqual({ fresh: "2.0.0" });
   });
 
   test("keeps the mismatch when the stage record still disagrees on re-read", async () => {
@@ -223,9 +230,9 @@ describe("acquireStagedNpm tarball verification", () => {
     });
   });
 
-  test("keeps the mismatch when the confirming read fails", async () => {
-    // Two well-formed digests that disagree are still evidence; a registry
-    // that cannot be re-read is not a reason to drop the finding.
+  test("leaves the review unverified when the confirming read fails", async () => {
+    // The initial pair may describe two generations of a mutable stage. A
+    // failed fresh read cannot turn that race into a critical accusation.
     const broker = brokerFor({ shasum: OTHER, archiveSha1: DECLARED });
     let call = 0;
     const first = broker.fetchStagedDetails;
@@ -233,7 +240,13 @@ describe("acquireStagedNpm tarball verification", () => {
 
     const result = await acquireStagedNpm({}, { stageId: "stage-1" }, broker);
 
-    expect(result.details.artifactIntegrity).toMatchObject({ status: "mismatch" });
+    expect(result.details.artifactIntegrity).toEqual({
+      algorithm: "sha1",
+      status: "unverified",
+      declared: OTHER,
+      computed: DECLARED,
+      reason: "stage-record-confirmation-unavailable",
+    });
   });
 
   test("does not re-read the stage record when the digests agree", async () => {
@@ -244,13 +257,31 @@ describe("acquireStagedNpm tarball verification", () => {
     expect(broker.fetchStagedDetails).toHaveBeenCalledTimes(1);
   });
 
-  test("keeps details null when the registry has no stage metadata to attach a verdict to", async () => {
+  test("persists an unverified verdict when the registry has no stage metadata", async () => {
     const broker = brokerFor({ shasum: DECLARED, archiveSha1: DECLARED });
     broker.fetchStagedDetails = vi.fn(async () => null);
 
     const result = await acquireStagedNpm({}, { stageId: "stage-1" }, broker);
 
-    expect(result.details).toBeNull();
+    expect(result.details).toEqual({
+      id: "stage-1",
+      packageName: null,
+      version: null,
+      tag: null,
+      access: null,
+      actor: null,
+      actorType: null,
+      createdAt: null,
+      shasum: null,
+      packageJson: null,
+      artifactIntegrity: {
+        algorithm: "sha1",
+        status: "unverified",
+        declared: null,
+        computed: DECLARED,
+        reason: "declared-digest-missing",
+      },
+    });
     expect(result.artifact.files).toHaveLength(1);
   });
 });

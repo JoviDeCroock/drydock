@@ -28,7 +28,9 @@ export type StagedArtifactIntegrityReason =
   /** The registry did not report a digest for this staged artifact. */
   | "declared-digest-missing"
   /** The sandbox could not digest the whole stream (cancelled, errored, or over the cap). */
-  | "computed-digest-unavailable";
+  | "computed-digest-unavailable"
+  /** A mismatch could not be confirmed against a fresh stage record. */
+  | "stage-record-confirmation-unavailable";
 
 export interface StagedArtifactIntegrity {
   algorithm: "sha1";
@@ -127,6 +129,21 @@ export function parseStagedArtifactIntegrity(value: unknown): StagedArtifactInte
       declared,
       computed: null,
       reason: "computed-digest-unavailable",
+    };
+  }
+  if (
+    record.status === "unverified" &&
+    record.reason === "stage-record-confirmation-unavailable" &&
+    declared &&
+    computed &&
+    declared !== computed
+  ) {
+    return {
+      algorithm: "sha1",
+      status: "unverified",
+      declared,
+      computed,
+      reason: "stage-record-confirmation-unavailable",
     };
   }
   return null;

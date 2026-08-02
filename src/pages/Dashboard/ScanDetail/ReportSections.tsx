@@ -71,7 +71,9 @@ function ArtifactIntegrityView({ integrity }: { integrity: StagedArtifactIntegri
         ? "The reviewed tarball bytes do not match npm's stage record. Treat this report as describing a different artifact."
         : integrity.reason === "declared-digest-missing"
           ? "npm did not provide a valid staged-tarball digest, so Drydock could not bind this review to the staged bytes."
-          : "Drydock could not hash the complete tarball stream, so this review is not bound to npm's stage record.";
+          : integrity.reason === "stage-record-confirmation-unavailable"
+            ? "Drydock saw a digest mismatch but could not confirm it against a fresh stage record, so this review remains unverified."
+            : "Drydock could not hash the complete tarball stream, so this review is not bound to npm's stage record.";
   // A registry that published no digest is an absence of evidence, and the
   // report must not tone it as a warning about the release: that is the same
   // mistake as raising a finding for it. Only a digest Drydock failed to

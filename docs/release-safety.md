@@ -65,7 +65,8 @@ Current structured events cover:
   version, and both digests — all registry-declared values, no credentials).
 - `scan.staged_artifact.digest_unverified` when a scan could not be bound to the
   registry's record at all (stage id, package, version, and which side was
-  missing). Verification silently covering nothing looks exactly like
+  missing, including a fresh stage record needed to confirm a mismatch).
+  Verification silently covering nothing looks exactly like
   verification working, so a registry that stops returning digests — or a cap
   that starts biting — is visible as a coverage outage rather than silence.
 - `scan.job.completed`, `scan.job.failed`, `scan.job.retryable_failed`, and

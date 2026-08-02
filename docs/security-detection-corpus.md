@@ -285,7 +285,9 @@ the corpus engine runs over `FileRecord[]` and carries no stage metadata, so cov
 `test/staged-artifact-integrity.test.mjs`, `test/npm-acquire.test.mjs`, `test/scan-pipeline.test.mjs`,
 and the `tarball-digest-mismatch` e2e scenario. Verification fails to `unverified` (no finding)
 whenever either digest is missing — a registry that reports no `shasum`, or an archive the sandbox
-could not digest end to end — so absence of evidence never reads as tampering.
+could not digest end to end — or a mismatch cannot be confirmed against a fresh stage record, so
+absence of evidence never reads as tampering. When that fresh record is available, it becomes the
+canonical metadata snapshot for the rest of the scan.
 
 `1.20.0` adds `package-json.entrypoint-missing`: a release whose manifest declares a `main`,
 `exports`, or `bin` path the artifact does not contain. The file diff can only say "this path is

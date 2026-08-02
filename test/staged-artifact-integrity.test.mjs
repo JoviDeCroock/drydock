@@ -55,6 +55,13 @@ describe("parseStagedArtifactIntegrity", () => {
     evaluateStagedArtifactIntegrity(DECLARED, OTHER),
     evaluateStagedArtifactIntegrity(DECLARED, null),
     evaluateStagedArtifactIntegrity(null, OTHER),
+    {
+      algorithm: "sha1",
+      status: "unverified",
+      declared: DECLARED,
+      computed: OTHER,
+      reason: "stage-record-confirmation-unavailable",
+    },
   ])("accepts a consistent persisted $status verdict", (integrity) => {
     expect(parseStagedArtifactIntegrity(integrity)).toEqual(integrity);
   });
@@ -71,6 +78,13 @@ describe("parseStagedArtifactIntegrity", () => {
       declared: DECLARED,
       computed: OTHER,
       reason: "computed-digest-unavailable",
+    },
+    {
+      algorithm: "sha1",
+      status: "unverified",
+      declared: DECLARED,
+      computed: DECLARED,
+      reason: "stage-record-confirmation-unavailable",
     },
   ])("rejects malformed or internally inconsistent persisted data", (value) => {
     expect(parseStagedArtifactIntegrity(value)).toBeNull();
