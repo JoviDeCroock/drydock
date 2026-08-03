@@ -9,7 +9,7 @@ only describes what an origin claim could later be verified against.
 Computed in `server/lib/scan-pipeline.ts` via the pure module
 `server/lib/intent-envelope.ts`, persisted inside the scan's `summaryJson`
 blob (`summary.intentEnvelope`, no dedicated column), returned on
-`ScanResult`, exported in the `drydock.report.v1` report as the optional
+`ScanResult`, exported in the `drydock.report.v2` report as the optional
 `intentEnvelope` field, and rendered as the "Source binding" row on the scan
 detail page.
 
