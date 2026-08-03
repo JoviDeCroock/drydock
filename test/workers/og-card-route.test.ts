@@ -2,8 +2,12 @@ import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:
 import { beforeEach, describe, expect, test } from "vitest";
 import worker from "../../server/index";
 import { resetOgFontCacheForTests } from "../../server/lib/public-diff/card-render";
-import { OG_CARD_RATE_LIMIT, OG_CARD_RATE_WINDOW_MS } from "../../server/routes/og";
 import type { PublicPackageDiff } from "../../server/lib/public-diff";
+import {
+  exhaustedRateLimitBindings,
+  rateLimitBindingOverrides,
+  rateLimiterDouble,
+} from "./rate-limit-doubles";
 
 // The share-card route is anonymous like the diff API it decorates: crawlers
 // unfurl it without a session. These tests cover the trust-boundary behavior —
@@ -199,51 +203,33 @@ describe("package-diff share card route", () => {
   });
 
   test("rate limits cold renders per IP", async () => {
-    // Seeding the bucket instead of issuing 60 real requests: driving the
-    // limiter by brute force meant ~60 rasterizations per run, which is slow
-    // enough on a loaded machine to sit near the test timeout, and it could not
-    // tell a rate-limited fallback from a render failure — both return the same
-    // image and TTL. This asserts the limit is enforced, not that a loop of
-    // requests eventually trips something.
     const ip = "10.9.9.9";
-    const bucket = Math.floor(Date.now() / OG_CARD_RATE_WINDOW_MS);
-    await env.DB.prepare(
-      "INSERT INTO rate_limits (key, count, expires_at, updated_at) VALUES (?, ?, ?, ?)",
-    )
-      .bind(
-        `og-card:${ip}:${bucket}`,
-        OG_CARD_RATE_LIMIT,
-        (bucket + 1) * OG_CARD_RATE_WINDOW_MS,
-        Date.now(),
-      )
-      .run();
+    const { overrides, limiter } = exhaustedRateLimitBindings();
 
-    const res = await cardFetch("/og/diff/tape/5.7.0/5.8.0/card.png", { ip });
+    const res = await cardFetch("/og/diff/tape/5.7.0/5.8.0/card.png", {
+      ip,
+      requestEnv: envWithAssets(overrides),
+    });
 
     expect(res.status).toBe(200);
     expect(res.headers.get("x-og-card-fallback")).toBe("rate-limited");
     expect(res.headers.get("cache-control")).toBe("public, max-age=60");
+    expect(limiter.keys).toEqual([`og-card:${ip}`]);
   });
 
   test("does not charge the limit for a card that is already cached", async () => {
-    // Crawlers refetch the same card across platforms; those hits must not
-    // consume an IP's budget or write a D1 row.
+    // Crawlers refetch the same card across platforms; cache hits must not
+    // consume the IP's native rate-limit budget.
     const ip = "10.9.9.8";
     const path = "/og/diff/tape/5.7.0/5.9.0/card.png";
-    const first = await cardFetch(path, { ip });
+    const limiter = rateLimiterDouble(true);
+    const requestEnv = envWithAssets(rateLimitBindingOverrides(limiter));
+    const first = await cardFetch(path, { ip, requestEnv });
     expect(first.headers.get("x-og-card-fallback")).toBeNull();
+    expect(limiter.keys).toEqual([`og-card:${ip}`]);
 
-    const bucket = Math.floor(Date.now() / OG_CARD_RATE_WINDOW_MS);
-    const seeded = await env.DB.prepare("SELECT count FROM rate_limits WHERE key = ?")
-      .bind(`og-card:${ip}:${bucket}`)
-      .first<{ count: number }>();
-    expect(seeded?.count).toBe(1);
-
-    const second = await cardFetch(path, { ip });
+    const second = await cardFetch(path, { ip, requestEnv });
     expect(second.status).toBe(200);
-    const after = await env.DB.prepare("SELECT count FROM rate_limits WHERE key = ?")
-      .bind(`og-card:${ip}:${bucket}`)
-      .first<{ count: number }>();
-    expect(after?.count).toBe(1);
+    expect(limiter.keys).toEqual([`og-card:${ip}`]);
   });
 });

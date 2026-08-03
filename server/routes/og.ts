@@ -1,10 +1,9 @@
 import { Hono, type Context } from "hono";
-import { createDb } from "../db/client";
-import { enforceRateLimit, RateLimitError } from "../db/rate-limit";
 import { getPublicDiffAdapter } from "../lib/ecosystems";
 import { PUBLIC_NPM_REGISTRY } from "../lib/ecosystems/npm/public-diff";
 import { coloCache } from "../lib/platform/http";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
+import { enforceRateLimit, RateLimitError } from "../lib/platform/rate-limit";
 import {
   renderOgCardSvg,
   type OgCardStats,
@@ -214,9 +213,9 @@ ogRoutes.get("/diff/*", async (c) => {
 
   // Rate limiting sits behind the cache read: the render is the expensive part,
   // and repeat crawler fetches of a card that is already warm should not be
-  // charged against the limit (or write a D1 row).
+  // charged against the native limiter.
   try {
-    await enforceRateLimit(createDb(c.env.DB), {
+    await enforceRateLimit(c.env, {
       key: `og-card:${c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || "unknown"}`,
       limit: OG_CARD_RATE_LIMIT,
       windowMs: OG_CARD_RATE_WINDOW_MS,
