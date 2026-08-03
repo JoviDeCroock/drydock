@@ -2877,6 +2877,20 @@ describe("package-json.entrypoint-missing", () => {
     ).toHaveLength(1);
   });
 
+  test.each(["js", "json", "node"])(
+    "uses npm's package-root index.%s fallback after an unresolved main",
+    (extension) => {
+      const manifest = { name: "pkg", version: "1.0.0", main: "dist/index.js" };
+      const previous = [
+        manifestFile({ ...manifest, version: "0.9.0" }),
+        file("dist/index.js"),
+        file(`index.${extension}`),
+      ];
+
+      expect(findingsFor(manifest, [`index.${extension}`], previous)).toEqual([]);
+    },
+  );
+
   test.each([
     ["a later array fallback", { exports: ["./index.js", "./missing.js"] }, ["index.js"]],
     [

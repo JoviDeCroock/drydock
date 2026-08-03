@@ -1,0 +1,60 @@
+{
+  "id": "legit-main-root-index-fallback",
+  "title": "Package remains loadable through Node's root index fallback after dropping its declared main",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-entrypoint-declaration",
+  "source": "synthetic",
+  "intent": "Regression guard for Node's final CommonJS package-directory fallback. The staged release removes the file named by main but retains root index.js, so require(package) still resolves and package-json.entrypoint-missing must not turn the removal into a high release-scoped finding.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": {
+    "name": "root-index-fallback",
+    "version": "1.0.0",
+    "main": "dist/index.js"
+  },
+  "stagedPackageJson": {
+    "name": "root-index-fallback",
+    "version": "1.1.0",
+    "main": "dist/index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 78,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"root-index-fallback\",\"version\":\"1.0.0\",\"main\":\"dist/index.js\"}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 24,
+      "sha256": "prev-dist-index",
+      "flags": [],
+      "textSample": "module.exports = 42;\n"
+    },
+    {
+      "path": "index.js",
+      "size": 24,
+      "sha256": "root-index",
+      "flags": [],
+      "textSample": "module.exports = 42;\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 78,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"root-index-fallback\",\"version\":\"1.1.0\",\"main\":\"dist/index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 24,
+      "sha256": "root-index",
+      "flags": [],
+      "textSample": "module.exports = 42;\n"
+    }
+  ]
+}

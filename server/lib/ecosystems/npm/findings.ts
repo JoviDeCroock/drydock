@@ -116,6 +116,7 @@ export function mergeStagedPackageJson(
     main: stagedMetadataPackageJson?.main ?? tarballPackageJson?.main,
     module: stagedMetadataPackageJson?.module ?? tarballPackageJson?.module,
     types: stagedMetadataPackageJson?.types ?? tarballPackageJson?.types,
+    browser: stagedMetadataPackageJson?.browser ?? tarballPackageJson?.browser,
     exports: stagedMetadataPackageJson?.exports ?? tarballPackageJson?.exports,
   };
 }

@@ -4,7 +4,8 @@ vi.mock("cloudflare:workers", () => ({
   WorkerEntrypoint: class {},
 }));
 
-const { acquireBaselineNpm } = await import("../server/lib/ecosystems/npm/acquire");
+const { acquireBaselineNpm, acquireStagedNpm } =
+  await import("../server/lib/ecosystems/npm/acquire");
 const { SandboxError } = await import("../server/lib/sandbox");
 
 function stagedArtifact() {
@@ -107,5 +108,27 @@ describe("acquireBaselineNpm", () => {
     };
 
     await expect(acquireBaselineNpm({}, {}, broker, stagedArtifact())).rejects.toThrow();
+  });
+});
+
+describe("acquireStagedNpm", () => {
+  test("preserves the browser entrypoint when staged metadata is merged", async () => {
+    const browser = "dist/browser.js";
+    const broker = {
+      dispose() {},
+      downloadStaged: vi.fn(async () => ({
+        files: [],
+        packageJson: { name: "pkg", version: "2.0.0", browser },
+      })),
+      fetchStagedDetails: vi.fn(async () => ({
+        packageName: "pkg",
+        version: "2.0.0",
+        packageJson: { name: "pkg", version: "2.0.0" },
+      })),
+    };
+
+    const result = await acquireStagedNpm({}, { stageId: "stage-1" }, broker);
+
+    expect(result.artifact.manifest).toMatchObject({ browser });
   });
 });
