@@ -51,6 +51,10 @@ function StageCommandDialog({ prompt }: { prompt: StageCommandPrompt }) {
     <Dialog
       open={true}
       onClose={dismissStageCommandPrompt}
+      // Wider than the default: the body is a copyable one-line shell command
+      // whose stage id runs long, so the default width scrolls it almost
+      // immediately.
+      size="md"
       title={approving ? "Finish the publish on npm" : "Remove the staged publish on npm"}
       description={
         approving
