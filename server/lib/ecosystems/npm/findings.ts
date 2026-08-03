@@ -9,12 +9,12 @@ import {
   type PackageJsonDiff,
   type PackageJsonSummary,
 } from "../../review";
-import type { StagedPublishDetails } from "./staged-publishes";
+import type { NpmStagedDetails } from "./staged-publishes";
 import type { AcquiredArtifact } from "../package-adapter";
 
 export function buildNpmFindings(args: {
   staged: AcquiredArtifact;
-  details: StagedPublishDetails | null;
+  details: NpmStagedDetails | null;
   fileDiff: DiffEntry[];
   manifestDiff: PackageJsonDiff;
   stagedManifestText: string | null;
@@ -32,10 +32,40 @@ export function buildNpmFindings(args: {
 }
 
 function createStagedMetadataFindings(
-  details: StagedPublishDetails | null,
+  details: NpmStagedDetails | null,
   pkg: PackageJsonSummary | null,
 ): Finding[] {
-  if (!details || !pkg) return [];
+  if (!details) return [];
+  return [...artifactDigestFindings(details), ...manifestMismatchFindings(details, pkg)];
+}
+
+// The staged tarball's bytes did not hash to the digest npm recorded for the
+// stage. Everything downstream — the file list, the diff, every file-scoped
+// finding — describes bytes that are not the staged release, so this is a
+// review-integrity failure rather than a package-content finding. Only a
+// two-sided comparison reaches here; an unverifiable digest stays silent and
+// is disclosed through the report's staged-publish block instead.
+function artifactDigestFindings(details: NpmStagedDetails): Finding[] {
+  const integrity = details.artifactIntegrity;
+  if (integrity?.status !== "mismatch") return [];
+  return [
+    {
+      severity: "critical",
+      file: "package.json",
+      evidence: `staged tarball ${integrity.algorithm} ${integrity.computed} != npm-recorded shasum ${integrity.declared}`,
+      reason:
+        "the staged tarball Drydock downloaded does not hash to the digest npm recorded for this stage, so the reviewed bytes are not the staged release: treat every file, diff entry, and finding in this report as describing a different artifact and re-run the scan before deciding",
+      ruleId: DETERMINISTIC_RULE_IDS.stageTarballDigestMismatch,
+      ruleVersion: DETERMINISTIC_RULES_VERSION,
+    },
+  ];
+}
+
+function manifestMismatchFindings(
+  details: NpmStagedDetails,
+  pkg: PackageJsonSummary | null,
+): Finding[] {
+  if (!pkg) return [];
   const mismatches: string[] = [];
   if (details.packageName && pkg.name && details.packageName !== pkg.name) {
     mismatches.push(`packageName ${details.packageName} != package.json name ${pkg.name}`);

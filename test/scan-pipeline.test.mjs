@@ -495,6 +495,79 @@ describe("scan pipeline baseline selection", () => {
     );
   });
 
+  test("fails the release closed when the staged tarball is not the tarball npm recorded", async () => {
+    // Regression guard for the review-integrity gap behind scan
+    // 163a1e40-c049-4587-8525-85b4393d2eed: without this check, a truncated or
+    // substituted download reads as "the publisher removed these files".
+    sandboxMock.downloadInSandbox.mockResolvedValue({
+      files: [
+        {
+          path: "package.json",
+          size: 64,
+          sha256: "staged-pkg",
+          flags: [],
+          textSample: JSON.stringify({ name: "@scope/pkg", version: "2.0.0-beta.3" }),
+        },
+      ],
+      packageJson: { name: "@scope/pkg", version: "2.0.0-beta.3" },
+      archiveSha1: "0000000000000000000000000000000000000000",
+    });
+
+    const result = await runScanPipeline(baseContext, npmAdapter, {
+      scanId: "scan_digest",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
+    const persistedInput = dbMock.persistScan.mock.calls[0]?.[1];
+
+    expect(result.risk).toBe("critical");
+    expect(result.ruleFindings).toContainEqual(
+      expect.objectContaining({
+        severity: "critical",
+        file: "package.json",
+        ruleId: "stage.tarball-digest-mismatch",
+      }),
+    );
+    // The verdict rides along in the persisted report, so a reviewer reading
+    // the report later can tell a proven artifact from an unverified one.
+    expect(persistedInput.summary.stagedPublish.artifactIntegrity).toMatchObject({
+      algorithm: "sha1",
+      status: "mismatch",
+      declared: "4f7f5f1d5bcf2f72f6e4d6c4f3b2812d8a2f6c19",
+      computed: "0000000000000000000000000000000000000000",
+    });
+  });
+
+  test("records a verified staged tarball without raising a finding", async () => {
+    sandboxMock.downloadInSandbox.mockResolvedValue({
+      files: [
+        {
+          path: "package.json",
+          size: 64,
+          sha256: "staged-pkg",
+          flags: [],
+          textSample: JSON.stringify({ name: "@scope/pkg", version: "2.0.0-beta.3" }),
+        },
+      ],
+      packageJson: { name: "@scope/pkg", version: "2.0.0-beta.3" },
+      archiveSha1: "4f7f5f1d5bcf2f72f6e4d6c4f3b2812d8a2f6c19",
+    });
+
+    const result = await runScanPipeline(baseContext, npmAdapter, {
+      scanId: "scan_digest_ok",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
+    const persistedInput = dbMock.persistScan.mock.calls[0]?.[1];
+
+    expect(
+      result.ruleFindings.filter((finding) => finding.ruleId === "stage.tarball-digest-mismatch"),
+    ).toEqual([]);
+    expect(persistedInput.summary.stagedPublish.artifactIntegrity).toMatchObject({
+      status: "verified",
+    });
+  });
+
   test("suppresses tag baseline selection when staged metadata disagrees with the tarball", async () => {
     stagedMock.fetchStagedPublishDetails.mockResolvedValue({
       id: "stage-beta-123",

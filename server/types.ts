@@ -2,6 +2,7 @@ import type { Auth, AuthSession } from "./lib/auth";
 import type { BaselineInfo } from "./lib/ecosystems/package-adapter";
 
 export type { ReleaseProvenance } from "./lib/ecosystems/package-adapter";
+export type { StagedArtifactIntegrity } from "./lib/ecosystems/artifact-integrity";
 import type { AiReview } from "./lib/ai-review";
 import type { ReleaseConsistency } from "./lib/scan/release-memory";
 import type { IntentEnvelope } from "./lib/intent-envelope";

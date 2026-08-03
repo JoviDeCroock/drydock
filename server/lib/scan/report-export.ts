@@ -5,6 +5,7 @@ import { normalizeIntentEnvelope } from "../intent-envelope";
 import { normalizeReleaseConsistency } from "./release-memory";
 import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems/package-adapter";
 import { isEcosystemId } from "../ecosystems/labels";
+import { parseStagedArtifactIntegrity } from "../ecosystems/artifact-integrity";
 
 // A persisted scan detail, as returned by getScan (never null at the call site).
 type ScanDetail = NonNullable<Awaited<ReturnType<typeof getScan>>>;
@@ -57,6 +58,9 @@ export function buildReportExport(detail: ScanDetail) {
     // Advisory source-binding tier (attested / declared / absent). Additive and
     // optional: scans persisted before the envelope existed export `null`.
     intentEnvelope: normalizeIntentEnvelope(summary.intentEnvelope),
+    // Staged-artifact byte-verification verdict. Null for workflow gates,
+    // legacy scans, and malformed persisted data.
+    artifactIntegrity: extractArtifactIntegrity(summary.stagedPublish),
     aiReview: extractAiReview(scan.aiJson),
     riskSummary: detail.riskSummary ?? null,
     // Advisory release-memory signal. Additive + optional: scans that predate
@@ -163,6 +167,11 @@ function extractProvenance(stagedPublish: unknown): ReleaseProvenance | null {
   }
   if (!mapped.length) return null;
   return { ecosystem, mode, artifacts: mapped };
+}
+
+function extractArtifactIntegrity(stagedPublish: unknown) {
+  if (!isRecord(stagedPublish)) return null;
+  return parseStagedArtifactIntegrity(stagedPublish.artifactIntegrity);
 }
 
 // Route through the display helper so invalid/unavailable fallbacks do not

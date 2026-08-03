@@ -61,7 +61,11 @@ for (const name of scenarioNames) {
       version: stagedManifest.version,
       manifest: stagedManifest,
       tarballFile: stagedPack.filename,
-      shasum: stagedPack.shasum ?? null,
+      // A scenario may pin the digest the stage record advertises so the
+      // fixture can serve real tarball bytes that do not hash to it — the
+      // truncated/substituted-download case the staged-tarball verification
+      // exists to catch.
+      shasum: scenario.staged.shasum ?? stagedPack.shasum ?? null,
       integrity: stagedPack.integrity ?? null,
     },
     previous:

@@ -91,6 +91,8 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
     // more than one node — assert the first like the release-risk badge above.
     await expect(page.getByText("implicit install: node-gyp rebuild").first()).toBeVisible();
     await expect(page.getByText("install-script.implicit-node-gyp").first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Artifact verification" })).toBeVisible();
+    await expect(page.getByText("verified", { exact: true })).toBeVisible();
     // The file tree carries a severity-toned finding count badge for the flagged
     // file (#188 surface 2); the fixture has a single finding on binding.gyp.
     await expect(page.getByLabel("1 finding").first()).toBeVisible();

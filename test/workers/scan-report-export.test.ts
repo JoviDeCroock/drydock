@@ -98,6 +98,15 @@ async function seedCompletedScanWithAi(owner: SeededUser, ai: unknown): Promise<
         entrypointsChanged: false,
       },
       diff: [{ path: "package.json", status: "modified" }],
+      stagedPublish: {
+        artifactIntegrity: {
+          algorithm: "sha1",
+          status: "unverified",
+          declared: "a".repeat(40),
+          computed: null,
+          reason: "computed-digest-unavailable",
+        },
+      },
     },
     ai,
     files: [{ path: "package.json", size: 10, sha256: "a", flags: [], textSample: "{}" }],
@@ -136,6 +145,13 @@ describe("scan report JSON export", () => {
       scan: { id: string; status: string };
       package: { name: string | null; stagedVersion: string | null };
       packageJsonDiff: unknown;
+      artifactIntegrity: {
+        algorithm: string;
+        status: string;
+        declared: string | null;
+        computed: string | null;
+        reason?: string;
+      } | null;
       aiReview: unknown;
       findings: Array<{ ruleId: string | null; severity: string }>;
     };
@@ -146,6 +162,13 @@ describe("scan report JSON export", () => {
     expect(body.package.name).toBe("@org/pkg");
     expect(body.package.stagedVersion).toBe("1.1.0");
     expect(body.packageJsonDiff).toBeTruthy();
+    expect(body.artifactIntegrity).toEqual({
+      algorithm: "sha1",
+      status: "unverified",
+      declared: "a".repeat(40),
+      computed: null,
+      reason: "computed-digest-unavailable",
+    });
     expect(body.aiReview).toBeNull();
     expect(body.findings).toEqual([
       expect.objectContaining({ ruleId: "install-script.lifecycle", severity: "high" }),
@@ -405,6 +428,48 @@ describe("scan report JSON export", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { provenance: unknown };
     expect(body.provenance).toBeNull();
+  });
+
+  test("omits an internally inconsistent staged-tarball verdict", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const scanId = `scan_${crypto.randomUUID()}`;
+    const stageId = `stage-${scanId.slice(-12)}`;
+    await createScanJob(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+    });
+    await persistScan(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+      packageJson: { name: "@org/pkg", version: "1.1.0" },
+      risk: "low",
+      status: "complete",
+      summary: {
+        stagedPublish: {
+          artifactIntegrity: {
+            algorithm: "sha1",
+            status: "verified",
+            declared: "a".repeat(40),
+            computed: "b".repeat(40),
+          },
+        },
+      },
+      ai: null,
+      files: [],
+      diff: [],
+      findings: [],
+      report: { version: 1, digest: "abc123" },
+    });
+
+    const res = await getReport(buildTestApp(owner), scanId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { artifactIntegrity: unknown };
+    expect(body.artifactIntegrity).toBeNull();
   });
 
   test("omits provenance for a staged-publish scan with no gate details", async () => {

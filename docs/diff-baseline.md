@@ -42,11 +42,11 @@ Discovery treats `GET /-/stage` as an account-wide candidate list, not as proof 
 
 Completed scans persist:
 
-- `summary_json.stagedPublish` with the parsed staged metadata (`id`, package name, version, tag, actor/access/timestamp, and npm shasum when present);
+- `summary_json.stagedPublish` with the parsed staged metadata (`id`, package name, version, tag, actor/access/timestamp, and npm shasum when present) plus the staged-tarball verification verdict (`verified`, `mismatch`, or `unverified`, with the compared digests);
 - `summary_json.baseline` with selected version, staged tag, selection source, current dist-tag target, and reason;
 - the existing `scans.previous_version` column as the actual parsed version of the downloaded comparison tarball.
 
-The pipeline cross-checks staged detail package name/version against the staged tarball's `package.json`. A mismatch produces a critical deterministic finding (`stage.metadata-mismatch`) and suppresses tag-based baseline selection for that scan. The staged API also exposes a shasum, but the current sandbox does not hash the compressed tarball bytes, so shasum verification is recorded as future hardening rather than implemented.
+The pipeline cross-checks staged detail package name/version against the staged tarball's `package.json`. A mismatch produces a critical deterministic finding (`stage.metadata-mismatch`) and suppresses tag-based baseline selection for that scan. The sandbox also hashes the staged `.tgz` wire bytes with SHA-1 and compares them against the stage's `shasum`; a mismatch produces the critical `stage.tarball-digest-mismatch` finding. Because the tarball and stage record arrive from separate requests, a disagreement is checked against a fresh stage record before it becomes a finding; that fresh record also replaces the initial metadata snapshot for manifest merging, baseline selection, and persistence. Missing/invalid registry digests, incomplete downloads, archives beyond the digest cap, and unavailable mismatch confirmation remain `unverified` rather than being called mismatches. The scan workbench and downloadable report expose the verdict even when the stage-detail request itself failed, so a reviewer can distinguish verified evidence from an unbound review whenever no finding is raised.
 
 ## AI evidence budget impact
 

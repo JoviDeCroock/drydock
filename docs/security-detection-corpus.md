@@ -103,7 +103,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.21.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.22.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -275,6 +275,20 @@ like `*` rather than skipped, and `workspace:`/`catalog:`/`link:`/`portal:` prot
 directly only when both specs are exact registry version keys. Ranges render no direct link because
 their bounds need not have been published; added dependencies use the package-only route that resolves
 a published pair from registry metadata.
+`1.22.0` adds `stage.tarball-digest-mismatch` (critical, npm staged publishes): the sandbox now
+digests each archive's raw wire bytes and the staged adapter compares that digest against the
+`shasum` npm recorded for the stage. The rule exists because the file diff's strongest claim —
+"the publisher removed this file" — reads identically whether the publisher removed it or the
+download was truncated or substituted; the finding says the whole report describes a different
+artifact than the one being released. It is not a package-content rule and has no corpus fixture:
+the corpus engine runs over `FileRecord[]` and carries no stage metadata, so coverage lives in
+`test/staged-artifact-integrity.test.mjs`, `test/npm-acquire.test.mjs`, `test/scan-pipeline.test.mjs`,
+and the `tarball-digest-mismatch` e2e scenario. Verification fails to `unverified` (no finding)
+whenever either digest is missing — a registry that reports no `shasum`, or an archive the sandbox
+could not digest end to end — or a mismatch cannot be confirmed against a fresh stage record, so
+absence of evidence never reads as tampering. When that fresh record is available, it becomes the
+canonical metadata snapshot for the rest of the scan.
+
 `1.20.0` adds `package-json.entrypoint-missing`: a release whose manifest declares a `main`,
 `exports`, or `bin` path the artifact does not contain. The file diff can only say "this path is
 not in the staged tarball", which reads as ordinary content churn until a reviewer notices the

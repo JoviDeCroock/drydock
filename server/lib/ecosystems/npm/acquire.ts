@@ -1,7 +1,12 @@
 import { pickBaselineVersion } from "./registry";
 import { parseSandboxErrorDetail } from "../../sandbox";
+import { emitOperationalEvent } from "../../platform/observability";
 import type { PackageJsonSummary } from "../../review";
-import type { StagedPublishDetails } from "./staged-publishes";
+import {
+  evaluateStagedArtifactIntegrity,
+  type StagedArtifactIntegrity,
+} from "../artifact-integrity";
+import type { NpmStagedDetails, StagedPublishDetails } from "./staged-publishes";
 import type {
   AcquiredArtifact,
   AdapterContext,
@@ -24,10 +29,23 @@ export async function acquireStagedNpm(
   const downloadOpts: NpmBrokerDownloadOptions = {
     maxFiles: input.maxFiles,
   };
-  const [staged, stagedDetails] = await Promise.all([
+  const [staged, initialStagedDetails] = await Promise.all([
     broker.downloadStaged(input.stageId, downloadOpts),
     broker.fetchStagedDetails(input.stageId),
   ]);
+
+  // Bind the review to the bytes it reviewed before deriving any metadata from
+  // the stage record. A mismatch re-read may discover that the stage changed
+  // between the two initial requests, in which case every downstream field
+  // must come from the same fresh record as the integrity verdict.
+  const evaluated = await evaluateStagedArtifact(
+    broker,
+    input.stageId,
+    initialStagedDetails,
+    staged.archiveSha1,
+  );
+  const stagedDetails = evaluated.details;
+  const artifactIntegrity = evaluated.integrity;
 
   // If staged metadata disagrees with the tarball we cannot trust it, so we
   // drop its package.json contribution. The mismatch itself surfaces as a
@@ -38,13 +56,104 @@ export async function acquireStagedNpm(
     metadataIsTrustworthy ? (stagedDetails?.packageJson ?? null) : null,
   );
 
+  const packageName = mergedManifest?.name ?? stagedDetails?.packageName ?? null;
+  const version = mergedManifest?.version ?? stagedDetails?.version ?? null;
+  if (artifactIntegrity.status === "mismatch") {
+    emitOperationalEvent("warn", "scan.staged_artifact.digest_mismatch", {
+      stageId: input.stageId,
+      packageName,
+      version,
+      algorithm: artifactIntegrity.algorithm,
+      declaredDigest: artifactIntegrity.declared,
+      computedDigest: artifactIntegrity.computed,
+    });
+  } else if (artifactIntegrity.status === "unverified") {
+    // Verification silently covering nothing looks exactly like verification
+    // working, so an unprovable scan is reported too: a registry that stops
+    // returning digests, or a cap that starts biting, is a coverage outage
+    // rather than a per-scan curiosity.
+    emitOperationalEvent("info", "scan.staged_artifact.digest_unverified", {
+      stageId: input.stageId,
+      packageName,
+      version,
+      algorithm: artifactIntegrity.algorithm,
+      reason: artifactIntegrity.reason ?? null,
+    });
+  }
+
   return {
     artifact: {
       files: staged.files,
       manifest: mergedManifest,
       suspiciousTarEntries: staged.suspiciousEntries,
     },
-    details: stagedDetails as StagedDetails,
+    // Persist an explicit unverified verdict even when the registry's detail
+    // request failed. Otherwise a newly unbound scan is indistinguishable from
+    // a legacy scan that predates artifact verification.
+    details: withArtifactIntegrity(input.stageId, stagedDetails, artifactIntegrity),
+  };
+}
+
+interface EvaluatedStagedArtifact {
+  details: StagedPublishDetails | null;
+  integrity: StagedArtifactIntegrity;
+}
+
+/**
+ * Compare the downloaded bytes against npm's stage record, confirming a
+ * mismatch against a second read of the record before it becomes an
+ * accusation.
+ *
+ * The bytes and the digest they are checked against arrive from two
+ * independent requests, so a stage rewritten between them — or a replica
+ * serving a record from a different generation — would otherwise raise a
+ * critical finding about two artifacts that were each internally consistent.
+ * Only the disagreeing case pays for the extra fetch. If that confirmation is
+ * unavailable, the review remains explicitly unverified: the original pair of
+ * digests may describe two different generations of the same mutable stage.
+ */
+async function evaluateStagedArtifact(
+  broker: NpmBroker,
+  stageId: string,
+  stagedDetails: StagedPublishDetails | null,
+  computedSha1: string | null | undefined,
+): Promise<EvaluatedStagedArtifact> {
+  const verdict = evaluateStagedArtifactIntegrity(stagedDetails?.shasum, computedSha1);
+  if (verdict.status !== "mismatch") return { details: stagedDetails, integrity: verdict };
+  const confirmation = await broker.fetchStagedDetails(stageId);
+  if (!confirmation) {
+    return {
+      details: stagedDetails,
+      integrity: {
+        ...verdict,
+        status: "unverified",
+        reason: "stage-record-confirmation-unavailable",
+      },
+    };
+  }
+  return {
+    details: confirmation,
+    integrity: evaluateStagedArtifactIntegrity(confirmation.shasum, computedSha1),
+  };
+}
+
+function withArtifactIntegrity(
+  stageId: string,
+  details: StagedPublishDetails | null,
+  artifactIntegrity: StagedArtifactIntegrity,
+): NpmStagedDetails {
+  return {
+    id: details?.id ?? stageId,
+    packageName: details?.packageName ?? null,
+    version: details?.version ?? null,
+    tag: details?.tag ?? null,
+    access: details?.access ?? null,
+    actor: details?.actor ?? null,
+    actorType: details?.actorType ?? null,
+    createdAt: details?.createdAt ?? null,
+    shasum: details?.shasum ?? null,
+    packageJson: details?.packageJson ?? null,
+    artifactIntegrity,
   };
 }
 

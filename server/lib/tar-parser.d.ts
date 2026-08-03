@@ -67,6 +67,20 @@ export interface Sha256Digester {
   finalize(): Promise<string>;
 }
 export function createSha256Digester(): Sha256Digester;
+export function createDigester(algorithm: string): Sha256Digester;
+
+export interface ArchiveDigestStream {
+  body: ReadableStream<Uint8Array>;
+  /** Hex digest of the whole wire stream, or null when it could not be verified. */
+  digest(): Promise<string | null>;
+  /** Cancel the source without draining it when archive parsing failed. */
+  abort(): Promise<void>;
+}
+export function digestArchiveStream(
+  body: ReadableStream<Uint8Array>,
+  maxBytes: number,
+  algorithm?: string,
+): ArchiveDigestStream;
 
 export interface StreamCursor {
   fill(target: number): Promise<boolean>;

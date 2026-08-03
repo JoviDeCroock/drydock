@@ -3,6 +3,7 @@ import { normalizeRegistryUrl, type NormalizeRegistryUrlOptions } from "./connec
 import { reliableFetch } from "../../platform/reliable-fetch";
 import { normalizePeerDependenciesMeta, normalizeStringRecord } from "../../tar-parser.js";
 import type { PackageJsonSummary } from "../../review";
+import type { StagedArtifactIntegrity } from "../artifact-integrity";
 import { isValidStageId } from "./stage-id";
 
 export interface StagedPublishItem {
@@ -19,6 +20,15 @@ export interface StagedPublishItem {
 
 export interface StagedPublishDetails extends StagedPublishItem {
   packageJson: PackageJsonSummary | null;
+}
+
+/**
+ * Staged metadata as the npm adapter carries it through a scan: the registry's
+ * own stage record plus the byte-verification verdict computed for it. Only
+ * the adapter reads this shape — the pipeline treats staged details as opaque.
+ */
+export interface NpmStagedDetails extends StagedPublishDetails {
+  artifactIntegrity: StagedArtifactIntegrity;
 }
 
 export interface StagedPublishesPage {

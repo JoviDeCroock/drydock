@@ -45,6 +45,8 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.describeNonRegularType,
   tarParser.sha256Hex,
   tarParser.createSha256Digester,
+  tarParser.createDigester,
+  tarParser.digestArchiveStream,
   tarParser.createStreamCursor,
   tarParser.shouldSkipTextSample,
   tarParser.sniffNativeArtifact,
@@ -141,6 +143,14 @@ export interface DownloadResult {
   files: FileRecord[];
   packageJson?: PackageJsonSummary | null;
   suspiciousEntries?: TarSuspiciousEntry[];
+  /**
+   * SHA-1 of the archive's raw wire bytes — the same digest npm publishes as
+   * `shasum` — so a caller can prove the bytes it reviewed are the bytes the
+   * registry recorded. Null when the sandbox could not observe the whole
+   * stream (cancelled, errored, or larger than the digest cap), which callers
+   * must treat as "unverified", never as a mismatch.
+   */
+  archiveSha1?: string | null;
 }
 
 export interface DownloadOptions {
@@ -405,6 +415,15 @@ export default {
       if (archiveFormat === "vsix" && contentLength > maxTarBytes) return json({ error: "tarball too large", status: 413 }, 413);
     }
     const maxStreamTarBytes = env.MAX_STREAM_TAR_BYTES || maxTarBytes * 10;
+    // Digest the wire bytes before anything decompresses or parses them, so
+    // the caller can tell "the publisher removed these files" from "we did not
+    // receive the whole artifact". The wrapper drains the source itself when a
+    // parser stops early, and yields null rather than a partial digest. The cap
+    // is the wire budget the parsers already read under (maxTarBytes only bounds
+    // *decompressed* bytes), so verification covers every archive the sandbox is
+    // willing to review instead of switching itself off above 1/10th of it.
+    if (!res.body) return json({ error: "archive download failed", status: 400 }, 400);
+    const archive = digestArchiveStream(res.body, maxStreamTarBytes);
     if (archiveFormat === "vsix") {
       // VSIX zips are packed by yazl (via vsce), whose streamed entries carry
       // their sizes in data descriptors — only the central directory (what
@@ -412,8 +431,9 @@ export default {
       // wire cap and is parsed CD-first, exactly as before zip streaming.
       let zip;
       try {
-        zip = await readStreamBounded(res.body, maxTarBytes);
+        zip = await readStreamBounded(archive.body, maxTarBytes);
       } catch (err) {
+        await archive.abort();
         const reason = err && err.message === "archive too large" ? "archive too large" : "archive download failed";
         const status = reason === "archive too large" ? 413 : 400;
         return json({ error: reason, status }, status);
@@ -430,21 +450,22 @@ export default {
         files = parsed.files;
         suspiciousEntries = parsed.suspicious;
       } catch (err) {
+        await archive.abort();
         const reason = err && err.tarSafety && err.message ? err.message : "zip parse failed";
         const status = reason === "archive contains too many files" || reason === "archive expands beyond safety limit" ? 413 : 400;
         return json({ error: reason, status }, status);
       }
-      return json({ files, packageJson: null, suspiciousEntries });
+      return json({ files, packageJson: null, suspiciousEntries, archiveSha1: await archive.digest() });
     }
     if (archiveFormat === "zip") {
       let files;
       let suspiciousEntries;
       try {
-        if (!res.body) return json({ error: "archive download failed", status: 400 }, 400);
-        const parsed = await readZipStream(res.body, env.MAX_FILES || 2_500, maxTarBytes, maxStreamTarBytes, env.MAX_ENTRIES || env.MAX_FILES || 2_500);
+        const parsed = await readZipStream(archive.body, env.MAX_FILES || 2_500, maxTarBytes, maxStreamTarBytes, env.MAX_ENTRIES || env.MAX_FILES || 2_500);
         files = parsed.files;
         suspiciousEntries = parsed.suspicious;
       } catch (err) {
+        await archive.abort();
         // The parser tags its own safety-limit / malformed-archive errors, so
         // anything untagged is an upstream stream failure. This avoids
         // matching on exact message text, which silently drifts on a reword.
@@ -452,21 +473,21 @@ export default {
         const status = reason === "archive contains too many files" || reason === "archive expands beyond safety limit" ? 413 : 400;
         return json({ error: reason, status }, status);
       }
-      return json({ files, packageJson: null, suspiciousEntries });
+      return json({ files, packageJson: null, suspiciousEntries, archiveSha1: await archive.digest() });
     }
 
     let files;
     let suspiciousEntries;
     try {
-      if (!res.body) return json({ error: "tarball decompression failed", status: 400 }, 400);
       // Cap the compressed wire bytes too: gzip can decode a huge input to
       // almost nothing, so the decompressed budget inside readTarStream does
       // not bound download size or inflater CPU on its own.
-      const tarStream = boundedByteStream(res.body, maxStreamTarBytes).pipeThrough(new DecompressionStream("gzip"));
+      const tarStream = boundedByteStream(archive.body, maxStreamTarBytes).pipeThrough(new DecompressionStream("gzip"));
       const parsed = await readTarStream(tarStream, env.MAX_FILES || 2_500, maxTarBytes, maxStreamTarBytes, env.MAX_ENTRIES || env.MAX_FILES || 2_500);
       files = parsed.files;
       suspiciousEntries = parsed.suspicious;
     } catch (err) {
+      await archive.abort();
       // The parser tags its own safety-limit / malformed-archive errors, so
       // anything untagged is an upstream gzip/stream failure. This avoids
       // matching on exact message text, which silently drifts on a reword.
@@ -475,7 +496,7 @@ export default {
       return json({ error: reason, status }, status);
     }
     const packageJson = parsePackageJson(files);
-    return json({ files, packageJson, suspiciousEntries });
+    return json({ files, packageJson, suspiciousEntries, archiveSha1: await archive.digest() });
   },
 };
 
