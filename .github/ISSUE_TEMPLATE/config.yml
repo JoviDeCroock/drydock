@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a vulnerability privately
+    url: https://github.com/JoviDeCroock/drydock/security/advisories/new
+    about: Do not disclose vulnerabilities or sensitive package evidence in a public issue.

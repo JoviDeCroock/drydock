@@ -1,0 +1,25 @@
+name: Feature request
+description: Propose an improvement to Drydock
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What release-review problem should Drydock solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the desired behavior and the maintainer workflow it supports.
+    validations:
+      required: true
+  - type: textarea
+    id: trust-boundary
+    attributes:
+      label: Trust-boundary considerations
+      description: Note any credential, artifact, sandbox, organization, or publication boundary involved.

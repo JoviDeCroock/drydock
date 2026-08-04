@@ -1,15 +1,17 @@
 // Wrangler configuration template for self-hosting Drydock on your own
-// Cloudflare account. Copy this to `wrangler.jsonc` and replace every
+// Cloudflare account. Copy this to `wrangler.self-host.jsonc` and replace every
 // REPLACE_* placeholder with values from your account. See
 // `docs/self-hosting.md` for the full walkthrough.
 //
-// The canonical `wrangler.jsonc` in this repo targets the maintainers'
-// production deployment; do not deploy with it. Fork from this template.
+// `wrangler.self-host.jsonc` is gitignored. Pass it explicitly to Wrangler for
+// resource and secret commands, and set CLOUDFLARE_VITE_WRANGLER_CONFIG_PATH
+// when running Vite. Deploy the generated config under `dist/`, not this source
+// config, so the built Worker modules and static asset directory are included.
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	// Worker service name. Kept as `staged-publish-review` so the `db:migrate:*`
-	// scripts in package.json (which target the D1 database `staged-publish-review`)
-	// work unchanged. Rename both together if you prefer a different name.
+	// Worker service name. The self-hosting commands and generated deploy-config
+	// path assume this value. If you rename it, update the D1 database name and
+	// generated `dist/<normalized-name>/wrangler.json` path together.
 	"name": "staged-publish-review",
 	"main": "./server/index.ts",
 	"compatibility_date": "2026-05-20",
@@ -65,6 +67,8 @@
 			"migrations_dir": "drizzle"
 		}
 	],
+	// Optional: public-diff metadata cache. Remove this block to use uncached
+	// public-registry reads.
 	"kv_namespaces": [
 		{
 			"binding": "COMPARE_CACHE",
@@ -72,12 +76,16 @@
 			"id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
 		}
 	],
+	// Optional: persisted canonical reports and redacted evidence. Remove this
+	// block to keep completed scan results in D1 only.
 	"r2_buckets": [
 		{
 			"binding": "ARTIFACTS",
 			"bucket_name": "staged-publish-review-artifacts"
 		}
 	],
+	// Optional: asynchronous scan execution and retries. Without this block,
+	// requests enqueue work with the Worker's waitUntil fallback.
 	"queues": {
 		"producers": [
 			{
@@ -96,6 +104,7 @@
 			}
 		]
 	},
+	// Optional: outbound email notifications. Remove when email is not configured.
 	"send_email": [
 		{
 			"name": "SEND_EMAIL"

@@ -3,9 +3,6 @@
     "allow": [
       "Bash(pnpm test *)",
       "Bash(pnpm dev *)",
-      "Bash(/Users/jovi/.claude/skills/gstack/browse/dist/browse goto *)",
-      "Bash(/Users/jovi/.claude/skills/gstack/browse/dist/browse screenshot *)",
-      "Bash(/Users/jovi/.claude/skills/gstack/browse/dist/browse snapshot *)",
       "Read(//tmp/**)",
       "Read(//private/tmp/**)"
     ]

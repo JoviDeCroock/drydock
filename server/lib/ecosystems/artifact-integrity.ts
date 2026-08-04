@@ -22,9 +22,9 @@
  * `evaluateStagedArtifactIntegrity` and exposes it from `summarizeDetails`.
  */
 
-export type StagedArtifactIntegrityStatus = "verified" | "mismatch" | "unverified";
+type StagedArtifactIntegrityStatus = "verified" | "mismatch" | "unverified";
 
-export type StagedArtifactIntegrityReason =
+type StagedArtifactIntegrityReason =
   /** The registry did not report a digest for this staged artifact. */
   | "declared-digest-missing"
   /** The sandbox could not digest the whole stream (cancelled, errored, or over the cap). */

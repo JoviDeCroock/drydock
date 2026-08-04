@@ -190,7 +190,7 @@ The "Why review a publish" section grounds the pitch in real, named supply-chain
 
 ### The closing CTA (landing)
 
-The page ends with a `Get started` section (the marketing page's only Display 2 heading outside the hero): `SectionLabel`, `32px / 600 / -0.02em` heading, one `14px / --fg-muted` sentence, the same primary/secondary button pair as the hero, and a `MonoDetail` trust line (`free for open-source maintainers · read-only tokens · you keep the final approval`). No banner treatment, no background fill, no extra `border-t` — the `SectionLabel` rule is the divider, like every other section.
+The page ends with a `Get started` section (the marketing page's only Display 2 heading outside the hero): `SectionLabel`, `32px / 600 / -0.02em` heading, one `14px / --fg-muted` sentence, the same primary/secondary button pair as the hero, and a `MonoDetail` trust line (`read-only tokens · you keep the final approval`). No banner treatment, no background fill, no extra `border-t` — the `SectionLabel` rule is the divider, like every other section.
 
 ### Canonical widths
 

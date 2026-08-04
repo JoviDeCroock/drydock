@@ -143,7 +143,7 @@ export const TEMPLATES = {
       ``,
       `Diff, if you want to read it yourself: ${url}`,
       ``,
-      `Free, no account. It is the same review Drydock runs before a publish goes out, pointed at two versions that are already public.`,
+      `No account required. It is the same review Drydock runs before a publish goes out, pointed at two versions that are already public.`,
     ].join("\n");
   },
 

@@ -24,5 +24,20 @@ NPM_CONNECTIONS_ENCRYPTION_KEY=replace-with-a-random-32-byte-secret
 # DISABLE_SECURITY_HEADERS=true
 
 # The AI reviewer is gated by the Cloudflare Flagship flag `ai-review` in the
-# `drydock` app (see the `flagship` binding in wrangler.jsonc). Toggle it from
-# the Cloudflare dashboard; there is no .dev.vars override.
+# `drydock` app (see the `flagship` binding in the selected Wrangler config).
+# Toggle it from the Cloudflare dashboard; there is no .dev.vars override.
+
+# Optional GitHub App workflow-gate integration. Public identifiers normally
+# live in the selected Wrangler config; keep secrets in .dev.vars locally or in
+# Wrangler secrets when deployed.
+# GITHUB_APP_ID=replace-with-your-app-id
+# GITHUB_APP_SLUG=replace-with-your-app-slug
+# GITHUB_APP_CLIENT_ID=replace-with-your-client-id
+# GITHUB_APP_CLIENT_SECRET=replace-with-your-client-secret
+# GITHUB_APP_PRIVATE_KEY=replace-with-your-pem-private-key
+# GITHUB_APP_WEBHOOK_SECRET=replace-with-your-webhook-secret
+# GITHUB_APP_STATE_SECRET=replace-with-a-random-32-byte-secret
+
+# Optional Slack notifications.
+# SLACK_CLIENT_ID=replace-with-your-client-id
+# SLACK_CLIENT_SECRET=replace-with-your-client-secret

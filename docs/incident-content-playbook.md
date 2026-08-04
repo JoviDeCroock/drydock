@@ -64,7 +64,7 @@ Concretely:
 - Lead with the change, not with the product. "`chalk` 5.6.1 added a postinstall script that is not in 5.6.0" is the story. "Drydock detected…" is not.
 - One screenshot of the actual hunk. Not a dashboard, not a findings list — the lines that changed.
 - Say what a reader should do. A post that only alarms is noise; a post that ends in "pin back to X and rotate Y" is useful.
-- Mention "free, no account" once. That is the friction the reader is silently pricing, and it is the reason the link is worth clicking.
+- Mention "no account required" once so readers know the public diff opens immediately.
 
 ## Frequency
 

@@ -9,8 +9,9 @@ integrations.
 
 - Node `22.14.0+`
 - pnpm `11.1.1`
-- A Cloudflare account with Workers, D1, R2, KV, Queues, Workers AI, and Worker
-  Loaders available
+- A Cloudflare account with Workers, D1, and Worker Loaders available
+- Optional Cloudflare services for the corresponding features: R2, KV, Queues,
+  Workers AI, Analytics Engine, Email Routing, and Flagship
 - An npm access token for each organization that will review staged npm
   publishes
 - Optional: a GitHub App for workflow gates
@@ -44,11 +45,17 @@ before scanning staged publishes.
 
 ## Cloudflare resources
 
-Create the required resources and copy their IDs into `wrangler.jsonc` or your
-environment-specific Wrangler config:
+Create the required D1 database:
 
 ```sh
 pnpm exec wrangler d1 create staged-publish-review
+```
+
+The template also enables the optional queue, KV cache, and R2 artifact store.
+Create those resources for the full configuration, or remove their binding
+blocks from your self-host config:
+
+```sh
 pnpm exec wrangler queues create staged-publish-review-scans
 pnpm exec wrangler queues create staged-publish-review-scans-dlq
 pnpm exec wrangler kv namespace create COMPARE_CACHE
@@ -56,20 +63,19 @@ pnpm exec wrangler r2 bucket create staged-publish-review-artifacts
 ```
 
 The checked-in `wrangler.jsonc` targets the maintainers' production deployment.
-Do not deploy from it. In your own fork, replace the contents of `wrangler.jsonc`
-with `wrangler.template.jsonc` and fill in your account values:
+Do not deploy from it. Copy the public template to the gitignored self-host path
+and fill in your account values:
 
 ```sh
-cp wrangler.template.jsonc wrangler.jsonc
+cp wrangler.template.jsonc wrangler.self-host.jsonc
 ```
 
-`wrangler.jsonc` is tracked in git, so this leaves your fork with account-specific
-edits in a tracked file. That is expected for a fork; just do not include those
-edits in pull requests you send back upstream.
+Keep `wrangler.self-host.jsonc` local. It is ignored by git so account IDs,
+domains, integration client IDs, and deployment choices cannot accidentally
+replace the upstream production configuration in a pull request.
 
-`wrangler.template.jsonc` keeps the production resource names (so the
-`db:migrate:*` scripts work unchanged) and marks every account-owned value with a
-`REPLACE_*` placeholder. Replace at least:
+`wrangler.template.jsonc` keeps the default resource names and marks every
+account-owned value with a `REPLACE_*` placeholder. Replace at least:
 
 - `d1_databases[].database_id` and `kv_namespaces[].id`;
 - custom `routes` with your own custom domain, or remove `routes` and use the
@@ -84,10 +90,12 @@ edits in pull requests you send back upstream.
 Keep the queue consumer `max_retries` and `dead_letter_queue` settings aligned
 with `MAX_SCAN_JOB_ATTEMPTS` in `server/lib/scan/job.ts`.
 
-Apply migrations after the D1 database ID is configured:
+Apply migrations after the D1 database ID is configured, always passing the
+self-host config explicitly:
 
 ```sh
-pnpm run db:migrate:remote
+pnpm exec wrangler d1 migrations apply staged-publish-review --remote \
+  --config wrangler.self-host.jsonc
 ```
 
 ## Secrets and vars
@@ -95,8 +103,9 @@ pnpm run db:migrate:remote
 Set required secrets with Wrangler:
 
 ```sh
-pnpm exec wrangler secret put BETTER_AUTH_SECRET
-pnpm exec wrangler secret put NPM_CONNECTIONS_ENCRYPTION_KEY
+pnpm exec wrangler secret put BETTER_AUTH_SECRET --config wrangler.self-host.jsonc
+pnpm exec wrangler secret put NPM_CONNECTIONS_ENCRYPTION_KEY \
+  --config wrangler.self-host.jsonc
 ```
 
 Required non-secret vars:
@@ -110,18 +119,35 @@ Optional integrations:
 
 - Email: `SEND_EMAIL` binding plus `EMAIL_FROM_ADDRESS` and `EMAIL_FROM_NAME`
 - GitHub App: `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`,
-  `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET`
+  `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET`,
+  and optional `GITHUB_APP_STATE_SECRET` (otherwise `BETTER_AUTH_SECRET` is used)
 - Slack: `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`
 
 Do not commit `.dev.vars`, private keys, tokens, or generated credential
 material.
 
-## Deploy
+## Run with the self-host config
+
+Use the same explicit config for local validation:
 
 ```sh
-pnpm run build
-pnpm run deploy
+CLOUDFLARE_VITE_WRANGLER_CONFIG_PATH=wrangler.self-host.jsonc pnpm run dev
 ```
+
+## Deploy
+
+Build with the self-host source config. The Cloudflare Vite plugin writes a
+deployable config containing the compiled Worker modules and static asset
+directory under `dist/staged_publish_review/`. Deploy that generated config;
+deploying `wrangler.self-host.jsonc` directly omits the Vite build output.
+
+```sh
+CLOUDFLARE_VITE_WRANGLER_CONFIG_PATH=wrangler.self-host.jsonc pnpm run build
+pnpm exec wrangler deploy --config dist/staged_publish_review/wrangler.json
+```
+
+If you change the Worker `name` in `wrangler.self-host.jsonc`, use the matching
+normalized directory name under `dist/` for the generated config.
 
 After deploying:
 

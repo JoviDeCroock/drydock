@@ -26,7 +26,7 @@ import { safeJson } from "./review/rules/helpers";
 
 export type IntentEnvelopeTier = "attested" | "declared" | "absent";
 
-export interface IntentEnvelopeSignal {
+interface IntentEnvelopeSignal {
   kind: string;
   detail: string;
 }

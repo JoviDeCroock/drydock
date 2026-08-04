@@ -12,7 +12,7 @@ export const SANDBOX_MAX_FILES = 2_500;
 // bounded by the stream-byte budget below. Sized for big-but-honest sdists —
 // numpy vendors its whole build system (8k+ files) — while staying under the
 // zip EOCD 16-bit entry count.
-export const SANDBOX_MAX_ENTRIES = 20_000;
+const SANDBOX_MAX_ENTRIES = 20_000;
 const SANDBOX_MAX_TAR_BYTES = 25 * 1024 * 1024;
 // Total decompressed bytes the streaming tar reader may consume. Bodies beyond
 // the retention budget (SANDBOX_MAX_TAR_BYTES) are skipped, not buffered, so

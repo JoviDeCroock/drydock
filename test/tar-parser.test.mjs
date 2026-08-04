@@ -1563,6 +1563,7 @@ describe("rendered sandbox parser source", () => {
 
   test("every required parser export keeps its function name", () => {
     for (const name of SANDBOX_EXPORT_NAMES) {
+      // oxlint-disable-next-line import/namespace -- this test intentionally verifies the dynamic export contract.
       const fn = tarParser[name];
       expect(typeof fn, `${name} must be exported`).toBe("function");
       expect(fn.name, `${name} must keep its declared name`).toBe(name);
@@ -1570,6 +1571,7 @@ describe("rendered sandbox parser source", () => {
   });
 
   test("concatenated source parses and runs without module-level dependencies", () => {
+    // oxlint-disable-next-line import/namespace -- every export name is exercised from the contract list above.
     const source = SANDBOX_EXPORT_NAMES.map((name) => tarParser[name].toString()).join("\n\n");
     for (const name of SANDBOX_EXPORT_NAMES) {
       expect(source).toContain(`function ${name}`);

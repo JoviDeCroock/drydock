@@ -15,7 +15,7 @@ Supported gate ecosystems: **PyPI**, **npm**, and **VS Code extensions**. Shared
 7. A maintainer accepts or rejects the gate review in Drydock.
 8. Drydock posts the deployment-protection decision back to GitHub; the workflow either continues to publish or fails closed.
 
-The GitHub webhook is public but signed with `GITHUB_WEBHOOK_SECRET` and bypasses Better Auth only after signature verification. All stored gate state remains organization-scoped.
+The GitHub webhook is public but signed with `GITHUB_APP_WEBHOOK_SECRET` and bypasses Better Auth only after signature verification. All stored gate state remains organization-scoped.
 
 ## Shared implementation
 
