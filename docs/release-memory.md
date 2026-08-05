@@ -2,9 +2,9 @@
 
 Release memory tells a reviewer when the scan they are looking at has the same
 deterministic finding profile as a release the organization already reviewed
-and approved. It exists to cut alert fatigue: benign packages like `tape`
-trigger the same high-severity capability findings on every release (test
-runners legitimately spawn processes), and without context each new scan
+and approved. It exists to cut alert fatigue: benign packages such as test
+runners trigger the same high-severity capability findings on every release
+(spawning processes is their declared purpose), and without context each new scan
 presents those findings as if they were novel.
 
 ## What it does

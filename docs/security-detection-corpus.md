@@ -144,8 +144,8 @@ test-path classification with reachability weighting: a `code.*` capability hit 
 (`main`/`module`/`browser`/`exports`/`bin`) and no lifecycle script target can statically reach
 (the reachability walk seeds from both, so files transitively imported by an install hook count)
 is demoted one severity step, marked `testScoped`, and excluded from the capability co-occurrence
-escalation (the `test-suite-capabilities` golden case and `legit-test-suite-tape` benign
-hard-negative — a tape-shaped test runner whose shipped tests exec, read env, and eval). Findings are
+escalation (the `test-suite-capabilities` golden case and `legit-test-suite-runner` benign
+hard-negative — a test runner whose shipped tests exec, read env, and eval). Findings are
 demoted, never dropped: obfuscated matches, lifecycle-reachable files (directly named or
 transitively imported by an install hook), entrypoint-reachable files, and
 same-file credential→network exfiltration chains all keep full severity. The release-delta annotator

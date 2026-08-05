@@ -2,7 +2,7 @@
   "id": "test-suite-capabilities",
   "title": "Shipped test suite spawns processes, reads env, and uses eval-ish constructs",
   "category": "benign-control",
-  "intent": "A test-runner-shaped package (tape-like) ships its own test/ tree where tests legitimately exec processes, read process.env, and exercise dynamic evaluation. Capability findings in unreachable test files must survive at demoted, test-scoped severity and must not co-occur into a high-risk roll-up.",
+  "intent": "A test-runner-shaped package ships its own test/ tree where tests legitimately exec processes, read process.env, and exercise dynamic evaluation. Capability findings in unreachable test files must survive at demoted, test-scoped severity and must not co-occur into a high-risk roll-up.",
   "previousPackageJson": {
     "name": "test-runner",
     "version": "5.0.0",

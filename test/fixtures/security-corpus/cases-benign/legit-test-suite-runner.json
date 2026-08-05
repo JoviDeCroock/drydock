@@ -1,24 +1,24 @@
 {
-  "id": "legit-test-suite-tape",
+  "id": "legit-test-suite-runner",
   "title": "Test runner ships a test/ tree that execs, reads env, and evals (benign hard-negative)",
   "ecosystem": "npm",
   "verdict": "benign",
   "threatClass": "legit-test-suite",
   "source": "benign-popular",
-  "intent": "A tape-shaped test runner publishes its own test suite inside the tarball. The tests legitimately spawn child processes, read process.env, and exercise dynamic evaluation across many files. None of the test files are reachable from the consumer entrypoint or bin, so the capability findings must demote to test-scoped severities and the risk roll-up must stay below medium.",
+  "intent": "A test runner publishes its own test suite inside the tarball. The tests legitimately spawn child processes, read process.env, and exercise dynamic evaluation across many files. None of the test files are reachable from the consumer entrypoint or bin, so the capability findings must demote to test-scoped severities and the risk roll-up must stay below medium.",
   "expectMinRisk": "low",
   "expectAnyRule": [],
   "previousPackageJson": {
-    "name": "tape-like",
+    "name": "spec-like",
     "version": "5.9.0",
     "main": "index.js",
-    "bin": { "tape-like": "bin/tape-like" }
+    "bin": { "spec-like": "bin/spec-like" }
   },
   "stagedPackageJson": {
-    "name": "tape-like",
+    "name": "spec-like",
     "version": "5.9.1",
     "main": "index.js",
-    "bin": { "tape-like": "bin/tape-like" }
+    "bin": { "spec-like": "bin/spec-like" }
   },
   "previousFiles": [
     {
@@ -26,7 +26,7 @@
       "size": 110,
       "sha256": "prev-package-json",
       "flags": [],
-      "textSample": "{\"name\":\"tape-like\",\"version\":\"5.9.0\",\"main\":\"index.js\",\"bin\":{\"tape-like\":\"bin/tape-like\"}}"
+      "textSample": "{\"name\":\"spec-like\",\"version\":\"5.9.0\",\"main\":\"index.js\",\"bin\":{\"spec-like\":\"bin/spec-like\"}}"
     },
     {
       "path": "index.js",
@@ -43,7 +43,7 @@
       "textSample": "module.exports = function test(name, cb) { cb(); };\n"
     },
     {
-      "path": "bin/tape-like",
+      "path": "bin/spec-like",
       "size": 80,
       "sha256": "bin-v1",
       "flags": [],
@@ -54,21 +54,21 @@
       "size": 160,
       "sha256": "test-exit-v1",
       "flags": [],
-      "textSample": "const { spawn } = require('child_process');\nconst tape = require('../index.js');\nspawn('node', ['--version']);\n"
+      "textSample": "const { spawn } = require('child_process');\nconst spec = require('../index.js');\nspawn('node', ['--version']);\n"
     },
     {
       "path": "test/todo.js",
       "size": 120,
       "sha256": "test-todo-v1",
       "flags": [],
-      "textSample": "const tape = require('../index.js');\nif (process.env.TODO_DEBUG) console.log('debug');\n"
+      "textSample": "const spec = require('../index.js');\nif (process.env.TODO_DEBUG) console.log('debug');\n"
     },
     {
-      "path": "test/too_many.js",
+      "path": "test/dynamic.js",
       "size": 130,
-      "sha256": "test-too-many-v1",
+      "sha256": "test-dynamic-v1",
       "flags": [],
-      "textSample": "const tape = require('../index.js');\nconst fn = new Function('return 1');\nfn();\n"
+      "textSample": "const spec = require('../index.js');\nconst fn = new Function('return 1');\nfn();\n"
     }
   ],
   "stagedFiles": [
@@ -77,7 +77,7 @@
       "size": 110,
       "sha256": "staged-package-json",
       "flags": [],
-      "textSample": "{\"name\":\"tape-like\",\"version\":\"5.9.1\",\"main\":\"index.js\",\"bin\":{\"tape-like\":\"bin/tape-like\"}}"
+      "textSample": "{\"name\":\"spec-like\",\"version\":\"5.9.1\",\"main\":\"index.js\",\"bin\":{\"spec-like\":\"bin/spec-like\"}}"
     },
     {
       "path": "index.js",
@@ -94,7 +94,7 @@
       "textSample": "module.exports = function test(name, cb) { cb(); };\n"
     },
     {
-      "path": "bin/tape-like",
+      "path": "bin/spec-like",
       "size": 80,
       "sha256": "bin-v1",
       "flags": [],
@@ -105,21 +105,21 @@
       "size": 160,
       "sha256": "test-exit-v1",
       "flags": [],
-      "textSample": "const { spawn } = require('child_process');\nconst tape = require('../index.js');\nspawn('node', ['--version']);\n"
+      "textSample": "const { spawn } = require('child_process');\nconst spec = require('../index.js');\nspawn('node', ['--version']);\n"
     },
     {
       "path": "test/todo.js",
       "size": 120,
       "sha256": "test-todo-v1",
       "flags": [],
-      "textSample": "const tape = require('../index.js');\nif (process.env.TODO_DEBUG) console.log('debug');\n"
+      "textSample": "const spec = require('../index.js');\nif (process.env.TODO_DEBUG) console.log('debug');\n"
     },
     {
-      "path": "test/too_many.js",
+      "path": "test/dynamic.js",
       "size": 130,
-      "sha256": "test-too-many-v1",
+      "sha256": "test-dynamic-v1",
       "flags": [],
-      "textSample": "const tape = require('../index.js');\nconst fn = new Function('return 1');\nfn();\n"
+      "textSample": "const spec = require('../index.js');\nconst fn = new Function('return 1');\nfn();\n"
     }
   ]
 }
