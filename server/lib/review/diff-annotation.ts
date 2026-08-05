@@ -26,6 +26,10 @@ export function annotateFindingsWithDiffStatus<
     line?: number | null;
     ruleId?: string | null;
     severity?: string | null;
+    // "ai" marks an assistant finding, whose `line` is an anchor-resolved
+    // display coordinate rather than rule-matched evidence. See
+    // `isFindingOnReleaseDelta`.
+    source?: string | null;
   },
 >(
   findings: T[],
@@ -123,7 +127,7 @@ function parsePackageJsonFile(
 }
 
 function isFindingOnReleaseDelta(
-  finding: { file: string; line?: number | null; ruleId?: string | null },
+  finding: { file: string; line?: number | null; ruleId?: string | null; source?: string | null },
   diffStatus: FindingDiffStatus,
   previousByPath: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
   stagedByPath: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
@@ -133,12 +137,21 @@ function isFindingOnReleaseDelta(
 ): boolean {
   if (diffStatus === "added") return true;
   if (diffStatus !== "modified") return false;
+  // An AI finding carries an anchor-resolved line for display only: the reviewer
+  // pins a concern to the clearest line illustrating it, which for a whole-file
+  // or manifest-wide argument is often a line the release never touched. Reading
+  // that coordinate as line-level evidence would move the finding out of the
+  // release bucket the workflow gate scores — a display feature quietly lowering
+  // `releaseRisk`. AI findings therefore stay scoped by file, exactly as they
+  // were before anchors existed. Deterministic lines come from the rule that
+  // matched, so they keep scoping.
+  const line = finding.source === "ai" ? null : finding.line;
   // When line-level evidence is unavailable (no recorded line, binary file, or
   // missing text samples), fall back to the baseline finding set: if the same
   // rule already fired on the same file in the baseline version, the capability
   // pre-existed the release and reads as package context. Without a baseline
   // counterpart the classification still fails open to release delta.
-  if (!finding.line) return !baselineHasFinding(baselineFingerprints, finding);
+  if (!line) return !baselineHasFinding(baselineFingerprints, finding);
 
   const changedLines = changedStagedLinesForPath(
     finding.file,
@@ -147,7 +160,7 @@ function isFindingOnReleaseDelta(
     changedLineCache,
   );
   if (!changedLines) return !baselineHasFinding(baselineFingerprints, finding);
-  if (changedLines.has(finding.line)) return true;
+  if (changedLines.has(line)) return true;
   return findingPatternMatchesChangedLine(
     finding,
     stagedByPath.get(finding.file)?.textSample,

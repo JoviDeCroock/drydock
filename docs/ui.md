@@ -52,6 +52,14 @@ move it into `src/features/` instead.
 - Use severity stacked bars for risk distribution; avoid decorative charts.
 - Icons are text glyphs only; no SVG icon libraries.
 
+## Diff annotations
+
+`DiffView` pins every annotation for a file beneath the staged line it references (`src/components/diff-annotations.ts`), and anything it cannot pin — no line, or a line past a truncated or windowed sample — falls back to a banner above the hunks so a signal is never hidden. Three kinds share that machinery:
+
+- **Deterministic findings** — captioned `<ruleId> · line N`, tinted by severity.
+- **Assistant findings** — captioned `assistant · line N` (they have no ruleId), tinted by severity like any other finding. Their line is resolved server-side from an anchor the reviewer copied out of the evidence; see [`release-safety.md`](release-safety.md).
+- **Assistant comments** — advisory notes carrying no severity, badged `assistant note` and rendered in the neutral info tone rather than a severity colour, because a note is not a signal. They are inline-only: they never appear in Risk signals, the file-tree counts, or the risk summary.
+
 ## Large diffs
 
 `DiffView` must stay responsive on megabyte-scale bundled artifacts (e.g. vite's 1.3 MiB `dist/node/chunks/node.js`):

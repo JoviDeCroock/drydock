@@ -16,6 +16,7 @@ import {
   listFilesInputSchema,
   type AiReviewSubmission,
 } from "./contract";
+import { resolveAnchorLine } from "./anchors";
 import type { DiffEntry, FileRecord } from "../review";
 import { nativeFormatLabel } from "../review/rules/binaries";
 import type { SelectiveAiReviewOptions } from "./types";
@@ -294,6 +295,41 @@ export function createAiReviewTools(
     }),
   };
 }
+
+export interface ResolvedAnchor {
+  /** The package-relative path as the diff and the file tree spell it. */
+  file: string;
+  /** 1-based line in the staged text, or null when the anchor did not pin. */
+  line: number | null;
+}
+
+/**
+ * Resolve a submitted `(file, anchor)` pair against the exact evidence the model
+ * was served, so a note can be pinned to a diff line.
+ *
+ * Returns null when the path is not one this review could see at all — that is a
+ * fabricated citation, not a near miss. A real path with an unusable anchor
+ * still resolves, with `line: null`, because the note itself is worth keeping.
+ *
+ * Staged text wins over previous text: the workbench numbers lines on the staged
+ * side, so a line resolved against the baseline would pin to the wrong row on
+ * every modified file.
+ */
+export function createAnchorResolver(index: EvidenceIndex) {
+  return (rawFile: string, anchor?: string | null): ResolvedAnchor | null => {
+    const file = resolveKnownPath(
+      rawFile,
+      index.stagedByPath,
+      index.previousByPath,
+      index.diffByPath,
+    );
+    if (!file) return null;
+    const record = index.stagedByPath.get(file) ?? index.previousByPath.get(file);
+    return { file, line: resolveAnchorLine(record?.textSample, anchor) };
+  };
+}
+
+export type AnchorResolver = ReturnType<typeof createAnchorResolver>;
 
 export function buildEvidenceIndex(options: SelectiveAiReviewOptions): EvidenceIndex {
   const stagedByPath = new Map(options.files.map((file) => [file.path, file]));

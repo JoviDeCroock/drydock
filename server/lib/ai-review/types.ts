@@ -7,6 +7,28 @@ interface AiFinding {
   evidence: string;
   reason: string;
   recommendation: string;
+  /**
+   * Staged line the finding pins to in the diff, resolved from the submitted
+   * anchor by `resolveAnchorLine` — never a number the model supplied. Null when
+   * the anchor was absent or did not match a single line, which is how the
+   * finding falls back to the unpinned banner above the hunks.
+   */
+  line?: number | null;
+}
+
+/**
+ * An advisory note the reviewer pinned to one line of the diff.
+ *
+ * Deliberately severity-free and deliberately outside the findings pipeline: a
+ * comment is context for the maintainer reading the hunk, not a signal. It never
+ * persists as a `scan_findings` row, never enters `computeScanRisk`, and never
+ * counts toward `finding_count`. Anything that should move the verdict has to be
+ * a finding or the summary.
+ */
+export interface AiReviewComment {
+  file: string;
+  note: string;
+  line?: number | null;
 }
 
 export type AiReviewStatus = "complete" | "invalid" | "unavailable";
@@ -19,6 +41,7 @@ export interface AiReview {
   releaseAssessment: AiReleaseAssessment | "not_assessed";
   summary: string;
   findings: AiFinding[];
+  comments: AiReviewComment[];
   requiresManualReview: boolean;
   model: string | null;
   /** Version of the prompt, evidence tools, and routing contract used. */
@@ -62,6 +85,7 @@ export type DisplayedAiResult =
       risk: RiskLevel;
       releaseAssessment: AiReleaseAssessment;
       findings: AiFinding[];
+      comments: AiReviewComment[];
       requiresManualReview: boolean;
     }
   | {
@@ -86,6 +110,8 @@ export function displayedAiResult(review: AiReview | null | undefined): Displaye
       risk: review.risk,
       releaseAssessment: review.releaseAssessment,
       findings: review.findings,
+      // Historical records (and hand-built fixtures) predate the field.
+      comments: review.comments ?? [],
       requiresManualReview: review.requiresManualReview,
     };
   }

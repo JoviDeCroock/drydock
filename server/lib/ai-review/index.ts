@@ -9,10 +9,17 @@ import {
   MAX_AGENT_STEPS,
   MAX_LOW_SIGNAL_CHANGED_FILES,
   MAX_REVIEW_OUTPUT_TOKENS,
+  selectReportedComments,
   selectReportedFindings,
   type AiReviewSubmission,
 } from "./contract";
-import { buildAiReviewPayload, buildEvidenceIndex, createAiReviewTools } from "./evidence";
+import {
+  buildAiReviewPayload,
+  buildEvidenceIndex,
+  createAiReviewTools,
+  createAnchorResolver,
+  type AnchorResolver,
+} from "./evidence";
 import type {
   AiReview,
   AiReviewResult,
@@ -130,6 +137,9 @@ export async function analyzeWithAi(
   const models = typeof model === "string" ? [model] : [...model];
   const index = buildEvidenceIndex(options);
   const payload = buildAiReviewPayload(options, index);
+  // Built from the same index the tools read, so an anchor is matched against
+  // exactly the bytes the model was shown.
+  const anchors = createAnchorResolver(index);
   const transientFailures: string[] = [];
   // Trace correlation is intentionally local to this invocation. Do not reuse
   // scan/stage/organization ids: the trace should remain useful without
@@ -204,10 +214,10 @@ export async function analyzeWithAi(
         const usage = toUsage(result.totalUsage, result.steps.length);
 
         if (submittedReview) {
-          return { review: normalizeParsedReview(candidateModel, submittedReview), usage };
+          return { review: normalizeParsedReview(candidateModel, submittedReview, anchors), usage };
         }
 
-        const textReview = normalizeAiResponse(candidateModel, result.text);
+        const textReview = normalizeAiResponse(candidateModel, result.text, anchors);
         if (textReview.status === "complete") {
           return { review: textReview, usage };
         }
@@ -383,9 +393,9 @@ function scanScopedCacheAffinity(env: Cloudflare.Env, scanId: string | undefined
   return `${base}:${suffix}`;
 }
 
-function normalizeAiResponse(model: string, text: string): AiReview {
+function normalizeAiResponse(model: string, text: string, anchors: AnchorResolver): AiReview {
   try {
-    return normalizeParsedReview(model, JSON.parse(text));
+    return normalizeParsedReview(model, JSON.parse(text), anchors);
   } catch {
     return fallbackReview(
       model,
@@ -395,7 +405,7 @@ function normalizeAiResponse(model: string, text: string): AiReview {
   }
 }
 
-function normalizeParsedReview(model: string, value: unknown): AiReview {
+function normalizeParsedReview(model: string, value: unknown, anchors: AnchorResolver): AiReview {
   const parsed = aiReviewSubmissionSchema.safeParse(value);
   if (!parsed.success) {
     return fallbackReview(
@@ -413,7 +423,22 @@ function normalizeParsedReview(model: string, value: unknown): AiReview {
     risk: review.risk,
     releaseAssessment: review.releaseAssessment,
     summary: review.summary,
-    findings: selectReportedFindings(review.findings),
+    findings: selectReportedFindings(review.findings).map((finding) => {
+      // `anchor` is a lookup key, not report content: it is consumed here and
+      // never persisted. A path the review could not have seen keeps the
+      // finding (its evidence still stands on its own) but wins no line.
+      const { anchor, ...rest } = finding;
+      const resolved = anchors(finding.file, anchor);
+      return { ...rest, file: resolved?.file ?? finding.file, line: resolved?.line ?? null };
+    }),
+    // A comment is only meaningful next to the line it annotates, so unlike a
+    // finding it is dropped outright when its file is not one this review could
+    // see. An unpinned comment on a real file is kept: the diff surfaces it in
+    // the same banner it uses for unpinnable findings.
+    comments: selectReportedComments(review.comments).flatMap((comment) => {
+      const resolved = anchors(comment.file, comment.anchor);
+      return resolved ? [{ file: resolved.file, note: comment.note, line: resolved.line }] : [];
+    }),
     requiresManualReview: review.requiresManualReview,
     model,
     reviewerVersion: AI_REVIEWER_VERSION,
@@ -431,6 +456,7 @@ function fallbackReview(
     releaseAssessment: "not_assessed",
     summary,
     findings: [],
+    comments: [],
     requiresManualReview: false,
     model,
     reviewerVersion: AI_REVIEWER_VERSION,
