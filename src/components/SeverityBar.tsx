@@ -81,7 +81,7 @@ export function SeverityBar({
         </span>
         <span class="font-mono text-[11px] text-ink-subtle">{total} total</span>
       </div>
-      {/* A plain flex stack, not an SVG — DESIGN.md's chart spec is a single
+      {/* A plain flex stack, not an SVG — docs/design.md's chart spec is a single
           horizontal element with percentage-width segments, and SVG is
           reserved for nothing in this system. The last segment's width is
           pre-corrected against float drift so the widths sum to exactly 100. */}

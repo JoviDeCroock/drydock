@@ -11,7 +11,7 @@ const toneStyles: Record<AlertTone, string> = {
 };
 
 // The disc is a shape, so it takes the saturated token — inheriting the text
-// color via bg-current would render it in the -text variant (DESIGN.md lists
+// color via bg-current would render it in the -text variant (docs/design.md lists
 // alert discs under saturated shapes, like the border).
 const toneDisc: Record<AlertTone, string> = {
   critical: "bg-danger",

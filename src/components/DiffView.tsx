@@ -1268,7 +1268,7 @@ function markerClass(marker: DiffOverviewMarker): string {
 // Severity-tinted fills and left bars for a pinned finding. The fill uses the
 // soft severity token at reduced opacity so it reads as a callout over the
 // green/red row backgrounds; the bar uses the saturated token (shapes, per
-// DESIGN.md "color = signal"). Both are static class strings so Tailwind keeps
+// docs/design.md "color = signal"). Both are static class strings so Tailwind keeps
 // them.
 const ANNOTATION_FILL: Record<SeverityGroup, string> = {
   danger: "bg-danger-soft/60",

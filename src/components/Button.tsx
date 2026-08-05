@@ -30,7 +30,7 @@ const sizeStyles: Record<ButtonSize, string> = {
 };
 
 // White-on-accent (and white-on-danger) requires 13px/500 minimum per
-// DESIGN.md's contrast rules, so small primary/danger buttons keep the md
+// docs/design.md's contrast rules, so small primary/danger buttons keep the md
 // text size; the quieter variants may drop to 12px at size sm.
 function textSize(variant: ButtonVariant, size: ButtonSize): string {
   if (size === "md") return "text-[13px]";

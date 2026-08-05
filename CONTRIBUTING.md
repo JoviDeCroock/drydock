@@ -10,7 +10,7 @@ standard.
 - Read the relevant files in [`docs/`](docs/) before changing behavior.
 - Read [`docs/release-safety.md`](docs/release-safety.md) for the expected test
   layer by change type.
-- Read [`DESIGN.md`](DESIGN.md) before changing visual UI or public copy.
+- Read [`docs/design.md`](docs/design.md) before changing visual UI or public copy.
 - For local setup and deployment, use [`docs/self-hosting.md`](docs/self-hosting.md).
 
 If you plan to make a large behavior, API, storage, or security-boundary change,

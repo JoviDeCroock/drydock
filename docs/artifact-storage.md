@@ -10,7 +10,7 @@ Wrangler binds the artifact bucket as `ARTIFACTS`:
 wrangler r2 bucket create staged-publish-review-artifacts
 ```
 
-Local Worker tests bind `staged-publish-review-test-artifacts` through `wrangler.test.jsonc`. Production deploys should confirm the bucket exists before applying the migration that adds the artifact metadata columns.
+Local Worker tests bind `staged-publish-review-test-artifacts` through `test/config/wrangler.jsonc`. Production deploys should confirm the bucket exists before applying the migration that adds the artifact metadata columns.
 
 ## D1 Metadata
 

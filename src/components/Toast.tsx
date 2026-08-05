@@ -74,7 +74,7 @@ export function releaseToast(id: number): void {
 }
 
 // The colored disc mirrors the Alert indicator — the only filled-shape exception
-// in the system (see DESIGN.md Iconography). Saturated severity tokens are fine
+// in the system (see docs/design.md Iconography). Saturated severity tokens are fine
 // here because the disc is a shape, not text.
 const toneDisc: Record<ToastTone, string> = {
   ok: "bg-ok",

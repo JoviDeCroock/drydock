@@ -62,21 +62,11 @@ project (`local-registry.spec.ts` and `two-factor.spec.ts`). The lightweight
 `smoke.spec.ts` runs in `desktop-smoke`, `mobile-smoke`, and `dark-smoke`, giving
 responsive/theme coverage without rerunning every staged-publish fixture.
 
-## Conductor
+## Parallel workspace ports
 
-`conductor.json` is checked in:
-
-```json
-{
-  "scripts": {
-    "setup": "pnpm install",
-    "run": "pnpm e2e:dev"
-  },
-  "runScriptMode": "concurrent"
-}
-```
-
-Conductor sets `CONDUCTOR_PORT`; the E2E runner uses that as the app port and `CONDUCTOR_PORT + 1` as the fake registry port. That lets multiple workspaces run the harness concurrently.
+When `CONDUCTOR_PORT` is present, the E2E runner uses it as the app port and
+`CONDUCTOR_PORT + 1` as the fake registry port. That lets multiple workspaces run
+the harness concurrently without requiring repository-specific Conductor settings.
 
 ## Local HTTP Registry Guard
 

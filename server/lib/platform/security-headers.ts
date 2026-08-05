@@ -19,7 +19,7 @@
 //
 // This is a string env var so it follows the same provisioning as
 // ALLOW_INSECURE_LOCAL_REGISTRY: set it in `.dev.vars` (gitignored) for local
-// dev only. It is deliberately absent from wrangler.jsonc and wrangler.test.jsonc
+// dev only. It is deliberately absent from wrangler.jsonc and test/config/wrangler.jsonc
 // — NEVER add it there. Production fails closed: when the var is unset the full
 // header policy applies, so a deployment can't accidentally ship with headers
 // stripped.

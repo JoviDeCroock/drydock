@@ -31,7 +31,7 @@
 
 ## UI and frontend conventions
 
-- Read `DESIGN.md` before visual or UI decisions. It is the source of truth for fonts, colors, spacing, iconography, data viz, state patterns, and marketing-surface rules.
+- Read `docs/design.md` before visual or UI decisions. It is the source of truth for fonts, colors, spacing, iconography, data viz, state patterns, and marketing-surface rules.
 - Tailwind CSS v4 tokens live in `src/style.css`; prefer primitives in `src/components/` before one-off classes. No CSS-in-JS and no SVG icons.
 - Code used by two or more pages belongs in `src/features/`, not in one page's folder. The scan workbench and the anonymous `/diff` page share `src/features/review/`; see `docs/ui.md`.
 - Use `preact`, `preact-iso`, and `@preact/signals`; never `preact/compat`.

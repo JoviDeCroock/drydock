@@ -16,7 +16,7 @@
 | `pnpm run format:check` | Report files that would change without writing.                                                                                                                                                                   |
 | `pnpm run test`         | Node logic tests (`test/**`) plus D1-backed worker tests (`test/workers/**`) via `scripts/test.mjs`; the node and workers projects run as two parallel Vitest processes.                                          |
 | `pnpm run test:node`    | Just the node logic suite (`vitest run --project node`).                                                                                                                                                          |
-| `pnpm run test:workers` | Just the worker suite (`vitest run --project workers`; Miniflare D1 from `wrangler.test.jsonc` + `drizzle/`).                                                                                                     |
+| `pnpm run test:workers` | Just the worker suite (`vitest run --project workers`; Miniflare D1 from `test/config/wrangler.jsonc` + `drizzle/`).                                                                                              |
 | `pnpm run e2e:fixtures` | Pack local E2E fixture packages and generate `.context/e2e-registry/registry.json`.                                                                                                                               |
 | `pnpm run e2e:dev`      | Start the fake npm staging registry plus the Vite/Worker dev server for browser testing.                                                                                                                          |
 | `pnpm run test:e2e`     | Run Playwright against the local fake-registry harness.                                                                                                                                                           |
@@ -37,7 +37,7 @@ test file (every module is fetched individually over the pool's module-fallback
 socket), so the suite's wall time is dominated by how often that import is
 repeated — not by the tests themselves. Deliberate choices that keep it fast:
 
-- **Pool workers are reused across test files.** `vitest.workers.config.ts`
+- **Pool workers are reused across test files.** `vitest.config.ts`
   sets `isolate: false` with `maxWorkers: 3`, so the module graph is imported
   once per pool worker instead of once per file. More workers means more
   redundant imports, so raising `maxWorkers` makes the suite _slower_. To keep
@@ -50,7 +50,7 @@ repeated — not by the tests themselves. Deliberate choices that keep it fast:
 - **The node project uses the `threads` pool** (per-file isolation kept, since
   several files `vi.mock` the same modules) to skip the default forks pool's
   per-file process spawn.
-- **`wrangler.test.jsonc` has no `main`.** The worker tests don't use `SELF` —
+- **`test/config/wrangler.jsonc` has no `main`.** The worker tests don't use `SELF` —
   they `import worker from "../../server/index"` and call `worker.fetch(req, env, ctx)`
   directly. Setting `main` makes Miniflare eagerly evaluate the whole app graph
   in _every_ isolate at boot (~5s/file → most of the suite's wall time). Leaving
@@ -137,11 +137,7 @@ member-access signals (`model.count.value`) — fix those by hand. See the
 skill for the full set of eager-unwrap anti-patterns and fixes. Fixture and test:
 `test/fixtures/oxlint-signals/` and `test/oxlint-signal-conditional-jsx.test.mjs`.
 
-The rule ships as `error`, but the pre-existing call sites are grandfathered in a baseline
-at `tooling/oxlint/signals-local/suppressions.json` (repo-relative path → 1-based lines), so
-only **new** infractions fail lint. Burn the baseline down as sites migrate to `<Show>`, then
-regenerate it with `node tooling/oxlint/signals-local/regenerate-suppressions.mjs` (it runs
-oxlint with `SIGNALS_NO_SUPPRESS=1` to see through the baseline). The list should only shrink.
+The rule ships as `error`; all existing call sites satisfy it, so every infraction fails lint.
 
 ## Client API helpers
 

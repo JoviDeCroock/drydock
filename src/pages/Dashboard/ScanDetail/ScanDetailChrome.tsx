@@ -96,7 +96,7 @@ function reportExportHref(detail: PersistedScanDetail): string {
 export function VersionPickerSkeleton({ stagedVersion }: { stagedVersion: string | null }) {
   // The sanctioned inline loading line, not a faked disabled select — that
   // reimplemented LoadingLine without its aria-live and edged into the
-  // "skeleton bone" shape DESIGN.md bans. min-h matches the md Select's
+  // "skeleton bone" shape docs/design.md bans. min-h matches the md Select's
   // rendered height (13px × 1.55 + 2×8px padding + 2px border ≈ 38px) so the
   // header doesn't shift when the real picker mounts.
   return (
