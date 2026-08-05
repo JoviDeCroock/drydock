@@ -4,6 +4,17 @@ Drydock reviews package artifacts before a maintainer approves publication. It c
 
 Approval stays outside Drydock: maintainers approve in npm, npmjs.com, or GitHub with their own required 2FA/review step. Drydock never publishes and never collects approval codes.
 
+## Sponsored by
+
+<a href="https://www.aikido.dev">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="src/assets/aikido-wordmark-inverted.svg">
+    <img src="src/assets/aikido-wordmark.svg" alt="Aikido Security" height="28">
+  </picture>
+</a>
+
+[Aikido Security](https://www.aikido.dev) sponsors Drydock's development. Sponsorship funds the work; it does not influence detection rules, findings, or risk scoring.
+
 ## Modes
 
 - **npm registry staging** — `npm stage publish` creates a private staged tarball. Drydock downloads it through a sandbox and leaves final approval in npm.
