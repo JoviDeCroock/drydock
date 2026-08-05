@@ -15,6 +15,8 @@ Approval stays outside Drydock: maintainers approve in npm, npmjs.com, or GitHub
 
 [Aikido Security](https://www.aikido.dev) sponsors Drydock's development. Sponsorship funds the work; it does not influence detection rules, findings, or risk scoring.
 
+<img src="src/assets/release-flow.png" alt="Source code is built into a package, staged as a release, held in Drydock quarantine where a scan of @acme/cli 4.2.0 to 4.3.0 reports 1 critical and 2 medium findings, and blocked from becoming a published package" width="100%">
+
 ## Modes
 
 - **npm registry staging** — `npm stage publish` creates a private staged tarball. Drydock downloads it through a sandbox and leaves final approval in npm.
