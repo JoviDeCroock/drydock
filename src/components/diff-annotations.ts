@@ -10,6 +10,14 @@ export interface DiffFinding {
   ruleId?: string | null;
   reason: string;
   evidence?: string | null;
+  // Who produced this: "rule" for a deterministic rule, "ai" for the assistant.
+  // Drives the caption only — an AI finding is pinned, styled, and ranked by the
+  // same severity machinery as a deterministic one.
+  source?: string | null;
+  // "comment" marks an advisory assistant note rather than a finding. Notes
+  // carry no severity of their own (they render in the neutral info group) and
+  // never appear in the risk-signals index or the file-tree counts.
+  kind?: "finding" | "comment";
 }
 
 export type SeverityGroup = "danger" | "warn" | "info" | "ok";
@@ -44,9 +52,16 @@ export function maxSeverity(a: string | null, b: string | null): string | null {
 
 // The mono caption above a pinned finding: `ruleId · line N`. Either part may be
 // absent; returns null when neither is present so the caption can be skipped.
-export function annotationLabel(finding: Pick<DiffFinding, "ruleId" | "line">): string | null {
+// An assistant finding has no ruleId, so it is captioned by its origin instead —
+// otherwise it reads as an unattributed claim sitting on the same line as
+// deterministic evidence, which is exactly the distinction a maintainer weighs.
+export function annotationLabel(
+  finding: Pick<DiffFinding, "ruleId" | "line" | "source" | "kind">,
+): string | null {
   const parts: string[] = [];
+  // A comment's origin is already on its badge, so it takes the line alone.
   if (finding.ruleId) parts.push(finding.ruleId);
+  else if (finding.source === "ai" && finding.kind !== "comment") parts.push("assistant");
   if (typeof finding.line === "number") parts.push(`line ${finding.line}`);
   return parts.length ? parts.join(" · ") : null;
 }

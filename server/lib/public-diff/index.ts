@@ -96,6 +96,7 @@ const AI_REVIEW_DISABLED: AiReview = {
   releaseAssessment: "not_assessed",
   summary: "AI review is disabled.",
   findings: [],
+  comments: [],
   requiresManualReview: false,
   model: null,
 };

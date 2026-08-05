@@ -823,7 +823,10 @@ function parseReportFindingsObject(
       file: finding.file,
       evidence: finding.evidence,
       reason: finding.reason,
-      line: null,
+      // Anchor-resolved staged line, when the review recorded one. Reading it
+      // back here is what keeps this path byte-identical to the D1 rows
+      // mergeAiFindings writes for the same review.
+      line: typeof finding.line === "number" ? finding.line : null,
       source: "ai",
       ruleId: null,
       ruleVersion: null,
@@ -864,6 +867,11 @@ export function projectAiReviewFindings(review: AiReview | null | undefined): Fi
       file: finding.file,
       evidence: finding.evidence,
       reason: finding.reason,
+      // Anchor-resolved staged line (see resolveAnchorLine); persisted so the
+      // workbench pins an AI finding to its hunk the same way it pins a
+      // deterministic one. `undefined` when the anchor did not resolve, which
+      // is what `scan_findings.line` stores as NULL.
+      ...(typeof finding.line === "number" ? { line: finding.line } : {}),
     })),
   );
 }

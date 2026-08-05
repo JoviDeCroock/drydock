@@ -39,9 +39,10 @@ export interface DiffViewProps {
   after: DiffSide | null;
   beforeLabel: string;
   afterLabel: string;
-  // Deterministic findings for this file, pinned to the staged line they
-  // reference. Findings without a matching line surface in a banner above the
-  // diff so a truncated sample can't hide a signal.
+  // Annotations for this file — deterministic findings, assistant findings, and
+  // assistant comments alike — pinned to the staged line they reference.
+  // Anything without a matching line surfaces in a banner above the diff so a
+  // truncated sample can't hide a signal.
   findings?: DiffFinding[];
 }
 
@@ -1287,8 +1288,14 @@ const ANNOTATION_BAR: Record<SeverityGroup, string> = {
 // The body of a pinned finding: severity Badge + mono `ruleId · line N` caption,
 // the reason, and (when present) the triggering evidence in mono. Mirrors the
 // landing page's review-preview annotation so what we advertise matches the app.
+//
+// An assistant comment reuses the same callout with two differences: a neutral
+// "assistant note" badge instead of a severity one, and the info group's quiet
+// blue fill. Both are deliberate — a note is not a signal, and giving it a
+// severity colour would spend the diff's loudest affordance on prose.
 function FindingAnnotationBody({ finding }: { finding: DiffFinding }) {
-  const group = severityGroup(finding.severity);
+  const isComment = finding.kind === "comment";
+  const group = isComment ? "info" : severityGroup(finding.severity);
   const label = annotationLabel(finding);
   return (
     <div
@@ -1302,7 +1309,11 @@ function FindingAnnotationBody({ finding }: { finding: DiffFinding }) {
       )}
     >
       <div class="flex flex-wrap items-center gap-2">
-        <Badge tone={severityTone(finding.severity)}>{finding.severity}</Badge>
+        {isComment ? (
+          <Badge tone="neutral">assistant note</Badge>
+        ) : (
+          <Badge tone={severityTone(finding.severity)}>{finding.severity}</Badge>
+        )}
         {label ? (
           <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
             {label}

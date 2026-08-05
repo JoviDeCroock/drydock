@@ -6,6 +6,11 @@ export type AiReviewEcosystem = "npm" | "pypi" | "vscode" | "generic";
 // first, capped at this count. Lower-severity context belongs in the summary.
 export const MAX_AI_FINDINGS = 6;
 
+// Advisory line-pinned notes the reviewer may leave on the diff. Capped low on
+// purpose: comments are for the handful of lines where a note beats reading the
+// hunk cold, and every one of them costs output tokens on every review.
+export const MAX_AI_COMMENTS = 6;
+
 const BASE_REVIEWER_SYSTEM_PROMPT = `Staged package release safety reviewer.
 
 Instruction boundary:
@@ -93,6 +98,18 @@ Findings output:
 - Report only critical/high findings, most severe first, at most ${MAX_AI_FINDINGS}. The system keeps the top ${MAX_AI_FINDINGS} critical/high and discards the rest.
 - Put medium/low/info observations in the summary. Set requiresManualReview and overall risk/releaseAssessment to reflect concern below a critical/high finding.
 
+Anchors (how a note gets pinned to a line):
+- \`anchor\` is one line copied verbatim from the file, exactly as the tool returned it, minus the leading diff marker (+, -, or space). No paraphrase, no elision, no reconstruction, no concatenating two lines.
+- Never state a line number anywhere. The system finds the line by matching your anchor against the file; an anchor it cannot match unambiguously is simply not pinned, which costs nothing.
+- Prefer an anchor with distinctive content. A bare \`}\` or a blank line matches everywhere and pins nothing.
+- Give every finding an anchor when the evidence is one line of a text file. Omit it for whole-file, manifest-wide, missing-file, or binary evidence.
+
+Inline comments (\`comments\`, optional, at most ${MAX_AI_COMMENTS}):
+- Short notes pinned next to a line of the diff for the maintainer reading that file: what a changed hunk actually does, why an alarming-looking construct is ordinary here, or what a reader should verify themselves.
+- Each needs \`file\`, \`anchor\` (as above), and \`note\` — one or two sentences of plain prose, no markdown.
+- Advisory only. They never change risk and never stand in for a finding: critical/high concern belongs in \`findings\`, everything else that changes the verdict belongs in \`summary\`.
+- Comment only where the note adds something the diff does not already say. Zero comments is a fine answer for an ordinary release; never narrate routine edits line by line.
+
 Summary style:
 - Plain prose only — no markdown, bullets, or headings; the UI renders the summary as plain text.
 - nothing_unusual: 1-3 sentences naming the kinds of changes and confirming no install-time, entrypoint, dependency, network/process, credential, or obfuscation capability was found. Never inventory routine changes file-by-file.
@@ -117,11 +134,12 @@ export function buildReviewerSystemPrompt(ecosystem: string | undefined): string
 
 export const MAX_AGENT_STEPS = 20;
 // Per-step output-token cap, sized comfortably above a worst-case submission so
-// findings plus summary serialize without truncation. A slight overshoot is
+// findings, anchors, inline comments, and summary serialize without truncation.
+// (Raised from 8k when anchors and comments were added to the schema.) A slight overshoot is
 // clamped by clampAiReviewSubmission; only a submission truncated mid-JSON by
 // this cap is unrecoverable, and that degrades to `invalid` which the risk layer
 // escalates to manual review.
-export const MAX_REVIEW_OUTPUT_TOKENS = 8_000;
+export const MAX_REVIEW_OUTPUT_TOKENS = 10_000;
 export const MAX_CHANGED_FILE_MANIFEST = 300;
 export const MAX_TOOL_RESPONSE_CHARS = 16_000;
 export const MAX_TOTAL_TOOL_RESPONSE_CHARS = 48_000;
@@ -154,8 +172,23 @@ const AI_REVIEW_BOUNDS = {
   evidence: 600,
   reason: 600,
   recommendation: 400,
+  anchor: 240,
+  note: 320,
   findingsCount: 12,
+  commentsCount: 10,
 } as const;
+
+// A verbatim source line the reviewer copied out of the evidence it was shown.
+// Never persisted and never rendered: `resolveAnchorLine` turns it into a line
+// number against the same text sample the tools served, and anything that does
+// not match exactly is dropped. That is what makes pinning safe — the model
+// supplies a string to search for, never a coordinate we have to trust.
+const anchorSchema = z
+  .string()
+  .max(AI_REVIEW_BOUNDS.anchor)
+  .describe(
+    "One line copied verbatim from the file, without its leading diff marker. Omit when the evidence is not a single line.",
+  );
 
 const aiFindingSchema = z
   .object({
@@ -164,6 +197,19 @@ const aiFindingSchema = z
     evidence: z.string().min(1).max(AI_REVIEW_BOUNDS.evidence),
     reason: z.string().min(1).max(AI_REVIEW_BOUNDS.reason),
     recommendation: z.string().min(1).max(AI_REVIEW_BOUNDS.recommendation),
+    anchor: anchorSchema.optional(),
+  })
+  .strict();
+
+const aiCommentSchema = z
+  .object({
+    file: z.string().min(1).max(AI_REVIEW_BOUNDS.file),
+    anchor: anchorSchema,
+    note: z
+      .string()
+      .min(1)
+      .max(AI_REVIEW_BOUNDS.note)
+      .describe("One or two sentences of plain prose. No markdown."),
   })
   .strict();
 
@@ -185,6 +231,11 @@ export const aiReviewSubmissionSchema = z
     // critical/high findings via selectReportedFindings. This cap only keeps a
     // runaway submission inside the output-token budget.
     findings: z.array(aiFindingSchema).max(AI_REVIEW_BOUNDS.findingsCount),
+    // Advisory line-pinned notes. Optional so a model that ignores the field
+    // still submits a valid review, and capped above MAX_AI_COMMENTS for the
+    // same reason `findingsCount` is: the trim happens in normalization, this
+    // bound only keeps a runaway submission inside the output-token budget.
+    comments: z.array(aiCommentSchema).max(AI_REVIEW_BOUNDS.commentsCount).optional(),
     requiresManualReview: z.boolean(),
   })
   .strict();
@@ -205,6 +256,16 @@ export function clampAiReviewSubmission(raw: unknown): unknown {
     findings: Array.isArray(value.findings)
       ? value.findings.slice(0, AI_REVIEW_BOUNDS.findingsCount).map(clampFinding)
       : value.findings,
+    // `comments` is optional: an absent key stays absent, and a non-array is
+    // passed through untouched so validation still rejects it (repairing only
+    // ever clamps sizes, it never invents shape).
+    ...(Array.isArray(value.comments)
+      ? {
+          comments: value.comments.slice(0, AI_REVIEW_BOUNDS.commentsCount).map(clampComment),
+        }
+      : value.comments === undefined
+        ? {}
+        : { comments: value.comments }),
   };
 }
 
@@ -217,6 +278,21 @@ function clampFinding(raw: unknown): unknown {
     evidence: clampString(value.evidence, AI_REVIEW_BOUNDS.evidence),
     reason: clampString(value.reason, AI_REVIEW_BOUNDS.reason),
     recommendation: clampString(value.recommendation, AI_REVIEW_BOUNDS.recommendation),
+    // Truncating an anchor is safe: a clipped line either still matches a
+    // unique line or matches nothing and goes unpinned.
+    ...(value.anchor === undefined
+      ? {}
+      : { anchor: clampString(value.anchor, AI_REVIEW_BOUNDS.anchor) }),
+  };
+}
+
+function clampComment(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const value = raw as Record<string, unknown>;
+  return {
+    file: clampString(value.file, AI_REVIEW_BOUNDS.file),
+    anchor: clampString(value.anchor, AI_REVIEW_BOUNDS.anchor),
+    note: clampString(value.note, AI_REVIEW_BOUNDS.note),
   };
 }
 
@@ -226,6 +302,7 @@ function clampString(value: unknown, max: number): unknown {
 
 export type AiReviewSubmission = z.infer<typeof aiReviewSubmissionSchema>;
 export type AiReviewSubmissionFinding = z.infer<typeof aiFindingSchema>;
+export type AiReviewSubmissionComment = z.infer<typeof aiCommentSchema>;
 
 const SEVERITY_RANK: Record<AiReviewSubmissionFinding["severity"], number> = {
   critical: 0,
@@ -247,6 +324,14 @@ export function selectReportedFindings(
     .slice(0, MAX_AI_FINDINGS);
 }
 
+// Comments have no severity to rank by (they are notes, not signals), so the
+// trim keeps submission order and caps the count.
+export function selectReportedComments(
+  comments: AiReviewSubmissionComment[] | undefined,
+): AiReviewSubmissionComment[] {
+  return (comments ?? []).slice(0, MAX_AI_COMMENTS);
+}
+
 // Validation schema for a *persisted* AiReview (as stored in `scans.ai_json`),
 // as opposed to `aiReviewSubmissionSchema` which validates the model's raw
 // tool call. This one carries the reviewer envelope the pipeline adds after
@@ -259,6 +344,16 @@ const persistedAiFindingSchema = z.object({
   evidence: z.string(),
   reason: z.string(),
   recommendation: z.string(),
+  // Resolved from the submission's anchor at normalization time (never taken
+  // from the model as a number). Absent on every review persisted before
+  // anchors existed, so it stays optional rather than nullable-required.
+  line: z.number().int().positive().nullable().optional(),
+});
+
+const persistedAiCommentSchema = z.object({
+  file: z.string(),
+  note: z.string(),
+  line: z.number().int().positive().nullable().optional(),
 });
 
 const persistedAiReviewSchema = z.object({
@@ -273,6 +368,9 @@ const persistedAiReviewSchema = z.object({
   ]),
   summary: z.string(),
   findings: z.array(persistedAiFindingSchema),
+  // Older records predate inline comments; default rather than reject so a
+  // historical review still parses into the current shape.
+  comments: z.array(persistedAiCommentSchema).default([]),
   requiresManualReview: z.boolean(),
   model: z.string().nullable(),
 });

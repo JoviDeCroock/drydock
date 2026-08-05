@@ -974,6 +974,48 @@ describe("review", () => {
     });
   });
 
+  test("scopes AI findings by file, ignoring their anchored line", () => {
+    // An AI finding's line comes from matching an anchor the reviewer copied,
+    // so it can legitimately sit on an untouched line while the concern is about
+    // the file the release changed. Scoping it by that line would drop the
+    // finding out of the release bucket the workflow gate reads.
+    const previous = [
+      {
+        path: "src/server.ts",
+        size: 60,
+        sha256: "old",
+        flags: [],
+        textSample: "fetch('/existing-risk');\nexport const value = 1;\n",
+      },
+    ];
+    const staged = [
+      {
+        path: "src/server.ts",
+        size: 60,
+        sha256: "new",
+        flags: [],
+        textSample: "fetch('/existing-risk');\nexport const value = 2;\n",
+      },
+    ];
+    const annotated = annotateFindingsWithDiffStatus(
+      [
+        {
+          id: "ai-unchanged-line",
+          severity: "high",
+          file: "src/server.ts",
+          line: 1,
+          source: "ai",
+          evidence: "network-capable code path",
+          reason: "exfiltration shape",
+        },
+      ],
+      createPackageDiff(previous, staged),
+      { previousFiles: previous, stagedFiles: staged },
+    );
+
+    expect(annotated[0]).toMatchObject({ diffStatus: "modified", releaseDelta: true });
+  });
+
   test("classifies manifest-diff dependency findings as release delta regardless of line", () => {
     // These rules are derived from the previous-vs-staged manifest diff, so they
     // are release-scoped by construction; they must not fall through to the

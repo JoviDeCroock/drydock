@@ -26,6 +26,7 @@ import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review
 import { Alert } from "../../../components/Alert";
 import { Button } from "../../../components/Button";
 import { Card } from "../../../components/Card";
+import type { DiffFinding } from "../../../components/DiffView";
 import { FileTree } from "../../../components/FileTree";
 import { Input } from "../../../components/Input";
 import { LoadingState } from "../../../components/Loading";
@@ -182,6 +183,39 @@ export default function ScanDetailPage() {
       all.filter((item) => item.finding.file === path).map((item) => item.finding),
     );
   });
+
+  // The assistant's inline comments for the open file, as diff annotations.
+  // Advisory notes, not signals: they ride the same pinning machinery as
+  // findings but stay out of the risk-signals index and the tree counts below,
+  // because nothing about them moves the release verdict.
+  const selectedComments = useComputed<DiffFinding[]>(() => {
+    const path = model.selectedPath.value;
+    const result = ai.value;
+    if (!path || result?.kind !== "complete") return [];
+    return result.comments.flatMap((comment, index) =>
+      comment.file === path
+        ? [
+            {
+              // Index-based: comments have no persisted identity of their own,
+              // and the array is stable for a given scan.
+              id: `ai-comment-${index}`,
+              severity: "info",
+              line: comment.line ?? null,
+              reason: comment.note,
+              source: "ai",
+              kind: "comment" as const,
+            },
+          ]
+        : [],
+    );
+  });
+
+  // Findings first, comments after, so a line carrying both leads with the
+  // signal and follows with the commentary.
+  const selectedAnnotations = useComputed(() => [
+    ...selectedFindings.value,
+    ...selectedComments.value,
+  ]);
 
   // Per-file finding counts for the tree, built once from the same finding set
   // that feeds the inline annotations and the risk-signals index.
@@ -410,7 +444,7 @@ export default function ScanDetailPage() {
                   compareLoading={compareLoading}
                   selectedVersion={selectedVersion}
                   stagedVersion={detail.scan.stagedVersion}
-                  findings={selectedFindings.value}
+                  findings={selectedAnnotations.value}
                 />
               </Card>
             </section>

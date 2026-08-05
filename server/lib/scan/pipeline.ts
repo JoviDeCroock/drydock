@@ -243,6 +243,7 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
     releaseAssessment: "not_assessed",
     summary: "AI review is disabled.",
     findings: [],
+    comments: [],
     requiresManualReview: false,
     model: null,
   };
@@ -331,6 +332,7 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
       releaseAssessment: "not_assessed",
       summary: "AI review failed; deterministic findings remain available.",
       findings: [],
+      comments: [],
       requiresManualReview: false,
       model: AI_MODEL,
     };

