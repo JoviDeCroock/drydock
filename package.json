@@ -39,7 +39,7 @@
     "@fontsource-variable/geist-mono": "^5.3.0",
     "@preact/signals": "^2.10.1",
     "@resvg/resvg-wasm": "^2.6.2",
-    "ai": "^6.0.240",
+    "ai": "^7.0.48",
     "better-auth": "^1.6.25",
     "diff": "^9.0.0",
     "drizzle-orm": "^0.45.2",
@@ -49,7 +49,7 @@
     "preact-iso": "^2.12.1",
     "qrcode": "^1.5.4",
     "shiki": "^4.4.1",
-    "workers-ai-provider": "^3.3.1",
+    "workers-ai-provider": "^4.0.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
