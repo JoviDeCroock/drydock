@@ -53,9 +53,9 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.41.0",
-    "@cloudflare/vitest-pool-workers": "0.16.17",
-    "@cloudflare/workers-types": "^4.20260617.1",
+    "@cloudflare/vite-plugin": "1.50.0",
+    "@cloudflare/vitest-pool-workers": "0.20.1",
+    "@cloudflare/workers-types": "^5.20260801.1",
     "@playwright/test": "^1.62.1",
     "@preact/eslint-plugin-signals": "^0.3.0",
     "@preact/preset-vite": "^2.10.6",
@@ -65,13 +65,13 @@
     "fast-check": "^4.9.0",
     "knip": "^6.31.0",
     "otpauth": "^9.5.1",
-    "oxfmt": "^0.55.0",
+    "oxfmt": "^0.61.0",
     "oxlint": "^1.77.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.2.0",
     "vitest": "^4.1.10",
-    "wrangler": "4.102.0"
+    "wrangler": "4.118.0"
   },
   "engines": {
     "node": ">=22.14.0"
