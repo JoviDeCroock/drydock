@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   check:
-    name: lint · format · typecheck · test
+    name: lint · format · typecheck · test · build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -50,6 +50,18 @@ jobs:
       - name: Test
         if: ${{ !cancelled() }}
         run: pnpm run test
+
+      - name: Production build
+        if: ${{ !cancelled() }}
+        run: pnpm run build
+
+      - name: Unused code check
+        if: ${{ !cancelled() }}
+        run: pnpm run knip
+
+      - name: Production dependency audit
+        if: ${{ !cancelled() }}
+        run: pnpm audit --prod
 
       - name: Upload detection eval report
         if: always()

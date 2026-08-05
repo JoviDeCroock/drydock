@@ -291,7 +291,7 @@ export function renderOgCardSvg(input: OgCardInput): string {
     body,
     `<line x1="${PAD_X}" y1="540" x2="${OG_CARD_WIDTH - PAD_X}" y2="540" stroke="${COLOR.border}" stroke-width="1"/>`,
     text("drydock.org", { x: PAD_X, y: 582, size: 22, color: COLOR.fg, mono: true }),
-    text("free · no account needed", {
+    text("no account required", {
       x: OG_CARD_WIDTH - PAD_X,
       y: 582,
       size: 20,

@@ -11,9 +11,9 @@ the supported range.
 
 ## Reporting a vulnerability
 
-Use GitHub's private vulnerability reporting flow for this repository if it is
-enabled. If it is not enabled yet, contact the maintainers through a private
-project channel and include `SECURITY` in the subject.
+Use [GitHub private vulnerability reporting](https://github.com/JoviDeCroock/drydock/security/advisories/new).
+If that flow is unavailable, email `drydock@drydock.org` with `SECURITY` in the
+subject. Do not open a public issue.
 
 Please include:
 

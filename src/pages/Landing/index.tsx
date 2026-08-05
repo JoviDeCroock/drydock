@@ -180,13 +180,7 @@ export default function LandingPage() {
             <LinkButton href="/dashboard">Open dashboard</LinkButton>
           </Show>
         </div>
-        <MonoDetail
-          parts={[
-            "free for open-source maintainers",
-            "read-only tokens",
-            "you keep the final approval",
-          ]}
-        />
+        <MonoDetail parts={["read-only tokens", "you keep the final approval"]} />
       </section>
     </PageShell>
   );

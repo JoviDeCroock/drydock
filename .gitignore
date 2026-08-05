@@ -5,6 +5,7 @@ packages/experiments/binding.gyp
 packages/experiments/build/
 .DS_Store
 .dev.vars
+wrangler.self-host.jsonc
 .gstack/
 .context/
 agent-tour-output/

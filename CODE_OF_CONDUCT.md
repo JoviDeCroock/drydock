@@ -30,10 +30,10 @@ acting as a project participant.
 
 ## Reporting
 
-Report conduct concerns to the project maintainers through the repository's
-private security or maintainer contact channel. If the report involves a
-maintainer, include enough context for another maintainer or project owner to
-handle it independently.
+Report conduct concerns to `drydock@drydock.org` with `CODE OF CONDUCT` in the
+subject. If the report involves a maintainer, say so explicitly and include
+enough context for another maintainer or project owner to handle it
+independently.
 
 Reports should include:
 

@@ -33,7 +33,7 @@ export interface PublicDiffInput {
 }
 
 /** One selectable version in the `/versions` listing. */
-export interface PublicDiffVersion {
+interface PublicDiffVersion {
   version: string;
   distTags?: string[];
   publishedAt?: string;

@@ -1,0 +1,41 @@
+name: Bug report
+description: Report a reproducible problem in Drydock
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report vulnerabilities here. Use the private reporting link shown on the issue chooser.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the observed and expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the smallest safe reproduction, with credentials and private package contents removed.
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Drydock revision
+      description: Commit, tag, or deployment version where the problem occurred.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Browser, Node version, deployment target, and relevant optional integrations.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed tokens, private package contents, and personal data from this report.
+          required: true

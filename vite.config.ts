@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import { cloudflare } from "@cloudflare/vite-plugin";
 import preact from "@preact/preset-vite";
 import tailwindcss from "@tailwindcss/vite";
-import { ADDITIONAL_PRERENDER_ROUTES } from "./src/lib/prerender-routes";
+import { ADDITIONAL_PRERENDER_ROUTES } from "./src/lib/prerender-routes.ts";
 
 declare const process: {
   env: {

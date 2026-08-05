@@ -2,7 +2,6 @@ import { initWasm, Resvg } from "@resvg/resvg-wasm";
 // The wasm module is compiled by the runtime at module-resolution time and only
 // instantiated on the first render, so importing it does not cost every request
 // that never asks for a card.
-// @ts-expect-error the wasm import has no type declaration
 import resvgWasm from "@resvg/resvg-wasm/index_bg.wasm";
 import { OG_CARD_WIDTH, OG_FONT_ASSETS, OG_FONT_SANS } from "./card";
 

@@ -69,7 +69,7 @@ export function packageDiffSeo(
     return {
       title: "Diff any npm or PyPI package | Drydock",
       description:
-        "Compare two published versions of any npm package or PyPI project file by file, with deterministic supply-chain findings pinned to the diff. Free, no account needed.",
+        "Compare two published versions of any npm package or PyPI project file by file, with deterministic supply-chain findings pinned to the diff. No account required.",
       path: "/diff",
     };
   }

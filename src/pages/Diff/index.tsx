@@ -504,10 +504,10 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
                 ? "One side of this diff is a pkg.pr.new preview build that has not been " +
                   "published yet. Drydock runs this same review automatically on staged npm " +
                   "publishes and GitHub-gated releases — while there is still time to say no. " +
-                  "Free for maintainers."
+                  "The maintainer keeps the final decision."
                 : "Both of these versions are already public. Drydock runs this same review on " +
                   "the release candidate — an npm staged publish or a GitHub-gated release — " +
-                  "while there is still time to say no. Free for maintainers."}
+                  "while there is still time to say no. The maintainer keeps the final decision."}
             </Muted>
             <div class="flex gap-3 mt-1">
               <LinkButton href="/register">Create account</LinkButton>

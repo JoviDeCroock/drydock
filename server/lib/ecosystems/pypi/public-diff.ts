@@ -236,7 +236,7 @@ const PREFERRED_WHEEL_NAMESPACE = "wheel/py3-none-any";
 // envelope. Keep the request-wide advertised download set bounded before any
 // bytes are fetched. When both artifact kinds do not fit, retain the cheaper
 // comparable pair and disclose the omitted coverage.
-export const PUBLIC_PYPI_DIFF_MAX_SELECTED_BYTES = 50 * 1024 * 1024;
+const PUBLIC_PYPI_DIFF_MAX_SELECTED_BYTES = 50 * 1024 * 1024;
 
 interface PublicPyPiDiffSelection {
   from: PyPiRemoteArtifact[];

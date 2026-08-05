@@ -13,8 +13,12 @@ overrides:
   # Keep this plugin on the Node 22.13-compatible line while remediating transitive advisories.
   "@cloudflare/vite-plugin>wrangler": 4.102.0
   "@cloudflare/vite-plugin>miniflare": 4.20260617.0
+  # Vite's PostCSS range otherwise resolves to versions with source-map path traversal advisories.
+  postcss: ^8.5.23
   ws: 8.21.0
-  undici: 7.28.0
+  # AI SDK 6 permits vulnerable Undici 7 releases; keep the patched cache,
+  # retry, cookie, and header handling until its dependency floor catches up.
+  undici: ^7.29.0
 
 allowBuilds:
   "0": esbuild
