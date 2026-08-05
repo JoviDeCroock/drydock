@@ -153,8 +153,24 @@ describe("recordProductEvent", () => {
         ecosystem: "npm",
         status: "unavailable",
         model: "@cf/meta/llama",
+        reviewerVersion: "1.0.0",
         durationMs: 50,
         findingCount: 0,
+        steps: 1,
+        inputTokens: 200,
+        cachedInputTokens: 100,
+        outputTokens: 20,
+        totalTokens: 220,
+      },
+      {
+        name: "ai_review.decided",
+        organizationId: "org_1",
+        ecosystem: "npm",
+        decision: "publish",
+        status: "complete",
+        releaseAssessment: "nothing_unusual",
+        model: "@cf/meta/llama",
+        reviewerVersion: "1.0.0",
       },
       {
         name: "scan.discarded",
@@ -207,6 +223,7 @@ describe("recordProductEvent", () => {
     // The model id legitimately contains a slash and an @; assert it is the
     // only such value and that it is a model, not a path.
     expect(points.flatMap((p) => p.blobs).filter((b) => b.includes("/"))).toEqual([
+      "@cf/meta/llama",
       "@cf/meta/llama",
     ]);
   });

@@ -23,6 +23,14 @@
 		"logs": {
 			"enabled": true,
 			"invocation_logs": true
+		},
+		// Optional sampled Agent Traces. Message and tool payload persistence is
+		// disabled in code; traces retain operation timing, model/usage metadata,
+		// tool names, and the non-identifying reviewer version only.
+		"traces": {
+			"enabled": true,
+			"head_sampling_rate": 0.1,
+			"persist": true
 		}
 	},
 	"assets": {

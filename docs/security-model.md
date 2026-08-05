@@ -80,6 +80,15 @@ Workflow gates never publish. GitHub Environment protection holds the publish jo
 
 Package contents are hostile instructions. AI prompts must frame package text as evidence, restrict outputs to schema-validated findings, and keep deterministic findings/risk independent. AI input should include only the minimum changed-file evidence needed for review, never credentials, sessions, raw headers, or operator secrets. Invalid, partial, or unsafe AI output is ignored/unavailable rather than treated as a clean review.
 
+Cloudflare Agent Traces are sampled at 10% for reviewer debugging, with message
+and tool payload persistence explicitly disabled. Trace metadata is restricted
+to operation/timing, model/usage, tool names, reviewer version, ecosystem, and a
+fresh invocation-scoped random id. It must not include scan, stage,
+organization, package, file, prompt, evidence, or tool-result content. Aggregate
+AI execution and decision events follow the same no-package-content rule; a
+maintainer decision is feedback, never an automatic truth label. See
+[`ai-review-eval.md`](./ai-review-eval.md).
+
 For npm registry tarballs, consumer install lifecycle hooks are `preinstall`, `install`, and `postinstall`. `prepare`, `prepack`, `postpack`, and publish/prepublish hooks are packaging-time hooks and should not be treated as consumer-install evidence unless other evidence shows they changed the shipped artifact.
 
 ## Authorization posture

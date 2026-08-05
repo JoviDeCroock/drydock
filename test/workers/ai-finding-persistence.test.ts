@@ -65,6 +65,7 @@ const completeAiReview = {
   ],
   requiresManualReview: true,
   model: "test-model",
+  reviewerVersion: "1.0.0",
 };
 
 const files = [
@@ -229,12 +230,40 @@ describe("AI finding persistence (R2 artifact path)", () => {
   test("release memory profiles exclude AI rows from artifact-backed priors", async () => {
     const owner = await seedUser();
     const { db, scanId } = await seedArtifactBackedScan(owner);
-    await recordScanDecision(db, {
-      scanId,
-      organizationId: owner.organizationId,
-      actorUserId: owner.userId,
-      decision: "publish",
-    });
+    const productPoints: AnalyticsEngineDataPoint[] = [];
+    const analyticsEnv = {
+      ...env,
+      PRODUCT_ANALYTICS: {
+        writeDataPoint: (point: AnalyticsEngineDataPoint) => productPoints.push(point),
+      },
+    } as Cloudflare.Env;
+    await recordScanDecision(
+      db,
+      {
+        scanId,
+        organizationId: owner.organizationId,
+        actorUserId: owner.userId,
+        decision: "publish",
+      },
+      env.ARTIFACTS,
+      analyticsEnv,
+    );
+
+    expect(productPoints.map((point) => point.indexes?.[0])).toEqual([
+      "scan.decided",
+      "ai_review.decided",
+    ]);
+    expect(productPoints[1].blobs).toEqual([
+      "1",
+      "ai_review.decided",
+      owner.organizationId,
+      "npm",
+      "publish",
+      "complete",
+      "suspicious",
+      "test-model",
+      "1.0.0",
+    ]);
 
     const prior = await getPriorApprovedScanFindings(
       db,

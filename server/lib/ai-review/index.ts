@@ -1,6 +1,8 @@
-import { generateText, stepCountIs, type LanguageModel, type LanguageModelUsage } from "ai";
+import * as ai from "ai";
+import type { LanguageModel, LanguageModelUsage } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
 import {
+  AI_REVIEWER_VERSION,
   aiReviewSubmissionSchema,
   buildReviewerSystemPrompt,
   clampAiReviewSubmission,
@@ -22,11 +24,37 @@ import { errorMessage } from "../platform/errors";
 
 export type { AiReview, AiReviewResult, SelectiveAiReviewOptions } from "./types";
 export { displayedAiResult } from "./types";
+export { AI_REVIEWER_VERSION } from "./contract";
 
 // Reviewer model order: prefer the strongest affordable model, then fail over.
 export const AI_MODEL = "@cf/moonshotai/kimi-k2.7-code";
 export const AI_FALLBACK_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 export const AI_MODEL_CANDIDATES = [AI_MODEL, AI_FALLBACK_MODEL] as const;
+export const AI_REVIEW_AGENT_NAME = "drydock-release-reviewer";
+
+// Package evidence and tool results can contain private pre-release source,
+// secrets, or prompt injection. Agent Traces record operation names, timings,
+// model/usage data, and tool names only — never message or tool payloads.
+let tracedAiPromise: Promise<typeof ai> | undefined;
+
+async function tracedAiSdk(): Promise<typeof ai> {
+  tracedAiPromise ??= import("agents/observability/ai")
+    .then(({ wrapAISDK }) =>
+      wrapAISDK(ai, {
+        storeMessages: false,
+        storeTools: false,
+      }),
+    )
+    .catch((err: unknown) => {
+      // The Agent SDK correctly imports `cloudflare:workers`, which Node's ESM
+      // loader does not implement. Unit/eval tests use injected mock models and
+      // retain the unwrapped AI SDK; production Workers must surface any other
+      // initialization failure rather than silently dropping traces.
+      if (errorMessage(err).includes("Received protocol 'cloudflare:'")) return ai;
+      throw err;
+    });
+  return tracedAiPromise;
+}
 
 const DEFAULT_CACHE_AFFINITY = "staged-publish-review-agentic-release-reviewer-v1";
 
@@ -80,6 +108,11 @@ export async function analyzeWithAi(
   const index = buildEvidenceIndex(options);
   const payload = buildAiReviewPayload(options, index);
   const transientFailures: string[] = [];
+  // Trace correlation is intentionally local to this invocation. Do not reuse
+  // scan/stage/organization ids: the trace should remain useful without
+  // becoming another index over private review records.
+  const traceConversationId = crypto.randomUUID();
+  const tracedAi = await tracedAiSdk();
 
   for (const candidateModel of models) {
     let lastError: unknown;
@@ -107,7 +140,7 @@ export async function analyzeWithAi(
           index,
         );
 
-        const result = await generateText({
+        const result = await tracedAi.generateText({
           model: languageModel,
           system: buildReviewerSystemPrompt(options.ecosystem),
           messages: [{ role: "user", content: JSON.stringify(payload) }],
@@ -115,7 +148,8 @@ export async function analyzeWithAi(
           // Stop on a recorded review, not on the mere presence of a submit_review
           // call: an invalid one (rejected by validation, so `execute` never fires)
           // must let the model see the tool error and retry instead of ending the loop.
-          stopWhen: [() => submittedReview !== null, stepCountIs(MAX_AGENT_STEPS)],
+          stopWhen: [() => submittedReview !== null, ai.stepCountIs(MAX_AGENT_STEPS)],
+          experimental_telemetry: aiReviewTraceTelemetry(options, traceConversationId),
           // The last step the budget allows offers only submit_review and forces
           // the call: a run that spends every step gathering evidence would
           // otherwise end unrecorded, discarding the whole token spend and
@@ -206,6 +240,23 @@ export async function analyzeWithAi(
       "Assistant review didn't run: no reviewer model configured.",
     ),
     usage: null,
+  };
+}
+
+export function aiReviewTraceTelemetry(
+  options: Pick<SelectiveAiReviewOptions, "ecosystem">,
+  conversationId: string,
+) {
+  return {
+    functionId: AI_REVIEW_AGENT_NAME,
+    metadata: {
+      agentId: AI_REVIEW_AGENT_NAME,
+      agentVersion: AI_REVIEWER_VERSION,
+      conversationId,
+      // Ecosystem is a closed product capability label, not package or tenant
+      // data. Organization, stage, package, file, and evidence fields stay out.
+      ecosystem: options.ecosystem,
+    },
   };
 }
 
@@ -310,6 +361,7 @@ function normalizeParsedReview(model: string, value: unknown): AiReview {
     findings: selectReportedFindings(review.findings),
     requiresManualReview: review.requiresManualReview,
     model,
+    reviewerVersion: AI_REVIEWER_VERSION,
   };
 }
 
@@ -326,5 +378,6 @@ function fallbackReview(
     findings: [],
     requiresManualReview: false,
     model,
+    reviewerVersion: AI_REVIEWER_VERSION,
   };
 }

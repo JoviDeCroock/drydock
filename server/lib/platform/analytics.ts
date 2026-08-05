@@ -106,8 +106,30 @@ export type AnalyticsEvent =
        */
       status: string;
       model: string;
+      /** Prompt, evidence-tool, and routing contract version. */
+      reviewerVersion: string;
       durationMs: number;
       findingCount: number;
+      steps: number;
+      inputTokens: number;
+      cachedInputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+    }
+  | {
+      /**
+       * Maintainer action joined to the persisted AI result. This is useful
+       * feedback, not a correctness label: publish can mean accepted risk and
+       * discard can be unrelated to the review.
+       */
+      name: "ai_review.decided";
+      organizationId: string;
+      ecosystem: string;
+      decision: string;
+      status: string;
+      releaseAssessment: string;
+      model: string;
+      reviewerVersion: string;
     }
   | {
       name: "npm_connection.validated";
@@ -210,6 +232,7 @@ export const ANALYTICS_EVENT_NAMES = [
   "scan.discarded",
   "scan.decided",
   "ai_review.finished",
+  "ai_review.decided",
   "npm_connection.validated",
   "public_diff.viewed",
   "user.signed_up",
@@ -264,9 +287,9 @@ export function recordProductEvent(
  * blob2:   event name (also in the index; repeated so queries need only blobs)
  * blob3:   organization id, or "" for anonymous events
  * blob4:   ecosystem
- * blob5–8: event-specific dimensions, in the order declared per event below
+ * blob5+:  event-specific dimensions, in the order declared per event below
  * double1: duration in ms (0 when not applicable)
- * double2–4: event-specific counts
+ * double2+: event-specific counts
  */
 function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
   const base = (
@@ -315,8 +338,23 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
       return base(
         event.organizationId,
         event.ecosystem,
-        [event.status, event.model],
-        [event.durationMs, event.findingCount],
+        [event.status, event.model, event.reviewerVersion],
+        [
+          event.durationMs,
+          event.findingCount,
+          event.steps,
+          event.inputTokens,
+          event.cachedInputTokens,
+          event.outputTokens,
+          event.totalTokens,
+        ],
+      );
+    case "ai_review.decided":
+      return base(
+        event.organizationId,
+        event.ecosystem,
+        [event.decision, event.status, event.releaseAssessment, event.model, event.reviewerVersion],
+        [0],
       );
     case "npm_connection.validated":
       return base(event.organizationId, "npm", [event.outcome], [0]);

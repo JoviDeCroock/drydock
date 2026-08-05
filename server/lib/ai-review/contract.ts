@@ -2,6 +2,12 @@ import z from "zod";
 
 export type AiReviewEcosystem = "npm" | "pypi" | "vscode" | "generic";
 
+// Bump whenever the system prompt, evidence/tool contract, submission policy,
+// or model-routing policy changes in a way that can alter reviewer behavior.
+// Persisting this with each review keeps analytics and recorded eval cases from
+// silently comparing different reviewer contracts as though they were one.
+export const AI_REVIEWER_VERSION = "1.0.0";
+
 // We surface only the highest-signal findings: critical/high, most severe
 // first, capped at this count. Lower-severity context belongs in the summary.
 export const MAX_AI_FINDINGS = 6;
@@ -275,6 +281,14 @@ const persistedAiReviewSchema = z.object({
   findings: z.array(persistedAiFindingSchema),
   requiresManualReview: z.boolean(),
   model: z.string().nullable(),
+  // Historical rows predate reviewer versioning. Normalize them to null rather
+  // than rejecting the otherwise-valid review; every newly produced review
+  // carries AI_REVIEWER_VERSION.
+  reviewerVersion: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
 });
 
 export type PersistedAiReview = z.infer<typeof persistedAiReviewSchema>;

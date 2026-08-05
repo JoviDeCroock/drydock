@@ -245,6 +245,7 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
     findings: [],
     requiresManualReview: false,
     model: null,
+    reviewerVersion: null,
   };
   const aiReviewEnabled = args.env.FLAGS
     ? await args.env.FLAGS.getBooleanValue("ai-review", true, {
@@ -260,7 +261,7 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
   // every cold start (and every per-file test isolate) for a path many scans skip.
   // AI_MODEL rides along — it lives in the same module, so importing it statically
   // would defeat the point.
-  const { runSelectiveAiReview, AI_MODEL } = await import("../ai-review");
+  const { runSelectiveAiReview, AI_MODEL, AI_REVIEWER_VERSION } = await import("../ai-review");
 
   const startedAtMs = Date.now();
   try {
@@ -286,8 +287,14 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
       ecosystem: args.ecosystem,
       status: review.status,
       model: review.model ?? "unknown",
+      reviewerVersion: review.reviewerVersion ?? "legacy",
       durationMs: durationMsSince(startedAtMs),
       findingCount: review.findings.length,
+      steps: usage?.steps ?? 0,
+      inputTokens: usage?.inputTokens ?? 0,
+      cachedInputTokens: usage?.cachedInputTokens ?? 0,
+      outputTokens: usage?.outputTokens ?? 0,
+      totalTokens: usage?.totalTokens ?? 0,
     });
     emitOperationalEvent("info", "scan.ai_review.completed", {
       scanId: args.identity.scanId,
@@ -316,8 +323,14 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
       ecosystem: args.ecosystem,
       status: "errored",
       model: AI_MODEL,
+      reviewerVersion: AI_REVIEWER_VERSION,
       durationMs: durationMsSince(startedAtMs),
       findingCount: 0,
+      steps: 0,
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
     });
     emitOperationalEvent("error", "scan.ai_review.failed", {
       scanId: args.identity.scanId,
@@ -333,6 +346,7 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
       findings: [],
       requiresManualReview: false,
       model: AI_MODEL,
+      reviewerVersion: AI_REVIEWER_VERSION,
     };
   }
 }
