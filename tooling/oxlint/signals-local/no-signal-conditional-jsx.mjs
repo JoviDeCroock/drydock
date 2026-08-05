@@ -31,35 +31,9 @@
  * which oxlint generally does not provide today.
  */
 
-import { readFileSync } from "node:fs";
-import { isAbsolute, relative, sep } from "node:path";
 import { isKnownSignal, isSignalByTypeChecker } from "./signals-scope.mjs";
 
 const SKIP_KEYS = new Set(["parent", "loc", "range", "start", "end", "type"]);
-
-// Baseline of pre-existing infractions, grandfathered so the rule can ship as
-// `error` without first migrating every call site to `<Show>`. Keyed by
-// repo-relative path → 1-based line numbers; anything NOT listed still errors,
-// so the baseline only shrinks. Burn it down as sites migrate, then regenerate:
-//   node tooling/oxlint/signals-local/regenerate-suppressions.mjs
-// (SIGNALS_NO_SUPPRESS=1 bypasses the baseline — the regenerator sets it.)
-const SUPPRESSIONS =
-  process.env.SIGNALS_NO_SUPPRESS === "1"
-    ? {}
-    : (() => {
-        try {
-          return JSON.parse(readFileSync(new URL("./suppressions.json", import.meta.url), "utf8"));
-        } catch {
-          return {};
-        }
-      })();
-
-/** Repo-relative, forward-slashed path so lookups match suppressions.json keys. */
-function toRepoRelative(filename) {
-  if (!filename) return "";
-  const rel = isAbsolute(filename) ? relative(process.cwd(), filename) : filename;
-  return rel.split(sep).join("/");
-}
 
 /** @type {import("eslint").Rule.RuleModule} */
 const rule = {
@@ -83,12 +57,7 @@ const rule = {
     const sourceCode = context.sourceCode ?? context.getSourceCode();
     const parserServices = context.parserServices ?? sourceCode?.parserServices;
 
-    // Skip infractions grandfathered in the baseline (see SUPPRESSIONS above).
-    const suppressedLines = new Set(
-      SUPPRESSIONS[toRepoRelative(context.filename ?? context.getFilename?.() ?? "")] ?? [],
-    );
     function reportConditional(node, messageId) {
-      if (suppressedLines.has(node.loc?.start?.line)) return;
       context.report({ node, messageId });
     }
 

@@ -401,7 +401,7 @@ function ScanStateSelect({
 // user at a filter which is also empty, and implies a review history they do
 // not have. That sentence is right for an organization that *has* history, so
 // it stays for that case and only the never-scanned case gets its own wording.
-// Per DESIGN.md the empty state is one muted sentence with no CTA inside it —
+// Per docs/design.md the empty state is one muted sentence with no CTA inside it —
 // the getting-started panel above carries the affordances.
 function emptyStateMessage(filter: ScanDecisionFilter, hasAnyScan: boolean | null): string {
   if (hasAnyScan === false) {

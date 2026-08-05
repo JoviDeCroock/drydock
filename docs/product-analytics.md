@@ -156,4 +156,4 @@ The binding is optional everywhere. `recordProductEvent` returns immediately
 when it is absent, and a write failure degrades to a `analytics.write_failed`
 warn log — analytics is the least important thing happening in any request that
 emits one. Local dev, the test suite, and self-hosted deployments that omit the
-block in `wrangler.template.jsonc` behave exactly as they did before.
+block in `docs/examples/wrangler.self-host.jsonc` behave exactly as they did before.

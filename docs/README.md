@@ -7,7 +7,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 ## Always-use references
 
 - [`../AGENTS.md`](../AGENTS.md) — repo rules, commands, invariants, and test expectations for agents.
-- [`../DESIGN.md`](../DESIGN.md) — visual/UI source of truth. Read before UI changes.
+- [`design.md`](./design.md) — visual/UI source of truth. Read before UI changes.
 - [`release-safety.md`](./release-safety.md) — required verification layer by change type.
 - [`security-model.md`](./security-model.md) — security boundaries and non-negotiables.
 
@@ -24,7 +24,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`self-hosting.md`](./self-hosting.md) — local setup, Cloudflare resources, deploy, GitHub App, Slack.
 - [`e2e-test-environment.md`](./e2e-test-environment.md) — fake registry and Playwright harness.
 - [`tooling.md`](./tooling.md) — oxlint/oxfmt/typecheck, signals lint rules, route/client helpers.
-- [`ui.md`](./ui.md) — compact implementation map for the Preact UI: primitives, copy density, and large-diff performance rules. `DESIGN.md` remains the visual source of truth.
+- [`ui.md`](./ui.md) — compact implementation map for the Preact UI: primitives, copy density, and large-diff performance rules. `docs/design.md` remains the visual source of truth.
 - [`agent-tour.md`](./agent-tour.md) — portable product walkthrough artifacts.
 - [`incident-content-playbook.md`](./incident-content-playbook.md) — what to publish when a public supply-chain compromise breaks, the hard rules, and the post templates.
 - [`test-package.md`](./test-package.md) — package fixture used for manual staged-publish checks.

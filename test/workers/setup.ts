@@ -10,7 +10,7 @@ declare module "cloudflare:test" {
 }
 
 // Pool workers are reused across test files (isolate: false in
-// vitest.workers.config.ts), so D1/R2 state persists between files that run on
+// vitest.config.ts), so D1/R2 state persists between files that run on
 // the same worker. Files on a worker run sequentially, so resetting storage
 // here restores the per-file clean-database semantics the tests are written
 // against while keeping the (expensive) module graph warm.

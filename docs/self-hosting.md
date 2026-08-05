@@ -67,14 +67,14 @@ Do not deploy from it. Copy the public template to the gitignored self-host path
 and fill in your account values:
 
 ```sh
-cp wrangler.template.jsonc wrangler.self-host.jsonc
+cp docs/examples/wrangler.self-host.jsonc wrangler.self-host.jsonc
 ```
 
 Keep `wrangler.self-host.jsonc` local. It is ignored by git so account IDs,
 domains, integration client IDs, and deployment choices cannot accidentally
 replace the upstream production configuration in a pull request.
 
-`wrangler.template.jsonc` keeps the default resource names and marks every
+`docs/examples/wrangler.self-host.jsonc` keeps the default resource names and marks every
 account-owned value with a `REPLACE_*` placeholder. Replace at least:
 
 - `d1_databases[].database_id` and `kv_namespaces[].id`;

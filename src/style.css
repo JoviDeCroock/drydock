@@ -110,7 +110,7 @@
     /* Diff syntax highlighting (shiki css-variables theme). Restrained by
        design: declarations/operators sit below identifiers on the ink scale and
        a single muted teal marks string literals. Severity row fills stay the only saturated color so
-       "color = signal" holds (DESIGN.md). */
+       "color = signal" holds (docs/design.md). */
     --sh-foreground: var(--color-ink);
     --sh-token-keyword: var(--color-ink-muted);
     --sh-token-constant: var(--color-ink-muted);

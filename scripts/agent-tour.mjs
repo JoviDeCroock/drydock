@@ -29,7 +29,7 @@ const commandArgs = [
   "playwright",
   "test",
   "--config",
-  "playwright.agent-tour.config.ts",
+  "test/agent-tour/playwright.config.ts",
   ...passThrough,
 ];
 const childEnv = {

@@ -1,6 +1,6 @@
 // Pure helpers for pinning findings onto diff lines. Kept JSX-free so the
 // row-matching logic is unit-testable without rendering DiffView. The diff is
-// the headline (DESIGN.md / diff-first direction): deterministic findings are
+// the headline (docs/design.md / diff-first direction): deterministic findings are
 // pinned to the hunk that triggered them rather than living in a side list.
 
 export interface DiffFinding {

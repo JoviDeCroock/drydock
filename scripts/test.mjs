@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 const forwardedArgs = process.argv.slice(2);
 const extraArgs = forwardedArgs[0] === "--" ? forwardedArgs.slice(1) : forwardedArgs;
 // The workers project parallelizes internally (reused pool workers, see
-// vitest.workers.config.ts), so it needs no external sharding; running it in
+// the workers project in vitest.config.ts), so it needs no external sharding; running it in
 // one process keeps a single shared Vite transform cache. The node project
 // runs as a separate process so the two suites overlap fully.
 const checks =

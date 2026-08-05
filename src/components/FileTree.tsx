@@ -30,7 +30,7 @@ function TreeIndent({ depth }: { depth: number }) {
     <>
       {Array.from({ length: depth }, (_, index) => (
         // 12px spacer + the row's 8px flex gap = the 20px-per-depth indent
-        // DESIGN.md specs; a 20px spacer would compound to 28px per level.
+        // docs/design.md specs; a 20px spacer would compound to 28px per level.
         <span key={index} class="w-3 shrink-0" aria-hidden />
       ))}
     </>

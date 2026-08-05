@@ -1,5 +1,5 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
+  "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "staged-publish-review-test",
   "compatibility_date": "2026-05-20",
   "compatibility_flags": ["nodejs_compat"],
@@ -17,7 +17,7 @@
       "binding": "DB",
       "database_name": "staged-publish-review-test",
       "database_id": "00000000-0000-0000-0000-000000000000",
-      "migrations_dir": "drizzle",
+      "migrations_dir": "../../drizzle",
     },
   ],
   "r2_buckets": [

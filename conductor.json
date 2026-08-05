@@ -1,7 +1,0 @@
-{
-  "scripts": {
-    "setup": "pnpm install",
-    "run": "pnpm e2e:dev"
-  },
-  "runScriptMode": "concurrent"
-}

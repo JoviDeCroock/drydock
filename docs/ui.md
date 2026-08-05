@@ -1,6 +1,6 @@
 # UI styling and primitives
 
-`DESIGN.md` is the source of truth for Drydock UI decisions: fonts, colors, spacing, iconography, chart rules, interaction density, dark/light behavior, and marketing-surface constraints. Read it before visual work.
+`docs/design.md` is the source of truth for Drydock UI decisions: fonts, colors, spacing, iconography, chart rules, interaction density, dark/light behavior, and marketing-surface constraints. Read it before visual work.
 
 This file is only a compact implementation map.
 

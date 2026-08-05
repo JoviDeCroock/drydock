@@ -10,7 +10,7 @@
 export const OG_CARD_WIDTH = 1200;
 export const OG_CARD_HEIGHT = 630;
 
-// DESIGN.md light-mode tokens. The card is deliberately rendered in the default
+// docs/design.md light-mode tokens. The card is deliberately rendered in the default
 // (light) surface: social clients composite previews on their own background
 // and a dark card reads as an unrelated screenshot next to the site.
 const COLOR = {
@@ -261,7 +261,7 @@ export function renderOgCardSvg(input: OgCardInput): string {
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${OG_CARD_WIDTH}" height="${OG_CARD_HEIGHT}" viewBox="0 0 ${OG_CARD_WIDTH} ${OG_CARD_HEIGHT}">`,
     `<rect width="${OG_CARD_WIDTH}" height="${OG_CARD_HEIGHT}" fill="${COLOR.bg}"/>`,
-    // Brand mark: the one saturated orange element on the card (DESIGN.md).
+    // Brand mark: the one saturated orange element on the card (docs/design.md).
     `<rect x="${PAD_X}" y="66" width="22" height="22" rx="3" fill="${COLOR.accent}"/>`,
     text("Drydock", { x: PAD_X + 36, y: 85, size: 28, color: COLOR.fg }),
     text(registryLabel, {

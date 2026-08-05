@@ -30,7 +30,7 @@ describe("worker security headers", () => {
   // Local-dev escape hatch: DISABLE_SECURITY_HEADERS skips the whole policy so
   // the strict CSP doesn't break Vite HMR and HSTS doesn't pin localhost to
   // HTTPS. The flag is absent from every deployed config (wrangler.jsonc /
-  // wrangler.test.jsonc), so the tests above prove production fails closed.
+  // test/config/wrangler.jsonc), so the tests above prove production fails closed.
   test("omits all security headers when DISABLE_SECURITY_HEADERS is set", async () => {
     const ctx = createExecutionContext();
     const res = await worker.fetch(

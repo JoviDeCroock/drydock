@@ -83,7 +83,7 @@ function isUnpreviewable(file: FileRecord | null): boolean {
 // A centered processing block that fills the diff panel so the "still working"
 // signal is unmistakable while the previous version streams in — the file tree
 // renders first, and the sandbox fetch of the previous tarball can take a
-// minute. No spinner (DESIGN.md): mono line plus an indeterminate bar.
+// minute. No spinner (docs/design.md): mono line plus an indeterminate bar.
 function DiffProcessing({ title, detail }: { title: string; detail: string }) {
   return (
     <div class="flex flex-1 flex-col items-center justify-center gap-3 text-center min-h-0">
