@@ -4,6 +4,8 @@ Drydock reviews package artifacts before a maintainer approves publication. It c
 
 Approval stays outside Drydock: maintainers approve in npm, npmjs.com, or GitHub with their own required 2FA/review step. Drydock never publishes and never collects approval codes.
 
+Drydock runs as a hosted service at [drydock.org](https://drydock.org); this repository is its source, and it can be self-hosted on your own Cloudflare account. To add it to a release, jump to [Add Drydock to your release](#add-drydock-to-your-release).
+
 ## Sponsored by
 
 <a href="https://www.aikido.dev">
@@ -17,19 +19,86 @@ Approval stays outside Drydock: maintainers approve in npm, npmjs.com, or GitHub
 
 <img src="src/assets/release-flow.png" alt="Source code is built into a package, staged as a release, held in Drydock quarantine where a scan of @acme/cli 4.2.0 to 4.3.0 reports 1 critical and 2 medium findings, and blocked from becoming a published package" width="100%">
 
-## Modes
+## Add Drydock to your release
 
-- **npm registry staging** — `npm stage publish` creates a private staged tarball. Drydock downloads it through a sandbox and leaves final approval in npm.
-- **Workflow gates** — for ecosystems where the registry cannot stage a candidate, GitHub Actions uploads built artifacts and a GitHub Environment custom deployment-protection rule blocks publishing until Drydock review is accepted or rejected. PyPI, npm, and VS Code workflow-gate artifacts are supported by the shared gate pipeline.
+**If you publish from GitHub Actions, use a workflow gate.** It is the path for npm, PyPI, and VS Code
+alike, and it is what the example repositories below use. `npm stage publish` is a shortcut for npm
+maintainers who already publish that way from a terminal — if you don't, skip it. Both paths produce
+the same review report; they differ only in who holds the candidate while you read it.
 
-Example GitHub Actions integrations:
+### Workflow gate — GitHub Actions publishes (npm, PyPI, VS Code)
 
-- [PyPI CI example](https://github.com/JoviDeCroock/drydock-ci-example)
-- [npm monorepo CI example](https://github.com/JoviDeCroock/drydock-npm-monorepo-ci-example)
+CI builds the release and uploads it. A GitHub Environment pauses the publish job until you accept
+the review in Drydock, then the same job publishes the exact reviewed bytes.
+
+1. Sign in at [drydock.org](https://drydock.org) and create the organization that owns the release.
+2. In `Organization settings → GitHub App`, install the Drydock GitHub App on the account that hosts
+   the repository.
+3. In the repository's `Settings → Environments`, create an environment (for example `production`)
+   and enable **Drydock** as a custom deployment protection rule.
+4. Back in Drydock settings, map that repository and environment to your organization.
+5. Split your release workflow into a build job that uploads the artifacts and a publish job pinned
+   to the protected environment:
+
+   ```yaml
+   jobs:
+     pack:
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@v4
+         - run: npm ci
+         - run: npm pack --pack-destination dist
+         - run: cd dist && sha256sum *.tgz > SHA256SUMS
+         - uses: actions/upload-artifact@v4
+           with:
+             name: npm-release-candidates
+             path: dist/
+
+     publish:
+       needs: pack
+       environment: production # Drydock holds this job
+       permissions: { id-token: write, contents: read }
+       steps:
+         - uses: actions/download-artifact@v4
+           with: { name: npm-release-candidates, path: dist }
+         - run: cd dist && sha256sum --check --strict SHA256SUMS
+         - run: npm publish dist/*.tgz --access public --provenance
+   ```
+
+6. Push a release. The publish job pauses, Drydock reviews the uploaded artifacts, and accepting the
+   review releases the job. Rejecting it fails the release closed.
+
+There is no Drydock manifest to maintain: package name, version, and ecosystem are read from metadata
+inside the uploaded `.tgz`, `.whl`, `.tar.gz`, or `.vsix`. A monorepo upload becomes one report per
+package, and the job continues only once every package is accepted. The publish job must publish the
+bytes it downloaded — rebuilding after approval breaks the review boundary, which is what the
+`SHA256SUMS` record/check pair enforces.
+
+Full workflows for each ecosystem: [PyPI CI example](https://github.com/JoviDeCroock/drydock-ci-example),
+[npm monorepo CI example](https://github.com/JoviDeCroock/drydock-npm-monorepo-ci-example), and
+[`docs/workflow-gates.md`](docs/workflow-gates.md).
+
+### npm stage publish — npm only, no CI changes
+
+npm holds a private staged tarball; Drydock reviews it and you finish the publish in npm with your
+own 2FA.
+
+1. Create a Drydock organization, then on npmjs.com generate a granular access token with
+   `Packages and scopes: Read-only` and `Organizations: No access` covering the scopes you publish.
+2. Paste it into `Organization settings → npm access`.
+3. Run `npm stage publish` from the package directory. Drydock discovers the stage, scans it, and
+   shows the report.
+4. Record your decision in Drydock, then complete or discard the publish on npm — on npmjs.com or
+   with the `npm stage approve` / `npm stage reject` command Drydock shows you.
+
+The longer walkthrough of both paths — what the report contains, how the credential boundary works,
+and per-ecosystem workflow examples — lives at [drydock.org/docs](https://drydock.org/docs).
 
 ## Docs
 
-Start with [`docs/README.md`](docs/README.md) to pick the smallest relevant reference. Common entry points:
+[drydock.org/docs](https://drydock.org/docs) is the guide for maintainers setting Drydock up. The
+files below are the engineering and operator reference for working on Drydock or self-hosting it;
+start with [`docs/README.md`](docs/README.md) to pick the smallest relevant one. Common entry points:
 
 - [`docs/self-hosting.md`](docs/self-hosting.md) — local setup, Cloudflare resources, deployment, GitHub App, and Slack setup.
 - [`docs/architecture.md`](docs/architecture.md) — runtime components, trust boundaries, adapters, storage, and API shape.
