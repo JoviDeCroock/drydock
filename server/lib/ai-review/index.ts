@@ -30,7 +30,7 @@ export { AI_REVIEWER_VERSION } from "./contract";
 export const AI_MODEL = "@cf/moonshotai/kimi-k2.7-code";
 export const AI_FALLBACK_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 export const AI_MODEL_CANDIDATES = [AI_MODEL, AI_FALLBACK_MODEL] as const;
-export const AI_REVIEW_AGENT_NAME = "drydock-release-reviewer";
+const AI_REVIEW_AGENT_NAME = "drydock-release-reviewer";
 
 // Package evidence and tool results can contain private pre-release source,
 // secrets, or prompt injection. Agent Traces record operation names, timings,
