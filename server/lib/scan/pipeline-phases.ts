@@ -10,6 +10,7 @@ import type {
   PackageAdapter,
   StagedDetails,
 } from "../ecosystems/package-adapter";
+import type { BuildAttestation } from "../build-attestation";
 import type { IntentEnvelope } from "../intent-envelope";
 import {
   describeOperationalError,
@@ -266,6 +267,10 @@ export interface PersistResultsArgs<TInput, TBroker extends AdapterBroker> {
   // Advisory source-binding classification computed by the pipeline; persisted
   // with the scan but never allowed to influence risk or findings.
   intentEnvelope: IntentEnvelope;
+  // Advisory build-attestation verdict, graded in the control plane by the
+  // workflow-gate job. Null for staged publishes and for gates whose ecosystem
+  // has no attestation source. Like the envelope, never feeds risk or findings.
+  buildAttestation?: BuildAttestation | null;
 }
 
 export interface PersistedScanOutcome {
@@ -308,6 +313,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     riskSummary: args.riskSummary,
     releaseConsistency: args.releaseConsistency,
     intentEnvelope: args.intentEnvelope,
+    buildAttestation: args.buildAttestation ?? null,
     safety,
   };
 
@@ -342,6 +348,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     risk: args.riskSummary,
     releaseConsistency: args.releaseConsistency,
     intentEnvelope: args.intentEnvelope,
+    buildAttestation: args.buildAttestation ?? null,
     safety,
   };
   const reportJson = stableJson(reportPayload);
@@ -381,6 +388,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
       baseline: baseline.baseline,
       releaseConsistency: args.releaseConsistency,
       intentEnvelope: args.intentEnvelope,
+      buildAttestation: args.buildAttestation ?? null,
       safety: result.safety,
     },
     ai: args.aiFindings,

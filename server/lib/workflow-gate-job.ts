@@ -4,7 +4,10 @@ import { recordScanEvent } from "../db/events";
 import { getOrganizationOwnerUserId } from "../db/organizations";
 import { createScanJob, discardGateScans, markScanFailed } from "../db/scans";
 import { githubAppInstallations } from "../db/schema";
+import { type BuildAttestation, evaluateBuildAttestation } from "./build-attestation";
+import { fetchWorkflowRunHeadSha } from "./github-app/api";
 import { WorkflowArtifactError } from "./github-app/artifacts";
+import { fetchBuildAttestations } from "./github-app/attestations";
 import {
   type GithubAppConfig,
   GithubAppConfigError,
@@ -258,7 +261,13 @@ export async function executeWorkflowGateJob(
     await discardGateScans(db, gate.id, organizationId, env.ARTIFACTS);
     reviewed = await reviewGatePackages(
       { env, executionCtx, db },
-      { gate, ownerUserId, packages: prepared.packages },
+      {
+        gate,
+        ownerUserId,
+        packages: prepared.packages,
+        config,
+        installationExternalId: prepared.installationExternalId,
+      },
     );
   } catch (err) {
     // A per-package scan failed. Release the claim so a retry re-runs the whole
@@ -436,6 +445,88 @@ interface ReviewedPackage {
 const GATE_PACKAGE_SCAN_CONCURRENCY = 3;
 
 /**
+ * Look up and grade the build attestation covering one candidate's artifacts.
+ *
+ * Advisory and strictly non-blocking: every failure path returns a verdict
+ * (`unavailable`) rather than throwing. Provenance evidence is a bonus signal —
+ * a repository that publishes none is the common case, and a GitHub outage in
+ * the attestation store must not be able to stall a release.
+ *
+ * The lookup asks the repository's attestation store about digests Drydock
+ * recomputed itself, and the verdict compares the answer against the repository
+ * and run the *signed webhook* bound. Both sides of that comparison are
+ * independent of the package, which is what makes a `mismatch` meaningful.
+ */
+async function gradeCandidateAttestation(args: {
+  config: GithubAppConfig;
+  installationExternalId: string;
+  gate: WorkflowGateRecord;
+  headSha: string | null;
+  artifactDigests: string[];
+}): Promise<BuildAttestation> {
+  const { config, installationExternalId, gate, headSha, artifactDigests } = args;
+  try {
+    const fetched = await fetchBuildAttestations(config, {
+      installationExternalId,
+      repositoryFullName: gate.repositoryFullName,
+      artifactDigests,
+    });
+    const verdict = await evaluateBuildAttestation(
+      fetched.failureReason
+        ? { status: "failed", reason: fetched.failureReason }
+        : { status: "ok", bundles: fetched.bundles },
+      {
+        repositoryFullName: gate.repositoryFullName,
+        runId: gate.runId,
+        headSha,
+        artifactDigests,
+      },
+    );
+    // A `mismatch` is the one verdict that asserts something is wrong, so it is
+    // logged at warn where gate operators already watch. Everything else is
+    // routine and stays at info.
+    emitOperationalEvent(
+      verdict.status === "mismatch" ? "warn" : "info",
+      {
+        verified: "github_workflow_gate.build_attestation_verified",
+        partial: "github_workflow_gate.build_attestation_partial",
+        mismatch: "github_workflow_gate.build_attestation_mismatch",
+        absent: "github_workflow_gate.build_attestation_absent",
+        unavailable: "github_workflow_gate.build_attestation_unavailable",
+      }[verdict.status],
+      {
+        organizationId: gate.organizationId,
+        gateId: gate.id,
+        repositoryFullName: gate.repositoryFullName,
+        runId: gate.runId,
+        status: verdict.status,
+        predicateType: verdict.claim?.predicateType ?? null,
+        checks: verdict.checks.map((check) => `${check.kind}:${check.result}`),
+      },
+    );
+    return verdict;
+  } catch (err) {
+    emitOperationalEvent("error", "github_workflow_gate.build_attestation_failed", {
+      organizationId: gate.organizationId,
+      gateId: gate.id,
+      error: describeOperationalError(err),
+    });
+    return {
+      status: "unavailable",
+      claim: null,
+      checks: [
+        {
+          kind: "subject-digest",
+          result: "skipped",
+          detail: "build-attestation lookup raised an error",
+        },
+      ],
+      trustCeiling: "none",
+    };
+  }
+}
+
+/**
  * Run one scan per discovered package, each against its own baseline, and link
  * every scan back to the gate via `scans.gate_id`. A monorepo release bundle
  * fans out into several packages here; the gate decision later aggregates them
@@ -445,11 +536,27 @@ const GATE_PACKAGE_SCAN_CONCURRENCY = 3;
  */
 async function reviewGatePackages(
   ctx: { env: Cloudflare.Env; executionCtx: ExecutionContext; db: AppDb },
-  args: { gate: WorkflowGateRecord; ownerUserId: string; packages: PreparedGatePackage[] },
+  args: {
+    gate: WorkflowGateRecord;
+    ownerUserId: string;
+    packages: PreparedGatePackage[];
+    config: GithubAppConfig;
+    installationExternalId: string;
+  },
 ): Promise<ReviewedPackage[]> {
   const { env, executionCtx, db } = ctx;
-  const { gate, ownerUserId, packages } = args;
+  const { gate, ownerUserId, packages, config, installationExternalId } = args;
   const organizationId = gate.organizationId;
+
+  // Resolved once for the whole gate: every package in a monorepo bundle was
+  // built by the same run, so they share a head commit. Null when the lookup
+  // fails, which degrades the `source-commit` cross-check to skipped.
+  const headSha = await fetchWorkflowRunHeadSha(
+    config,
+    installationExternalId,
+    gate.repositoryFullName,
+    gate.runId,
+  );
 
   return mapWithConcurrency(packages, GATE_PACKAGE_SCAN_CONCURRENCY, async (pkg) => {
     const { candidate, packageAdapter } = pkg;
@@ -475,6 +582,18 @@ async function reviewGatePackages(
       source: "workflow_gate",
     });
 
+    // Advisory build-attestation verdict, graded before the scan runs so the
+    // pipeline only ever handles the credential-free result. A lookup failure
+    // grades `unavailable` rather than throwing: missing provenance evidence
+    // must never block or fail a gate review.
+    const buildAttestation = await gradeCandidateAttestation({
+      config,
+      installationExternalId,
+      gate,
+      headSha,
+      artifactDigests: candidate.artifactDigests,
+    });
+
     try {
       const result = await runScanPipeline(
         { env, executionCtx, db, session: { userId: ownerUserId } },
@@ -483,6 +602,7 @@ async function reviewGatePackages(
           scanId,
           stageId,
           organizationId,
+          buildAttestation,
           // `source` matches the `workflow_gate` value the D1 row already
           // carries; without it the product counter files every gated scan as
           // "unknown" and the npm/gate split is unreadable.

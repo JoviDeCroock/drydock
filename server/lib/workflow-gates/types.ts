@@ -54,6 +54,16 @@ export interface PreparedReleaseCandidate {
   ecosystem: string;
   pipelineInput: Record<string, unknown>;
   package: { name: string; version: string };
+  /**
+   * SHA-256 of every artifact in *this* candidate, as the control plane
+   * recomputed it from the downloaded bytes.
+   *
+   * Per candidate, not per bundle: a monorepo release fans out into one scan
+   * per package, and each scan's build-attestation lookup must ask about its
+   * own artifacts only. Attributing a sibling package's attestation to this
+   * scan would be exactly the false corroboration the verdict exists to avoid.
+   */
+  artifactDigests: string[];
 }
 
 /**

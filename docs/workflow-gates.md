@@ -153,6 +153,24 @@ jobs:
 
 The publish job must publish the reviewed VSIX bytes. Repacking after approval breaks the review boundary.
 
+## Build attestation
+
+Alongside the byte-continuity record above, each gate review grades any
+SLSA/in-toto **build attestation** covering the reviewed digests: it asks the
+repository's attestation store about the SHA-256s Drydock recomputed, then
+compares what the attestation claims (repository, workflow run, source commit)
+against what the signed `deployment_protection_rule` webhook already bound.
+Neither side of that comparison is claimed by the package.
+
+The verdict is advisory — it never moves risk, changes the recommendation, or
+auto-rejects — and it is ecosystem-neutral, because GitHub's attestation store
+addresses files rather than packages. `absent` is the common, quiet case.
+
+See [`build-attestation.md`](./build-attestation.md) for the verdict lattice,
+the cross-checks, and the explicit ceiling on what a `verified` verdict proves
+(Drydock does not validate the Sigstore certificate chain or transparency-log
+inclusion).
+
 ## Trust and failure behavior
 
 - The GitHub webhook signature is mandatory.
@@ -190,4 +208,5 @@ byte-continuity loop without trusting any single step.
 ## Remaining work
 
 - Expand gate-specific e2e coverage as more ecosystems are added.
+- Raise the build-attestation trust ceiling (Fulcio certificate extensions, then chain/Rekor verification).
 - Keep GitHub/PyPI/npm/VS Code validation failures user-actionable without leaking credentials or private package bytes.

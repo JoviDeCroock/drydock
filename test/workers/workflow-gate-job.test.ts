@@ -20,9 +20,12 @@ import {
   workflowGateCallbackWindowMs,
 } from "../../server/lib/workflow-gate-job";
 import worker from "../../server";
+import { normalizeBuildAttestation } from "../../server/lib/build-attestation";
+import { FIXTURE_COMMIT, signedBundle, slsaV1Statement } from "../helpers/sigstore-bundle";
 
 const WEBHOOK_SECRET = "webhook-secret-value-1234567890";
 const REPORT_BASE_URL = "https://drydock.test";
+const GATE_REPOSITORY = "octo/example";
 
 const originalFetch = globalThis.fetch;
 
@@ -275,6 +278,15 @@ interface ScenarioOpts {
   // HTTP status the mocked GitHub deployment-protection callback returns; a
   // non-2xx makes the decision POST throw so the failure path can be exercised.
   decisionStatus?: number;
+  // Build-attestation evidence the mocked GitHub attestation store serves for
+  // the reviewed wheel. Omitted, the store answers 404 (the common case), which
+  // grades `absent`.
+  attestation?: {
+    /** Repository the attestation claims it built from. */
+    repository?: string;
+    /** Head commit the mocked `/actions/runs/:id` lookup reports. */
+    headSha?: string;
+  };
 }
 
 async function buildScenario(runId: number, opts: ScenarioOpts) {
@@ -308,6 +320,22 @@ async function buildScenario(runId: number, opts: ScenarioOpts) {
     { path: wheelPath, body: wheelBytes },
   ]);
 
+  // Signed with a real key over the real DSSE PAE bytes, and subject-bound to
+  // the digest the gate recomputes from the wheel — so the verdict exercises
+  // the whole chain rather than a stub.
+  const attestationBundle = opts.attestation
+    ? await signedBundle(
+        slsaV1Statement({
+          digests: [declaredSha],
+          runId: String(runId),
+          commit: opts.attestation.headSha ?? FIXTURE_COMMIT,
+          // Defaults to the repository the seeded gate binds, so the happy path
+          // corroborates and only an explicit override contradicts.
+          repository: opts.attestation.repository ?? `https://github.com/${GATE_REPOSITORY}`,
+        }),
+      )
+    : null;
+
   const decisionCalls: DecisionCall[] = [];
   const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init);
@@ -320,6 +348,13 @@ async function buildScenario(runId: number, opts: ScenarioOpts) {
         token: "ghs_install_token",
         expires_at: "2099-01-01T00:00:00Z",
       });
+    }
+    if (request.url.includes(`/attestations/sha256:`)) {
+      if (!attestationBundle) return new Response("{}", { status: 404 });
+      return Response.json({ attestations: [{ bundle: attestationBundle }] });
+    }
+    if (request.url.endsWith(`/actions/runs/${runId}`)) {
+      return Response.json({ head_sha: opts.attestation?.headSha ?? FIXTURE_COMMIT });
     }
     if (request.url.includes(`/actions/runs/${runId}/artifacts`)) {
       return new Response(
@@ -446,7 +481,7 @@ describe("gate callback timeout classification", () => {
 describe("workflow gate scan attachment", () => {
   test("claims a pending gate only when the observed scan link still matches", async () => {
     const seeded = await seedGateForTest({
-      installationExternalId: "9210",
+      installationExternalId: "9230",
       repositoryId: 72011,
       runId: 16161,
     });
@@ -530,6 +565,113 @@ describe("executeWorkflowGateJob", () => {
     expect(types).toContain("github_workflow_gate.reviewed");
     expect(types).not.toContain("github_workflow_gate.approved");
     expect(types).not.toContain("github_workflow_gate.rejected");
+  });
+
+  test("records a verified build attestation on the gate's scan", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9210",
+      repositoryId: 72010,
+      runId: 7801,
+    });
+    await buildScenario(7801, { digestMatches: true, attestation: {} });
+    const ctx = buildCtxWithGateway();
+    const sandboxEnv = buildEnv(buildConfigBindings(), buildLoaderMock().binding);
+    const db = createDb(env.DB);
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    const persisted = await getScan(db, gate!.scanId!, seeded.organizationId);
+    const summary = persisted?.scan.summaryJson as { buildAttestation?: unknown };
+    const verdict = normalizeBuildAttestation(summary.buildAttestation);
+
+    expect(verdict?.status).toBe("verified");
+    expect(verdict?.trustCeiling).toBe("self-consistent");
+    expect(verdict?.claim?.repository).toBe(`https://github.com/${GATE_REPOSITORY}`);
+    // The attestation covers the digest the control plane recomputed, and the
+    // run + commit it claims are the ones the signed webhook and the run lookup
+    // reported — none of which the package controls.
+    expect(
+      Object.fromEntries(verdict!.checks.map((check) => [check.kind, check.result])),
+    ).toMatchObject({
+      "subject-digest": "pass",
+      repository: "pass",
+      "workflow-run": "pass",
+      "source-commit": "pass",
+      signature: "pass",
+    });
+  });
+
+  test("records a mismatch when the attestation names a different repository", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9231",
+      repositoryId: 72011,
+      runId: 7802,
+    });
+    await buildScenario(7802, {
+      digestMatches: true,
+      attestation: { repository: "https://github.com/attacker/example" },
+    });
+    const ctx = buildCtxWithGateway();
+    const sandboxEnv = buildEnv(buildConfigBindings(), buildLoaderMock().binding);
+    const db = createDb(env.DB);
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    const persisted = await getScan(db, gate!.scanId!, seeded.organizationId);
+    const summary = persisted?.scan.summaryJson as { buildAttestation?: unknown };
+    const verdict = normalizeBuildAttestation(summary.buildAttestation);
+
+    expect(verdict?.status).toBe("mismatch");
+    // Advisory only: a contradicted attestation is surfaced, never auto-blocked.
+    // The gate still waits on a human, and the risk grade is untouched.
+    expect(gate?.status).toBe("pending");
+    expect(gate?.decision).toBeNull();
+  });
+
+  test("grades the attestation absent when the repository publishes none", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9232",
+      repositoryId: 72012,
+      runId: 7803,
+    });
+    await buildScenario(7803, { digestMatches: true });
+    const ctx = buildCtxWithGateway();
+    const sandboxEnv = buildEnv(buildConfigBindings(), buildLoaderMock().binding);
+    const db = createDb(env.DB);
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    const persisted = await getScan(db, gate!.scanId!, seeded.organizationId);
+    const summary = persisted?.scan.summaryJson as { buildAttestation?: unknown };
+
+    // No attestation is the common case and must stay quiet: the review
+    // completes normally and the gate is still recommended for approval.
+    expect(normalizeBuildAttestation(summary.buildAttestation)?.status).toBe("absent");
+    expect(persisted?.scan.status).toBe("complete");
+    const reviewed = await gateEventMetadata(
+      seeded.organizationId,
+      seeded.gateId,
+      "github_workflow_gate.reviewed",
+    );
+    expect(reviewed?.recommendation).toBe("approved");
   });
 
   test("rejects the deployment when an artifact path is unsafe", async () => {

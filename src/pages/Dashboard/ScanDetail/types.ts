@@ -29,6 +29,9 @@ export interface PersistedSummary {
   // predate the feature or may be malformed; readers re-validate through
   // `normalizeIntentEnvelope`.
   intentEnvelope?: unknown;
+  // Advisory build-attestation verdict. Untyped for the same reason as the
+  // envelope; readers re-validate through `normalizeBuildAttestation`.
+  buildAttestation?: unknown;
 }
 
 export type PersistedFinding = PersistedScanDetail["findings"][number];

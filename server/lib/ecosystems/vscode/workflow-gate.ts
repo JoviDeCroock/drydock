@@ -87,6 +87,7 @@ function deriveVscodeReleaseCandidates(
         },
       },
       package: { name: manifest.package, version: manifest.version },
+      artifactDigests: [artifact.sha256],
     };
   });
 }

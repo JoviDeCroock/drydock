@@ -21,6 +21,7 @@ import {
 } from "../../../models/scan";
 import type { WorkflowGateDecision } from "../../../models/github-app";
 import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review/types";
+import { normalizeBuildAttestation } from "../../../../server/lib/build-attestation";
 import { normalizeIntentEnvelope } from "../../../../server/lib/intent-envelope";
 import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
 import { Alert } from "../../../components/Alert";
@@ -38,6 +39,7 @@ import { GateContextPanel, GateDecisionDialog, GatePackagesPanel } from "./GateD
 import { StageCommandDialogHost } from "./StageCommandDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
 import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection";
+import { BuildAttestationSection } from "./BuildAttestationSection";
 import { IntentEnvelopeSection } from "./IntentEnvelopeSection";
 import { ReleaseConsistencyNotice } from "./ReleaseConsistencyNotice";
 import { ReleaseRecommendation } from "./ReleaseRecommendation";
@@ -131,6 +133,11 @@ export default function ScanDetailPage() {
   // Older scans have no envelope; the normalizer returns null and the section
   // is simply not rendered.
   const intentEnvelope = useComputed(() => normalizeIntentEnvelope(summary.value.intentEnvelope));
+  // Workflow-gate scans only; staged publishes have no attestation source, so
+  // the normalizer returns null and the section is not rendered.
+  const buildAttestation = useComputed(() =>
+    normalizeBuildAttestation(summary.value.buildAttestation),
+  );
 
   const diffEntries = useComputed<DiffEntry[]>(() => {
     const detail = model.detail.value;
@@ -216,6 +223,7 @@ export default function ScanDetailPage() {
   const isWorkflowGate = model.isWorkflowGate.value;
   const gate = model.gate.value;
   const envelope = intentEnvelope.value;
+  const attestation = buildAttestation.value;
 
   const handleDecisionSubmit = async (decision: ScanDecision, reason: string | null) => {
     await model.setDecision(decision, reason);
@@ -338,6 +346,8 @@ export default function ScanDetailPage() {
             />
 
             {envelope ? <IntentEnvelopeSection envelope={envelope} /> : null}
+
+            {attestation ? <BuildAttestationSection attestation={attestation} /> : null}
 
             {detail.scan.packageName ? (
               <div class="flex flex-col gap-2 border-t border-border pt-3">

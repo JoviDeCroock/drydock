@@ -1,6 +1,7 @@
 import type { getScan } from "../../db/scans";
 import { parsePersistedAiReview } from "../ai-review/contract";
 import { displayedAiResult } from "../ai-review/types";
+import { normalizeBuildAttestation } from "../build-attestation";
 import { normalizeIntentEnvelope } from "../intent-envelope";
 import { normalizeReleaseConsistency } from "./release-memory";
 import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems/package-adapter";
@@ -64,6 +65,11 @@ export function buildReportExport(detail: ScanDetail) {
     // Advisory source-binding tier (attested / declared / absent). Additive and
     // optional: scans persisted before the envelope existed export `null`.
     intentEnvelope: normalizeIntentEnvelope(summary.intentEnvelope),
+    // Advisory build-attestation verdict — "where did these bytes come from?",
+    // as distinct from the byte-continuity record in `provenance` above.
+    // Workflow-gate reviews only; re-validated so a persisted status cannot
+    // outlive the checks that produced it.
+    buildAttestation: normalizeBuildAttestation(summary.buildAttestation),
     // Staged-artifact byte-verification verdict. Null for workflow gates,
     // legacy scans, and malformed persisted data.
     artifactIntegrity: extractArtifactIntegrity(summary.stagedPublish),

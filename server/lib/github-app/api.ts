@@ -230,3 +230,45 @@ export async function listRepositoryEnvironments(
 
   return environments;
 }
+
+/**
+ * Resolve the head commit of a workflow run.
+ *
+ * Used by the build-attestation cross-check: an attestation claims the commit
+ * it built from, and the run's own head commit is the independently-held value
+ * to compare it against. Reads through the existing `actions: read` grant that
+ * artifact discovery already requires.
+ *
+ * Returns null rather than throwing — a missing head commit degrades the
+ * `source-commit` check to `skipped`, and must never fail a gate review.
+ *
+ * NOTE: the release-authority work (`github-app/workflow-source.ts` on the
+ * port-vila branch) resolves the same field as part of a larger run-context
+ * fetch. Whichever lands second should collapse these into one call.
+ */
+export async function fetchWorkflowRunHeadSha(
+  config: GithubAppConfig,
+  installationId: string,
+  fullName: string,
+  runId: number | string,
+): Promise<string | null> {
+  const repository = parseRepositoryFullName(fullName);
+  if (!repository) return null;
+  if (!/^\d{1,20}$/.test(String(runId))) return null;
+
+  try {
+    const token = await getInstallationAccessToken(config, installationId);
+    const response = await reliableFetch(
+      `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/` +
+        `${encodeURIComponent(repository.name)}/actions/runs/${String(runId)}`,
+      { headers: githubInstallationHeaders(token), redirect: "manual" },
+    );
+    if (!response.ok) return null;
+    const data = (await response.json()) as { head_sha?: unknown };
+    if (typeof data.head_sha !== "string") return null;
+    const headSha = data.head_sha.trim().toLowerCase();
+    return /^[0-9a-f]{40}$/.test(headSha) ? headSha : null;
+  } catch {
+    return null;
+  }
+}

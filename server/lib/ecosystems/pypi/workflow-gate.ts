@@ -142,6 +142,7 @@ function deriveReleaseCandidates(entries: PreparedArtifactEntry[]): PreparedRele
       ecosystem: "pypi",
       pipelineInput: { manifest, artifacts: group.entries.map((entry) => entry.input) },
       package: { name: manifest.package, version: manifest.version },
+      artifactDigests: group.entries.map((entry) => entry.artifact.sha256),
     };
   });
 }

@@ -17,6 +17,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`workflow-gates.md`](./workflow-gates.md) — GitHub Environment gate flow for PyPI, npm, and VS Code workflow-gated releases.
 - [`diff-baseline.md`](./diff-baseline.md) — default previous-version comparison strategy.
 - [`intent-envelope.md`](./intent-envelope.md) — advisory source-binding tiers (attested / declared / absent) persisted with every scan.
+- [`build-attestation.md`](./build-attestation.md) — advisory SLSA/Sigstore build-provenance verdict graded at workflow gates, and the trust ceiling on it.
 - [`artifact-storage.md`](./artifact-storage.md) — D1/R2 report and artifact persistence.
 - [`public-reports.md`](./public-reports.md) — public share links, signed report attestations, badges, and the threat feed.
 

@@ -41,6 +41,12 @@ export interface PreparedGateRelease {
   gate: WorkflowGateRecord;
   /** One entry per distinct package the bundle publishes (≥ 1). */
   packages: PreparedGatePackage[];
+  /**
+   * GitHub's own installation id, resolved here so callers that need a second
+   * authenticated lookup (the build-attestation store) do not have to re-read
+   * the installation row.
+   */
+  installationExternalId: string;
 }
 
 /**
@@ -152,7 +158,7 @@ export async function prepareReleaseCandidatesForGate(
       },
     );
     const packages = prepareBundlePackages(bundle.artifacts);
-    return { gate, packages };
+    return { gate, packages, installationExternalId: installation.installationId };
   } catch (err) {
     const reason =
       err instanceof WorkflowArtifactError

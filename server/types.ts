@@ -5,6 +5,7 @@ export type { ReleaseProvenance } from "./lib/ecosystems/package-adapter";
 export type { StagedArtifactIntegrity } from "./lib/ecosystems/artifact-integrity";
 import type { AiReview } from "./lib/ai-review";
 import type { ReleaseConsistency } from "./lib/scan/release-memory";
+import type { BuildAttestation } from "./lib/build-attestation";
 import type { IntentEnvelope } from "./lib/intent-envelope";
 import type { ScanRiskBreakdown } from "./lib/review/risk";
 import type {
@@ -17,6 +18,7 @@ import type {
 
 export type { PackageJsonDiff, PackageJsonDiffEntry } from "./lib/review";
 export type { IntentEnvelope, IntentEnvelopeTier } from "./lib/intent-envelope";
+export type { BuildAttestation, BuildAttestationStatus } from "./lib/build-attestation";
 
 export type Bindings = Cloudflare.Env;
 
@@ -54,6 +56,9 @@ export interface ScanResult {
   releaseConsistency: ReleaseConsistency;
   // Advisory source-binding classification; never feeds risk or findings.
   intentEnvelope: IntentEnvelope;
+  // Advisory build-attestation verdict graded at the workflow gate; null for
+  // staged publishes. Never feeds risk or findings.
+  buildAttestation: BuildAttestation | null;
   safety: {
     tokenExposedToSandbox: boolean;
     directSandboxNetwork: boolean;

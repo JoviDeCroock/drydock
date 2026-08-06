@@ -1,5 +1,6 @@
 import { type AppDb, type WorkspaceSession } from "../../db/client";
 import type { AiReview } from "../ai-review/types";
+import type { BuildAttestation } from "../build-attestation";
 import type {
   AdapterBroker,
   AdapterConnectionRef,
@@ -48,6 +49,14 @@ export interface ScanPipelineOptions extends ScanInput {
    * and the reviewed artifact bytes were downloaded from that run.
    */
   gateContext?: WorkflowGateIntent;
+  /**
+   * Build-attestation verdict, graded by the workflow-gate job before the scan
+   * starts. Computed in the control plane rather than here because the lookup
+   * needs the installation token; the pipeline only carries the finished,
+   * credential-free verdict into the persisted summary. Absent for staged
+   * publishes, which have no attestation source today.
+   */
+  buildAttestation?: BuildAttestation | null;
   // Adapters parse their own input shape off this object (e.g. the PyPI adapter
   // reads `manifest`/`artifacts`), so allow extra keys to flow through untyped.
   [key: string]: unknown;
@@ -153,6 +162,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       riskSummary,
       releaseConsistency,
       intentEnvelope,
+      buildAttestation: input.buildAttestation ?? null,
     });
 
     await recordCompletion({

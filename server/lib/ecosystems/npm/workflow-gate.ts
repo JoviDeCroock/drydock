@@ -112,6 +112,7 @@ function deriveNpmReleaseCandidates(artifacts: ParsedGateArtifact[]): PreparedRe
         },
       },
       package: { name: manifest.package, version: manifest.version },
+      artifactDigests: group.artifacts.map((entry) => entry.sha256),
     };
   });
 }
