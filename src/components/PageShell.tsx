@@ -1,5 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useComputed } from "@preact/signals";
+import githubMarkBlack from "../assets/github-mark-black.png";
+import githubMarkWhite from "../assets/github-mark-white.png";
 import { sessionModel } from "../models/auth";
 import { cn } from "./cn";
 import { BrandMark } from "./BrandMark";
@@ -129,6 +131,29 @@ function SiteFooter({ maxWidth }: { maxWidth: string }) {
           </a>
           <a href="/docs" class={linkClass}>
             Docs
+          </a>
+          <a
+            href="https://github.com/JoviDeCroock/drydock"
+            class="inline-flex size-5 items-center justify-center rounded-sm opacity-70 transition-opacity hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="View Drydock source code on GitHub"
+            title="View Drydock source code on GitHub"
+          >
+            <img
+              src={githubMarkBlack}
+              alt=""
+              class="h-4 w-auto dark:hidden"
+              width="294"
+              height="288"
+            />
+            <img
+              src={githubMarkWhite}
+              alt=""
+              class="hidden h-4 w-auto dark:inline-block"
+              width="294"
+              height="288"
+            />
           </a>
           <a href="/privacy" class={linkClass}>
             Privacy
