@@ -22,6 +22,11 @@ Approval stays outside Drydock: maintainers approve in npm, npmjs.com, or GitHub
 - **npm registry staging** — `npm stage publish` creates a private staged tarball. Drydock downloads it through a sandbox and leaves final approval in npm.
 - **Workflow gates** — for ecosystems where the registry cannot stage a candidate, GitHub Actions uploads built artifacts and a GitHub Environment custom deployment-protection rule blocks publishing until Drydock review is accepted or rejected. PyPI, npm, and VS Code workflow-gate artifacts are supported by the shared gate pipeline.
 
+Example GitHub Actions integrations:
+
+- [PyPI CI example](https://github.com/JoviDeCroock/drydock-ci-example)
+- [npm monorepo CI example](https://github.com/JoviDeCroock/drydock-npm-monorepo-ci-example)
+
 ## Docs
 
 Start with [`docs/README.md`](docs/README.md) to pick the smallest relevant reference. Common entry points:
