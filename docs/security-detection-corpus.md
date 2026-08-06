@@ -103,7 +103,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.22.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.23.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -331,7 +331,7 @@ ships one of those root indexes remains loadable (with Node's invalid-main depre
 preserves the string-form `browser` field through staged npm metadata parsing and manifest merging,
 so browser-only entrypoint changes reach package-json diffing and AI reviewer selection.
 
-`1.22.0` adds the history-based release-process fingerprint rules `release.burst-anomaly` and
+`1.23.0` adds the history-based release-process fingerprint rules `release.burst-anomaly` and
 `release.source-drift` (see [`release-fingerprint.md`](./release-fingerprint.md)). They compare a scan
 against the organization's D1 scan history rather than package bytes, so they have no corpus fixtures —
 their matrix lives in `test/release-fingerprint.test.ts` and
