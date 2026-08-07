@@ -337,6 +337,12 @@ against the organization's D1 scan history rather than package bytes, so they ha
 their matrix lives in `test/release-fingerprint.test.ts` and
 `test/workers/release-fingerprint.test.ts`.
 
+`1.24.0` removes `release.burst-anomaly`. Its trigger (≥ 5 distinct packages staged inside 30 minutes,
+never seen before in 180 days) is indistinguishable from a monorepo release train, and because
+`release.*` findings are release-scoped it turned that train's gate recommendation into `rejected`.
+`release.source-drift` is unchanged. See [`release-fingerprint.md`](./release-fingerprint.md) for the
+conditions any revived burst rule would have to meet.
+
 ### Fixture format
 
 Required fields:

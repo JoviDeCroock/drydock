@@ -34,7 +34,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`security-detection-corpus.md`](./security-detection-corpus.md) — rule/eval fixture layout and expected findings.
 - [`detection-eval.md`](./detection-eval.md) — eval harness, metrics, and gates.
 - [`release-memory.md`](./release-memory.md) — advisory prior-release finding-profile consistency; discounts already-approved package context from the artifact-risk headline, and never moves release risk or a gate decision.
-- [`release-fingerprint.md`](./release-fingerprint.md) — history-based `release.*` rules (burst anomaly, source drift) and their FP posture.
+- [`release-fingerprint.md`](./release-fingerprint.md) — the history-based `release.source-drift` rule and its FP posture.
 - [`organization-members.md`](./organization-members.md) — organization invitation/membership behavior.
 - [`marketing-attribution.md`](./marketing-attribution.md) — coarse Analytics Engine channel attribution for the public marketing surfaces, and the share-card surface it measures.
 - [`audit-log.md`](./audit-log.md) — organization audit log surface, visible-event allowlist, and retention.

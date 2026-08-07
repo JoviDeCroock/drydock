@@ -1,19 +1,30 @@
 import { DETERMINISTIC_RULE_IDS, DETERMINISTIC_RULES_VERSION } from "./review/rules";
 import type { Finding } from "./review";
 
-// Release-process fingerprint rules (release.burst-anomaly / release.source-drift).
+// Release-process fingerprint rules (release.source-drift).
 //
 // These findings are about how a release ARRIVED, not what the artifact
 // contains: the dominant compromised-maintainer shape is a stolen credential
-// burst-publishing malicious versions across many packages, usually bypassing
-// the usual CI release path. Drydock sits pre-publish with per-organization
-// scan history, so it can flag releases that deviate from how this org/package
-// normally releases.
+// publishing malicious versions outside the maintainer's normal CI release
+// path. Drydock sits pre-publish with per-organization scan history, so it can
+// flag a package that suddenly arrives through a different release path.
 //
-// FP posture: silence over noise. Both rules require enough history to prove
-// the deviation is abnormal, and any ambiguity (short history, mixed history,
-// prior burst windows, truncated history fetches) suppresses the finding
-// entirely instead of emitting a hedged one.
+// A companion rule, `release.burst-anomaly`, used to live here: it flagged an
+// organization staging >= 5 distinct packages inside 30 minutes for the first
+// time. It was removed because a monorepo release train is exactly that shape.
+// The suppression it relied on ("some earlier window in the last 180 days also
+// burst") only holds once a train is already in history, so an org's first
+// coordinated release — and every release train spaced more than 180 days
+// apart — raised a high release finding, which rejects a workflow gate. The
+// true-positive side never justified that: an attacker holding a stolen npm
+// token publishes directly, not through the victim's staged-publish flow or CI
+// gate, so the only bursts Drydock can actually observe are the legitimate
+// ones. If the burst signal comes back it must be non-blocking, or conditioned
+// on the packages also drifting off their usual release path.
+//
+// FP posture: silence over noise. The rule requires enough history to prove the
+// deviation is abnormal, and any ambiguity (short history, mixed history)
+// suppresses the finding entirely instead of emitting a hedged one.
 //
 // This module is pure — it takes plain history rows plus current-scan facts and
 // returns findings — so the thresholds are unit-testable without a database.
@@ -22,31 +33,8 @@ import type { Finding } from "./review";
 /** Synthetic file label for findings that describe the release process itself. */
 export const RELEASE_PROCESS_FINDING_FILE = "<release-process>";
 
-/** Burst window: distinct packages scanned inside this span count as one burst. */
-export const BURST_WINDOW_MS = 30 * 60 * 1000;
-/** Distinct package names inside one window needed to call it a burst. */
-export const BURST_DISTINCT_PACKAGE_THRESHOLD = 5;
-/** The org needs at least this much scan history before a burst is judgeable. */
-export const BURST_MIN_ORG_HISTORY_DAYS = 30;
-/** ...and at least this many prior completed scans. */
-export const BURST_MIN_PRIOR_COMPLETED_SCANS = 5;
-/** How far back the prior-burst sweep looks for an established release train. */
-export const BURST_LOOKBACK_DAYS = 180;
-/** Cap on package names spelled out in the finding evidence. */
-export const BURST_EVIDENCE_PACKAGE_LIMIT = 8;
-
 /** Prior completed scans of the package required before source drift is judgeable. */
 export const SOURCE_DRIFT_MIN_PRIOR_SCANS = 3;
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-/** One org-scoped scan row from the burst lookback window (current scan excluded). */
-export interface OrgScanHistoryRow {
-  id: string;
-  packageName: string | null;
-  status: string;
-  createdAt: Date;
-}
 
 /** One prior scan of the current package (current scan excluded). */
 export interface PackageScanHistoryRow {
@@ -60,8 +48,7 @@ export interface PackageScanHistoryRow {
 /**
  * Facts about the scan being reviewed right now. The scan row may not be
  * persisted (or terminal) yet, so callers pass these explicitly instead of
- * relying on the row existing — the burst count includes the current scan via
- * `packageName`, never via a database row.
+ * relying on the row existing.
  */
 export interface CurrentScanFacts {
   scanId: string;
@@ -73,103 +60,13 @@ export interface CurrentScanFacts {
 }
 
 export interface ReleaseFingerprintArgs {
-  now: Date;
   current: CurrentScanFacts;
-  /** Org scans from the last BURST_LOOKBACK_DAYS, excluding the current scan. */
-  orgHistory: OrgScanHistoryRow[];
-  /**
-   * True when the history fetch hit its row cap, i.e. older rows inside the
-   * lookback window were not loaded. An unseen prior burst window could make a
-   * "first ever" claim wrong, so a truncated fetch suppresses the burst rule.
-   */
-  orgHistoryTruncated?: boolean;
   /** Prior scans of the current package, excluding the current scan. */
   packageHistory: PackageScanHistoryRow[];
 }
 
 export function releaseFingerprintFindings(args: ReleaseFingerprintArgs): Finding[] {
-  return [...burstAnomalyFindings(args), ...sourceDriftFindings(args)];
-}
-
-// ── release.burst-anomaly ────────────────────────────────────────────────────
-
-function burstAnomalyFindings(args: ReleaseFingerprintArgs): Finding[] {
-  const nowMs = args.now.getTime();
-  const windowStartMs = nowMs - BURST_WINDOW_MS;
-  const rows = args.orgHistory.filter((row) => row.id !== args.current.scanId);
-
-  // Current 30-minute window, counting the in-flight scan explicitly.
-  const windowPackages = new Set<string>();
-  if (args.current.packageName) windowPackages.add(args.current.packageName);
-  for (const row of rows) {
-    const createdAtMs = row.createdAt.getTime();
-    if (createdAtMs > windowStartMs && createdAtMs <= nowMs && row.packageName) {
-      windowPackages.add(row.packageName);
-    }
-  }
-  if (windowPackages.size < BURST_DISTINCT_PACKAGE_THRESHOLD) return [];
-
-  // A capped fetch may have dropped a prior burst window; without the full
-  // lookback we cannot prove the burst is abnormal, so emit nothing.
-  if (args.orgHistoryTruncated) return [];
-
-  // The org must have enough history for "this never happens here" to mean
-  // anything: >= BURST_MIN_ORG_HISTORY_DAYS of scans and >= 5 prior completions.
-  const historyFloorMs = nowMs - BURST_MIN_ORG_HISTORY_DAYS * DAY_MS;
-  if (!rows.some((row) => row.createdAt.getTime() <= historyFloorMs)) return [];
-  const completedCount = rows.reduce(
-    (count, row) => (row.status === "complete" ? count + 1 : count),
-    0,
-  );
-  if (completedCount < BURST_MIN_PRIOR_COMPLETED_SCANS) return [];
-
-  // Monorepo release trains legitimately publish many packages at once; if any
-  // prior window already reached the threshold, bursts are normal here.
-  const priorEvents = rows
-    .filter(
-      (row): row is OrgScanHistoryRow & { packageName: string } =>
-        row.packageName !== null && row.createdAt.getTime() <= windowStartMs,
-    )
-    .map((row) => ({ atMs: row.createdAt.getTime(), packageName: row.packageName }))
-    .sort((a, b) => a.atMs - b.atMs);
-  if (hasPriorBurstWindow(priorEvents)) return [];
-
-  const names = [...windowPackages].sort((a, b) => a.localeCompare(b));
-  const shown = names.slice(0, BURST_EVIDENCE_PACKAGE_LIMIT);
-  const overflow = names.length - shown.length;
-  return [
-    {
-      severity: "high",
-      file: RELEASE_PROCESS_FINDING_FILE,
-      evidence: `${names.length} distinct packages staged for release in this organization within 30 minutes: ${shown.join(", ")}${overflow > 0 ? ` (+${overflow} more)` : ""}`,
-      reason:
-        "this organization has never released this many distinct packages inside one 30-minute window in the last 180 days; a sudden multi-package publish burst is the dominant shape of a compromised maintainer account pushing malicious versions across every package it controls — verify each staged release before publishing",
-      ruleId: DETERMINISTIC_RULE_IDS.releaseBurstAnomaly,
-      ruleVersion: DETERMINISTIC_RULES_VERSION,
-    },
-  ];
-}
-
-/**
- * Linear two-pointer sweep over time-ascending (atMs, packageName) events:
- * returns true when any trailing BURST_WINDOW_MS window holds
- * BURST_DISTINCT_PACKAGE_THRESHOLD distinct package names.
- */
-function hasPriorBurstWindow(events: Array<{ atMs: number; packageName: string }>): boolean {
-  const counts = new Map<string, number>();
-  let left = 0;
-  for (const event of events) {
-    counts.set(event.packageName, (counts.get(event.packageName) ?? 0) + 1);
-    while (events[left].atMs <= event.atMs - BURST_WINDOW_MS) {
-      const name = events[left].packageName;
-      const count = counts.get(name) ?? 0;
-      if (count <= 1) counts.delete(name);
-      else counts.set(name, count - 1);
-      left += 1;
-    }
-    if (counts.size >= BURST_DISTINCT_PACKAGE_THRESHOLD) return true;
-  }
-  return false;
+  return sourceDriftFindings(args);
 }
 
 // ── release.source-drift ─────────────────────────────────────────────────────
@@ -205,7 +102,10 @@ function releasePathOf(row: {
 
 function releasePathKey(path: ReleasePath): string {
   if (path.kind === "staged") return "staged";
-  return `workflow_gate ${path.repositoryFullName ?? ""} ${path.environment ?? ""}`;
+  // NUL-separated like every other composite key in the codebase, so a
+  // repository or environment name containing the separator cannot make two
+  // different gates read as the same release path.
+  return `workflow_gate\0${path.repositoryFullName ?? ""}\0${path.environment ?? ""}`;
 }
 
 function describeReleasePath(path: ReleasePath): string {

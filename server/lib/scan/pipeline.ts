@@ -195,17 +195,14 @@ async function collectReleaseFingerprintFindings(
   identity: PipelineIdentity,
   resolved: ResolvedArtifacts,
 ): Promise<Finding[]> {
-  const now = new Date();
   const packageName = resolved.staged.artifact.manifest?.name || null;
   try {
     const history = await loadReleaseFingerprintHistory(db, {
       organizationId: identity.organizationId,
       scanId: identity.scanId,
       packageName,
-      now,
     });
     return releaseFingerprintFindings({
-      now,
       current: {
         scanId: identity.scanId,
         packageName,
@@ -213,8 +210,6 @@ async function collectReleaseFingerprintFindings(
         gateRepositoryFullName: history.currentScan?.gateRepositoryFullName ?? null,
         gateEnvironment: history.currentScan?.gateEnvironment ?? null,
       },
-      orgHistory: history.orgHistory,
-      orgHistoryTruncated: history.orgHistoryTruncated,
       packageHistory: history.packageHistory,
     });
   } catch (err) {
