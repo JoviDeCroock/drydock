@@ -1,5 +1,6 @@
 import { compareSeverity, groupFindingsByRule } from "../../lib/findings";
 import { pluralize } from "../../lib/format";
+import { RELEASE_PROCESS_FINDING_FILE } from "../../../server/lib/release-fingerprint";
 import type { FindingDiffStatus } from "../../../server/lib/review";
 import { Badge } from "../../components/Badge";
 import { FindingCard, FindingRow, GroupedFindingCard } from "../../components/FindingCard";
@@ -76,6 +77,11 @@ function FindingGrid({
   findings: FindingWithDiffStatus[];
   onSelect?: (file: string) => void;
 }) {
+  // release.* findings carry the synthetic "<release-process>" label — there is
+  // no such file in the artifact, so the label must not become an
+  // open-in-the-diff button.
+  const selectFile = (file: string) =>
+    onSelect && file !== RELEASE_PROCESS_FINDING_FILE ? () => onSelect(file) : undefined;
   const groups = groupFindingsByRule(
     findings.map((item) => ({
       ruleId: item.finding.ruleId,
@@ -105,7 +111,7 @@ function FindingGrid({
               diffLabel={findingDiffStatusLabel(diffStatus)}
               ruleId={finding.ruleId}
               source={finding.source}
-              onSelect={canOpen ? () => onSelect(finding.file) : undefined}
+              onSelect={canOpen ? selectFile(finding.file) : undefined}
             >
               <FindingRow label="evidence" value={finding.evidence} />
               <FindingRow label="reason" value={finding.reason} />
@@ -123,7 +129,7 @@ function FindingGrid({
               line: item.finding.line,
               diffStatus: item.diffStatus === "unknown" ? null : item.diffStatus,
               diffLabel: findingDiffStatusLabel(item.diffStatus),
-              onSelect: onSelect ? () => onSelect(item.finding.file) : undefined,
+              onSelect: selectFile(item.finding.file),
             }))}
           >
             <FindingRow label="evidence" value={first.evidence} />

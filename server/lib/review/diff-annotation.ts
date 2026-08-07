@@ -85,6 +85,10 @@ function isReleaseScopedFinding(finding: {
   }
   return Boolean(
     finding.ruleId?.startsWith("stage.") ||
+    // release.* rules describe how THIS release arrived (burst/source
+    // fingerprints), so they are always release-scoped even though their
+    // synthetic file label never appears in the artifact diff.
+    finding.ruleId?.startsWith("release.") ||
     finding.ruleId?.startsWith("pypi.") ||
     finding.ruleId?.startsWith("vscode.") ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyUnusualSpec ||
