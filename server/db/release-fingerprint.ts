@@ -13,9 +13,9 @@ import { githubWorkflowGates, scans } from "./schema";
 // silent rather than claiming a burst is unprecedented on partial data).
 
 /** Org history rows fetched per scan. Rides `scans_org_created_idx`. */
-export const RELEASE_FINGERPRINT_ORG_HISTORY_CAP = 500;
+const RELEASE_FINGERPRINT_ORG_HISTORY_CAP = 500;
 /** Prior package scans fetched per scan. Rides `scans_package_idx`. */
-export const RELEASE_FINGERPRINT_PACKAGE_HISTORY_CAP = 100;
+const RELEASE_FINGERPRINT_PACKAGE_HISTORY_CAP = 100;
 
 export interface ReleaseFingerprintHistory {
   orgHistory: OrgScanHistoryRow[];
