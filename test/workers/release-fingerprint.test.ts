@@ -56,27 +56,6 @@ async function seedScan(db: ReturnType<typeof createDb>, options: SeedScanOption
   return id;
 }
 
-/**
- * Quiet, old org history: one completed scan per day, one package per scan.
- * Old enough (>= 30 days) and complete enough (>= 5) for burst preconditions
- * without ever forming a prior burst window.
- */
-async function seedQuietHistory(
-  db: ReturnType<typeof createDb>,
-  organizationId: string,
-  ownerUserId: string,
-  now: Date,
-) {
-  for (let index = 0; index < 6; index += 1) {
-    await seedScan(db, {
-      organizationId,
-      ownerUserId,
-      packageName: `history-pkg-${index}`,
-      createdAt: new Date(now.getTime() - (35 + index) * DAY_MS),
-    });
-  }
-}
-
 async function seedGateChain(
   db: ReturnType<typeof createDb>,
   organizationId: string,
@@ -223,71 +202,34 @@ async function runFakeScan(args: {
 }
 
 describe("release-process fingerprint (workers)", () => {
-  test("burst anomaly fires end-to-end, raises risk, and persists as release delta", async () => {
+  test("a monorepo release train emits no release-process findings", async () => {
+    // Regression guard for the removed `release.burst-anomaly` rule: staging
+    // many distinct packages inside one window is a normal release train, and
+    // must never raise release risk (which would reject a workflow gate).
     const { db, userId, organizationId } = await seedUserAndOrg();
     const now = new Date();
-    await seedQuietHistory(db, organizationId, userId, now);
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < 8; index += 1) {
       await seedScan(db, {
         organizationId,
         ownerUserId: userId,
-        packageName: `burst-pkg-${index}`,
-        status: "running",
-        createdAt: new Date(now.getTime() - (index + 1) * MINUTE_MS),
-      });
-    }
-
-    const { scanId, result } = await runFakeScan({
-      db,
-      organizationId,
-      userId,
-      packageName: "burst-pkg-current",
-    });
-
-    expect(result.ruleFindings).toContainEqual(
-      expect.objectContaining({
-        ruleId: "release.burst-anomaly",
-        severity: "high",
-        file: RELEASE_PROCESS_FINDING_FILE,
-      }),
-    );
-    expect(result.risk).toBe("high");
-    expect(result.riskSummary.releaseRisk).toBe("high");
-
-    const persisted = await getScan(db, scanId, organizationId, env.ARTIFACTS);
-    expect(persisted?.scan.status).toBe("complete");
-    expect(persisted?.scan.risk).toBe("high");
-    const finding = persisted?.findings.find((item) => item.ruleId === "release.burst-anomaly");
-    expect(finding).toMatchObject({ severity: "high", releaseDelta: true });
-  });
-
-  test("another organization's burst does not leak into a quiet org", async () => {
-    const quiet = await seedUserAndOrg();
-    const noisy = await seedUserAndOrg();
-    const now = new Date();
-    await seedQuietHistory(quiet.db, quiet.organizationId, quiet.userId, now);
-    await seedQuietHistory(noisy.db, noisy.organizationId, noisy.userId, now);
-    for (let index = 0; index < 6; index += 1) {
-      await seedScan(noisy.db, {
-        organizationId: noisy.organizationId,
-        ownerUserId: noisy.userId,
-        packageName: `noisy-pkg-${index}`,
+        packageName: `train-pkg-${index}`,
         status: "running",
         createdAt: new Date(now.getTime() - (index + 1) * MINUTE_MS),
       });
     }
 
     const { result } = await runFakeScan({
-      db: quiet.db,
-      organizationId: quiet.organizationId,
-      userId: quiet.userId,
-      packageName: "quiet-pkg",
+      db,
+      organizationId,
+      userId,
+      packageName: "train-pkg-current",
     });
 
     expect(result.ruleFindings.filter((finding) => finding.ruleId?.startsWith("release."))).toEqual(
       [],
     );
     expect(result.risk).toBe("low");
+    expect(result.riskSummary.releaseRisk).toBe("low");
   });
 
   test("gate-to-manual source drift fires high with the gate repo/env from the join", async () => {
@@ -377,9 +319,7 @@ describe("release-process fingerprint (workers)", () => {
       organizationId: orgA.organizationId,
       scanId: "scan_missing",
       packageName: "shared-name",
-      now,
     });
-    expect(history.orgHistory).toEqual([]);
     expect(history.packageHistory).toEqual([]);
     expect(history.currentScan).toBeNull();
   });
