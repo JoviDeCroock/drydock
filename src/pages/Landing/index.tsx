@@ -66,11 +66,11 @@ export default function LandingPage() {
 
       <ScanPreview />
 
-      <section aria-label="Real incident diffs" class="flex flex-col gap-3">
-        <SectionLabel as="h2">Open a real incident</SectionLabel>
+      <section aria-label="Live incident diffs" class="flex flex-col gap-3">
+        <SectionLabel as="h2">Open a live diff</SectionLabel>
         <p class="m-0 text-[13px] text-ink-muted leading-[1.55] max-w-[680px]">
-          The report above is hand-authored. These are live diffs of real supply-chain incidents,
-          served by the same deterministic review — no account needed.
+          The report above is hand-authored. These are live reports from the same deterministic
+          review — two real supply-chain incidents and one demo package. No account needed.
         </p>
         <IncidentDiffCards />
         <LinkButton href="/diff" variant="ghost" size="sm" class="self-start">
