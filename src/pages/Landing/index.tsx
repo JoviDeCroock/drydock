@@ -11,6 +11,7 @@ import { PageShell } from "../../components/PageShell";
 import { SeverityBar } from "../../components/SeverityBar";
 import { StatusStrip, StatusStripItem } from "../../components/StatusStrip";
 import { Eyebrow, MonoDetail, SectionLabel } from "../../components/Typography";
+import { IncidentDiffCards } from "../../features/incident-diffs/IncidentDiffCards";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
 
@@ -43,13 +44,16 @@ export default function LandingPage() {
             "no publish credential",
           ]}
         />
-        <div class="flex gap-3 mt-2">
+        <div class="flex flex-wrap gap-3 mt-2">
           <Show
             when={authed}
             fallback={
               <>
-                <LinkButton href="/register">Create account</LinkButton>
-                <LinkButton href="/login" variant="secondary">
+                <LinkButton href="/diff">Read a diff</LinkButton>
+                <LinkButton href="/register" variant="secondary">
+                  Create account
+                </LinkButton>
+                <LinkButton href="/login" variant="ghost">
                   Sign in
                 </LinkButton>
               </>
@@ -61,6 +65,18 @@ export default function LandingPage() {
       </section>
 
       <ScanPreview />
+
+      <section aria-label="Live incident diffs" class="flex flex-col gap-3">
+        <SectionLabel as="h2">Open a live diff</SectionLabel>
+        <p class="m-0 text-[13px] text-ink-muted leading-[1.55] max-w-[680px]">
+          The report above is hand-authored. These are live reports from the same deterministic
+          review — two real supply-chain incidents and one demo package. No account needed.
+        </p>
+        <IncidentDiffCards />
+        <LinkButton href="/diff" variant="ghost" size="sm" class="self-start">
+          Diff any npm or PyPI package →
+        </LinkButton>
+      </section>
 
       <AikidoPartnerStrip />
 

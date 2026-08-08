@@ -1,5 +1,6 @@
 import { useEffect } from "preact/hooks";
 import { useComputed, useSignal } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
 import { useRoute } from "preact-iso";
 import { formatDateTime } from "../../lib/format";
 import { sortFindingsBySeverity } from "../../lib/findings";
@@ -10,7 +11,7 @@ import { FindingCard } from "../../components/FindingCard";
 import { LoadingState } from "../../components/Loading";
 import { PageShell } from "../../components/PageShell";
 import { LinkButton } from "../../components/Button";
-import { EmptyLine, MonoDetail, SectionLabel } from "../../components/Typography";
+import { EmptyLine, MonoDetail, Muted, SectionLabel } from "../../components/Typography";
 import { verdictTextClass } from "../../features/review/verdict";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
@@ -290,6 +291,38 @@ export default function PublicReportPage() {
           >
             Download report JSON
           </LinkButton>
+        </div>
+      </section>
+
+      <section class="flex flex-col gap-3 pt-3">
+        <SectionLabel as="p">Before it ships</SectionLabel>
+        <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0">
+          This release was reviewed while it could still be stopped.
+        </h2>
+        <Muted class="m-0 text-[14px] leading-[1.65] max-w-[680px]">
+          The publisher held this release — an npm staged publish or a GitHub-gated job —{" "}
+          {decision === "publish"
+            ? "and read this report before letting it ship."
+            : decision
+              ? "read this report, and stopped it from shipping."
+              : "and is reading this report before deciding whether it ships."}{" "}
+          Drydock runs the same review on every version you publish; the maintainer keeps the final
+          decision. You can also diff any published npm or PyPI package without an account.
+        </Muted>
+        <div class="flex flex-wrap gap-3 mt-1">
+          <Show
+            when={authed}
+            fallback={
+              <>
+                <LinkButton href="/register">Create account</LinkButton>
+                <LinkButton href="/diff" variant="secondary">
+                  Diff a package
+                </LinkButton>
+              </>
+            }
+          >
+            <LinkButton href="/diff">Diff a package</LinkButton>
+          </Show>
         </div>
       </section>
     </PageShell>
