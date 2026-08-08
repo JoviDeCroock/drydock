@@ -263,7 +263,12 @@ export default function PublicReportPage() {
             The signed attestation covers the exact JSON served for this link: its subject digest is
             the SHA-256 of the report bytes, signed with Drydock's Ed25519 key (DSSE envelope, key
             published at{" "}
-            <a href="/public/attestation-key" class="text-ink-muted underline hover:text-ink">
+            <a
+              href="/public/attestation-key"
+              target="_blank"
+              rel="noreferrer"
+              class="text-ink-muted underline hover:text-ink"
+            >
               /public/attestation-key
             </a>
             ).
