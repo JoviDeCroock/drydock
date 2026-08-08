@@ -32,14 +32,16 @@ export default function LandingPage() {
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
           Between your last code review and the public registry sit build scripts, bundler output,
-          and CI credentials. Drydock holds the release while it is still private, diffs the exact
-          artifact against the last published version, and pins every finding to a changed line. You
-          make the final call.
+          and CI credentials. Add a gate to the GitHub Actions job that publishes: it holds the
+          release while it is still private, diffs the exact artifact against the last published
+          version, and pins every finding to a changed line. You make the final call, and nothing
+          ships until you do.
         </p>
         <MonoDetail
           parts={[
-            "npm stage publish",
-            "pypi / npm / vs code workflow gates",
+            "npm / pypi / vs code",
+            "one github actions gate",
+            "or npm stage publish",
             "no publish credential",
           ]}
         />
@@ -88,9 +90,9 @@ export default function LandingPage() {
               title: "Hold the release candidate",
               body: (
                 <>
-                  A maintainer stages an npm publish, or a GitHub Environment gate pauses the
-                  publish job after CI uploads built artifacts. The candidate stays private while
-                  Drydock can inspect it.
+                  A GitHub Environment gate pauses the publish job after CI uploads the built
+                  artifacts — or, on npm, a maintainer stages the publish instead. Either way the
+                  candidate stays private while Drydock inspects it.
                 </>
               ),
             },
@@ -109,8 +111,9 @@ export default function LandingPage() {
               title: "Let a maintainer decide",
               body: (
                 <>
-                  Approve the npm publish yourself with 2FA, or approve or reject the gated GitHub
-                  job from the workbench. Drydock gives you the review; it never publishes and never
+                  Approve or reject the gated GitHub job from the workbench, or complete an npm
+                  stage publish yourself with 2FA. A rejected gate fails the job closed — the
+                  release cannot proceed. Drydock gives you the review; it never publishes and never
                   holds your publish credential.
                 </>
               ),
@@ -121,17 +124,19 @@ export default function LandingPage() {
 
       <section aria-label="How Drydock hooks in" class="flex flex-col gap-4">
         <SectionLabel as="h2">How it hooks in</SectionLabel>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <RegistryCard title="npm stage publish">
-            A maintainer runs <code class="font-mono text-[12px] text-ink">npm stage publish</code>{" "}
-            and the registry parks a private candidate. Drydock reviews that tarball and pins risk
-            signals to the diff before the maintainer completes npm's 2FA confirmation.
+        <div class="flex flex-col gap-4">
+          <RegistryCard title="GitHub workflow gate" badge="npm · PyPI · VS Code" badgeTone="info">
+            Add <code class="font-mono text-[12px] text-ink">environment: production</code> to the
+            job that publishes and let CI upload the built artifact first. GitHub holds the job,
+            Drydock reviews the exact uploaded bytes, and you approve or reject. Approved, the job
+            continues with its own credential; rejected, it fails closed. One setup covers every
+            registry Drydock supports.
           </RegistryCard>
-          <RegistryCard title="Workflow gating: PyPI, npm & VS Code" badge="Preview">
-            For PyPI, VS Code extensions, or npm workflows that do not stage, a GitHub Environment
-            pauses the publish job after CI uploads the release artifact. Drydock reviews the
-            upload, the maintainer approves or rejects, and, if approved, the job continues with its
-            own credential.
+          <RegistryCard title="npm stage publish" badge="npm only">
+            Publishing from a terminal instead? Run{" "}
+            <code class="font-mono text-[12px] text-ink">npm stage publish</code> and the registry
+            parks a private candidate. Drydock reviews that tarball and pins risk signals to the
+            diff before you complete npm's 2FA confirmation.
           </RegistryCard>
         </div>
         <LinkButton href="/docs" variant="ghost" size="sm" class="self-start">
@@ -143,15 +148,15 @@ export default function LandingPage() {
         <SectionLabel as="h2">Safeguards</SectionLabel>
         <StatusStrip>
           <StatusStripItem label="credentials" status="scoped" tone="ok">
-            Scoped tokens only fetch release evidence. Publish credentials stay in npm or GitHub
-            Actions, not in Drydock.
+            A workflow gate hands Drydock no token at all; npm staging needs only a read-scoped one.
+            Publish credentials stay in GitHub Actions or npm, never in Drydock.
           </StatusStripItem>
           <StatusStripItem label="retention" status="redacted" tone="ok">
             Reports keep redacted review evidence instead of raw release archives.
           </StatusStripItem>
           <StatusStripItem label="approval" status="human" tone="neutral">
-            Maintainers make the release decision: npm 2FA for a stage publish or the CI gate for
-            workflow releases.
+            Maintainers make the release decision. A gate that is rejected — or that cannot be
+            reviewed — never becomes a publish.
           </StatusStripItem>
         </StatusStrip>
       </section>
@@ -162,7 +167,7 @@ export default function LandingPage() {
           Put your next release in the dock.
         </h2>
         <p class="m-0 text-[14px] text-ink-muted leading-[1.65] max-w-[620px]">
-          Stage an npm publish or add a workflow gate to your release job. Setup takes minutes, and
+          Add a gate to your release workflow — or stage an npm publish. Setup takes minutes, and
           from then on every version gets a second pair of eyes before it can ship.
         </p>
         <div class="flex gap-3 mt-1">
@@ -216,17 +221,19 @@ function HowSteps({ items }: { items: Array<{ title: string; body: ComponentChil
 function RegistryCard({
   title,
   badge,
+  badgeTone = "neutral",
   children,
 }: {
   title: string;
   badge?: string;
+  badgeTone?: BadgeTone;
   children: ComponentChildren;
 }) {
   return (
     <Card as="article" class="p-5 flex flex-col gap-2">
       <div class="flex flex-wrap items-center gap-2">
         <h2 class="text-base font-medium tracking-[-0.005em] m-0">{title}</h2>
-        {badge ? <Badge tone="info">{badge}</Badge> : null}
+        {badge ? <Badge tone={badgeTone}>{badge}</Badge> : null}
       </div>
       <p class="text-[13px] text-ink-muted leading-[1.55] m-0">{children}</p>
     </Card>

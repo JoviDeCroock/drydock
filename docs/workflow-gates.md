@@ -1,8 +1,10 @@
 # Workflow Gates
 
-Workflow gates are Drydock's review mode for releases whose registry cannot hold a private staged artifact. GitHub Actions builds the release, uploads the candidate artifacts, and a GitHub Environment custom deployment-protection rule pauses publishing while Drydock reviews the bytes.
+Workflow gates are Drydock's default review mode, and the only one that covers every supported registry through a single integration. GitHub Actions builds the release and uploads the candidate artifacts; a GitHub Environment custom deployment-protection rule holds the publish job while Drydock reviews those exact bytes. The job resumes only after a maintainer accepts, and a rejection stops the release mechanically rather than relying on a human to decline a later prompt.
 
 Supported gate ecosystems: **PyPI**, **npm**, and **VS Code extensions**. Shared GitHub plumbing lives in `server/lib/workflow-gates/`; artifact-specific behavior lives behind adapters.
+
+npm registry staging is the alternative path, but it is npm-only and expects a maintainer at a terminal. Prefer a gate whenever CI builds or publishes the release.
 
 ## Core contract
 
@@ -79,7 +81,7 @@ The PyPI adapter (`server/lib/ecosystems/pypi/`):
 
 ## npm workflow-gate notes
 
-Use npm workflow gates when CI publishes from built artifacts instead of `npm stage publish`, or when the release must be paused by GitHub rather than npm registry staging.
+Use npm workflow gates when CI publishes from built artifacts instead of `npm stage publish`, when the release must be paused by GitHub rather than npm registry staging, or when a monorepo publishes several packages from one run.
 
 The candidate is the uploaded npm pack artifact. Drydock detects npm candidates from `package.json` in the archive, normalizes package identity, and compares against the currently published baseline using the same npm adapter projection used by registry-staged scans.
 

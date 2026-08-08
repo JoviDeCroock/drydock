@@ -41,14 +41,14 @@ export function packageDiffOgImageAlt(
 export const homePageSeo: PageSeoMetadata = {
   title: "Drydock: pre-publish package review",
   description:
-    "Drydock lets npm, PyPI, and VS Code maintainers review the exact package artifact before an npm stage publish or gated release goes live.",
+    "Drydock gates your GitHub Actions publish job so npm, PyPI, and VS Code maintainers review the exact package artifact before it goes live. No publish credential required.",
   path: "/",
 };
 
 export const docsPageSeo: PageSeoMetadata = {
   title: "Learn Drydock: artifact review before you publish",
   description:
-    "Learn how Drydock reviews npm, PyPI, and VS Code release artifacts, then set up npm stage publish or a GitHub workflow gate.",
+    "Learn how Drydock reviews npm, PyPI, and VS Code release artifacts, then add a GitHub workflow gate to your publish job — or use npm stage publish.",
   path: "/docs",
 };
 

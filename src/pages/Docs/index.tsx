@@ -29,14 +29,6 @@ const TOC: Array<{ id: string; label: string; children: Array<{ id: string; labe
     children: [{ id: "path-comparison", label: "Compare the paths" }],
   },
   {
-    id: "staged-publishing",
-    label: "npm stage publish",
-    children: [
-      { id: "staged-setup", label: "Connect npm" },
-      { id: "staged-lifecycle", label: "Run a review" },
-    ],
-  },
-  {
     id: "workflow-gating",
     label: "GitHub workflow gates",
     children: [
@@ -44,6 +36,14 @@ const TOC: Array<{ id: string; label: string; children: Array<{ id: string; labe
       { id: "gate-bundle", label: "Prepare the artifacts" },
       { id: "gate-workflow", label: "Workflow examples" },
       { id: "gate-decision", label: "Approve or reject" },
+    ],
+  },
+  {
+    id: "staged-publishing",
+    label: "npm stage publish",
+    children: [
+      { id: "staged-setup", label: "Connect npm" },
+      { id: "staged-lifecycle", label: "Run a review" },
     ],
   },
 ];
@@ -108,7 +108,7 @@ export default function DocsPage() {
             Learn what Drydock inspects and how a maintainer makes the call.
           </JourneyCard>
           <JourneyCard number="03" href="#choose-path" title="Choose your setup">
-            Pick npm stage publish or a GitHub workflow gate for your release.
+            Gate your GitHub Actions publish job, or use npm stage publish.
           </JourneyCard>
         </nav>
       </header>
@@ -315,126 +315,50 @@ export default function DocsPage() {
             <Subsection id="path-comparison" title="Compare the paths">
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <PathCard
+                  title="GitHub workflow gate"
+                  badge="npm · PyPI · VS Code"
+                  href="#workflow-gating"
+                  command="environment: production"
+                  bestFor="Any release CI builds or publishes, including monorepos."
+                  heldBy="A GitHub Environment holds the publish job."
+                  decision="You approve or reject the job from Drydock; a rejection fails it closed."
+                />
+                <PathCard
                   title="npm stage publish"
                   badge="npm only"
                   href="#staged-publishing"
                   command="npm stage publish"
-                  bestFor="Maintainers already using npm stage publish."
+                  bestFor="Maintainers who publish npm packages from a terminal."
                   heldBy="npm holds the unpublished package."
                   decision="You finish or decline the publish in npm with 2FA."
                 />
-                <PathCard
-                  title="GitHub workflow gate"
-                  badge="Preview"
-                  href="#workflow-gating"
-                  command="environment: production"
-                  bestFor="PyPI, npm, VS Code, monorepos, and CI-first releases."
-                  heldBy="A GitHub Environment holds the publish job."
-                  decision="You approve or reject the job from Drydock."
-                />
               </div>
               <Callout label="Quick decision">
-                If your release uses <Code>npm stage publish</Code>, start there. If CI builds the
-                artifact—or you publish to PyPI or the VS Code Marketplace—use a GitHub workflow
-                gate.
-              </Callout>
-            </Subsection>
-          </section>
-
-          <section id="staged-publishing" class="flex flex-col gap-8 scroll-mt-6">
-            <div class="flex flex-col gap-3">
-              <SectionLabel as="p">Path 1 · npm stage publish</SectionLabel>
-              <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-                npm holds the candidate; you keep the approval.
-              </h2>
-              <Prose>
-                This is the shortest route for npm. Stage the package, let Drydock review the
-                private tarball, then return to npm to publish or discard it.
-              </Prose>
-            </div>
-
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Requirement label="Registry">npm stage publish</Requirement>
-              <Requirement label="Drydock connection">Read-scoped npm token</Requirement>
-              <Requirement label="Final approval">npm 2FA</Requirement>
-            </div>
-
-            <Subsection id="staged-setup" title="Connect npm once">
-              <Steps
-                items={[
-                  <>Create a Drydock organization for the team that publishes the package.</>,
-                  <>
-                    On npmjs.com, generate a granular access token with{" "}
-                    <Code>Packages and scopes: Read-only</Code> on the packages you stage and{" "}
-                    <Code>Organizations: No access</Code>. A scoped package like{" "}
-                    <Code>@nanostores/i18n</Code> is covered by selecting the{" "}
-                    <Code>@nanostores</Code> scope there; the Organizations permission is for member
-                    and settings management, which Drydock never reads.
-                  </>,
-                  <>
-                    Open <Code>Organization settings → npm access</Code> and paste the token.
-                  </>,
-                  <>
-                    Save. Drydock encrypts the token and checks it against the registry right away.
-                  </>,
-                  <>
-                    Drydock now discovers packages in npm stage publish automatically. Use{" "}
-                    <Code>Check npm</Code> on the dashboard when you want an immediate refresh.
-                  </>,
-                ]}
-              />
-              <div class="flex flex-wrap gap-2 pt-1">
-                <LinkButton href="/dashboard/settings?tab=integrations" size="sm">
-                  Open Organization settings
-                </LinkButton>
-              </div>
-            </Subsection>
-
-            <Subsection id="staged-lifecycle" title="Run a release review">
-              <Steps
-                items={[
-                  <>
-                    From the package directory, run <Code>npm stage publish</Code>. npm uploads the
-                    candidate but does not make it public.
-                  </>,
-                  <>
-                    Drydock discovers the stage and queues a scan. You can also trigger discovery
-                    with <Code>Check npm</Code>.
-                  </>,
-                  <>
-                    Open the report. Start with the recommendation, then inspect release-delta
-                    findings and the highlighted file diff. The baseline follows the staged dist-tag
-                    when possible, so beta and maintenance releases compare against the right line.
-                  </>,
-                  <>
-                    Record your decision and reason in Drydock. Then finish on npm with your normal
-                    2FA — either on npm's staged-packages page, or with the{" "}
-                    <Code>npm stage approve</Code> / <Code>npm stage reject</Code> command Drydock
-                    shows you after saving.
-                  </>,
-                ]}
-              />
-              <Callout label="Credential boundary">
-                The npm token is encrypted at rest and only attached by the registry gateway for
-                allowed npm endpoints. The archive sandbox never sees it, and Drydock never receives
-                the credential that completes the publish.
+                If CI publishes your release, use a workflow gate — it is the same setup for npm,
+                PyPI, and the VS Code Marketplace, and it is the only path where a rejection stops
+                the publish rather than asking you not to finish it. Reach for{" "}
+                <Code>npm stage publish</Code> when you publish npm packages by hand.
               </Callout>
             </Subsection>
           </section>
 
           <section id="workflow-gating" class="flex flex-col gap-8 scroll-mt-6">
             <div class="flex flex-col gap-3">
-              <SectionLabel as="p">
-                Path 2 · GitHub workflow gates <Badge tone="info">Preview</Badge>
-              </SectionLabel>
+              <SectionLabel as="p">Path 1 · GitHub workflow gates</SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-                When the registry can't pause, the workflow can.
+                Gate the job that publishes.
               </h2>
               <Prose>
                 CI builds the files, uploads them as a workflow artifact, and reaches a protected
                 publish job. GitHub asks Drydock for a decision; Drydock reviews the upload; a
                 maintainer approves or rejects; then the same workflow either publishes those exact
                 files or stops.
+              </Prose>
+              <Prose>
+                This is the same setup for npm, PyPI, and VS Code extensions, and it works with the
+                release tooling you already run. It is also the only path where rejecting is
+                mechanical: the job cannot proceed without an approval, so nothing depends on a
+                maintainer remembering not to finish a publish.
               </Prose>
             </div>
 
@@ -628,6 +552,92 @@ export default function DocsPage() {
             </Subsection>
           </section>
 
+          <section id="staged-publishing" class="flex flex-col gap-8 scroll-mt-6">
+            <div class="flex flex-col gap-3">
+              <SectionLabel as="p">Path 2 · npm stage publish</SectionLabel>
+              <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
+                npm holds the candidate; you keep the approval.
+              </h2>
+              <Prose>
+                If you publish npm packages by hand, this is the shortest route and needs no CI
+                changes. Stage the package, let Drydock review the private tarball, then return to
+                npm to publish or discard it. It covers npm only — if CI does the publishing, gate
+                the workflow instead.
+              </Prose>
+              <LinkButton href="#workflow-gating" variant="ghost" size="sm" class="self-start">
+                Use a workflow gate →
+              </LinkButton>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <Requirement label="Registry">npm stage publish</Requirement>
+              <Requirement label="Drydock connection">Read-scoped npm token</Requirement>
+              <Requirement label="Final approval">npm 2FA</Requirement>
+            </div>
+
+            <Subsection id="staged-setup" title="Connect npm once">
+              <Steps
+                items={[
+                  <>Create a Drydock organization for the team that publishes the package.</>,
+                  <>
+                    On npmjs.com, generate a granular access token with{" "}
+                    <Code>Packages and scopes: Read-only</Code> on the packages you stage and{" "}
+                    <Code>Organizations: No access</Code>. A scoped package like{" "}
+                    <Code>@nanostores/i18n</Code> is covered by selecting the{" "}
+                    <Code>@nanostores</Code> scope there; the Organizations permission is for member
+                    and settings management, which Drydock never reads.
+                  </>,
+                  <>
+                    Open <Code>Organization settings → npm access</Code> and paste the token.
+                  </>,
+                  <>
+                    Save. Drydock encrypts the token and checks it against the registry right away.
+                  </>,
+                  <>
+                    Drydock now discovers packages in npm stage publish automatically. Use{" "}
+                    <Code>Check npm</Code> on the dashboard when you want an immediate refresh.
+                  </>,
+                ]}
+              />
+              <div class="flex flex-wrap gap-2 pt-1">
+                <LinkButton href="/dashboard/settings?tab=integrations" size="sm">
+                  Open Organization settings
+                </LinkButton>
+              </div>
+            </Subsection>
+
+            <Subsection id="staged-lifecycle" title="Run a release review">
+              <Steps
+                items={[
+                  <>
+                    From the package directory, run <Code>npm stage publish</Code>. npm uploads the
+                    candidate but does not make it public.
+                  </>,
+                  <>
+                    Drydock discovers the stage and queues a scan. You can also trigger discovery
+                    with <Code>Check npm</Code>.
+                  </>,
+                  <>
+                    Open the report. Start with the recommendation, then inspect release-delta
+                    findings and the highlighted file diff. The baseline follows the staged dist-tag
+                    when possible, so beta and maintenance releases compare against the right line.
+                  </>,
+                  <>
+                    Record your decision and reason in Drydock. Then finish on npm with your normal
+                    2FA — either on npm's staged-packages page, or with the{" "}
+                    <Code>npm stage approve</Code> / <Code>npm stage reject</Code> command Drydock
+                    shows you after saving.
+                  </>,
+                ]}
+              />
+              <Callout label="Credential boundary">
+                The npm token is encrypted at rest and only attached by the registry gateway for
+                allowed npm endpoints. The archive sandbox never sees it, and Drydock never receives
+                the credential that completes the publish.
+              </Callout>
+            </Subsection>
+          </section>
+
           <section class="border-t border-border pt-10">
             <Card
               padding="none"
@@ -639,8 +649,8 @@ export default function DocsPage() {
                   Add the checkpoint before the next publish.
                 </h2>
                 <p class="m-0 text-[13px] text-ink-muted leading-[1.6]">
-                  Connect npm for the shortest path, or install the GitHub App to protect a CI
-                  release. Your first report will make the model concrete.
+                  Install the GitHub App and gate your publish job, or connect npm if you release
+                  from a terminal. Your first report will make the model concrete.
                 </p>
               </div>
               <div class="flex flex-wrap gap-3 shrink-0">
@@ -846,7 +856,7 @@ function PathCard({
     <Card as="article" padding="none" class="p-5 flex flex-col gap-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <h4 class="m-0 text-base font-medium tracking-[-0.005em]">{title}</h4>
-        <Badge tone={badge === "Preview" ? "info" : "neutral"}>{badge}</Badge>
+        <Badge tone="neutral">{badge}</Badge>
       </div>
       <code class="font-mono text-[12px] text-ink bg-surface-2 border border-border rounded px-2.5 py-2 overflow-x-auto">
         {command}

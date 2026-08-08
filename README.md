@@ -2,7 +2,7 @@
 
 Drydock reviews package artifacts before a maintainer approves publication. It compares the candidate with a tag-aware published baseline, runs deterministic supply-chain checks, optionally sends changed-file evidence to Cloudflare Workers AI, and saves a review report.
 
-Approval stays outside Drydock: maintainers approve in npm, npmjs.com, or GitHub with their own required 2FA/review step. Drydock never publishes and never collects approval codes.
+Drydock never publishes and never holds a publish credential. A workflow gate returns an accept/reject decision to GitHub and your own job does the publishing; a staged npm release is completed by you on npm with your required 2FA. There is no token to hand over at publish time.
 
 Drydock runs as a hosted service at [drydock.org](https://drydock.org); this repository is its source, and it can be self-hosted on your own Cloudflare account. To add it to a release, jump to [Add Drydock to your release](#add-drydock-to-your-release).
 
@@ -21,10 +21,8 @@ Drydock runs as a hosted service at [drydock.org](https://drydock.org); this rep
 
 ## Add Drydock to your release
 
-**If you publish from GitHub Actions, use a workflow gate.** It is the path for npm, PyPI, and VS Code
-alike, and it is what the example repositories below use. `npm stage publish` is a shortcut for npm
-maintainers who already publish that way from a terminal — if you don't, skip it. Both paths produce
-the same review report; they differ only in who holds the candidate while you read it.
+- **Workflow gates** — the default path, and the one integration that covers every supported registry. GitHub Actions uploads the built artifacts, and a GitHub Environment custom deployment-protection rule holds the publish job while Drydock reviews those exact bytes. The job continues only after a maintainer accepts; a rejection — or any failure to review — fails the job closed. npm, PyPI, and VS Code extensions all run through the shared gate pipeline, and the publish credential never leaves GitHub Actions.
+- **npm registry staging** — the npm-only shortcut for maintainers who publish from a terminal. `npm stage publish` creates a private staged tarball, Drydock downloads it through a sandbox, and you complete or discard the publish on npm with your own 2FA.
 
 ### Workflow gate — GitHub Actions publishes (npm, PyPI, VS Code)
 
