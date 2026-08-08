@@ -145,8 +145,9 @@ the status/model context rather than treating zero as a measured free
 invocation.
 
 `ai_review.decided` joins a later maintainer action to the already-persisted AI
-review without retaining a scan id or package data. Its dimensions are decision,
-status, release assessment, model, and reviewer version. See
+review without retaining a scan id or package data. Disabled-review placeholders
+emit no feedback event. Its dimensions are decision, status, release assessment,
+model, and reviewer version. See
 [`ai-review-eval.md`](./ai-review-eval.md) for promotion and adjudication rules.
 
 ## Reading the data

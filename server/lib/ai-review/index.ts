@@ -32,6 +32,16 @@ export const AI_FALLBACK_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 export const AI_MODEL_CANDIDATES = [AI_MODEL, AI_FALLBACK_MODEL] as const;
 const AI_REVIEW_AGENT_NAME = "drydock-release-reviewer";
 
+// The Agent SDK automatically copies `aiGatewayLogId` from a Workers AI
+// binding into its trace. Keep the provider's `run` capability while hiding
+// that correlation handle so a trace cannot be joined to AI Gateway records
+// carrying private scan/organization metadata.
+export function traceIsolatedAiBinding(binding: Cloudflare.Env["AI"]): Cloudflare.Env["AI"] {
+  return {
+    run: binding.run.bind(binding),
+  } as unknown as Cloudflare.Env["AI"];
+}
+
 // Package evidence and tool results can contain private pre-release source,
 // secrets, or prompt injection. Agent Traces record operation names, timings,
 // model/usage data, and tool names only — never message or tool payloads.
@@ -124,7 +134,7 @@ export async function analyzeWithAi(
         const languageModel =
           resolveLanguageModelOverride(languageModelOverride, candidateModel) ??
           createWorkersAI({
-            binding: env.AI,
+            binding: traceIsolatedAiBinding(env.AI),
             gateway: { id: "drydock-gateway" },
           })(candidateModel, {
             extraHeaders: {

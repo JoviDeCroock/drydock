@@ -936,7 +936,10 @@ function recordDecisionEvent(
   });
 
   const aiReview = parsePersistedAiReview(row.aiJson);
-  if (!aiReview) return;
+  // The disabled-review placeholder is persisted so report consumers can
+  // explain why no advisory result exists, but it is not a reviewer attempt
+  // and must not enter the reviewer feedback dataset as a "legacy" review.
+  if (!aiReview || (aiReview.model === null && aiReview.reviewerVersion === null)) return;
   recordProductEvent(env, {
     name: "ai_review.decided",
     organizationId: input.organizationId,

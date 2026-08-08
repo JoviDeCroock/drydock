@@ -145,6 +145,64 @@ describe("AI finding persistence (D1 degraded path)", () => {
     expect(exported.findings).toHaveLength(1);
     expect(exported.aiReview?.findings.map((finding) => finding.file)).toEqual(["setup.js"]);
   });
+
+  test("does not record reviewer feedback for a disabled-review placeholder", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const scanId = `scan_${crypto.randomUUID()}`;
+    const stageId = `stage-${scanId.slice(-12)}`;
+    await createScanJob(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+    });
+    await persistScan(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+      packageJson: { name: "alleviate", version: "0.2.0" },
+      risk: "medium",
+      status: "complete",
+      summary: { diff },
+      ai: {
+        status: "unavailable",
+        risk: "low",
+        releaseAssessment: "not_assessed",
+        summary: "AI review is disabled.",
+        findings: [],
+        requiresManualReview: false,
+        model: null,
+        reviewerVersion: null,
+      },
+      files,
+      diff,
+      findings: [ruleFinding],
+      aiFindingRecords: [],
+      report: { version: 1, digest: `digest-${scanId}` },
+    });
+
+    const productPoints: AnalyticsEngineDataPoint[] = [];
+    await recordScanDecision(
+      db,
+      {
+        scanId,
+        organizationId: owner.organizationId,
+        actorUserId: owner.userId,
+        decision: "publish",
+      },
+      undefined,
+      {
+        ...env,
+        PRODUCT_ANALYTICS: {
+          writeDataPoint: (point: AnalyticsEngineDataPoint) => productPoints.push(point),
+        },
+      } as Cloudflare.Env,
+    );
+
+    expect(productPoints.map((point) => point.indexes?.[0])).toEqual(["scan.decided"]);
+  });
 });
 
 describe("AI finding persistence (R2 artifact path)", () => {

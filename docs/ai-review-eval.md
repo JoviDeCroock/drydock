@@ -24,10 +24,12 @@ hostile instructions.
 
 Recorded trace data is limited to operation names and timing, model and token
 usage, tool names, the reviewer version, ecosystem capability label, and a
-fresh random conversation id scoped to one invocation. Scan, stage,
-organization, package, file, message, evidence, and tool-result payloads are not
-added to trace metadata. Traces are debugging evidence, not the canonical scan
-record.
+fresh random conversation id scoped to one invocation. The reviewer gives the
+provider a narrow Workers AI binding facade that omits `aiGatewayLogId`, so the
+trace cannot become an index into Gateway records carrying private review
+metadata. Scan, stage, organization, package, file, message, evidence, and
+tool-result payloads are not added to trace metadata. Traces are debugging
+evidence, not the canonical scan record.
 
 ## Aggregate execution and decision feedback
 
@@ -41,6 +43,8 @@ assessment, model, and reviewer version. This is behavioral feedback, **not a
 correctness label**: a maintainer may accept known risk, discard for unrelated
 reasons, or make a mistake. Promotion decisions need confirmed incident labels
 or a separately adjudicated corpus, not raw agreement rates.
+Disabled-review placeholders do not emit this event because no reviewer attempt
+occurred.
 
 ## Offline eval
 

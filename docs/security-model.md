@@ -83,7 +83,9 @@ Package contents are hostile instructions. AI prompts must frame package text as
 Cloudflare Agent Traces are sampled at 10% for reviewer debugging, with message
 and tool payload persistence explicitly disabled. Trace metadata is restricted
 to operation/timing, model/usage, tool names, reviewer version, ecosystem, and a
-fresh invocation-scoped random id. It must not include scan, stage,
+fresh invocation-scoped random id. The reviewer exposes only `run` through a
+narrow Workers AI binding facade so the tracing wrapper cannot copy the AI
+Gateway log id into the trace. It must not include scan, stage,
 organization, package, file, prompt, evidence, or tool-result content. Aggregate
 AI execution and decision events follow the same no-package-content rule; a
 maintainer decision is feedback, never an automatic truth label. See
