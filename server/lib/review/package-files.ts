@@ -56,7 +56,7 @@ function globLikePackageFilesEntryMatches(entry: string, path: string): boolean 
 
 function packageFilesGlobToRegexSource(entry: string): string {
   let source = "";
-  for (let index = 0; index < entry.length; ) {
+  for (let index = 0; index < entry.length;) {
     const char = entry[index];
     const next = entry[index + 1];
     const afterNext = entry[index + 2];

@@ -4,6 +4,7 @@ import { enforceRateLimit, RateLimitError } from "../db/rate-limit";
 import { getPublicDiffAdapter } from "../lib/ecosystems";
 import { PUBLIC_NPM_REGISTRY } from "../lib/ecosystems/npm/public-diff";
 import { rateLimitResponse } from "../lib/platform/http";
+import { workerExecutionContext } from "../lib/platform/execution-context";
 import { recordProductEvent } from "../lib/platform/analytics";
 import {
   computePublicDiffCacheKey,
@@ -153,11 +154,16 @@ async function loadRequestedDiff(
       if (limited) return { error: limited };
     }
 
-    const payload = await loadPublicPackageDiff(c.env, c.executionCtx, input, {
-      onCacheOutcome: (hit) => {
-        cacheHit = hit;
+    const payload = await loadPublicPackageDiff(
+      c.env,
+      workerExecutionContext(c.executionCtx),
+      input,
+      {
+        onCacheOutcome: (hit) => {
+          cacheHit = hit;
+        },
       },
-    });
+    );
     if (options.countView) recordPublicDiffView(c, payload, cacheHit, startedAtMs);
     return { payload };
   } catch (err) {
@@ -195,7 +201,11 @@ publicDiffRoutes.get("/versions", async (c) => {
 
   let listing;
   try {
-    listing = await adapter.listVersions(c.env, c.executionCtx, packageName);
+    listing = await adapter.listVersions(
+      c.env,
+      workerExecutionContext(c.executionCtx),
+      packageName,
+    );
   } catch (err) {
     return publicDiffErrorResponse(c, err);
   }

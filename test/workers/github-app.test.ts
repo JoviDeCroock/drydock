@@ -84,12 +84,16 @@ async function seedRateLimit(key: string, count: number, windowMs: number) {
   const nowMs = Date.now();
   const bucket = Math.floor(nowMs / windowMs);
   const now = new Date(nowMs);
-  await db.insert(schema.rateLimits).values({
-    key: `${key}:${bucket}`,
-    count,
-    expiresAt: new Date((bucket + 1) * windowMs),
-    updatedAt: now,
-  });
+  // Seed the adjacent bucket too so this fixture stays active when a test
+  // crosses the window boundary between setup and the request.
+  await db.insert(schema.rateLimits).values(
+    [bucket, bucket + 1].map((activeBucket) => ({
+      key: `${key}:${activeBucket}`,
+      count,
+      expiresAt: new Date((activeBucket + 1) * windowMs),
+      updatedAt: now,
+    })),
+  );
 }
 
 function buildTestApp(userId: string) {
