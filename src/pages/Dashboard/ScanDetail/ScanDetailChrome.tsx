@@ -11,10 +11,12 @@ export function ScanDetailHeader({
   detail,
   onDecideClick,
   onDeleteClick,
+  onShareClick,
 }: {
   detail?: PersistedScanDetail | null;
   onDecideClick?: () => void;
   onDeleteClick?: () => void;
+  onShareClick?: () => void;
 } = {}) {
   const decision = detail?.scan.decision;
   const decidedAt = detail?.scan.decidedAt;
@@ -60,6 +62,11 @@ export function ScanDetailHeader({
                 </span>
               ) : null}
             </div>
+          ) : null}
+          {detail && isComplete && onShareClick ? (
+            <Button variant="ghost" size="sm" onClick={onShareClick}>
+              Share
+            </Button>
           ) : null}
           {detail && isComplete ? (
             <LinkButton

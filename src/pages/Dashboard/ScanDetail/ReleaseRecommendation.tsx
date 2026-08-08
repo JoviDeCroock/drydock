@@ -8,6 +8,7 @@ import { Badge } from "../../../components/Badge";
 import { Card } from "../../../components/Card";
 import { SeverityBar } from "../../../components/SeverityBar";
 import { SectionLabel } from "../../../components/Typography";
+import { verdictTextClass } from "../../../features/review/verdict";
 import type { FindingWithDiffStatus, ReviewFinding } from "../../../features/review/types";
 import type { PersistedSummary } from "./types";
 
@@ -75,7 +76,7 @@ export function ReleaseRecommendation({
         <SectionLabel as="h2">Recommendation</SectionLabel>
         <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
           <h3
-            class={`m-0 text-lg font-semibold tracking-[-0.01em] ${verdictColor(recommendation.tone)}`}
+            class={`m-0 text-lg font-semibold tracking-[-0.01em] ${verdictTextClass(recommendation.tone)}`}
           >
             {capitalize(recommendation.label)}
           </h3>
@@ -126,12 +127,6 @@ function capitalize(value: string): string {
 
 // The verdict heading carries severity meaning, so it uses the `-text` severity
 // variants (text role), never the saturated tokens. Neutral verdicts stay --ink.
-function verdictColor(tone: string): string {
-  if (tone === "critical" || tone === "high") return "text-danger-text";
-  if (tone === "medium") return "text-warn-text";
-  if (tone === "ok") return "text-ok-text";
-  return "text-ink";
-}
 
 function buildRecommendationEvidence(
   detail: PersistedScanDetail,

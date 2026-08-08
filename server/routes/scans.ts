@@ -35,6 +35,7 @@ import {
 } from "../lib/compare-cache";
 import { rateLimitResponse } from "../lib/platform/http";
 import { workerExecutionContext } from "../lib/platform/execution-context";
+import { enablePublicShare, revokePublicShare } from "../db/scan-share";
 import {
   allowInsecureLocalRegistry,
   decryptNpmToken,
@@ -52,7 +53,7 @@ import { describeOperationalError, emitOperationalEvent } from "../lib/platform/
 import { parseScanInput } from "../lib/scan/input";
 import { reportExportFilename, serializeReportExport } from "../lib/scan/report-export";
 import { executeScanJob, type ScanQueueMessage } from "../lib/scan/job";
-import { roleCanManageIntegrations } from "../lib/auth/roles";
+import { roleCanManageIntegrations, roleCanManagePublicShares } from "../lib/auth/roles";
 import {
   checkStagedPublishAccess,
   fetchStagedPublishDetails,
@@ -309,11 +310,72 @@ scansRoutes.delete("/:id", async (c) => {
   return c.json({ ok: true, id: scanId });
 });
 
+// Public share link management. Enabling exposes the completed scan's
+// canonical report export (and its signed attestation) at
+// /public/reports/:token to anyone holding the link — an explicit, elevated
+// opt-in, so it takes owner/admin, not plain membership.
+scansRoutes.post("/:id/share", async (c) => {
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
+  if (!roleCanManagePublicShares(role)) return c.json({ error: "forbidden" }, 403);
+
+  const share = await enablePublicShare(db, {
+    scanId: c.req.param("id"),
+    organizationId,
+    actorUserId: session.userId,
+  });
+  if (!share) {
+    const existing = await getScanStatus(db, c.req.param("id"), organizationId);
+    if (!existing) return c.json({ error: "not found" }, 404);
+    return c.json({ error: "only completed scans can be shared publicly" }, 409);
+  }
+  return c.json({ share: publicShareResponse(c, share) });
+});
+
+scansRoutes.delete("/:id/share", async (c) => {
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
+  if (!roleCanManagePublicShares(role)) return c.json({ error: "forbidden" }, 403);
+
+  const revoked = await revokePublicShare(db, {
+    scanId: c.req.param("id"),
+    organizationId,
+    actorUserId: session.userId,
+  });
+  if (!revoked) {
+    const existing = await getScanStatus(db, c.req.param("id"), organizationId);
+    if (!existing) return c.json({ error: "not found" }, 404);
+  }
+  return c.json({ revoked });
+});
+
+function publicShareResponse(
+  c: Context<{ Bindings: Bindings; Variables: Variables }>,
+  share: { publicShareToken: string; publicSharedAt: Date },
+) {
+  // Prefer the canonical origin so copied links don't pin a preview host.
+  const origin = (() => {
+    try {
+      return c.env.BETTER_AUTH_URL ? new URL(c.env.BETTER_AUTH_URL).origin : null;
+    } catch {
+      return null;
+    }
+  })();
+  const base = origin ?? new URL(c.req.url).origin;
+  return {
+    token: share.publicShareToken,
+    url: `${base}/reports/${share.publicShareToken}`,
+    sharedAt: share.publicSharedAt,
+  };
+}
+
 scansRoutes.get("/:id", async (c) => {
   const db = createDb(c.env.DB);
   const organizationId = await requireActiveOrganization(c, db);
   const scan = await getScan(db, c.req.param("id"), organizationId, scanArtifactReadBucket(c.env), {
-    includeFileSamples: false,
+    files: "list",
   });
   if (!scan) return c.json({ error: "not found" }, 404);
   return c.json(scan);
@@ -348,12 +410,19 @@ scansRoutes.get("/:id/report.json", async (c) => {
   const organizationId = await resolveReportExportOrganization(c, db);
   if (!organizationId) return c.json({ error: "not found" }, 404);
   // Full-detail export: the findings come from R2 for artifact-backed scans, so
-  // load the artifact bucket (unlike the metadata-only reads below).
+  // load the artifact bucket (unlike the metadata-only reads below). `omit`
+  // skips the file-samples artifact the export never reads, and keeps this
+  // route byte-identical to the public share route by construction — both go
+  // through the same artifact reads, so neither can degrade to the D1 fallback
+  // while the other does not.
   const detail = await getScan(
     db,
     c.req.param("id"),
     organizationId,
     scanArtifactReadBucket(c.env),
+    {
+      files: "omit",
+    },
   );
   if (!detail) return c.json({ error: "not found" }, 404);
   if (detail.scan.status !== "complete") {

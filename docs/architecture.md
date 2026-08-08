@@ -126,7 +126,7 @@ Organizations store their own encrypted npm connection. The UI validates baselin
 
 ## Report model
 
-Reports should remain canonical and future-signable: stable ordering, explicit release/artifact/context risk sections, redacted evidence, and enough metadata to reproduce the reviewed artifact identity. Public signed reports are future work; do not expose signing semantics until the report contract is finalized.
+Reports remain canonical and signable: stable ordering, explicit release/artifact/context risk sections, redacted evidence, and enough metadata to reproduce the reviewed artifact identity. The canonical export (`drydock.report.v2`) is the signing boundary — publicly shared reports serve those exact bytes at `/public/reports/:token`, and the attestation endpoint signs their SHA-256 inside a DSSE envelope (see `public-reports.md`). Changing the export shape changes the attested bytes, so bump the schema tag when consumers must branch.
 
 ## API direction
 

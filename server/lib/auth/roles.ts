@@ -24,3 +24,9 @@ export function roleCanManageMembers(role: OrganizationRole | null): boolean {
 export function roleCanManageIntegrations(role: OrganizationRole | null): boolean {
   return role === "owner" || role === "admin";
 }
+
+// Publishing a report beyond the organization is a governance action, not a
+// scan-review action, so it takes the same elevated bar as integrations.
+export function roleCanManagePublicShares(role: OrganizationRole | null): boolean {
+  return role === "owner" || role === "admin";
+}

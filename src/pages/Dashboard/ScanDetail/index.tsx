@@ -16,6 +16,7 @@ import {
   ScanDetailModel,
   type DecisionStatus,
   type DeleteStatus,
+  type PublicShareInfo,
   type ScanDecision,
 } from "../../../models/scan";
 import type { WorkflowGateDecision } from "../../../models/github-app";
@@ -43,6 +44,7 @@ import { ReleaseRecommendation } from "./ReleaseRecommendation";
 import { PersistedReportSections } from "./ReportSections";
 import { ReviewerSummary } from "./ReviewerSummary";
 import { ScanDetailHeader, ScanFailureAlert, VersionPickerSkeleton } from "./ScanDetailChrome";
+import { ShareDialog } from "./ShareDialog";
 import { filterDiffEntries, findingCountsByPath } from "../../../features/review/diff-entries";
 import { scanFilesToFileRecords } from "./diff-helpers";
 import { useFindingsWithDiff } from "./hooks/useFindingsWithDiff";
@@ -61,6 +63,7 @@ export default function ScanDetailPage() {
   const decisionDialogOpen = useSignal(false);
   const gateDialogOpen = useSignal(false);
   const deleteDialogOpen = useSignal(false);
+  const shareDialogOpen = useSignal(false);
   const npmStagedPackagesUrlSignal = useComputed(() => {
     const scan = model.detail.value?.scan;
     return scan ? npmStagedPackagesUrlFor(scan) : null;
@@ -262,6 +265,9 @@ export default function ScanDetailPage() {
       ? () => (decisionDialogOpen.value = true)
       : undefined;
 
+  const onShareClick =
+    detail?.scan.status === "complete" ? () => (shareDialogOpen.value = true) : undefined;
+
   return (
     <PageShell>
       <ScanDetailHeader
@@ -270,6 +276,7 @@ export default function ScanDetailPage() {
         onDeleteClick={
           detail?.scan.status === "failed" ? () => (deleteDialogOpen.value = true) : undefined
         }
+        onShareClick={onShareClick}
       />
 
       {error ? <Alert tone="critical">{error}</Alert> : null}
@@ -438,6 +445,18 @@ export default function ScanDetailPage() {
         />
       ) : null}
 
+      {detail && detail.scan.status === "complete" ? (
+        <ShareDialogHost
+          openSignal={shareDialogOpen}
+          onClose={() => (shareDialogOpen.value = false)}
+          shareSignal={model.share}
+          statusSignal={model.shareStatus}
+          errorSignal={model.shareError}
+          onEnable={() => void model.enableShare()}
+          onRevoke={() => void model.revokeShare()}
+        />
+      ) : null}
+
       {detail && isWorkflowGate && gate ? (
         <GateDialogHost
           openSignal={gateDialogOpen}
@@ -525,6 +544,29 @@ function DeleteDialogHost({
       open={openSignal.value}
       status={statusSignal.value}
       error={errorSignal.value}
+    />
+  );
+}
+
+function ShareDialogHost({
+  openSignal,
+  shareSignal,
+  statusSignal,
+  errorSignal,
+  ...props
+}: Omit<ComponentProps<typeof ShareDialog>, "open" | "share" | "status" | "error"> & {
+  openSignal: ReadonlySignal<boolean>;
+  shareSignal: ReadonlySignal<PublicShareInfo | null>;
+  statusSignal: ReadonlySignal<DecisionStatus>;
+  errorSignal: ReadonlySignal<string | null>;
+}) {
+  return (
+    <ShareDialog
+      open={openSignal.value}
+      share={shareSignal.value}
+      status={statusSignal.value}
+      error={errorSignal.value}
+      {...props}
     />
   );
 }

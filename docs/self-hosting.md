@@ -108,6 +108,14 @@ pnpm exec wrangler secret put NPM_CONNECTIONS_ENCRYPTION_KEY \
   --config wrangler.self-host.jsonc
 ```
 
+Optional secrets:
+
+```sh
+# Ed25519 private JWK for public report attestations (docs/public-reports.md).
+# Without it, report sharing works but attestation endpoints return 503.
+pnpm exec wrangler secret put ATTESTATION_SIGNING_KEY_JWK
+```
+
 Required non-secret vars:
 
 - `BETTER_AUTH_URL` — canonical deployed origin

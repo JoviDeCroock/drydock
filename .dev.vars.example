@@ -27,6 +27,11 @@ NPM_CONNECTIONS_ENCRYPTION_KEY=replace-with-a-random-32-byte-secret
 # `drydock` app (see the `flagship` binding in the selected Wrangler config).
 # Toggle it from the Cloudflare dashboard; there is no .dev.vars override.
 
+# Optional. Private Ed25519 JWK used to sign public-report attestations. Without
+# it, sharing still works and attestation endpoints return 503. Generate one:
+#   node -e "crypto.subtle.generateKey({name:'Ed25519'},true,['sign','verify']).then(async k=>console.log(JSON.stringify(await crypto.subtle.exportKey('jwk',k.privateKey))))"
+# ATTESTATION_SIGNING_KEY_JWK={"kty":"OKP","crv":"Ed25519","d":"...","x":"..."}
+
 # Optional GitHub App workflow-gate integration. Public identifiers normally
 # live in the selected Wrangler config; keep secrets in .dev.vars locally or in
 # Wrangler secrets when deployed.

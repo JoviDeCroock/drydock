@@ -1,0 +1,107 @@
+import { useComputed, useSignal } from "@preact/signals";
+import { formatDateTime } from "../../../lib/format";
+import type { DecisionStatus, PublicShareInfo } from "../../../models/scan";
+import { publicReportAttestationUrl } from "../../../models/scan";
+import { Alert } from "../../../components/Alert";
+import { Button } from "../../../components/Button";
+import { Dialog } from "../../../components/Dialog";
+import { Input } from "../../../components/Input";
+import { EmptyLine, MonoDetail } from "../../../components/Typography";
+
+export function ShareDialog({
+  open,
+  onClose,
+  share,
+  status,
+  error,
+  onEnable,
+  onRevoke,
+}: {
+  open: boolean;
+  onClose: () => void;
+  share: PublicShareInfo | null;
+  status: DecisionStatus;
+  error: string | null;
+  onEnable: () => void;
+  onRevoke: () => void;
+}) {
+  const copied = useSignal(false);
+  // Rendered directly as a signal child so the copy feedback re-renders only
+  // the text node, not the dialog (signals-local/no-signal-conditional-jsx).
+  const copyLabel = useComputed(() => (copied.value ? "Copied ✓" : "Copy"));
+  const saving = status === "saving";
+
+  const copyLink = async () => {
+    if (!share) return;
+    try {
+      await navigator.clipboard.writeText(share.url);
+      copied.value = true;
+      setTimeout(() => (copied.value = false), 2000);
+    } catch {
+      // Clipboard access denied — the URL stays selectable in the input.
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title="Share report"
+      description="A public link serves this review's canonical report — findings, risk, and manifest changes — to anyone who has it. Individual file contents are never included; findings still quote the redacted lines they matched."
+      footer={
+        share ? (
+          <>
+            <Button variant="danger" size="sm" onClick={onRevoke} disabled={saving}>
+              {saving ? "Revoking…" : "Revoke link"}
+            </Button>
+            <Button variant="secondary" size="sm" onClick={onClose}>
+              Close
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button variant="secondary" size="sm" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={onEnable} disabled={saving}>
+              {saving ? "Creating…" : "Create public link"}
+            </Button>
+          </>
+        )
+      }
+    >
+      {error ? <Alert tone="critical">{error}</Alert> : null}
+      {share ? (
+        <>
+          <div class="flex items-center gap-2">
+            <Input value={share.url} readOnly class="flex-1 font-mono text-[12px]" />
+            <Button variant="secondary" size="sm" onClick={copyLink}>
+              {copyLabel}
+            </Button>
+          </div>
+          <MonoDetail
+            parts={[
+              <span key="shared">shared {formatDateTime(share.sharedAt)}</span>,
+              <a
+                key="attestation"
+                href={publicReportAttestationUrl(share.token)}
+                class="text-ink-muted hover:text-ink"
+                download
+              >
+                signed attestation
+              </a>,
+            ]}
+          />
+          <EmptyLine>
+            Anyone with the link can read the report; revoking invalidates it immediately.
+          </EmptyLine>
+        </>
+      ) : (
+        <EmptyLine>
+          This review is currently visible to organization members only. Requires an owner or admin
+          role.
+        </EmptyLine>
+      )}
+    </Dialog>
+  );
+}

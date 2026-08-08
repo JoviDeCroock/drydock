@@ -164,6 +164,15 @@ export const scans = sqliteTable(
     reportArtifactKey: text("report_artifact_key"),
     fileSamplesArtifactKey: text("file_samples_artifact_key"),
     diffArtifactKey: text("diff_artifact_key"),
+    // Public share link. A non-null token makes the completed scan's canonical
+    // report export readable (unauthenticated) at /public/reports/:token.
+    // Revoking sets the token back to null; the token itself is the only
+    // capability — there is no separate "enabled" flag to drift out of sync.
+    publicShareToken: text("public_share_token"),
+    publicSharedAt: integer("public_shared_at", { mode: "timestamp_ms" }),
+    publicSharedByUserId: text("public_shared_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
     startedAt: integer("started_at", { mode: "timestamp_ms" }),
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
@@ -194,6 +203,12 @@ export const scans = sqliteTable(
     // Account deletion nulls decided_by_user_id by user id, and D1 enforces the
     // user FK on delete; without this index both walk the whole table.
     decidedByIdx: index("scans_decided_by_idx").on(table.decidedByUserId),
+    // Same reasoning for the share attribution column: account deletion nulls it
+    // by user id, and the FK is checked on every user delete.
+    publicSharedByIdx: index("scans_public_shared_by_idx").on(table.publicSharedByUserId),
+    publicShareTokenUniqueIdx: uniqueIndex("scans_public_share_token_unique_idx").on(
+      table.publicShareToken,
+    ),
   }),
 );
 

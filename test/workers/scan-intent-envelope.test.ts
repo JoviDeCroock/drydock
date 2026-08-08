@@ -120,7 +120,7 @@ describe("scan intent envelope persistence and readers", () => {
     expect(res.status).toBe(200);
     const text = await res.text();
     const body = JSON.parse(text) as { schema: string; intentEnvelope: unknown };
-    expect(body.schema).toBe("drydock.report.v1");
+    expect(body.schema).toBe("drydock.report.v2");
     expect(body.intentEnvelope).toEqual(attestedEnvelope);
 
     // Stable serialization still holds with the new field present.

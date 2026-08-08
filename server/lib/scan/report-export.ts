@@ -18,7 +18,13 @@ interface ReportExportFilenameInput {
 
 // Schema tag for the exported report document. Bump the suffix when the export
 // shape changes in a way consumers must branch on.
-const REPORT_EXPORT_SCHEMA = "drydock.report.v1";
+//
+// v2 drops `releaseConsistency.priorScanId` and `releaseConsistency.decidedAt`
+// (see `exportReleaseConsistency`). Those are removals from the authenticated
+// `report.json` contract as much as from the public one, so they take the bump
+// with them: the export is the signing boundary, and a consumer that pinned v1
+// must not silently receive a document missing a field it read.
+export const REPORT_EXPORT_SCHEMA = "drydock.report.v2";
 
 // Build a self-contained, archivable view of a completed review from the data
 // already persisted for it: provenance metadata, package/baseline identity, the
@@ -65,13 +71,13 @@ export function buildReportExport(detail: ScanDetail) {
     riskSummary: detail.riskSummary ?? null,
     // Advisory release-memory signal. Additive + optional: scans that predate
     // the field (or persisted a malformed blob) export null.
-    releaseConsistency: normalizeReleaseConsistency(summary.releaseConsistency),
+    releaseConsistency: exportReleaseConsistency(summary.releaseConsistency),
     packageJsonDiff: summary.packageJsonDiff ?? null,
     diff: summary.diff ?? null,
     // Deterministic findings only. A completed AI review's findings are carried
     // by `aiReview.findings` above; including the persisted `source: "ai"` rows
     // here too would double-count them in this array and break the invariant
-    // that every entry has a ruleId/ruleVersion. Keeps `drydock.report.v1`'s
+    // that every entry has a ruleId/ruleVersion. Keeps `drydock.report.v2`'s
     // findings[] meaning stable across the persistence change.
     findings: detail.findings
       .filter((finding) => finding.source !== "ai")
@@ -91,11 +97,22 @@ export function buildReportExport(detail: ScanDetail) {
   };
 }
 
+export type ReportExportDocument = ReturnType<typeof buildReportExport>;
+
 // Serialize the export with stable key ordering so the same evidence always
 // produces byte-identical output — the property two report artifacts need to be
 // comparable, and a prerequisite for signing later.
 export function serializeReportExport(detail: ScanDetail): string {
-  return stableStringify(buildReportExport(detail));
+  return serializeReportExportDocument(buildReportExport(detail));
+}
+
+// Serialize an already-built export. The attestation route needs the document
+// *and* its bytes: anything it asserts about the report has to be read off the
+// same object that produced the digest it signs, or the two can disagree inside
+// a signed envelope (they did — `findingCount` counted AI findings the
+// document's `findings[]` deliberately excludes).
+export function serializeReportExportDocument(document: ReportExportDocument): string {
+  return stableStringify(document);
 }
 
 export function reportExportFilename(scan: ReportExportFilenameInput): string {
@@ -140,6 +157,19 @@ function toIso(value: unknown): string | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// The export drops `priorScanId` and `decidedAt`: both describe a *prior* scan
+// the org never chose to share, and these bytes are served verbatim on the
+// public report route. `decidedAt` is the sharper of the two — a precise
+// timestamp of an internal review decision on an unshared release. What stays
+// (`status`, the finding counts, `newFindings`) describes this scan's delta
+// against that history, which is the signal the report is making.
+function exportReleaseConsistency(raw: unknown) {
+  const consistency = normalizeReleaseConsistency(raw);
+  if (!consistency) return null;
+  const { priorScanId: _priorScanId, decidedAt: _decidedAt, ...exported } = consistency;
+  return exported;
 }
 
 // Pull the provenance block out of the persisted, adapter-shaped staged details.

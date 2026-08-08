@@ -9,6 +9,10 @@
     "AI_CACHE_AFFINITY": "staged-publish-review-test",
     "NPM_REGISTRY": "https://registry.npmjs.org",
     "NPM_CONNECTIONS_ENCRYPTION_KEY": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    // ATTESTATION_SIGNING_KEY_JWK is deliberately absent: a committed private
+    // JWK is a permanent secret-scanning false positive, and the unset case is
+    // the one production degrades through. Tests that need a signer generate a
+    // throwaway Ed25519 key and inject it per request.
     "SLACK_CLIENT_ID": "test-slack-client-id",
     "SLACK_CLIENT_SECRET": "test-slack-client-secret",
   },

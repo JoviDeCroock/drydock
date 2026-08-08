@@ -21,6 +21,9 @@ declare global {
       // any deployed config — production must keep the full header policy.
       DISABLE_SECURITY_HEADERS?: string;
       NPM_CONNECTIONS_ENCRYPTION_KEY?: string;
+      // Ed25519 private JWK (kty OKP) used to sign public report attestations.
+      // Absent → attestation endpoints return 503; sharing still works.
+      ATTESTATION_SIGNING_KEY_JWK?: string;
       BETTER_AUTH_SECRET: string;
       BETTER_AUTH_URL?: string;
       AUTH_REQUIRED?: string;

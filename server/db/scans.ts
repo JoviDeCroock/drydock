@@ -928,12 +928,25 @@ function recordDecisionEvent(
   });
 }
 
+/**
+ * How much of the file table a `getScan` caller needs:
+ * - `samples` (default) — every artifact, file rows carry their redacted text
+ *   samples. The workbench detail view.
+ * - `list` — metadata only, and the artifacts are read only when D1 alone is
+ *   short (`needsArtifactMetadataFallback`). The cheapest mode; note it can
+ *   leave `findings` sourced from D1 rather than report.json.
+ * - `omit` — full report/diff fidelity (so `findings` and their `diffStatus`
+ *   are byte-identical to `samples`) while skipping the file-samples artifact
+ *   entirely. For callers that serialize the report and never read `files`.
+ */
+export type ScanDetailFileMode = "samples" | "list" | "omit";
+
 export async function getScan(
   db: AppDb,
   id: string,
   organizationId: string,
   artifactBucket?: R2Bucket,
-  options: { includeFileSamples?: boolean } = {},
+  options: { files?: ScanDetailFileMode } = {},
 ) {
   const [scanRows, files, findings, events] = await Promise.all([
     db
@@ -951,14 +964,18 @@ export async function getScan(
   ]);
   const scan = scanRows[0];
   if (!scan) return null;
-  const includeFileSamples = options.includeFileSamples ?? true;
-  const artifactDetail = includeFileSamples
-    ? await loadScanArtifacts(artifactBucket, scan)
-    : needsArtifactMetadataFallback(scan, files, findings)
-      ? await loadScanArtifactMetadata(artifactBucket, scan)
-      : null;
+  const fileMode = options.files ?? "samples";
+  const artifactDetail =
+    fileMode === "list"
+      ? needsArtifactMetadataFallback(scan, files, findings)
+        ? await loadScanArtifactMetadata(artifactBucket, scan)
+        : null
+      : await loadScanArtifacts(artifactBucket, scan, {
+          includeFileSamples: fileMode === "samples",
+        });
   const detailFiles = artifactDetail ? mergeArtifactFiles(files, artifactDetail.files, id) : files;
-  const responseFiles = includeFileSamples ? detailFiles : detailFiles.map(stripFileSampleForList);
+  const responseFiles =
+    fileMode === "samples" ? detailFiles : detailFiles.map(stripFileSampleForList);
   const diff = artifactDetail?.diff ?? diffForFindingAnnotations(scan.summaryJson, detailFiles);
   const findingRows = artifactDetail ? artifactDetail.findings : findings;
   const annotatedFindings = annotateFindingsWithDiffStatus(findingRows, diff, {

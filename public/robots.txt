@@ -10,5 +10,9 @@ Disallow: /login
 Disallow: /register
 Disallow: /verify-email
 Disallow: /api/
+# A shared report link is a capability, not a public page. Indexing one would
+# republish it to everyone long after the publisher revoked the share.
+Disallow: /reports/
+Disallow: /public/reports/
 
 Sitemap: https://drydock.org/sitemap.xml

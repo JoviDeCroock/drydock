@@ -100,7 +100,7 @@ Production responses should keep conservative security headers: no package-provi
 
 ## Known gaps / future work
 
-- Public signed reports are not exposed yet; report data should remain canonical and future-signable.
+- Public report sharing is an explicit owner/admin opt-in per completed scan: an unguessable 256-bit token exposes the canonical report export (never file samples, events, or org/user identifiers) at `/public/reports/:token`, with an Ed25519-signed DSSE attestation over those exact bytes. See `public-reports.md`.
 - Raw-artifact retention, if ever added, must be explicit, short-TTL, organization-scoped, and documented.
 - Additional ecosystems need adapter-specific credential, baseline, artifact, and failure-mode review before enablement.
 - Keep dependency and parser updates covered by regression/fuzz tests because archive handling is a trust boundary.
