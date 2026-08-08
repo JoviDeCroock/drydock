@@ -114,8 +114,12 @@ function assetFallbackRequest(request: Request): Request {
 // log line. Cloudflare's own invocation logs still capture the full URL — that
 // is inherent to capability URLs and is why revocation is immediate — but
 // nothing Drydock writes should widen that exposure.
+// Both spellings carry the token: /public/reports/:token is the API read, and
+// /reports/:token is the browser-facing page that wraps it. Redacting only the
+// former leaves the document request — the one a human actually pastes around,
+// and the one whose asset fallback can throw — logging the capability in full.
 export function redactCapabilityPath(path: string): string {
-  return path.replace(/^\/public\/reports\/[^/]+/, "/public/reports/:token");
+  return path.replace(/^(\/public)?\/reports\/[^/]+/, "$1/reports/:token");
 }
 
 function applySecurityHeaders(c: { res: Response; req: { path: string } }) {

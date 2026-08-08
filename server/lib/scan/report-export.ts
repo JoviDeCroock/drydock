@@ -97,11 +97,22 @@ export function buildReportExport(detail: ScanDetail) {
   };
 }
 
+export type ReportExportDocument = ReturnType<typeof buildReportExport>;
+
 // Serialize the export with stable key ordering so the same evidence always
 // produces byte-identical output — the property two report artifacts need to be
 // comparable, and a prerequisite for signing later.
 export function serializeReportExport(detail: ScanDetail): string {
-  return stableStringify(buildReportExport(detail));
+  return serializeReportExportDocument(buildReportExport(detail));
+}
+
+// Serialize an already-built export. The attestation route needs the document
+// *and* its bytes: anything it asserts about the report has to be read off the
+// same object that produced the digest it signs, or the two can disagree inside
+// a signed envelope (they did — `findingCount` counted AI findings the
+// document's `findings[]` deliberately excludes).
+export function serializeReportExportDocument(document: ReportExportDocument): string {
+  return stableStringify(document);
 }
 
 export function reportExportFilename(scan: ReportExportFilenameInput): string {

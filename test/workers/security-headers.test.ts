@@ -74,6 +74,16 @@ describe("capability path redaction", () => {
     expect(redactCapabilityPath("/api/v1/scans/scan_123")).toBe("/api/v1/scans/scan_123");
   });
 
+  test("redacts the browser-facing report page too", () => {
+    const token = "C".repeat(43);
+    // /reports/:token is the URL a publisher actually pastes around, and its
+    // asset-fallback request reaches app.onError like any other.
+    expect(redactCapabilityPath(`/reports/${token}`)).toBe("/reports/:token");
+    expect(redactCapabilityPath(`/reports/${token}`)).not.toContain(token);
+    expect(redactCapabilityPath("/reports/")).toBe("/reports/");
+    expect(redactCapabilityPath("/reports")).toBe("/reports");
+  });
+
   test("does not leave a token behind when the prefix is not at the start", () => {
     const token = "B".repeat(43);
     // Only the anchored prefix is a capability path; anything else must not be

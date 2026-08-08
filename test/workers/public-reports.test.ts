@@ -110,7 +110,14 @@ async function request(
   return res;
 }
 
-async function seedCompletedScan(owner: SeededUser): Promise<string> {
+// `withAiReview` seeds a completed AI review alongside the rule finding. The
+// export routes AI findings through `aiReview.findings` and keeps them out of
+// `findings[]`, so this is the shape where a naive finding count disagrees with
+// the document it describes.
+async function seedCompletedScan(
+  owner: SeededUser,
+  options: { withAiReview?: boolean } = {},
+): Promise<string> {
   const db = createDb(env.DB);
   const scanId = `scan_${crypto.randomUUID()}`;
   const stageId = `stage-${scanId.slice(-12)}`;
@@ -139,7 +146,7 @@ async function seedCompletedScan(owner: SeededUser): Promise<string> {
       baseline: { kind: "registry", version: "1.0.0" },
       diff: [{ path: "package.json", status: "modified" }],
     },
-    ai: null,
+    ai: options.withAiReview ? AI_REVIEW : null,
     files: [{ path: "package.json", size: 10, sha256: "a", flags: [], textSample: "{}" }],
     diff: [{ path: "package.json", status: "modified", flags: [] }],
     findings: [
@@ -152,10 +159,36 @@ async function seedCompletedScan(owner: SeededUser): Promise<string> {
         ruleVersion: "1.8.0",
       },
     ],
+    aiFindingRecords: options.withAiReview ? AI_REVIEW.findings : undefined,
     report: { version: 1, digest: "abc123" },
   });
   return scanId;
 }
+
+const AI_REVIEW = {
+  status: "complete" as const,
+  risk: "high" as const,
+  releaseAssessment: "suspicious" as const,
+  summary: "The postinstall hook fetches and runs a remote script.",
+  requiresManualReview: true,
+  model: "test-model",
+  findings: [
+    {
+      severity: "high" as const,
+      file: "install.js",
+      evidence: "https.get(process.env.DRYDOCK_TEST_URL)",
+      reason: "downloads and executes remote code at install time",
+      recommendation: "remove the network fetch from the install hook",
+    },
+    {
+      severity: "medium" as const,
+      file: "install.js",
+      evidence: "process.env.NPM_TOKEN",
+      reason: "reads a publish credential during install",
+      recommendation: "drop the credential read",
+    },
+  ],
+};
 
 async function enableShare(app: ReturnType<typeof buildTestApp>, scanId: string) {
   const res = await request(app, `/api/v1/scans/${scanId}/share`, { method: "POST", body: "{}" });
@@ -564,6 +597,36 @@ describe("public report attestations", () => {
       pae,
     );
     expect(valid).toBe(true);
+  });
+
+  test("predicate findingCount matches the attested document, AI review included", async () => {
+    const owner = await seedUser();
+    const scanId = await seedCompletedScan(owner, { withAiReview: true });
+    const app = buildTestApp(owner);
+    const { share } = (await (await enableShare(app, scanId)).json()) as {
+      share: { token: string };
+    };
+    const signer = await signingEnv();
+
+    const report = (await (await request(app, `/public/reports/${share.token}`)).json()) as {
+      findings: unknown[];
+      aiReview: { findings: unknown[] } | null;
+    };
+    // The fixture is the interesting case only if the two lists actually
+    // differ — otherwise this test would pass against the bug it guards.
+    expect(report.aiReview?.findings).toHaveLength(2);
+    expect(report.findings).toHaveLength(1);
+
+    const attRes = await request(app, `/public/reports/${share.token}/attestation`, {}, signer);
+    const envelope = (await attRes.json()) as { payload: string };
+    const statement = JSON.parse(
+      new TextDecoder().decode(strictBase64Decode(envelope.payload)),
+    ) as { predicate: { findingCount: number } };
+    // Counting the scan's finding *rows* would say 3 here: the export carries
+    // AI findings under `aiReview`, never in `findings[]`, and a verifier
+    // cross-checking the signed predicate against the signed document must not
+    // see two different numbers.
+    expect(statement.predicate.findingCount).toBe(report.findings.length);
   });
 
   test("attestation endpoints return 503 when no signing key is configured", async () => {

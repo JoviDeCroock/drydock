@@ -12,9 +12,11 @@ import {
 import { rateLimitResponse } from "../lib/platform/http";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import {
+  buildReportExport,
   REPORT_EXPORT_SCHEMA,
   reportExportFilename,
   serializeReportExport,
+  serializeReportExportDocument,
 } from "../lib/scan/report-export";
 import { scanArtifactReadBucket } from "../lib/scan/artifacts";
 import type { Bindings, Variables } from "../types";
@@ -110,7 +112,10 @@ publicReportsRoutes.get("/reports/:token/attestation", async (c) => {
   if (!key) return c.json({ error: "attestations are not configured" }, 503);
 
   const { detail } = loaded;
-  const reportBytes = new TextEncoder().encode(serializeReportExport(detail));
+  // Build the document once and sign *its* bytes, so every predicate field is
+  // read off the same object the digest covers.
+  const document = buildReportExport(detail);
+  const reportBytes = new TextEncoder().encode(serializeReportExportDocument(document));
   const subjectName =
     detail.scan.packageName && detail.scan.stagedVersion
       ? `${detail.scan.packageName}@${detail.scan.stagedVersion}`
@@ -124,7 +129,11 @@ publicReportsRoutes.get("/reports/:token/attestation", async (c) => {
       previousVersion: detail.scan.previousVersion ?? null,
       risk: detail.scan.risk,
       decision: detail.scan.decision ?? null,
-      findingCount: detail.findings.length,
+      // The export's findings[], not the scan's finding rows: those also carry
+      // the AI reviewer's findings, which the export deliberately routes through
+      // `aiReview.findings` instead. A verifier comparing this against the
+      // attested document must not see two different numbers.
+      findingCount: document.findings.length,
       reportSchema: REPORT_EXPORT_SCHEMA,
       reportDigest: detail.scan.reportDigest ?? null,
       completedAt:
