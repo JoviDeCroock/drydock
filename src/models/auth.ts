@@ -95,12 +95,22 @@ const SessionModel = createModel(() => {
 
     // Starts the GitHub OAuth redirect. Better Auth returns the provider's
     // authorize URL; the browser navigates there and comes back through
-    // /api/auth/callback/github, which redirects to callbackURL signed in.
-    async signInWithGitHub(returnTo?: string): Promise<void> {
+    // /api/auth/callback/github, which redirects to callbackURL signed in. On
+    // failure it lands on errorPath (the page that started the flow) with
+    // ?error=…, keeping returnTo so a retry still ends up in the right place.
+    async signInWithGitHub(
+      returnTo?: string,
+      errorPath: "/login" | "/register" = "/login",
+    ): Promise<void> {
+      const destination = returnTo ?? "/dashboard";
+      const errorCallbackURL =
+        destination === "/dashboard"
+          ? `${errorPath}?error=github`
+          : `${errorPath}?error=github&returnTo=${encodeURIComponent(destination)}`;
       const data = await authPost("/api/auth/sign-in/social", {
         provider: "github",
-        callbackURL: returnTo ?? "/dashboard",
-        errorCallbackURL: "/login?error=github",
+        callbackURL: destination,
+        errorCallbackURL,
       });
       const url = data && typeof data === "object" ? (data as { url?: unknown }).url : null;
       if (typeof url !== "string" || !url) {

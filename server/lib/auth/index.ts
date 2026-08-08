@@ -500,6 +500,18 @@ export function createAuth(env: Cloudflare.Env) {
           },
         }
       : {}),
+    account: {
+      accountLinking: {
+        // Never link a social sign-in to an existing password account by email
+        // match. Better Auth's implicit linking would sign the caller straight
+        // in on the OAuth callback — and the twoFactor plugin only challenges
+        // /sign-in/email, so implicit linking would let anyone who controls
+        // the account's email address bypass an enrolled TOTP challenge.
+        // Disabled, a GitHub sign-in against an already-registered email fails
+        // closed to the login page; the owner signs in with their password.
+        disableImplicitLinking: true,
+      },
+    },
     databaseHooks: {
       user: {
         create: {
@@ -513,6 +525,9 @@ export function createAuth(env: Cloudflare.Env) {
           // a provider-verified email, so social accounts are the only ones
           // created with emailVerified already true; password sign-ups always
           // start unverified regardless of whether verification is enforced.
+          // Known skew: a GitHub account whose email arrives unverified (e.g.
+          // the provider app lacks the Email addresses read permission, see
+          // docs/self-hosting.md) is counted as email_password.
           after: async (createdUser) => {
             const social = Boolean((createdUser as { emailVerified?: boolean }).emailVerified);
             recordProductEvent(env, {

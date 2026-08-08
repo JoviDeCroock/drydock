@@ -53,8 +53,11 @@ describe("auth config", () => {
     expect(url.hostname).toBe("github.com");
     expect(url.pathname).toBe("/login/oauth/authorize");
     expect(url.searchParams.get("client_id")).toBe("Iv1.test-client-id");
-    // Identity-only authorization: no repo or org scopes ever.
-    expect(url.searchParams.get("scope") ?? "").not.toContain("repo");
+    // Identity-only authorization: profile + verified email, no repo or org
+    // scopes ever. Asserted exactly so a scope widening cannot slip through.
+    expect(url.searchParams.get("scope")).toBe("read:user user:email");
+    // The callback operators must whitelist on the OAuth app.
+    expect(url.searchParams.get("redirect_uri")).toBe(`${ORIGIN}/api/auth/callback/github`);
   });
 
   test("POST /api/auth/sign-in/social is rejected when no provider is configured", async () => {

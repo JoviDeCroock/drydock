@@ -41,7 +41,10 @@ swaps to a "Verify it's you" step that accepts either:
 The challenge guards password sign-ins. GitHub sign-in (when the operator
 configures it, see [`self-hosting.md`](./self-hosting.md)) is authenticated by
 GitHub itself, including any 2FA on the GitHub account; the release-decision
-TOTP step-up below applies regardless of how the session was created.
+TOTP step-up below applies regardless of how the session was created. To keep
+this split safe, implicit account linking is disabled: a social sign-in can
+never attach to an existing password account by email match, so it cannot be
+used to skip an enrolled TOTP challenge.
 
 Only after the second factor succeeds is a full session cookie set. The client model logic lives
 in `src/models/auth.ts` (`signIn` returns `{ twoFactorRequired }`; `completeTwoFactorSignIn`)
