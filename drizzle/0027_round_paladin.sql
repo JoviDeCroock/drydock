@@ -1,0 +1,1 @@
+CREATE INDEX `npm_connections_validation_status_idx` ON `npm_connections` (`validation_status`,`id`);
