@@ -17,6 +17,13 @@ a shields.io badge per package and an opt-in public threat feed.
   `scan.share_revoked`) and surface in the organization audit log.
 - The UI entry point is the **Share** button on the scan detail header; the
   public page renders at `/reports/:token`.
+- That button only appears once the release is decided `publish` — a public
+  report is the organization vouching for a release, and an undecided or blocked
+  one has nothing to vouch for yet. A release that already has a link keeps the
+  button whatever it is decided afterwards, so flipping approved → blocked never
+  strands a live link out of reach of revoke. The API itself is unchanged and
+  still accepts any completed scan; the rule is a product default, not a
+  security boundary.
 
 ## Public endpoints (no auth)
 

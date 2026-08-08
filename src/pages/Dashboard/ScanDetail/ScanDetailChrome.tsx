@@ -1,22 +1,41 @@
+import type { ReadonlySignal } from "@preact/signals";
 import { getDashboardReturnUrl } from "../../../lib/query-state";
 import { formatDateTime } from "../../../lib/format";
 import { reportExportFilename } from "../../../../server/lib/scan/report-export";
-import type { PersistedScanDetail } from "../../../models/scan";
+import type { PersistedScanDetail, PublicShareInfo } from "../../../models/scan";
 import { Alert } from "../../../components/Alert";
 import { Badge, severityTone } from "../../../components/Badge";
 import { Button, LinkButton } from "../../../components/Button";
 import { LoadingLine, MonoDetail, MonoLabel } from "../../../components/Typography";
+
+/**
+ * Whether the header offers the Share action.
+ *
+ * A public report is the organization vouching for a release, so the offer only
+ * appears once someone has approved it — an undecided or blocked release has
+ * nothing to vouch for yet. An already-shared release keeps the action whatever
+ * it was decided afterwards: flipping approved → blocked would otherwise strand
+ * a live public link with no way to reach the revoke button.
+ */
+export function shouldOfferShare(
+  decision: string | null | undefined,
+  hasShareLink: boolean,
+): boolean {
+  return decision === "publish" || hasShareLink;
+}
 
 export function ScanDetailHeader({
   detail,
   onDecideClick,
   onDeleteClick,
   onShareClick,
+  shareSignal,
 }: {
   detail?: PersistedScanDetail | null;
   onDecideClick?: () => void;
   onDeleteClick?: () => void;
   onShareClick?: () => void;
+  shareSignal?: ReadonlySignal<PublicShareInfo | null>;
 } = {}) {
   const decision = detail?.scan.decision;
   const decidedAt = detail?.scan.decidedAt;
@@ -64,9 +83,7 @@ export function ScanDetailHeader({
             </div>
           ) : null}
           {detail && isComplete && onShareClick ? (
-            <Button variant="ghost" size="sm" onClick={onShareClick}>
-              Share
-            </Button>
+            <ShareAction decision={decision} shareSignal={shareSignal} onClick={onShareClick} />
           ) : null}
           {detail && isComplete ? (
             <LinkButton
@@ -91,6 +108,28 @@ export function ScanDetailHeader({
         </div>
       ) : null}
     </header>
+  );
+}
+
+/**
+ * Own boundary component so the share signal's subscription stays here: enable
+ * and revoke round-trips re-render this button, not the whole workbench. That
+ * is why `model.share` is deliberately kept out of the scan detail payload.
+ */
+function ShareAction({
+  decision,
+  shareSignal,
+  onClick,
+}: {
+  decision: string | null | undefined;
+  shareSignal?: ReadonlySignal<PublicShareInfo | null>;
+  onClick: () => void;
+}) {
+  if (!shouldOfferShare(decision, shareSignal?.value != null)) return null;
+  return (
+    <Button variant="ghost" size="sm" onClick={onClick}>
+      Share
+    </Button>
   );
 }
 
