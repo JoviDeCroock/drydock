@@ -1,0 +1,84 @@
+name: "Drydock release review"
+description: >-
+  Upload release candidate artifacts to Drydock for review during the build, and
+  verify at publish time that the bytes you are about to ship are the ones that
+  were reviewed.
+author: "Drydock"
+branding:
+  icon: "anchor"
+  color: "orange"
+
+inputs:
+  mode:
+    description: >-
+      `publish` uploads the artifacts and (unless `seal` is false) marks the
+      release complete so Drydock reviews it. `verify` re-hashes the files the
+      publish job is about to ship and fails if any digest differs from what
+      Drydock reviewed.
+    required: false
+    default: "publish"
+  path:
+    description: >-
+      Newline- or comma-separated file globs to upload (publish) or verify.
+      Supports `*` and `**`, e.g. "dist/*.tgz" or "packages/**/*.whl".
+    required: true
+  api-url:
+    description: "Drydock base URL. Override only for a self-hosted deployment."
+    required: false
+    default: "https://drydock.org"
+  ecosystem:
+    description: >-
+      Pin the ecosystem (`npm`, `pypi`, `vscode`) instead of detecting it from
+      the uploaded bytes. Leave unset for a monorepo that publishes to more than
+      one registry from a single run.
+    required: false
+    default: ""
+  release-key:
+    description: >-
+      Separate several independent releases produced by one workflow run so each
+      is reviewed and approved on its own. Leave unset for the normal case.
+    required: false
+    default: ""
+  seal:
+    description: >-
+      Whether this step completes the release. Set to `false` in every leg of a
+      matrix build except the one that runs last, so Drydock reviews the whole
+      release rather than a partial one.
+    required: false
+    default: "true"
+  wait-for:
+    description: >-
+      `none` returns as soon as the upload is accepted. `review` blocks until
+      Drydock finishes reviewing and prints the per-package risk. `decision`
+      additionally blocks until a maintainer has decided every package, and
+      fails the job if any package is blocked.
+    required: false
+    default: "none"
+  wait-timeout-seconds:
+    description: "How long `wait-for` may block before giving up."
+    required: false
+    default: "1800"
+  release-set-id:
+    description: >-
+      Release set to verify against. Defaults to the one recorded by an earlier
+      `publish` step in the same run.
+    required: false
+    default: ""
+  audience:
+    description: "OIDC audience to request. Must match the Drydock deployment."
+    required: false
+    default: "drydock"
+
+outputs:
+  release-set-id:
+    description: "Identifier of the release set these artifacts belong to."
+  review-url:
+    description: "Link to the Drydock review for this release."
+  status:
+    description: "Release set status when the step finished."
+  packages:
+    description: "JSON array of reviewed packages, when the review had finished."
+
+runs:
+  using: "node20"
+  main: "index.js"

@@ -4,6 +4,8 @@ Workflow gates are Drydock's review mode for releases whose registry cannot hold
 
 Supported gate ecosystems: **PyPI**, **npm**, and **VS Code extensions**. Shared GitHub plumbing lives in `server/lib/workflow-gates/`; artifact-specific behavior lives behind adapters.
 
+> This document describes the **pull path**: the gate is the trigger, and Drydock fetches the run's artifacts while the job waits. There is also a **push path** — the CI action uploads the release candidate over OIDC as it is built, Drydock reviews immediately, and a gate binds to that finished review. See [`ci-action.md`](./ci-action.md). A gate bound to a pushed release skips the bundle download entirely; a run with no pushed release behaves exactly as described below.
+
 ## Core contract
 
 1. A repository installs the Drydock GitHub App and configures a GitHub Environment with Drydock as a deployment-protection rule.
@@ -152,6 +154,19 @@ jobs:
 ```
 
 The publish job must publish the reviewed VSIX bytes. Repacking after approval breaks the review boundary.
+
+## Binding to a pushed release
+
+When a delivery arrives for a run whose release the CI action already pushed,
+the gate binds to that release set instead of downloading a bundle. Its whole
+job then reduces to collecting the answer: deliver an existing decision, adopt
+the reviewed scans and keep waiting for a human, seal a set the workflow never
+sealed, or fail closed on a set that could not be reviewed. The state table and
+the two deliberate conservatisms (multiple keyed sets, and never throwing on a
+binding failure) are in [`ci-action.md`](./ci-action.md#gate-binding).
+
+The fallback is total: no matching release set means the pull path below runs
+unchanged, so existing workflows keep working with no migration.
 
 ## Trust and failure behavior
 

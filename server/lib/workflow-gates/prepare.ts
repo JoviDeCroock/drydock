@@ -233,12 +233,17 @@ function resolveBundleClassifier(
 }
 
 /**
- * Parse every verified artifact once in the shared sandbox router, group the
- * parsed artifacts by their (possibly content-resolved) ecosystem, and let each
- * ecosystem's adapter split its slice into one prepared candidate per distinct
- * package.
+ * Group parsed artifacts by their (possibly content-resolved) ecosystem and let
+ * each ecosystem's adapter split its slice into one prepared candidate per
+ * distinct package.
+ *
+ * Exported because both release paths end here: the pull path arrives with
+ * artifacts extracted from a GitHub Actions bundle, the push path with
+ * artifacts the CI Action uploaded, and from this point on a release is a
+ * release. Everything ecosystem-specific — identity, grouping, disagreement
+ * handling — stays behind the adapters.
  */
-function prepareBundlePackages(resolved: ParsedGateArtifact[]): PreparedGatePackage[] {
+export function prepareBundlePackages(resolved: ParsedGateArtifact[]): PreparedGatePackage[] {
   const byEcosystem = new Map<string, ParsedGateArtifact[]>();
   for (const artifact of resolved) {
     const slice = byEcosystem.get(artifact.ecosystem);

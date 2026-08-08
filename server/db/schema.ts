@@ -137,6 +137,14 @@ export const scans = sqliteTable(
     gateId: text("gate_id").references((): AnySQLiteColumn => githubWorkflowGates.id, {
       onDelete: "set null",
     }),
+    // Push-path (CI Action) reviews link each per-package scan to the release
+    // set the artifacts were uploaded into. The set exists before any gate does
+    // — that is the whole point of the push path — so this is the durable link,
+    // and `gate_id` is backfilled later if and when a deployment gate binds to
+    // the set. Null for pull-path gate scans and ordinary npm/manual scans.
+    releaseSetId: text("release_set_id").references((): AnySQLiteColumn => ciReleaseSets.id, {
+      onDelete: "set null",
+    }),
     packageName: text("package_name"),
     stagedVersion: text("staged_version"),
     previousVersion: text("previous_version"),
@@ -200,6 +208,7 @@ export const scans = sqliteTable(
       table.completedAt,
     ),
     gateIdx: index("scans_gate_org_idx").on(table.gateId, table.organizationId),
+    releaseSetIdx: index("scans_release_set_org_idx").on(table.releaseSetId, table.organizationId),
     artifactBackfillIdx: index("scans_artifact_backfill_idx").on(
       table.organizationId,
       table.status,
@@ -442,6 +451,14 @@ export const githubWorkflowGates = sqliteTable(
     releaseTargetId: text("release_target_id")
       .notNull()
       .references(() => githubReleaseTargets.id, { onDelete: "cascade" }),
+    // Set when this gate bound to a release set the CI Action had already
+    // pushed and Drydock had already reviewed. A bound gate never downloads a
+    // GitHub Actions artifact bundle — the bytes were reviewed during the build
+    // — it only carries the deployment-protection callback. Null means this gate
+    // is on the pull path and owns its own bundle fetch.
+    releaseSetId: text("release_set_id").references((): AnySQLiteColumn => ciReleaseSets.id, {
+      onDelete: "set null",
+    }),
     deliveryId: text("delivery_id").notNull(),
     repositoryId: integer("repository_id").notNull(),
     repositoryFullName: text("repository_full_name").notNull(),
@@ -477,6 +494,121 @@ export const githubWorkflowGates = sqliteTable(
     ),
     releaseTargetIdx: index("github_workflow_gates_release_target_idx").on(table.releaseTargetId),
     scanIdx: index("github_workflow_gates_scan_idx").on(table.scanId),
+    releaseSetIdx: index("github_workflow_gates_release_set_idx").on(table.releaseSetId),
+  }),
+);
+
+/**
+ * A release pushed to Drydock by the CI Action, before (and independently of)
+ * any GitHub deployment gate.
+ *
+ * The pull path makes the gate the trigger: nothing is reviewed until a
+ * protected job asks for permission, and Drydock then fetches the bundle. A
+ * release set inverts that. CI uploads its candidate artifacts as it builds
+ * them, Drydock reviews immediately, and a gate — if the workflow has one at
+ * all — later binds to the finished review and collects the answer.
+ *
+ * Identity is `(repository, run, attempt, releaseKey)`: every job in one
+ * workflow run uploads into the same set, which is how a monorepo matrix build
+ * lands as one review that fans out per package. `releaseKey` exists for the
+ * rarer case of a run that publishes several independent releases and wants
+ * them reviewed (and approved) separately.
+ */
+export const ciReleaseSets = sqliteTable(
+  "ci_release_sets",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    installationRowId: text("installation_row_id")
+      .notNull()
+      .references(() => githubAppInstallations.id, { onDelete: "cascade" }),
+    repositoryId: integer("repository_id").notNull(),
+    repositoryFullName: text("repository_full_name").notNull(),
+    runId: integer("run_id").notNull(),
+    runAttempt: integer("run_attempt").notNull().default(1),
+    // Caller-supplied grouping key. Empty string (not null) is the default so
+    // the unique index below stays usable in SQLite, where NULLs never collide
+    // and would let one run open unlimited duplicate sets.
+    releaseKey: text("release_key").notNull().default(""),
+    // Null = auto-detect each artifact's ecosystem from its bytes, which is what
+    // a polyglot monorepo needs. Non-null pins one ecosystem's classifier.
+    ecosystem: text("ecosystem"),
+    // Verified OIDC provenance. These are claims GitHub signed, not values the
+    // uploader asserted, so they are safe to render as evidence.
+    sha: text("sha"),
+    ref: text("ref"),
+    workflowRef: text("workflow_ref"),
+    jobWorkflowRef: text("job_workflow_ref"),
+    actor: text("actor"),
+    eventName: text("event_name"),
+    // open → sealed → scanning → reviewed (or errored). Only a sealed set is
+    // reviewed, so a matrix build cannot be scanned half-uploaded.
+    status: text("status").notNull().default("open"),
+    artifactCount: integer("artifact_count").notNull().default(0),
+    totalBytes: integer("total_bytes").notNull().default(0),
+    // Representative (highest-risk) package scan, mirroring the gate's headline.
+    scanId: text("scan_id").references((): AnySQLiteColumn => scans.id, { onDelete: "set null" }),
+    // CAS claim so a re-enqueued seal cannot double-run the per-package scans.
+    reviewStartedAt: integer("review_started_at", { mode: "timestamp_ms" }),
+    failureReason: text("failure_reason"),
+    // Publish-time byte-continuity check reported back by the Action.
+    verifiedAt: integer("verified_at", { mode: "timestamp_ms" }),
+    sealedAt: integer("sealed_at", { mode: "timestamp_ms" }),
+    reviewedAt: integer("reviewed_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    runUniqueIdx: uniqueIndex("ci_release_sets_run_unique_idx").on(
+      table.organizationId,
+      table.repositoryId,
+      table.runId,
+      table.runAttempt,
+      table.releaseKey,
+    ),
+    // The gate webhook's lookup key: it knows repository + run, nothing else.
+    repoRunIdx: index("ci_release_sets_repo_run_idx").on(
+      table.organizationId,
+      table.repositoryId,
+      table.runId,
+    ),
+    orgStatusIdx: index("ci_release_sets_org_status_idx").on(table.organizationId, table.status),
+  }),
+);
+
+/**
+ * One uploaded artifact in a release set.
+ *
+ * `sha256` is recomputed by the control plane from the received bytes and
+ * compared against the digest the Action declared, so a mismatch is rejected at
+ * ingest rather than discovered during review. The bytes themselves live in R2
+ * only until the set has been reviewed; `storageKey` is cleared when they are
+ * dropped, which is why it is nullable on an otherwise complete row.
+ */
+export const ciReleaseArtifacts = sqliteTable(
+  "ci_release_artifacts",
+  {
+    id: text("id").primaryKey(),
+    releaseSetId: text("release_set_id")
+      .notNull()
+      .references(() => ciReleaseSets.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    path: text("path").notNull(),
+    sha256: text("sha256").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    storageKey: text("storage_key"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    setPathUniqueIdx: uniqueIndex("ci_release_artifacts_set_path_unique_idx").on(
+      table.releaseSetId,
+      table.path,
+    ),
+    setIdx: index("ci_release_artifacts_set_idx").on(table.releaseSetId),
   }),
 );
 

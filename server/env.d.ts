@@ -39,6 +39,13 @@ declare global {
       GITHUB_APP_WEBHOOK_SECRET?: string;
       GITHUB_APP_STATE_SECRET?: string;
       WORKFLOW_GATE_CALLBACK_WINDOW_MS?: string;
+      // Push-path CI ingest. Both default to GitHub's production OIDC issuer
+      // and the `drydock` audience; they exist so a self-hosted deployment can
+      // choose its own audience and so the test suite can stand up a local
+      // issuer. Never point CI_OIDC_ISSUER at a host you do not control — it is
+      // the root of trust for every pushed release.
+      CI_OIDC_ISSUER?: string;
+      CI_OIDC_AUDIENCE?: string;
       SLACK_CLIENT_ID?: string;
       SLACK_CLIENT_SECRET?: string;
     }

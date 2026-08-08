@@ -204,6 +204,19 @@ describe("recordProductEvent", () => {
         decision: "approved",
         packageCount: 3,
       },
+      { name: "ci_release_set.opened", organizationId: "org_1" },
+      {
+        name: "ci_release_set.reviewed",
+        organizationId: "org_1",
+        recommendation: "approve",
+        durationMs: 4200,
+        packageCount: 2,
+      },
+      {
+        name: "ci_release_set.gate_bound",
+        organizationId: "org_1",
+        outcome: "pre_approved",
+      },
     ];
     for (const event of events) recordProductEvent(env, event);
 

@@ -46,9 +46,27 @@ export interface WorkflowGateIntent {
   environment: string;
 }
 
+/**
+ * Push-path release context, threaded from the CI release-set job.
+ *
+ * Strictly stronger evidence than the gate variant above: those fields come
+ * from a webhook that *mentions* a run, while these come from claims GitHub
+ * signed into an OIDC token minted for that exact job — including
+ * `job_workflow_ref`, which names the workflow file and ref that produced the
+ * bytes.
+ */
+export interface CiReleaseIntent {
+  repositoryFullName: string;
+  runId: number | string;
+  jobWorkflowRef: string | null;
+  sha: string | null;
+}
+
 export interface IntentEnvelopeInput {
   /** Present only for scans reviewed through a GitHub workflow gate. */
   workflowGate?: WorkflowGateIntent | null;
+  /** Present only for scans pushed by the CI Action over OIDC. */
+  ciRelease?: CiReleaseIntent | null;
   /** Raw manifest `repository` value (string, `{url}` object, shorthand, …). */
   declaredRepository?: unknown;
 }
@@ -220,6 +238,34 @@ function repositoryFromPyPiMetadata(text: string): string | null {
 export function computeIntentEnvelope(input: IntentEnvelopeInput): IntentEnvelope {
   const declared = normalizeRepositoryUrl(input.declaredRepository);
   const gate = validWorkflowGateIntent(input.workflowGate);
+  const ciRelease = validCiReleaseIntent(input.ciRelease);
+
+  // Checked before the gate signal: when a release arrives on the push path and
+  // later binds to a gate, both contexts describe the same bytes, and the OIDC
+  // claims are the more specific evidence (they name the workflow file, not
+  // just the run).
+  if (ciRelease) {
+    const repository = normalizeRepositoryUrl(`https://github.com/${ciRelease.repositoryFullName}`);
+    const detail = [
+      `repo ${ciRelease.repositoryFullName}`,
+      `run ${ciRelease.runId}`,
+      ciRelease.jobWorkflowRef ? `workflow ${ciRelease.jobWorkflowRef}` : null,
+      ciRelease.sha ? `commit ${ciRelease.sha.slice(0, 12)}` : null,
+    ]
+      .filter(Boolean)
+      .join(", ");
+    const signals: IntentEnvelopeSignal[] = [{ kind: "ci-oidc", detail }];
+    if (gate) {
+      signals.push({
+        kind: "workflow-gate",
+        detail: `held by environment ${gate.environment}`,
+      });
+    }
+    if (declared) {
+      signals.push({ kind: "manifest-repository", detail: `manifest declares ${declared}` });
+    }
+    return { tier: "attested", repository: repository ?? declared, signals };
+  }
 
   if (gate) {
     const gateRepository = normalizeRepositoryUrl(`https://github.com/${gate.repositoryFullName}`);
@@ -261,6 +307,20 @@ function validWorkflowGateIntent(value: WorkflowGateIntent | null | undefined) {
   if (typeof environment !== "string" || !environment.trim()) return null;
   if (typeof runId !== "number" && typeof runId !== "string") return null;
   return { repositoryFullName: repositoryFullName.trim(), runId, environment: environment.trim() };
+}
+
+function validCiReleaseIntent(value: CiReleaseIntent | null | undefined) {
+  if (!value) return null;
+  const { repositoryFullName, runId, jobWorkflowRef, sha } = value;
+  if (typeof repositoryFullName !== "string" || !repositoryFullName.trim()) return null;
+  if (typeof runId !== "number" && typeof runId !== "string") return null;
+  return {
+    repositoryFullName: repositoryFullName.trim(),
+    runId,
+    jobWorkflowRef:
+      typeof jobWorkflowRef === "string" && jobWorkflowRef.trim() ? jobWorkflowRef.trim() : null,
+    sha: typeof sha === "string" && sha.trim() ? sha.trim() : null,
+  };
 }
 
 /**

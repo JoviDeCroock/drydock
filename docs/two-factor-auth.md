@@ -74,9 +74,25 @@ to GitHub. Step-up attempts have their own rate-limit bucket
 60/min-per-org limit. The dialog (`GateDecisionDialog`) only shows the code field when
 the signed-in user has `twoFactorEnabled`.
 
-This is scoped to the approval gate. The **staged-publish** decision (`POST
-/api/v1/scans/:id/decision`) is an audit record only — it never publishes or cancels a
-release on npm — and intentionally does **not** require a step-up. The decision dialog can open npm's staged-packages page in a new tab with
+### Step-up: deciding a pushed release
+
+The same step-up applies to a decision on a **release-gating scan** made through
+`POST /api/v1/scans/:id/decision`. A release pushed by the CI action (see
+[`ci-action.md`](./ci-action.md)) is reviewed before any deployment gate exists, so a
+maintainer approves it on the ordinary scan route — and a gate binding to that release
+later delivers the decision to GitHub, releasing the held publish job. The act is
+therefore exactly as irreversible as deciding a gate, and carries the same guard.
+
+"Release-gating" means the scan carries a `gate_id` or a `release_set_id`
+(`isReleaseGatingScan` in `server/db/scans.ts`). The shared policy lives in
+`server/lib/auth/release-step-up.ts` so both routes cannot drift; its rate-limit bucket
+is `scans:release-decision-2fa:<userId>`. Without this distinction the push path would
+be a way around an organization's release 2FA policy.
+
+This is scoped to release-gating decisions. The **staged-publish** decision (`POST
+/api/v1/scans/:id/decision` on a scan with neither link) is an audit record only — it
+never publishes or cancels a release on npm — and intentionally does **not** require a
+step-up. The decision dialog can open npm's staged-packages page in a new tab with
 `filterPackage` set to the reviewed package; the maintainer still approves or declines
 in npm with npm's own 2FA. That checkbox is sticky per browser
 (`drydock:open-npm-after-decision` in localStorage, `src/models/publish-preferences.ts`)

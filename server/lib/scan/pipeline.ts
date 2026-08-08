@@ -10,6 +10,7 @@ import { loadReleaseFingerprintHistory } from "../../db/release-fingerprint";
 import {
   computeIntentEnvelope,
   extractDeclaredRepository,
+  type CiReleaseIntent,
   type WorkflowGateIntent,
 } from "../intent-envelope";
 import {
@@ -48,6 +49,12 @@ export interface ScanPipelineOptions extends ScanInput {
    * and the reviewed artifact bytes were downloaded from that run.
    */
   gateContext?: WorkflowGateIntent;
+  /**
+   * OIDC-attested release context, set only by the CI release-set job. Carries
+   * the signed `job_workflow_ref`/`sha` claims, so it produces a stronger
+   * attested envelope than `gateContext` alone.
+   */
+  ciReleaseContext?: CiReleaseIntent;
   // Adapters parse their own input shape off this object (e.g. the PyPI adapter
   // reads `manifest`/`artifacts`), so allow extra keys to flow through untyped.
   [key: string]: unknown;
@@ -132,6 +139,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
     // repository declaration; it never influences risk or findings.
     const intentEnvelope = computeIntentEnvelope({
       workflowGate: input.gateContext ?? null,
+      ciRelease: input.ciReleaseContext ?? null,
       declaredRepository: extractDeclaredRepository({
         manifestText: diff.stagedManifestText,
         files: resolved.staged.artifact.files,

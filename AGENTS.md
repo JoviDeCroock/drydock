@@ -5,6 +5,7 @@
 - `server/` — Hono Worker. `index.ts` mounts routes under `/api/*`. The Worker is the deploy target (`main` in `wrangler.jsonc`).
   - `routes/scans.ts` — `POST /api/v1/scans { stageId }`, `GET /api/v1/scans`, `GET /api/v1/scans/:id`.
   - `routes/github-webhooks.ts` — public signed GitHub App webhook endpoint. Persists `deployment_protection_rule` deliveries into `github_workflow_gates`; see `docs/workflow-gates.md`, `docs/npm-workflow-gate.md`, `docs/pypi-workflow-gate.md`, and `docs/vscode-workflow-gate.md`.
+  - `routes/ci-releases.ts` — OIDC-authenticated push-path ingest (`/api/ci/v1/*`). Mounted before the session/CSRF middleware; the organization comes from the token's signed `repository_id`. See `docs/ci-action.md`.
   - `lib/sandbox.ts` — Dynamic Worker that downloads/parses package artifacts. `NpmStageGateway` is the only npm-token egress.
   - `lib/review/` — deterministic findings (`rules/`), package/package.json diffing, redaction, serialization, risk computation, and shared UI types. `lib/review/index.ts` is the public entry.
   - `lib/ai-review/` — Workers AI reviewer, wired via `lib/scan/pipeline.ts` and on by default behind the `ai-review` Flagship killswitch.
@@ -12,6 +13,7 @@
   - `lib/public-diff/` — anonymous `/diff` orchestration and the `PublicDiffAdapter` contract.
   - `lib/ecosystems/` — one directory per ecosystem (npm, PyPI, VS Code) plus `index.ts`, the single registry declaring which release paths each supports (`staged` / `gate` / `publicDiff`). Add an ecosystem by adding a directory and a registry entry — never by branching on the ecosystem name in a route or orchestrator.
   - `lib/workflow-gates/` — shared GitHub Environment gate plumbing only; ecosystem gate adapters live in `lib/ecosystems/<id>/workflow-gate.ts`. When one ecosystem needs extra behavior here, add an optional method to `WorkflowGateAdapter` instead of branching on the ecosystem name.
+  - `lib/ci/` — push path: OIDC verification, organization resolution, ingest validation, release-artifact storage, the release-set review job, and gate binding. Both release paths share the per-package runner in `lib/scan/review-packages.ts`; keep them converged rather than forking it.
   - `lib/auth/` — Better Auth wiring, ownership, roles, active organization, invitation tokens, audit-event allowlist.
   - `lib/notify/` — outbound messaging: notification fan-out, Slack, email.
   - `lib/platform/` — domain-free infrastructure: HTTP helpers, errors, fetch retry, JSON canonicalization, text utils, crypto, secret box, security headers, observability.
@@ -26,7 +28,8 @@
 - Package bytes are hostile evidence. Never execute package code, install dependencies, run lifecycle scripts, import modules, run builds, invoke shells, or render package-provided active content.
 - npm credentials stay outside the sandbox. Only `NpmStageGateway` may attach npm auth, only for allowed staged/metadata/tarball registry endpoints.
 - The AI reviewer is advisory and on by default; the per-organization `ai-review` flag is a killswitch that disables it. It cannot downgrade deterministic findings.
-- D1/Better Auth are required for every non-auth `/api/*` endpoint; resource ownership must be organization-scoped. Two anonymous exceptions, both credential-free and IP rate-limited (see `docs/security-model.md`): the `/api/public/v1/package-diff` endpoints, which serve only public-registry and pkg.pr.new preview data; and `/public/reports/*`, where an unguessable share token minted by an owner/admin is the capability and the response is the scan's canonical report export and nothing else.
+- D1/Better Auth are required for every non-auth `/api/*` endpoint; resource ownership must be organization-scoped. Three exceptions are documented in `docs/security-model.md`: the anonymous `/api/public/v1/package-diff` endpoints, which serve only public-registry and pkg.pr.new preview data, attach no credentials, and are IP rate-limited; `/public/reports/*`, where an unguessable share token minted by an owner/admin is the capability and the response is the scan's canonical report export and nothing else; and `/api/ci/v1/*`, which is authenticated by a GitHub Actions OIDC token instead of a session and derives the organization from the signed `repository_id` claim.
+- A decision that can release a held deployment carries a two-factor step-up. That includes a decision on a pushed release set made through the ordinary scan route, because a gate binding to it later delivers that decision. Staged-publish decisions publish nothing and stay step-up-free.
 - Operational logs/events must be structured and secret-redacted. Never log raw tokens, headers, package contents, or unredacted errors.
 
 ## UI and frontend conventions

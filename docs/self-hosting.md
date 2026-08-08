@@ -176,6 +176,26 @@ publish the reviewed artifact bundle after approval. See
 [`workflow-gates.md`](workflow-gates.md) and
 [`npm-workflow-gate.md`](npm-workflow-gate.md).
 
+## CI release action (push path)
+
+The push path needs no extra secret: repositories authenticate with GitHub
+Actions OIDC tokens, verified against the issuer's public JWKS. It does need the
+GitHub App installed and at least one release target for the repository — that
+mapping is how an upload resolves to an organization — and the `ARTIFACTS` R2
+bucket, which holds uploaded bytes for the short window between upload and the
+end of review.
+
+Two optional vars:
+
+- `CI_OIDC_ISSUER` (default `https://token.actions.githubusercontent.com`) —
+  **never point this at a host you do not control.** It is the root of trust for
+  every pushed release.
+- `CI_OIDC_AUDIENCE` (default `drydock`) — must match the `audience` input the
+  action requests.
+
+Point workflows at your origin with the action's `api-url` input. See
+[`ci-action.md`](ci-action.md).
+
 ## Slack notifications
 
 Slack notifications require a Slack OAuth app. Register the redirect URL:

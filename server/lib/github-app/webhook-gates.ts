@@ -11,6 +11,11 @@ export interface WorkflowGateRecord {
   organizationId: string;
   installationRowId: string;
   releaseTargetId: string;
+  /**
+   * Set when this gate bound to a release the CI Action pushed for the same
+   * run. A bound gate collects that review instead of downloading a bundle.
+   */
+  releaseSetId: string | null;
   deliveryId: string;
   repositoryId: number;
   repositoryFullName: string;
@@ -443,6 +448,7 @@ function readGateRow(row: {
   organizationId: string;
   installationRowId: string;
   releaseTargetId: string;
+  releaseSetId: string | null;
   deliveryId: string;
   repositoryId: number;
   repositoryFullName: string;
@@ -468,6 +474,7 @@ function readGateRow(row: {
     organizationId: row.organizationId,
     installationRowId: row.installationRowId,
     releaseTargetId: row.releaseTargetId,
+    releaseSetId: row.releaseSetId,
     deliveryId: row.deliveryId,
     repositoryId: row.repositoryId,
     repositoryFullName: row.repositoryFullName,

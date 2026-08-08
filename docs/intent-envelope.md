@@ -25,11 +25,11 @@ interface IntentEnvelope {
 
 ## Tiers
 
-| Tier       | Meaning                                                                                                                                                                                                                           |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `attested` | The scan came through a GitHub workflow gate: the signed `deployment_protection_rule` webhook binds repository + workflow run + environment, and the reviewed artifact bytes were downloaded from that run.                       |
-| `declared` | Not attested, but the staged manifest (package.json / PyPI core metadata / VSIX manifest) declares a parseable repository URL (`repository` as string or `{url}`, `git+https://`, `github:owner/repo`, …). Claimed, not verified. |
-| `absent`   | No repository binding at all — the artifact cannot be tied to reviewed source.                                                                                                                                                    |
+| Tier       | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `attested` | The binding is machine-verified. Either the release was **pushed by the CI action** (a GitHub-signed OIDC token binds repository + run + `job_workflow_ref` + commit, and the reviewed bytes arrived under that token — signal `ci-oidc`), or it came through a **GitHub workflow gate** (the signed `deployment_protection_rule` webhook binds repository + run + environment, and the bytes were downloaded from that run — signal `workflow-gate`). |
+| `declared` | Not attested, but the staged manifest (package.json / PyPI core metadata / VSIX manifest) declares a parseable repository URL (`repository` as string or `{url}`, `git+https://`, `github:owner/repo`, …). Claimed, not verified.                                                                                                                                                                                                                      |
+| `absent`   | No repository binding at all — the artifact cannot be tied to reviewed source.                                                                                                                                                                                                                                                                                                                                                                         |
 
 Repository URLs are normalized to `https://host/owner/repo` for GitHub and
 Bitbucket. GitLab keeps nested group namespaces
@@ -42,8 +42,16 @@ The tier is a ceiling on the strength of origin claims a future Release
 Contract could make about the scan:
 
 - `attested` can later support **proven** claims ("this artifact was built
-  from run N of owner/repo") because the binding is machine-verified by the
-  signed webhook plus the artifact download from that exact run.
+  from run N of owner/repo") because the binding is machine-verified — by the
+  signed OIDC token the bytes were uploaded under, or by the signed webhook
+  plus the artifact download from that exact run.
+
+  The two attested sources are not equally specific. A pushed release names the
+  workflow file and ref that produced it (`job_workflow_ref`) and the commit; a
+  gated one names only the run. When both are present — a pushed release whose
+  gate later bound to it — the OIDC signal leads and the gate is recorded as a
+  secondary signal.
+
 - `declared` caps at **consistent** claims ("the artifact's contents are
   consistent with what the declared repository publishes") — the manifest is
   package-controlled, so the binding itself is unverifiable evidence.

@@ -25,11 +25,13 @@ import {
 import {
   classifyScanError,
   executeScanJob,
+  isCiReleaseSetMessage,
   isWorkflowGateMessage,
   MAX_SCAN_JOB_ATTEMPTS,
   retryDelaySeconds,
   type QueueMessage,
 } from "./lib/scan/job";
+import { executeCiReleaseSetJob } from "./lib/ci/release-set-job";
 import { executeWorkflowGateJob } from "./lib/workflow-gate-job";
 import {
   createStageStartCoordinator,
@@ -41,6 +43,7 @@ import {
   StagedPublishesFetchError,
 } from "./lib/ecosystems/npm/staged-publishes-discovery";
 import { auditRoutes } from "./routes/audit";
+import { ciReleaseRoutes } from "./routes/ci-releases";
 import { githubAppRoutes } from "./routes/github-app";
 import { githubWebhookRoutes } from "./routes/github-webhooks";
 import { publicReportsRoutes } from "./routes/public-reports";
@@ -164,6 +167,15 @@ app.route("/webhooks", githubWebhookRoutes);
 // mounted before the auth middleware below; every other /api/* endpoint keeps
 // requiring a session.
 app.route("/api/public/v1/package-diff", publicDiffRoutes);
+
+// Push-based CI ingest. Authenticated, but by a GitHub Actions OIDC token
+// rather than a Better Auth session — a workflow runner has no cookie and sends
+// no Origin header, so these routes must sit ahead of both the session and CSRF
+// middleware below. Every handler verifies the token's signature, issuer, and
+// audience, then derives the organization from the signed `repository_id`
+// claim; nothing downstream trusts a caller-supplied organization. See
+// docs/ci-action.md and docs/security-model.md.
+app.route("/api/ci/v1", ciReleaseRoutes);
 
 // Share cards for the same anonymous surface. Mounted outside /api so social
 // crawlers fetch a plain image URL, and before the auth middleware for the same
@@ -295,6 +307,8 @@ app.get("/api", (c) =>
       githubApp:
         "GET /api/v1/github-app/config; POST /api/v1/github-app/install; POST /api/v1/github-app/install/callback; GET /api/v1/github-app/installations; GET/POST /api/v1/github-app/release-targets; DELETE /api/v1/github-app/release-targets/:id; GET /api/v1/github-app/workflow-gates/by-scan/:scanId; POST /api/v1/github-app/workflow-gates/:gateId/decision",
       githubWebhooks: "POST /webhooks/github (signed by GitHub App webhook secret)",
+      ciReleases:
+        "POST /api/ci/v1/releases; PUT /api/ci/v1/releases/:id/artifacts/:filename; POST /api/ci/v1/releases/:id/seal; GET /api/ci/v1/releases/:id; POST /api/ci/v1/releases/:id/verify (authenticated by a GitHub Actions OIDC token, not a session)",
       publicPackageDiff:
         "GET /api/public/v1/package-diff?package&from&to[&ecosystem=npm|pypi]; GET /api/public/v1/package-diff/versions?package[&ecosystem]; GET /api/public/v1/package-diff/file?package&from&to&path[&ecosystem] (anonymous, IP rate-limited, public registry data only; on npm, from/to also accept pkg.pr.new preview URLs)",
       publicReports:
@@ -305,7 +319,7 @@ app.get("/api", (c) =>
         "GET /api/v1/slack; POST /api/v1/slack/connect; GET /api/v1/slack/callback; GET /api/v1/slack/channels; PUT /api/v1/slack/channel; PATCH /api/v1/slack; DELETE /api/v1/slack; POST /api/v1/slack/test",
       health: "GET /api/health",
     },
-    auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints (public registry data only) and /public/reports/* (a share token is the capability; the owning organization opted in per scan).",
+    auth: "Better Auth is required for every non-auth API endpoint except anonymous public package diffs, opt-in token-capability public reports, and /api/ci/v1/*, which uses a GitHub Actions OIDC token instead of a session.",
     note: "Cloudflare Workers cannot spawn the npm CLI. This service performs the npm stage download equivalent inside a Dynamic Worker by fetching the staged tarball through a locked-down gateway.",
   }),
 );
@@ -567,6 +581,40 @@ export default {
   async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
     for (const message of batch.messages) {
       const messageStartedAtMs = Date.now();
+      if (isCiReleaseSetMessage(message.body)) {
+        const releaseMessage = message.body;
+        try {
+          await executeCiReleaseSetJob(env, ctx, releaseMessage);
+          emitOperationalEvent("info", "ci_release_set.queue.message.completed", {
+            organizationId: releaseMessage.organizationId,
+            releaseSetId: releaseMessage.releaseSetId,
+            attempt: message.attempts,
+            durationMs: durationMsSince(messageStartedAtMs),
+          });
+        } catch (err) {
+          if (message.attempts < MAX_SCAN_JOB_ATTEMPTS) {
+            message.retry({ delaySeconds: retryDelaySeconds(message.attempts) });
+            emitOperationalEvent("warn", "ci_release_set.queue.retry_scheduled", {
+              organizationId: releaseMessage.organizationId,
+              releaseSetId: releaseMessage.releaseSetId,
+              attempt: message.attempts,
+              nextDelaySeconds: retryDelaySeconds(message.attempts),
+              durationMs: durationMsSince(messageStartedAtMs),
+              error: describeOperationalError(err),
+            });
+          } else {
+            emitOperationalEvent("error", "ci_release_set.queue.message_failed", {
+              organizationId: releaseMessage.organizationId,
+              releaseSetId: releaseMessage.releaseSetId,
+              attempt: message.attempts,
+              durationMs: durationMsSince(messageStartedAtMs),
+              error: describeOperationalError(err),
+            });
+            throw err;
+          }
+        }
+        continue;
+      }
       if (isWorkflowGateMessage(message.body)) {
         const gateMessage = message.body;
         try {

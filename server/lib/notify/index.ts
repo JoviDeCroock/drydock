@@ -247,6 +247,16 @@ export interface NotifyWorkflowGateReviewInput {
   releaseRisk: RiskLevel;
   /** Total packages in the release; >1 means a monorepo bundle fanned out. */
   packageCount?: number;
+  /**
+   * Whether a GitHub deployment is actually held behind this review.
+   *
+   * True on the pull path, where the webhook only fires because a job is
+   * already blocked. False on the push path, where CI uploaded the candidate
+   * during the build and may reach its protected environment minutes later — or
+   * never. Telling a maintainer a deployment is blocked when nothing is blocked
+   * would train them to ignore the one message that means it.
+   */
+  deploymentHeld?: boolean;
 }
 
 /**
@@ -282,6 +292,7 @@ export async function notifyWorkflowGateReview(
     version,
     releaseRisk,
     packageCount,
+    deploymentHeld = true,
   } = input;
 
   const [recipients, organizationName] = await Promise.all([
@@ -300,11 +311,19 @@ export async function notifyWorkflowGateReview(
     ? `${packageLabel} (+${otherPackages} more in this release; each must be approved)`
     : packageLabel;
   const packageLine = `Package: ${packageDisplay}`;
-  const subject = `Release gate needs your review — ${packageLabel}`;
+  const subject = deploymentHeld
+    ? `Release gate needs your review — ${packageLabel}`
+    : `Release needs your review — ${packageLabel}`;
+  const openingLine = deploymentHeld
+    ? `A staged release is held in ${repositoryFullName} and is waiting for a decision before it can publish.`
+    : `CI uploaded a release candidate from ${repositoryFullName} and it is waiting for a decision.`;
+  const closingLine = deploymentHeld
+    ? "The held GitHub deployment stays blocked until someone approves or rejects it."
+    : "Deciding now means the publish job is released the moment it reaches its protected environment.";
   const lines = [
     "Hi there,",
     "",
-    `A staged release is held in ${repositoryFullName} and is waiting for a decision before it can publish.`,
+    openingLine,
     "",
     organizationName ? `Organization: ${organizationName}` : null,
     packageLine,
@@ -314,20 +333,22 @@ export async function notifyWorkflowGateReview(
     "",
     dashboardUrl ? `Approve or block the release: ${dashboardUrl}` : null,
     "",
-    "The held GitHub deployment stays blocked until someone approves or rejects it.",
+    closingLine,
     "",
     "— Drydock",
   ];
   const text = lines.filter((line): line is string => line !== null).join("\n");
 
   const slackPayload: SlackNotificationPayload = {
-    title: "Release gate needs a decision",
+    title: deploymentHeld ? "Release gate needs a decision" : "Release needs a decision",
     packageLabel: packageDisplay,
-    source: "GitHub workflow gate",
+    source: deploymentHeld ? "GitHub workflow gate" : "CI release upload",
     risk: releaseRisk,
     repository: repositoryFullName,
     environment,
-    statusLine: `Held in ${repositoryFullName} — the deployment stays blocked until someone approves or rejects it.`,
+    statusLine: deploymentHeld
+      ? `Held in ${repositoryFullName} — the deployment stays blocked until someone approves or rejects it.`
+      : `Uploaded from ${repositoryFullName} — decide now and the publish job is released as soon as it asks.`,
     dashboardUrl,
   };
 

@@ -73,6 +73,25 @@ const REGISTRY: Record<string, AuditEventDef> = {
     label: "Release gate expired without a decision",
     severity: "security",
   },
+  "ci_release_set.sealed": {
+    category: "release_decision",
+    label: "CI release uploaded for review",
+    severity: "info",
+    summarize: (m) => {
+      const count = typeof m.artifactCount === "number" ? `${m.artifactCount} artifacts` : null;
+      return count;
+    },
+  },
+  // A publish job whose bytes drifted from what was reviewed is exactly the
+  // failure the push path exists to catch, so it is surfaced as security-grade
+  // rather than filed with routine release churn.
+  "ci_release_set.verify_failed": {
+    category: "release_decision",
+    label: "Publish-time bytes did not match the reviewed release",
+    severity: "security",
+    summarize: (m) =>
+      typeof m.mismatchCount === "number" ? `${m.mismatchCount} artifact(s) differ` : null,
+  },
 
   // ── Members ──────────────────────────────────────────────────────────────
   "organization.member_invited": {

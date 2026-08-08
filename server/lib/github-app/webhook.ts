@@ -5,6 +5,7 @@ import type { GithubAppConfig } from "./config";
 import { reliableFetch } from "../platform/reliable-fetch";
 import { markInstallationStatus, resolveDeploymentProtectionTarget } from "./persistence";
 import { recordGateRequest, type WorkflowGateRecord } from "./webhook-gates";
+import { bindGateToPushedRelease } from "../ci/gate-binding";
 
 // ── Signature verification ───────────────────────────────────────────────────
 
@@ -242,6 +243,11 @@ export async function applyGithubWebhookEvent(
       releaseTarget: resolved.releaseTarget,
       event,
     });
+    // If the CI Action already pushed this run's release, bind the gate to it
+    // so the job collects that review instead of downloading and re-reviewing
+    // the same bytes. A run with no pushed release binds nothing and stays on
+    // the pull path.
+    if (created) await bindGateToPushedRelease(db, gate);
     return { kind: "gate_pending", gate, created };
   }
 

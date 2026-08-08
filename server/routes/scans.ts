@@ -17,6 +17,7 @@ import {
   getScanCompareData,
   getScanFile,
   getScanStatus,
+  releaseGatingScanContext,
   listScans,
   recordScanDecision,
 } from "../db/scans";
@@ -24,6 +25,9 @@ import {
   requireActiveOrganization,
   requireActiveOrganizationContext,
 } from "../lib/auth/active-organization";
+import { requireReleaseDecisionStepUp } from "../lib/auth/release-step-up";
+import { listGateIdsForReleaseSet } from "../db/ci-release-sets";
+import { executeWorkflowGateJob } from "../lib/workflow-gate-job";
 import { backfillScanArtifactsBatch } from "../lib/scan/artifact-backfill";
 import { deleteScanArtifacts, scanArtifactReadBucket } from "../lib/scan/artifacts";
 import {
@@ -71,6 +75,34 @@ import { recordProductEvent } from "../lib/platform/analytics";
 import type { Bindings, ScanInput, Variables } from "../types";
 
 export const scansRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+/**
+ * Re-run every deployment gate bound to a release set after one of its packages
+ * was decided. Failures are swallowed: the gate stays pending, which is the
+ * safe state, and a redelivery or a later decision still resolves it.
+ */
+async function nudgeGatesForReleaseSet(
+  env: Cloudflare.Env,
+  executionCtx: ExecutionContext,
+  db: ReturnType<typeof createDb>,
+  organizationId: string,
+  releaseSetId: string,
+): Promise<void> {
+  try {
+    const gateIds = await listGateIdsForReleaseSet(db, { releaseSetId, organizationId });
+    for (const gateId of gateIds) {
+      const message = { kind: "workflow_gate" as const, organizationId, gateId };
+      if (env.SCAN_QUEUE) await env.SCAN_QUEUE.send(message);
+      else await executeWorkflowGateJob(env, executionCtx, message);
+    }
+  } catch (err) {
+    emitOperationalEvent("warn", "scan_decision.gate_nudge_failed", {
+      organizationId,
+      releaseSetId,
+      error: describeOperationalError(err),
+    });
+  }
+}
 
 scansRoutes.post("/", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as Partial<ScanInput>;
@@ -259,6 +291,7 @@ scansRoutes.post("/:id/decision", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as Partial<{
     decision: string;
     reason: string;
+    totpCode: string;
   }>;
   if (!DECISION_SET.has(body.decision as ScanDecision)) {
     return c.json({ error: "decision must be 'publish' or 'no_publish'" }, 400);
@@ -271,6 +304,22 @@ scansRoutes.post("/:id/decision", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
+
+  // A staged-publish decision is an audit record: it never publishes or cancels
+  // anything, so it deliberately needs no step-up. A decision on a *release-
+  // gating* scan is different — a pushed release set can be approved here before
+  // its deployment gate exists, and the gate then collects that decision and
+  // releases the held job. That is the same irreversible act the gate route
+  // guards, so it carries the same guard. Without this, deciding through this
+  // route would be a way around an organization's release 2FA policy.
+  const gating = await releaseGatingScanContext(db, c.req.param("id"), organizationId);
+  if (gating.isGating) {
+    const stepUp = await requireReleaseDecisionStepUp(c, db, session.userId, organizationId, {
+      totpCode: typeof body.totpCode === "string" ? body.totpCode.trim() : "",
+      rateLimitKey: `scans:release-decision-2fa:${session.userId}`,
+    });
+    if (stepUp) return stepUp;
+  }
 
   const updated = await recordScanDecision(
     db,
@@ -290,6 +339,17 @@ scansRoutes.post("/:id/decision", async (c) => {
     const existing = await getScan(db, c.req.param("id"), organizationId);
     if (!existing) return c.json({ error: "not found" }, 404);
     return c.json({ error: "decision can only be set on completed scans" }, 409);
+  }
+
+  // A pushed release may already have deployment gates waiting on it. Re-run
+  // them so the aggregate is re-evaluated now that this package is decided;
+  // otherwise a release decided through this route (rather than the gate
+  // dialog) would leave the held job waiting for a webhook redelivery that may
+  // never come. Best effort — the decision itself is already durable.
+  if (gating.releaseSetId) {
+    c.executionCtx.waitUntil(
+      nudgeGatesForReleaseSet(c.env, c.executionCtx, db, organizationId, gating.releaseSetId),
+    );
   }
 
   return c.json(updated);

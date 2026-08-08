@@ -92,28 +92,39 @@ low-volume one out of the dataset.
 
 ## Events
 
-| event                      | emitted from                  | answers                                     |
-| -------------------------- | ----------------------------- | ------------------------------------------- |
-| `scan.queued`              | `POST /api/v1/scans`          | queued → completed drop-off                 |
-| `scan.completed`           | `recordCompletion`            | volume, latency, risk mix, finding counts   |
-| `scan.failed`              | `executeScanJob`, gate runner | failure rate by error code                  |
-| `scan.decided`             | both decision paths           | time-to-decision; agreement with the grade  |
-| `ai_review.finished`       | `maybeRunAiReview`            | reviewer health — the silent-failure rate   |
-| `npm_connection.validated` | npm connection validation     | onboarding funnel                           |
-| `public_diff.viewed`       | `loadRequestedDiff`           | growth-loop traffic, cache hit rate         |
-| `user.signed_up`           | Better Auth user-create hook  | acquisition — the funnel's numerator        |
-| `organization.created`     | `POST /api/v1/organizations`  | teams, excluding lazy personal workspaces   |
-| `integration.connected`    | npm / GitHub / Slack connect  | activation, by integration kind             |
-| `workflow_gate.opened`     | `deployment_protection_rule`  | gate volume                                 |
-| `workflow_gate.reviewed`   | gate runner                   | recommendation mix; review latency          |
-| `workflow_gate.decided`    | human route + auto-block path | approval rate, human vs automatic           |
-| `marketing_page.viewed`    | public document request       | traffic by public surface and coarse source |
+| event                       | emitted from                  | answers                                     |
+| --------------------------- | ----------------------------- | ------------------------------------------- |
+| `scan.queued`               | `POST /api/v1/scans`          | queued → completed drop-off                 |
+| `scan.completed`            | `recordCompletion`            | volume, latency, risk mix, finding counts   |
+| `scan.failed`               | `executeScanJob`, gate runner | failure rate by error code                  |
+| `scan.decided`              | both decision paths           | time-to-decision; agreement with the grade  |
+| `ai_review.finished`        | `maybeRunAiReview`            | reviewer health — the silent-failure rate   |
+| `npm_connection.validated`  | npm connection validation     | onboarding funnel                           |
+| `public_diff.viewed`        | `loadRequestedDiff`           | growth-loop traffic, cache hit rate         |
+| `user.signed_up`            | Better Auth user-create hook  | acquisition — the funnel's numerator        |
+| `organization.created`      | `POST /api/v1/organizations`  | teams, excluding lazy personal workspaces   |
+| `integration.connected`     | npm / GitHub / Slack connect  | activation, by integration kind             |
+| `workflow_gate.opened`      | `deployment_protection_rule`  | gate volume                                 |
+| `workflow_gate.reviewed`    | gate runner                   | recommendation mix; review latency          |
+| `workflow_gate.decided`     | human route + auto-block path | approval rate, human vs automatic           |
+| `ci_release_set.opened`     | `POST /api/ci/v1/releases`    | push-path adoption                          |
+| `ci_release_set.reviewed`   | release-set runner            | recommendation mix; review latency          |
+| `ci_release_set.gate_bound` | bound-gate branch             | how often the human decided before the gate |
+| `marketing_page.viewed`     | public document request       | traffic by public surface and coarse source |
 
 `scan.failed` fires only on a terminal failure, so a scan that succeeds on retry
 is not filed as a failure. Both the npm queue path and the workflow-gate runner
 emit it — counting completions from every ecosystem while counting failures from
 only one would bias the derived failure rate low for exactly the ecosystems that
 release solely through a gate.
+
+The `ci_release_set.*` counters are kept separate from the `workflow_gate.*`
+ones rather than merged. Their durations measure different things — a pushed
+release is reviewed during the build, a gated one after a job is already blocked
+— and many pushed releases never bind to a gate at all, which is precisely the
+funnel worth watching. `ci_release_set.gate_bound` carries `pre_approved` vs
+`pending_review`, the one number that says whether the push path is actually
+removing wait time or just moving it.
 
 `public_diff.viewed` fires for the version-pair request only. `/file` funnels
 through the same loader and is called once per file the visitor opens, so

@@ -38,10 +38,24 @@ export interface WorkflowGateQueueMessage {
   gateId: string;
 }
 
-export type QueueMessage = ScanQueueMessage | WorkflowGateQueueMessage;
+/**
+ * A sealed push-path release set to review. Like the gate message this only
+ * points at a row — the artifacts, provenance, and ecosystem all live on it.
+ */
+export interface CiReleaseSetQueueMessage {
+  kind: "ci_release_set";
+  organizationId: string;
+  releaseSetId: string;
+}
+
+export type QueueMessage = ScanQueueMessage | WorkflowGateQueueMessage | CiReleaseSetQueueMessage;
 
 export function isWorkflowGateMessage(message: QueueMessage): message is WorkflowGateQueueMessage {
   return "kind" in message && message.kind === "workflow_gate";
+}
+
+export function isCiReleaseSetMessage(message: QueueMessage): message is CiReleaseSetQueueMessage {
+  return "kind" in message && message.kind === "ci_release_set";
 }
 
 export const MAX_SCAN_JOB_ATTEMPTS = 3;

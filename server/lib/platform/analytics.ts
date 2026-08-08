@@ -161,6 +161,32 @@ export type AnalyticsEvent =
       organizationId: string;
     }
   | {
+      /** A CI Action run opened a push-path release set. */
+      name: "ci_release_set.opened";
+      organizationId: string;
+    }
+  | {
+      /**
+       * A pushed release finished review. Separate from `workflow_gate.reviewed`
+       * because the push path reviews during the build, so its duration measures
+       * something different — and many pushed releases never bind to a gate at
+       * all, which is exactly the funnel worth watching.
+       */
+      name: "ci_release_set.reviewed";
+      organizationId: string;
+      /** `approve` | `reject` | `manual_review` — advisory, as on the gate path. */
+      recommendation: string;
+      durationMs: number;
+      packageCount: number;
+    }
+  | {
+      /** A gate that bound to an already-reviewed release set instead of pulling a bundle. */
+      name: "ci_release_set.gate_bound";
+      organizationId: string;
+      /** `pre_approved` | `pending_review` — whether the human had already decided. */
+      outcome: string;
+    }
+  | {
       /** The reviewer's recommendation for a gate, before any human acts on it. */
       name: "workflow_gate.reviewed";
       organizationId: string;
@@ -228,6 +254,9 @@ export const ANALYTICS_EVENT_NAMES = [
   "workflow_gate.opened",
   "workflow_gate.reviewed",
   "workflow_gate.decided",
+  "ci_release_set.opened",
+  "ci_release_set.reviewed",
+  "ci_release_set.gate_bound",
   "marketing_page.viewed",
 ] as const;
 
@@ -339,6 +368,17 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
       return base(event.organizationId, event.kind, [event.outcome], [0]);
     case "workflow_gate.opened":
       return base(event.organizationId, "", [], [0]);
+    case "ci_release_set.opened":
+      return base(event.organizationId, "", [], [0]);
+    case "ci_release_set.reviewed":
+      return base(
+        event.organizationId,
+        "",
+        [event.recommendation],
+        [event.durationMs, event.packageCount],
+      );
+    case "ci_release_set.gate_bound":
+      return base(event.organizationId, "", [event.outcome], [0]);
     case "workflow_gate.reviewed":
       return base(
         event.organizationId,

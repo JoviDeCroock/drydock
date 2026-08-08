@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { type AppDb, createDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
 import { getOrganizationOwnerUserId } from "../db/organizations";
-import { createScanJob, discardGateScans, markScanFailed } from "../db/scans";
+import { discardGateScans } from "../db/scans";
 import { githubAppInstallations } from "../db/schema";
 import { WorkflowArtifactError } from "./github-app/artifacts";
 import {
@@ -17,8 +17,15 @@ import {
   claimGateReviewStart,
   getGateForOrganization,
   markGateDecided,
+  markGateDecidedForPackageAggregate,
   releaseGateReviewClaim,
 } from "./github-app/webhook-gates";
+import {
+  getReleaseSet,
+  linkReleaseSetScansToGate,
+  listReleaseSetScans,
+  sealReleaseSet,
+} from "../db/ci-release-sets";
 import { notifyWorkflowGateReview, notifyWorkflowGateTimeout } from "./notify";
 import {
   describeOperationalError,
@@ -27,12 +34,11 @@ import {
 } from "./platform/observability";
 import { recordProductEvent } from "./platform/analytics";
 import {
-  type PreparedGatePackage,
   type PreparedGateRelease,
   prepareReleaseCandidatesForGate,
 } from "./workflow-gates/prepare";
 import { combineRisk, type RiskLevel } from "./review";
-import { runScanPipeline } from "./scan/pipeline";
+import { type ReviewedPackage, reviewReleasePackages } from "./scan/review-packages";
 import { classifyScanError, type WorkflowGateQueueMessage } from "./scan/job";
 
 // A release whose changed (release-delta) findings reach these levels is
@@ -159,6 +165,27 @@ export async function executeWorkflowGateJob(
     return;
   }
 
+  // The CI Action pushed this run's release and Drydock reviewed it during the
+  // build. There is nothing to download: collect that review instead.
+  //
+  // Checked *before* the `already_reviewed` guard below, and safe to re-run: a
+  // bound gate does no scanning, and every step it takes is a CAS. Guarding it
+  // would strand the deployment in the case where a maintainer records their
+  // decision against the release set after the gate already adopted its scans —
+  // nothing else would ever re-evaluate the aggregate.
+  if (gate.releaseSetId) {
+    await resolveGateFromReleaseSet(
+      env,
+      executionCtx,
+      db,
+      config,
+      gate,
+      gate.releaseSetId,
+      startedAtMs,
+    );
+    return;
+  }
+
   // A finished batch attaches a representative scan to the gate. A re-delivery
   // must not re-run the per-package scans; the gate is waiting on a human.
   if (gate.scanId) {
@@ -256,9 +283,24 @@ export async function executeWorkflowGateJob(
     // the half-finished scans first so the gate's package set is exactly this
     // batch.
     await discardGateScans(db, gate.id, organizationId, env.ARTIFACTS);
-    reviewed = await reviewGatePackages(
+    reviewed = await reviewReleasePackages(
       { env, executionCtx, db },
-      { gate, ownerUserId, packages: prepared.packages },
+      {
+        organizationId,
+        ownerUserId,
+        packages: prepared.packages,
+        source: "workflow_gate",
+        stageIdPrefix: `workflow-gate:${gate.id}`,
+        gateId: gate.id,
+        // Marks the scan as gate-attested in the intent envelope: the signed
+        // webhook bound repository + run + environment, and the reviewed bytes
+        // were downloaded from that run.
+        gateContext: {
+          repositoryFullName: gate.repositoryFullName,
+          runId: gate.runId,
+          environment: gate.environment,
+        },
+      },
     );
   } catch (err) {
     // A per-package scan failed. Release the claim so a retry re-runs the whole
@@ -424,127 +466,264 @@ export async function executeWorkflowGateJob(
   });
 }
 
-interface ReviewedPackage {
-  scanId: string;
-  packageName: string | null;
-  version: string | null;
-  releaseRisk: RiskLevel;
-  /** The published baseline was not downloaded, so `releaseRisk` graded nothing. */
-  baselineComparisonSkipped: boolean;
-}
-
-const GATE_PACKAGE_SCAN_CONCURRENCY = 3;
+// ── Bound release sets (push path) ───────────────────────────────────────────
 
 /**
- * Run one scan per discovered package, each against its own baseline, and link
- * every scan back to the gate via `scans.gate_id`. A monorepo release bundle
- * fans out into several packages here; the gate decision later aggregates them
- * (release only when all are approved). A pipeline failure on any package
- * rethrows so the caller fail-closes the batch — a half-reviewed gate must never
- * become review-ready.
+ * Resolve a gate that bound to a release the CI Action already pushed.
+ *
+ * This is where the two paths converge. The expensive work — fetching bytes,
+ * parsing, fanning out per package, scanning against baselines — already
+ * happened during the build, so all this does is decide what the gate should
+ * tell GitHub given the state of that review:
+ *
+ *  - **reviewed and fully decided** → deliver the maintainer's answer straight
+ *    away. This is the case that changes how releases feel: the human decided
+ *    while CI was still running, so the protected job is never actually held.
+ *  - **reviewed, not yet decided** → adopt the review's scans as the gate's
+ *    packages and leave the deployment held for a human, exactly like the pull
+ *    path.
+ *  - **still open** → the run reached its protected job without sealing (a
+ *    workflow that uploads but never calls seal). Seal it now and wait; the
+ *    review's completion re-enqueues this gate.
+ *  - **sealed or scanning** → the review is in flight; stay pending.
+ *  - **errored** → the release could not be reviewed. Fail closed and block the
+ *    deployment, matching the pull path's artifact-error behavior.
  */
-async function reviewGatePackages(
-  ctx: { env: Cloudflare.Env; executionCtx: ExecutionContext; db: AppDb },
-  args: { gate: WorkflowGateRecord; ownerUserId: string; packages: PreparedGatePackage[] },
-): Promise<ReviewedPackage[]> {
-  const { env, executionCtx, db } = ctx;
-  const { gate, ownerUserId, packages } = args;
+async function resolveGateFromReleaseSet(
+  env: Cloudflare.Env,
+  executionCtx: ExecutionContext,
+  db: AppDb,
+  config: GithubAppConfig,
+  gate: WorkflowGateRecord,
+  releaseSetId: string,
+  startedAtMs: number,
+): Promise<void> {
   const organizationId = gate.organizationId;
-
-  return mapWithConcurrency(packages, GATE_PACKAGE_SCAN_CONCURRENCY, async (pkg) => {
-    const { candidate, packageAdapter } = pkg;
-    const scanId = crypto.randomUUID();
-    const stageId = `workflow-gate:${gate.id}:${candidate.ecosystem}:${candidate.package.name}`;
-    await createScanJob(db, {
-      id: scanId,
-      stageId,
+  const set = await getReleaseSet(db, organizationId, releaseSetId);
+  if (!set) {
+    // The set vanished (organization cleanup, manual deletion). Leave the gate
+    // pending rather than guessing; a human can retry it onto the pull path.
+    emitOperationalEvent("warn", "github_workflow_gate.release_set_missing", {
       organizationId,
-      ownerUserId,
-      source: "workflow_gate",
       gateId: gate.id,
-      packageName: candidate.package.name,
-      stagedVersion: candidate.package.version,
+      releaseSetId,
     });
-    // Counted per package scan, not per gate: a monorepo bundle creates several
-    // scans under one gate and each emits its own `scan.completed`, so counting
-    // the gate would make the queued -> completed drop-off unreadable.
-    recordProductEvent(env, {
-      name: "scan.queued",
-      organizationId,
-      ecosystem: candidate.ecosystem,
-      source: "workflow_gate",
-    });
+    return;
+  }
 
-    try {
-      const result = await runScanPipeline(
-        { env, executionCtx, db, session: { userId: ownerUserId } },
-        packageAdapter,
-        {
-          scanId,
-          stageId,
-          organizationId,
-          // `source` matches the `workflow_gate` value the D1 row already
-          // carries; without it the product counter files every gated scan as
-          // "unknown" and the npm/gate split is unreadable.
-          source: "workflow_gate",
-          // Marks the scan as gate-attested in the intent envelope: the signed
-          // webhook bound repository + run + environment, and the reviewed
-          // bytes came from that run.
-          gateContext: {
-            repositoryFullName: gate.repositoryFullName,
-            runId: gate.runId,
-            environment: gate.environment,
-          },
-          ...candidate.pipelineInput,
-        },
-      );
-      return {
-        scanId,
-        packageName: result.package.name,
-        version: result.package.stagedVersion,
-        releaseRisk: result.riskSummary.releaseRisk,
-        baselineComparisonSkipped: Boolean(result.baseline.comparisonSkipped),
-      };
-    } catch (err) {
-      const safe = classifyScanError(err);
-      await markScanFailed(db, scanId, organizationId, safe);
-      // `scan.failed` otherwise only fires on the npm queue path, so gated
-      // failures went uncounted while gated *completions* were counted — which
-      // biases the derived failure rate low for exactly the ecosystems that
-      // only release through a gate.
-      recordProductEvent(env, {
-        name: "scan.failed",
+  if (set.status === "errored") {
+    await rejectGateForReleaseSetError(env, db, config, gate, set.failureReason ?? "review_failed");
+    return;
+  }
+
+  if (set.status === "open") {
+    const sealed = await sealReleaseSet(db, organizationId, set.id);
+    if (sealed) {
+      const message = {
+        kind: "ci_release_set" as const,
         organizationId,
-        ecosystem: packageAdapter.id,
-        source: "workflow_gate",
-        code: safe.code,
-        durationMs: 0,
-      });
-      throw err;
+        releaseSetId: set.id,
+      };
+      // Falls back to an inline run when no queue is bound (local dev, tests).
+      // Sealing without scheduling the review would strand the deployment: the
+      // set would sit `sealed` forever and nothing would ever re-run this gate.
+      if (env.SCAN_QUEUE) {
+        await env.SCAN_QUEUE.send(message);
+      } else {
+        const { executeCiReleaseSetJob } = await import("./ci/release-set-job");
+        executionCtx.waitUntil(executeCiReleaseSetJob(env, executionCtx, message));
+      }
     }
+    emitOperationalEvent("info", "github_workflow_gate.release_set_sealed_by_gate", {
+      organizationId,
+      gateId: gate.id,
+      releaseSetId: set.id,
+      sealed: Boolean(sealed),
+    });
+    return;
+  }
+
+  if (set.status !== "reviewed") {
+    emitOperationalEvent("info", "github_workflow_gate.release_set_pending", {
+      organizationId,
+      gateId: gate.id,
+      releaseSetId: set.id,
+      setStatus: set.status,
+    });
+    return;
+  }
+
+  // Adopt the reviewed scans as this gate's packages so the whole existing
+  // decision surface — workbench, per-package decision route, aggregate CAS —
+  // works on a pushed release without changes.
+  //
+  // Only the first gate to bind claims the scans. A run with two protected
+  // environments produces two gates over one review, and the second must still
+  // resolve: the authority for a bound gate is the *release set*, not
+  // `scans.gate_id`, so the aggregate below is always read from the set.
+  await linkReleaseSetScansToGate(db, {
+    releaseSetId: set.id,
+    organizationId,
+    gateId: gate.id,
+  });
+  const packages = await listReleaseSetScans(db, {
+    releaseSetId: set.id,
+    organizationId,
+  });
+  if (packages.length === 0) {
+    emitOperationalEvent("warn", "github_workflow_gate.release_set_no_packages", {
+      organizationId,
+      gateId: gate.id,
+      releaseSetId: set.id,
+    });
+    return;
+  }
+
+  const representativeScanId = set.scanId ?? packages[0].scanId;
+  await attachScanToGate(db, gate.id, representativeScanId, null);
+
+  const anyRejected = packages.some((pkg) => pkg.decision === "no_publish");
+  const allApproved = packages.every((pkg) => pkg.decision === "publish");
+  if (!anyRejected && !allApproved) {
+    // The review is ready but a human has not finished deciding. The
+    // notification already went out when the review completed, so there is
+    // nothing to send here — just leave the deployment held.
+    recordProductEvent(env, {
+      name: "ci_release_set.gate_bound",
+      organizationId,
+      outcome: "pending_review",
+    });
+    emitOperationalEvent("info", "github_workflow_gate.release_set_awaiting_decision", {
+      organizationId,
+      gateId: gate.id,
+      releaseSetId: set.id,
+      packageCount: packages.length,
+      durationMs: durationMsSince(startedAtMs),
+    });
+    return;
+  }
+
+  const decision: "approved" | "rejected" = anyRejected ? "rejected" : "approved";
+  const reportUrl = buildReportUrl(env, representativeScanId);
+  // The gate that owns the scans can use the stronger CAS, which re-checks the
+  // per-package decisions in SQL. A sibling gate over the same review owns no
+  // scans, so that predicate would match nothing and refuse forever; it takes
+  // the plain pending→decided CAS with the aggregate read from the set above.
+  // Ownership is read off the rows rather than from this run's claim count,
+  // because a re-delivery of the owning gate re-claims nothing.
+  const ownsScans = packages.some((pkg) => pkg.gateId === gate.id);
+  const decided = ownsScans
+    ? await markGateDecidedForPackageAggregate(db, {
+        gateId: gate.id,
+        organizationId,
+        decision,
+        comment: buildPreApprovedComment(decision, reportUrl),
+        reportUrl,
+      })
+    : await markGateDecided(db, {
+        gateId: gate.id,
+        decision,
+        comment: buildPreApprovedComment(decision, reportUrl),
+        reportUrl,
+      });
+  if (!decided) {
+    emitOperationalEvent("info", "github_workflow_gate.job_skipped", {
+      organizationId,
+      gateId: gate.id,
+      reason: "release_set_decision_lost",
+    });
+    return;
+  }
+
+  await deliverGateDecision(config, db, decided);
+  recordProductEvent(env, {
+    name: "workflow_gate.decided",
+    organizationId,
+    // The click happened in the workbench before the gate existed; it is still
+    // a human decision, just an earlier one.
+    surface: "human",
+    decision,
+    packageCount: packages.length,
+  });
+  recordProductEvent(env, {
+    name: "ci_release_set.gate_bound",
+    organizationId,
+    outcome: "pre_approved",
+  });
+  await recordScanEvent(db, {
+    organizationId,
+    scanId: representativeScanId,
+    type:
+      decision === "approved" ? "github_workflow_gate.approved" : "github_workflow_gate.rejected",
+    metadata: {
+      gateId: gate.id,
+      releaseSetId: set.id,
+      decidedBy: "human",
+      preApproved: true,
+      reportUrl,
+      packageCount: packages.length,
+    },
+  });
+  emitOperationalEvent("info", "github_workflow_gate.release_set_decision_delivered", {
+    organizationId,
+    gateId: gate.id,
+    releaseSetId: set.id,
+    decision,
+    packageCount: packages.length,
+    durationMs: durationMsSince(startedAtMs),
+  });
+}
+
+/**
+ * The comment GitHub renders when a gate is answered by a decision a maintainer
+ * had already made against the pushed release.
+ */
+export function buildPreApprovedComment(
+  decision: "approved" | "rejected",
+  reportUrl: string | null,
+): string {
+  const verb = decision === "approved" ? "approved" : "blocked";
+  const head = `A Drydock maintainer ${verb} this release before it reached the gate.`;
+  return reportUrl ? `${head} Review: ${reportUrl}` : head;
+}
+
+/**
+ * A bound release set that could not be reviewed blocks its deployment, the
+ * same way an unverifiable artifact bundle does on the pull path. Never fail
+ * open: an unreviewable release is exactly the one that should not publish.
+ */
+async function rejectGateForReleaseSetError(
+  env: Cloudflare.Env,
+  db: AppDb,
+  config: GithubAppConfig,
+  gate: WorkflowGateRecord,
+  reason: string,
+): Promise<void> {
+  const comment =
+    "Drydock blocked this release: the uploaded release candidate could not be reviewed.";
+  const decided = await markGateDecided(db, {
+    gateId: gate.id,
+    decision: "rejected",
+    comment,
+    reportUrl: null,
+  });
+  if (!decided) return;
+  recordProductEvent(env, {
+    name: "workflow_gate.decided",
+    organizationId: gate.organizationId,
+    surface: "automatic",
+    decision: "rejected",
+    packageCount: 0,
+  });
+  await deliverGateDecision(config, db, decided);
+  await recordScanEvent(db, {
+    organizationId: gate.organizationId,
+    type: "github_workflow_gate.rejected",
+    metadata: { gateId: gate.id, reason, decidedBy: "automatic" },
   });
 }
 
 // ── Internals ────────────────────────────────────────────────────────────────
-
-async function mapWithConcurrency<T, U>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T) => Promise<U>,
-): Promise<U[]> {
-  const results = new Map<number, U>();
-  let next = 0;
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    for (;;) {
-      const index = next;
-      next += 1;
-      if (index >= items.length) return;
-      results.set(index, await worker(items[index]));
-    }
-  });
-  await Promise.all(workers);
-  return items.map((_, index) => results.get(index)!);
-}
 
 async function rejectGateForArtifactError(
   env: Cloudflare.Env,

@@ -46,6 +46,13 @@ Types not in the registry are hidden from the view even though they are persiste
 excluded as noise. `AUDIT_VISIBLE_TYPES` scopes the query so hidden types never
 leave the Worker.
 
+Two push-path events are surfaced. `ci_release_set.sealed` records that CI
+uploaded a release for review. `ci_release_set.verify_failed` is graded
+**security**, not routine release churn: it means the bytes a publish job was
+about to ship no longer matched the ones Drydock reviewed, which is exactly the
+failure the push path exists to catch. The set's other lifecycle events stay
+hidden as processing noise.
+
 ## API
 
 `GET /api/v1/audit-events` (`server/routes/audit.ts`), owner/admin only

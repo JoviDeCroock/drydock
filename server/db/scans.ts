@@ -73,6 +73,12 @@ export interface CreateScanJobInput {
   /** Links a workflow-gate review scan back to its gate. */
   gateId?: string | null;
   /**
+   * Links a push-path (CI Action) review scan back to its release set. Unlike
+   * `gateId` this is known when the scan is created, because the release set
+   * exists before any deployment gate does.
+   */
+  releaseSetId?: string | null;
+  /**
    * Package identity known before the tarball is inspected (from the staged
    * publishes listing or the gate bundle). Lets failed scans — including ones
    * whose tarball never parsed — still carry a display label; the pipeline
@@ -82,7 +88,10 @@ export interface CreateScanJobInput {
   stagedVersion?: string | null;
 }
 
-const SCAN_SOURCES = ["manual", "auto_discovery", "workflow_gate"] as const;
+// `workflow_gate` is the pull path (GitHub held a deployment and Drydock
+// fetched the bundle); `ci_release` is the push path (the CI Action uploaded
+// the candidate during the build, possibly with no gate at all).
+const SCAN_SOURCES = ["manual", "auto_discovery", "workflow_gate", "ci_release"] as const;
 export type ScanSource = (typeof SCAN_SOURCES)[number];
 
 export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
@@ -93,6 +102,7 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
     organizationId: input.organizationId,
     ownerUserId: input.ownerUserId,
     gateId: input.gateId ?? null,
+    releaseSetId: input.releaseSetId ?? null,
     packageName: input.packageName ?? null,
     stagedVersion: input.stagedVersion ?? null,
     risk: "unknown",
@@ -102,6 +112,31 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
     updatedAt: now,
   });
   return getScan(db, input.id, input.organizationId);
+}
+
+/**
+ * Whether deciding this scan can release or block a real deployment, and which
+ * release set it belongs to if any.
+ *
+ * `isGating` is true for both release paths: a pull-path gate scan (`gate_id`)
+ * and a push-path release-set scan (`release_set_id`), because a gate can bind
+ * to a pushed release afterwards and adopt the decision recorded here. False for
+ * staged-publish and manual scans, whose decision is an audit record only.
+ */
+export async function releaseGatingScanContext(
+  db: AppDb,
+  scanId: string,
+  organizationId: string,
+): Promise<{ isGating: boolean; releaseSetId: string | null }> {
+  const [row] = await db
+    .select({ gateId: scans.gateId, releaseSetId: scans.releaseSetId })
+    .from(scans)
+    .where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)))
+    .limit(1);
+  return {
+    isGating: Boolean(row?.gateId || row?.releaseSetId),
+    releaseSetId: row?.releaseSetId ?? null,
+  };
 }
 
 export async function deletePendingScanJob(db: AppDb, scanId: string, organizationId: string) {
