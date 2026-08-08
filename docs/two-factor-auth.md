@@ -38,6 +38,11 @@ swaps to a "Verify it's you" step that accepts either:
 - a TOTP code → `POST /api/auth/two-factor/verify-totp`, or
 - a backup recovery code → `POST /api/auth/two-factor/verify-backup-code`.
 
+The challenge guards password sign-ins. GitHub sign-in (when the operator
+configures it, see [`self-hosting.md`](./self-hosting.md)) is authenticated by
+GitHub itself, including any 2FA on the GitHub account; the release-decision
+TOTP step-up below applies regardless of how the session was created.
+
 Only after the second factor succeeds is a full session cookie set. The client model logic lives
 in `src/models/auth.ts` (`signIn` returns `{ twoFactorRequired }`; `completeTwoFactorSignIn`)
 and `src/models/two-factor.ts`.

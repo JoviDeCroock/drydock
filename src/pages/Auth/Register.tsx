@@ -12,6 +12,7 @@ import { Field } from "../../components/Field";
 import { Input } from "../../components/Input";
 import { PageShell } from "../../components/PageShell";
 import { Eyebrow, Muted } from "../../components/Typography";
+import { SocialSignIn } from "./SocialSignIn";
 
 export default function RegisterPage() {
   const location = useLocation();
@@ -120,6 +121,8 @@ export default function RegisterPage() {
           Create a workspace, connect npm or a GitHub gate, and review held releases before they go
           live.
         </Muted>
+
+        <SocialSignIn returnTo={returnTo} onError={(message) => (error.value = message)} />
 
         <form class="flex flex-col gap-4 mt-2" onSubmit={onSubmit}>
           <Field label="Name" for="register-name">
