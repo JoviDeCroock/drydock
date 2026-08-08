@@ -15,7 +15,7 @@
 // The runtime exposes the colo cache as `caches.default`, but the DOM lib wins
 // the global CacheStorage type in this repo's single tsconfig and doesn't know
 // the property.
-export function coloCache(): Cache {
+function coloCache(): Cache {
   return (caches as unknown as { default: Cache }).default;
 }
 

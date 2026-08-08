@@ -232,7 +232,7 @@ export function publicReportAttestationUrl(token: string): string {
   return `${location.origin}/public/reports/${encodeURIComponent(token)}/attestation`;
 }
 
-export async function publicAttestationAvailable(): Promise<boolean> {
+async function publicAttestationAvailable(): Promise<boolean> {
   try {
     const response = await fetch("/public/attestation-key", {
       credentials: "same-origin",

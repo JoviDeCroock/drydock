@@ -124,9 +124,9 @@ export function scanEcosystem(summaryJson: unknown): PublicEcosystem {
 // the org can publish under that name. Workflow-gate scans review a repo-built
 // artifact whose manifest claims the name — nothing verifies ownership yet, so
 // consumers must be able to discount those claims.
-export type PackageIdentity = "registry-verified" | "manifest-claimed";
+type PackageIdentity = "registry-verified" | "manifest-claimed";
 
-export function scanPackageIdentity(source: string): PackageIdentity {
+function scanPackageIdentity(source: string): PackageIdentity {
   return source === "workflow_gate" ? "manifest-claimed" : "registry-verified";
 }
 
@@ -149,7 +149,7 @@ export function pickBadgeScan(rows: SharedScanRow[]): SharedScanRow | null {
 }
 
 /** The release-scoped risk when persisted, falling back to the artifact risk. */
-export function sharedScanReleaseRisk(row: SharedScanRow): string {
+function sharedScanReleaseRisk(row: SharedScanRow): string {
   const breakdown = row.riskSummaryJson;
   if (breakdown && typeof breakdown === "object" && !Array.isArray(breakdown)) {
     const releaseRisk = (breakdown as { releaseRisk?: unknown }).releaseRisk;
