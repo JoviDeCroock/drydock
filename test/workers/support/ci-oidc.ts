@@ -10,8 +10,8 @@ import { createSign, generateKeyPairSync, type KeyObject } from "node:crypto";
  * a pushed release lands in.
  */
 
-export const TEST_ISSUER = "https://oidc.test";
-export const TEST_AUDIENCE = "drydock";
+const TEST_ISSUER = "https://oidc.test";
+const TEST_AUDIENCE = "drydock";
 const TEST_KID = "drydock-test-key";
 
 export interface FakeOidcIssuer {

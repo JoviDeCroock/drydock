@@ -94,7 +94,7 @@ export interface CiOidcConfig {
   jwksUri: string;
 }
 
-export function readCiOidcConfig(env: Cloudflare.Env): CiOidcConfig {
+function readCiOidcConfig(env: Cloudflare.Env): CiOidcConfig {
   const issuer = normalizeIssuer(env.CI_OIDC_ISSUER?.trim() || DEFAULT_ISSUER);
   const audience = env.CI_OIDC_AUDIENCE?.trim() || DEFAULT_AUDIENCE;
   return { issuer, audience, jwksUri: `${issuer}/.well-known/jwks` };

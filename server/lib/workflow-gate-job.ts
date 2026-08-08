@@ -678,7 +678,7 @@ async function resolveGateFromReleaseSet(
  * The comment GitHub renders when a gate is answered by a decision a maintainer
  * had already made against the pushed release.
  */
-export function buildPreApprovedComment(
+function buildPreApprovedComment(
   decision: "approved" | "rejected",
   reportUrl: string | null,
 ): string {

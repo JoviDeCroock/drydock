@@ -2,7 +2,7 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { type AppDb } from "./client";
 import { ciReleaseArtifacts, ciReleaseSets, githubWorkflowGates, scans } from "./schema";
 
-export type CiReleaseSetStatus = "open" | "sealed" | "scanning" | "reviewed" | "errored";
+type CiReleaseSetStatus = "open" | "sealed" | "scanning" | "reviewed" | "errored";
 
 export interface CiReleaseSetRecord {
   id: string;

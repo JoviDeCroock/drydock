@@ -438,7 +438,7 @@ async function nudgeBoundGates(
 }
 
 /** Gates bound to a set, for the decision fan-out. */
-export async function gatesForReleaseSet(
+async function gatesForReleaseSet(
   db: AppDb,
   set: Pick<CiReleaseSetRecord, "id" | "organizationId">,
 ): Promise<string[]> {

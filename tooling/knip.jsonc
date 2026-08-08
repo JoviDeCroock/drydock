@@ -1,5 +1,7 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
+  // Referenced by action/action.yml rather than an import Knip can discover.
+  "entry": ["action/index.js"],
   "ignore": [
     // Package fixtures are hostile-evidence samples the fixture builder reads as
     // bytes at runtime; they are never part of the module graph.

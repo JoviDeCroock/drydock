@@ -27,7 +27,7 @@ export function releaseArtifactKey(
   return `orgs/${safeSegment(organizationId)}/ci-releases/${safeSegment(releaseSetId)}/${safeSegment(artifactId)}`;
 }
 
-export function releaseSetPrefix(organizationId: string, releaseSetId: string): string {
+function releaseSetPrefix(organizationId: string, releaseSetId: string): string {
   return `orgs/${safeSegment(organizationId)}/ci-releases/${safeSegment(releaseSetId)}/`;
 }
 
