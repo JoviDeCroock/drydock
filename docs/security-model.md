@@ -92,6 +92,14 @@ The `/og/diff/**/card.png` share cards are part of the same anonymous surface an
 
 Marketing attribution is a `marketing_page.viewed` Analytics Engine event. The only public surfaces recorded are the landing page, the docs page, and the package diff; authenticated routes are never recorded. A request is reduced to `(surface, channel bucket)` where the bucket comes from a closed allowlist — no IP, no full referrer URL, no user agent, no session identifier, package name, or version is written. An unrecognized `utm_source` collapses to `other` rather than creating unbounded analytics dimension cardinality.
 
+Three further anonymous endpoints exist, all under `/public`, all serving only data an organization owner/admin explicitly opted into publishing:
+
+- `GET /public/reports/:token` and `GET /public/reports/:token/attestation` — capability URLs. The unguessable 256-bit share token _is_ the authorization; unknown, malformed, and revoked tokens are indistinguishable 404s. They serve the canonical report export (never file samples, events, or org/user identifiers), attach no credentials, persist nothing, are `no-store` so revocation is immediate, and are per-IP rate limited. `GET /public/attestation-key` returns public key material only.
+- `GET /public/badge/:ecosystem/*` — a shields.io endpoint payload for a package's latest review. Reflects only scans whose org took the _second_ opt-in (feed listing) on top of sharing, so a private share link never makes a scan name-queryable. The response carries no package name, no org identity, and no share token; an unlisted-but-scanned package and a never-scanned package return byte-identical bodies, so there is no enumeration oracle. Separate per-IP rate-limit bucket (badge proxies multiplex unrelated packages through shared egress addresses), and a throttled response says `unavailable` rather than impersonating `not reviewed`.
+- `GET /public/threat-feed.json` — the listed set, newest first, keyset-paginated. Entries carry package identity, risk, decision, counts, and the public report URL; no organization id, user id, or internal scan id.
+
+Both derived surfaces are colo-cached for 300s and purged on revoke/unlist. That purge is **colo-local and best effort** — it clears the region that served the revoking request, and every other region serves the withdrawn body until the TTL expires (longer still behind a badge proxy's own cache). The report itself has no such window. Treat the badge and feed as eventually consistent; the report route is the authority.
+
 The `pkg.pr.new` egress (npm only) is bounded by a shared strict URL parser (`src/lib/pkg-pr-new.ts`): only `https://pkg.pr.new` (exact host, no port, no credentials, no query/fragment) with a canonical `owner/repo/name@ref`-shaped path is ever fetched, the fetch path is structurally anonymous (`fetchPkgPrNewTarballStream` accepts no token option), and preview bytes are never written to the shared colo tarball cache because preview refs are mutable. Diff results that involve a preview side are cached for at most 15 minutes.
 
 ## Browser response headers
@@ -100,7 +108,7 @@ Production responses should keep conservative security headers: no package-provi
 
 ## Known gaps / future work
 
-- Public report sharing is an explicit owner/admin opt-in per completed scan: an unguessable 256-bit token exposes the canonical report export (never file samples, events, or org/user identifiers) at `/public/reports/:token`, with an Ed25519-signed DSSE attestation over those exact bytes. See `public-reports.md`.
+- Public report sharing is an explicit owner/admin opt-in per completed scan; the badge and threat feed are a second opt-in on top of it. See `public-reports.md` and the authorization posture section above.
 - Raw-artifact retention, if ever added, must be explicit, short-TTL, organization-scoped, and documented.
 - Additional ecosystems need adapter-specific credential, baseline, artifact, and failure-mode review before enablement.
 - Keep dependency and parser updates covered by regression/fuzz tests because archive handling is a trust boundary.

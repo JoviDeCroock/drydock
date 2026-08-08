@@ -173,6 +173,15 @@ export const scans = sqliteTable(
     publicSharedByUserId: text("public_shared_by_user_id").references(() => user.id, {
       onDelete: "set null",
     }),
+    // Public threat-feed listing is a second, separate opt-in on top of the
+    // share link: a shared report is reachable by anyone holding the link,
+    // but only feed-listed scans appear in the discoverable
+    // /public/threat-feed.json index. Cleared whenever the share is revoked.
+    publicFeedListedAt: integer("public_feed_listed_at", { mode: "timestamp_ms" }),
+    // Ecosystem-prefixed canonical package identity used by the public badge.
+    // Populated only while feed-listed, so private shares stay unqueryable by
+    // package name and PyPI/VS Code aliases resolve through one indexed key.
+    publicPackageKey: text("public_package_key"),
     startedAt: integer("started_at", { mode: "timestamp_ms" }),
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
@@ -183,6 +192,13 @@ export const scans = sqliteTable(
     ownerIdx: index("scans_owner_idx").on(table.ownerUserId),
     stageIdx: index("scans_stage_id_idx").on(table.stageId),
     packageIdx: index("scans_package_idx").on(table.packageName),
+    // Serves the badge lookup, which filters on the canonical public key (not
+    // package_name) and orders by completed_at. Keyed on the wrong column this
+    // index covered nothing and taxed every write to the busiest table.
+    publicPackageKeyCompletedIdx: index("scans_public_package_key_completed_idx").on(
+      table.publicPackageKey,
+      table.completedAt,
+    ),
     gateIdx: index("scans_gate_org_idx").on(table.gateId, table.organizationId),
     artifactBackfillIdx: index("scans_artifact_backfill_idx").on(
       table.organizationId,
@@ -209,6 +225,9 @@ export const scans = sqliteTable(
     publicShareTokenUniqueIdx: uniqueIndex("scans_public_share_token_unique_idx").on(
       table.publicShareToken,
     ),
+    publicFeedListedIdx: index("scans_public_feed_listed_idx").on(table.publicFeedListedAt),
+    // No standalone public_package_key index: the composite above has it as a
+    // leading column, so it already serves an equality lookup on the key alone.
   }),
 );
 

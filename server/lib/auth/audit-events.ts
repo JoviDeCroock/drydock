@@ -116,6 +116,18 @@ const REGISTRY: Record<string, AuditEventDef> = {
     severity: "notice",
     summarize: summarizePackageVersion,
   },
+  "scan.feed_listed": {
+    category: "security",
+    label: "Report listed in public threat feed",
+    severity: "security",
+    summarize: summarizePackageVersion,
+  },
+  "scan.feed_unlisted": {
+    category: "security",
+    label: "Report removed from public threat feed",
+    severity: "notice",
+    summarize: summarizePackageVersion,
+  },
   "organization.release_two_factor_changed": {
     category: "security",
     label: "Release two-factor policy changed",

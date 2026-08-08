@@ -209,6 +209,11 @@ describe("public report sharing", () => {
     expect(share.token).toMatch(/^[A-Za-z0-9_-]{40,}$/);
     expect(share.url).toBe(`http://example.com/reports/${share.token}`);
 
+    const detail = (await (await request(app, `/api/v1/scans/${scanId}`)).json()) as {
+      scan: { publicShareUrl: string };
+    };
+    expect(detail.scan.publicShareUrl).toBe(share.url);
+
     const pub = await request(app, `/public/reports/${share.token}`);
     expect(pub.status).toBe(200);
     const text = await pub.text();

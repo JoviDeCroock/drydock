@@ -299,6 +299,8 @@ app.get("/api", (c) =>
         "GET /api/public/v1/package-diff?package&from&to[&ecosystem=npm|pypi]; GET /api/public/v1/package-diff/versions?package[&ecosystem]; GET /api/public/v1/package-diff/file?package&from&to&path[&ecosystem] (anonymous, IP rate-limited, public registry data only; on npm, from/to also accept pkg.pr.new preview URLs)",
       publicReports:
         "POST/DELETE /api/v1/scans/:id/share; GET /public/reports/:token; GET /public/reports/:token/attestation; GET /public/attestation-key (share token is the capability; no auth)",
+      publicFeed:
+        "GET /public/threat-feed.json (feed-listed shared reviews); GET /public/badge/:ecosystem/:package (shields.io endpoint badge)",
       slack:
         "GET /api/v1/slack; POST /api/v1/slack/connect; GET /api/v1/slack/callback; GET /api/v1/slack/channels; PUT /api/v1/slack/channel; PATCH /api/v1/slack; DELETE /api/v1/slack; POST /api/v1/slack/test",
       health: "GET /api/health",

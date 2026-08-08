@@ -90,7 +90,9 @@ export interface PersistedScanDetail {
     reportVersion?: number | null;
     reportDigest?: string | null;
     publicShareToken?: string | null;
+    publicShareUrl?: string | null;
     publicSharedAt?: string | number | Date | null;
+    publicFeedListedAt?: string | number | Date | null;
     startedAt?: string | number | Date | null;
     completedAt?: string | number | Date | null;
   };
@@ -203,10 +205,17 @@ export interface PublicShareInfo {
   token: string;
   url: string;
   sharedAt: string | number | Date;
+  threatFeedListedAt: string | number | Date | null;
 }
 
-function enableScanShare(id: string): Promise<{ share: PublicShareInfo }> {
-  return apiJson<{ share: PublicShareInfo }>(`/api/v1/scans/${encodeURIComponent(id)}/share`, {});
+function enableScanShare(
+  id: string,
+  options: { threatFeed?: boolean } = {},
+): Promise<{ share: PublicShareInfo }> {
+  return apiJson<{ share: PublicShareInfo }>(
+    `/api/v1/scans/${encodeURIComponent(id)}/share`,
+    options,
+  );
 }
 
 function revokeScanShare(id: string): Promise<{ revoked: boolean }> {
@@ -221,6 +230,18 @@ function publicReportUrl(token: string): string {
 
 export function publicReportAttestationUrl(token: string): string {
   return `${location.origin}/public/reports/${encodeURIComponent(token)}/attestation`;
+}
+
+async function publicAttestationAvailable(): Promise<boolean> {
+  try {
+    const response = await fetch("/public/attestation-key", {
+      credentials: "same-origin",
+      headers: { accept: "application/json" },
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 export type DecisionStatus = "idle" | "saving" | "error";
@@ -422,6 +443,7 @@ export const ScanDetailModel = createModel((id: string) => {
   const share = signal<PublicShareInfo | null>(null);
   const shareStatus = signal<DecisionStatus>("idle");
   const shareError = signal<string | null>(null);
+  const attestationAvailable = signal<boolean | null>(null);
   const gate = signal<PublicWorkflowGate | null>(null);
   const gateLoaded = signal(false);
   const gateDecisionStatus = signal<DecisionStatus>("idle");
@@ -557,6 +579,7 @@ export const ScanDetailModel = createModel((id: string) => {
     share,
     shareStatus,
     shareError,
+    attestationAvailable,
     gate,
     gateLoaded,
     gateDecisionStatus,
@@ -578,8 +601,9 @@ export const ScanDetailModel = createModel((id: string) => {
           this.share.value = data.scan.publicShareToken
             ? {
                 token: data.scan.publicShareToken,
-                url: publicReportUrl(data.scan.publicShareToken),
+                url: data.scan.publicShareUrl ?? publicReportUrl(data.scan.publicShareToken),
                 sharedAt: data.scan.publicSharedAt ?? data.scan.updatedAt,
+                threatFeedListedAt: data.scan.publicFeedListedAt ?? null,
               }
             : null;
           if (this.selectedPath.peek() === null) {
@@ -600,6 +624,28 @@ export const ScanDetailModel = createModel((id: string) => {
         this.share.value = share;
         this.shareStatus.value = "idle";
       } catch (err) {
+        this.shareError.value = shareErrorMessage(err);
+        this.shareStatus.value = "error";
+      }
+    },
+
+    async loadAttestationAvailability(): Promise<void> {
+      this.attestationAvailable.value = null;
+      this.attestationAvailable.value = await publicAttestationAvailable();
+    },
+
+    async setFeedListing(listed: boolean): Promise<void> {
+      const id = this.scanId.peek();
+      this.shareStatus.value = "saving";
+      this.shareError.value = null;
+      try {
+        const { share } = await enableScanShare(id, { threatFeed: listed });
+        this.share.value = share;
+        this.shareStatus.value = "idle";
+      } catch (err) {
+        // 409 means the link was revoked while the toggle was in flight — drop
+        // the dead share state so the dialog falls back to "create link".
+        if (err instanceof ApiError && err.status === 409) this.share.value = null;
         this.shareError.value = shareErrorMessage(err);
         this.shareStatus.value = "error";
       }

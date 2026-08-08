@@ -1,8 +1,9 @@
-# Public report sharing and attestations
+# Public report sharing, attestations, badges, and the threat feed
 
 Completed scans can be shared outside the organization as a read-only public
 report, with an optional signed attestation that lets anyone verify the report
-bytes came from Drydock.
+bytes came from Drydock. Shared reports also power two discoverable surfaces:
+a shields.io badge per package and an opt-in public threat feed.
 
 ## Share flow
 
@@ -65,6 +66,140 @@ mutable field — `decision`, `riskSummary`, findings) means the digest covers a
 document the consumer never fetched, and verification fails. That is a race, not
 a forgery: re-fetch the report and compare again. An archived pair captured
 together always verifies, which is what matters for the archival use case.
+
+## Badge endpoint
+
+`GET /public/badge/:ecosystem/:package` (ecosystems: `npm`, `pypi`, `vscode`;
+npm names may contain `@scope/` slashes) returns a
+[shields.io endpoint-badge](https://shields.io/badges/endpoint-badge) payload
+for the package's most recent **feed-listed** review:
+
+- Not listed / unknown → `not reviewed` (lightgrey). Always `200` so badge
+  proxies never render an error.
+- Listed → `<version> reviewed · <release risk> risk`, colored green / yellow /
+  red by risk; a `no_publish` decision renders `<version> blocked` (red).
+
+The badge is a name-discoverable index, so it takes the same second opt-in as
+the threat feed — a report shared privately by link never becomes queryable by
+package name.
+
+**Verified and unverified badges are visibly different.** Among listed
+candidates the newest **registry-verified** review wins (see package identity
+below), so on npm a workflow-gate scan claiming someone else's name cannot
+displace the real maintainer's staged review. That preference is only a
+tiebreak, and it does not generalize: only npm has a staged adapter, so every
+PyPI and VS Code review is a workflow gate and is _always_ manifest-claimed —
+there is never a registry-verified row to prefer. A manifest-claimed pick
+therefore renders as `drydock (unverified)` and never takes the clean green
+low-risk color, because anyone can build an artifact whose manifest claims any
+name, and a badge is read by people who will not open the report behind it.
+
+Embed via
+`https://img.shields.io/endpoint?url=<origin>/public/badge/npm/<package>`
+(URL-encode the badge URL).
+
+## Threat feed
+
+`GET /public/threat-feed.json` is a discoverable index (schema
+`drydock.threat-feed.v1`, 100 entries per page, newest listings first) meant
+for security partners — Aikido and other ecosystem-intel consumers can poll it.
+Each entry carries package identity, ecosystem, release/artifact risk,
+decision, `totalFindingCount`, timestamps, and a `reportUrl` to the full public
+report.
+
+`totalFindingCount` counts deterministic _and_ advisory AI findings. It is
+deliberately not `report.findings.length`: the export routes AI findings
+through `aiReview.findings` and keeps `findings[]` deterministic-only, so the
+two numbers differ by design and the field is named for what it counts. (The
+attestation's `predicate.findingCount` is the other one — it is read off the
+attested document, so it always equals that document's `findings.length`.)
+
+**Page one is not the whole feed.** The response carries `nextCursor` whenever
+more listings exist behind it; pass it back as `?after=<cursor>` to continue.
+`?limit=` shrinks the page (capped at 100); a malformed `after` or `limit` is
+ignored rather than erroring.
+`(listedAt, scanId)` is a total order over the listed set, so paging is stable
+and nothing is unreachable — which matters because listings are not
+rate-limited: one organization listing a batch of its own scans displaces
+everything older off page one, including other organizations' `no_publish`
+releases. A poller that reads only page one after such a burst silently misses
+them. Read until you reach a listing you have already seen, not until the first
+response ends.
+
+Listing is a **second explicit opt-in** on top of sharing (the checkbox in the
+share dialog, or `POST /api/v1/scans/:id/share { "threatFeed": true|false }`):
+holding a link is capability, appearing in an index is publication, and the two
+must never be conflated. Revoking the share link always unlists the report;
+re-sharing later starts unlisted. Listing changes are audited
+(`scan.feed_listed`, `scan.feed_unlisted`).
+
+`{ "threatFeed": false }` is a _withdrawal_ and never creates a share link. On
+a scan that is not currently shared it returns `409` (the dialog drops its
+stale share state and falls back to "create link") rather than quietly minting
+a fresh token and republishing the report. Revoking nulls the share token and
+its timestamp together, so "revoked a moment ago" and "never shared" are the
+same persisted state and the 409 does not claim to tell them apart.
+
+### Package identity
+
+Each feed entry carries `packageIdentity`:
+
+- `registry-verified` — staged-publish reviews. The artifact was fetched from
+  the registry with the org's npm token, so the registry proved the org can
+  publish under that name.
+- `manifest-claimed` — workflow-gate reviews. The reviewed artifact is
+  repo-built and its manifest claims the name; nothing verifies ownership yet.
+  Consumers should weigh these accordingly. (Known limitation: post-publish
+  digest verification against the registry would upgrade gate claims; not
+  built yet.)
+
+`ecosystem` is `null` when a gate scan's provenance snapshot never established
+one — a legacy pre-provenance record, or a redaction that failed. Such a scan
+can still be feed-listed, but it is not badge-discoverable under any ecosystem:
+defaulting an unknown to npm would let a PyPI or VS Code release take the npm
+badge for its own name, in the one ecosystem where a registry-verified review
+exists to be displaced. Partners should treat a null `ecosystem` as unknown
+rather than assuming npm.
+
+### Caching
+
+Badge and feed responses read through the per-colo Workers cache
+(`caches.default`) and declare `max-age=300`. The cache key is the canonical
+origin plus path, query string ignored, and badge URLs collapse onto their
+package lookup key, so one package has one entry per colo however an embedder
+encoded the name. Case is part of that key for npm — the registry treats
+existing names case-sensitively, so `JSONStream` and `jsonstream` are different
+packages and must not share a badge — while PyPI (PEP 503) and VS Code fold, as
+`publicPackageLookupKey` documents. Two consequences: `/badge/npm/React` is its
+own entry and resolves to "not reviewed", and the origin must be the _canonical_
+one on both the write and the purge, or a second bound hostname builds entries
+the purge never visits.
+
+Badge **misses** are deliberately not written to the colo cache. The "not
+reviewed" body is identical for every package, so a per-name entry buys nothing
+the downstream `max-age` doesn't already absorb, while every invented name would
+add an entry to the namespace that also holds published-tarball bytes. Cursored
+feed pages (`?after=`) are uncached too, since the key ignores the query.
+
+Revoking a share or unlisting a report purges both entries. **That purge is
+colo-local and best effort**: `caches.default.delete()` clears the entry in the
+colo that handled the revoking request and nowhere else, so other regions keep
+serving the withdrawn badge until `max-age` expires — and shields.io's own cache
+(a ≥300s floor it enforces regardless of what we send) sits in front of that.
+Plan for a withdrawal to take effect on the derived surfaces within roughly ten
+minutes, not instantly. Only the report and attestation routes are immediate,
+via `no-store` plus a D1 lookup on every request; they are the authority, and
+the badge links to them.
+
+The same TTL bounds non-revocation staleness: a decision recorded after the
+badge was cached can take ~5 minutes to render as `blocked`.
+
+Badge reads use a rate-limit bucket separate from report reads, because badge
+proxies multiplex unrelated packages through a handful of egress addresses. A
+throttled badge returns an uncached, valid shields.io payload reading
+`unavailable` — never `not reviewed`, which is an assertion _about the package_
+that shields would cache for minutes, potentially over a review that says
+`blocked`.
 
 ## Key management
 
