@@ -242,6 +242,12 @@ describe("account deletion", () => {
         scanId,
       ),
     ).toBe(1);
+    expect(
+      await countRows(
+        "SELECT count(*) AS n FROM release_authority_snapshots WHERE id = ? AND approved_by_user_id IS NULL",
+        authorityId,
+      ),
+    ).toBe(1);
   });
 
   test("nulls the share attribution of a scan the leaving member shared", async () => {
@@ -289,12 +295,6 @@ describe("account deletion", () => {
       await countRows(
         "SELECT count(*) AS n FROM scans WHERE id = ? AND public_share_token IS NOT NULL AND public_shared_by_user_id IS NULL",
         scanId,
-      ),
-    ).toBe(1);
-    expect(
-      await countRows(
-        "SELECT count(*) AS n FROM release_authority_snapshots WHERE id = ? AND approved_by_user_id IS NULL",
-        authorityId,
       ),
     ).toBe(1);
   });
