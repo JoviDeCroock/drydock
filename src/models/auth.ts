@@ -93,6 +93,22 @@ const SessionModel = createModel(() => {
       await this.load();
     },
 
+    // Starts the GitHub OAuth redirect. Better Auth returns the provider's
+    // authorize URL; the browser navigates there and comes back through
+    // /api/auth/callback/github, which redirects to callbackURL signed in.
+    async signInWithGitHub(returnTo?: string): Promise<void> {
+      const data = await authPost("/api/auth/sign-in/social", {
+        provider: "github",
+        callbackURL: returnTo ?? "/dashboard",
+        errorCallbackURL: "/login?error=github",
+      });
+      const url = data && typeof data === "object" ? (data as { url?: unknown }).url : null;
+      if (typeof url !== "string" || !url) {
+        throw new AuthError("GitHub sign-in could not start");
+      }
+      window.location.assign(url);
+    },
+
     async signUp(name: string, email: string, password: string, returnTo?: string): Promise<void> {
       await authPost("/api/auth/sign-up/email", {
         name,
@@ -126,6 +142,38 @@ const SessionModel = createModel(() => {
 });
 
 export const sessionModel = new SessionModel();
+
+// Which optional sign-in methods the deployment offers (GET /api/auth-config,
+// anonymous). Defaults stay false on any failure so the password form — which
+// needs no configuration — is never blocked on this lookup.
+const AuthConfigModel = createModel(() => {
+  const githubSignIn = signal(false);
+  const loaded = signal(false);
+
+  return {
+    githubSignIn,
+    loaded,
+
+    async load(): Promise<void> {
+      if (this.loaded.peek()) return;
+      try {
+        const res = await fetch("/api/auth-config", {
+          credentials: "same-origin",
+          headers: { accept: "application/json" },
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { githubSignIn?: boolean } | null;
+          this.githubSignIn.value = Boolean(data?.githubSignIn);
+        }
+      } catch {
+        // Offline or misconfigured — leave every optional method hidden.
+      }
+      this.loaded.value = true;
+    },
+  };
+});
+
+export const authConfigModel = new AuthConfigModel();
 
 async function fetchSession(): Promise<AuthSession | null> {
   const res = await fetch("/api/auth/get-session", {

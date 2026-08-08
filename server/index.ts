@@ -5,7 +5,7 @@ import { pruneExpiredAuthRows } from "./db/auth-retention";
 import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
 import { getOrganizationOwnerUserId } from "./db/organizations";
 import { RateLimitError, enforceRateLimit } from "./db/rate-limit";
-import { createAuth, getAuthSession } from "./lib/auth";
+import { createAuth, getAuthSession, isGithubSignInEnabled } from "./lib/auth";
 import { rateLimitResponse } from "./lib/platform/http";
 import { allowInsecureLocalRegistry } from "./lib/ecosystems/npm/connection";
 import { isPackageDiffDetailPath, rewritePackageDiffMetadata } from "./lib/public-diff/page";
@@ -262,6 +262,12 @@ function authIpLimit(path: string): { bucket: string; max: number; windowMs: num
   return null;
 }
 
+// Which optional sign-in methods this deployment offers. Anonymous on purpose
+// (registered ahead of the session gate below): the login and register pages
+// need it before any session exists. Deployment configuration only — no user
+// data, no secrets.
+app.get("/api/auth-config", (c) => c.json({ githubSignIn: isGithubSignInEnabled(c.env) }));
+
 app.use("/api/*", async (c, next) => {
   const session = await getAuthSession(c.get("auth"), c.req.raw);
   if (!session) return c.json({ error: "unauthorized" }, 401);
@@ -301,6 +307,7 @@ app.get("/api", (c) =>
         "GET /public/threat-feed.json (feed-listed shared reviews); GET /public/badge/:ecosystem/:package (shields.io endpoint badge)",
       slack:
         "GET /api/v1/slack; POST /api/v1/slack/connect; GET /api/v1/slack/callback; GET /api/v1/slack/channels; PUT /api/v1/slack/channel; PATCH /api/v1/slack; DELETE /api/v1/slack; POST /api/v1/slack/test",
+      authConfig: "GET /api/auth-config (anonymous; which optional sign-in methods are offered)",
       health: "GET /api/health",
     },
     auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints (public registry data only) and /public/reports/* (a share token is the capability; the owning organization opted in per scan).",

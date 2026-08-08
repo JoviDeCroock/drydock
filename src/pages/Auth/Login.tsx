@@ -12,6 +12,7 @@ import { Field } from "../../components/Field";
 import { Input } from "../../components/Input";
 import { PageShell } from "../../components/PageShell";
 import { Eyebrow, Muted } from "../../components/Typography";
+import { SocialSignIn } from "./SocialSignIn";
 
 export default function LoginPage() {
   const location = useLocation();
@@ -20,7 +21,13 @@ export default function LoginPage() {
   const code = useSignal("");
   const useBackup = useSignal(false);
   const step = useSignal<"credentials" | "twoFactor">("credentials");
-  const error = useSignal<string | null>(null);
+  // A failed or cancelled OAuth redirect lands back here with ?error=…
+  // (the errorCallbackURL passed when the redirect started).
+  const error = useSignal<string | null>(
+    location.query.error
+      ? "GitHub sign-in didn't complete. Try again, or use your email and password."
+      : null,
+  );
   const loading = useSignal(false);
   const needsVerificationFor = useSignal<string | null>(null);
   const resending = useSignal(false);
@@ -203,6 +210,8 @@ export default function LoginPage() {
         <Muted class="text-[13px] m-0">
           Sign in to review held releases and revisit saved reports.
         </Muted>
+
+        <SocialSignIn returnTo={returnTo} onError={(message) => (error.value = message)} />
 
         <form class="flex flex-col gap-4 mt-2" onSubmit={onSubmit}>
           <Field label="Email" for="login-email">

@@ -129,6 +129,19 @@ Optional integrations:
 - GitHub App: `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`,
   `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET`,
   and optional `GITHUB_APP_STATE_SECRET` (otherwise `BETTER_AUTH_SECRET` is used)
+- GitHub sign-in: `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET`.
+  When both are set, the login and register pages offer "Continue with GitHub"
+  (`GET /api/auth-config` reports availability). This is identity-only OAuth —
+  the grant shares the user's profile and verified email, requests no repo
+  scopes, and never installs the GitHub App; workflow-gate installation stays a
+  separate step. Any GitHub OAuth app works; the workflow-gate GitHub App's own
+  client id/secret can be reused if the app enables "Request user
+  authorization" with `<BETTER_AUTH_URL>/api/auth/callback/github` as a
+  callback URL. Accounts created this way arrive with a provider-verified
+  email, so they skip the email-verification wall. Note that GitHub sign-in is
+  authenticated by GitHub (including any 2FA on the GitHub account); Drydock's
+  own TOTP challenge applies to password sign-ins, and the TOTP step-up on
+  release decisions is unaffected by sign-in method.
 - Slack: `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`
 
 Do not commit `.dev.vars`, private keys, tokens, or generated credential

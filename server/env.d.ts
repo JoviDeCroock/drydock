@@ -31,6 +31,12 @@ declare global {
       SEND_EMAIL?: SendEmailBinding;
       EMAIL_FROM_ADDRESS?: string;
       EMAIL_FROM_NAME?: string;
+      // GitHub sign-in (Better Auth social provider). Identity-only OAuth —
+      // authorizing never installs anything on a repo or org. The GitHub App's
+      // own client id/secret may be reused here once the app's "Request user
+      // authorization" callback includes /api/auth/callback/github.
+      GITHUB_OAUTH_CLIENT_ID?: string;
+      GITHUB_OAUTH_CLIENT_SECRET?: string;
       GITHUB_APP_ID?: string;
       GITHUB_APP_SLUG?: string;
       GITHUB_APP_CLIENT_ID?: string;

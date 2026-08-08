@@ -88,6 +88,16 @@ function isLocalAuthUrl(url: string | undefined): boolean {
   }
 }
 
+/**
+ * GitHub sign-in is identity-only OAuth (profile + verified email) — it never
+ * installs the GitHub App and grants no repo access. Enabled by the operator
+ * via a dedicated credential pair so a deployment can run the workflow-gate
+ * App without offering social sign-in, or vice versa.
+ */
+export function isGithubSignInEnabled(env: Cloudflare.Env): boolean {
+  return Boolean(env.GITHUB_OAUTH_CLIENT_ID && env.GITHUB_OAUTH_CLIENT_SECRET);
+}
+
 export function createAuth(env: Cloudflare.Env) {
   if (!env.DB) throw new Error("DB binding is required for Better Auth");
   if (!env.BETTER_AUTH_SECRET) throw new Error("BETTER_AUTH_SECRET is required");
@@ -95,6 +105,7 @@ export function createAuth(env: Cloudflare.Env) {
   const db = createDb(env.DB);
   const trustedOrigins = env.BETTER_AUTH_URL ? [env.BETTER_AUTH_URL] : [];
   const emailVerificationEnabled = Boolean(env.SEND_EMAIL) && !isLocalAuthUrl(env.BETTER_AUTH_URL);
+  const githubSignIn = isGithubSignInEnabled(env);
   return betterAuth({
     appName: "Drydock",
     secret: env.BETTER_AUTH_SECRET,
@@ -124,20 +135,35 @@ export function createAuth(env: Cloudflare.Env) {
       maxPasswordLength: 256,
       ...(nativeScryptAvailable ? { password: nativeScryptPassword } : {}),
     },
+    ...(githubSignIn
+      ? {
+          socialProviders: {
+            github: {
+              clientId: env.GITHUB_OAUTH_CLIENT_ID as string,
+              clientSecret: env.GITHUB_OAUTH_CLIENT_SECRET as string,
+            },
+          },
+        }
+      : {}),
     databaseHooks: {
       user: {
         create: {
           // Top of the funnel. Fires once per account row, so it counts real
           // signups rather than sign-in attempts. Nothing identifying is
           // recorded — not the email, not the user id (see the privacy posture
-          // in lib/platform/analytics.ts). `emailVerificationEnabled` rides
-          // along as the outcome because an unverified account cannot reach a
-          // scan, and that is the first place the funnel leaks.
-          after: async () => {
+          // in lib/platform/analytics.ts). The outcome tracks whether the
+          // account can reach a scan immediately: an unverified password
+          // account cannot, and that is the first place the funnel leaks.
+          // Method is inferred rather than read from context: GitHub supplies
+          // a provider-verified email, so social accounts are the only ones
+          // created with emailVerified already true; password sign-ups always
+          // start unverified regardless of whether verification is enforced.
+          after: async (createdUser) => {
+            const social = Boolean((createdUser as { emailVerified?: boolean }).emailVerified);
             recordProductEvent(env, {
               name: "user.signed_up",
-              method: "email_password",
-              outcome: emailVerificationEnabled ? "verification_pending" : "active",
+              method: social ? "github" : "email_password",
+              outcome: social || !emailVerificationEnabled ? "active" : "verification_pending",
             });
           },
         },

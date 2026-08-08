@@ -114,7 +114,7 @@ low-volume one out of the dataset.
 | `ai_review.decided`        | both decision paths           | feedback by assessment and reviewer version |
 | `npm_connection.validated` | npm connection validation     | onboarding funnel                           |
 | `public_diff.viewed`       | `loadRequestedDiff`           | growth-loop traffic, cache hit rate         |
-| `user.signed_up`           | Better Auth user-create hook  | acquisition — the funnel's numerator        |
+| `user.signed_up`           | Better Auth user-create hook  | acquisition, by method (`email_password` / `github`) |
 | `organization.created`     | `POST /api/v1/organizations`  | teams, excluding lazy personal workspaces   |
 | `integration.connected`    | npm / GitHub / Slack connect  | activation, by integration kind             |
 | `workflow_gate.opened`     | `deployment_protection_rule`  | gate volume                                 |
