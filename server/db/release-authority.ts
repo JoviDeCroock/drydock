@@ -1,6 +1,6 @@
 import { and, desc, eq, isNotNull, ne } from "drizzle-orm";
 import { type AppDb } from "./client";
-import { releaseAuthoritySnapshots, scans } from "./schema";
+import { releaseAuthoritySnapshots } from "./schema";
 import type { AuthorityBaselineRef, ReleaseAuthorityDelta } from "../lib/release-authority/delta";
 import { normalizeReleaseAuthorityDelta } from "../lib/release-authority/normalize-delta";
 import { normalizeReleaseAuthoritySnapshot } from "../lib/release-authority/normalize";
@@ -96,25 +96,6 @@ export async function getReleaseAuthorityForGate(
     )
     .limit(1);
   return row ? readRow(row) : null;
-}
-
-/**
- * Resolve the authority record behind a scan. A monorepo gate fans out into
- * several package scans that all share one release authority, so every scan of
- * the gate resolves to the same record.
- */
-export async function getReleaseAuthorityForScan(
-  db: AppDb,
-  organizationId: string,
-  scanId: string,
-): Promise<ReleaseAuthorityRecord | null> {
-  const [scanRow] = await db
-    .select({ gateId: scans.gateId })
-    .from(scans)
-    .where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)))
-    .limit(1);
-  if (!scanRow?.gateId) return null;
-  return getReleaseAuthorityForGate(db, organizationId, scanRow.gateId);
 }
 
 export interface BaselineLookupInput {

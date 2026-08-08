@@ -215,25 +215,6 @@ export function computeReleaseAuthorityDelta(
   };
 }
 
-/** The neutral delta for a release with no snapshot at all (capture failed). */
-export function unavailableReleaseAuthorityDelta(): ReleaseAuthorityDelta {
-  return {
-    schema: RELEASE_AUTHORITY_DELTA_SCHEMA,
-    status: "no_baseline",
-    baseline: null,
-    changes: [],
-    changeCount: 0,
-    highestSignificance: "none",
-    standing: {
-      mutableRefs: [],
-      coverageComplete: false,
-      unresolved: [],
-      artifactsWithoutDigest: 0,
-    },
-    requiresApproval: false,
-  };
-}
-
 // ── Standing properties ──────────────────────────────────────────────────────
 
 function readStanding(snapshot: ReleaseAuthoritySnapshot): AuthorityStanding {
