@@ -197,11 +197,11 @@ describe("summary_json diff compaction", () => {
     const owner = await seedUser();
     const { db, scanId } = await seedCompactedScan(owner);
 
-    // GET /api/v1/scans/:id passes includeFileSamples: false, which takes the
+    // GET /api/v1/scans/:id passes files: "list", which takes the
     // metadata-only artifact path rather than the full one. The workbench renders
     // its diff from this response, so the complete diff has to arrive here too.
     const detail = await getScan(db, scanId, owner.organizationId, env.ARTIFACTS, {
-      includeFileSamples: false,
+      files: "list",
     });
     expect(detail!.diff).toEqual(fileDiff);
     expect(detail!.files.every((file) => file.textSample === null)).toBe(true);
