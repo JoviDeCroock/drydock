@@ -28,9 +28,13 @@ export async function coloCacheMatch(key: Request): Promise<Response | undefined
   }
 }
 
+// Both entry points take a nullable context and no-op without one. Everything
+// here is background work behind `waitUntil`, so a request with no execution
+// context should lose the cache write — never the request.
+
 /** Best-effort background write; a failure only costs a later read-through. */
-export function coloCachePut(ctx: ExecutionContext, key: Request, response: Response): void {
-  ctx.waitUntil(
+export function coloCachePut(ctx: ExecutionContext | null, key: Request, response: Response): void {
+  ctx?.waitUntil(
     coloCache()
       .put(key, response)
       .catch(() => {}),
@@ -38,8 +42,8 @@ export function coloCachePut(ctx: ExecutionContext, key: Request, response: Resp
 }
 
 /** Best-effort background delete. Colo-local — see the note above. */
-export function coloCacheDelete(ctx: ExecutionContext, key: Request): void {
-  ctx.waitUntil(
+export function coloCacheDelete(ctx: ExecutionContext | null, key: Request): void {
+  ctx?.waitUntil(
     coloCache()
       .delete(key)
       .catch(() => {}),

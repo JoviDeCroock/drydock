@@ -24,6 +24,7 @@ import {
   type PublicEcosystem,
 } from "../lib/public-feed";
 import { coloCacheMatch, coloCachePut } from "../lib/platform/colo-cache";
+import { optionalWorkerExecutionContext } from "../lib/platform/execution-context";
 import {
   buildAttestationStatement,
   loadAttestationKey,
@@ -116,7 +117,7 @@ publicReportsRoutes.use("*", async (c, next) => {
   await next();
   const skip = c.res?.headers.has(COLO_CACHE_SKIP_HEADER);
   if (c.res?.status === 200 && !skip && !c.res.headers.get("cache-control")?.includes("no-store")) {
-    coloCachePut(c.executionCtx, cacheKey, c.res.clone());
+    coloCachePut(optionalWorkerExecutionContext(c), cacheKey, c.res.clone());
   }
   // Mutate in place rather than rebuilding: Hono's `c.res` setter copies the
   // previous response's headers onto the replacement, so a delete-then-reassign
@@ -233,7 +234,9 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
   // name-queryable), the SQL pre-filter re-checked through scanEcosystem, and
   // registry-verified identity preferred over manifest claims.
   const rows = await listBadgeCandidateScans(db, packageName, ecosystem);
-  const match = pickBadgeScan(rows.filter((row) => scanEcosystem(row.summaryJson) === ecosystem));
+  const match = pickBadgeScan(
+    rows.filter((row) => scanEcosystem(row.source, row.summaryJson) === ecosystem),
+  );
   // Always 200: shields renders the payload either way, and "not reviewed"
   // must not read as an error to badge proxies.
   return c.json(buildBadgePayload(match), 200, {

@@ -34,7 +34,10 @@ import {
   writeCompareMetadataCache,
 } from "../lib/compare-cache";
 import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
-import { workerExecutionContext } from "../lib/platform/execution-context";
+import {
+  optionalWorkerExecutionContext,
+  workerExecutionContext,
+} from "../lib/platform/execution-context";
 import { purgePublicFeedCache } from "../lib/public-feed";
 import {
   enablePublicShare,
@@ -346,7 +349,11 @@ scansRoutes.post("/:id/share", async (c) => {
   if (!share) {
     const existing = await getScanStatus(db, c.req.param("id"), organizationId);
     if (!existing) return c.json({ error: "not found" }, 404);
-    if (unlisting) return c.json({ error: "the share link was just revoked" }, 409);
+    // Revoking nulls the token *and* its timestamp, so "revoked a moment ago"
+    // and "never shared" are the same persisted state — there is nothing to
+    // tell them apart with. Say the part that is true either way; the UI drops
+    // its stale share state on 409 regardless.
+    if (unlisting) return c.json({ error: "this report is not shared publicly" }, 409);
     return c.json({ error: "only completed scans can be shared publicly" }, 409);
   }
   // Threat-feed listing is a second opt-in layered on the link: only flip it
@@ -368,7 +375,11 @@ scansRoutes.post("/:id/share", async (c) => {
       // least this region. canonicalOrigin, not the request origin: the badge
       // writes its entry under the same value, and this request arrives at the
       // dashboard, which may be a different hostname than the one embedders hit.
-      purgePublicFeedCache(c.executionCtx, canonicalOrigin(c), updated.publicPackageKey ?? null);
+      purgePublicFeedCache(
+        optionalWorkerExecutionContext(c),
+        canonicalOrigin(c),
+        updated.publicPackageKey ?? null,
+      );
       share = updated;
     }
   }
@@ -390,7 +401,7 @@ scansRoutes.delete("/:id/share", async (c) => {
     const existing = await getScanStatus(db, c.req.param("id"), organizationId);
     if (!existing) return c.json({ error: "not found" }, 404);
   } else {
-    purgePublicFeedCache(c.executionCtx, canonicalOrigin(c), publicPackageKey);
+    purgePublicFeedCache(optionalWorkerExecutionContext(c), canonicalOrigin(c), publicPackageKey);
   }
   return c.json({ revoked });
 });

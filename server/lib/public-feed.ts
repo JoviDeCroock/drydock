@@ -90,7 +90,7 @@ export function publicFeedCacheKey(origin: string, routePath: string): Request {
  * eventually consistent by construction, which is why their TTLs are short.
  */
 export function purgePublicFeedCache(
-  executionCtx: ExecutionContext,
+  executionCtx: ExecutionContext | null,
   origin: string,
   publicPackageKey: string | null,
 ): void {
@@ -98,12 +98,7 @@ export function purgePublicFeedCache(
   if (publicPackageKey) coloCacheDelete(executionCtx, badgeCacheKey(origin, publicPackageKey));
 }
 
-/**
- * The reviewed ecosystem lives in the persisted adapter snapshot
- * (`summaryJson.stagedPublish.provenance.ecosystem`) for workflow-gate scans;
- * staged-publish scans are npm by construction.
- */
-export function scanEcosystem(summaryJson: unknown): PublicEcosystem {
+function provenanceEcosystem(summaryJson: unknown): PublicEcosystem | null {
   if (summaryJson && typeof summaryJson === "object" && !Array.isArray(summaryJson)) {
     const stagedPublish = (summaryJson as { stagedPublish?: unknown }).stagedPublish;
     if (stagedPublish && typeof stagedPublish === "object" && !Array.isArray(stagedPublish)) {
@@ -116,7 +111,26 @@ export function scanEcosystem(summaryJson: unknown): PublicEcosystem {
       }
     }
   }
-  return "npm";
+  return null;
+}
+
+/**
+ * The reviewed ecosystem, or null when it cannot be established.
+ *
+ * It lives in the persisted adapter snapshot
+ * (`summaryJson.stagedPublish.provenance.ecosystem`) for workflow-gate scans.
+ * Staged-publish scans carry no snapshot and are npm by construction — only npm
+ * has a staged adapter.
+ *
+ * A gate scan whose snapshot is missing or malformed (a legacy pre-provenance
+ * record, or a redaction that failed) resolves to null rather than falling back
+ * to npm. Defaulting is what turns "we don't know" into a claim: a PyPI or VS
+ * Code release would take the npm badge for its own name, in the one ecosystem
+ * where a real registry-verified review exists to be displaced. Null means the
+ * scan can still be feed-listed — it just isn't badge-discoverable.
+ */
+export function scanEcosystem(source: string, summaryJson: unknown): PublicEcosystem | null {
+  return provenanceEcosystem(summaryJson) ?? (source === "workflow_gate" ? null : "npm");
 }
 
 // How trustworthy the package-name claim is. Staged-publish scans fetched the
@@ -162,7 +176,9 @@ export interface ThreatFeedEntry {
   package: string | null;
   version: string | null;
   previousVersion: string | null;
-  ecosystem: PublicEcosystem;
+  // Null when a gate scan's provenance snapshot never established one — the
+  // feed says "unknown" rather than guessing on a partner's behalf.
+  ecosystem: PublicEcosystem | null;
   packageIdentity: PackageIdentity;
   releaseRisk: string;
   artifactRisk: string;
@@ -178,7 +194,7 @@ export function buildThreatFeedEntry(row: SharedScanRow, origin: string): Threat
     package: row.packageName,
     version: row.stagedVersion,
     previousVersion: row.previousVersion,
-    ecosystem: scanEcosystem(row.summaryJson),
+    ecosystem: scanEcosystem(row.source, row.summaryJson),
     packageIdentity: scanPackageIdentity(row.source),
     releaseRisk: sharedScanReleaseRisk(row),
     artifactRisk: row.risk,

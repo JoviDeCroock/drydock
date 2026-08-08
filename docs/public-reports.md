@@ -127,9 +127,11 @@ re-sharing later starts unlisted. Listing changes are audited
 (`scan.feed_listed`, `scan.feed_unlisted`).
 
 `{ "threatFeed": false }` is a _withdrawal_ and never creates a share link. On
-a scan whose link was revoked in the meantime it returns `409` (the dialog
-drops its stale share state and falls back to "create link") rather than
-quietly minting a fresh token and republishing the report.
+a scan that is not currently shared it returns `409` (the dialog drops its
+stale share state and falls back to "create link") rather than quietly minting
+a fresh token and republishing the report. Revoking nulls the share token and
+its timestamp together, so "revoked a moment ago" and "never shared" are the
+same persisted state and the 409 does not claim to tell them apart.
 
 ### Package identity
 
@@ -143,6 +145,14 @@ Each feed entry carries `packageIdentity`:
   Consumers should weigh these accordingly. (Known limitation: post-publish
   digest verification against the registry would upgrade gate claims; not
   built yet.)
+
+`ecosystem` is `null` when a gate scan's provenance snapshot never established
+one — a legacy pre-provenance record, or a redaction that failed. Such a scan
+can still be feed-listed, but it is not badge-discoverable under any ecosystem:
+defaulting an unknown to npm would let a PyPI or VS Code release take the npm
+badge for its own name, in the one ecosystem where a registry-verified review
+exists to be displaced. Partners should treat a null `ecosystem` as unknown
+rather than assuming npm.
 
 ### Caching
 

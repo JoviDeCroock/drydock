@@ -166,7 +166,8 @@ export async function revokePublicShare(
       packageName: scans.packageName,
       stagedVersion: scans.stagedVersion,
       // `public_package_key` is nulled by this same UPDATE, so the key that
-      // just went stale is recomputed from the (untouched) package name.
+      // just went stale is recomputed from the (untouched) source + snapshot.
+      source: scans.source,
       summaryJson: scans.summaryJson,
     });
   if (updated.length === 0) return { revoked: false, publicPackageKey: null };
@@ -180,10 +181,24 @@ export async function revokePublicShare(
   });
   return {
     revoked: true,
-    publicPackageKey: updated[0].packageName
-      ? publicPackageLookupKey(scanEcosystem(updated[0].summaryJson), updated[0].packageName)
-      : null,
+    publicPackageKey: badgeLookupKey(updated[0]),
   };
+}
+
+/**
+ * The badge cache key a row occupies, or null when it can never occupy one —
+ * no package name, or a gate scan whose provenance never established an
+ * ecosystem. Same rule as the key written on listing, so a purge always
+ * addresses the entry the write created.
+ */
+function badgeLookupKey(row: {
+  source: string;
+  packageName: string | null;
+  summaryJson: unknown;
+}): string | null {
+  if (!row.packageName) return null;
+  const ecosystem = scanEcosystem(row.source, row.summaryJson);
+  return ecosystem ? publicPackageLookupKey(ecosystem, row.packageName) : null;
 }
 
 /**
@@ -204,15 +219,19 @@ export async function setThreatFeedListing(
     isNotNull(scans.publicShareToken),
   );
   const [candidate] = await db
-    .select({ packageName: scans.packageName, summaryJson: scans.summaryJson })
+    .select({
+      source: scans.source,
+      packageName: scans.packageName,
+      summaryJson: scans.summaryJson,
+    })
     .from(scans)
     .where(scoped)
     .limit(1);
   if (!candidate) return null;
-  const publicPackageKey =
-    input.listed && candidate.packageName
-      ? publicPackageLookupKey(scanEcosystem(candidate.summaryJson), candidate.packageName)
-      : null;
+  // Null here means "listed in the feed but not badge-discoverable" — the scan
+  // has no name, or is a gate scan whose ecosystem was never established.
+  const badgeKey = badgeLookupKey(candidate);
+  const publicPackageKey = input.listed ? badgeKey : null;
   const updated = await db
     .update(scans)
     .set({
@@ -239,11 +258,9 @@ export async function setThreatFeedListing(
     metadata: { packageName: row.packageName, stagedVersion: row.stagedVersion },
   });
   return {
-    publicPackageKey:
-      publicPackageKey ??
-      (row.packageName
-        ? publicPackageLookupKey(scanEcosystem(candidate.summaryJson), row.packageName)
-        : null),
+    // Always the key, listing or unlisting: an *un*listing is exactly when the
+    // cached badge body goes stale, so the caller needs the entry to purge.
+    publicPackageKey: badgeKey,
     publicShareToken: row.publicShareToken,
     publicSharedAt: row.publicSharedAt,
     publicFeedListedAt: row.publicFeedListedAt,

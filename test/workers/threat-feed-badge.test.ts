@@ -72,6 +72,9 @@ async function seedCompletedScan(
     releaseRisk?: string;
     ecosystem?: "npm" | "pypi" | "vscode";
     source?: "manual" | "workflow_gate";
+    // A gate scan with no provenance snapshot at all: a legacy pre-provenance
+    // record, or one whose redaction failed. Its ecosystem is unknowable.
+    withoutProvenance?: boolean;
   } = {},
 ): Promise<string> {
   const db = createDb(env.DB);
@@ -81,8 +84,9 @@ async function seedCompletedScan(
   const version = options.version ?? "1.1.0";
   const risk = options.risk ?? "low";
   // Gate scans persist a provenance snapshot; staged-publish scans do not.
-  const gateEcosystem =
-    options.ecosystem && options.ecosystem !== "npm"
+  const gateEcosystem = options.withoutProvenance
+    ? null
+    : options.ecosystem && options.ecosystem !== "npm"
       ? options.ecosystem
       : options.source === "workflow_gate"
         ? "npm"
@@ -158,7 +162,7 @@ interface FeedBody {
   entries: Array<{
     package: string | null;
     version: string | null;
-    ecosystem: string;
+    ecosystem: string | null;
     packageIdentity: string;
     releaseRisk: string;
     decision: string | null;
@@ -441,6 +445,32 @@ describe("shields badge endpoint", () => {
 
     expect((await fetchBadge(app, "pypi", packageName)).body.message).toContain("reviewed");
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+  });
+
+  test("a gate scan with no provenance snapshot claims no ecosystem's badge", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `demo-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      source: "workflow_gate",
+      withoutProvenance: true,
+    });
+    await share(app, scanId, { threatFeed: true });
+
+    // Defaulting an unknowable ecosystem to npm would hand a PyPI or VS Code
+    // release the npm badge for its own name — the one ecosystem where a real
+    // registry-verified review exists to be displaced.
+    for (const ecosystem of ["npm", "pypi", "vscode"] as const) {
+      expect((await fetchBadge(app, ecosystem, packageName)).body.message).toBe("not reviewed");
+    }
+
+    // Listing still works; it is only the name-keyed badge that abstains, and
+    // the feed reports the unknown rather than inventing a value.
+    const feed = await fetchFeed(app);
+    const entry = feed.entries.find((item) => item.package === packageName);
+    expect(entry).toBeDefined();
+    expect(entry?.ecosystem).toBeNull();
   });
 
   test("canonical ecosystem aliases resolve to the same public badge", async () => {
