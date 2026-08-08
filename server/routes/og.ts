@@ -41,8 +41,8 @@ export const ogRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 
 // Per-IP cold renders per minute. Generous: unfurl crawlers fetch each card
 // once, so only a scripted caller reaches this.
-export const OG_CARD_RATE_LIMIT = 60;
-export const OG_CARD_RATE_WINDOW_MS = 60 * 1000;
+const OG_CARD_RATE_LIMIT = 60;
+const OG_CARD_RATE_WINDOW_MS = 60 * 1000;
 
 type OgContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 
