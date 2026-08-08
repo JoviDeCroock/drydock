@@ -211,7 +211,11 @@ export default function LoginPage() {
           Sign in to review held releases and revisit saved reports.
         </Muted>
 
-        <SocialSignIn returnTo={returnTo} onError={(message) => (error.value = message)} />
+        <SocialSignIn
+          returnTo={returnTo}
+          errorPath="/login"
+          onError={(message) => (error.value = message)}
+        />
 
         <form class="flex flex-col gap-4 mt-2" onSubmit={onSubmit}>
           <Field label="Email" for="login-email">

@@ -134,14 +134,21 @@ Optional integrations:
   (`GET /api/auth-config` reports availability). This is identity-only OAuth —
   the grant shares the user's profile and verified email, requests no repo
   scopes, and never installs the GitHub App; workflow-gate installation stays a
-  separate step. Any GitHub OAuth app works; the workflow-gate GitHub App's own
-  client id/secret can be reused if the app enables "Request user
+  separate step. Any GitHub OAuth app works. The workflow-gate GitHub App's own
+  client id/secret can be reused only if the app both enables "Request user
   authorization" with `<BETTER_AUTH_URL>/api/auth/callback/github` as a
-  callback URL. Accounts created this way arrive with a provider-verified
-  email, so they skip the email-verification wall. Note that GitHub sign-in is
-  authenticated by GitHub (including any 2FA on the GitHub account); Drydock's
-  own TOTP challenge applies to password sign-ins, and the TOTP step-up on
-  release decisions is unaffected by sign-in method.
+  callback URL **and** grants the "Email addresses" (read-only) account
+  permission — GitHub Apps ignore OAuth scope parameters, and without that
+  permission the email lookup fails, so sign-ins with a private email are
+  rejected and the rest arrive unverified. Social sign-ins are never asked for
+  email verification (the wall applies to the email sign-in route only), and a
+  provider-verified email also satisfies the verified-email checks elsewhere
+  (e.g. accepting an invitation). Implicit account linking is disabled: a
+  GitHub sign-in whose email already belongs to a password account fails back
+  to the login page instead of attaching to that account, because the Drydock
+  TOTP challenge guards only password sign-ins and linking by email match
+  would let an inbox takeover skip it. The TOTP step-up on release decisions
+  is unaffected by sign-in method.
 - Slack: `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`
 
 Do not commit `.dev.vars`, private keys, tokens, or generated credential

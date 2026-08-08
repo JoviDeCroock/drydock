@@ -15,9 +15,12 @@ import { Muted } from "../../components/Typography";
  */
 export function SocialSignIn({
   returnTo,
+  errorPath,
   onError,
 }: {
   returnTo: string;
+  /** The page that starts the flow, so a failed redirect lands back on it. */
+  errorPath: "/login" | "/register";
   onError: (message: string) => void;
 }) {
   const starting = useSignal(false);
@@ -29,7 +32,7 @@ export function SocialSignIn({
   const onGitHub = async () => {
     starting.value = true;
     try {
-      await sessionModel.signInWithGitHub(returnTo);
+      await sessionModel.signInWithGitHub(returnTo, errorPath);
       // The browser is navigating to GitHub; leave the button disabled.
     } catch (err) {
       starting.value = false;
