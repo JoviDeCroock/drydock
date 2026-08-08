@@ -1,6 +1,5 @@
 import { Hono, type Context } from "hono";
 import { createDb } from "../db/client";
-import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
 import {
   encodeThreatFeedCursor,
   listBadgeCandidateScans,
@@ -36,6 +35,7 @@ import {
   signAttestation,
 } from "../lib/attestation";
 import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
+import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import {
   buildReportExport,
@@ -142,7 +142,7 @@ publicReportsRoutes.use("*", async (c, next) => {
   const isBadgeRequest = routePath.startsWith("/badge/");
   const rate = isBadgeRequest ? PUBLIC_BADGE_READ_RATE : PUBLIC_READ_RATE;
   try {
-    await enforceRateLimit(createDb(c.env.DB), {
+    await enforceRateLimit(c.env, {
       key: `${rate.bucket}:${ip}`,
       limit: rate.limit,
       windowMs: rate.windowMs,
