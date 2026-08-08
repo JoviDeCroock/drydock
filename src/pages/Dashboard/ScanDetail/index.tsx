@@ -282,6 +282,7 @@ export default function ScanDetailPage() {
           detail?.scan.status === "failed" ? () => (deleteDialogOpen.value = true) : undefined
         }
         onShareClick={onShareClick}
+        shareSignal={model.share}
       />
 
       {error ? <Alert tone="critical">{error}</Alert> : null}
