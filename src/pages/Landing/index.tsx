@@ -148,7 +148,7 @@ export default function LandingPage() {
         <SectionLabel as="h2">Safeguards</SectionLabel>
         <StatusStrip>
           <StatusStripItem label="credentials" status="scoped" tone="ok">
-            A workflow gate hands Drydock no token at all; npm staging needs only a read-scoped one.
+            A workflow gate requires no registry token; npm staging needs only a read-scoped one.
             Publish credentials stay in GitHub Actions or npm, never in Drydock.
           </StatusStripItem>
           <StatusStripItem label="retention" status="redacted" tone="ok">
