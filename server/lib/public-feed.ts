@@ -183,7 +183,16 @@ export interface ThreatFeedEntry {
   releaseRisk: string;
   artifactRisk: string;
   decision: string | null;
-  findingCount: number;
+  /**
+   * Deterministic *and* advisory AI findings — the scan's persisted total, not
+   * `report.findings.length`. The report export routes AI findings through
+   * `aiReview.findings` and keeps `findings[]` deterministic-only, so the two
+   * numbers legitimately differ. Named for what it counts so a partner walking
+   * feed → report doesn't read the difference as a discrepancy. The per-entry
+   * deterministic count is not carried here: deriving it means reading each
+   * scan's report artifact, and this is a 100-entry page.
+   */
+  totalFindingCount: number;
   completedAt: string | null;
   listedAt: string | null;
   reportUrl: string;
@@ -199,7 +208,7 @@ export function buildThreatFeedEntry(row: SharedScanRow, origin: string): Threat
     releaseRisk: sharedScanReleaseRisk(row),
     artifactRisk: row.risk,
     decision: row.decision,
-    findingCount: row.findingCount ?? 0,
+    totalFindingCount: row.findingCount ?? 0,
     completedAt: row.completedAt ? row.completedAt.toISOString() : null,
     listedAt: row.publicFeedListedAt ? row.publicFeedListedAt.toISOString() : null,
     reportUrl: `${origin}/reports/${row.publicShareToken}`,

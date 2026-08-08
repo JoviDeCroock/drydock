@@ -104,8 +104,15 @@ Embed via
 `drydock.threat-feed.v1`, 100 entries per page, newest listings first) meant
 for security partners — Aikido and other ecosystem-intel consumers can poll it.
 Each entry carries package identity, ecosystem, release/artifact risk,
-decision, finding count, timestamps, and a `reportUrl` to the full public
+decision, `totalFindingCount`, timestamps, and a `reportUrl` to the full public
 report.
+
+`totalFindingCount` counts deterministic _and_ advisory AI findings. It is
+deliberately not `report.findings.length`: the export routes AI findings
+through `aiReview.findings` and keeps `findings[]` deterministic-only, so the
+two numbers differ by design and the field is named for what it counts. (The
+attestation's `predicate.findingCount` is the other one — it is read off the
+attested document, so it always equals that document's `findings.length`.)
 
 **Page one is not the whole feed.** The response carries `nextCursor` whenever
 more listings exist behind it; pass it back as `?after=<cursor>` to continue.
