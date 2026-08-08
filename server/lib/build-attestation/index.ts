@@ -10,17 +10,8 @@
  * `verified` verdict does and does not establish.
  */
 
-export { evaluateBuildAttestation, type AttestationLookup } from "./verdict";
+export { evaluateBuildAttestation } from "./verdict";
 export { normalizeBuildAttestation } from "./normalize";
 export { parseInTotoStatement } from "./statement";
 export { parseSigstoreBundle, verifyDsseSignature, dssePae, derEcdsaSignatureToRaw } from "./dsse";
-export type {
-  AttestationBinding,
-  BuildAttestation,
-  BuildAttestationCheck,
-  BuildAttestationCheckKind,
-  BuildAttestationCheckResult,
-  BuildAttestationStatus,
-  BuildAttestationTrustCeiling,
-  BuildClaim,
-} from "./types";
+export type { BuildAttestation, BuildAttestationStatus } from "./types";

@@ -44,7 +44,7 @@ function concat(...parts: Uint8Array[]): Uint8Array {
  * signature, issuer, validity and subject to reach it. The skipped fields are
  * placeholders — the parser never reads their contents.
  */
-export function certificateWrapping(spki: Uint8Array): Uint8Array {
+function certificateWrapping(spki: Uint8Array): Uint8Array {
   const placeholder = der(0x30, new Uint8Array(0));
   const tbs = der(
     0x30,
@@ -62,7 +62,7 @@ export function certificateWrapping(spki: Uint8Array): Uint8Array {
 }
 
 /** WebCrypto emits raw r||s; Sigstore carries DER. Re-encode for the fixture. */
-export function rawEcdsaSignatureToDer(raw: Uint8Array): Uint8Array {
+function rawEcdsaSignatureToDer(raw: Uint8Array): Uint8Array {
   const half = raw.length / 2;
   const encodeInteger = (value: Uint8Array) => {
     let start = 0;

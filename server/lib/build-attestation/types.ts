@@ -115,7 +115,7 @@ export interface BuildAttestation {
  * signature alone proves only that the bundle is internally consistent. The
  * load-bearing trust comes from the binding cross-checks, not the PKI.
  */
-export type BuildAttestationTrustCeiling = "self-consistent" | "none";
+type BuildAttestationTrustCeiling = "self-consistent" | "none";
 
 /**
  * Facts Drydock holds independently of the attestation, used as the comparison

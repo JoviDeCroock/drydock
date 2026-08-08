@@ -300,7 +300,7 @@ const OID_CURVES: Record<string, SubjectPublicKeyInfo["algorithm"]> = {
  * signature, issuer, validity, subject, subjectPublicKeyInfo, … — so the SPKI
  * is the seventh element once the optional version tag is accounted for.
  */
-export function extractSubjectPublicKeyInfo(certificate: Uint8Array): SubjectPublicKeyInfo | null {
+function extractSubjectPublicKeyInfo(certificate: Uint8Array): SubjectPublicKeyInfo | null {
   const root = readDerNode(certificate, 0);
   if (!root || root.tag !== DER_SEQUENCE) return null;
   const certChildren = readDerChildren(certificate, root, 0);
