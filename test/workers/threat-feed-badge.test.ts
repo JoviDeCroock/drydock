@@ -537,8 +537,13 @@ describe("shields badge endpoint", () => {
     const headers = { "cf-connecting-ip": ip };
     let throttled: BadgeBody | null = null;
     // Distinct package names so every request misses the colo cache and pays
-    // the D1 lookup the limiter protects.
-    for (let i = 0; i < 125; i += 1) {
+    // the D1 lookup the limiter protects. The limiter counts inside fixed
+    // wall-clock windows (floor(now / windowMs), see server/db/rate-limit.ts),
+    // so a run that starts near the end of a minute straddles the boundary and
+    // loses its progress — under CI load, 125 consecutive requests are not
+    // guaranteed to land in one window. The cap leaves room to fill a fresh
+    // window (> 2 × the 120 limit) after a straddle wastes the first.
+    for (let i = 0; i < 400; i += 1) {
       const res = await request(app, `/public/badge/npm/miss-${i}`, { headers });
       expect(res.status).toBe(200);
       if (res.headers.has("retry-after")) {
