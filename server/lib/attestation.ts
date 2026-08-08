@@ -9,8 +9,8 @@ import { base64Encode, base64UrlEncode } from "./platform/crypto-utils";
 // (https://github.com/secure-systems-lab/dsse) around an in-toto v1 Statement,
 // the format sigstore/SLSA tooling already understands.
 
-export const ATTESTATION_PAYLOAD_TYPE = "application/vnd.in-toto+json";
-export const ATTESTATION_PREDICATE_TYPE = "https://drydock.org/attestation/scan-report/v1";
+const ATTESTATION_PAYLOAD_TYPE = "application/vnd.in-toto+json";
+const ATTESTATION_PREDICATE_TYPE = "https://drydock.org/attestation/scan-report/v1";
 const ATTESTATION_KEY_ALGORITHM = "Ed25519";
 
 export interface AttestationSubject {
@@ -85,12 +85,12 @@ export async function loadAttestationKey(env: {
   }
 }
 
-export function publicJwkFromPrivate(jwk: JsonWebKey): JsonWebKey {
+function publicJwkFromPrivate(jwk: JsonWebKey): JsonWebKey {
   return { kty: jwk.kty, crv: jwk.crv, x: jwk.x };
 }
 
 /** RFC 7638 JWK thumbprint (OKP members, lexicographic order), base64url. */
-export async function jwkThumbprint(publicJwk: JsonWebKey): Promise<string> {
+async function jwkThumbprint(publicJwk: JsonWebKey): Promise<string> {
   const canonical = JSON.stringify({ crv: publicJwk.crv, kty: publicJwk.kty, x: publicJwk.x });
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
   return base64UrlEncode(new Uint8Array(digest));
@@ -113,7 +113,7 @@ export function buildAttestationStatement(
  * body with length framing, so an envelope's payload cannot be reinterpreted
  * under a different type.
  */
-export function preAuthenticationEncoding(
+function preAuthenticationEncoding(
   payloadType: string,
   payload: Uint8Array,
 ): Uint8Array<ArrayBuffer> {

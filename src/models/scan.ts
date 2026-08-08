@@ -205,17 +205,17 @@ export interface PublicShareInfo {
   sharedAt: string | number | Date;
 }
 
-export function enableScanShare(id: string): Promise<{ share: PublicShareInfo }> {
+function enableScanShare(id: string): Promise<{ share: PublicShareInfo }> {
   return apiJson<{ share: PublicShareInfo }>(`/api/v1/scans/${encodeURIComponent(id)}/share`, {});
 }
 
-export function revokeScanShare(id: string): Promise<{ revoked: boolean }> {
+function revokeScanShare(id: string): Promise<{ revoked: boolean }> {
   return apiFetch<{ revoked: boolean }>(`/api/v1/scans/${encodeURIComponent(id)}/share`, {
     method: "DELETE",
   });
 }
 
-export function publicReportUrl(token: string): string {
+function publicReportUrl(token: string): string {
   return `${location.origin}/reports/${token}`;
 }
 

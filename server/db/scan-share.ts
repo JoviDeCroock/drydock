@@ -7,7 +7,7 @@ import { scans } from "./schema";
 // 256 bits of entropy, base64url (43 chars). The token is the whole capability
 // for the public report route, so it must be unguessable; lookups go through
 // the unique index, not string comparison in application code.
-export function generatePublicShareToken(): string {
+function generatePublicShareToken(): string {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
   return base64UrlEncode(bytes);
