@@ -25,7 +25,7 @@ interface AiFinding {
  * counts toward `finding_count`. Anything that should move the verdict has to be
  * a finding or the summary.
  */
-export interface AiReviewComment {
+interface AiReviewComment {
   file: string;
   note: string;
   line?: number | null;
