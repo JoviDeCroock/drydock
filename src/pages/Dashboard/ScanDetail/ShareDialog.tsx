@@ -114,7 +114,12 @@ export function ShareDialog({
             />
             <span>
               List publicly — the report appears in the discoverable{" "}
-              <a href="/public/threat-feed.json" class="text-ink-muted underline hover:text-ink">
+              <a
+                href="/public/threat-feed.json"
+                target="_blank"
+                rel="noreferrer"
+                class="text-ink-muted underline hover:text-ink"
+              >
                 threat-feed.json
               </a>{" "}
               index that security partners consume and powers the package&apos;s status badge, not

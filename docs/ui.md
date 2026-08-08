@@ -11,6 +11,11 @@ This file is only a compact implementation map.
 - Tailwind CSS v4 via `@tailwindcss/vite`.
 - Tokens live in `src/style.css` under `@theme`; dark mode follows `prefers-color-scheme`.
 - State uses `@preact/signals`; `useState`/`useReducer` are banned by oxlint.
+- Links to Worker routes (`/public/*`, `/api/*`) need `target="_blank"` (plus
+  `rel="noreferrer"`) or `download`. `preact-iso` intercepts same-origin anchor
+  clicks, and those paths have no `<Route>`, so a plain anchor renders the SPA
+  404 instead of reaching the server. `test/server-route-links.test.ts` guards
+  the literal-href case.
 
 ## Primitives
 
