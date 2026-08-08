@@ -501,6 +501,12 @@ export function createAuth(env: Cloudflare.Env) {
         }
       : {}),
     account: {
+      // A social sign-in leaves the provider's access (and refresh) token in
+      // `account`. Better Auth stores those in plain text by default, which
+      // would put usable GitHub credentials in every D1 dump and backup —
+      // encrypt them at rest instead. Drydock never reads them back: the
+      // grant is identity-only and the token is dead weight after callback.
+      encryptOAuthTokens: true,
       accountLinking: {
         // Never link a social sign-in to an existing password account by email
         // match. Better Auth's implicit linking would sign the caller straight

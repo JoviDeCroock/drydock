@@ -44,7 +44,9 @@ GitHub itself, including any 2FA on the GitHub account; the release-decision
 TOTP step-up below applies regardless of how the session was created. To keep
 this split safe, implicit account linking is disabled: a social sign-in can
 never attach to an existing password account by email match, so it cannot be
-used to skip an enrolled TOTP challenge.
+used to skip an enrolled TOTP challenge. A GitHub-only account cannot enrol in
+Drydock two-factor at all — see [Management](#management) for why, and for what
+that costs an organization that mandates it.
 
 Only after the second factor succeeds is a full session cookie set. The client model logic lives
 in `src/models/auth.ts` (`signIn` returns `{ twoFactorRequired }`; `completeTwoFactorSignIn`)
@@ -55,6 +57,25 @@ and `src/models/two-factor.ts`.
 Enrolled users can regenerate backup codes
 (`POST /api/auth/two-factor/generate-backup-codes`, password-gated) or disable 2FA
 (`POST /api/auth/two-factor/disable`, password-gated) from Account settings.
+
+**A GitHub-only account cannot enrol.** Every two-factor endpoint reauthenticates
+with a password, and Better Auth validates that against the user's `credential`
+account row — which an account created by GitHub sign-in does not have, so
+`enable` fails with `INVALID_PASSWORD` and there is nothing the user can correct.
+Drydock also wires no password-reset email (`emailAndPassword.sendResetPassword`
+is unset), so `forget-password` — the one Better Auth path that would mint a
+missing `credential` row — is not reachable either. `TwoFactorSection` therefore
+asks `GET /api/auth/list-accounts` on mount and, when no `credential` row exists,
+replaces the enrol button with an explanation instead of dead-ending on an
+uncorrectable password error.
+
+The consequence for the org policy below is real and currently unresolved: a
+member who signed up with GitHub is permanently blocked from release decisions in
+an organization that requires two-factor for them, and a GitHub-signup owner can
+never turn that policy on (enabling it requires the owner's own enrollment).
+Offering GitHub sign-in on a deployment that uses the policy needs a way to add a
+password to a social account first — a "set a password" flow, or password-reset
+email wiring. Until then, treat the two as mutually exclusive.
 
 ### Step-up: deciding a workflow gate (issue #162)
 

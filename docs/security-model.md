@@ -147,6 +147,8 @@ The `/og/diff/**/card.png` share cards are part of the same anonymous surface an
 
 Document requests for the public surfaces (landing, docs, `/diff`) are not instrumented at all. There is no referrer classification, no campaign parameter handling, and no page-view event — the only analytics a visit can produce is the `public_diff.viewed` counter written when a diff is actually computed, which carries the package name and nothing about the visitor. See [`product-analytics.md`](./product-analytics.md).
 
+`GET /api/auth-config` is anonymous for a narrower reason: the login and register pages must know which sign-in methods the deployment offers before any session can exist. It returns one boolean — whether the operator configured the GitHub sign-in credential pair — derived from environment configuration alone. It reads no bindings, touches neither D1 nor KV, reflects nothing about the caller, and cannot be made to do work, so it carries no rate limit of its own. Sign-in itself stays behind the existing per-IP `sign-in` bucket.
+
 Three further anonymous endpoints exist, all under `/public`, all serving only data an organization owner/admin explicitly opted into publishing:
 
 - `GET /public/reports/:token` and `GET /public/reports/:token/attestation` — capability URLs. The unguessable 256-bit share token _is_ the authorization; unknown, malformed, and revoked tokens are indistinguishable 404s. They serve the canonical report export (never file samples, events, or org/user identifiers), attach no credentials, persist nothing, are `no-store` so revocation is immediate, and are per-IP rate limited. `GET /public/attestation-key` returns public key material only.

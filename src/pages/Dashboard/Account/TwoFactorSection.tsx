@@ -1,5 +1,6 @@
+import { useEffect } from "preact/hooks";
 import { useModel, useSignal } from "@preact/signals";
-import { sessionModel } from "../../../models/auth";
+import { sessionModel, signInMethodsModel } from "../../../models/auth";
 import { TwoFactorModel } from "../../../models/two-factor";
 import { Alert } from "../../../components/Alert";
 import { Badge } from "../../../components/Badge";
@@ -47,6 +48,14 @@ export function TwoFactorSection() {
   const busy = tf.busy.value;
   const error = tf.error.value;
   const codes = tf.backupCodes.value;
+  // Every two-factor endpoint reauthenticates with a password, so an account
+  // that only signs in through GitHub cannot enrol here at all — offering the
+  // button would dead-end on "invalid password" with nothing to correct.
+  const hasPassword = signInMethodsModel.hasPassword.value;
+
+  useEffect(() => {
+    void signInMethodsModel.load();
+  }, []);
 
   const close = () => {
     dialog.value = "none";
@@ -262,10 +271,17 @@ export function TwoFactorSection() {
             Disable two-factor
           </Button>
         </div>
-      ) : (
+      ) : hasPassword ? (
         <div>
           <Button onClick={() => open("enroll")}>Enable two-factor</Button>
         </div>
+      ) : (
+        <Alert tone="info">
+          This account signs in with GitHub, so there is no Drydock password to confirm and
+          two-factor can't be enabled here — the sign-in is protected by whatever 2FA the GitHub
+          account carries. An organization that requires Drydock two-factor for release decisions
+          cannot be satisfied by a GitHub-only account.
+        </Alert>
       )}
 
       <Dialog

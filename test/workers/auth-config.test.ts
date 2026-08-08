@@ -1,6 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 import worker from "../../server";
+import { createAuth } from "../../server/lib/auth";
 
 const ORIGIN = "http://example.com";
 
@@ -58,6 +59,26 @@ describe("auth config", () => {
     expect(url.searchParams.get("scope")).toBe("read:user user:email");
     // The callback operators must whitelist on the OAuth app.
     expect(url.searchParams.get("redirect_uri")).toBe(`${ORIGIN}/api/auth/callback/github`);
+  });
+
+  test("social sign-in stores provider tokens encrypted and never links implicitly", async () => {
+    const options = (
+      createAuth(githubEnv as unknown as Cloudflare.Env) as unknown as {
+        options: {
+          account?: {
+            encryptOAuthTokens?: boolean;
+            accountLinking?: { disableImplicitLinking?: boolean };
+          };
+        };
+      }
+    ).options;
+
+    // A GitHub access/refresh token would otherwise sit in plain text in every
+    // D1 dump and backup.
+    expect(options.account?.encryptOAuthTokens).toBe(true);
+    // Implicit linking would sign a caller into an existing password account on
+    // the OAuth callback, skipping the TOTP challenge that guards /sign-in/email.
+    expect(options.account?.accountLinking?.disableImplicitLinking).toBe(true);
   });
 
   test("POST /api/auth/sign-in/social is rejected when no provider is configured", async () => {

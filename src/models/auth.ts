@@ -185,6 +185,44 @@ const AuthConfigModel = createModel(() => {
 
 export const authConfigModel = new AuthConfigModel();
 
+// How *this* user's account can authenticate (GET /api/auth/list-accounts).
+// Better Auth files a password under the `credential` provider, and an account
+// created by GitHub sign-in has no such row — which matters because every
+// two-factor endpoint reauthenticates with a password, so a GitHub-only
+// account cannot enrol. `hasPassword` starts true and stays true on any
+// failure: the password dialog is the long-standing path, so a failed lookup
+// must never take it away from an account that does have one.
+const SignInMethodsModel = createModel(() => {
+  const hasPassword = signal(true);
+  const loaded = signal(false);
+
+  return {
+    hasPassword,
+    loaded,
+
+    async load(): Promise<void> {
+      if (this.loaded.peek()) return;
+      try {
+        const res = await fetch("/api/auth/list-accounts", {
+          credentials: "same-origin",
+          headers: { accept: "application/json" },
+        });
+        if (res.ok) {
+          const accounts = (await res.json()) as { providerId?: string }[] | null;
+          if (Array.isArray(accounts)) {
+            this.hasPassword.value = accounts.some((a) => a?.providerId === "credential");
+          }
+        }
+      } catch {
+        // Offline or unauthenticated — leave the password path offered.
+      }
+      this.loaded.value = true;
+    },
+  };
+});
+
+export const signInMethodsModel = new SignInMethodsModel();
+
 async function fetchSession(): Promise<AuthSession | null> {
   const res = await fetch("/api/auth/get-session", {
     credentials: "same-origin",
