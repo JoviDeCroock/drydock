@@ -7,9 +7,6 @@ overrides:
   kysely: ^0.28.17
   # @esbuild-kit is deprecated and still pins an esbuild version with GHSA-67mh-4wv8-2f99.
   "@esbuild-kit/core-utils>esbuild": 0.25.12
-  # Keep this plugin on the Node 22.13-compatible line while remediating transitive advisories.
-  "@cloudflare/vite-plugin>wrangler": 4.102.0
-  "@cloudflare/vite-plugin>miniflare": 4.20260617.0
   # Vite's PostCSS range otherwise resolves to versions with source-map path traversal advisories.
   postcss: ^8.5.23
   ws: 8.21.0

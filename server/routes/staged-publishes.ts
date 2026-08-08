@@ -4,6 +4,7 @@ import { getNpmConnection } from "../db/npm-connections";
 import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
 import { requireActiveOrganization } from "../lib/auth/active-organization";
 import { rateLimitResponse } from "../lib/platform/http";
+import { workerExecutionContext } from "../lib/platform/execution-context";
 import { allowInsecureLocalRegistry } from "../lib/ecosystems/npm/connection";
 import {
   InvalidNpmConnectionError,
@@ -60,7 +61,7 @@ stagedPublishesRoutes.post("/scan", async (c) => {
       {
         db,
         env: c.env,
-        executionCtx: c.executionCtx,
+        executionCtx: workerExecutionContext(c.executionCtx),
         organizationId,
         actorUserId: session.userId,
         source: "manual",

@@ -11,6 +11,7 @@ import {
 import { userHasTwoFactor, verifyTotpStepUp } from "../lib/auth";
 import { roleCanManageIntegrations } from "../lib/auth/roles";
 import { rateLimitResponse } from "../lib/platform/http";
+import { workerExecutionContext } from "../lib/platform/execution-context";
 import { recordProductEvent } from "../lib/platform/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import { scanArtifactReadBucket } from "../lib/scan/artifacts";
@@ -773,7 +774,7 @@ async function runWorkflowGateJob(
       // failure after markGateDecided does not leave the GitHub job held.
     }
   }
-  await executeWorkflowGateJob(c.env, c.executionCtx, message, db);
+  await executeWorkflowGateJob(c.env, workerExecutionContext(c.executionCtx), message, db);
 }
 
 async function ensureInstallationOwnedBy(

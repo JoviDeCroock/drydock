@@ -34,6 +34,7 @@ import {
   writeCompareMetadataCache,
 } from "../lib/compare-cache";
 import { rateLimitResponse } from "../lib/platform/http";
+import { workerExecutionContext } from "../lib/platform/execution-context";
 import {
   allowInsecureLocalRegistry,
   decryptNpmToken,
@@ -144,7 +145,9 @@ scansRoutes.post("/", async (c) => {
       await c.env.SCAN_QUEUE.send(message);
     } else {
       c.executionCtx.waitUntil(
-        executeScanJob(c.env, c.executionCtx, message, db, { finalAttempt: true }),
+        executeScanJob(c.env, workerExecutionContext(c.executionCtx), message, db, {
+          finalAttempt: true,
+        }),
       );
     }
 
@@ -578,7 +581,7 @@ async function loadCompareArchive(
     } as const;
   }
 
-  const cached = await loadCompare(c.env, c.executionCtx, ctx.version, {
+  const cached = await loadCompare(c.env, workerExecutionContext(c.executionCtx), ctx.version, {
     tarballUrl,
     registryUrl,
     npmToken: connection?.token,
@@ -606,7 +609,7 @@ async function fetchPackageMetadataCached(
     npmToken: input.npmToken,
     npmRegistry: input.registryUrl,
   });
-  await writeCompareMetadataCache(c.env, c.executionCtx, key, metadata);
+  await writeCompareMetadataCache(c.env, workerExecutionContext(c.executionCtx), key, metadata);
   return metadata;
 }
 
