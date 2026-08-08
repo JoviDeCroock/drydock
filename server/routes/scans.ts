@@ -563,7 +563,7 @@ scansRoutes.get("/:id/versions", async (c) => {
   const registryUrl = connection?.registryUrl || c.env.NPM_REGISTRY || "https://registry.npmjs.org";
   // Full packument: this response renders per-version publish dates, which
   // only the full document carries.
-  const metadata = await fetchPackageMetadataCached(c.env, c.executionCtx, {
+  const metadata = await fetchPackageMetadataCached(c.env, workerExecutionContext(c.executionCtx), {
     packageName: scan.packageName,
     registryUrl,
     cacheScope: `org:${organizationId}`,
@@ -701,7 +701,7 @@ async function loadCompareArchive(
   }
 
   const registryUrl = connection?.registryUrl || c.env.NPM_REGISTRY || "https://registry.npmjs.org";
-  const metadata = await fetchPackageMetadataCached(c.env, c.executionCtx, {
+  const metadata = await fetchPackageMetadataCached(c.env, workerExecutionContext(c.executionCtx), {
     packageName: ctx.packageName,
     registryUrl,
     cacheScope: `org:${ctx.organizationId}`,
