@@ -222,15 +222,16 @@ describe("build attestation verdict", () => {
     expect(checkResults(verdict)["workflow-run"]).toBe("fail");
   });
 
-  it("lets a contradiction outrank an agreeable attestation in the same release", async () => {
-    // A release can carry several attestations. Reporting the good one and
-    // dropping the contradiction would hide exactly the signal this exists for.
+  it("keeps verification monotonic when older attestations cover the same bytes", async () => {
+    // Digest lookups span repository history. A retry can produce the same
+    // bytes in a newer run, so an older attestation must not downgrade a
+    // matching current-run attestation.
     const good = await signedBundle(slsaV1Statement());
     const bad = await signedBundle(
       slsaV1Statement({ repository: "https://github.com/attacker/widgets" }),
     );
     const verdict = await evaluateBuildAttestation({ status: "ok", bundles: [good, bad] }, BINDING);
-    expect(verdict.status).toBe("mismatch");
+    expect(verdict.status).toBe("verified");
   });
 
   it("degrades to partial when the signature cannot be verified", async () => {

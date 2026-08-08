@@ -39,7 +39,15 @@ The wired source is the **GitHub artifact-attestation store**
 (`server/lib/github-app/attestations.ts`):
 `GET /repos/{owner}/{repo}/attestations/sha256:{digest}`, queried with the
 existing installation token for each digest the control plane recomputed from
-the immutable Actions artifact.
+the immutable Actions artifact. The query sets `predicate_type=provenance` and
+`per_page=8`, and the GitHub App must have the repository permission
+**Attestations: read**. Existing installations must approve that permission
+before private-repository lookups will succeed.
+
+GitHub may return either an embedded Sigstore bundle or a `bundle_url` for a
+Snappy-compressed bundle. URL-backed bundles are fetched without the
+installation token, with redirects disabled, and with the same byte and time
+limits as the API response.
 
 That endpoint attests _files_, not packages, so it is ecosystem-neutral by
 construction: npm tarballs, wheels, sdists and VSIXes all resolve through one
@@ -66,9 +74,10 @@ accusation.
 
 Two rules shape the grading:
 
-- **A contradiction dominates.** A release can carry several attestations; if
-  any of them disagrees, the verdict is `mismatch`. Reporting an agreeable
-  sibling instead would hide exactly the signal this exists to surface.
+- **Agreement is monotonic.** A repository can retain several attestations for
+  the same bytes after reruns. A `verified` or `partial` current-run candidate
+  outranks a historical candidate whose run binding differs. `mismatch`
+  remains the result when no agreeable candidate exists.
 - **`verified` requires positive agreement, not merely absent disagreement.** An
   attestation that covers the right bytes but names no repository or run has
   nothing to corroborate, so it caps at `partial` however well it is signed.
@@ -119,7 +128,9 @@ reviewed artifacts"). One attested wheel in a thirty-wheel release is a true
 `pass` — the bytes it names really were reviewed — but reading that as "this
 release is attested" would be wrong, so the fraction is always stated. Lookups
 are capped at 8 digests per candidate (`MAX_DIGEST_LOOKUPS`); a release with
-more artifacts than that has the remainder unchecked.
+more artifacts than that has the remainder unchecked. Each digest lookup asks
+for at most 8 provenance records, and each API or bundle response is capped at
+1 MiB while streaming.
 
 Digests are per **candidate**, not per bundle: a monorepo release fans out into
 one scan per package, and each scan's lookup asks about its own artifacts only.
@@ -155,6 +166,9 @@ than throwing:
   quiet.
 - Lookup, transport, or parse failure → `unavailable`, plus a
   `github_workflow_gate.build_attestation_unavailable` operational event.
+- Advisory GitHub calls use one attempt with a 5-second deadline. Digest
+  lookups run two at a time, so a slow or unavailable store does not serialize
+  the full eight-digest allowance.
 - A `mismatch` is logged at `warn`
   (`github_workflow_gate.build_attestation_mismatch`) and rendered with a
   severity tone, but it does **not** move risk, change the gate recommendation,
@@ -178,8 +192,9 @@ have no verdict and render nothing.
   SubjectPublicKeyInfo, DER→P1363 signature conversion, statement projection for
   all three predicate shapes, the verdict lattice, and the normalizer's
   downgrade rules.
-- `test/workers/workflow-gate-job.test.ts` — the gate path end to end: verified,
-  mismatch, and absent, against a mocked GitHub attestation store.
+- `test/workers/workflow-gate-job.test.ts` — the gate path end to end: embedded
+  and URL-backed Snappy bundles, verified, mismatch, absent, and streamed
+  oversized responses against a mocked GitHub attestation store.
 - `test/helpers/sigstore-bundle.ts` — shared fixtures. The bundles are _really_
   signed: a fresh P-256 key signs the actual PAE bytes and its public key is
   carried in a DER certificate the parser must walk. A faked signature would

@@ -49,6 +49,7 @@
     "preact-iso": "^2.12.1",
     "qrcode": "^1.5.4",
     "shiki": "^4.4.1",
+    "snappyjs": "^0.7.0",
     "workers-ai-provider": "^4.0.0",
     "zod": "^4.4.3"
   },
@@ -61,6 +62,7 @@
     "@preact/preset-vite": "^2.10.6",
     "@tailwindcss/vite": "^4.3.3",
     "@types/qrcode": "^1.5.6",
+    "@types/snappyjs": "^0.7.1",
     "drizzle-kit": "^0.31.10",
     "fast-check": "^4.9.0",
     "knip": "^6.31.0",

@@ -26,7 +26,7 @@ The GitHub webhook is public but signed with `GITHUB_APP_WEBHOOK_SECRET` and byp
 - `server/lib/workflow-gates/` resolves workflow runs, artifacts, release targets, callback URLs, and gate lifecycle state.
 - `server/lib/scan/pipeline.ts` runs the same deterministic/AI/report pipeline used by npm registry-staged scans.
 
-Required bindings/secrets include the GitHub App id/private key/client credentials, webhook secret, installation access, queues, D1, R2, and normal scan pipeline bindings. See [`self-hosting.md`](./self-hosting.md) for setup.
+Required bindings/secrets include the GitHub App id/private key/client credentials, webhook secret, installation access, queues, D1, R2, and normal scan pipeline bindings. The App's repository permissions must include **Attestations: read**; existing installations must approve that permission before private-repository provenance can be queried. See [`self-hosting.md`](./self-hosting.md) for setup.
 
 ## Release set derivation
 
@@ -161,6 +161,11 @@ repository's attestation store about the SHA-256s Drydock recomputed, then
 compares what the attestation claims (repository, workflow run, source commit)
 against what the signed `deployment_protection_rule` webhook already bound.
 Neither side of that comparison is claimed by the package.
+
+The lookup is bounded and advisory: Drydock requests only provenance records,
+caps the response count and bytes, and supports both embedded bundles and
+GitHub's URL-backed Snappy bundles. A missing App permission or lookup timeout
+produces `unavailable`; it does not block the deterministic review pipeline.
 
 The verdict is advisory — it never moves risk, changes the recommendation, or
 auto-rejects — and it is ecosystem-neutral, because GitHub's attestation store

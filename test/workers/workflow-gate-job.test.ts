@@ -1,6 +1,7 @@
 import { createExecutionContext, env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
+import { compress } from "snappyjs";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob, getScan } from "../../server/db/scans";
@@ -286,6 +287,10 @@ interface ScenarioOpts {
     repository?: string;
     /** Head commit the mocked `/actions/runs/:id` lookup reports. */
     headSha?: string;
+    /** Serve the bundle through GitHub's null-bundle + Snappy URL shape. */
+    bundleViaUrl?: boolean;
+    /** Return a streamed list response beyond the control-plane byte cap. */
+    oversizedListResponse?: boolean;
   };
 }
 
@@ -337,6 +342,10 @@ async function buildScenario(runId: number, opts: ScenarioOpts) {
     : null;
 
   const decisionCalls: DecisionCall[] = [];
+  const bundleUrl = "https://tmaproduction.blob.core.windows.net/attestations/test/bundle.json.sn";
+  const compressedBundle = attestationBundle
+    ? compress(new TextEncoder().encode(JSON.stringify(attestationBundle)))
+    : null;
   const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init);
     if (request.url.endsWith("/deployment_protection_rule")) {
@@ -351,7 +360,31 @@ async function buildScenario(runId: number, opts: ScenarioOpts) {
     }
     if (request.url.includes(`/attestations/sha256:`)) {
       if (!attestationBundle) return new Response("{}", { status: 404 });
-      return Response.json({ attestations: [{ bundle: attestationBundle }] });
+      if (opts.attestation?.oversizedListResponse) {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array(700 * 1024));
+              controller.enqueue(new Uint8Array(700 * 1024));
+              controller.close();
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      return Response.json({
+        attestations: [
+          opts.attestation?.bundleViaUrl
+            ? { bundle: null, bundle_url: bundleUrl }
+            : { bundle: attestationBundle },
+        ],
+      });
+    }
+    if (request.url === bundleUrl && compressedBundle) {
+      return new Response(compressedBundle, {
+        status: 200,
+        headers: { "content-type": "application/x-snappy" },
+      });
     }
     if (request.url.endsWith(`/actions/runs/${runId}`)) {
       return Response.json({ head_sha: opts.attestation?.headSha ?? FIXTURE_COMMIT });
@@ -573,7 +606,7 @@ describe("executeWorkflowGateJob", () => {
       repositoryId: 72010,
       runId: 7801,
     });
-    await buildScenario(7801, { digestMatches: true, attestation: {} });
+    const scenario = await buildScenario(7801, { digestMatches: true, attestation: {} });
     const ctx = buildCtxWithGateway();
     const sandboxEnv = buildEnv(buildConfigBindings(), buildLoaderMock().binding);
     const db = createDb(env.DB);
@@ -605,6 +638,67 @@ describe("executeWorkflowGateJob", () => {
       "source-commit": "pass",
       signature: "pass",
     });
+    const attestationRequest = scenario.fetchSpy.mock.calls
+      .map(([input, init]) => (input instanceof Request ? input : new Request(input, init)))
+      .find((request) => request.url.includes("/attestations/sha256:"));
+    expect(attestationRequest?.url).toContain("predicate_type=provenance");
+    expect(attestationRequest?.url).toContain("per_page=8");
+  });
+
+  test("records a verified URL-backed Snappy attestation", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9216",
+      repositoryId: 72016,
+      runId: 7804,
+    });
+    await buildScenario(7804, {
+      digestMatches: true,
+      attestation: { bundleViaUrl: true },
+    });
+    const ctx = buildCtxWithGateway();
+    const sandboxEnv = buildEnv(buildConfigBindings(), buildLoaderMock().binding);
+    const db = createDb(env.DB);
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    const persisted = await getScan(db, gate!.scanId!, seeded.organizationId);
+    const summary = persisted?.scan.summaryJson as { buildAttestation?: unknown };
+    expect(normalizeBuildAttestation(summary.buildAttestation)?.status).toBe("verified");
+  });
+
+  test("bounds the attestation list before materializing it", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9217",
+      repositoryId: 72017,
+      runId: 7805,
+    });
+    await buildScenario(7805, {
+      digestMatches: true,
+      attestation: { oversizedListResponse: true },
+    });
+    const ctx = buildCtxWithGateway();
+    const sandboxEnv = buildEnv(buildConfigBindings(), buildLoaderMock().binding);
+    const db = createDb(env.DB);
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    const persisted = await getScan(db, gate!.scanId!, seeded.organizationId);
+    const summary = persisted?.scan.summaryJson as { buildAttestation?: unknown };
+    const verdict = normalizeBuildAttestation(summary.buildAttestation);
+    expect(verdict?.status).toBe("unavailable");
+    expect(verdict?.checks[0]?.detail).toContain("size cap");
   });
 
   test("records a mismatch when the attestation names a different repository", async () => {

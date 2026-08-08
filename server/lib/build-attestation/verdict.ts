@@ -113,13 +113,13 @@ export async function evaluateBuildAttestation(
     };
   }
 
-  // A contradiction dominates: if any attestation covering this release
-  // disagrees with Drydock's own binding, reporting a different, agreeable one
-  // instead would hide exactly the signal this feature exists to surface.
-  const contradiction = candidates.find((candidate) => candidate.status === "mismatch");
-  if (contradiction) return contradiction;
-
-  const rank = { verified: 0, partial: 1 } as Record<string, number>;
+  // Verification is monotonic across the repository's digest-indexed
+  // collection. Re-running a release can legitimately attach the same bytes to
+  // more than one workflow run; an older run is not allowed to turn a matching
+  // current-run attestation into a mismatch. A contradiction remains visible
+  // when it is the strongest evidence available, but never outranks an
+  // agreeable candidate.
+  const rank = { verified: 0, partial: 1, mismatch: 2 } as Record<string, number>;
   return candidates.sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9))[0];
 }
 

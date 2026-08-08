@@ -176,6 +176,11 @@ publish the reviewed artifact bundle after approval. See
 [`workflow-gates.md`](workflow-gates.md) and
 [`npm-workflow-gate.md`](npm-workflow-gate.md).
 
+The App also needs the repository permission **Attestations: read** so Drydock
+can grade build provenance for private repositories. Existing installations
+must approve that added permission. Until they do, gate reviews remain usable,
+but their build-attestation verdict is `unavailable`.
+
 ## Slack notifications
 
 Slack notifications require a Slack OAuth app. Register the redirect URL:

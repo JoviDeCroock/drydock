@@ -57,6 +57,9 @@ importers:
       shiki:
         specifier: ^4.4.1
         version: 4.4.1
+      snappyjs:
+        specifier: ^0.7.0
+        version: 0.7.0
       workers-ai-provider:
         specifier: ^4.0.0
         version: 4.0.0(@ai-sdk/provider@4.0.4)(ai@7.0.48(zod@4.4.3))
@@ -88,6 +91,9 @@ importers:
       '@types/qrcode':
         specifier: ^1.5.6
         version: 1.5.6
+      '@types/snappyjs':
+        specifier: ^0.7.1
+        version: 0.7.1
       drizzle-kit:
         specifier: ^0.31.10
         version: 0.31.10
@@ -1711,6 +1717,9 @@ packages:
   '@types/qrcode@1.5.6':
     resolution: {integrity: sha512-te7NQcV2BOvdj2b1hCAHzAoMNuj65kNBMz0KBaxM6c3VGBOhU0dURQKOtH8CFNI/dsKkwlv32p26qYQTWoB5bw==}
 
+  '@types/snappyjs@0.7.1':
+    resolution: {integrity: sha512-OxjzJ6cQZstysMh6PEwZWmK9qlKZyezHJKOkcUkZDooSFuog2votUEKkxMaTq51UQF3cJkXKQ+XGlj4FSl8JQQ==}
+
   '@types/unist@3.0.3':
     resolution: {integrity: sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==}
 
@@ -2735,6 +2744,9 @@ packages:
   smol-toml@1.7.1:
     resolution: {integrity: sha512-PPlsspAZ4jbMBu5DMFhfUGDQLu/vrL4SyBROVS37x8ynnVmFIs1VPBz1Co8Xks3TvpIaZXmU85y4DrQ+UyVFoQ==}
     engines: {node: '>= 18'}
+
+  snappyjs@0.7.0:
+    resolution: {integrity: sha512-u5iEEXkMe2EInQio6Wv9LWHOQYRDbD2O9hzS27GpT/lwfIQhTCnHCTqedqHIHe9ZcvQo+9au6vngQayipz1NYw==}
 
   source-map-js@1.2.1:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
@@ -4153,6 +4165,8 @@ snapshots:
     dependencies:
       '@types/node': 26.1.2
 
+  '@types/snappyjs@0.7.1': {}
+
   '@types/unist@3.0.3': {}
 
   '@typescript/typescript-aix-ppc64@7.0.2':
@@ -5050,6 +5064,8 @@ snapshots:
       kolorist: 1.8.0
 
   smol-toml@1.7.1: {}
+
+  snappyjs@0.7.0: {}
 
   source-map-js@1.2.1: {}
 

@@ -2,7 +2,7 @@ import { GithubAppValidationError, type GithubAppConfig } from "./config";
 import { githubAppHeaders, githubInstallationHeaders, nextLink } from "./http";
 import { generateGithubAppJwt } from "./jwt";
 import { parseRepositoryFullName } from "./validation";
-import { reliableFetch } from "../platform/reliable-fetch";
+import { reliableFetch, type ReliableFetchOptions } from "../platform/reliable-fetch";
 
 export interface GithubInstallationMetadata {
   installationId: string;
@@ -57,6 +57,7 @@ export async function fetchInstallationMetadata(
 export async function getInstallationAccessToken(
   config: GithubAppConfig,
   installationId: string,
+  fetchOptions: Pick<ReliableFetchOptions, "attempts" | "timeoutMs"> = {},
 ): Promise<string> {
   const jwt = await generateGithubAppJwt(config);
   const response = await reliableFetch(
@@ -65,6 +66,7 @@ export async function getInstallationAccessToken(
       method: "POST",
       headers: githubAppHeaders(jwt),
       retryMethods: ["POST"],
+      ...fetchOptions,
     },
   );
   if (!response.ok) {
@@ -257,11 +259,21 @@ export async function fetchWorkflowRunHeadSha(
   if (!/^\d{1,20}$/.test(String(runId))) return null;
 
   try {
-    const token = await getInstallationAccessToken(config, installationId);
+    // This lookup is advisory. Keep it on a short single-attempt budget so an
+    // unavailable GitHub API cannot delay the release review itself.
+    const token = await getInstallationAccessToken(config, installationId, {
+      attempts: 1,
+      timeoutMs: 5_000,
+    });
     const response = await reliableFetch(
       `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/` +
         `${encodeURIComponent(repository.name)}/actions/runs/${String(runId)}`,
-      { headers: githubInstallationHeaders(token), redirect: "manual" },
+      {
+        headers: githubInstallationHeaders(token),
+        redirect: "manual",
+        attempts: 1,
+        timeoutMs: 5_000,
+      },
     );
     if (!response.ok) return null;
     const data = (await response.json()) as { head_sha?: unknown };
