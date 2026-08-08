@@ -348,7 +348,13 @@ scansRoutes.post("/:id/decision", async (c) => {
   // never come. Best effort — the decision itself is already durable.
   if (gating.releaseSetId) {
     c.executionCtx.waitUntil(
-      nudgeGatesForReleaseSet(c.env, c.executionCtx, db, organizationId, gating.releaseSetId),
+      nudgeGatesForReleaseSet(
+        c.env,
+        workerExecutionContext(c.executionCtx),
+        db,
+        organizationId,
+        gating.releaseSetId,
+      ),
     );
   }
 

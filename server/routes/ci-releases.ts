@@ -40,6 +40,7 @@ import {
 import { isEcosystemId } from "../lib/ecosystems/labels";
 import { supportedWorkflowGateEcosystems } from "../lib/ecosystems";
 import { recordProductEvent } from "../lib/platform/analytics";
+import { workerExecutionContext } from "../lib/platform/execution-context";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import type { Bindings, Variables } from "../types";
 
@@ -390,7 +391,7 @@ async function enqueueReleaseSetReview(
     return;
   }
   const { executeCiReleaseSetJob } = await import("../lib/ci/release-set-job");
-  const executionCtx = c.executionCtx;
+  const executionCtx = workerExecutionContext(c.executionCtx);
   const run = executeCiReleaseSetJob(c.env, executionCtx, {
     kind: "ci_release_set",
     organizationId,
