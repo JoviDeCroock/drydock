@@ -508,6 +508,24 @@ export function createAuth(env: Cloudflare.Env) {
           },
         }
       : {}),
+    hooks: {
+      before: createAuthMiddleware(async (ctx) => {
+        if (
+          ctx.path === "/sign-in/social" &&
+          ctx.body &&
+          typeof ctx.body === "object" &&
+          Object.hasOwn(ctx.body, "scopes")
+        ) {
+          // Better Auth otherwise appends request-provided scopes to the
+          // provider defaults. Reject overrides at the server boundary so the
+          // GitHub grant remains profile-and-email-only for every caller.
+          throw APIError.from("BAD_REQUEST", {
+            code: "OAUTH_SCOPES_NOT_ALLOWED",
+            message: "OAuth scope overrides are not allowed",
+          });
+        }
+      }),
+    },
     account: {
       // A social sign-in leaves the provider's access (and refresh) token in
       // `account`. Better Auth stores those in plain text by default, which

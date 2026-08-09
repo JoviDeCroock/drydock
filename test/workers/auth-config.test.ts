@@ -77,11 +77,35 @@ describe("auth config", () => {
     expect(url.hostname).toBe("github.com");
     expect(url.pathname).toBe("/login/oauth/authorize");
     expect(url.searchParams.get("client_id")).toBe("Ov23li-test-client-id");
-    // Identity-only authorization: profile + verified email, no repo or org
-    // scopes ever. Asserted exactly so a scope widening cannot slip through.
+    // The provider defaults are identity-only: profile + verified email.
     expect(url.searchParams.get("scope")).toBe("read:user user:email");
     // The callback operators must whitelist on the OAuth app.
     expect(url.searchParams.get("redirect_uri")).toBe(`${ORIGIN}/api/auth/callback/github`);
+  });
+
+  test("rejects caller-supplied GitHub scopes", async () => {
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      new Request(`${ORIGIN}/api/auth/sign-in/social`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+          origin: ORIGIN,
+        },
+        body: JSON.stringify({
+          provider: "github",
+          callbackURL: "/dashboard",
+          scopes: ["repo"],
+        }),
+      }),
+      githubEnv,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual(expect.objectContaining({ code: "OAUTH_SCOPES_NOT_ALLOWED" }));
   });
 
   test("social sign-in stores provider tokens encrypted and disables every linking path", async () => {

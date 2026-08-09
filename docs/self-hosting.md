@@ -152,7 +152,9 @@ Optional integrations:
   retrieval endpoints. A classic OAuth app with `read:user user:email` mints the
   profile-and-email-only token this integration promises. Drydock does not use
   that token after the callback, and `account.encryptOAuthTokens` keeps what
-  Better Auth stores encrypted at rest.
+  Better Auth stores encrypted at rest. Request-level OAuth scope overrides are
+  rejected server-side so callers cannot widen the grant beyond `read:user`
+  and `user:email`.
 
   Social sign-ins are never asked for email verification (the wall applies to
   the email sign-in route only), and a provider-verified email also satisfies
