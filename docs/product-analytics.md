@@ -2,8 +2,13 @@
 
 Aggregate counters for the questions that outlive a debugging session: how many
 scans run, how long they take, how often they fail, whether the AI reviewer is
-healthy, whether maintainers agree with the risk grade, and how much traffic the
-public marketing surfaces get and from which coarse channel.
+healthy, whether maintainers agree with the risk grade, and how many package
+diffs get read.
+
+Scope is deliberately narrow: the diff and the scan are the product, so those
+are the only things counted. Marketing page views and channel attribution were
+removed — they measured traffic rather than work done, and every event they
+produced sat in the hot path of serving a static document.
 
 Implementation: `server/lib/platform/analytics.ts`. Binding: `PRODUCT_ANALYTICS`
 (Cloudflare Analytics Engine, dataset `drydock_product_events`).
@@ -35,8 +40,9 @@ Matching [`security-model.md`](./security-model.md):
   identifying a person.
 - **Public-diff analysis events record only the package name**, which is already
   public in the request URL, the response cache key, and the page's own Open
-  Graph metadata. Marketing-page events record only the public surface and an
-  allowlisted channel bucket; raw referrers and user agents are discarded.
+  Graph metadata.
+- **No traffic data.** Referrers, campaign parameters, and page views of the
+  landing and docs surfaces are not classified, counted, or stored anywhere.
 - **Nothing is written from the browser.** No client script, no beacon
   endpoint, no cookie — and therefore no new anonymous surface to rate-limit or
   document. Every event is emitted by the Worker while it is already handling
@@ -92,22 +98,22 @@ low-volume one out of the dataset.
 
 ## Events
 
-| event                      | emitted from                  | answers                                     |
-| -------------------------- | ----------------------------- | ------------------------------------------- |
-| `scan.queued`              | `POST /api/v1/scans`          | queued → completed drop-off                 |
-| `scan.completed`           | `recordCompletion`            | volume, latency, risk mix, finding counts   |
-| `scan.failed`              | `executeScanJob`, gate runner | failure rate by error code                  |
-| `scan.decided`             | both decision paths           | time-to-decision; agreement with the grade  |
-| `ai_review.finished`       | `maybeRunAiReview`            | reviewer health — the silent-failure rate   |
-| `npm_connection.validated` | npm connection validation     | onboarding funnel                           |
-| `public_diff.viewed`       | `loadRequestedDiff`           | growth-loop traffic, cache hit rate         |
-| `user.signed_up`           | Better Auth user-create hook  | acquisition — the funnel's numerator        |
-| `organization.created`     | `POST /api/v1/organizations`  | teams, excluding lazy personal workspaces   |
-| `integration.connected`    | npm / GitHub / Slack connect  | activation, by integration kind             |
-| `workflow_gate.opened`     | `deployment_protection_rule`  | gate volume                                 |
-| `workflow_gate.reviewed`   | gate runner                   | recommendation mix; review latency          |
-| `workflow_gate.decided`    | human route + auto-block path | approval rate, human vs automatic           |
-| `marketing_page.viewed`    | public document request       | traffic by public surface and coarse source |
+| event                      | emitted from                  | answers                                    |
+| -------------------------- | ----------------------------- | ------------------------------------------ |
+| `scan.queued`              | `POST /api/v1/scans`          | queued → completed drop-off                |
+| `scan.completed`           | `recordCompletion`            | volume, latency, risk mix, finding counts  |
+| `scan.failed`              | `executeScanJob`, gate runner | failure rate by error code                 |
+| `scan.discarded`           | `executeScanJob`              | queued scans retired before they ever ran  |
+| `scan.decided`             | both decision paths           | time-to-decision; agreement with the grade |
+| `ai_review.finished`       | `maybeRunAiReview`            | reviewer health — the silent-failure rate  |
+| `npm_connection.validated` | npm connection validation     | onboarding funnel                          |
+| `public_diff.viewed`       | `loadRequestedDiff`           | growth-loop traffic, cache hit rate        |
+| `user.signed_up`           | Better Auth user-create hook  | acquisition — the funnel's numerator       |
+| `organization.created`     | `POST /api/v1/organizations`  | teams, excluding lazy personal workspaces  |
+| `integration.connected`    | npm / GitHub / Slack connect  | activation, by integration kind            |
+| `workflow_gate.opened`     | `deployment_protection_rule`  | gate volume                                |
+| `workflow_gate.reviewed`   | gate runner                   | recommendation mix; review latency         |
+| `workflow_gate.decided`    | human route + auto-block path | approval rate, human vs automatic          |
 
 `scan.failed` fires only on a terminal failure, so a scan that succeeds on retry
 is not filed as a failure. Both the npm queue path and the workflow-gate runner
@@ -119,13 +125,6 @@ release solely through a gate.
 through the same loader and is called once per file the visitor opens, so
 counting it would report one page view as thirty and skew the cache column
 toward `hit` (only the first request of a session can miss).
-
-`marketing_page.viewed` fires on the HTML document request, before the browser
-loads the public-diff API. That is the only request that still carries the
-external `Referer`; the event stores only the classified source bucket and the
-surface (`landing`, `docs`, `diff_index`, or `diff`). See
-[`marketing-attribution.md`](./marketing-attribution.md) for the classifier and
-queries.
 
 `ai_review.finished` is the highest-value counter here. A review that returns
 `invalid`/`unavailable` is handled safely — `computeScanRisk` floors the scan at
