@@ -99,4 +99,32 @@ describe("signInMethodsModel", () => {
     expect(signInMethodsModel.hasPassword.value).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  test("ignores a slower response from the previously signed-in user", async () => {
+    vi.resetModules();
+    let resolvePrevious!: (response: Response) => void;
+    let resolveCurrent!: (response: Response) => void;
+    const previousResponse = new Promise<Response>((resolve) => (resolvePrevious = resolve));
+    const currentResponse = new Promise<Response>((resolve) => (resolveCurrent = resolve));
+    const fetchMock = vi
+      .fn<() => Promise<Response>>()
+      .mockReturnValueOnce(previousResponse)
+      .mockReturnValueOnce(currentResponse);
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const { signInMethodsModel } = await import("../src/models/auth");
+
+    const previousLoad = signInMethodsModel.load("github_user");
+    const currentLoad = signInMethodsModel.load("password_user");
+    resolveCurrent(accountsResponse(["credential"]));
+    await currentLoad;
+    expect(signInMethodsModel.hasPassword.value).toBe(true);
+
+    resolvePrevious(accountsResponse(["github"]));
+    await previousLoad;
+    expect(signInMethodsModel.hasPassword.value).toBe(true);
+    expect(signInMethodsModel.loaded.value).toBe(true);
+
+    await signInMethodsModel.load("password_user");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

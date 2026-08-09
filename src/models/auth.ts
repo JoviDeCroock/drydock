@@ -198,13 +198,16 @@ const SignInMethodsModel = createModel(() => {
   const hasPassword = signal(true);
   const loaded = signal(false);
   const loadedForUserId = signal<string | null>(null);
+  let loadGeneration = 0;
 
   return {
     hasPassword,
     loaded,
 
     async load(userId: string): Promise<void> {
+      const generation = ++loadGeneration;
       if (loadedForUserId.peek() === userId) return;
+      loadedForUserId.value = null;
       this.hasPassword.value = true;
       this.loaded.value = false;
       try {
@@ -214,7 +217,7 @@ const SignInMethodsModel = createModel(() => {
         });
         if (res.ok) {
           const accounts = (await res.json()) as { providerId?: string }[] | null;
-          if (Array.isArray(accounts)) {
+          if (generation === loadGeneration && Array.isArray(accounts)) {
             this.hasPassword.value = accounts.some((a) => a?.providerId === "credential");
             loadedForUserId.value = userId;
           }
@@ -222,7 +225,7 @@ const SignInMethodsModel = createModel(() => {
       } catch {
         // Offline or unauthenticated — leave the password path offered.
       } finally {
-        this.loaded.value = true;
+        if (generation === loadGeneration) this.loaded.value = true;
       }
     },
   };
