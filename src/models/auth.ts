@@ -216,12 +216,12 @@ const SignInMethodsModel = createModel(() => {
           const accounts = (await res.json()) as { providerId?: string }[] | null;
           if (Array.isArray(accounts)) {
             this.hasPassword.value = accounts.some((a) => a?.providerId === "credential");
+            loadedForUserId.value = userId;
           }
         }
       } catch {
         // Offline or unauthenticated — leave the password path offered.
       } finally {
-        loadedForUserId.value = userId;
         this.loaded.value = true;
       }
     },

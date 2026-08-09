@@ -50,6 +50,23 @@ describe("signInMethodsModel", () => {
     expect(signInMethodsModel.loaded.value).toBe(true);
   });
 
+  test("retries the lookup for the same user after a transient failure", async () => {
+    vi.resetModules();
+    const fetchMock = vi
+      .fn<() => Promise<Response>>()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(accountsResponse(["github"]));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const { signInMethodsModel } = await import("../src/models/auth");
+
+    await signInMethodsModel.load("github_user");
+    expect(signInMethodsModel.hasPassword.value).toBe(true);
+
+    await signInMethodsModel.load("github_user");
+    expect(signInMethodsModel.hasPassword.value).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   test("keeps the password path on an unauthenticated response", async () => {
     const { signInMethodsModel } = await loadWith(async () => new Response("", { status: 401 }));
 
