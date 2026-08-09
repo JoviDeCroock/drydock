@@ -13,6 +13,12 @@ const githubEnv = {
 
 const githubAppEnv = {
   ...env,
+  GITHUB_OAUTH_CLIENT_ID: "Iv23lid3JXi9WSYbS6pn",
+  GITHUB_OAUTH_CLIENT_SECRET: "test-client-secret",
+};
+
+const legacyGithubAppEnv = {
+  ...env,
   GITHUB_OAUTH_CLIENT_ID: "Iv1.test-client-id",
   GITHUB_OAUTH_CLIENT_SECRET: "test-client-secret",
 };
@@ -39,6 +45,19 @@ describe("auth config", () => {
   test("does not offer sign-in through a repository-capable GitHub App", async () => {
     const ctx = createExecutionContext();
     const res = await worker.fetch(new Request(`${ORIGIN}/api/auth/config`), githubAppEnv, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ githubSignIn: false });
+  });
+
+  test("also rejects legacy GitHub App client IDs", async () => {
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      new Request(`${ORIGIN}/api/auth/config`),
+      legacyGithubAppEnv,
+      ctx,
+    );
     await waitOnExecutionContext(ctx);
 
     expect(res.status).toBe(200);

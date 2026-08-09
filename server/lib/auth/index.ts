@@ -411,10 +411,11 @@ export function isGithubSignInEnabled(env: Cloudflare.Env): boolean {
   return Boolean(
     clientId &&
     env.GITHUB_OAUTH_CLIENT_SECRET &&
-    // GitHub App OAuth client ids use this prefix. Their user-to-server
+    // GitHub App OAuth client IDs use the `Iv` prefix across legacy and
+    // current formats. Their user-to-server
     // tokens can inherit installation permissions, so accepting one would
     // make the UI's identity-only/no-repository-access promise false.
-    !clientId.startsWith("Iv1."),
+    !clientId.startsWith("Iv"),
   );
 }
 

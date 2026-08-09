@@ -148,15 +148,15 @@ Optional integrations:
   the grant shares the user's profile and verified email, requests no repo
   scopes, and never installs the GitHub App; workflow-gate installation stays a
   separate step. **Use a plain OAuth app, not the workflow-gate GitHub App.**
-  Known GitHub App client ids (the `Iv1.` prefix) are rejected even when a secret
-  is present: GitHub Apps ignore OAuth scopes, their user-to-server tokens can
-  carry installation permissions, and Better Auth exposes authenticated token
-  retrieval endpoints. A classic OAuth app with `read:user user:email` mints the
-  profile-and-email-only token this integration promises. Drydock does not use
-  that token after the callback, and `account.encryptOAuthTokens` keeps what
-  Better Auth stores encrypted at rest. Request-level OAuth scope overrides are
-  rejected server-side so callers cannot widen the grant beyond `read:user`
-  and `user:email`.
+  GitHub App client IDs (the `Iv` prefix across legacy and current formats) are
+  rejected even when a secret is present: GitHub Apps ignore OAuth scopes, their
+  user-to-server tokens can carry installation permissions, and Better Auth
+  exposes authenticated token retrieval endpoints. A classic OAuth app with
+  `read:user user:email` mints the profile-and-email-only token this integration
+  promises. Drydock does not use that token after the callback, and
+  `account.encryptOAuthTokens` keeps what Better Auth stores encrypted at rest.
+  Request-level OAuth scope overrides are rejected server-side so callers cannot
+  widen the grant beyond `read:user` and `user:email`.
 
   Social sign-ins are never asked for email verification (the wall applies to
   the email sign-in route only), and a provider-verified email also satisfies
