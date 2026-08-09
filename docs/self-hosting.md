@@ -141,6 +141,8 @@ Optional integrations:
   `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET`,
   and optional `GITHUB_APP_STATE_SECRET` (otherwise `BETTER_AUTH_SECRET` is used)
 - GitHub sign-in: `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET`.
+  Register `${BETTER_AUTH_URL}/api/auth/callback/github` as the OAuth app's
+  **Authorization callback URL** before copying its credentials into Drydock.
   When both are set, the login and register pages offer "Continue with GitHub"
   (`GET /api/auth/config` reports availability). This is identity-only OAuth —
   the grant shares the user's profile and verified email, requests no repo
