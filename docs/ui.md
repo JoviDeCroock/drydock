@@ -60,6 +60,18 @@ move it into `src/features/` instead.
 - Two-sided diffs collapse long unchanged runs into expandable gap rows (`src/components/diff-hunks.ts`, 3 context lines); rows carrying pinned findings never collapse.
 - Single-sided views render 1,000 lines initially with a "show more" expander; findings pinned past the rendered window fall back to the banner above the diff.
 - Word-diff pairing bails out for changed blocks beyond 10,000 line-pair combinations to avoid quadratic scoring.
+- Line pairing is bounded by `LINE_DIFF_TIMEOUT_MS` (1.5s). Past it the file renders as a whole-file replacement with a notice saying pairing was abandoned — "every line changed" and "we gave up pairing" look identical otherwise.
+
+## Minified files
+
+A minified bundle is one line, so `diffLines` reports one removed and one added line for any change at all. `src/components/format-source.ts` re-flows both sides at statement and block boundaries first, which is what makes the line diff, hunk collapse, and finding pinning work on `dist/` artifacts. On preact's `dist/preact.min.js`, a patch release goes from 2 changed lines of 11 KB each to 39 changed lines out of 464.
+
+- It runs client-side as a display transform. Scan artifacts, report exports, and the AI reviewer keep seeing the shipped bytes; nothing persisted is reformatted.
+- It only inserts whitespace between tokens. The token stream round-trips (asserted in `test/format-source.test.ts`, including under fast-check), so the view can never show bytes the artifact does not contain. Breaks land only after `;`, `{`, `,` and around `}` — never automatic-semicolon-insertion sites — so the reformatted text stays semantically the source it came from.
+- JS/TS/JSX/JSON go through the shared lexer in `server/lib/platform/js-lexer.ts` (also used by the deterministic scanner's constant folder); CSS/SCSS use a character scanner because `//` is not a comment in CSS and `url(//cdn…)` would swallow the file.
+- It is on by default when a side `looksMinified` (any line ≥ 500 chars) and off otherwise, with a "Reformat" toggle in the diff options and a "reformatted for review" note in the meta row.
+- Findings are re-pinned through the formatter's source-line map (`remapFindingLines`). A finding only ever lands on a row that came from the line the rule reported; a line this side does not have is unpinned to the banner rather than left pointing at a raw line number, since reformatting multiplies the row count. The annotation caption keeps naming the artifact's line, never the reformatted row — a reviewer taking a line number back to the package must get the real one.
+- Findings carry no column, so a rule that matched halfway through a bundle still pins to the top of its source line. That is exactly as precise as the unformatted view. Recording match offsets server-side is the follow-up that would make it exact.
 
 ## Signals reminder
 

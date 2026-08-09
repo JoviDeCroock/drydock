@@ -10,7 +10,7 @@ import {
 
 describe("buildRows", () => {
   test("marks changed word spans inside paired changed lines", () => {
-    const rows = buildRows('const label = "safe";\n', 'const label = "risky";\n', null, null, {
+    const { rows } = buildRows('const label = "safe";\n', 'const label = "risky";\n', null, null, {
       wordDiff: true,
     });
 
@@ -23,7 +23,7 @@ describe("buildRows", () => {
   });
 
   test("leaves punctuation-only word diff spans unhighlighted", () => {
-    const rows = buildRows("foo();\n", "foo(), {};\n", null, null, {
+    const { rows } = buildRows("foo();\n", "foo(), {};\n", null, null, {
       wordDiff: true,
     });
 
@@ -31,7 +31,7 @@ describe("buildRows", () => {
   });
 
   test("splits punctuation out of changed word diff spans", () => {
-    const rows = buildRows(
+    const { rows } = buildRows(
       "sub = wonka.subscribe(() => {\n",
       "stop = vue.watch([fetching, stale], ([isFetching, isStale]) => {\n",
       null,
@@ -50,7 +50,7 @@ describe("buildRows", () => {
   });
 
   test("does not word-highlight inserted comments against nearby code", () => {
-    const rows = buildRows(
+    const { rows } = buildRows(
       "var promise = new Promise(resolve => {\nif (!source.value) {\n  return resolve(state);\n}\n",
       "var promise = new Promise(resolve => {\n// If there's no source, resolve without subscribing again.\n// See: https://github.com/urql-graphql/urql/issues/3722\nif (!source.value || !fetching.value && !stale.value) {\n  return resolve(state);\n}\n",
       null,
@@ -69,7 +69,7 @@ describe("buildRows", () => {
   });
 
   test("aligns changed block rows before applying word diff", () => {
-    const rows = buildRows(
+    const { rows } = buildRows(
       "var hasResult = false;\nsub = wonka.subscribe(() => {\n  if (!state.fetching.value && !state.stale.value) {\n    if (sub) sub.unsubscribe();\n    hasResult = true;\n  }\n});\n",
       "var stop = vue.watch([fetching, stale], ([isFetching, isStale]) => {\n  if (!isFetching && !isStale) {\n    stop();\n  }\n});\n",
       null,
@@ -92,7 +92,7 @@ describe("buildRows", () => {
     // diffs; line tones still render.
     const before = Array.from({ length: 150 }, (_, i) => `const before${i} = ${i};`).join("\n");
     const after = Array.from({ length: 150 }, (_, i) => `const after${i} = ${i};`).join("\n");
-    const rows = buildRows(`${before}\n`, `${after}\n`, null, null, { wordDiff: true });
+    const { rows } = buildRows(`${before}\n`, `${after}\n`, null, null, { wordDiff: true });
 
     expect(rows).toHaveLength(300);
     expect(rows.every((row) => row.wordParts === null)).toBe(true);
@@ -103,13 +103,13 @@ describe("buildRows", () => {
   test("strips CRLF carriage returns from rendered row text", () => {
     // shiki drops the \r when tokenizing, so a retained \r would make a CRLF
     // file render differently before and after the lazy highlighter loads.
-    const rows = buildRows("const a = 1;\r\n", "const a = 2;\r\n", null, null, {});
+    const { rows } = buildRows("const a = 1;\r\n", "const a = 2;\r\n", null, null, {});
     expect(rows.map((row) => row.text)).toEqual(["const a = 1;", "const a = 2;"]);
     expect(rows.some((row) => row.text.includes("\r"))).toBe(false);
   });
 
   test("treats whitespace-only line edits as unchanged with -w", () => {
-    const rows = buildRows("const value=1;\n", "const value = 1;\n", null, null, {
+    const { rows } = buildRows("const value=1;\n", "const value = 1;\n", null, null, {
       ignoreWhitespace: true,
     });
 
@@ -124,7 +124,7 @@ describe("buildRows", () => {
   });
 
   test("keeps non-whitespace edits visible when -w is enabled", () => {
-    const rows = buildRows("const value = 1;\n", "const value = 2;\n", null, null, {
+    const { rows } = buildRows("const value = 1;\n", "const value = 2;\n", null, null, {
       ignoreWhitespace: true,
       wordDiff: true,
     });
