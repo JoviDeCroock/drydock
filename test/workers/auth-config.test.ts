@@ -7,6 +7,12 @@ const ORIGIN = "http://example.com";
 
 const githubEnv = {
   ...env,
+  GITHUB_OAUTH_CLIENT_ID: "Ov23li-test-client-id",
+  GITHUB_OAUTH_CLIENT_SECRET: "test-client-secret",
+};
+
+const githubAppEnv = {
+  ...env,
   GITHUB_OAUTH_CLIENT_ID: "Iv1.test-client-id",
   GITHUB_OAUTH_CLIENT_SECRET: "test-client-secret",
 };
@@ -28,6 +34,15 @@ describe("auth config", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ githubSignIn: true });
+  });
+
+  test("does not offer sign-in through a repository-capable GitHub App", async () => {
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(new Request(`${ORIGIN}/api/auth/config`), githubAppEnv, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ githubSignIn: false });
   });
 
   test("does not leave the old non-auth API path anonymous", async () => {
@@ -61,7 +76,7 @@ describe("auth config", () => {
     const url = new URL(data.url ?? "");
     expect(url.hostname).toBe("github.com");
     expect(url.pathname).toBe("/login/oauth/authorize");
-    expect(url.searchParams.get("client_id")).toBe("Iv1.test-client-id");
+    expect(url.searchParams.get("client_id")).toBe("Ov23li-test-client-id");
     // Identity-only authorization: profile + verified email, no repo or org
     // scopes ever. Asserted exactly so a scope widening cannot slip through.
     expect(url.searchParams.get("scope")).toBe("read:user user:email");
@@ -69,13 +84,13 @@ describe("auth config", () => {
     expect(url.searchParams.get("redirect_uri")).toBe(`${ORIGIN}/api/auth/callback/github`);
   });
 
-  test("social sign-in stores provider tokens encrypted and never links implicitly", async () => {
+  test("social sign-in stores provider tokens encrypted and disables every linking path", async () => {
     const options = (
       createAuth(githubEnv as unknown as Cloudflare.Env) as unknown as {
         options: {
           account?: {
             encryptOAuthTokens?: boolean;
-            accountLinking?: { disableImplicitLinking?: boolean };
+            accountLinking?: { enabled?: boolean; disableImplicitLinking?: boolean };
           };
         };
       }
@@ -86,6 +101,7 @@ describe("auth config", () => {
     expect(options.account?.encryptOAuthTokens).toBe(true);
     // Implicit linking would sign a caller into an existing password account on
     // the OAuth callback, skipping the TOTP challenge that guards /sign-in/email.
+    expect(options.account?.accountLinking?.enabled).toBe(false);
     expect(options.account?.accountLinking?.disableImplicitLinking).toBe(true);
   });
 

@@ -407,7 +407,15 @@ function isLocalAuthUrl(url: string | undefined): boolean {
  * App without offering social sign-in, or vice versa.
  */
 export function isGithubSignInEnabled(env: Cloudflare.Env): boolean {
-  return Boolean(env.GITHUB_OAUTH_CLIENT_ID && env.GITHUB_OAUTH_CLIENT_SECRET);
+  const clientId = env.GITHUB_OAUTH_CLIENT_ID;
+  return Boolean(
+    clientId &&
+    env.GITHUB_OAUTH_CLIENT_SECRET &&
+    // GitHub App OAuth client ids use this prefix. Their user-to-server
+    // tokens can inherit installation permissions, so accepting one would
+    // make the UI's identity-only/no-repository-access promise false.
+    !clientId.startsWith("Iv1."),
+  );
 }
 
 export function createAuth(env: Cloudflare.Env) {
@@ -504,17 +512,17 @@ export function createAuth(env: Cloudflare.Env) {
       // A social sign-in leaves the provider's access (and refresh) token in
       // `account`. Better Auth stores those in plain text by default, which
       // would put usable GitHub credentials in every D1 dump and backup —
-      // encrypt them at rest instead. Drydock never reads them back: the
-      // grant is identity-only and the token is dead weight after callback.
+      // encrypt them at rest instead. Drydock application logic never uses
+      // them after callback; Better Auth's authenticated account API can still
+      // return them to the signed-in user, so the grant must stay identity-only.
       encryptOAuthTokens: true,
       accountLinking: {
-        // Never link a social sign-in to an existing password account by email
-        // match. Better Auth's implicit linking would sign the caller straight
-        // in on the OAuth callback — and the twoFactor plugin only challenges
-        // /sign-in/email, so implicit linking would let anyone who controls
-        // the account's email address bypass an enrolled TOTP challenge.
-        // Disabled, a GitHub sign-in against an already-registered email fails
-        // closed to the login page; the owner signs in with their password.
+        // Keep social-only and password identities separate. Better Auth also
+        // exposes an explicit link endpoint; leaving it enabled would let a
+        // password account attach GitHub and bypass its Drydock TOTP challenge
+        // on later sign-ins, then potentially unlink its credential into a
+        // state the password-gated 2FA management routes cannot service.
+        enabled: false,
         disableImplicitLinking: true,
       },
     },

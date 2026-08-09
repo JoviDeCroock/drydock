@@ -146,29 +146,23 @@ Optional integrations:
   the grant shares the user's profile and verified email, requests no repo
   scopes, and never installs the GitHub App; workflow-gate installation stays a
   separate step. **Use a plain OAuth app, not the workflow-gate GitHub App.**
-  Reuse is technically possible — the app must both enable "Request user
-  authorization" with `<BETTER_AUTH_URL>/api/auth/callback/github` as a callback
-  URL **and** grant the "Email addresses" (read-only) account permission, since
-  GitHub Apps ignore OAuth scope parameters and without that permission the
-  email lookup fails, so sign-ins with a private email are rejected and the rest
-  arrive unverified. But reuse also breaks the identity-only property this
-  integration advertises: a GitHub App's user-to-server token can act on the
-  intersection of the app's installation permissions and the user's own access
-  (that is exactly what the install callback uses `/user/installations` for), so
-  every sign-in would mint a token carrying workflow-gate reach rather than
-  profile-and-email reach. A classic OAuth app with `read:user user:email` mints
-  a token that can do nothing else. Either way Drydock never reads the token
-  back after the callback, and `account.encryptOAuthTokens` keeps what Better
-  Auth stores encrypted at rest.
+  Known GitHub App client ids (the `Iv1.` prefix) are rejected even when a secret
+  is present: GitHub Apps ignore OAuth scopes, their user-to-server tokens can
+  carry installation permissions, and Better Auth exposes authenticated token
+  retrieval endpoints. A classic OAuth app with `read:user user:email` mints the
+  profile-and-email-only token this integration promises. Drydock does not use
+  that token after the callback, and `account.encryptOAuthTokens` keeps what
+  Better Auth stores encrypted at rest.
 
   Social sign-ins are never asked for email verification (the wall applies to
   the email sign-in route only), and a provider-verified email also satisfies
   the verified-email checks elsewhere (e.g. accepting an invitation). Implicit
-  account linking is disabled: a GitHub sign-in whose email already belongs to a
-  password account fails back to the login page instead of attaching to that
-  account, because the Drydock TOTP challenge guards only password sign-ins and
-  linking by email match would let an inbox takeover skip it. The TOTP step-up
-  on release decisions is unaffected by sign-in method.
+  account linking is disabled, including Better Auth's explicit link endpoint:
+  a GitHub sign-in whose email already belongs to a password account fails back
+  to the login page instead of attaching to that account, because the Drydock
+  TOTP challenge guards only password sign-ins and a linked social method would
+  bypass it. The TOTP step-up on release decisions is unaffected by sign-in
+  method.
 
   One adoption limit to weigh before enabling this: a GitHub-only account cannot
   enrol in Drydock two-factor at all, because every two-factor endpoint

@@ -171,14 +171,14 @@ const AuthConfigModel = createModel(() => {
           credentials: "same-origin",
           headers: { accept: "application/json" },
         });
-        if (res.ok) {
-          const data = (await res.json()) as { githubSignIn?: boolean } | null;
-          this.githubSignIn.value = Boolean(data?.githubSignIn);
-        }
+        if (!res.ok) return;
+        const data = (await res.json()) as { githubSignIn?: boolean } | null;
+        this.githubSignIn.value = Boolean(data?.githubSignIn);
+        this.loaded.value = true;
       } catch {
-        // Offline or misconfigured — leave every optional method hidden.
+        // Offline or misconfigured — leave every optional method hidden and
+        // retry when the auth surface mounts again.
       }
-      this.loaded.value = true;
     },
   };
 });
