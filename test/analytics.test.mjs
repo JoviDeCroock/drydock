@@ -63,26 +63,6 @@ describe("recordProductEvent", () => {
     expect(points[0].blobs).toContain("requests");
   });
 
-  test("marketing page events carry only the coarse surface and source", () => {
-    const { points, env } = fakeDataset();
-    recordProductEvent(env, {
-      name: "marketing_page.viewed",
-      surface: "diff",
-      source: "bluesky",
-    });
-
-    expect(points[0].indexes).toEqual(["marketing_page.viewed"]);
-    expect(points[0].blobs).toEqual([
-      ANALYTICS_SCHEMA_VERSION,
-      "marketing_page.viewed",
-      "",
-      "",
-      "diff",
-      "bluesky",
-    ]);
-    expect(points[0].doubles).toEqual([0]);
-  });
-
   test("is a no-op without the binding", () => {
     expect(() =>
       recordProductEvent(undefined, {
@@ -149,7 +129,6 @@ describe("recordProductEvent", () => {
         risk: "low",
         durationMs: 3,
       },
-      { name: "marketing_page.viewed", surface: "diff", source: "bluesky" },
       { name: "scan.queued", organizationId: "org_1", ecosystem: "npm", source: "manual" },
       {
         name: "scan.failed",

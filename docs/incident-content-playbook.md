@@ -27,7 +27,7 @@ These are not style preferences. Breaking one of them costs more trust than any 
 | T+20     | Screenshot the diff hunk that shows the change. The image is the ad; the link is the proof.                                |
 | T+30     | Post to Bluesky and X — `breaking` then `whatToDo` in one thread.                                                          |
 | T+24–48h | LinkedIn `analysis` post: what changed, why it was reviewable, what provenance does and does not answer.                   |
-| T+1 week | Check the channel counters. Which channel actually sent people to the diff?                                                |
+| T+1 week | Check `public_diff.viewed` for the package across the post window.                                                         |
 
 The order matters. Bluesky and X are where the incident thread is alive on day one; LinkedIn rewards the considered write-up two days later, when the news cycle has moved and the analysis is the only thing left worth reading.
 
@@ -72,4 +72,6 @@ The incident engine is reactive and cannot be scheduled — real compromises are
 
 ## Measuring it
 
-The `marketing_page.viewed` Analytics Engine event answers whether a post worked: views on the `diff` surface, grouped by `source`, on the day of the post and the day after. Filter `source != 'bot'` — crawler fetches scale with how many platforms a link was posted to, not with interest. The `bot` count is still worth a glance as confirmation the unfurl actually happened on each platform.
+The `public_diff.viewed` Analytics Engine event is the measurement: diffs actually computed, by day and by package, on the day of the post and the day after. A spike on the package the post was about is the signal that the post worked.
+
+Channel attribution no longer exists — page views and referrer buckets were removed from analytics, so which platform sent the traffic is not answerable from this data. That is deliberate: the counter tracks diffs read, not visits, and a diff read is the thing the post was trying to cause. Note that the event fires on the version-pair request, so a link that unfurls but is never opened produces nothing at all.
