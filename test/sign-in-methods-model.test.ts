@@ -1,13 +1,12 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-// The model is a module singleton whose `loaded` guard makes `load()` a
-// one-shot, so each case re-imports a fresh module instance.
-async function loadWith(handler: () => Promise<Response>) {
+// The model is a module singleton, so each case re-imports a fresh instance.
+async function loadWith(handler: () => Promise<Response>, userId = "user_1") {
   vi.resetModules();
   const fetchMock = vi.fn(handler);
   globalThis.fetch = fetchMock as unknown as typeof fetch;
   const { signInMethodsModel } = await import("../src/models/auth");
-  await signInMethodsModel.load();
+  await signInMethodsModel.load(userId);
   return { signInMethodsModel, fetchMock };
 }
 
@@ -57,13 +56,30 @@ describe("signInMethodsModel", () => {
     expect(signInMethodsModel.hasPassword.value).toBe(true);
   });
 
-  test("load is a one-shot", async () => {
+  test("load is a one-shot for the same user", async () => {
     const { signInMethodsModel, fetchMock } = await loadWith(async () =>
       accountsResponse(["github"]),
     );
 
-    await signInMethodsModel.load();
+    await signInMethodsModel.load("user_1");
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("reloads when a different user signs in", async () => {
+    vi.resetModules();
+    const fetchMock = vi
+      .fn<() => Promise<Response>>()
+      .mockResolvedValueOnce(accountsResponse(["github"]))
+      .mockResolvedValueOnce(accountsResponse(["credential"]));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const { signInMethodsModel } = await import("../src/models/auth");
+
+    await signInMethodsModel.load("github_user");
+    expect(signInMethodsModel.hasPassword.value).toBe(false);
+
+    await signInMethodsModel.load("password_user");
+    expect(signInMethodsModel.hasPassword.value).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

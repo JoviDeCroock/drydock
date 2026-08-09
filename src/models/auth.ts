@@ -140,12 +140,12 @@ const SessionModel = createModel(() => {
       this.session.value = null;
     },
 
-    // Permanently delete the signed-in account. The password is re-verified
-    // server-side (reauth) and Better Auth cascades Drydock-owned data; on
-    // success the session is gone, so we drop it locally too. Throws AuthError
-    // on failure (e.g. wrong password, or still owning a shared organization).
-    async deleteAccount(password: string): Promise<void> {
-      await authPost("/api/auth/delete-user", { password });
+    // Permanently delete the signed-in account. Password accounts reauthenticate
+    // with their credential; social-only accounts omit it and Better Auth
+    // requires the OAuth-created session to still be fresh. On success the
+    // session is gone, so we drop it locally too.
+    async deleteAccount(password?: string): Promise<void> {
+      await authPost("/api/auth/delete-user", password ? { password } : {});
       this.session.value = null;
     },
   };
@@ -153,7 +153,7 @@ const SessionModel = createModel(() => {
 
 export const sessionModel = new SessionModel();
 
-// Which optional sign-in methods the deployment offers (GET /api/auth-config,
+// Which optional sign-in methods the deployment offers (GET /api/auth/config,
 // anonymous). Defaults stay false on any failure so the password form — which
 // needs no configuration — is never blocked on this lookup.
 const AuthConfigModel = createModel(() => {
@@ -167,7 +167,7 @@ const AuthConfigModel = createModel(() => {
     async load(): Promise<void> {
       if (this.loaded.peek()) return;
       try {
-        const res = await fetch("/api/auth-config", {
+        const res = await fetch("/api/auth/config", {
           credentials: "same-origin",
           headers: { accept: "application/json" },
         });
@@ -189,19 +189,24 @@ export const authConfigModel = new AuthConfigModel();
 // Better Auth files a password under the `credential` provider, and an account
 // created by GitHub sign-in has no such row — which matters because every
 // two-factor endpoint reauthenticates with a password, so a GitHub-only
-// account cannot enrol. `hasPassword` starts true and stays true on any
-// failure: the password dialog is the long-standing path, so a failed lookup
-// must never take it away from an account that does have one.
+// account cannot enrol. The result is keyed by user id so client-side sign-out
+// followed by a different sign-in cannot reuse the previous account's methods.
+// `hasPassword` starts true and stays true on any failure: the password dialog
+// is the long-standing path, so a failed lookup must never take it away from an
+// account that does have one.
 const SignInMethodsModel = createModel(() => {
   const hasPassword = signal(true);
   const loaded = signal(false);
+  const loadedForUserId = signal<string | null>(null);
 
   return {
     hasPassword,
     loaded,
 
-    async load(): Promise<void> {
-      if (this.loaded.peek()) return;
+    async load(userId: string): Promise<void> {
+      if (loadedForUserId.peek() === userId) return;
+      this.hasPassword.value = true;
+      this.loaded.value = false;
       try {
         const res = await fetch("/api/auth/list-accounts", {
           credentials: "same-origin",
@@ -215,8 +220,10 @@ const SignInMethodsModel = createModel(() => {
         }
       } catch {
         // Offline or unauthenticated — leave the password path offered.
+      } finally {
+        loadedForUserId.value = userId;
+        this.loaded.value = true;
       }
-      this.loaded.value = true;
     },
   };
 });

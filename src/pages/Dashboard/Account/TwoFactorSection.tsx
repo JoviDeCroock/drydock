@@ -1,5 +1,5 @@
-import { useEffect } from "preact/hooks";
-import { useModel, useSignal } from "@preact/signals";
+import { useComputed, useModel, useSignal } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
 import { sessionModel, signInMethodsModel } from "../../../models/auth";
 import { TwoFactorModel } from "../../../models/two-factor";
 import { Alert } from "../../../components/Alert";
@@ -44,19 +44,13 @@ export function TwoFactorSection() {
   const code = useSignal("");
   const savedConfirmed = useSignal(false);
 
-  const enabled = sessionModel.user.value?.twoFactorEnabled === true;
+  const enabled = useComputed(() => sessionModel.user.value?.twoFactorEnabled === true);
   const busy = tf.busy.value;
   const error = tf.error.value;
   const codes = tf.backupCodes.value;
   // Every two-factor endpoint reauthenticates with a password, so an account
   // that only signs in through GitHub cannot enrol here at all — offering the
   // button would dead-end on "invalid password" with nothing to correct.
-  const hasPassword = signInMethodsModel.hasPassword.value;
-
-  useEffect(() => {
-    void signInMethodsModel.load();
-  }, []);
-
   const close = () => {
     dialog.value = "none";
     enrollStep.value = "password";
@@ -247,7 +241,9 @@ export function TwoFactorSection() {
             Two-factor authentication
           </SectionLabel>
           <span class="shrink-0">
-            {enabled ? <Badge tone="ok">enabled</Badge> : <Badge tone="neutral">not enabled</Badge>}
+            <Show when={enabled} fallback={<Badge tone="neutral">not enabled</Badge>}>
+              <Badge tone="ok">enabled</Badge>
+            </Show>
           </span>
         </div>
         <Muted class="text-[13px] m-0 max-w-[760px]">
@@ -262,7 +258,26 @@ export function TwoFactorSection() {
         />
       </div>
 
-      {enabled ? (
+      <Show
+        when={enabled}
+        fallback={
+          <Show
+            when={signInMethodsModel.hasPassword}
+            fallback={
+              <Alert tone="info">
+                This account signs in with GitHub, so there is no Drydock password to confirm and
+                two-factor can't be enabled here — the sign-in is protected by whatever 2FA the
+                GitHub account carries. An organization that requires Drydock two-factor for release
+                decisions cannot be satisfied by a GitHub-only account.
+              </Alert>
+            }
+          >
+            <div>
+              <Button onClick={() => open("enroll")}>Enable two-factor</Button>
+            </div>
+          </Show>
+        }
+      >
         <div class="flex flex-wrap gap-2">
           <Button variant="secondary" onClick={() => open("regenerate")}>
             Regenerate backup codes
@@ -271,18 +286,7 @@ export function TwoFactorSection() {
             Disable two-factor
           </Button>
         </div>
-      ) : hasPassword ? (
-        <div>
-          <Button onClick={() => open("enroll")}>Enable two-factor</Button>
-        </div>
-      ) : (
-        <Alert tone="info">
-          This account signs in with GitHub, so there is no Drydock password to confirm and
-          two-factor can't be enabled here — the sign-in is protected by whatever 2FA the GitHub
-          account carries. An organization that requires Drydock two-factor for release decisions
-          cannot be satisfied by a GitHub-only account.
-        </Alert>
-      )}
+      </Show>
 
       <Dialog
         open={dialog.value !== "none"}

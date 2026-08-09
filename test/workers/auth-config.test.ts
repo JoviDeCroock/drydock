@@ -12,22 +12,30 @@ const githubEnv = {
 };
 
 describe("auth config", () => {
-  test("GET /api/auth-config is anonymous and reports github sign-in off by default", async () => {
+  test("GET /api/auth/config is anonymous and reports github sign-in off by default", async () => {
     const ctx = createExecutionContext();
-    const res = await worker.fetch(new Request(`${ORIGIN}/api/auth-config`), env, ctx);
+    const res = await worker.fetch(new Request(`${ORIGIN}/api/auth/config`), env, ctx);
     await waitOnExecutionContext(ctx);
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ githubSignIn: false });
   });
 
-  test("GET /api/auth-config reports github sign-in when the credential pair is set", async () => {
+  test("GET /api/auth/config reports github sign-in when the credential pair is set", async () => {
     const ctx = createExecutionContext();
-    const res = await worker.fetch(new Request(`${ORIGIN}/api/auth-config`), githubEnv, ctx);
+    const res = await worker.fetch(new Request(`${ORIGIN}/api/auth/config`), githubEnv, ctx);
     await waitOnExecutionContext(ctx);
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ githubSignIn: true });
+  });
+
+  test("does not leave the old non-auth API path anonymous", async () => {
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(new Request(`${ORIGIN}/api/auth-config`), githubEnv, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(401);
   });
 
   test("POST /api/auth/sign-in/social starts the GitHub authorize redirect when enabled", async () => {

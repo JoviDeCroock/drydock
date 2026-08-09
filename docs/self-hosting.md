@@ -142,7 +142,7 @@ Optional integrations:
   and optional `GITHUB_APP_STATE_SECRET` (otherwise `BETTER_AUTH_SECRET` is used)
 - GitHub sign-in: `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET`.
   When both are set, the login and register pages offer "Continue with GitHub"
-  (`GET /api/auth-config` reports availability). This is identity-only OAuth —
+  (`GET /api/auth/config` reports availability). This is identity-only OAuth —
   the grant shares the user's profile and verified email, requests no repo
   scopes, and never installs the GitHub App; workflow-gate installation stays a
   separate step. **Use a plain OAuth app, not the workflow-gate GitHub App.**

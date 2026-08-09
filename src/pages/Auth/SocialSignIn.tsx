@@ -54,7 +54,7 @@ export function SocialSignIn({
         </Muted>
         <div class="flex items-center gap-3" aria-hidden>
           <span class="h-px flex-1 bg-border" />
-          <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">or</span>
+          <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">or</span>
           <span class="h-px flex-1 bg-border" />
         </div>
       </div>
