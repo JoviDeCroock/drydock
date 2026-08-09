@@ -5,8 +5,8 @@ scans run, how long they take, how often they fail, whether the AI reviewer is
 healthy, whether maintainers agree with the risk grade, and how many package
 diffs get read.
 
-Scope is deliberately narrow: the diff and the scan are the product, so those
-are the only things counted. Marketing page views and channel attribution were
+Scope is deliberately narrow: it counts work done across the review funnel and
+successful public diff reads. Marketing page views and channel attribution were
 removed — they measured traffic rather than work done, and every event they
 produced sat in the hot path of serving a static document.
 

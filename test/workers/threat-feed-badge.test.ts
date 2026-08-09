@@ -566,7 +566,12 @@ describe("shields badge endpoint", () => {
       { headers },
     );
     expect(((await blockedUnderThrottle.json()) as BadgeBody).message).not.toBe("not reviewed");
-  });
+    // The timeout is tied to the loop cap above: a straddled run pays for a
+    // wasted window before filling a fresh one, so the worst case is hundreds of
+    // sequential D1-backed requests. The 5s default covers the fast path (~250ms
+    // locally) but not that worst case on a loaded runner, which is a timeout
+    // rather than a limiter bug. Raise both together or neither.
+  }, 30_000);
 
   test("badge misses are not written to the colo cache", async () => {
     const app = buildTestApp(null);

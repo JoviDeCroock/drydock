@@ -27,7 +27,7 @@ These are not style preferences. Breaking one of them costs more trust than any 
 | T+20     | Screenshot the diff hunk that shows the change. The image is the ad; the link is the proof.                                |
 | T+30     | Post to Bluesky and X — `breaking` then `whatToDo` in one thread.                                                          |
 | T+24–48h | LinkedIn `analysis` post: what changed, why it was reviewable, what provenance does and does not answer.                   |
-| T+1 week | Check the channel counters. Which channel actually sent people to the diff?                                                |
+| T+1 week | Check `public_diff.viewed` for the package across the post window.                                                         |
 
 The order matters. Bluesky and X are where the incident thread is alive on day one; LinkedIn rewards the considered write-up two days later, when the news cycle has moved and the analysis is the only thing left worth reading.
 
