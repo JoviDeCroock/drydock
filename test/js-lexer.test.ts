@@ -28,6 +28,7 @@ describe("tokenizeJs regex vs division", () => {
       "({a:1})/2/b", // parenthesised expression
       "var o={a:1}/2/b", // object literal
       "return{a:1}/2/b", // object literal after a keyword
+      "class C{class={}/2/b}", // a field named `class`, not a nested declaration
       "a.b/2/c", // property
       "1/2/3", // numbers
       "typeof x/2/b", // the operand, not the keyword, precedes the slash
@@ -45,6 +46,9 @@ describe("tokenizeJs regex vs division", () => {
       "for(;;){}/x/.test(a)",
       "function f(){}/x/.test(a)",
       "a=>{}/x/.test(a)",
+      "class A{}/x/.test(a)",
+      "const A=class extends mixin({a:1}){}/x/.test(a)",
+      "try{}catch{}/x/.test(a)",
       "return /x/.test(a)",
       "a=/x/.test(a)",
       "/x/.test(a)",
@@ -58,6 +62,20 @@ describe("tokenizeJs regex vs division", () => {
     // punctuation, which is what let the reformatter break a line inside it.
     expect(kinds("if(a)/x;y{z}/.test(a)")).toBe(
       "ident:if punct:( ident:a punct:) regex:/x;y{z}/ punct:. ident:test punct:( ident:a punct:)",
+    );
+  });
+
+  test("keeps comments, regexes, and nested templates whole inside interpolation", () => {
+    const source = 'const s=`${/}/.test(x) ? `inner;{x}` : "x"}`;';
+    const template = tokenizeJs(source).find((token) => token.type === "template");
+
+    expect(template && jsTokenText(source, template)).toBe('`${/}/.test(x) ? `inner;{x}` : "x"}`');
+    expect(tokenizeJs(source).filter((token) => token.type === "template")).toHaveLength(1);
+
+    const comment = "const s=`${/* } and ` */ `inner;{x}`}`;";
+    const commentTemplate = tokenizeJs(comment).find((token) => token.type === "template");
+    expect(commentTemplate && jsTokenText(comment, commentTemplate)).toBe(
+      "`${/* } and ` */ `inner;{x}`}`",
     );
   });
 

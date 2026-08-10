@@ -43,14 +43,24 @@ export interface JsToken {
 // into the middle of a regex literal.
 type BracketKind = "head-paren" | "paren" | "block" | "object" | "bracket";
 
+interface BracketState {
+  brackets: BracketKind[];
+  closed: BracketKind | null;
+  // `class` bodies are blocks even though the token immediately before `{` is
+  // usually the class name or extends expression. Remember the bracket depth at
+  // which the class header started so nested calls/objects do not consume it.
+  pendingClassDepth: number | null;
+}
+
 // Keywords whose parenthesised head is followed by a statement.
 const STATEMENT_HEAD_KEYWORDS = new Set(["if", "for", "while", "with"]);
 
 // Keywords after which a `{` opens a block rather than an object literal. Every
 // other block form is caught by the preceding punctuator (`)`, `;`, `{`, `}`,
-// `=>`); anything else before a `{` — a class name, a property key — leaves it
-// an object literal, the conservative reading that keeps `/` a division.
-const BLOCK_PRECEDING_KEYWORDS = new Set(["else", "do", "try", "finally"]);
+// `=>`) or the pending-class state below; anything else before a `{` — such as
+// a property key — leaves it an object literal, the conservative reading that
+// keeps `/` a division.
+const BLOCK_PRECEDING_KEYWORDS = new Set(["else", "do", "try", "catch", "finally"]);
 
 // Punctuators after which a `{` opens a block: statement boundaries, another
 // block's braces, a parenthesised head (`if(a){`, `function f(){`), and an
@@ -120,17 +130,10 @@ export function tokenizeJs(src: string): JsToken[] {
   let i = 0;
   // Open brackets, innermost last, and the kind the most recent closer popped.
   // `closed` is only ever read while `prev` is that closer.
-  const brackets: BracketKind[] = [];
-  let closed: BracketKind | null = null;
+  const state: BracketState = { brackets: [], closed: null, pendingClassDepth: null };
 
   const pushSignificant = (token: JsToken): void => {
-    if (token.type === "punct") {
-      const text = jsTokenText(src, token);
-      if (text === "(") brackets.push(isStatementHead(src, prev) ? "head-paren" : "paren");
-      else if (text === "[") brackets.push("bracket");
-      else if (text === "{") brackets.push(opensBlock(src, prev) ? "block" : "object");
-      else if (text === ")" || text === "]" || text === "}") closed = brackets.pop() ?? null;
-    }
+    updateBracketState(src, token, prev, state);
     tokens.push(token);
     prev = token;
   };
@@ -176,7 +179,7 @@ export function tokenizeJs(src: string): JsToken[] {
       continue;
     }
 
-    if (c === "/" && regexAllowed(src, prev, closed)) {
+    if (c === "/" && regexAllowed(src, prev, state.closed)) {
       const start = i;
       i = scanRegex(src, i);
       pushSignificant({ type: "regex", start, end: i });
@@ -245,30 +248,90 @@ function scanTemplate(src: string, i: number): number {
     }
     if (c === "`") return j + 1;
     if (c === "$" && src[j + 1] === "{") {
-      j += 2;
-      let depth = 1;
-      while (j < n && depth > 0) {
-        const cc = src[j];
-        if (cc === "\\") {
-          j += 2;
-          continue;
-        }
-        if (cc === "`") {
-          j = scanTemplate(src, j);
-          continue;
-        }
-        if (cc === "'" || cc === '"') {
-          j = scanString(src, j).end;
-          continue;
-        }
-        if (cc === "{") depth += 1;
-        else if (cc === "}") depth -= 1;
-        j += 1;
-      }
+      j = scanTemplateExpression(src, j + 2);
       continue;
     }
     j += 1;
   }
+  return j;
+}
+
+// Scan one `${ … }` body with the same literal boundaries as the outer lexer.
+// Counting braces character-by-character is not enough: `}` and backticks are
+// ordinary data inside comments and regex literals, and misreading either can
+// make the formatter insert newlines into a nested template's actual contents.
+function scanTemplateExpression(src: string, i: number): number {
+  const n = src.length;
+  const state: BracketState = { brackets: [], closed: null, pendingClassDepth: null };
+  let depth = 1;
+  let prev: JsToken | undefined;
+  let j = i;
+
+  const pushSignificant = (token: JsToken): void => {
+    updateBracketState(src, token, prev, state);
+    prev = token;
+  };
+
+  while (j < n) {
+    const c = src[j];
+    if (isWhitespace(c)) {
+      j += 1;
+      continue;
+    }
+    if (c === "/" && src[j + 1] === "/") {
+      j += 2;
+      while (j < n && src[j] !== "\n") j += 1;
+      continue;
+    }
+    if (c === "/" && src[j + 1] === "*") {
+      j += 2;
+      while (j < n && !(src[j] === "*" && src[j + 1] === "/")) j += 1;
+      j = Math.min(n, j + 2);
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      const start = j;
+      const scanned = scanString(src, j);
+      j = scanned.end;
+      pushSignificant({ type: "string", start, end: j, value: scanned.value });
+      continue;
+    }
+    if (c === "`") {
+      const start = j;
+      j = scanTemplate(src, j);
+      pushSignificant({ type: "template", start, end: j });
+      continue;
+    }
+    if (c === "/" && regexAllowed(src, prev, state.closed)) {
+      const start = j;
+      j = scanRegex(src, j);
+      pushSignificant({ type: "regex", start, end: j });
+      continue;
+    }
+    if (isDigit(c) || (c === "." && isDigit(src[j + 1]))) {
+      const start = j;
+      j = scanNumber(src, j);
+      pushSignificant({ type: "number", start, end: j });
+      continue;
+    }
+    if (isIdentStart(c)) {
+      const start = j;
+      j += 1;
+      while (j < n && isIdentPart(src[j])) j += 1;
+      pushSignificant({ type: "ident", start, end: j });
+      continue;
+    }
+
+    const start = j;
+    j += matchPunctuator(src, j);
+    const token: JsToken = { type: "punct", start, end: j };
+    const text = jsTokenText(src, token);
+    if (text === "}" && depth === 1) return j;
+    if (text === "{") depth += 1;
+    else if (text === "}") depth -= 1;
+    pushSignificant(token);
+  }
+
   return j;
 }
 
@@ -379,6 +442,45 @@ function matchPunctuator(src: string, i: number): number {
     if (src.startsWith(op, i)) return op.length;
   }
   return 1;
+}
+
+function updateBracketState(
+  src: string,
+  token: JsToken,
+  prev: JsToken | undefined,
+  state: BracketState,
+): void {
+  const text = jsTokenText(src, token);
+  if (token.type === "ident") {
+    if (
+      text === "class" &&
+      !(prev?.type === "punct" && [".", "?."].includes(jsTokenText(src, prev)))
+    ) {
+      state.pendingClassDepth = state.brackets.length;
+    }
+    return;
+  }
+  if (token.type !== "punct") return;
+
+  if (
+    state.pendingClassDepth === state.brackets.length &&
+    (text === ":" || text === ";" || text === "=")
+  ) {
+    // `class` was an object key or malformed/truncated header, not a class
+    // declaration/expression whose body is still ahead.
+    state.pendingClassDepth = null;
+  }
+  if (text === "(") {
+    state.brackets.push(isStatementHead(src, prev) ? "head-paren" : "paren");
+  } else if (text === "[") {
+    state.brackets.push("bracket");
+  } else if (text === "{") {
+    const classBody = state.pendingClassDepth === state.brackets.length;
+    state.brackets.push(classBody || opensBlock(src, prev) ? "block" : "object");
+    if (classBody) state.pendingClassDepth = null;
+  } else if (text === ")" || text === "]" || text === "}") {
+    state.closed = state.brackets.pop() ?? null;
+  }
 }
 
 function regexAllowed(src: string, prev: JsToken | undefined, closed: BracketKind | null): boolean {

@@ -55,8 +55,11 @@ const MAX_INDENT_DEPTH = 24;
 // Shiki language ids (`langForPath`) we know how to re-flow. Everything else —
 // markdown, yaml, python, toml — either does not minify or carries meaning in
 // its own line structure, so it is left exactly as shipped.
-const JS_LANGS = new Set(["javascript", "jsx", "typescript", "tsx", "json"]);
-const CSS_LANGS = new Set(["css", "scss"]);
+// JSX text and SCSS line comments carry whitespace-sensitive syntax that the
+// deliberately small scanners below do not understand. Fail closed for those
+// grammars instead of presenting a transformed view that changes their meaning.
+const JS_LANGS = new Set(["javascript", "typescript", "json"]);
+const CSS_LANGS = new Set(["css"]);
 
 export function formatLanguageFor(lang: string | undefined): FormatLanguage | null {
   if (!lang) return null;
@@ -244,6 +247,12 @@ function cssBreaks(src: string): SourceBreak[] {
 
   while (index < src.length) {
     const char = src[index];
+    // CSS escapes make the next code point data even when it is normally a
+    // structural delimiter (`.foo\;bar`, for example). Never split there.
+    if (char === "\\") {
+      index += 2;
+      continue;
+    }
     if (char === "/" && src[index + 1] === "*") {
       const close = src.indexOf("*/", index + 2);
       index = close === -1 ? src.length : close + 2;
@@ -297,6 +306,10 @@ function skipCssString(src: string, start: number): number {
 function skipCssUrl(src: string, start: number): number {
   let index = start;
   while (index < src.length && src[index] !== ")" && src[index] !== "\n") {
+    if (src[index] === "\\") {
+      index += 2;
+      continue;
+    }
     if (src[index] === '"' || src[index] === "'") {
       index = skipCssString(src, index);
       continue;

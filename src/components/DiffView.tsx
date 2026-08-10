@@ -78,9 +78,8 @@ const INITIAL_SCROLL_PADDING = 8;
 
 export interface DiffRows {
   rows: Row[];
-  // False when line pairing was abandoned and the file is shown as a whole-file
-  // replacement. Surfaced to the reader rather than swallowed: "every line
-  // changed" and "we gave up pairing lines" look identical on screen.
+  // False when line pairing was abandoned. The caller renders each source side
+  // independently and incrementally instead of manufacturing changed rows.
   paired: boolean;
 }
 
@@ -132,10 +131,7 @@ function buildRowsFromLineDiff(
 ): DiffChunks {
   const parts = diffLines(before, after, { timeout: timeoutMs });
   if (!parts) {
-    return {
-      chunks: wholeFileReplacement(before, after, beforeTokens, afterTokens),
-      paired: false,
-    };
+    return { chunks: [], paired: false };
   }
   const chunks: RowChunk[] = [];
   let beforeLine = 0;
@@ -199,10 +195,7 @@ function buildRowsIgnoringWhitespace(
     timeout: timeoutMs,
   });
   if (!parts) {
-    return {
-      chunks: wholeFileReplacement(before, after, beforeTokens, afterTokens),
-      paired: false,
-    };
+    return { chunks: [], paired: false };
   }
   const chunks: RowChunk[] = [];
   let beforeLine = 0;
@@ -251,38 +244,6 @@ function buildRowsIgnoringWhitespace(
     }
   }
   return { chunks, paired: true };
-}
-
-// The honest answer when line pairing gives up: every line of the baseline is
-// gone and every line of the staged side is new. It is exactly what an
-// unformatted minified diff shows today, just line by line, and it never claims
-// a pairing the diff never found.
-function wholeFileReplacement(
-  before: string,
-  after: string,
-  beforeTokens: TokenLine[] | null,
-  afterTokens: TokenLine[] | null,
-): RowChunk[] {
-  const chunks: RowChunk[] = [];
-  const removed = splitLines(before).map((text, index) => ({
-    tone: "removed" as const,
-    beforeLine: index + 1,
-    afterLine: null,
-    text,
-    tokens: beforeTokens?.[index] ?? null,
-    wordParts: null,
-  }));
-  const added = splitLines(after).map((text, index) => ({
-    tone: "added" as const,
-    beforeLine: null,
-    afterLine: index + 1,
-    text,
-    tokens: afterTokens?.[index] ?? null,
-    wordParts: null,
-  }));
-  if (removed.length) chunks.push({ tone: "removed", rows: removed });
-  if (added.length) chunks.push({ tone: "added", rows: added });
-  return chunks;
 }
 
 function splitLines(value: string): string[] {
@@ -1094,6 +1055,111 @@ function TwoSidedView({
       }),
     [beforeText, afterText, beforeTokens, afterTokens, wordDiff, ignoreWhitespace],
   );
+  if (!paired) {
+    return (
+      <WholeFileReplacementView
+        path={path}
+        status={status}
+        beforeText={beforeText}
+        afterText={afterText}
+        beforeTokens={beforeTokens}
+        afterTokens={afterTokens}
+        beforeLabel={beforeLabel}
+        afterLabel={afterLabel}
+        findings={findings}
+      />
+    );
+  }
+  return (
+    <PairedTwoSidedView
+      path={path}
+      status={status}
+      beforeText={beforeText}
+      afterText={afterText}
+      beforeLabel={beforeLabel}
+      afterLabel={afterLabel}
+      findings={findings}
+      ignoreWhitespace={ignoreWhitespace}
+      rows={rows}
+    />
+  );
+}
+
+// A timed-out Myers diff has no trustworthy pairing to render. Show the two
+// source sides independently through the existing incremental renderer instead
+// of manufacturing tens of thousands of "changed" rows in one DOM commit.
+function WholeFileReplacementView({
+  path,
+  status,
+  beforeText,
+  afterText,
+  beforeTokens,
+  afterTokens,
+  beforeLabel,
+  afterLabel,
+  findings,
+}: {
+  path: string;
+  status: string;
+  beforeText: string;
+  afterText: string;
+  beforeTokens: TokenLine[] | null;
+  afterTokens: TokenLine[] | null;
+  beforeLabel: string;
+  afterLabel: string;
+  findings: DiffFinding[];
+}) {
+  return (
+    <div class="flex flex-col gap-3">
+      <Muted class="border border-border rounded-md bg-surface-2 px-3 py-2 text-[12px]">
+        Line pairing timed out on this file, so each side is shown independently. Use the line
+        expanders to review the complete samples without rendering every row at once.
+      </Muted>
+      <SingleSidedView
+        path={path}
+        label={beforeLabel}
+        tone="removed"
+        text={beforeText}
+        tokens={beforeTokens}
+        findings={[]}
+        resetKey={initialScrollResetKey(`${path}:pairing-timeout:before`, status, beforeText, "")}
+        seekFirstChange={shouldSeekInitialDiffTarget(status)}
+      />
+      <SingleSidedView
+        path={path}
+        label={afterLabel}
+        tone="added"
+        text={afterText}
+        tokens={afterTokens}
+        findings={findings}
+        resetKey={initialScrollResetKey(`${path}:pairing-timeout:after`, status, "", afterText)}
+        seekFirstChange={shouldSeekInitialDiffTarget(status)}
+      />
+    </div>
+  );
+}
+
+function PairedTwoSidedView({
+  path,
+  status,
+  beforeText,
+  afterText,
+  beforeLabel,
+  afterLabel,
+  findings,
+  ignoreWhitespace,
+  rows,
+}: {
+  path: string;
+  status: string;
+  beforeText: string;
+  afterText: string;
+  beforeLabel: string;
+  afterLabel: string;
+  findings: DiffFinding[];
+  ignoreWhitespace: boolean;
+  rows: Row[];
+}) {
   // Partitioning, segment collapse, and overview markers are all O(rows);
   // memoized so scroll-adjacent rerenders never re-walk a 36k-row table.
   const { pinned, unpinned } = useMemo(() => {
@@ -1134,12 +1200,6 @@ function TwoSidedView({
         <span>{beforeLabel}</span>
         <span>{afterLabel}</span>
       </div>
-      {paired ? null : (
-        <Muted class="border-b border-border px-3 py-2 text-[12px]">
-          Line pairing timed out on this file, so both sides are shown in full instead. Every line
-          reads as changed here — that is this view giving up, not the whole file changing.
-        </Muted>
-      )}
       {unpinned.length ? <AnnotationBanner findings={unpinned} /> : null}
       <div class="relative h-[560px]">
         <DiffScrollViewport

@@ -143,18 +143,13 @@ describe("buildRows", () => {
   // reach the give-up path without staging a genuinely slow diff.
   const EXHAUSTED_BUDGET_MS = -1;
 
-  test("falls back to a whole-file replacement when line pairing runs out of budget", () => {
+  test("defers row construction when line pairing runs out of budget", () => {
     const { rows, paired } = buildRows("a\nb\n", "c\nd\n", null, null, {
       timeoutMs: EXHAUSTED_BUDGET_MS,
     });
 
     expect(paired).toBe(false);
-    expect(rows).toMatchObject([
-      { tone: "removed", beforeLine: 1, afterLine: null, text: "a" },
-      { tone: "removed", beforeLine: 2, afterLine: null, text: "b" },
-      { tone: "added", beforeLine: null, afterLine: 1, text: "c" },
-      { tone: "added", beforeLine: null, afterLine: 2, text: "d" },
-    ]);
+    expect(rows).toEqual([]);
   });
 
   test("gives up the same way with -w", () => {
@@ -164,7 +159,7 @@ describe("buildRows", () => {
     });
 
     expect(paired).toBe(false);
-    expect(rows.map((row) => row.tone)).toEqual(["removed", "removed", "added", "added"]);
+    expect(rows).toEqual([]);
   });
 
   test("reports a real pairing as paired", () => {

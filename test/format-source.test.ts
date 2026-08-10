@@ -35,16 +35,17 @@ function lines(formatted: FormattedSource | null): string[] {
 }
 
 describe("formatLanguageFor", () => {
-  test("covers the languages that ship minified", () => {
+  test("covers the languages whose token boundaries the formatter understands", () => {
     expect(formatLanguageFor("javascript")).toBe("js");
     expect(formatLanguageFor("typescript")).toBe("js");
-    expect(formatLanguageFor("tsx")).toBe("js");
     expect(formatLanguageFor("json")).toBe("js");
     expect(formatLanguageFor("css")).toBe("css");
-    expect(formatLanguageFor("scss")).toBe("css");
   });
 
-  test("leaves languages whose line structure carries meaning alone", () => {
+  test("leaves languages whose unsupported syntax makes inserted whitespace meaningful alone", () => {
+    expect(formatLanguageFor("jsx")).toBeNull();
+    expect(formatLanguageFor("tsx")).toBeNull();
+    expect(formatLanguageFor("scss")).toBeNull();
     expect(formatLanguageFor("markdown")).toBeNull();
     expect(formatLanguageFor("yaml")).toBeNull();
     expect(formatLanguageFor("python")).toBeNull();
@@ -112,6 +113,21 @@ describe("formatSource (javascript)", () => {
       "  u:/a;b{c}/g",
       "};",
     ]);
+  });
+
+  test("keeps regexes and nested templates inside interpolation opaque", () => {
+    const source = 'const s=`${/}/.test(x) ? `inner;{x}` : "x"}`;foo();';
+    const formatted = formatJs(source);
+
+    expect(lines(formatted)).toEqual(['const s=`${/}/.test(x) ? `inner;{x}` : "x"}`;', "foo();"]);
+  });
+
+  test("recognizes class and bindingless catch bodies before a regex statement", () => {
+    const classSource = formatJs("class A{}/x;y{z}/.test(a);foo();");
+    const catchSource = formatJs("try{}catch{}/x;y{z}/.test(a);foo();");
+
+    expect(lines(classSource)).toEqual(["class A{}", "/x;y{z}/.test(a);", "foo();"]);
+    expect(lines(catchSource)).toEqual(["try{}catch{}", "/x;y{z}/.test(a);", "foo();"]);
   });
 
   test("keeps a trailing line comment with its statement and code below it", () => {
@@ -198,6 +214,19 @@ describe("formatSource (css)", () => {
       ".a{",
       "  background:url(//cdn.example.com/a;b{c}.png);",
       '  content:"x;y{z}"',
+      "}",
+    ]);
+  });
+
+  test("does not treat escaped CSS delimiters as structure", () => {
+    const selector = formatSource(".foo\\;bar{color:red}", "css");
+    const url = formatSource(".a{background:url(foo\\)bar;baz{qux});color:red}", "css");
+
+    expect(lines(selector)).toEqual([".foo\\;bar{", "  color:red", "}"]);
+    expect(lines(url)).toEqual([
+      ".a{",
+      "  background:url(foo\\)bar;baz{qux});",
+      "  color:red",
       "}",
     ]);
   });
