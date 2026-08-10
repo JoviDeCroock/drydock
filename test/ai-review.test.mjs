@@ -611,7 +611,7 @@ describe("ai review orchestration", () => {
   test("a complete submission slightly over the summary bound is clamped, not discarded", async () => {
     // Reproduces the reported failure: validation used to reject the whole call
     // over a few-char overage, dropping a critical finding and collapsing to low.
-    const overLongSummary = "x".repeat(1031);
+    const overLongSummary = `${"word ".repeat(310)}tail.`;
     const { review: ai } = await analyzeWithAi(
       {},
       "mock-reviewer",
@@ -626,10 +626,64 @@ describe("ai review orchestration", () => {
     );
 
     expect(ai.status).toBe("complete");
-    expect(ai.summary.length).toBe(1000);
+    expect(ai.summary.length).toBeLessThanOrEqual(1500);
     expect(ai.findings).toHaveLength(1);
     expect(ai.findings[0].severity).toBe("critical");
     expect(computeScanRisk([], ai)).toBe("high");
+  });
+
+  test("an over-long summary is cut on a boundary and marked, never mid-word", async () => {
+    // The reported UI bug: a 1000-char hard slice ended the rendered summary at
+    // "I searched the availabl", which reads as the reviewer crashing rather
+    // than as a system cap.
+    const sentence = "The prepare script now runs husky and playwright install chromium. ";
+    const { review: ai } = await analyzeWithAi(
+      {},
+      "mock-reviewer",
+      BASE_OPTIONS,
+      submittingModel({
+        risk: "medium",
+        releaseAssessment: "review_recommended",
+        summary: `${sentence.repeat(40)}I searched the available evidence.`,
+        findings: [],
+        requiresManualReview: true,
+      }),
+    );
+
+    expect(ai.status).toBe("complete");
+    expect(ai.summary.length).toBeLessThanOrEqual(1500);
+    expect(ai.summary.endsWith(" …")).toBe(true);
+    // Boundary-aligned: the retained text ends at a whole sentence, and nothing
+    // before the marker is a severed word.
+    expect(ai.summary).toMatch(/chromium\. …$/);
+  });
+
+  test("prose with no whitespace to break on still clamps within bounds", async () => {
+    const { review: ai } = await analyzeWithAi(
+      {},
+      "mock-reviewer",
+      BASE_OPTIONS,
+      submittingModel({
+        risk: "high",
+        releaseAssessment: "suspicious",
+        summary: "A".repeat(4000),
+        findings: [
+          {
+            ...aiFinding("critical", "package.json"),
+            evidence: "B".repeat(2000),
+            reason: "C".repeat(2000),
+            recommendation: "D".repeat(2000),
+          },
+        ],
+        requiresManualReview: true,
+      }),
+    );
+
+    expect(ai.status).toBe("complete");
+    expect(ai.summary.length).toBeLessThanOrEqual(1500);
+    expect(ai.findings[0].evidence.length).toBeLessThanOrEqual(600);
+    expect(ai.findings[0].reason.length).toBeLessThanOrEqual(600);
+    expect(ai.findings[0].recommendation.length).toBeLessThanOrEqual(400);
   });
 
   test("an invalid submit_review does not end the loop; the model retries and completes", async () => {

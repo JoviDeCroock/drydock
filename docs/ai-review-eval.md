@@ -14,6 +14,22 @@ it whenever a change can alter reviewer behavior; copy or regenerate the eval
 records for the new version in the same change. Historical rows parse with a
 `null` version and analytics labels them `legacy`.
 
+## Submission bounds
+
+`AI_REVIEW_BOUNDS` in the same file is the single source of the per-field length
+limits, shared by the submission schema, the system prompt's stated budget, and
+`clampAiReviewSubmission`. A submission that overshoots is clamped and
+re-validated rather than discarded, because rejecting the whole call would
+collapse a high-risk review into the low-risk `invalid` fallback.
+
+Clamping prose is maintainer-visible: the summary is rendered verbatim in the
+scan workbench, so a hard mid-word cut reads as the reviewer crashing. Prose
+fields are cut on the last sentence break inside the budget, else the last word
+break, and always end in a ` …` marker; only `file` keeps a plain cut, since a
+trailing ellipsis on a path reads as part of the filename. The prompt states
+the summary budget so the model finishes its verdict inside it instead of
+relying on the clamp.
+
 ## Agent Traces
 
 The AI SDK is wrapped with Cloudflare's Agent Traces integration. Production
