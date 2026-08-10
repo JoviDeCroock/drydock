@@ -80,11 +80,13 @@ const BLOCK_PRECEDING_PUNCTUATORS = new Set([";", "{", "}", ")", "=>"]);
 
 // Keywords after which a `/` opens a regex literal rather than a division.
 const REGEX_PRECEDING_KEYWORDS = new Set([
+  "default",
   "return",
   "typeof",
   "instanceof",
   "in",
   "of",
+  "extends",
   "new",
   "delete",
   "void",
@@ -138,14 +140,16 @@ export function tokenizeJs(src: string): JsToken[] {
   const n = src.length;
   const tokens: JsToken[] = [];
   let prev: JsToken | undefined;
+  let beforePrev: JsToken | undefined;
   let i = 0;
   // Open brackets, innermost last, and the kind the most recent closer popped.
   // `closed` is only ever read while `prev` is that closer.
   const state = createBracketState();
 
   const pushSignificant = (token: JsToken): void => {
-    updateBracketState(src, token, prev, state);
+    updateBracketState(src, token, prev, beforePrev, state);
     tokens.push(token);
+    beforePrev = prev;
     prev = token;
   };
 
@@ -190,7 +194,7 @@ export function tokenizeJs(src: string): JsToken[] {
       continue;
     }
 
-    if (c === "/" && regexAllowed(src, prev, state.closed)) {
+    if (c === "/" && regexAllowed(src, prev, beforePrev, state.closed)) {
       const start = i;
       i = scanRegex(src, i);
       pushSignificant({ type: "regex", start, end: i });
@@ -258,6 +262,7 @@ interface TemplateExpressionFrame {
   depth: number;
   state: BracketState;
   prev?: JsToken;
+  beforePrev?: JsToken;
 }
 
 type TemplateScanFrame = TemplateLiteralFrame | TemplateExpressionFrame;
@@ -332,7 +337,7 @@ function scanTemplate(src: string, i: number): number {
       j += 1;
       continue;
     }
-    if (c === "/" && regexAllowed(src, frame.prev, frame.state.closed)) {
+    if (c === "/" && regexAllowed(src, frame.prev, frame.beforePrev, frame.state.closed)) {
       const start = j;
       j = scanRegex(src, j);
       pushTemplateExpressionToken(src, frame, { type: "regex", start, end: j });
@@ -373,7 +378,8 @@ function pushTemplateExpressionToken(
   frame: TemplateExpressionFrame,
   token: JsToken,
 ): void {
-  updateBracketState(src, token, frame.prev, frame.state);
+  updateBracketState(src, token, frame.prev, frame.beforePrev, frame.state);
+  frame.beforePrev = frame.prev;
   frame.prev = token;
 }
 
@@ -490,6 +496,7 @@ function updateBracketState(
   src: string,
   token: JsToken,
   prev: JsToken | undefined,
+  beforePrev: JsToken | undefined,
   state: BracketState,
 ): void {
   const text = jsTokenText(src, token);
@@ -526,7 +533,7 @@ function updateBracketState(
     state.pendingClassDepth = null;
   }
   if (text === "(") {
-    state.brackets.push(isStatementHead(src, prev) ? "head-paren" : "paren");
+    state.brackets.push(isStatementHead(src, prev, beforePrev) ? "head-paren" : "paren");
   } else if (text === "[") {
     state.brackets.push("bracket");
   } else if (text === "{") {
@@ -578,7 +585,12 @@ function canStartStatement(src: string, prev: JsToken | undefined, state: Bracke
   return false;
 }
 
-function regexAllowed(src: string, prev: JsToken | undefined, closed: BracketKind | null): boolean {
+function regexAllowed(
+  src: string,
+  prev: JsToken | undefined,
+  beforePrev: JsToken | undefined,
+  closed: BracketKind | null,
+): boolean {
   if (!prev) return true;
   if (prev.type === "punct") {
     const t = jsTokenText(src, prev);
@@ -586,16 +598,42 @@ function regexAllowed(src: string, prev: JsToken | undefined, closed: BracketKin
     // statement, so the `/` opens a regex; `f(a)/2` and `({}).x/2` are values.
     if (t === ")") return closed === "head-paren";
     if (t === "}") return closed === "block";
+    // Both punctuators may be prefix or postfix, but valid code cannot start a
+    // regex operand after the postfix form (`value++/2`, `value--/2`). Treating
+    // the slash as division is the conservative reading: it keeps following
+    // statements visible instead of swallowing them into a fake regex token.
+    if (t === "++" || t === "--") return false;
     return t !== "]";
   }
-  if (prev.type === "ident") return REGEX_PRECEDING_KEYWORDS.has(jsTokenText(src, prev));
+  if (prev.type === "ident") {
+    // Keyword-shaped property names are values (`result.default/2`), not the
+    // expression-leading keyword forms (`export default /re/`).
+    if (
+      beforePrev?.type === "punct" &&
+      (jsTokenText(src, beforePrev) === "." || jsTokenText(src, beforePrev) === "?.")
+    ) {
+      return false;
+    }
+    return REGEX_PRECEDING_KEYWORDS.has(jsTokenText(src, prev));
+  }
   return false; // value-producing token -> division
 }
 
-// `(` of `if (…)`, `for (…)`, `while (…)`, `with (…)` — the forms whose closing
-// `)` is followed by a statement rather than by more of an expression.
-function isStatementHead(src: string, prev: JsToken | undefined): boolean {
-  return prev?.type === "ident" && STATEMENT_HEAD_KEYWORDS.has(jsTokenText(src, prev));
+// `(` of `if (…)`, `for (…)`, `for await (…)`, `while (…)`, `with (…)` — the
+// forms whose closing `)` is followed by a statement rather than by more of an
+// expression.
+function isStatementHead(
+  src: string,
+  prev: JsToken | undefined,
+  beforePrev: JsToken | undefined,
+): boolean {
+  if (prev?.type !== "ident") return false;
+  if (STATEMENT_HEAD_KEYWORDS.has(jsTokenText(src, prev))) return true;
+  return (
+    jsTokenText(src, prev) === "await" &&
+    beforePrev?.type === "ident" &&
+    jsTokenText(src, beforePrev) === "for"
+  );
 }
 
 // Whether a `{` opens a statement block (`if(a){`, `else{`, `function f(){`) as

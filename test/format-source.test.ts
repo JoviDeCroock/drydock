@@ -146,6 +146,37 @@ describe("formatSource (javascript)", () => {
     ]);
   });
 
+  test("keeps expression-leading and statement-position regexes whole", () => {
+    const exported = formatJs("export default /a;b{c}/g;foo();");
+    const extended = formatJs("class A extends /a;b{c}/.constructor{};foo();");
+    const forAwait = formatJs("async function f(){for await(x of xs)/a;b{c}/.test(x);foo();}");
+
+    expect(lines(exported)).toEqual(["export default /a;b{c}/g;", "foo();"]);
+    expect(lines(extended)).toEqual(["class A extends /a;b{c}/.constructor{};", "foo();"]);
+    expect(lines(forAwait)).toEqual([
+      "async function f(){",
+      "  for await(x of xs)/a;b{c}/.test(x);",
+      "  foo();",
+      "}",
+    ]);
+  });
+
+  test("does not swallow division after a postfix update into a regex token", () => {
+    const formatted = formatJs("var x=i++/2;danger();var y=i--/3;safe();");
+
+    expect(lines(formatted)).toEqual(["var x=i++/2;", "danger();", "var y=i--/3;", "safe();"]);
+  });
+
+  test("keeps TypeScript assertions attached to closing object literals", () => {
+    const formatted = formatJs("const config={} as const;const checked={} satisfies Config;foo();");
+
+    expect(lines(formatted)).toEqual([
+      "const config={} as const;",
+      "const checked={} satisfies Config;",
+      "foo();",
+    ]);
+  });
+
   test("does not overflow on deeply nested templates", () => {
     let source = "x";
     for (let depth = 0; depth < 16_000; depth += 1) source = "`${" + source + "}`";

@@ -33,6 +33,11 @@ describe("tokenizeJs regex vs division", () => {
       "class C{class={}/2/b}", // a field named `class`, not a nested declaration
       "a.b/2/c", // property
       "1/2/3", // numbers
+      "i++/2/b", // postfix update result
+      "i--/2/b", // postfix update result
+      "result.default/2/b", // keyword-shaped property name
+      "result.return/2/b", // keyword-shaped property name
+      "result?.extends/2/b", // optional keyword-shaped property name
       "typeof x/2/b", // the operand, not the keyword, precedes the slash
     ]) {
       expect(`${source} -> ${firstSlash(source)}`).toBe(`${source} -> punct`);
@@ -55,6 +60,9 @@ describe("tokenizeJs regex vs division", () => {
       "switch(a){case 1:{b()}/x/.test(a)}",
       "switch(a){case b ? c : d:{b()}/x/.test(a)}",
       "switch(a){default:{b()}/x/.test(a)}",
+      "async function f(){for await(x of xs)/x/.test(a)}",
+      "export default /x/.test(a)",
+      "class A extends /x/.constructor{}",
       "return /x/.test(a)",
       "a=/x/.test(a)",
       "/x/.test(a)",

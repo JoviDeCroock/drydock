@@ -169,7 +169,14 @@ function applyBreaks(src: string, breaks: SourceBreak[]): FormattedSource {
 
 // Keywords that continue the statement a `}` just closed, so the block's closing
 // brace and what follows stay on one line (`}else{`, `}catch(e){`).
-const BLOCK_CONTINUATION_KEYWORDS = new Set(["else", "catch", "finally", "while"]);
+const BLOCK_CONTINUATION_KEYWORDS = new Set([
+  "as",
+  "catch",
+  "else",
+  "finally",
+  "satisfies",
+  "while",
+]);
 
 function jsBreaks(src: string): SourceBreak[] {
   // Comments stay in the significant stream: they are content a reviewer reads,
