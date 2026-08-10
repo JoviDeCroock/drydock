@@ -6,11 +6,23 @@ export type AiReviewEcosystem = "npm" | "pypi" | "vscode" | "generic";
 // or model-routing policy changes in a way that can alter reviewer behavior.
 // Persisting this with each review keeps analytics and recorded eval cases from
 // silently comparing different reviewer contracts as though they were one.
-export const AI_REVIEWER_VERSION = "1.0.0";
+export const AI_REVIEWER_VERSION = "1.1.0";
 
 // We surface only the highest-signal findings: critical/high, most severe
 // first, capped at this count. Lower-severity context belongs in the summary.
 export const MAX_AI_FINDINGS = 6;
+
+// Shared by the schema, the system prompt, and `clampAiReviewSubmission` so all
+// three enforce the exact same limits. Sized to keep a worst-case submission
+// inside MAX_REVIEW_OUTPUT_TOKENS.
+const AI_REVIEW_BOUNDS = {
+  summary: 1_500,
+  file: 300,
+  evidence: 600,
+  reason: 600,
+  recommendation: 400,
+  findingsCount: 12,
+} as const;
 
 const BASE_REVIEWER_SYSTEM_PROMPT = `Staged package release safety reviewer.
 
@@ -101,8 +113,9 @@ Findings output:
 
 Summary style:
 - Plain prose only — no markdown, bullets, or headings; the UI renders the summary as plain text.
+- Hard budget: ${AI_REVIEW_BOUNDS.summary} characters. The system truncates anything longer, so a summary that runs past it loses its own conclusion. Reach your verdict inside the budget rather than narrating up to it.
 - nothing_unusual: 1-3 sentences naming the kinds of changes and confirming no install-time, entrypoint, dependency, network/process, credential, or obfuscation capability was found. Never inventory routine changes file-by-file.
-- Spend words only on what raises concern, citing concrete paths; stay terse even then.`;
+- Spend words only on what raises concern, citing concrete paths; stay terse even then. A refactor is context, not a finding: describe its shape in a clause, not a file-by-file walkthrough.`;
 
 export function normalizeAiReviewEcosystem(ecosystem: string | undefined): AiReviewEcosystem {
   if (ecosystem === "npm" || ecosystem === "pypi" || ecosystem === "vscode") return ecosystem;
@@ -152,17 +165,6 @@ const releaseAssessmentSchema = z.enum([
   "blocked",
 ]);
 
-// Shared by the schema and `clampAiReviewSubmission` so both enforce the exact
-// same limits. Sized to keep a worst-case submission inside MAX_REVIEW_OUTPUT_TOKENS.
-const AI_REVIEW_BOUNDS = {
-  summary: 1_000,
-  file: 300,
-  evidence: 600,
-  reason: 600,
-  recommendation: 400,
-  findingsCount: 12,
-} as const;
-
 const aiFindingSchema = z
   .object({
     severity: severitySchema,
@@ -185,7 +187,7 @@ export const aiReviewSubmissionSchema = z
       .min(1)
       .max(AI_REVIEW_BOUNDS.summary)
       .describe(
-        "Plain prose, no markdown. 1-3 sentences for an ordinary release; longer only to detail concerns.",
+        `Plain prose, no markdown. 1-3 sentences for an ordinary release; longer only to detail concerns. Hard cap ${AI_REVIEW_BOUNDS.summary} characters — a longer summary is truncated and loses its conclusion.`,
       ),
     // The model may over-report; the system trims to the top MAX_AI_FINDINGS
     // critical/high findings via selectReportedFindings. This cap only keeps a
@@ -206,7 +208,7 @@ export function clampAiReviewSubmission(raw: unknown): unknown {
   return {
     risk: value.risk,
     releaseAssessment: value.releaseAssessment,
-    summary: clampString(value.summary, AI_REVIEW_BOUNDS.summary),
+    summary: clampProse(value.summary, AI_REVIEW_BOUNDS.summary),
     requiresManualReview: value.requiresManualReview,
     findings: Array.isArray(value.findings)
       ? value.findings.slice(0, AI_REVIEW_BOUNDS.findingsCount).map(clampFinding)
@@ -219,11 +221,58 @@ function clampFinding(raw: unknown): unknown {
   const value = raw as Record<string, unknown>;
   return {
     severity: value.severity,
+    // A path is an identifier, not prose: a trailing ellipsis would read as part
+    // of the filename, so an over-long path keeps the plain hard cut.
     file: clampString(value.file, AI_REVIEW_BOUNDS.file),
-    evidence: clampString(value.evidence, AI_REVIEW_BOUNDS.evidence),
-    reason: clampString(value.reason, AI_REVIEW_BOUNDS.reason),
-    recommendation: clampString(value.recommendation, AI_REVIEW_BOUNDS.recommendation),
+    evidence: clampProse(value.evidence, AI_REVIEW_BOUNDS.evidence),
+    reason: clampProse(value.reason, AI_REVIEW_BOUNDS.reason),
+    recommendation: clampProse(value.recommendation, AI_REVIEW_BOUNDS.recommendation),
   };
+}
+
+// Every prose field here is rendered verbatim to a maintainer, so a hard
+// `slice` is not a neutral safety net: it ends the reviewer's sentence
+// mid-word, which reads as the assistant trailing off or crashing rather than
+// as a system-imposed cap. Cut on a boundary instead and mark the cut.
+const TRUNCATION_MARK = " …";
+// Only walk back to a boundary inside the tail of the budget. Without a floor,
+// a field whose last sentence break falls near its start would discard most of
+// the content the model already paid output tokens to produce.
+const MIN_CLAMP_RETENTION = 0.7;
+
+function clampProse(value: unknown, max: number): unknown {
+  if (typeof value !== "string" || value.length <= max) return value;
+  const budget = max - TRUNCATION_MARK.length;
+  const head = withoutDanglingSurrogate(value.slice(0, budget));
+  const floor = Math.floor(budget * MIN_CLAMP_RETENTION);
+  const cut = lastSentenceEnd(head, floor) ?? lastWordEnd(head, floor) ?? head.length;
+  return `${head.slice(0, cut).trimEnd()}${TRUNCATION_MARK}`;
+}
+
+// Sentence-final punctuation only counts when whitespace (or the cut) follows
+// it, so version numbers, relative paths, and abbreviations don't read as
+// sentence ends.
+function lastSentenceEnd(text: string, floor: number): number | null {
+  for (let i = text.length - 1; i >= floor; i -= 1) {
+    if (!".!?".includes(text[i])) continue;
+    const next = text[i + 1];
+    if (next === undefined || /\s/.test(next)) return i + 1;
+  }
+  return null;
+}
+
+function lastWordEnd(text: string, floor: number): number | null {
+  for (let i = text.length - 1; i >= floor; i -= 1) {
+    if (/\s/.test(text[i])) return i;
+  }
+  return null;
+}
+
+// Slicing at a fixed code-unit offset can split a surrogate pair and leave a
+// lone half that serializes as U+FFFD.
+function withoutDanglingSurrogate(text: string): string {
+  const last = text.charCodeAt(text.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? text.slice(0, -1) : text;
 }
 
 function clampString(value: unknown, max: number): unknown {
