@@ -207,6 +207,82 @@ describe("formatSource (css)", () => {
 
     expect(lines(formatted)).toEqual(["/*! a;b{c} */.a{", "  color:red", "}"]);
   });
+
+  test("leaves an already-formatted stylesheet untouched", () => {
+    // Every break point already ends its line, so there is nothing to gain and a
+    // blank line to lose. Stylesheets reach this surface unminified whenever a
+    // single long line — one `data:` URI is enough — trips `looksMinified`.
+    const source = ".a {\n  color: red;\n  margin: 0;\n}\n.b {\n  padding: 0;\n}\n";
+
+    expect(formatSource(source, "css")).toBeNull();
+  });
+
+  test("breaks only what a partially minified stylesheet left on one line", () => {
+    const formatted = formatSource(".a{\ncolor:red;margin:0}\n.b{padding:0}\n", "css");
+
+    expect(lines(formatted)).toEqual([
+      ".a{",
+      "color:red;",
+      "  margin:0",
+      "}",
+      ".b{",
+      "  padding:0",
+      "}",
+      "",
+    ]);
+  });
+});
+
+describe("css formatting invariants", () => {
+  // The CSS side is a hand-rolled character scanner rather than a lexer walk, so
+  // it gets its own invariants: it may only move whitespace around.
+  const cssFragment = fc.constantFrom(
+    ".a{",
+    "@media(min-width:0){",
+    "}",
+    "color:red;",
+    "margin:0",
+    'content:"x;y{z}"',
+    "background:url(//cdn.example.com/a;b{c}.png)",
+    "/*! a;b{c} */",
+    ";",
+    "\n",
+    " ",
+    "\t",
+    "'q;{",
+    '"',
+    "\\",
+  );
+
+  test("preserves every non-whitespace character", () => {
+    fc.assert(
+      fc.property(fc.array(cssFragment, { maxLength: 40 }), (parts) => {
+        const source = parts.join("");
+        const formatted = formatSource(source, "css");
+        if (!formatted) return;
+        expect(formatted.text.replace(/\s/g, "")).toBe(source.replace(/\s/g, ""));
+      }),
+      { numRuns: 500 },
+    );
+  });
+
+  test("never inserts a blank line and keeps the source line map in range", () => {
+    fc.assert(
+      fc.property(fc.array(cssFragment, { maxLength: 40 }), (parts) => {
+        const source = parts.join("");
+        const formatted = formatSource(source, "css");
+        if (!formatted) return;
+        const outputLines = formatted.text.split("\n");
+        expect(formatted.sourceLines).toHaveLength(outputLines.length);
+        expect(Math.max(...formatted.sourceLines)).toBeLessThanOrEqual(source.split("\n").length);
+        // A blank line the source did not have is a row the reviewer scrolls past
+        // for nothing — and doubles the height of every rule when it recurs.
+        const sourceBlanks = source.split("\n").filter((line) => !line.trim()).length;
+        expect(outputLines.filter((line) => !line.trim()).length).toBeLessThanOrEqual(sourceBlanks);
+      }),
+      { numRuns: 500 },
+    );
+  });
 });
 
 describe("source line mapping", () => {
@@ -387,5 +463,18 @@ describe("formatting invariants", () => {
     const formatted = formatJs("var a=1; var b=2;  \tvar c=3;");
 
     expect(lines(formatted)).toEqual(["var a=1;", "var b=2;", "var c=3;"]);
+  });
+
+  test("adds no blank line the source did not already have", () => {
+    fc.assert(
+      fc.property(fc.string({ maxLength: 300 }), (source) => {
+        const formatted = formatSource(source, "js");
+        if (!formatted) return;
+        const sourceBlanks = source.split("\n").filter((line) => !line.trim()).length;
+        const outputBlanks = formatted.text.split("\n").filter((line) => !line.trim()).length;
+        expect(outputBlanks).toBeLessThanOrEqual(sourceBlanks);
+      }),
+      { numRuns: 500 },
+    );
   });
 });

@@ -34,6 +34,29 @@ export interface JsToken {
   value?: string;
 }
 
+// Bracket kinds, tracked so the regex-vs-division decision can see past the
+// single preceding token. `)` and `}` are the two closers whose meaning depends
+// on what they closed: `if(a)` and a statement block are followed by a
+// *statement*, where a leading `/` opens a regex, while a call's `)` and an
+// object literal's `}` are values, where `/` divides. Without this, `if(a)/x;y/`
+// lexes as a division and everything downstream — folding, line breaking — walks
+// into the middle of a regex literal.
+type BracketKind = "head-paren" | "paren" | "block" | "object" | "bracket";
+
+// Keywords whose parenthesised head is followed by a statement.
+const STATEMENT_HEAD_KEYWORDS = new Set(["if", "for", "while", "with"]);
+
+// Keywords after which a `{` opens a block rather than an object literal. Every
+// other block form is caught by the preceding punctuator (`)`, `;`, `{`, `}`,
+// `=>`); anything else before a `{` — a class name, a property key — leaves it
+// an object literal, the conservative reading that keeps `/` a division.
+const BLOCK_PRECEDING_KEYWORDS = new Set(["else", "do", "try", "finally"]);
+
+// Punctuators after which a `{` opens a block: statement boundaries, another
+// block's braces, a parenthesised head (`if(a){`, `function f(){`), and an
+// arrow body — `x=>({})` is how an arrow returns an object, so `x=>{` is a block.
+const BLOCK_PRECEDING_PUNCTUATORS = new Set([";", "{", "}", ")", "=>"]);
+
 // Keywords after which a `/` opens a regex literal rather than a division.
 const REGEX_PRECEDING_KEYWORDS = new Set([
   "return",
@@ -95,8 +118,19 @@ export function tokenizeJs(src: string): JsToken[] {
   const tokens: JsToken[] = [];
   let prev: JsToken | undefined;
   let i = 0;
+  // Open brackets, innermost last, and the kind the most recent closer popped.
+  // `closed` is only ever read while `prev` is that closer.
+  const brackets: BracketKind[] = [];
+  let closed: BracketKind | null = null;
 
   const pushSignificant = (token: JsToken): void => {
+    if (token.type === "punct") {
+      const text = jsTokenText(src, token);
+      if (text === "(") brackets.push(isStatementHead(src, prev) ? "head-paren" : "paren");
+      else if (text === "[") brackets.push("bracket");
+      else if (text === "{") brackets.push(opensBlock(src, prev) ? "block" : "object");
+      else if (text === ")" || text === "]" || text === "}") closed = brackets.pop() ?? null;
+    }
     tokens.push(token);
     prev = token;
   };
@@ -142,7 +176,7 @@ export function tokenizeJs(src: string): JsToken[] {
       continue;
     }
 
-    if (c === "/" && regexAllowed(src, prev)) {
+    if (c === "/" && regexAllowed(src, prev, closed)) {
       const start = i;
       i = scanRegex(src, i);
       pushSignificant({ type: "regex", start, end: i });
@@ -347,14 +381,34 @@ function matchPunctuator(src: string, i: number): number {
   return 1;
 }
 
-function regexAllowed(src: string, prev: JsToken | undefined): boolean {
+function regexAllowed(src: string, prev: JsToken | undefined, closed: BracketKind | null): boolean {
   if (!prev) return true;
   if (prev.type === "punct") {
     const t = jsTokenText(src, prev);
-    return t !== ")" && t !== "]" && t !== "}";
+    // `if(a)/re/.test(a)` and `if(a){b()}/re/.test(a)` both continue with a
+    // statement, so the `/` opens a regex; `f(a)/2` and `({}).x/2` are values.
+    if (t === ")") return closed === "head-paren";
+    if (t === "}") return closed === "block";
+    return t !== "]";
   }
   if (prev.type === "ident") return REGEX_PRECEDING_KEYWORDS.has(jsTokenText(src, prev));
   return false; // value-producing token -> division
+}
+
+// `(` of `if (…)`, `for (…)`, `while (…)`, `with (…)` — the forms whose closing
+// `)` is followed by a statement rather than by more of an expression.
+function isStatementHead(src: string, prev: JsToken | undefined): boolean {
+  return prev?.type === "ident" && STATEMENT_HEAD_KEYWORDS.has(jsTokenText(src, prev));
+}
+
+// Whether a `{` opens a statement block (`if(a){`, `else{`, `function f(){`) as
+// opposed to an object literal (`={`, `({`, `,{`, `return{`).
+function opensBlock(src: string, prev: JsToken | undefined): boolean {
+  if (!prev) return true; // a program starting with `{` starts with a block
+  const text = jsTokenText(src, prev);
+  if (prev.type === "punct") return BLOCK_PRECEDING_PUNCTUATORS.has(text);
+  if (prev.type === "ident") return BLOCK_PRECEDING_KEYWORDS.has(text);
+  return false;
 }
 
 function isWhitespace(c: string): boolean {

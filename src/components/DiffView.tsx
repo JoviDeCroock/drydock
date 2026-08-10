@@ -12,13 +12,7 @@ import {
 } from "./diff-annotations";
 import { buildDisplaySegments, GAP_EXPAND_STEP, GAP_SHOW_ALL_MAX } from "./diff-hunks";
 import { diffOverviewMarkers, displayOverviewRows, type DiffOverviewMarker } from "./diff-overview";
-import {
-  formatLanguageFor,
-  formatSource,
-  looksMinified,
-  remapFindingLines,
-  type FormatLanguage,
-} from "./format-source";
+import { formatLanguageFor, formatSource, looksMinified, remapFindingLines } from "./format-source";
 import {
   canHighlight,
   ensureHighlighter,
@@ -74,6 +68,9 @@ interface RowChunk {
 interface DiffOptions {
   wordDiff?: boolean;
   ignoreWhitespace?: boolean;
+  // Line-pairing budget, defaulting to LINE_DIFF_TIMEOUT_MS. Only tests pass it,
+  // so the give-up path below is reachable without staging a four-second diff.
+  timeoutMs?: number;
 }
 
 const INITIAL_SCROLL_TARGET_SELECTOR = "[data-diff-scroll-target='true']";
@@ -94,9 +91,10 @@ export function buildRows(
   afterTokens: TokenLine[] | null,
   options: DiffOptions = {},
 ): DiffRows {
+  const timeoutMs = options.timeoutMs ?? LINE_DIFF_TIMEOUT_MS;
   const result = options.ignoreWhitespace
-    ? buildRowsIgnoringWhitespace(before, after, beforeTokens, afterTokens)
-    : buildRowsFromLineDiff(before, after, beforeTokens, afterTokens);
+    ? buildRowsIgnoringWhitespace(before, after, beforeTokens, afterTokens, timeoutMs)
+    : buildRowsFromLineDiff(before, after, beforeTokens, afterTokens, timeoutMs);
   if (options.wordDiff) applyWordDiff(result.chunks);
   return { rows: result.chunks.flatMap((chunk) => chunk.rows), paired: result.paired };
 }
@@ -130,8 +128,9 @@ function buildRowsFromLineDiff(
   after: string,
   beforeTokens: TokenLine[] | null,
   afterTokens: TokenLine[] | null,
+  timeoutMs: number,
 ): DiffChunks {
-  const parts = diffLines(before, after, { timeout: LINE_DIFF_TIMEOUT_MS });
+  const parts = diffLines(before, after, { timeout: timeoutMs });
   if (!parts) {
     return {
       chunks: wholeFileReplacement(before, after, beforeTokens, afterTokens),
@@ -193,10 +192,11 @@ function buildRowsIgnoringWhitespace(
   after: string,
   beforeTokens: TokenLine[] | null,
   afterTokens: TokenLine[] | null,
+  timeoutMs: number,
 ): DiffChunks {
   const parts = diffArrays(splitLines(before), splitLines(after), {
     comparator: linesEqualIgnoringWhitespace,
-    timeout: LINE_DIFF_TIMEOUT_MS,
+    timeout: timeoutMs,
   });
   if (!parts) {
     return {
@@ -454,23 +454,21 @@ function partTone(part: ChangeObject<string>): WordPart["tone"] {
   return "unchanged";
 }
 
-// Tokenize an entire side once, memoized on the sample/language/ready signal.
+// Tokenize an entire side once, memoized on the text/language/ready signal.
 // Sides beyond the highlight cap stay plain text: tokenizing them would block
 // the main thread for seconds (see HIGHLIGHT_MAX_LINES).
 //
-// `allowed` is evaluated against the *shipped* sample, not the text passed here.
-// Reformatting only inserts whitespace, so the tokenizer's real workload — total
-// characters — is unchanged; deciding on the reformatted text instead would
-// trip the line cap and make turning the reformat on cost you highlighting.
-function useLineTokens(
-  text: string,
-  lang: string | undefined,
-  allowed: boolean,
-): TokenLine[] | null {
+// The cap is applied to the text actually handed to shiki, which is the
+// reformatted one when the reformat is on. Its cost is dominated by per-line
+// work, not by total characters: a 128 KiB bundle re-flows to ~5,700 lines and
+// measures ~0.5s -> ~1.9s per side, so exempting reformatted sides would blow
+// the very budget HIGHLIGHT_MAX_LINES exists to hold. Past the cap the reformat
+// still runs — structure a reviewer can read beats colour.
+function useLineTokens(text: string, lang: string | undefined): TokenLine[] | null {
   const ready = highlighterReady.value;
   return useMemo(
-    () => (lang && ready && text && allowed ? tokenizeLines(text, lang) : null),
-    [text, lang, ready, allowed],
+    () => (lang && ready && text && canHighlight(text) ? tokenizeLines(text, lang) : null),
+    [text, lang, ready],
   );
 }
 
@@ -697,11 +695,6 @@ export function DiffView({
   const native = nativeBadge(after) ?? nativeBadge(before);
   const showDiffOptions = !binary && !contentSkipped && Boolean(beforeSample && afterSample);
   const hashLines = diffHashLines(before, after, beforeLabel, afterLabel);
-  const highlightCapped =
-    !binary &&
-    !contentSkipped &&
-    Boolean(langForPath(path)) &&
-    (!canHighlight(beforeSample) || !canHighlight(afterSample));
 
   const formatLang = formatLanguageFor(langForPath(path));
   const reformattable =
@@ -719,6 +712,42 @@ export function DiffView({
     reformattable && (choice?.key === reformatKey ? choice.enabled : autoReformat)
       ? formatLang
       : null;
+
+  // Re-flowing a side is a per-file, per-toggle cost; memoized so scroll-adjacent
+  // rerenders never re-lex a megabyte of package bytes. It lives here rather than
+  // in DiffBody because the meta row below has to describe the text that is
+  // actually rendered — whether it was reformatted, and whether it still fits the
+  // highlight cap once it was.
+  const beforeFormatted = useMemo(
+    () => (reformat ? formatSource(beforeSample, reformat) : null),
+    [beforeSample, reformat],
+  );
+  const afterFormatted = useMemo(
+    () => (reformat ? formatSource(afterSample, reformat) : null),
+    [afterSample, reformat],
+  );
+  const beforeText = beforeFormatted?.text ?? beforeSample;
+  const afterText = afterFormatted?.text ?? afterSample;
+  // A source with nothing left to re-flow comes back unchanged, and saying
+  // "reformatted" over bytes nobody touched is the kind of small lie that costs a
+  // reviewer their trust in the whole surface.
+  const reformatted = beforeFormatted !== null || afterFormatted !== null;
+  // Findings are pinned by line, so a reformatted side has to carry them along or
+  // every annotation lands on the wrong row. Each side gets its own mapping
+  // because which side is rendered depends on the diff status.
+  const beforeFindings = useMemo(
+    () => remapFindingLines(findings, beforeFormatted),
+    [findings, beforeFormatted],
+  );
+  const afterFindings = useMemo(
+    () => remapFindingLines(findings, afterFormatted),
+    [findings, afterFormatted],
+  );
+  const highlightCapped =
+    !binary &&
+    !contentSkipped &&
+    Boolean(langForPath(path)) &&
+    (!canHighlight(beforeText) || !canHighlight(afterText));
 
   return (
     <div class="flex flex-col gap-3 min-h-0">
@@ -756,7 +785,7 @@ export function DiffView({
           <span>
             {afterLabel}: {formatSize(after?.size ?? null)}
           </span>
-          {reformat ? <span>reformatted for review</span> : null}
+          {reformatted ? <span>reformatted for review</span> : null}
           {highlightCapped ? <span>syntax highlighting off (large file)</span> : null}
         </div>
         {hashLines.map((line) => (
@@ -768,17 +797,18 @@ export function DiffView({
       <DiffBody
         path={path}
         status={status}
-        beforeSample={beforeSample}
-        afterSample={afterSample}
+        beforeText={beforeText}
+        afterText={afterText}
         binary={binary}
         contentSkipped={contentSkipped}
         sampleOmitted={sampleOmitted}
         beforeLabel={beforeLabel}
         afterLabel={afterLabel}
         findings={findings}
+        beforeFindings={beforeFindings}
+        afterFindings={afterFindings}
         wordDiff={wordDiff.value}
         ignoreWhitespace={ignoreWhitespace.value}
-        reformat={reformat}
       />
     </div>
   );
@@ -865,62 +895,44 @@ function DiffOptionToggle({
 function DiffBody({
   path,
   status,
-  beforeSample,
-  afterSample,
+  beforeText,
+  afterText,
   binary,
   contentSkipped,
   sampleOmitted,
   beforeLabel,
   afterLabel,
   findings,
+  beforeFindings,
+  afterFindings,
   wordDiff,
   ignoreWhitespace,
-  reformat,
 }: {
   path: string;
   status: string;
-  beforeSample: string;
-  afterSample: string;
+  // Already reformatted when the reformat is on, so everything below — tokens,
+  // line diff, scroll keys — works on the text the reviewer actually sees.
+  beforeText: string;
+  afterText: string;
   binary: boolean;
   contentSkipped: boolean;
   sampleOmitted: boolean;
   beforeLabel: string;
   afterLabel: string;
+  // The unmapped findings, for the no-text-body messages that pin nothing.
   findings: DiffFinding[];
+  beforeFindings: DiffFinding[];
+  afterFindings: DiffFinding[];
   wordDiff: boolean;
   ignoreWhitespace: boolean;
-  reformat: FormatLanguage | null;
 }) {
   const lang = langForPath(path);
   const anyHighlightableSide =
-    Boolean(beforeSample && canHighlight(beforeSample)) ||
-    Boolean(afterSample && canHighlight(afterSample));
+    Boolean(beforeText && canHighlight(beforeText)) ||
+    Boolean(afterText && canHighlight(afterText));
   if (lang && !binary && anyHighlightableSide) ensureHighlighter();
-  // Re-flowing a minified side is a per-file, per-toggle cost; memoized so
-  // scroll-adjacent rerenders never re-lex a megabyte of package bytes.
-  const beforeFormatted = useMemo(
-    () => (reformat ? formatSource(beforeSample, reformat) : null),
-    [beforeSample, reformat],
-  );
-  const afterFormatted = useMemo(
-    () => (reformat ? formatSource(afterSample, reformat) : null),
-    [afterSample, reformat],
-  );
-  const beforeText = beforeFormatted?.text ?? beforeSample;
-  const afterText = afterFormatted?.text ?? afterSample;
-  // Findings are pinned by line, so a reformatted side has to carry them along
-  // or every annotation lands on the wrong row. Each side gets its own mapping
-  // because the rendered side depends on the diff status below.
-  const beforeFindings = useMemo(
-    () => remapFindingLines(findings, beforeFormatted),
-    [findings, beforeFormatted],
-  );
-  const afterFindings = useMemo(
-    () => remapFindingLines(findings, afterFormatted),
-    [findings, afterFormatted],
-  );
-  const beforeTokens = useLineTokens(beforeText, lang, canHighlight(beforeSample));
-  const afterTokens = useLineTokens(afterText, lang, canHighlight(afterSample));
+  const beforeTokens = useLineTokens(beforeText, lang);
+  const afterTokens = useLineTokens(afterText, lang);
 
   if (binary) {
     return <DiffMessage findings={findings}>Binary file. No text diff available.</DiffMessage>;
@@ -937,7 +949,7 @@ function DiffBody({
   // Distinct from the cases above: the body was read and scanned, it just did
   // not fit the cached sample budget for this release pair. Say so, rather than
   // implying nothing was ever inspected.
-  if (sampleOmitted && !beforeSample && !afterSample) {
+  if (sampleOmitted && !beforeText && !afterText) {
     return (
       <DiffMessage findings={findings}>
         Text sample not cached for this file. This release pair exceeds the sample budget, which
@@ -947,7 +959,7 @@ function DiffBody({
   }
 
   if (status === "added") {
-    if (!afterSample) {
+    if (!afterText) {
       return <DiffMessage findings={findings}>No preview stored for this added file.</DiffMessage>;
     }
     return (
@@ -964,7 +976,7 @@ function DiffBody({
     );
   }
   if (status === "removed") {
-    if (!beforeSample) {
+    if (!beforeText) {
       return (
         <DiffMessage findings={findings}>No preview stored for this removed file.</DiffMessage>
       );
@@ -983,7 +995,7 @@ function DiffBody({
     );
   }
   if (status === "unchanged") {
-    if (!afterSample && !beforeSample) {
+    if (!afterText && !beforeText) {
       return <DiffMessage findings={findings}>No preview stored for this file.</DiffMessage>;
     }
     return (
@@ -992,17 +1004,17 @@ function DiffBody({
         label={afterLabel || beforeLabel}
         tone="unchanged"
         text={afterText || beforeText}
-        tokens={afterSample ? afterTokens : beforeTokens}
-        findings={afterSample ? afterFindings : beforeFindings}
+        tokens={afterText ? afterTokens : beforeTokens}
+        findings={afterText ? afterFindings : beforeFindings}
         resetKey={initialScrollResetKey(path, status, beforeText, afterText)}
         seekFirstChange={shouldSeekInitialDiffTarget(status)}
       />
     );
   }
-  if (!beforeSample && !afterSample) {
+  if (!beforeText && !afterText) {
     return <DiffMessage findings={findings}>No text samples available to diff.</DiffMessage>;
   }
-  if (!beforeSample) {
+  if (!beforeText) {
     return (
       <SingleSidedView
         path={path}
@@ -1016,7 +1028,7 @@ function DiffBody({
       />
     );
   }
-  if (!afterSample) {
+  if (!afterText) {
     return (
       <SingleSidedView
         path={path}

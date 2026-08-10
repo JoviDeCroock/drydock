@@ -136,6 +136,42 @@ describe("buildRows", () => {
     expect(rows[0].wordParts).toContainEqual({ text: "1", tone: "removed" });
     expect(rows[1].wordParts).toContainEqual({ text: "2", tone: "added" });
   });
+
+  // Reformatting a minified side turns a 1×1 comparison into a several-thousand
+  // line one, so the pairing can run out of budget. A negative budget is already
+  // spent before the first Myers iteration, which is the deterministic way to
+  // reach the give-up path without staging a genuinely slow diff.
+  const EXHAUSTED_BUDGET_MS = -1;
+
+  test("falls back to a whole-file replacement when line pairing runs out of budget", () => {
+    const { rows, paired } = buildRows("a\nb\n", "c\nd\n", null, null, {
+      timeoutMs: EXHAUSTED_BUDGET_MS,
+    });
+
+    expect(paired).toBe(false);
+    expect(rows).toMatchObject([
+      { tone: "removed", beforeLine: 1, afterLine: null, text: "a" },
+      { tone: "removed", beforeLine: 2, afterLine: null, text: "b" },
+      { tone: "added", beforeLine: null, afterLine: 1, text: "c" },
+      { tone: "added", beforeLine: null, afterLine: 2, text: "d" },
+    ]);
+  });
+
+  test("gives up the same way with -w", () => {
+    const { rows, paired } = buildRows("a\nb\n", "c\nd\n", null, null, {
+      ignoreWhitespace: true,
+      timeoutMs: EXHAUSTED_BUDGET_MS,
+    });
+
+    expect(paired).toBe(false);
+    expect(rows.map((row) => row.tone)).toEqual(["removed", "removed", "added", "added"]);
+  });
+
+  test("reports a real pairing as paired", () => {
+    const { paired } = buildRows("a\nb\n", "a\nc\n", null, null, {});
+
+    expect(paired).toBe(true);
+  });
 });
 
 describe("diffHashLines", () => {

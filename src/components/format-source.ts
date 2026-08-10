@@ -307,10 +307,12 @@ function skipCssUrl(src: string, start: number): number {
 }
 
 function pushBreak(src: string, breaks: SourceBreak[], item: SourceBreak): void {
-  // The source already starts a line here — a partially minified file, a license
-  // banner above the bundle, or simply code that was never minified. Adding a
-  // break would only insert a blank line.
-  if (alreadyLineStart(src, item.at)) return;
+  // The source already breaks the line here — a partially minified file, a
+  // license banner above the bundle, or simply code that was never minified.
+  // Adding a break would only insert a blank line. Both sides matter: the CSS
+  // scanner lands `at` on the newline itself when a `{` or `;` already ends its
+  // line, and the text after that newline is already at a line start.
+  if (endsLineAt(src, item.at) || alreadyLineStart(src, item.at)) return;
   const last = breaks[breaks.length - 1];
   if (last && last.at === item.at) {
     // Two rules want the same position (`,` before a closing `}`). The shallower
@@ -320,6 +322,12 @@ function pushBreak(src: string, breaks: SourceBreak[], item: SourceBreak): void 
     return;
   }
   breaks.push(item);
+}
+
+// True when the source's own newline is the next thing at `at`, so a break here
+// would push an empty line ahead of a line the source already started.
+function endsLineAt(src: string, at: number): boolean {
+  return src[at] === "\n" || src[at] === "\r";
 }
 
 // True when only horizontal whitespace separates `at` from the start of its
