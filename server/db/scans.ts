@@ -13,6 +13,7 @@ import {
   type PackageJsonSummary,
 } from "../lib/review";
 import { normalizeScanRiskBreakdown, type ScanRiskBreakdown } from "../lib/review/risk";
+import { parsePersistedAiReview } from "../lib/ai-review/contract";
 import { recordProductEvent } from "../lib/platform/analytics";
 import {
   deleteScanArtifacts,
@@ -790,6 +791,7 @@ export async function recordScanDecision(
       createdAt: scans.createdAt,
       risk: scans.risk,
       riskSummaryJson: scans.riskSummaryJson,
+      aiJson: scans.aiJson,
     });
 
   if (updated.length === 0) return null;
@@ -880,6 +882,7 @@ export async function recordGatePackageDecision(
       createdAt: scans.createdAt,
       risk: scans.risk,
       riskSummaryJson: scans.riskSummaryJson,
+      aiJson: scans.aiJson,
     });
 
   if (updated.length === 0) return null;
@@ -913,7 +916,12 @@ export async function recordGatePackageDecision(
  */
 function recordDecisionEvent(
   env: Cloudflare.Env | undefined,
-  row: { createdAt: Date | number | string | null; risk: string; riskSummaryJson: unknown },
+  row: {
+    createdAt: Date | number | string | null;
+    risk: string;
+    riskSummaryJson: unknown;
+    aiJson: unknown;
+  },
   input: { organizationId: string; decision: string; ecosystem: string; now: Date },
 ): void {
   const breakdown = normalizeScanRiskBreakdown(readRiskSummaryValue(row.riskSummaryJson));
@@ -925,6 +933,22 @@ function recordDecisionEvent(
     releaseRisk: breakdown?.releaseRisk ?? row.risk,
     artifactRisk: breakdown?.artifactRisk ?? row.risk,
     timeToDecisionMs: Math.max(0, input.now.getTime() - toEpochMs(row.createdAt)),
+  });
+
+  const aiReview = parsePersistedAiReview(row.aiJson);
+  // The disabled-review placeholder is persisted so report consumers can
+  // explain why no advisory result exists, but it is not a reviewer attempt
+  // and must not enter the reviewer feedback dataset as a "legacy" review.
+  if (!aiReview || (aiReview.model === null && aiReview.reviewerVersion === null)) return;
+  recordProductEvent(env, {
+    name: "ai_review.decided",
+    organizationId: input.organizationId,
+    ecosystem: input.ecosystem,
+    decision: input.decision,
+    status: aiReview.status,
+    releaseAssessment: aiReview.releaseAssessment,
+    model: aiReview.model ?? "none",
+    reviewerVersion: aiReview.reviewerVersion ?? "legacy",
   });
 }
 

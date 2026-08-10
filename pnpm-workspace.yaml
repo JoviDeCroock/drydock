@@ -14,7 +14,17 @@ overrides:
   # retry, cookie, and header handling until its dependency floor catches up.
   undici: ^7.29.0
 
+# The Agent SDK's tracing-only subpath does not load its Babel decorator build
+# plugin. The package nevertheless declares Babel 8's decorator plugin as a
+# runtime dependency, while this Preact workspace correctly uses Babel 7.
+# Allow that unused toolchain peer so installs retain the Preact-compatible
+# root without making the whole dependency graph Babel 8-only.
+peerDependencyRules:
+  allowedVersions:
+    "@babel/core": ">=7 <9"
+
 allowBuilds:
+  core-js-pure: false
   esbuild: true
   sharp: true
   workerd: true

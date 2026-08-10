@@ -35,7 +35,7 @@ The Worker is the trusted control plane; the sandbox treats package bytes as hos
 | Directory         | Holds                                                                                                                                                 |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `review/`         | Deterministic rules (`rules/`), package and manifest diffing, redaction, serialization, risk. `index.ts` is the entry.                                |
-| `ai-review/`      | Workers AI advisory reviewer: prompt contract, evidence assembly, response types.                                                                     |
+| `ai-review/`      | Versioned Workers AI advisory reviewer: prompt contract, evidence assembly, response types, traces, and eval contract.                                |
 | `scan/`           | Scan lifecycle: pipeline and phases, queue job, input parsing, artifact persistence, report export, release memory.                                   |
 | `public-diff/`    | Anonymous `/diff` orchestration, the `PublicDiffAdapter` contract, cache and error helpers.                                                           |
 | `ecosystems/`     | One directory per ecosystem plus the registry that declares what each supports. See below.                                                            |
@@ -110,7 +110,7 @@ Within a single org sweep, new staged publishes are started through a bounded-co
 - **D1** — Better Auth tables, organizations, npm connections, scans, scan files/findings, workflow gates, release targets, summaries, and audit/event metadata. D1 remains the operational source of truth.
 - **R2** — canonical report JSON and redacted file/diff artifacts. D1 keeps compact metadata and historical fallback samples so list/detail pages remain cheap.
 - **KV** — session-related state where configured.
-- **Workers AI / AI Gateway** — optional advisory review path. The per-organization `ai-review` Flagship flag is a killswitch that is on by default; deterministic findings remain authoritative.
+- **Workers AI / AI Gateway** — optional advisory review path. The per-organization `ai-review` Flagship flag is a killswitch that is on by default; deterministic findings remain authoritative. Sampled Agent Traces retain no message or tool payloads; Analytics Engine stores only aggregate execution and decision dimensions keyed by reviewer version.
 
 ## Organization and auth model
 

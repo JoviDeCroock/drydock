@@ -21,6 +21,8 @@ export interface AiReview {
   findings: AiFinding[];
   requiresManualReview: boolean;
   model: string | null;
+  /** Version of the prompt, evidence tools, and routing contract used. */
+  reviewerVersion: string | null;
 }
 
 // Operational telemetry for one AI review run. Kept off `AiReview` so it never

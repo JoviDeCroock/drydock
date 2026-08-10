@@ -98,6 +98,7 @@ const AI_REVIEW_DISABLED: AiReview = {
   findings: [],
   requiresManualReview: false,
   model: null,
+  reviewerVersion: null,
 };
 
 export async function loadPublicPackageDiff(

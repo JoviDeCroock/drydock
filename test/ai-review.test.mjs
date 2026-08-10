@@ -4,10 +4,13 @@ import {
   AI_FALLBACK_MODEL,
   AI_MODEL,
   AI_MODEL_CANDIDATES,
+  AI_REVIEWER_VERSION,
   analyzeWithAi,
   aiGatewayMetadataHeader,
+  aiReviewTraceTelemetry,
   displayedAiResult,
   selectModelCandidates,
+  traceIsolatedAiBinding,
 } from "../server/lib/ai-review";
 import {
   buildReviewerSystemPrompt,
@@ -289,6 +292,46 @@ describe("ai review orchestration", () => {
     });
   });
 
+  test("Agent Trace metadata is versioned and excludes review-record identifiers", () => {
+    const telemetry = aiReviewTraceTelemetry(
+      {
+        ...BASE_OPTIONS,
+        scanId: "scan_private",
+        stageId: "stage_private",
+        organizationId: "org_private",
+      },
+      "trace_random",
+    );
+
+    expect(telemetry).toEqual({
+      functionId: "drydock-release-reviewer",
+      metadata: {
+        agentId: "drydock-release-reviewer",
+        agentVersion: AI_REVIEWER_VERSION,
+        conversationId: "trace_random",
+        ecosystem: "npm",
+      },
+    });
+    expect(JSON.stringify(telemetry)).not.toMatch(/scan_private|stage_private|org_private/);
+  });
+
+  test("hides the AI Gateway log correlation handle from Agent Traces", async () => {
+    const run = vi.fn(async () => ({ response: "ok" }));
+    const binding = traceIsolatedAiBinding({
+      aiGatewayLogId: "gateway-log-private",
+      run,
+    });
+
+    expect("aiGatewayLogId" in binding).toBe(false);
+    expect(binding.aiGatewayLogId).toBeUndefined();
+    await binding.run("@cf/test/model", { prompt: "hello" }, { gateway: { id: "test" } });
+    expect(run).toHaveBeenCalledWith(
+      "@cf/test/model",
+      { prompt: "hello" },
+      { gateway: { id: "test" } },
+    );
+  });
+
   test("a submit_review tool call produces a complete review and records the model", async () => {
     const { review: ai, usage } = await analyzeWithAi(
       {},
@@ -302,6 +345,7 @@ describe("ai review orchestration", () => {
     expect(ai.releaseAssessment).toBe("nothing_unusual");
     expect(ai.summary).toBe("No unusual changes.");
     expect(ai.model).toBe("mock-reviewer");
+    expect(ai.reviewerVersion).toBe(AI_REVIEWER_VERSION);
     expect(computeScanRisk([], ai)).toBe("low");
 
     // Usage telemetry is captured from the generateText result.
