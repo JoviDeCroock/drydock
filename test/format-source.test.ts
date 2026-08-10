@@ -130,6 +130,30 @@ describe("formatSource (javascript)", () => {
     expect(lines(catchSource)).toEqual(["try{}catch{}", "/x;y{z}/.test(a);", "foo();"]);
   });
 
+  test("keeps regexes whole after labeled and case-clause blocks", () => {
+    const labelSource = formatJs("label:{foo()}/x;y{z}/.test(a);bar();");
+    const caseSource = formatJs("switch(a){case 1:{foo()}/x;y{z}/.test(a);break}");
+
+    expect(lines(labelSource)).toEqual(["label:{", "  foo()", "}", "/x;y{z}/.test(a);", "bar();"]);
+    expect(lines(caseSource)).toEqual([
+      "switch(a){",
+      "  case 1:{",
+      "    foo()",
+      "  }",
+      "  /x;y{z}/.test(a);",
+      "  break",
+      "}",
+    ]);
+  });
+
+  test("does not overflow on deeply nested templates", () => {
+    let source = "x";
+    for (let depth = 0; depth < 16_000; depth += 1) source = "`${" + source + "}`";
+
+    expect(() => formatSource(source, "js")).not.toThrow();
+    expect(formatSource(source, "js")).toBeNull();
+  });
+
   test("keeps a trailing line comment with its statement and code below it", () => {
     const formatted = formatJs("a();// note ; and { and }\nb();c();");
 

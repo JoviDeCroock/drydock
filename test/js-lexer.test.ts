@@ -27,6 +27,8 @@ describe("tokenizeJs regex vs division", () => {
       "a[0]/2/b", // element access
       "({a:1})/2/b", // parenthesised expression
       "var o={a:1}/2/b", // object literal
+      "var o={a:{}/2/b}", // object value after a property colon
+      "var o=a?b:{}/2/b", // object value after a conditional colon
       "return{a:1}/2/b", // object literal after a keyword
       "class C{class={}/2/b}", // a field named `class`, not a nested declaration
       "a.b/2/c", // property
@@ -49,6 +51,10 @@ describe("tokenizeJs regex vs division", () => {
       "class A{}/x/.test(a)",
       "const A=class extends mixin({a:1}){}/x/.test(a)",
       "try{}catch{}/x/.test(a)",
+      "label:{b()}/x/.test(a)",
+      "switch(a){case 1:{b()}/x/.test(a)}",
+      "switch(a){case b ? c : d:{b()}/x/.test(a)}",
+      "switch(a){default:{b()}/x/.test(a)}",
       "return /x/.test(a)",
       "a=/x/.test(a)",
       "/x/.test(a)",
@@ -84,5 +90,13 @@ describe("tokenizeJs regex vs division", () => {
     // never opened is routine input rather than an edge case.
     expect(kinds("a)/2/b")).toBe("ident:a punct:) punct:/ number:2 punct:/ ident:b");
     expect(() => tokenizeJs("}/x/".repeat(50))).not.toThrow();
+  });
+
+  test("does not overflow on deeply nested templates", () => {
+    let source = "x";
+    for (let depth = 0; depth < 16_000; depth += 1) source = "`${" + source + "}`";
+
+    expect(() => tokenizeJs(source)).not.toThrow();
+    expect(tokenizeJs(source)).toEqual([{ type: "template", start: 0, end: source.length }]);
   });
 });

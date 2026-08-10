@@ -68,6 +68,14 @@ describe("normalizeCodeForScanning", () => {
     expect(normalizeCodeForScanning(source)).toBe(source);
   });
 
+  test("never folds regex contents after labeled or case-clause blocks", () => {
+    const labelSource = "label:{foo()}/'chi' + 'ld_process'/.test(a)";
+    const caseSource = "switch(a){case 1:{foo()}/'chi' + 'ld_process'/.test(a)}";
+
+    expect(normalizeCodeForScanning(labelSource)).toBe(labelSource);
+    expect(normalizeCodeForScanning(caseSource)).toBe(caseSource);
+  });
+
   test("leaves template literals untouched", () => {
     const source = "const t = `${'a' + 'b'}`;";
     expect(normalizeCodeForScanning(source)).toBe(source);

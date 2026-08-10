@@ -50,6 +50,17 @@ interface BracketState {
   // usually the class name or extends expression. Remember the bracket depth at
   // which the class header started so nested calls/objects do not consume it.
   pendingClassDepth: number | null;
+  // A `case` expression may contain nested objects and conditional expressions
+  // before its terminating `:`. Keep the switch-block depth so that colon can
+  // be distinguished from an object property or conditional-expression colon.
+  pendingCaseDepth: number | null;
+  conditionalDepths: number[];
+  // Whether the immediately preceding identifier can be a statement label, and
+  // whether the immediately preceding colon ended a label/case clause. These
+  // are the contexts where `{` opens a block even though `:` is also used by
+  // object literals and conditional expressions.
+  labelCandidate: boolean;
+  statementColon: boolean;
 }
 
 // Keywords whose parenthesised head is followed by a statement.
@@ -130,7 +141,7 @@ export function tokenizeJs(src: string): JsToken[] {
   let i = 0;
   // Open brackets, innermost last, and the kind the most recent closer popped.
   // `closed` is only ever read while `prev` is that closer.
-  const state: BracketState = { brackets: [], closed: null, pendingClassDepth: null };
+  const state = createBracketState();
 
   const pushSignificant = (token: JsToken): void => {
     updateBracketState(src, token, prev, state);
@@ -237,43 +248,58 @@ function scanString(src: string, i: number): { end: number; value: string } {
   return { end: j, value };
 }
 
-function scanTemplate(src: string, i: number): number {
-  const n = src.length;
-  let j = i + 1;
-  while (j < n) {
-    const c = src[j];
-    if (c === "\\") {
-      j += 2;
-      continue;
-    }
-    if (c === "`") return j + 1;
-    if (c === "$" && src[j + 1] === "{") {
-      j = scanTemplateExpression(src, j + 2);
-      continue;
-    }
-    j += 1;
-  }
-  return j;
+interface TemplateLiteralFrame {
+  kind: "template";
+  start: number;
 }
 
-// Scan one `${ … }` body with the same literal boundaries as the outer lexer.
-// Counting braces character-by-character is not enough: `}` and backticks are
-// ordinary data inside comments and regex literals, and misreading either can
-// make the formatter insert newlines into a nested template's actual contents.
-function scanTemplateExpression(src: string, i: number): number {
+interface TemplateExpressionFrame {
+  kind: "expression";
+  depth: number;
+  state: BracketState;
+  prev?: JsToken;
+}
+
+type TemplateScanFrame = TemplateLiteralFrame | TemplateExpressionFrame;
+
+// Scan a template and every nested `${...}` / template with an explicit stack.
+// Package bytes can nest these deeply enough to overflow recursive scanners
+// while still fitting comfortably inside the retained-sample cap.
+function scanTemplate(src: string, i: number): number {
   const n = src.length;
-  const state: BracketState = { brackets: [], closed: null, pendingClassDepth: null };
-  let depth = 1;
-  let prev: JsToken | undefined;
-  let j = i;
-
-  const pushSignificant = (token: JsToken): void => {
-    updateBracketState(src, token, prev, state);
-    prev = token;
-  };
-
+  const frames: TemplateScanFrame[] = [{ kind: "template", start: i }];
+  let j = i + 1;
   while (j < n) {
+    const frame = frames[frames.length - 1];
     const c = src[j];
+    if (frame.kind === "template") {
+      if (c === "\\") {
+        j = Math.min(n, j + 2);
+        continue;
+      }
+      if (c === "`") {
+        j += 1;
+        frames.pop();
+        const parent = frames[frames.length - 1];
+        if (!parent) return j;
+        if (parent.kind === "expression") {
+          pushTemplateExpressionToken(src, parent, {
+            type: "template",
+            start: frame.start,
+            end: j,
+          });
+        }
+        continue;
+      }
+      if (c === "$" && src[j + 1] === "{") {
+        frames.push({ kind: "expression", depth: 1, state: createBracketState() });
+        j += 2;
+        continue;
+      }
+      j += 1;
+      continue;
+    }
+
     if (isWhitespace(c)) {
       j += 1;
       continue;
@@ -293,32 +319,36 @@ function scanTemplateExpression(src: string, i: number): number {
       const start = j;
       const scanned = scanString(src, j);
       j = scanned.end;
-      pushSignificant({ type: "string", start, end: j, value: scanned.value });
+      pushTemplateExpressionToken(src, frame, {
+        type: "string",
+        start,
+        end: j,
+        value: scanned.value,
+      });
       continue;
     }
     if (c === "`") {
-      const start = j;
-      j = scanTemplate(src, j);
-      pushSignificant({ type: "template", start, end: j });
+      frames.push({ kind: "template", start: j });
+      j += 1;
       continue;
     }
-    if (c === "/" && regexAllowed(src, prev, state.closed)) {
+    if (c === "/" && regexAllowed(src, frame.prev, frame.state.closed)) {
       const start = j;
       j = scanRegex(src, j);
-      pushSignificant({ type: "regex", start, end: j });
+      pushTemplateExpressionToken(src, frame, { type: "regex", start, end: j });
       continue;
     }
     if (isDigit(c) || (c === "." && isDigit(src[j + 1]))) {
       const start = j;
       j = scanNumber(src, j);
-      pushSignificant({ type: "number", start, end: j });
+      pushTemplateExpressionToken(src, frame, { type: "number", start, end: j });
       continue;
     }
     if (isIdentStart(c)) {
       const start = j;
       j += 1;
       while (j < n && isIdentPart(src[j])) j += 1;
-      pushSignificant({ type: "ident", start, end: j });
+      pushTemplateExpressionToken(src, frame, { type: "ident", start, end: j });
       continue;
     }
 
@@ -326,13 +356,25 @@ function scanTemplateExpression(src: string, i: number): number {
     j += matchPunctuator(src, j);
     const token: JsToken = { type: "punct", start, end: j };
     const text = jsTokenText(src, token);
-    if (text === "}" && depth === 1) return j;
-    if (text === "{") depth += 1;
-    else if (text === "}") depth -= 1;
-    pushSignificant(token);
+    if (text === "}" && frame.depth === 1) {
+      frames.pop();
+      continue;
+    }
+    if (text === "{") frame.depth += 1;
+    else if (text === "}") frame.depth -= 1;
+    pushTemplateExpressionToken(src, frame, token);
   }
 
   return j;
+}
+
+function pushTemplateExpressionToken(
+  src: string,
+  frame: TemplateExpressionFrame,
+  token: JsToken,
+): void {
+  updateBracketState(src, token, frame.prev, frame.state);
+  frame.prev = token;
 }
 
 function scanRegex(src: string, i: number): number {
@@ -452,6 +494,12 @@ function updateBracketState(
 ): void {
   const text = jsTokenText(src, token);
   if (token.type === "ident") {
+    const statementStart = canStartStatement(src, prev, state);
+    state.labelCandidate = statementStart && text !== "case" && text !== "default";
+    state.statementColon = false;
+    if ((text === "case" || text === "default") && statementStart) {
+      state.pendingCaseDepth = state.brackets.length;
+    }
     if (
       text === "class" &&
       !(prev?.type === "punct" && [".", "?."].includes(jsTokenText(src, prev)))
@@ -460,7 +508,14 @@ function updateBracketState(
     }
     return;
   }
-  if (token.type !== "punct") return;
+  if (token.type !== "punct") {
+    state.labelCandidate = false;
+    state.statementColon = false;
+    return;
+  }
+
+  const followsStatementColon = state.statementColon;
+  state.statementColon = false;
 
   if (
     state.pendingClassDepth === state.brackets.length &&
@@ -476,11 +531,51 @@ function updateBracketState(
     state.brackets.push("bracket");
   } else if (text === "{") {
     const classBody = state.pendingClassDepth === state.brackets.length;
-    state.brackets.push(classBody || opensBlock(src, prev) ? "block" : "object");
+    state.brackets.push(
+      classBody || followsStatementColon || opensBlock(src, prev) ? "block" : "object",
+    );
     if (classBody) state.pendingClassDepth = null;
   } else if (text === ")" || text === "]" || text === "}") {
     state.closed = state.brackets.pop() ?? null;
+  } else if (text === "?") {
+    state.conditionalDepths.push(state.brackets.length);
+  } else if (text === ":") {
+    const conditionalDepth = state.conditionalDepths[state.conditionalDepths.length - 1];
+    if (conditionalDepth === state.brackets.length) {
+      state.conditionalDepths.pop();
+    } else if (state.labelCandidate || state.pendingCaseDepth === state.brackets.length) {
+      state.statementColon = true;
+      state.pendingCaseDepth = null;
+    }
   }
+  state.labelCandidate = false;
+}
+
+function createBracketState(): BracketState {
+  return {
+    brackets: [],
+    closed: null,
+    pendingClassDepth: null,
+    pendingCaseDepth: null,
+    conditionalDepths: [],
+    labelCandidate: false,
+    statementColon: false,
+  };
+}
+
+function canStartStatement(src: string, prev: JsToken | undefined, state: BracketState): boolean {
+  const top = state.brackets[state.brackets.length - 1];
+  if (top !== undefined && top !== "block") return false;
+  if (!prev) return true;
+  const text = jsTokenText(src, prev);
+  if (prev.type === "ident") return text === "else" || text === "do";
+  if (prev.type !== "punct") return false;
+  if (text === "{") return top === "block";
+  if (text === ";") return true;
+  if (text === ":") return state.statementColon;
+  if (text === ")") return state.closed === "head-paren";
+  if (text === "}") return state.closed === "block";
+  return false;
 }
 
 function regexAllowed(src: string, prev: JsToken | undefined, closed: BracketKind | null): boolean {
