@@ -1,5 +1,5 @@
 import { type AppDb } from "../../../db/client";
-import { getNpmConnection, markNpmConnectionUsed } from "../../../db/npm-connections";
+import { getNpmConnection, markNpmConnectionUsedIfStale } from "../../../db/npm-connections";
 import { base64UrlDecode, base64UrlEncode } from "../../platform/crypto-utils";
 import { errorMessage } from "../../platform/errors";
 import { reliableFetch } from "../../platform/reliable-fetch";
@@ -190,10 +190,18 @@ export async function getOrganizationNpmToken(
   const connection = await getNpmConnection(db, organizationId);
   if (!connection) return null;
   const token = await decryptNpmToken(env, connection);
+  const nowMs = Date.now();
   // The row we just read already carries `lastUsedAt`, so the debounce costs no
-  // extra query.
-  if (npmConnectionUseIsStale(connection.lastUsedAt)) {
-    await markNpmConnectionUsed(db, organizationId);
+  // extra query on the common path. The update repeats the cutoff in its WHERE
+  // clause so concurrent requests that all observed a stale value cannot all
+  // mutate the row.
+  if (npmConnectionUseIsStale(connection.lastUsedAt, nowMs)) {
+    await markNpmConnectionUsedIfStale(
+      db,
+      organizationId,
+      new Date(nowMs - NPM_CONNECTION_USE_DEBOUNCE_MS),
+      new Date(nowMs),
+    );
   }
   return { token, registryUrl: connection.registryUrl };
 }

@@ -51,7 +51,7 @@ async function call(
   return res;
 }
 
-async function signUp(): Promise<Jar> {
+async function signUp(requestEnv: Cloudflare.Env = env): Promise<Jar> {
   const jar: Jar = new Map();
   const res = await call("POST", "/api/auth/sign-up/email", {
     body: {
@@ -60,6 +60,7 @@ async function signUp(): Promise<Jar> {
       password: PASSWORD,
     },
     jar,
+    requestEnv,
   });
   expect(res.status).toBe(200);
   return jar;
@@ -80,6 +81,10 @@ function envWithFailingSessionStore(): Cloudflare.Env {
       getWithMetadata: forbidden,
     } as unknown as KVNamespace,
   };
+}
+
+function envWithoutSessionStore(): Cloudflare.Env {
+  return { ...env, AUTH_SESSIONS: undefined };
 }
 
 async function clearSessionKv(): Promise<void> {
@@ -140,6 +145,41 @@ describe("session secondary storage", () => {
 
     const res = await call("GET", "/api/health", { jar });
     expect(res.status).toBe(200);
+  });
+
+  test("lists and revokes sessions created before KV was enabled", async () => {
+    const d1OnlyEnv = envWithoutSessionStore();
+    const primary = await signUp(d1OnlyEnv);
+    const session = await call("GET", "/api/auth/get-session", {
+      jar: primary,
+      requestEnv: d1OnlyEnv,
+    });
+    const email = ((await session.json()) as { user: { email: string } }).user.email;
+
+    const secondary: Jar = new Map();
+    expect(
+      (
+        await call("POST", "/api/auth/sign-in/email", {
+          body: { email, password: PASSWORD },
+          jar: secondary,
+          requestEnv: d1OnlyEnv,
+        })
+      ).status,
+    ).toBe(200);
+    await clearSessionKv();
+
+    const listed = await call("GET", "/api/auth/list-sessions", { jar: primary });
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toHaveLength(2);
+
+    const revoked = await call("POST", "/api/auth/revoke-other-sessions", { jar: primary });
+    expect(revoked.status).toBe(200);
+
+    // Remove the bounded cookie cache so this proves the durable session and
+    // its newly hydrated KV entry were both revoked.
+    secondary.delete(SESSION_DATA_COOKIE);
+    expect((await call("GET", "/api/health", { jar: secondary })).status).toBe(401);
+    expect((await call("GET", "/api/health", { jar: primary })).status).toBe(200);
   });
 });
 

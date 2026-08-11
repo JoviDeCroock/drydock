@@ -65,7 +65,7 @@ interface NativeTier {
 /**
  * Ordered ascending by limit. Adding a per-minute limit at a call site requires
  * a tier here *and* a matching `ratelimits` entry in `wrangler.jsonc` and
- * `wrangler.test.jsonc`; without one the call silently degrades to the D1
+ * `test/config/wrangler.jsonc`; without one the call silently degrades to the D1
  * counter and emits `rate_limit.tier_missing`.
  */
 export const NATIVE_TIERS: readonly NativeTier[] = [

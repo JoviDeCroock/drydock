@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import type { AppDb } from "./client";
 import { npmConnections } from "./schema";
 
@@ -94,10 +94,30 @@ export async function updateNpmConnectionValidation(
   return getNpmConnection(db, input.organizationId);
 }
 
+export async function markNpmConnectionUsedIfStale(
+  db: AppDb,
+  organizationId: string,
+  staleBefore: Date,
+  now: Date,
+): Promise<boolean> {
+  const updated = await db
+    .update(npmConnections)
+    .set({ lastUsedAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(npmConnections.organizationId, organizationId),
+        or(isNull(npmConnections.lastUsedAt), lte(npmConnections.lastUsedAt, staleBefore)),
+      ),
+    )
+    .returning({ id: npmConnections.id });
+  return updated.length > 0;
+}
+
 export async function markNpmConnectionUsed(db: AppDb, organizationId: string) {
+  const now = new Date();
   await db
     .update(npmConnections)
-    .set({ lastUsedAt: new Date(), updatedAt: new Date() })
+    .set({ lastUsedAt: now, updatedAt: now })
     .where(eq(npmConnections.organizationId, organizationId));
 }
 

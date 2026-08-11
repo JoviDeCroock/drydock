@@ -2,7 +2,11 @@ import { env } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { getNpmConnection, upsertNpmConnection } from "../../server/db/npm-connections";
+import {
+  getNpmConnection,
+  markNpmConnectionUsedIfStale,
+  upsertNpmConnection,
+} from "../../server/db/npm-connections";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
 import {
@@ -81,6 +85,22 @@ describe("npm connection last_used_at debounce", () => {
 
     const refreshed = await readLastUsedAt(organizationId);
     expect(refreshed?.getTime()).toBeGreaterThan(stale.getTime());
+  });
+
+  test("only one concurrent stale observer mutates the row", async () => {
+    const organizationId = await seedConnection();
+    const db = createDb(env.DB);
+    const now = new Date();
+    const staleBefore = new Date(now.getTime() - NPM_CONNECTION_USE_DEBOUNCE_MS);
+
+    const results = await Promise.all(
+      Array.from({ length: 25 }, () =>
+        markNpmConnectionUsedIfStale(db, organizationId, staleBefore, now),
+      ),
+    );
+
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect((await readLastUsedAt(organizationId))?.getTime()).toBe(now.getTime());
   });
 });
 

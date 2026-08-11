@@ -68,8 +68,8 @@
 	],
 	// Native Rate Limiting bindings: per-colo fixed-window counters that keep
 	// abuse control off D1. One binding per per-minute limit the app enforces;
-	// see NATIVE_TIERS in server/lib/platform/rate-limit.ts. `namespace_id` is a
-	// per-Worker identifier we choose, not an account resource to provision.
+	// see NATIVE_TIERS in server/lib/platform/rate-limit.ts. `namespace_id` is an
+	// account-wide unique integer we choose, not a resource to provision.
 	"ratelimits": [
 		{
 			"name": "RATE_LIMIT_10_PER_MINUTE",

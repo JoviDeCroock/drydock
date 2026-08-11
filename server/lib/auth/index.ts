@@ -3,7 +3,7 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError } from "better-auth/api";
 import { twoFactor } from "better-auth/plugins";
-import { eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 import { type AppDb, createDb } from "../../db/client";
 import { deleteUserAccount, findCoOwnedOrganizations } from "../../db/organizations";
 import { recordProductEvent } from "../platform/analytics";
@@ -134,24 +134,84 @@ function isSessionStoreKeyAllowed(key: string): boolean {
  * `isSessionStoreKeyAllowed`); everything Drydock authorizes on (organization
  * membership, roles, npm connections, scans) stays in D1.
  */
-function createSessionSecondaryStorage(namespace: KVNamespace | undefined) {
+interface ActiveSessionCacheEntry {
+  token: string;
+  expiresAt: number;
+}
+
+function createSessionSecondaryStorage(db: AppDb, namespace: KVNamespace | undefined) {
   if (!namespace) return null;
+  const store = namespace;
+
+  async function setWithSafeTtl(key: string, value: string, ttl?: number): Promise<void> {
+    // KV rejects a TTL under 60 seconds. Clamp rather than dropping the TTL: an
+    // entry with no expiration would outlive the session it caches.
+    await store.put(
+      key,
+      value,
+      ttl === undefined ? {} : { expirationTtl: Math.max(60, Math.ceil(ttl)) },
+    );
+  }
+
+  async function getAuthoritativeActiveSessions(key: string): Promise<string | null> {
+    const userId = key.slice("active-sessions-".length);
+    const now = new Date();
+    const [cached, owner, sessions] = await Promise.all([
+      store.get(key),
+      db.select().from(schema.user).where(eq(schema.user.id, userId)).limit(1),
+      db
+        .select()
+        .from(schema.session)
+        .where(and(eq(schema.session.userId, userId), gt(schema.session.expiresAt, now))),
+    ]);
+
+    // Better Auth deletes the user and its D1 sessions before asking secondary
+    // storage to delete the user's sessions. Preserve the cached index for that
+    // cleanup call; for a live user, D1 is the authority so a newly bound,
+    // cleared, or eventually-consistent KV namespace cannot hide sessions from
+    // list-sessions or revoke-other-sessions.
+    const [user] = owner;
+    if (!user) return cached;
+
+    const nowMs = now.getTime();
+    const active: ActiveSessionCacheEntry[] = sessions.map((session) => ({
+      token: session.token,
+      expiresAt: session.expiresAt.getTime(),
+    }));
+    await Promise.all(
+      sessions.map((session) =>
+        setWithSafeTtl(
+          session.token,
+          JSON.stringify({ session, user }),
+          Math.ceil((session.expiresAt.getTime() - nowMs) / 1000),
+        ),
+      ),
+    );
+
+    if (active.length === 0) {
+      await store.delete(key);
+    } else {
+      const furthestExpiry = Math.max(...active.map((session) => session.expiresAt));
+      await setWithSafeTtl(key, JSON.stringify(active), Math.ceil((furthestExpiry - nowMs) / 1000));
+    }
+    return JSON.stringify(active);
+  }
+
   return {
-    get: (key: string) =>
-      isSessionStoreKeyAllowed(key) ? namespace.get(key) : Promise.resolve(null),
+    get: (key: string) => {
+      if (!isSessionStoreKeyAllowed(key)) return Promise.resolve(null);
+      if (key.startsWith("active-sessions-") && key.length > "active-sessions-".length) {
+        return getAuthoritativeActiveSessions(key);
+      }
+      return store.get(key);
+    },
     set: async (key: string, value: string, ttl?: number) => {
       if (!isSessionStoreKeyAllowed(key)) return;
-      // KV rejects a TTL under 60 seconds. Clamp rather than dropping the TTL:
-      // an entry with no expiration would outlive the session it caches.
-      await namespace.put(
-        key,
-        value,
-        ttl === undefined ? {} : { expirationTtl: Math.max(60, Math.ceil(ttl)) },
-      );
+      await setWithSafeTtl(key, value, ttl);
     },
     delete: async (key: string) => {
       if (!isSessionStoreKeyAllowed(key)) return;
-      await namespace.delete(key);
+      await store.delete(key);
     },
   };
 }
@@ -171,7 +231,7 @@ export function createAuth(env: Cloudflare.Env) {
   if (!env.BETTER_AUTH_SECRET) throw new Error("BETTER_AUTH_SECRET is required");
 
   const db = createDb(env.DB);
-  const secondaryStorage = createSessionSecondaryStorage(env.AUTH_SESSIONS);
+  const secondaryStorage = createSessionSecondaryStorage(db, env.AUTH_SESSIONS);
   const trustedOrigins = env.BETTER_AUTH_URL ? [env.BETTER_AUTH_URL] : [];
   const emailVerificationEnabled = Boolean(env.SEND_EMAIL) && !isLocalAuthUrl(env.BETTER_AUTH_URL);
   return betterAuth({
@@ -204,6 +264,8 @@ export function createAuth(env: Cloudflare.Env) {
       // existed before KV was introduced keep working (Better Auth falls back to
       // the database on a KV miss), account deletion and session revocation still
       // have rows to delete, and losing the KV namespace cannot log everyone out.
+      // The storage wrapper also rebuilds Better Auth's active-session index from
+      // D1 so list/revoke operations cannot overlook those durable sessions.
       cookieCache: {
         enabled: true,
         maxAge: SESSION_COOKIE_CACHE_SECONDS,

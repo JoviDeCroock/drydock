@@ -95,13 +95,13 @@
 	],
 	// Native Rate Limiting bindings: per-colo fixed-window counters that keep
 	// abuse control off D1. One binding per per-minute limit the app enforces;
-	// see NATIVE_TIERS in server/lib/platform/rate-limit.ts. `namespace_id` is a
-	// per-Worker identifier you choose, not an account resource to provision.
+	// see NATIVE_TIERS in server/lib/platform/rate-limit.ts. `namespace_id` is an
+	// account-wide unique integer you choose, not a resource to provision.
 	// Removing these blocks degrades every limit to the D1 `rate_limits` counter.
 	"ratelimits": [
 		{
 			"name": "RATE_LIMIT_10_PER_MINUTE",
-			"namespace_id": "1001",
+			"namespace_id": "REPLACE_WITH_UNIQUE_ACCOUNT_RATE_LIMIT_NAMESPACE_ID_10",
 			"simple": {
 				"limit": 10,
 				"period": 60
@@ -109,7 +109,7 @@
 		},
 		{
 			"name": "RATE_LIMIT_20_PER_MINUTE",
-			"namespace_id": "1002",
+			"namespace_id": "REPLACE_WITH_UNIQUE_ACCOUNT_RATE_LIMIT_NAMESPACE_ID_20",
 			"simple": {
 				"limit": 20,
 				"period": 60
@@ -117,7 +117,7 @@
 		},
 		{
 			"name": "RATE_LIMIT_30_PER_MINUTE",
-			"namespace_id": "1003",
+			"namespace_id": "REPLACE_WITH_UNIQUE_ACCOUNT_RATE_LIMIT_NAMESPACE_ID_30",
 			"simple": {
 				"limit": 30,
 				"period": 60
@@ -125,7 +125,7 @@
 		},
 		{
 			"name": "RATE_LIMIT_60_PER_MINUTE",
-			"namespace_id": "1004",
+			"namespace_id": "REPLACE_WITH_UNIQUE_ACCOUNT_RATE_LIMIT_NAMESPACE_ID_60",
 			"simple": {
 				"limit": 60,
 				"period": 60
@@ -133,7 +133,7 @@
 		},
 		{
 			"name": "RATE_LIMIT_120_PER_MINUTE",
-			"namespace_id": "1005",
+			"namespace_id": "REPLACE_WITH_UNIQUE_ACCOUNT_RATE_LIMIT_NAMESPACE_ID_120",
 			"simple": {
 				"limit": 120,
 				"period": 60
@@ -141,7 +141,7 @@
 		},
 		{
 			"name": "RATE_LIMIT_240_PER_MINUTE",
-			"namespace_id": "1006",
+			"namespace_id": "REPLACE_WITH_UNIQUE_ACCOUNT_RATE_LIMIT_NAMESPACE_ID_240",
 			"simple": {
 				"limit": 240,
 				"period": 60

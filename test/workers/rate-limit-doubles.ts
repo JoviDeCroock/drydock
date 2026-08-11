@@ -3,7 +3,7 @@ import { NATIVE_TIERS } from "../../server/lib/platform/rate-limit";
 /**
  * Stand-ins for the native Cloudflare Rate Limiting bindings.
  *
- * `wrangler.test.jsonc` binds the real (Miniflare-emulated) limiters, so a test
+ * `test/config/wrangler.jsonc` binds the real (Miniflare-emulated) limiters, so a test
  * that wants to observe the *blocked* path would otherwise have to issue `limit`
  * real requests. These doubles let a test force an outcome and assert which keys
  * the limiter was asked about.
