@@ -202,6 +202,19 @@ describe("formatSource (javascript)", () => {
     ]);
   });
 
+  test("keeps regexes whole after semicolonless declarations", () => {
+    for (const source of [
+      "call()\nfunction f(){}/x;y{z}/.test(a);foo();",
+      "const value=1\nclass A{}/x;y{z}/.test(a);foo();",
+      "call()\ninterface Result{value:string}/x;y{z}/.test(a);foo();",
+      "call()\n@sealed class Result{}/x;y{z}/.test(a);foo();",
+    ]) {
+      const formatted = formatJs(source);
+
+      expect(formatted?.text).toContain("/x;y{z}/.test(a);");
+    }
+  });
+
   test("keeps regexes whole after line-terminated statements and type aliases", () => {
     const debuggerSource = formatJs("debugger\n/x;y{2}/.test(a);foo();");
     const breakSource = formatJs("label:while(a){break label\n/x;y{2}/.test(a);foo()}");

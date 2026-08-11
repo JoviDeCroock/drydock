@@ -96,6 +96,15 @@ describe("normalizeCodeForScanning", () => {
     expect(normalizeCodeForScanning(source)).toBe(source);
   });
 
+  test("never folds regex contents after semicolonless declarations", () => {
+    for (const source of [
+      "call()\nfunction f(){}/'chi' + 'ld_process'/.test(a)",
+      "const value=1\nclass A{}/'chi' + 'ld_process'/.test(a)",
+    ]) {
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
+  });
+
   test("never folds regex contents after typed or declaration bodies", () => {
     const functionSource = "function f():void{}/'chi' + 'ld_process'/.test(a)";
     const interfaceSource = "interface Result{value:string}/'chi' + 'ld_process'/.test(a)";

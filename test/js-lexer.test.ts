@@ -135,8 +135,19 @@ describe("tokenizeJs regex vs division", () => {
       "class C extends class{}{}/x/.test(a)",
       "class C extends function(){}{static{function f(){}/x/.test(a)}}",
       "class C extends class{}{static{label:{b()}/x/.test(a)}}",
+      "call()\nfunction f(){}/x/.test(a)",
+      "const value=1\nclass A{}/x/.test(a)",
+      "call()\ninterface Result{value:string}/x/.test(a)",
+      "call()\nimport 'x'\n/x/.test(a)",
+      "call()\n@sealed class Result{}/x/.test(a)",
     ]) {
       expect(`${source} -> ${firstSlash(source)}`).toBe(`${source} -> regex`);
+    }
+  });
+
+  test("keeps line-broken function and class expressions value-shaped", () => {
+    for (const source of ["const f=\nfunction(){}/2/b", "const C=\nclass{}/2/b"]) {
+      expect(`${source} -> ${firstSlash(source)}`).toBe(`${source} -> punct`);
     }
   });
 

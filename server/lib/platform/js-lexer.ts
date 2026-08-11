@@ -136,6 +136,41 @@ const TYPE_BLOCK_DECLARATION_KEYWORDS = new Set([
 const DECLARATION_PREFIX_KEYWORDS = new Set(["const", "declare", "default", "export"]);
 const TYPE_ALIAS_PREFIX_KEYWORDS = new Set(["declare", "export"]);
 
+// These tokens start declarations rather than continue a preceding expression.
+// When one follows a line-terminable value in a statement list, ASI ends the
+// previous statement even though the previous token is not one of the explicit
+// boundaries handled by `canStartStatement`.
+const LINE_TERMINATED_DECLARATION_KEYWORDS = new Set([
+  "class",
+  "enum",
+  "export",
+  "function",
+  "import",
+  "interface",
+  "module",
+  "namespace",
+  "type",
+]);
+
+// Prefix/operator keywords whose operand may continue on the following line.
+// They cannot end a statement immediately before a declaration-shaped token.
+const EXPRESSION_CONTINUATION_KEYWORDS = new Set([
+  "await",
+  "case",
+  "default",
+  "delete",
+  "do",
+  "else",
+  "extends",
+  "in",
+  "instanceof",
+  "new",
+  "of",
+  "throw",
+  "typeof",
+  "void",
+]);
+
 // A line terminator is syntactically significant after these statements. A
 // following slash starts a new regex expression; it cannot continue the prior
 // statement as division. `return`/`yield`/`await` already live in
@@ -675,7 +710,11 @@ function updateBracketState(
     !continuesModuleDeclaration(src, token);
   if (followsModuleDeclaration) clearModuleDeclaration(state);
   if (token.type === "ident") {
-    const statementStart = followsModuleDeclaration || canStartStatement(src, prev, state);
+    const statementStart =
+      followsModuleDeclaration ||
+      canStartStatement(src, prev, state) ||
+      (LINE_TERMINATED_DECLARATION_KEYWORDS.has(text) &&
+        startsStatementAfterLineTerminator(src, prev, state, lineTerminatorBefore));
     const decoratedClass =
       text === "class" && state.pendingDecoratorDepth === state.brackets.length;
     if (state.pendingTypeAliasDepth === state.brackets.length && text !== "type") {
@@ -767,7 +806,9 @@ function updateBracketState(
 
   if (
     text === "@" &&
-    (canStartStatement(src, prev, state) || state.pendingDecoratorDepth === state.brackets.length)
+    (canStartStatement(src, prev, state) ||
+      startsStatementAfterLineTerminator(src, prev, state, lineTerminatorBefore) ||
+      state.pendingDecoratorDepth === state.brackets.length)
   ) {
     state.pendingDecoratorDepth = state.brackets.length;
   }
@@ -1024,6 +1065,42 @@ function canStartStatement(src: string, prev: JsToken | undefined, state: Bracke
   if (text === ")") return state.closed === "head-paren";
   if (text === "}") return state.closed === "block" || state.closed === "class-block";
   return false;
+}
+
+function startsStatementAfterLineTerminator(
+  src: string,
+  prev: JsToken | undefined,
+  state: BracketState,
+  lineTerminatorBefore: boolean,
+): boolean {
+  if (!lineTerminatorBefore || !prev) return false;
+  const top = state.brackets[state.brackets.length - 1];
+  if (
+    top !== undefined &&
+    top !== "block" &&
+    top !== "value-block" &&
+    top !== "class-block" &&
+    top !== "class-value-block"
+  ) {
+    return false;
+  }
+  if (
+    prev.type === "string" ||
+    prev.type === "template" ||
+    prev.type === "regex" ||
+    prev.type === "number"
+  ) {
+    return true;
+  }
+  if (prev.type === "ident") {
+    const text = jsTokenText(src, prev);
+    return (
+      !EXPRESSION_CONTINUATION_KEYWORDS.has(text) &&
+      !["class", "const", "export", "function", "import", "let", "var"].includes(text)
+    );
+  }
+  if (prev.type !== "punct") return false;
+  return [")", "]", "}", "++", "--"].includes(jsTokenText(src, prev));
 }
 
 function regexAllowed(
