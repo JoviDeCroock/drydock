@@ -436,6 +436,57 @@ describe("shields badge endpoint", () => {
     });
   });
 
+  test("an approved release reads approved, not its pre-decision risk grade", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      version: "4.0.0",
+      risk: "medium",
+      releaseRisk: "medium",
+    });
+    await share(app, scanId, { threatFeed: true });
+    // Before the decision, the badge reports the evidence.
+    expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+      message: "4.0.0 reviewed · medium risk",
+      color: "yellow",
+    });
+
+    const decide = await request(app, `/api/v1/scans/${scanId}/decision`, {
+      method: "POST",
+      body: JSON.stringify({ decision: "publish", reason: "intended changes" }),
+    });
+    expect(decide.status).toBe(200);
+    // After sign-off the decision is the message; the grade stays in the
+    // report behind the badge.
+    expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+      label: "drydock",
+      message: "4.0.0 approved",
+      color: "brightgreen",
+    });
+  });
+
+  test("an approved manifest-claimed release stays visibly unverified", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      version: "2.0.0",
+      source: "workflow_gate",
+    });
+    await share(app, scanId, { threatFeed: true });
+    // Gate decisions arrive through the gate flow, not /decision; the badge
+    // reads the persisted row either way, so set the decision directly.
+    await env.DB.prepare("UPDATE scans SET decision = 'publish' WHERE id = ?").bind(scanId).run();
+    expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+      label: "drydock (unverified)",
+      message: "2.0.0 approved",
+      color: "lightgrey",
+    });
+  });
+
   test("the badge is ecosystem-scoped", async () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);

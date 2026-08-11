@@ -316,6 +316,23 @@ export function buildBadgePayload(row: SharedScanRow | null): BadgePayload {
       cacheSeconds: BADGE_CACHE_SECONDS,
     };
   }
+  if (row.decision === "publish") {
+    // A recorded publish decision is the product's verdict: a maintainer read
+    // the evidence and signed off. Keeping the pre-decision risk grade in the
+    // message would present the evidence as outranking the decision — an
+    // approved release wearing "medium risk" reads as a warning about a
+    // release the review process explicitly cleared (and a high-risk approval
+    // is, in practice, more often a false positive than a shipped compromise).
+    // The grade and its findings stay one click away in the report.
+    return {
+      schemaVersion: 1,
+      label: badgeLabel(row),
+      message: `${badgeVersion(row.stagedVersion)} approved`,
+      // An unverified name claim still never renders clean green.
+      color: scanPackageIdentity(row.source) === "registry-verified" ? "brightgreen" : "lightgrey",
+      cacheSeconds: BADGE_CACHE_SECONDS,
+    };
+  }
   const risk = sharedScanReleaseRisk(row);
   return {
     schemaVersion: 1,

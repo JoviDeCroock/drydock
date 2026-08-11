@@ -83,8 +83,15 @@ for the package's most recent **feed-listed** review:
 
 - Not listed / unknown → `not reviewed` (lightgrey). Always `200` so badge
   proxies never render an error.
-- Listed → `<version> reviewed · <release risk> risk`, colored green / yellow /
-  red by risk; a `no_publish` decision renders `<version> blocked` (red).
+- Listed, undecided → `<version> reviewed · <release risk> risk`, colored
+  green / yellow / red by risk.
+- Listed, approved (`publish`) → `<version> approved` (green when
+  registry-verified). The decision supersedes the pre-decision risk grade in
+  the message: a maintainer read the evidence and signed off, and an approved
+  release wearing "medium risk" would read as a warning about a release the
+  review process cleared. The grade and findings stay in the report behind the
+  badge.
+- Listed, rejected (`no_publish`) → `<version> blocked` (red).
 
 The badge is a name-discoverable index, so it takes the same second opt-in as
 the threat feed — a report shared privately by link never becomes queryable by
