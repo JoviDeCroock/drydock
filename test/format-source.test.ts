@@ -43,7 +43,7 @@ function lines(formatted: FormattedSource | null): string[] {
 describe("formatLanguageFor", () => {
   test("covers the languages whose token boundaries the formatter understands", () => {
     expect(formatLanguageFor("javascript")).toBe("js");
-    expect(formatLanguageFor("typescript")).toBe("js");
+    expect(formatLanguageFor("typescript")).toBe("ts");
     expect(formatLanguageFor("json")).toBe("json");
     expect(formatLanguageFor("css")).toBe("css");
   });
@@ -76,6 +76,34 @@ describe("looksMinified", () => {
 });
 
 describe("formatSource (javascript)", () => {
+  test("leaves JSX shipped under JavaScript extensions opaque", () => {
+    const longText = "safe;payload".repeat(50);
+    const element = `const view=<div>${longText}</div>;danger();`;
+
+    expect(looksMinified(element)).toBe(true);
+    expect(formatSource(element, "js")).toBeNull();
+    expect(formatSource("const view=<Widget value={x}/>;danger();", "js")).toBeNull();
+    expect(formatSource("const view=<>safe;payload</>;danger();", "js")).toBeNull();
+    expect(formatSource("export default <Widget/>;danger();", "js")).toBeNull();
+    expect(formatSource("if(ready)<Widget/>;danger();", "js")).toBeNull();
+  });
+
+  test("does not mistake relational expressions for JSX", () => {
+    const formatted = formatJs("const result=a<b>c;danger();");
+
+    expect(lines(formatted)).toEqual(["const result=a<b>c;", "danger();"]);
+  });
+
+  test("keeps TypeScript angle-bracket assertions reformattable", () => {
+    const formatted = formatSource("const value=<Result>input;danger();", "ts");
+
+    expect(lines(formatted)).toEqual(["const value=<Result>input;", "danger();"]);
+  });
+
+  test("fails closed when inserted whitespace changes a hostile sample's lexical context", () => {
+    expect(formatSource("}function f(){}/re;{}/g", "js")).toBeNull();
+  });
+
   test("breaks a minified statement run onto one line each", () => {
     const formatted = formatJs("var a=1;var b=2;var c=3;");
 

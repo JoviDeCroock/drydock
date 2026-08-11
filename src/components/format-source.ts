@@ -28,7 +28,7 @@
 
 import { jsTokenText, tokenizeJs, type JsToken } from "../../server/lib/platform/js-lexer";
 
-export type FormatLanguage = "js" | "json" | "css";
+export type FormatLanguage = "js" | "ts" | "json" | "css";
 
 export interface FormattedSource {
   text: string;
@@ -58,12 +58,12 @@ const MAX_INDENT_DEPTH = 24;
 // JSX text and SCSS line comments carry whitespace-sensitive syntax that the
 // deliberately small scanners below do not understand. Fail closed for those
 // grammars instead of presenting a transformed view that changes their meaning.
-const JS_LANGS = new Set(["javascript", "typescript"]);
 const CSS_LANGS = new Set(["css"]);
 
 export function formatLanguageFor(lang: string | undefined): FormatLanguage | null {
   if (!lang) return null;
-  if (JS_LANGS.has(lang)) return "js";
+  if (lang === "javascript") return "js";
+  if (lang === "typescript") return "ts";
   if (lang === "json") return "json";
   if (CSS_LANGS.has(lang)) return "css";
   return null;
@@ -88,9 +88,97 @@ export function looksMinified(text: string): boolean {
  */
 export function formatSource(text: string, language: FormatLanguage): FormattedSource | null {
   if (!text || text.length > FORMAT_MAX_CHARS) return null;
-  const breaks = language === "css" ? cssBreaks(text) : jsBreaks(text, language === "json");
+  const jsTokens = language === "css" ? null : significantJsTokens(text);
+  // File extensions are only hints: packages routinely ship JSX in `.js`
+  // files. The small JS lexer cannot preserve whitespace-sensitive JSX text,
+  // so leave any expression-position tag opener opaque even when Shiki chose
+  // the JavaScript grammar for the path.
+  if (language === "js" && containsUnsupportedJsx(text, jsTokens ?? [])) return null;
+  const breaks =
+    language === "css" ? cssBreaks(text) : jsBreaks(text, language === "json", jsTokens ?? []);
   if (!breaks.length) return null;
-  return applyBreaks(text, breaks);
+  const formatted = applyBreaks(text, breaks);
+  // Lexical goals depend on context. On malformed or clipped hostile input,
+  // inserting whitespace can make the lexer reinterpret a later slash even
+  // though no non-whitespace character moved. Never expose that reinterpretation
+  // to reviewers: a mismatched token stream falls back to the shipped bytes.
+  if (jsTokens && !preservesJsTokenStream(text, jsTokens, formatted.text)) return null;
+  return formatted;
+}
+
+const JSX_PRECEDING_PUNCTUATORS = new Set([
+  "(",
+  "[",
+  "{",
+  "=",
+  ",",
+  ":",
+  "?",
+  ";",
+  "=>",
+  "&&",
+  "||",
+  "??",
+  "!",
+  "~",
+]);
+const JSX_PRECEDING_KEYWORDS = new Set(["await", "case", "default", "return", "throw", "yield"]);
+
+function containsUnsupportedJsx(src: string, tokens: JsToken[]): boolean {
+  const structuralTokens = tokens.filter((token) => token.type !== "comment");
+  for (let index = 0; index < structuralTokens.length - 1; index += 1) {
+    const token = structuralTokens[index];
+    if (!isPunctText(src, token, "<")) continue;
+    const next = structuralTokens[index + 1];
+    // Closing tags are unambiguous even when the opening element followed a
+    // statement head (`if (ready) <Widget />`) rather than an expression-leading
+    // punctuator. A real regex token retains its closing slash, unlike the
+    // lexer's opaque scan of JSX `</tag>`.
+    if (next.type === "regex" && /^\/(?:[\w$.:-]+)?>$/u.test(jsTokenText(src, next))) {
+      return true;
+    }
+    if (next.type !== "ident" && !isPunctText(src, next, ">")) continue;
+    if (next.type === "ident") {
+      for (
+        let cursor = index + 2;
+        cursor < Math.min(structuralTokens.length - 1, index + 64);
+        cursor += 1
+      ) {
+        if (isPunctText(src, structuralTokens[cursor], ">")) break;
+        if (
+          isPunctText(src, structuralTokens[cursor], "/") &&
+          isPunctText(src, structuralTokens[cursor + 1], ">")
+        ) {
+          return true;
+        }
+        if (isPunctText(src, structuralTokens[cursor], ";")) break;
+      }
+    }
+    const previous = structuralTokens[index - 1];
+    if (!previous) return true;
+    if (previous.type === "punct" && JSX_PRECEDING_PUNCTUATORS.has(jsTokenText(src, previous))) {
+      return true;
+    }
+    if (previous.type === "ident" && JSX_PRECEDING_KEYWORDS.has(jsTokenText(src, previous))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function significantJsTokens(src: string): JsToken[] {
+  return tokenizeJs(src).filter((token) => token.type !== "ws");
+}
+
+function preservesJsTokenStream(src: string, tokens: JsToken[], formatted: string): boolean {
+  const formattedTokens = significantJsTokens(formatted);
+  if (tokens.length !== formattedTokens.length) return false;
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (jsTokenText(src, tokens[index]) !== jsTokenText(formatted, formattedTokens[index])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -179,11 +267,10 @@ const BLOCK_CONTINUATION_KEYWORDS = new Set([
   "while",
 ]);
 
-function jsBreaks(src: string, splitArrays: boolean): SourceBreak[] {
+function jsBreaks(src: string, splitArrays: boolean, tokens: JsToken[]): SourceBreak[] {
   // Comments stay in the significant stream: they are content a reviewer reads,
   // and keeping them means the gap between two consecutive entries is always
   // pure whitespace.
-  const tokens = tokenizeJs(src).filter((token) => token.type !== "ws");
   const breaks: SourceBreak[] = [];
   // Open brackets, innermost last. `;` inside `(` is a `for(;;)` separator, and
   // `,` only earns a line of its own inside an object literal/block, plus arrays

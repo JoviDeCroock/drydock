@@ -359,7 +359,10 @@ describe("shields badge endpoint", () => {
 
     const badge = await fetchBadge(app, "npm", packageName);
     expect(badge.body.message).toBe("1.0.0 reviewed · low risk");
-  });
+    // Crowding the 20-row candidate page requires 21 complete scan-and-share
+    // setups. Loaded CI runners can exceed Vitest's 5s default even though the
+    // assertion is deterministic, so budget the deliberate D1 workload here.
+  }, 15_000);
 
   test("badge and feed responses are served from the colo cache", async () => {
     const owner = await seedUser();
