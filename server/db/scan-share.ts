@@ -189,9 +189,11 @@ export async function revokePublicShare(
  * The badge cache key a row occupies, or null when it can never occupy one —
  * no package name, or a gate scan whose provenance never established an
  * ecosystem. Same rule as the key written on listing, so a purge always
- * addresses the entry the write created.
+ * addresses the entry the write created. Exported for the decision routes,
+ * which purge a listed scan's badge when the recorded decision changes what
+ * the cached payload asserts.
  */
-function badgeLookupKey(row: {
+export function badgeLookupKey(row: {
   source: string;
   packageName: string | null;
   summaryJson: unknown;

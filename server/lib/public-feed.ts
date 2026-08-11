@@ -79,8 +79,9 @@ export function publicFeedCacheKey(origin: string, routePath: string): Request {
 }
 
 /**
- * Drop the colo-cached badge and threat feed after a share is revoked or a
- * listing is turned off, so the withdrawal is not delayed by the TTL.
+ * Drop the colo-cached badge and threat feed after a share is revoked, a
+ * listing is turned off, or a release decision is recorded on a listed scan,
+ * so the change is not delayed by the TTL.
  *
  * **This is colo-local.** It clears the entries in the colo that served the
  * revoking admin's request and nowhere else; every other region keeps serving
@@ -313,6 +314,23 @@ export function buildBadgePayload(row: SharedScanRow | null): BadgePayload {
       label: badgeLabel(row),
       message: `${badgeVersion(row.stagedVersion)} blocked`,
       color: "red",
+      cacheSeconds: BADGE_CACHE_SECONDS,
+    };
+  }
+  if (row.decision === "publish") {
+    // A recorded publish decision is the product's verdict: a maintainer read
+    // the evidence and signed off. Keeping the pre-decision risk grade in the
+    // message would present the evidence as outranking the decision — an
+    // approved release wearing "medium risk" reads as a warning about a
+    // release the review process explicitly cleared (and a high-risk approval
+    // is, in practice, more often a false positive than a shipped compromise).
+    // The grade and its findings stay one click away in the report.
+    return {
+      schemaVersion: 1,
+      label: badgeLabel(row),
+      message: `${badgeVersion(row.stagedVersion)} approved`,
+      // An unverified name claim still never renders clean green.
+      color: scanPackageIdentity(row.source) === "registry-verified" ? "brightgreen" : "lightgrey",
       cacheSeconds: BADGE_CACHE_SECONDS,
     };
   }

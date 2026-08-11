@@ -4,14 +4,19 @@ import { recordScanEvent } from "../db/events";
 import { organizationRequiresTwoFactorForReleaseDecisions } from "../db/organizations";
 import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
 import { getScan, recordGatePackageDecision } from "../db/scans";
+import { badgeLookupKey } from "../db/scan-share";
 import {
   requireActiveOrganization,
   requireActiveOrganizationContext,
 } from "../lib/auth/active-organization";
 import { userHasTwoFactor, verifyTotpStepUp } from "../lib/auth";
 import { roleCanManageIntegrations } from "../lib/auth/roles";
-import { rateLimitResponse } from "../lib/platform/http";
-import { workerExecutionContext } from "../lib/platform/execution-context";
+import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
+import {
+  optionalWorkerExecutionContext,
+  workerExecutionContext,
+} from "../lib/platform/execution-context";
+import { purgePublicFeedCache } from "../lib/public-feed";
 import { recordProductEvent } from "../lib/platform/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import { scanArtifactReadBucket } from "../lib/scan/artifacts";
@@ -598,6 +603,22 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
             : "gate has already been decided",
       },
       409,
+    );
+  }
+
+  // A decision changes what a listed scan's cached badge and feed entry
+  // assert ("reviewed · risk" → "approved"/"blocked"); drop both so the
+  // change is not delayed by the colo TTL in at least this region. Same
+  // canonical-origin purge as the staged decision route and (un)listing.
+  if (decidedPackage.scan.publicFeedListedAt) {
+    purgePublicFeedCache(
+      optionalWorkerExecutionContext(c),
+      canonicalOrigin(c),
+      badgeLookupKey({
+        source: decidedPackage.scan.source,
+        packageName: decidedPackage.scan.packageName,
+        summaryJson: decidedPackage.scan.summaryJson,
+      }),
     );
   }
 

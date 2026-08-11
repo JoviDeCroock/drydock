@@ -83,8 +83,15 @@ for the package's most recent **feed-listed** review:
 
 - Not listed / unknown → `not reviewed` (lightgrey). Always `200` so badge
   proxies never render an error.
-- Listed → `<version> reviewed · <release risk> risk`, colored green / yellow /
-  red by risk; a `no_publish` decision renders `<version> blocked` (red).
+- Listed, undecided → `<version> reviewed · <release risk> risk`, colored
+  green / yellow / red by risk.
+- Listed, approved (`publish`) → `<version> approved` (green when
+  registry-verified). The decision supersedes the pre-decision risk grade in
+  the message: a maintainer read the evidence and signed off, and an approved
+  release wearing "medium risk" would read as a warning about a release the
+  review process cleared. The grade and findings stay in the report behind the
+  badge.
+- Listed, rejected (`no_publish`) → `<version> blocked` (red).
 
 The badge is a name-discoverable index, so it takes the same second opt-in as
 the threat feed — a report shared privately by link never becomes queryable by
@@ -197,7 +204,10 @@ the downstream `max-age` doesn't already absorb, while every invented name would
 add an entry to the namespace that also holds published-tarball bytes. Cursored
 feed pages (`?after=`) are uncached too, since the key ignores the query.
 
-Revoking a share or unlisting a report purges both entries. **That purge is
+Revoking a share, unlisting a report, or recording a release decision on a
+listed scan purges both entries — a publish → no_publish flip must not leave a
+green "approved" badge serving from the deciding admin's own colo for the full
+TTL. **That purge is
 colo-local and best effort**: `caches.default.delete()` clears the entry in the
 colo that handled the revoking request and nowhere else, so other regions keep
 serving the withdrawn badge until `max-age` expires — and shields.io's own cache
