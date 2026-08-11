@@ -254,10 +254,13 @@ function cssBreaks(src: string): SourceBreak[] {
 
   while (index < src.length) {
     const char = src[index];
-    // CSS escapes make the next code point data even when it is normally a
-    // structural delimiter (`.foo\;bar`, for example). Never split there.
-    if (char === "\\") {
-      index += 2;
+    const identifier = scanCssIdentifier(src, index);
+    if (identifier) {
+      if (identifier.value.toLowerCase() === "url" && src[identifier.end] === "(") {
+        index = skipCssUrl(src, identifier.end + 1);
+      } else {
+        index = identifier.end;
+      }
       continue;
     }
     if (char === "/" && src[index + 1] === "*") {
@@ -269,8 +272,10 @@ function cssBreaks(src: string): SourceBreak[] {
       index = skipCssString(src, index);
       continue;
     }
-    if ((char === "u" || char === "U") && /^url\(/i.test(src.slice(index, index + 4))) {
-      index = skipCssUrl(src, index + 4);
+    // CSS escapes make the next code point data even when it is normally a
+    // structural delimiter (`.foo\;bar`, for example). Never split there.
+    if (char === "\\") {
+      index = scanCssEscape(src, index).end;
       continue;
     }
     if (char === "}") {
@@ -300,7 +305,7 @@ function skipCssString(src: string, start: number): number {
   let index = start + 1;
   while (index < src.length) {
     if (src[index] === "\\") {
-      index += 2;
+      index = scanCssEscape(src, index).end;
       continue;
     }
     if (src[index] === quote) return index + 1;
@@ -314,7 +319,7 @@ function skipCssUrl(src: string, start: number): number {
   let index = start;
   while (index < src.length && src[index] !== ")" && src[index] !== "\n") {
     if (src[index] === "\\") {
-      index += 2;
+      index = scanCssEscape(src, index).end;
       continue;
     }
     if (src[index] === '"' || src[index] === "'") {
@@ -324,6 +329,71 @@ function skipCssUrl(src: string, start: number): number {
     index += 1;
   }
   return index;
+}
+
+interface CssIdentifier {
+  end: number;
+  value: string;
+}
+
+// CSS identifiers may spell any code point with a backslash escape, including
+// the name of the url() function itself (`u\72l(...)`). Decode just enough of
+// the identifier to recognize that function before the structural scan walks
+// its opaque payload.
+function scanCssIdentifier(src: string, start: number): CssIdentifier | null {
+  const first = src[start];
+  if (!isCssNameStart(first) && first !== "-" && first !== "\\") return null;
+  let value = "";
+  let index = start;
+  while (index < src.length) {
+    const char = src[index];
+    if (isCssNameChar(char)) {
+      value += char;
+      index += 1;
+      continue;
+    }
+    if (char !== "\\") break;
+    const escape = scanCssEscape(src, index);
+    // A backslash-newline is not an identifier escape. Leave it to the generic
+    // hostile-input path rather than joining tokens the CSS parser keeps apart.
+    if (escape.value === null) break;
+    value += escape.value;
+    index = escape.end;
+  }
+  return index === start ? null : { end: index, value };
+}
+
+function scanCssEscape(src: string, start: number): { end: number; value: string | null } {
+  const next = src[start + 1];
+  if (next === undefined) return { end: start + 1, value: "" };
+  if (next === "\r") {
+    return { end: src[start + 2] === "\n" ? start + 3 : start + 2, value: null };
+  }
+  if (next === "\n" || next === "\f") return { end: start + 2, value: null };
+  if (!/[0-9a-fA-F]/.test(next)) return { end: start + 2, value: next };
+
+  let end = start + 1;
+  while (end < src.length && end < start + 7 && /[0-9a-fA-F]/.test(src[end])) end += 1;
+  const codePoint = Number.parseInt(src.slice(start + 1, end), 16);
+  if (src[end] === "\r") end += src[end + 1] === "\n" ? 2 : 1;
+  else if (src[end] === " " || src[end] === "\t" || src[end] === "\n" || src[end] === "\f") {
+    end += 1;
+  }
+  const value =
+    codePoint === 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)
+      ? "\uFFFD"
+      : String.fromCodePoint(codePoint);
+  return { end, value };
+}
+
+function isCssNameStart(char: string | undefined): boolean {
+  if (!char) return false;
+  const code = char.codePointAt(0) ?? 0;
+  return /[A-Za-z_]/.test(char) || code >= 0x80;
+}
+
+function isCssNameChar(char: string | undefined): boolean {
+  return isCssNameStart(char) || char === "-" || (char !== undefined && /[0-9]/.test(char));
 }
 
 function pushBreak(src: string, breaks: SourceBreak[], item: SourceBreak): void {

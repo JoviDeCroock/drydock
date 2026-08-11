@@ -46,10 +46,15 @@ type BracketKind = "head-paren" | "paren" | "block" | "object" | "bracket";
 interface BracketState {
   brackets: BracketKind[];
   closed: BracketKind | null;
-  // `class` bodies are blocks even though the token immediately before `{` is
-  // usually the class name or extends expression. Remember the bracket depth at
-  // which the class header started so nested calls/objects do not consume it.
-  pendingClassDepth: number | null;
+  // Class/interface/enum/namespace bodies are blocks even though the token
+  // immediately before `{` is usually the declaration name or extends
+  // expression. Remember the bracket depth at which the header started so
+  // nested calls/objects do not consume it.
+  pendingDeclarationDepth: number | null;
+  // TypeScript permits a return annotation between a function/method's `)` and
+  // body. Without remembering the annotation's colon, `(): void {}` looks like
+  // an object literal and a following regex is consequently read as division.
+  pendingTypedBodyDepth: number | null;
   // A `case` expression may contain nested objects and conditional expressions
   // before its terminating `:`. Keep the switch-block depth so that colon can
   // be distinguished from an object property or conditional-expression colon.
@@ -77,6 +82,14 @@ const BLOCK_PRECEDING_KEYWORDS = new Set(["else", "do", "try", "catch", "finally
 // block's braces, a parenthesised head (`if(a){`, `function f(){`), and an
 // arrow body — `x=>({})` is how an arrow returns an object, so `x=>{` is a block.
 const BLOCK_PRECEDING_PUNCTUATORS = new Set([";", "{", "}", ")", "=>"]);
+
+const TYPE_BLOCK_DECLARATION_KEYWORDS = new Set(["enum", "interface", "module", "namespace"]);
+const DECLARATION_PREFIX_KEYWORDS = new Set(["const", "declare", "export"]);
+
+// While a typed body is pending, these punctuators introduce a type literal
+// rather than the implementation body. The pending marker survives that nested
+// object and is consumed by the next brace at the annotation's original depth.
+const TYPE_LITERAL_PRECEDING_PUNCTUATORS = new Set([":", "<", "(", "?", "|", "&", "=", ",", "=>"]);
 
 // Keywords after which a `/` opens a regex literal rather than a division.
 const REGEX_PRECEDING_KEYWORDS = new Set([
@@ -507,11 +520,16 @@ function updateBracketState(
     if ((text === "case" || text === "default") && statementStart) {
       state.pendingCaseDepth = state.brackets.length;
     }
+    const blockDeclaration =
+      text === "class" ||
+      (TYPE_BLOCK_DECLARATION_KEYWORDS.has(text) &&
+        (statementStart ||
+          (prev?.type === "ident" && DECLARATION_PREFIX_KEYWORDS.has(jsTokenText(src, prev)))));
     if (
-      text === "class" &&
+      blockDeclaration &&
       !(prev?.type === "punct" && [".", "?."].includes(jsTokenText(src, prev)))
     ) {
-      state.pendingClassDepth = state.brackets.length;
+      state.pendingDeclarationDepth = state.brackets.length;
     }
     return;
   }
@@ -525,23 +543,33 @@ function updateBracketState(
   state.statementColon = false;
 
   if (
-    state.pendingClassDepth === state.brackets.length &&
+    state.pendingDeclarationDepth === state.brackets.length &&
     (text === ":" || text === ";" || text === "=")
   ) {
-    // `class` was an object key or malformed/truncated header, not a class
-    // declaration/expression whose body is still ahead.
-    state.pendingClassDepth = null;
+    // The keyword was an object key or malformed/truncated header, not a
+    // declaration whose body is still ahead.
+    state.pendingDeclarationDepth = null;
+  }
+  if (state.pendingTypedBodyDepth === state.brackets.length && text === ";") {
+    // A method signature or truncated annotation has no implementation body.
+    state.pendingTypedBodyDepth = null;
   }
   if (text === "(") {
     state.brackets.push(isStatementHead(src, prev, beforePrev) ? "head-paren" : "paren");
   } else if (text === "[") {
     state.brackets.push("bracket");
   } else if (text === "{") {
-    const classBody = state.pendingClassDepth === state.brackets.length;
+    const declarationBody = state.pendingDeclarationDepth === state.brackets.length;
+    const typedBody =
+      state.pendingTypedBodyDepth === state.brackets.length &&
+      !(prev?.type === "punct" && TYPE_LITERAL_PRECEDING_PUNCTUATORS.has(jsTokenText(src, prev)));
     state.brackets.push(
-      classBody || followsStatementColon || opensBlock(src, prev) ? "block" : "object",
+      declarationBody || typedBody || followsStatementColon || opensBlock(src, prev)
+        ? "block"
+        : "object",
     );
-    if (classBody) state.pendingClassDepth = null;
+    if (declarationBody) state.pendingDeclarationDepth = null;
+    if (typedBody) state.pendingTypedBodyDepth = null;
   } else if (text === ")" || text === "]" || text === "}") {
     state.closed = state.brackets.pop() ?? null;
   } else if (text === "?") {
@@ -553,6 +581,12 @@ function updateBracketState(
     } else if (state.labelCandidate || state.pendingCaseDepth === state.brackets.length) {
       state.statementColon = true;
       state.pendingCaseDepth = null;
+    } else if (
+      prev?.type === "punct" &&
+      jsTokenText(src, prev) === ")" &&
+      state.closed === "paren"
+    ) {
+      state.pendingTypedBodyDepth = state.brackets.length;
     }
   }
   state.labelCandidate = false;
@@ -562,7 +596,8 @@ function createBracketState(): BracketState {
   return {
     brackets: [],
     closed: null,
-    pendingClassDepth: null,
+    pendingDeclarationDepth: null,
+    pendingTypedBodyDepth: null,
     pendingCaseDepth: null,
     conditionalDepths: [],
     labelCandidate: false,

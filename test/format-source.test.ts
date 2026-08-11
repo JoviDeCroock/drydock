@@ -130,6 +130,20 @@ describe("formatSource (javascript)", () => {
     expect(lines(catchSource)).toEqual(["try{}catch{}", "/x;y{z}/.test(a);", "foo();"]);
   });
 
+  test("recognizes typed function and TypeScript declaration bodies before a regex", () => {
+    const functionSource = formatJs("function f():void{}/x;y{z}/.test(a);foo();");
+    const interfaceSource = formatJs("interface Result{value:string}/x;y{z}/.test(a);foo();");
+
+    expect(lines(functionSource)).toEqual(["function f():void{}", "/x;y{z}/.test(a);", "foo();"]);
+    expect(lines(interfaceSource)).toEqual([
+      "interface Result{",
+      "  value:string",
+      "}",
+      "/x;y{z}/.test(a);",
+      "foo();",
+    ]);
+  });
+
   test("keeps regexes whole after labeled and case-clause blocks", () => {
     const labelSource = formatJs("label:{foo()}/x;y{z}/.test(a);bar();");
     const caseSource = formatJs("switch(a){case 1:{foo()}/x;y{z}/.test(a);break}");
@@ -281,6 +295,18 @@ describe("formatSource (css)", () => {
     expect(lines(url)).toEqual([
       ".a{",
       "  background:url(foo\\)bar;baz{qux});",
+      "  color:red",
+      "}",
+    ]);
+  });
+
+  test("keeps escaped spellings of url() opaque", () => {
+    const source = String.raw`.a{background:u\72l(data:image/svg+xml;utf8,<svg>{}</svg>);color:red}`;
+    const formatted = formatSource(source, "css");
+
+    expect(lines(formatted)).toEqual([
+      ".a{",
+      String.raw`  background:u\72l(data:image/svg+xml;utf8,<svg>{}</svg>);`,
       "  color:red",
       "}",
     ]);

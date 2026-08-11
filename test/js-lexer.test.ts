@@ -31,6 +31,7 @@ describe("tokenizeJs regex vs division", () => {
       "var o=a?b:{}/2/b", // object value after a conditional colon
       "return{a:1}/2/b", // object literal after a keyword
       "class C{class={}/2/b}", // a field named `class`, not a nested declaration
+      "var o={module,x:{}/2/b}", // declaration-shaped object shorthand
       "a.b/2/c", // property
       "1/2/3", // numbers
       "i++/2/b", // postfix update result
@@ -55,6 +56,10 @@ describe("tokenizeJs regex vs division", () => {
       "a=>{}/x/.test(a)",
       "class A{}/x/.test(a)",
       "const A=class extends mixin({a:1}){}/x/.test(a)",
+      "function f():void{}/x/.test(a)",
+      'function f():{value:string}{return{value:""}}/x/.test(a)',
+      "class C{method():Result{}}/x/.test(a)",
+      "interface Result{value:string}/x/.test(a)",
       "try{}catch{}/x/.test(a)",
       "label:{b()}/x/.test(a)",
       "switch(a){case 1:{b()}/x/.test(a)}",

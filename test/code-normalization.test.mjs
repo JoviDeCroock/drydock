@@ -76,6 +76,14 @@ describe("normalizeCodeForScanning", () => {
     expect(normalizeCodeForScanning(caseSource)).toBe(caseSource);
   });
 
+  test("never folds regex contents after typed or declaration bodies", () => {
+    const functionSource = "function f():void{}/'chi' + 'ld_process'/.test(a)";
+    const interfaceSource = "interface Result{value:string}/'chi' + 'ld_process'/.test(a)";
+
+    expect(normalizeCodeForScanning(functionSource)).toBe(functionSource);
+    expect(normalizeCodeForScanning(interfaceSource)).toBe(interfaceSource);
+  });
+
   test("leaves template literals untouched", () => {
     const source = "const t = `${'a' + 'b'}`;";
     expect(normalizeCodeForScanning(source)).toBe(source);
