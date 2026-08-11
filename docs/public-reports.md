@@ -105,6 +105,15 @@ Embed via
 `https://img.shields.io/endpoint?url=<origin>/public/badge/npm/<package>`
 (URL-encode the badge URL).
 
+**The share dialog hands maintainers the snippet.** Once a share is feed-listed
+(and the scan's ecosystem resolves — see `scanEcosystem`), the dialog shows
+copy-paste README markdown built by `src/lib/badge-markdown.ts`. The badge
+image always reflects the newest listed review, so the click target is chosen
+to not pin what the badge does not: npm links the evergreen package-only
+`/diff/<name>` page (it resolves the latest published pair on load), while
+PyPI and VS Code — which have no package-only diff form — link the share URL
+the maintainer copied, correct at copy time but version-pinned.
+
 ## Threat feed
 
 `GET /public/threat-feed.json` is a discoverable index (schema

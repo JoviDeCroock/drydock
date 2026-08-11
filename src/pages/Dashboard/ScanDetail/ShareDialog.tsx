@@ -1,4 +1,6 @@
 import { useComputed, useSignal } from "@preact/signals";
+import type { PublicEcosystem } from "../../../../server/lib/public-feed";
+import { badgeMarkdown } from "../../../lib/badge-markdown";
 import { formatDateTime } from "../../../lib/format";
 import type { DecisionStatus, PublicShareInfo } from "../../../models/scan";
 import { publicReportAttestationUrl } from "../../../models/scan";
@@ -6,7 +8,7 @@ import { Alert } from "../../../components/Alert";
 import { Button } from "../../../components/Button";
 import { Dialog } from "../../../components/Dialog";
 import { Input } from "../../../components/Input";
-import { EmptyLine, MonoDetail } from "../../../components/Typography";
+import { EmptyLine, MonoDetail, MonoLabel } from "../../../components/Typography";
 
 export function ShareDialog({
   open,
@@ -15,6 +17,8 @@ export function ShareDialog({
   status,
   error,
   attestationAvailable,
+  badgeEcosystem,
+  packageName,
   onEnable,
   onRevoke,
   onSetFeedListing,
@@ -25,26 +29,43 @@ export function ShareDialog({
   status: DecisionStatus;
   error: string | null;
   attestationAvailable: boolean | null;
+  badgeEcosystem: PublicEcosystem | null;
+  packageName: string | null;
   onEnable: () => void;
   onRevoke: () => void;
   onSetFeedListing: (listed: boolean) => void;
 }) {
   const copied = useSignal(false);
-  // Rendered directly as a signal child so the copy feedback re-renders only
+  const badgeCopied = useSignal(false);
+  // Rendered directly as signal children so the copy feedback re-renders only
   // the text node, not the dialog (signals-local/no-signal-conditional-jsx).
   const copyLabel = useComputed(() => (copied.value ? "Copied ✓" : "Copy"));
+  const badgeCopyLabel = useComputed(() => (badgeCopied.value ? "Copied ✓" : "Copy"));
   const saving = status === "saving";
 
-  const copyLink = async () => {
-    if (!share) return;
+  const copyToClipboard = async (text: string, feedback: typeof copied) => {
     try {
-      await navigator.clipboard.writeText(share.url);
-      copied.value = true;
-      setTimeout(() => (copied.value = false), 2000);
+      await navigator.clipboard.writeText(text);
+      feedback.value = true;
+      setTimeout(() => (feedback.value = false), 2000);
     } catch {
-      // Clipboard access denied — the URL stays selectable in the input.
+      // Clipboard access denied — the text stays selectable in the input.
     }
   };
+
+  const copyLink = () => (share ? copyToClipboard(share.url, copied) : Promise.resolve());
+
+  // The badge endpoint only answers for feed-listed scans with a resolvable
+  // ecosystem, so the snippet appears exactly when it would render something.
+  const badge =
+    share && share.threatFeedListedAt !== null && badgeEcosystem && packageName
+      ? badgeMarkdown({
+          origin: location.origin,
+          ecosystem: badgeEcosystem,
+          packageName,
+          reportUrl: share.url,
+        })
+      : null;
 
   return (
     <Dialog
@@ -126,6 +147,25 @@ export function ShareDialog({
               just behind this link.
             </span>
           </label>
+          {badge ? (
+            <div class="flex flex-col gap-1.5">
+              <MonoLabel as="span">README badge</MonoLabel>
+              <div class="flex items-center gap-2">
+                <Input value={badge} readOnly class="flex-1 font-mono text-[12px]" />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void copyToClipboard(badge, badgeCopied)}
+                >
+                  {badgeCopyLabel}
+                </Button>
+              </div>
+              <EmptyLine>
+                Paste into the package&apos;s README. The badge always shows the newest listed
+                review for this package; unlisting reverts it to &ldquo;not reviewed&rdquo;.
+              </EmptyLine>
+            </div>
+          ) : null}
         </>
       ) : (
         <EmptyLine>
