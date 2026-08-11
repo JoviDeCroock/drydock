@@ -188,6 +188,27 @@ describe("formatSource (javascript)", () => {
     ]);
   });
 
+  test("keeps scanning after division by function and class expressions", () => {
+    const formatted = formatJs(
+      "const a=function(){}/2;danger();const b=class{}/3;const c=async function(){}/4;safe();",
+    );
+
+    expect(lines(formatted)).toEqual([
+      "const a=function(){}/2;",
+      "danger();",
+      "const b=class{}/3;",
+      "const c=async function(){}/4;",
+      "safe();",
+    ]);
+  });
+
+  test("does not treat an ASI-terminated break followed by division as a labeled break", () => {
+    const formatted = formatJs("while(a){break\nvalue\n/2;danger()}");
+
+    expect(formatted?.text).toContain("value\n/2;");
+    expect(formatted?.text).toContain("danger()\n}");
+  });
+
   test("keeps expression-leading and statement-position regexes whole", () => {
     const exported = formatJs("export default /a;b{c}/g;foo();");
     const extended = formatJs("class A extends /a;b{c}/.constructor{};foo();");
@@ -201,6 +222,25 @@ describe("formatSource (javascript)", () => {
       "  foo();",
       "}",
     ]);
+  });
+
+  test("keeps regex statements after static module declarations whole", () => {
+    const bareImport = formatJs("import'x'\n/a;b{c}/.test(value);safe();");
+    const namedExport = formatJs("const x=1;export{x}\n/a;b{c}/.test(value);safe();");
+
+    expect(bareImport?.text).toContain("/a;b{c}/.test(value);");
+    expect(namedExport?.text).toContain("/a;b{c}/.test(value);");
+  });
+
+  test("never breaks inside strings containing JSON-superset line separators", () => {
+    for (const separator of ["\u2028", "\u2029"]) {
+      const source = `const text="before${separator}'chi'+'ld_process';after";safe();`;
+      const formatted = formatJs(source);
+
+      expect(formatted?.text).toBe(
+        `const text="before${separator}'chi'+'ld_process';after";\nsafe();`,
+      );
+    }
   });
 
   test("does not swallow division after a postfix update into a regex token", () => {

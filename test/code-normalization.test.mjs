@@ -68,6 +68,14 @@ describe("normalizeCodeForScanning", () => {
     expect(normalizeCodeForScanning(source)).toBe(source);
   });
 
+  test("never folds inside strings containing JSON-superset line separators", () => {
+    for (const separator of ["\u2028", "\u2029"]) {
+      const source = `const text="before${separator}'chi'+'ld_process';after";`;
+
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
+  });
+
   test("never folds regex contents after labeled or case-clause blocks", () => {
     const labelSource = "label:{foo()}/'chi' + 'ld_process'/.test(a)";
     const caseSource = "switch(a){case 1:{foo()}/'chi' + 'ld_process'/.test(a)}";
@@ -96,6 +104,34 @@ describe("normalizeCodeForScanning", () => {
     const source = "const π=1;const ratio=π/2;const name='chi'+'ld_process';";
 
     expect(normalizeCodeForScanning(source)).toContain('const name="child_process";');
+  });
+
+  test("keeps scanning after division by function and class expression results", () => {
+    for (const prefix of [
+      "const padding=function(){} / 2;",
+      "const padding=class{} / 2;",
+      "const padding=async function(){} / 2;",
+    ]) {
+      const source = `${prefix}const name='chi'+'ld_process';`;
+
+      expect(normalizeCodeForScanning(source)).toContain('const name="child_process";');
+    }
+  });
+
+  test("keeps scanning when a line-terminated break is followed by a divided value", () => {
+    const source = "while(true){break\nvalue\n/2;const name='chi'+'ld_process';}";
+
+    expect(normalizeCodeForScanning(source)).toContain('const name="child_process";');
+  });
+
+  test("never folds inside regex statements after static module declarations", () => {
+    for (const source of [
+      "import 'x'\n/'chi' + 'ld_process'/.test(value)",
+      "import { x } from 'x'\n/'chi' + 'ld_process'/.test(value)",
+      "const x=1;export { x }\n/'chi' + 'ld_process'/.test(value)",
+    ]) {
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
   });
 
   test("leaves template literals untouched", () => {
@@ -143,5 +179,40 @@ describe("assembled-identifier evasion is caught by the deterministic scanner", 
 
     expect(computeRisk(findings)).toBe("high");
     expect(findings.some((f) => f.ruleId === "code.process-execution")).toBe(true);
+  });
+
+  test("a divided function expression cannot hide the assembled process sink", () => {
+    const payload =
+      "const p=['chi','ld_pro','cess'].join('');const r=globalThis['re'+'quire'];" +
+      "const cp=r(p);cp['exec'+'Sync']('id')";
+    const staged = [
+      {
+        path: "index.js",
+        size: payload.length,
+        sha256: "index-js",
+        flags: [],
+        textSample: `const padding=function(){} / 2;${payload}`,
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(computeRisk(findings)).toBe("high");
+    expect(findings.some((finding) => finding.ruleId === "code.process-execution")).toBe(true);
+  });
+
+  test("JSON-superset line separators in strings cannot fabricate process execution", () => {
+    const safe = `const text="before\u2028'chi'+'ld_process';after";`;
+    const staged = [
+      {
+        path: "index.js",
+        size: safe.length,
+        sha256: "index-js",
+        flags: [],
+        textSample: safe,
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings.some((finding) => finding.ruleId === "code.process-execution")).toBe(false);
   });
 });

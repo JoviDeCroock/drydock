@@ -41,7 +41,7 @@ export interface JsToken {
 // object literal's `}` are values, where `/` divides. Without this, `if(a)/x;y/`
 // lexes as a division and everything downstream — folding, line breaking — walks
 // into the middle of a regex literal.
-type BracketKind = "head-paren" | "paren" | "block" | "object" | "bracket";
+type BracketKind = "head-paren" | "paren" | "block" | "value-block" | "object" | "bracket";
 
 interface BracketState {
   brackets: BracketKind[];
@@ -51,6 +51,10 @@ interface BracketState {
   // expression. Remember the bracket depth at which the header started so
   // nested calls/objects do not consume it.
   pendingDeclarationDepth: number | null;
+  // Function/class expressions end in blocks that produce values. Keep every
+  // pending depth so a nested expression in a parameter/default/extends clause
+  // cannot overwrite the outer body's marker.
+  pendingValueBodyDepths: number[];
   // TypeScript permits a return annotation between a function/method's `)` and
   // body. Without remembering the annotation's colon, `(): void {}` looks like
   // an object literal and a following regex is consequently read as division.
@@ -73,6 +77,13 @@ interface BracketState {
   pendingTypeAliasDepth: number | null;
   pendingTypeAliasHasName: boolean;
   pendingTypeAliasObjectDepth: number | null;
+  // Static import/export declarations are statement-shaped even when their last
+  // token is a string or `}`. These fields let a slash after their terminating
+  // line open a regex without mistaking dynamic import() or export default.
+  moduleDeclarationDepth: number | null;
+  moduleDeclarationKind: "import" | "export" | null;
+  moduleDeclarationSawSource: boolean;
+  moduleDeclarationClosedClause: boolean;
 }
 
 // Keywords whose parenthesised head is followed by a statement.
@@ -169,16 +180,20 @@ export function tokenizeJs(src: string): JsToken[] {
   let prev: JsToken | undefined;
   let beforePrev: JsToken | undefined;
   let lineTerminatorBefore = false;
+  let lineTerminatorBeforePrev = false;
+  let prevEndsModuleDeclaration = false;
   let i = 0;
   // Open brackets, innermost last, and the kind the most recent closer popped.
   // `closed` is only ever read while `prev` is that closer.
   const state = createBracketState();
 
   const pushSignificant = (token: JsToken): void => {
-    updateBracketState(src, token, prev, beforePrev, state);
+    updateBracketState(src, token, prev, beforePrev, state, lineTerminatorBefore);
     tokens.push(token);
     beforePrev = prev;
     prev = token;
+    lineTerminatorBeforePrev = lineTerminatorBefore;
+    prevEndsModuleDeclaration = tokenEndsModuleDeclaration(src, token, state);
     lineTerminatorBefore = false;
   };
 
@@ -227,7 +242,18 @@ export function tokenizeJs(src: string): JsToken[] {
       continue;
     }
 
-    if (c === "/" && regexAllowed(src, prev, beforePrev, state.closed, lineTerminatorBefore)) {
+    if (
+      c === "/" &&
+      regexAllowed(
+        src,
+        prev,
+        beforePrev,
+        state.closed,
+        lineTerminatorBefore,
+        lineTerminatorBeforePrev,
+        prevEndsModuleDeclaration,
+      )
+    ) {
       const start = i;
       i = scanRegex(src, i);
       pushSignificant({ type: "regex", start, end: i });
@@ -283,7 +309,9 @@ function scanString(src: string, i: number): { end: number; value: string } {
       j += 1;
       break;
     }
-    if (isLineTerminator(c)) break; // unterminated single-line string
+    // U+2028/U+2029 are valid unescaped string contents in modern ECMAScript
+    // (the JSON-superset grammar). Only physical CR/LF terminate a quoted string.
+    if (c === "\n" || c === "\r") break; // unterminated single-line string
     value += c;
     j += 1;
   }
@@ -302,6 +330,8 @@ interface TemplateExpressionFrame {
   prev?: JsToken;
   beforePrev?: JsToken;
   lineTerminatorBefore: boolean;
+  lineTerminatorBeforePrev: boolean;
+  prevEndsModuleDeclaration: boolean;
 }
 
 type TemplateScanFrame = TemplateLiteralFrame | TemplateExpressionFrame;
@@ -341,6 +371,8 @@ function scanTemplate(src: string, i: number): number {
           depth: 1,
           state: createBracketState(),
           lineTerminatorBefore: false,
+          lineTerminatorBeforePrev: false,
+          prevEndsModuleDeclaration: false,
         });
         j += 2;
         continue;
@@ -392,6 +424,8 @@ function scanTemplate(src: string, i: number): number {
         frame.beforePrev,
         frame.state.closed,
         frame.lineTerminatorBefore,
+        frame.lineTerminatorBeforePrev,
+        frame.prevEndsModuleDeclaration,
       )
     ) {
       const start = j;
@@ -439,9 +473,18 @@ function pushTemplateExpressionToken(
   frame: TemplateExpressionFrame,
   token: JsToken,
 ): void {
-  updateBracketState(src, token, frame.prev, frame.beforePrev, frame.state);
+  updateBracketState(
+    src,
+    token,
+    frame.prev,
+    frame.beforePrev,
+    frame.state,
+    frame.lineTerminatorBefore,
+  );
   frame.beforePrev = frame.prev;
   frame.prev = token;
+  frame.lineTerminatorBeforePrev = frame.lineTerminatorBefore;
+  frame.prevEndsModuleDeclaration = tokenEndsModuleDeclaration(src, token, frame.state);
   frame.lineTerminatorBefore = false;
 }
 
@@ -540,6 +583,9 @@ function decodeEscape(src: string, p: number): { text: string; len: number } {
       return { text: "", len: 2 }; // line continuation
     case "\r":
       return src[p + 2] === "\n" ? { text: "", len: 3 } : { text: "", len: 2 };
+    case "\u2028":
+    case "\u2029":
+      return { text: "", len: 2 }; // line continuation
     case undefined:
       return { text: "", len: 1 }; // trailing backslash
     default:
@@ -560,10 +606,17 @@ function updateBracketState(
   prev: JsToken | undefined,
   beforePrev: JsToken | undefined,
   state: BracketState,
+  lineTerminatorBefore: boolean,
 ): void {
   const text = jsTokenText(src, token);
+  const followsModuleDeclaration =
+    Boolean(state.moduleDeclarationKind) &&
+    lineTerminatorBefore &&
+    tokenEndsModuleDeclaration(src, prev, state) &&
+    !continuesModuleDeclaration(src, token);
+  if (followsModuleDeclaration) clearModuleDeclaration(state);
   if (token.type === "ident") {
-    const statementStart = canStartStatement(src, prev, state);
+    const statementStart = followsModuleDeclaration || canStartStatement(src, prev, state);
     if (state.pendingTypeAliasDepth === state.brackets.length && text !== "type") {
       state.pendingTypeAliasHasName = true;
     }
@@ -571,6 +624,18 @@ function updateBracketState(
     state.statementColon = false;
     if ((text === "case" || text === "default") && statementStart) {
       state.pendingCaseDepth = state.brackets.length;
+    }
+    if ((text === "import" || text === "export") && statementStart) {
+      state.moduleDeclarationDepth = state.brackets.length;
+      state.moduleDeclarationKind = text;
+      state.moduleDeclarationSawSource = false;
+      state.moduleDeclarationClosedClause = false;
+    } else if (
+      state.moduleDeclarationKind === "export" &&
+      state.moduleDeclarationDepth === state.brackets.length &&
+      text === "default"
+    ) {
+      clearModuleDeclaration(state);
     }
     const blockDeclaration =
       text === "class" ||
@@ -582,6 +647,17 @@ function updateBracketState(
       !(prev?.type === "punct" && [".", "?."].includes(jsTokenText(src, prev)))
     ) {
       state.pendingDeclarationDepth = state.brackets.length;
+      if (text === "class" && isClassExpression(src, prev, statementStart)) {
+        state.pendingValueBodyDepths.push(state.brackets.length);
+      }
+    }
+    if (
+      text === "function" &&
+      !(prev?.type === "punct" && [".", "?."].includes(jsTokenText(src, prev)))
+    ) {
+      if (isFunctionExpression(src, prev, beforePrev, state, statementStart)) {
+        state.pendingValueBodyDepths.push(state.brackets.length);
+      }
     }
     const typeAliasDeclaration =
       text === "type" &&
@@ -598,6 +674,13 @@ function updateBracketState(
     return;
   }
   if (token.type !== "punct") {
+    if (
+      token.type === "string" &&
+      state.moduleDeclarationKind &&
+      state.moduleDeclarationDepth === state.brackets.length
+    ) {
+      state.moduleDeclarationSawSource = true;
+    }
     if (state.pendingTypeAliasObjectDepth === state.brackets.length) {
       state.pendingTypeAliasObjectDepth = null;
     }
@@ -634,34 +717,74 @@ function updateBracketState(
     // declaration whose body is still ahead.
     state.pendingDeclarationDepth = null;
   }
+  if (text === ";") {
+    state.pendingValueBodyDepths = state.pendingValueBodyDepths.filter(
+      (depth) => depth !== state.brackets.length,
+    );
+  }
   if (state.pendingTypedBodyDepth === state.brackets.length && text === ";") {
     // A method signature or truncated annotation has no implementation body.
     state.pendingTypedBodyDepth = null;
   }
   if (text === "(") {
+    if (
+      state.moduleDeclarationKind === "import" &&
+      state.moduleDeclarationDepth === state.brackets.length &&
+      !state.moduleDeclarationSawSource &&
+      !state.moduleDeclarationClosedClause
+    ) {
+      clearModuleDeclaration(state); // dynamic import(...)
+    }
     state.brackets.push(isStatementHead(src, prev, beforePrev) ? "head-paren" : "paren");
   } else if (text === "[") {
     state.brackets.push("bracket");
   } else if (text === "{") {
     const declarationBody = state.pendingDeclarationDepth === state.brackets.length;
+    const valueBodyIndex = state.pendingValueBodyDepths.lastIndexOf(state.brackets.length);
+    const valueBody =
+      valueBodyIndex !== -1 &&
+      !(prev?.type === "punct" && TYPE_LITERAL_PRECEDING_PUNCTUATORS.has(jsTokenText(src, prev)));
     const typeAliasObject = state.pendingTypeAliasObjectDepth === state.brackets.length;
     const typedBody =
       state.pendingTypedBodyDepth === state.brackets.length &&
       !(prev?.type === "punct" && TYPE_LITERAL_PRECEDING_PUNCTUATORS.has(jsTokenText(src, prev)));
     state.brackets.push(
-      declarationBody ||
-        typeAliasObject ||
-        typedBody ||
-        followsStatementColon ||
-        opensBlock(src, prev)
-        ? "block"
-        : "object",
+      valueBody
+        ? "value-block"
+        : declarationBody ||
+            typeAliasObject ||
+            typedBody ||
+            followsStatementColon ||
+            followsModuleDeclaration ||
+            opensBlock(src, prev)
+          ? "block"
+          : "object",
     );
-    if (declarationBody) state.pendingDeclarationDepth = null;
+    if (declarationBody) {
+      state.pendingDeclarationDepth = null;
+    }
+    if (valueBody) state.pendingValueBodyDepths.splice(valueBodyIndex, 1);
     if (typeAliasObject) state.pendingTypeAliasObjectDepth = null;
     if (typedBody) state.pendingTypedBodyDepth = null;
   } else if (text === ")" || text === "]" || text === "}") {
     state.closed = state.brackets.pop() ?? null;
+    if (
+      text === "}" &&
+      state.moduleDeclarationKind &&
+      state.moduleDeclarationDepth === state.brackets.length
+    ) {
+      state.moduleDeclarationClosedClause = true;
+    }
+  } else if (
+    text === "." &&
+    state.moduleDeclarationKind === "import" &&
+    state.moduleDeclarationDepth === state.brackets.length &&
+    !state.moduleDeclarationSawSource &&
+    !state.moduleDeclarationClosedClause
+  ) {
+    clearModuleDeclaration(state); // import.meta
+  } else if (text === ";") {
+    clearModuleDeclaration(state);
   } else if (text === "?") {
     state.conditionalDepths.push(state.brackets.length);
   } else if (text === ":") {
@@ -687,6 +810,7 @@ function createBracketState(): BracketState {
     brackets: [],
     closed: null,
     pendingDeclarationDepth: null,
+    pendingValueBodyDepths: [],
     pendingTypedBodyDepth: null,
     pendingCaseDepth: null,
     conditionalDepths: [],
@@ -695,6 +819,10 @@ function createBracketState(): BracketState {
     pendingTypeAliasDepth: null,
     pendingTypeAliasHasName: false,
     pendingTypeAliasObjectDepth: null,
+    moduleDeclarationDepth: null,
+    moduleDeclarationKind: null,
+    moduleDeclarationSawSource: false,
+    moduleDeclarationClosedClause: false,
   };
 }
 
@@ -719,8 +847,11 @@ function regexAllowed(
   beforePrev: JsToken | undefined,
   closed: BracketKind | null,
   lineTerminatorBefore: boolean,
+  lineTerminatorBeforePrev: boolean,
+  prevEndsModuleDeclaration: boolean,
 ): boolean {
   if (!prev) return true;
+  if (lineTerminatorBefore && prevEndsModuleDeclaration) return true;
   if (prev.type === "punct") {
     const t = jsTokenText(src, prev);
     // `if(a)/re/.test(a)` and `if(a){b()}/re/.test(a)` both continue with a
@@ -747,6 +878,7 @@ function regexAllowed(
       lineTerminatorBefore &&
       (LINE_TERMINATED_REGEX_KEYWORDS.has(jsTokenText(src, prev)) ||
         (beforePrev?.type === "ident" &&
+          !lineTerminatorBeforePrev &&
           (jsTokenText(src, beforePrev) === "break" ||
             jsTokenText(src, beforePrev) === "continue")))
     ) {
@@ -755,6 +887,64 @@ function regexAllowed(
     return REGEX_PRECEDING_KEYWORDS.has(jsTokenText(src, prev));
   }
   return false; // value-producing token -> division
+}
+
+function isClassExpression(
+  src: string,
+  prev: JsToken | undefined,
+  statementStart: boolean,
+): boolean {
+  if (statementStart) return false;
+  const prevText = prev ? jsTokenText(src, prev) : "";
+  return !["export", "default", "declare", "abstract"].includes(prevText);
+}
+
+function isFunctionExpression(
+  src: string,
+  prev: JsToken | undefined,
+  beforePrev: JsToken | undefined,
+  state: BracketState,
+  statementStart: boolean,
+): boolean {
+  if (statementStart) return false;
+  const prevText = prev ? jsTokenText(src, prev) : "";
+  if (["export", "default", "declare"].includes(prevText)) return false;
+  if (prevText !== "async") return true;
+  if (!beforePrev || canStartStatement(src, beforePrev, state)) return false;
+  return !["export", "default", "declare"].includes(jsTokenText(src, beforePrev));
+}
+
+function tokenEndsModuleDeclaration(
+  src: string,
+  token: JsToken | undefined,
+  state: BracketState,
+): boolean {
+  if (!token || !state.moduleDeclarationKind) return false;
+  if (
+    token.type === "string" &&
+    state.moduleDeclarationSawSource &&
+    state.moduleDeclarationDepth === state.brackets.length
+  ) {
+    return true;
+  }
+  return (
+    token.type === "punct" &&
+    jsTokenText(src, token) === "}" &&
+    state.moduleDeclarationClosedClause &&
+    state.moduleDeclarationDepth === state.brackets.length
+  );
+}
+
+function continuesModuleDeclaration(src: string, token: JsToken): boolean {
+  if (token.type !== "ident") return false;
+  return ["assert", "from", "with"].includes(jsTokenText(src, token));
+}
+
+function clearModuleDeclaration(state: BracketState): void {
+  state.moduleDeclarationDepth = null;
+  state.moduleDeclarationKind = null;
+  state.moduleDeclarationSawSource = false;
+  state.moduleDeclarationClosedClause = false;
 }
 
 // `(` of `if (…)`, `for (…)`, `for await (…)`, `while (…)`, `with (…)` — the
