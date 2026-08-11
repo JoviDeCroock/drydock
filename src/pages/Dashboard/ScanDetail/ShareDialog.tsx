@@ -1,5 +1,5 @@
 import { useComputed, useSignal } from "@preact/signals";
-import type { PublicEcosystem } from "../../../../server/lib/public-feed";
+import { DEFAULT_BADGE_TAG, type PublicEcosystem } from "../../../../server/lib/public-feed";
 import { badgeMarkdown } from "../../../lib/badge-markdown";
 import { formatDateTime } from "../../../lib/format";
 import type { DecisionStatus, PublicShareInfo } from "../../../models/scan";
@@ -19,6 +19,7 @@ export function ShareDialog({
   attestationAvailable,
   badgeEcosystem,
   packageName,
+  badgeTag,
   onEnable,
   onRevoke,
   onSetFeedListing,
@@ -31,6 +32,9 @@ export function ShareDialog({
   attestationAvailable: boolean | null;
   badgeEcosystem: PublicEcosystem | null;
   packageName: string | null;
+  // The dist-tag this release was staged under, so the snippet points at the
+  // line the maintainer just listed rather than at `latest`.
+  badgeTag: string | null;
   onEnable: () => void;
   onRevoke: () => void;
   onSetFeedListing: (listed: boolean) => void;
@@ -64,8 +68,12 @@ export function ShareDialog({
           ecosystem: badgeEcosystem,
           packageName,
           reportUrl: share.url,
+          tag: badgeTag,
         })
       : null;
+  // What the badge answers for. An untagged scan only ever answers the default
+  // badge, so it reads as `latest` rather than as nothing.
+  const badgeLine = badgeTag ?? DEFAULT_BADGE_TAG;
 
   return (
     <Dialog
@@ -143,8 +151,8 @@ export function ShareDialog({
               >
                 threat-feed.json
               </a>{" "}
-              index that security partners consume and powers the status badge for this
-              release&apos;s dist-tag, not just behind this link.
+              index that security partners consume and powers the README badge below, not just
+              behind this link.
             </span>
           </label>
           {badge ? (
@@ -162,7 +170,8 @@ export function ShareDialog({
               </div>
               <EmptyLine>
                 Paste into the package&apos;s README. The badge always shows the newest listed
-                review for this package; unlisting reverts it to &ldquo;not reviewed&rdquo;.
+                review on the <code class="font-mono">{badgeLine}</code> tag — a review of another
+                release line never displaces it; unlisting reverts it to &ldquo;not reviewed&rdquo;.
               </EmptyLine>
             </div>
           ) : null}

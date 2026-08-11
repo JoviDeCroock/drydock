@@ -150,12 +150,17 @@ prerelease row.
 
 **The share dialog hands maintainers the snippet.** Once a share is feed-listed
 (and the scan's ecosystem resolves — see `scanEcosystem`), the dialog shows
-copy-paste README markdown built by `src/lib/badge-markdown.ts`. The badge
-image always reflects the newest listed review, so the click target is chosen
-to not pin what the badge does not: npm links the evergreen package-only
-`/diff/<name>` page (it resolves the latest published pair on load), while
-PyPI and VS Code — which have no package-only diff form — link the share URL
-the maintainer copied, correct at copy time but version-pinned.
+copy-paste README markdown built by `src/lib/badge-markdown.ts`. The snippet is
+for **the release line the copied scan was staged under**: a scan tagged `rc`
+yields `?tag=rc` and alt text `Drydock review (rc)`, while `latest` and untagged
+scans keep the short untagged form (the endpoint already defaults to `latest`).
+Without that, a maintainer who lists a prerelease review would paste a badge
+that never shows it. The badge image always reflects the newest listed review
+_on that line_, so the click target is chosen to not pin what the badge does
+not: npm links the evergreen package-only `/diff/<name>` page (it resolves the
+latest published pair on load), while PyPI and VS Code — which have no
+package-only diff form — link the share URL the maintainer copied, correct at
+copy time but version-pinned.
 
 ## Threat feed
 
