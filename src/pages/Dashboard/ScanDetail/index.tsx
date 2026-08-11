@@ -22,6 +22,7 @@ import {
 import type { WorkflowGateDecision } from "../../../models/github-app";
 import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review/types";
 import { normalizeIntentEnvelope } from "../../../../server/lib/intent-envelope";
+import { scanEcosystem } from "../../../../server/lib/public-feed";
 import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
 import { Alert } from "../../../components/Alert";
 import { Button } from "../../../components/Button";
@@ -459,6 +460,8 @@ export default function ScanDetailPage() {
           statusSignal={model.shareStatus}
           errorSignal={model.shareError}
           attestationAvailableSignal={model.attestationAvailable}
+          badgeEcosystem={scanEcosystem(detail.scan.source ?? "", detail.scan.summaryJson)}
+          packageName={detail.scan.packageName}
           onEnable={() => void model.enableShare()}
           onRevoke={() => void model.revokeShare()}
           onSetFeedListing={(listed) => void model.setFeedListing(listed)}
