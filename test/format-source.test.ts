@@ -180,6 +180,28 @@ describe("formatSource (javascript)", () => {
     ]);
   });
 
+  test("keeps regexes whole after statements directly inside IIFE wrappers", () => {
+    // Minified bundles are function-expression wrappers, so labels and nested
+    // declarations sit directly inside a body whose closing brace is a value.
+    const labeled = formatJs("!function(){e:{foo()}/x;y{z}/.test(a)}()");
+    const nested = formatJs("(function(){function g(){}/x;y{z}/.test(a)})()");
+
+    expect(lines(labeled)).toEqual([
+      "!function(){",
+      "  e:{",
+      "    foo()",
+      "  }",
+      "  /x;y{z}/.test(a)",
+      "}()",
+    ]);
+    expect(lines(nested)).toEqual([
+      "(function(){",
+      "    function g(){}",
+      "    /x;y{z}/.test(a)",
+      "  })()",
+    ]);
+  });
+
   test("keeps regexes whole after line-terminated statements and type aliases", () => {
     const debuggerSource = formatJs("debugger\n/x;y{2}/.test(a);foo();");
     const breakSource = formatJs("label:while(a){break label\n/x;y{2}/.test(a);foo()}");

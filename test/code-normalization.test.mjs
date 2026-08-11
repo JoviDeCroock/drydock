@@ -84,6 +84,12 @@ describe("normalizeCodeForScanning", () => {
     expect(normalizeCodeForScanning(caseSource)).toBe(caseSource);
   });
 
+  test("never folds regex contents after labeled blocks inside IIFE wrappers", () => {
+    const source = "!function(){e:{foo()}/'chi' + 'ld_process'/.test(a)}()";
+
+    expect(normalizeCodeForScanning(source)).toBe(source);
+  });
+
   test("never folds regex contents after typed or declaration bodies", () => {
     const functionSource = "function f():void{}/'chi' + 'ld_process'/.test(a)";
     const interfaceSource = "interface Result{value:string}/'chi' + 'ld_process'/.test(a)";

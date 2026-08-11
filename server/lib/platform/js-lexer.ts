@@ -952,12 +952,16 @@ function clearTypeAliasBody(state: BracketState): void {
 
 function canStartStatement(src: string, prev: JsToken | undefined, state: BracketState): boolean {
   const top = state.brackets[state.brackets.length - 1];
-  if (top !== undefined && top !== "block") return false;
+  // A "value-block" differs from a "block" only at its *closing* brace (the
+  // expression continues, so `/` divides). Inside it, a function expression's
+  // body is the same statement list as a declaration's — and minified bundles
+  // are IIFE wrappers, so labels and nested declarations sit directly in one.
+  if (top !== undefined && top !== "block" && top !== "value-block") return false;
   if (!prev) return true;
   const text = jsTokenText(src, prev);
   if (prev.type === "ident") return text === "else" || text === "do";
   if (prev.type !== "punct") return false;
-  if (text === "{") return top === "block";
+  if (text === "{") return top === "block" || top === "value-block";
   if (text === ";") return true;
   if (text === ":") return state.statementColon;
   if (text === ")") return state.closed === "head-paren";

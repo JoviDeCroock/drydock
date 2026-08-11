@@ -53,6 +53,8 @@ describe("tokenizeJs regex vs division", () => {
       "export const value={}\n/2/b", // exported object initializer result
       "export const value=class{}\n/2/b", // exported class-expression result
       "export const value=function(){}\n/2/b", // exported function-expression result
+      "!function(){}/2/b", // an IIFE wrapper's own closing brace is still a value
+      "const C=class{m(){}}/2/b", // and so is a class expression's, past its members
     ]) {
       expect(`${source} -> ${firstSlash(source)}`).toBe(`${source} -> punct`);
     }
@@ -103,6 +105,14 @@ describe("tokenizeJs regex vs division", () => {
       "const x=1;export { x }\n/x/.test(a)",
       "import 'x'\nclass A{}/x/.test(a)",
       "import 'x'\n{}/x/.test(a)",
+      // Minified bundles are IIFE wrappers, so statement positions directly
+      // inside a function-expression body are the common case, not a corner.
+      "!function(){e:{b()}/x/.test(a)}()",
+      "(function(){e:{b()}/x/.test(a)})()",
+      "!function(){function g(){}/x/.test(a)}()",
+      "!function(){if(a){b()}/x/.test(a)}()",
+      "var f=function(){interface R{v:string}/x/.test(a)}",
+      "!function(){type T={a:1}\n/x/.test(a)}()",
     ]) {
       expect(`${source} -> ${firstSlash(source)}`).toBe(`${source} -> regex`);
     }
