@@ -1,0 +1,23 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "Adds a Drydock column to Renovate PR tables: every npm and PyPI update links to a line-level diff of the published packages at drydock.org/diff.",
+    "Usage: \"extends\": [\"github>JoviDeCroock/drydock//renovate/diff-links\"]"
+  ],
+  "packageRules": [
+    {
+      "matchDatasources": ["npm"],
+      "prBodyColumns": ["Package", "Type", "Update", "Change", "Pending", "Drydock"],
+      "prBodyDefinitions": {
+        "Drydock": "{{#if currentVersion}}{{#if newVersion}}[Read the diff](https://drydock.org/diff/{{{packageName}}}/{{{currentVersion}}}/{{{newVersion}}}){{/if}}{{/if}}"
+      }
+    },
+    {
+      "matchDatasources": ["pypi"],
+      "prBodyColumns": ["Package", "Type", "Update", "Change", "Pending", "Drydock"],
+      "prBodyDefinitions": {
+        "Drydock": "{{#if currentVersion}}{{#if newVersion}}[Read the diff](https://drydock.org/diff/pypi/{{{packageName}}}/{{{currentVersion}}}/{{{newVersion}}}){{/if}}{{/if}}"
+      }
+    }
+  ]
+}

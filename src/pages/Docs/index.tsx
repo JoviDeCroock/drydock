@@ -46,6 +46,14 @@ const TOC: Array<{ id: string; label: string; children: Array<{ id: string; labe
       { id: "gate-decision", label: "Approve or reject" },
     ],
   },
+  {
+    id: "dependency-updates",
+    label: "Diffs in dependency PRs",
+    children: [
+      { id: "renovate-diff-links", label: "Renovate" },
+      { id: "dependabot-diff-links", label: "Dependabot" },
+    ],
+  },
 ];
 
 const TOC_IDS = TOC.flatMap((section) => [section.id, ...section.children.map((c) => c.id)]);
@@ -626,6 +634,87 @@ export default function DocsPage() {
                 finish a scan, or return a safe decision, the workflow does not get a silent pass.
               </Callout>
             </Subsection>
+          </section>
+
+          <section id="dependency-updates" class="flex flex-col gap-8 scroll-mt-6">
+            <div class="flex flex-col gap-3">
+              <SectionLabel as="p">Diffs in dependency PRs</SectionLabel>
+              <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
+                Review the bumps you merge, not just the releases you ship.
+              </h2>
+              <Prose>
+                The same public diff pages work from the consumer side. A Renovate or Dependabot PR
+                names an exact version pair, so the published-package diff has a predictable URL —
+                no account, token, or API call. Set it up once and every dependency bump links its
+                own diff.
+              </Prose>
+            </div>
+
+            <Subsection id="renovate-diff-links" title="Renovate">
+              <Prose>
+                Extend the shared preset and each npm or PyPI update row gains a Drydock column
+                linking the exact published pair being merged:
+              </Prose>
+              <CodeBlock name="renovate.json" lang="json">
+                {`{
+  "extends": ["github>JoviDeCroock/drydock//renovate/diff-links"]
+}`}
+              </CodeBlock>
+              <Prose>
+                Updates without an exact version pair — pins, digests, and some lockfile-only
+                changes — simply omit the link, and update tables with no Drydock link render
+                unchanged.
+              </Prose>
+            </Subsection>
+
+            <Subsection id="dependabot-diff-links" title="Dependabot">
+              <Prose>
+                Dependabot cannot template PR bodies, so a small workflow comments the link instead.
+                It reads the bump from the PR metadata and never checks out or executes the updated
+                code. Grouped update PRs have no single version pair, so the workflow skips them.
+              </Prose>
+              <WorkflowExample title="Dependabot diff comment" defaultOpen>
+                {`name: drydock-diff-link
+
+on:
+  pull_request:
+    types: [opened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  diff-link:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - id: meta
+        uses: dependabot/fetch-metadata@v2
+      - if: steps.meta.outputs.previous-version != '' && steps.meta.outputs.new-version != ''
+        env:
+          GH_TOKEN: \${{ github.token }}
+          PR_URL: \${{ github.event.pull_request.html_url }}
+          ECOSYSTEM: \${{ steps.meta.outputs.package-ecosystem }}
+          NAME: \${{ steps.meta.outputs.dependency-names }}
+          FROM: \${{ steps.meta.outputs.previous-version }}
+          TO: \${{ steps.meta.outputs.new-version }}
+        run: |
+          case "$ECOSYSTEM" in
+            npm_and_yarn) path="$NAME" ;;
+            pip) path="pypi/$NAME" ;;
+            *) exit 0 ;;
+          esac
+          case "$NAME" in *,*) exit 0 ;; esac
+          gh pr comment "$PR_URL" --body \\
+            "[Read the diff of $NAME $FROM → $TO](https://drydock.org/diff/$path/$FROM/$TO)"`}
+              </WorkflowExample>
+            </Subsection>
+
+            <Callout label="Links, not lookups">
+              Both integrations add plain markdown links. Nothing contacts Drydock when a PR renders
+              — only when a reviewer clicks — and the linked pages serve public-registry data
+              anonymously.
+            </Callout>
           </section>
 
           <section class="border-t border-border pt-10">
