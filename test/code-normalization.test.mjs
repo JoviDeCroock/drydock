@@ -63,6 +63,12 @@ describe("normalizeCodeForScanning", () => {
     expect(normalizeCodeForScanning(block)).toBe(block);
   });
 
+  test("never folds tokens inside a hashbang", () => {
+    const source = "#!/usr/bin/env -S node --conditions=['chi','ld_process'].join('')\nsafe();";
+
+    expect(normalizeCodeForScanning(source)).toBe(source);
+  });
+
   test("never folds tokens inside a regex literal", () => {
     const source = "const re = /'a' + 'b'/;";
     expect(normalizeCodeForScanning(source)).toBe(source);

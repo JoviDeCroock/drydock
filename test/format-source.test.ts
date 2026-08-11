@@ -387,6 +387,18 @@ describe("formatSource (javascript)", () => {
     expect(lines(formatted)).toEqual(["a();// note ; and { and }", "b();", "c();"]);
   });
 
+  test("keeps a package executable hashbang on its shipped line", () => {
+    const formatted = formatJs(
+      "#!/usr/bin/env -S node --conditions={a,b}\n" + "a();b();".repeat(60),
+    );
+
+    expect(lines(formatted)?.slice(0, 3)).toEqual([
+      "#!/usr/bin/env -S node --conditions={a,b}",
+      "a();",
+      "b();",
+    ]);
+  });
+
   test("gives a block comment between statements its own line", () => {
     const formatted = formatJs("a();/* note */b();");
 

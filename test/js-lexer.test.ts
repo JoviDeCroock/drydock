@@ -20,6 +20,16 @@ function firstSlash(source: string): string {
   return token ? token.type : "none";
 }
 
+describe("tokenizeJs comments", () => {
+  test("keeps a leading hashbang opaque", () => {
+    const source = "#!/usr/bin/env -S node --conditions={a,b}\nconst value=1;";
+
+    expect(kinds(source)).toBe(
+      "comment:#!/usr/bin/env -S node --conditions={a,b} ident:const ident:value punct:= number:1 punct:;",
+    );
+  });
+});
+
 describe("tokenizeJs regex vs division", () => {
   test("reads a slash after a value as division", () => {
     for (const source of [

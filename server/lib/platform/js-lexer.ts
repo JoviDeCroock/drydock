@@ -233,6 +233,18 @@ export function tokenizeJs(src: string): JsToken[] {
   while (i < n) {
     const c = src[i];
 
+    // Hashbang comments are only recognized at the absolute start of a script.
+    // Package executables commonly put interpreter flags here; treating their
+    // punctuation as JavaScript would let the review formatter split the
+    // shipped first line into code that does not exist in the artifact.
+    if (i === 0 && c === "#" && src[i + 1] === "!") {
+      const start = i;
+      i += 2;
+      while (i < n && !isLineTerminator(src[i])) i += 1;
+      tokens.push({ type: "comment", start, end: i });
+      continue;
+    }
+
     if (isWhitespace(c)) {
       const start = i;
       while (i < n && isWhitespace(src[i])) {
