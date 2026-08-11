@@ -52,10 +52,10 @@ export function publicPackageLookupKey(ecosystem: PublicEcosystem, packageName: 
  */
 export const DEFAULT_BADGE_TAG = "latest";
 
-// Conservative subset of what npm accepts as a dist-tag. The value is echoed
-// into a shields label and folded into a cache key, so it is validated at the
-// edge rather than sanitized on the way out.
-const BADGE_TAG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+// npm accepts the URI-safe characters that encodeURIComponent leaves intact.
+// The value is echoed into a shields label and folded into a cache key, so cap
+// its length at the edge while preserving valid tags such as `beta~edge`.
+const BADGE_TAG_RE = /^[A-Za-z0-9!~*'()._-]{1,64}$/;
 
 export function isValidBadgeTag(tag: string): boolean {
   return BADGE_TAG_RE.test(tag);
@@ -140,7 +140,9 @@ export function publicFeedCacheKey(origin: string, routePath: string, search = "
       return badgeCacheKey(
         origin,
         publicPackageLookupKey(ecosystem, name),
-        raw || DEFAULT_BADGE_TAG,
+        // Blank is invalid, not absent. Keep it on its own key so a warmed
+        // default badge cannot bypass the route's validation and answer it.
+        raw ?? DEFAULT_BADGE_TAG,
       );
     }
   }

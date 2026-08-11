@@ -121,10 +121,11 @@ review sat just past the limit.
   request would answer a question about the beta line with a review of
   something else, so on PyPI and VS Code every non-default tag is
   `not reviewed`.
-- A malformed tag (anything outside `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`) is a
-  `400`, not a silent fall back to `latest` — the fallback would answer a
-  typo'd parameter with a badge about a different release line and the embedder
-  would never find out.
+- A malformed tag (empty, longer than 64 characters, or containing characters
+  outside npm's URI-safe dist-tag alphabet) is a `400`, not a silent fall back
+  to `latest` — the fallback would answer a typo'd parameter with a badge about
+  a different release line and the embedder would never find out. Valid npm
+  punctuation such as the `~` in `beta~edge` is preserved.
 - Tags are matched exactly, not case-folded, on the same reasoning as npm
   package names.
 

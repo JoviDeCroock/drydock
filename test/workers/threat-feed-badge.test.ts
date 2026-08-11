@@ -748,6 +748,27 @@ describe("shields badge endpoint", () => {
     });
   });
 
+  test("npm-valid URI-safe punctuation remains addressable as a release line", async () => {
+    // npm accepts dist-tags made from characters encodeURIComponent leaves
+    // intact. Treating `~` as malformed made the persisted non-null tag miss
+    // both the default SQL population and every explicitly queryable line.
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      version: "2.0.0-beta.1",
+      tag: "beta~edge",
+    });
+    await share(app, scanId, { threatFeed: true });
+
+    expect((await fetchBadge(app, "npm", packageName, { tag: "beta~edge" })).body).toMatchObject({
+      label: "drydock (beta~edge)",
+      message: "2.0.0-beta.1 reviewed · low risk",
+    });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+  });
+
   test("tags do not share a colo cache entry", async () => {
     // The cache key ignores the query string by design (cache-busting must not
     // force a D1 read); the tag is the one parameter that changes the body, so
@@ -862,7 +883,7 @@ describe("shields badge endpoint", () => {
 
     // Silently falling back would answer a typo'd parameter with a badge about
     // a different release line, and the embedder would never find out.
-    for (const bad of ["../latest", "beta rc", "a".repeat(65), "‮rtsl"]) {
+    for (const bad of ["", "   ", "../latest", "beta rc", "a".repeat(65), "‮rtsl"]) {
       const res = await request(
         app,
         `/public/badge/npm/${packageName}?tag=${encodeURIComponent(bad)}`,
