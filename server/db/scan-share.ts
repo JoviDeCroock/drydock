@@ -1,6 +1,11 @@
 import { and, desc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { base64UrlEncode } from "../lib/platform/crypto-utils";
-import { publicPackageLookupKey, scanEcosystem } from "../lib/public-feed";
+import {
+  DEFAULT_BADGE_TAG,
+  publicPackageLookupKey,
+  scanDistTag,
+  scanEcosystem,
+} from "../lib/public-feed";
 import type { AppDb } from "./client";
 import { recordScanEvent } from "./events";
 import { scans } from "./schema";
@@ -25,6 +30,13 @@ export interface PublicShareState {
    * stale.
    */
   publicPackageKey?: string | null;
+  /**
+   * The dist-tag this scan's badge lives under, so the purge addresses the
+   * entry the badge write created rather than the default one. Null when the
+   * scan was never staged under a tag — that scan only ever answered the
+   * default badge.
+   */
+  publicBadgeTag?: string | null;
 }
 
 /**
@@ -43,6 +55,7 @@ export async function readPublicShare(
       publicSharedAt: scans.publicSharedAt,
       publicFeedListedAt: scans.publicFeedListedAt,
       publicPackageKey: scans.publicPackageKey,
+      summaryJson: scans.summaryJson,
     })
     .from(scans)
     .where(and(eq(scans.id, input.scanId), eq(scans.organizationId, input.organizationId)))
@@ -53,6 +66,7 @@ export async function readPublicShare(
     publicSharedAt: row.publicSharedAt,
     publicFeedListedAt: row.publicFeedListedAt,
     publicPackageKey: row.publicPackageKey,
+    publicBadgeTag: scanDistTag(row.summaryJson),
   };
 }
 
@@ -142,7 +156,7 @@ export async function enablePublicShare(
 export async function revokePublicShare(
   db: AppDb,
   input: { scanId: string; organizationId: string; actorUserId: string },
-): Promise<{ revoked: boolean; publicPackageKey: string | null }> {
+): Promise<{ revoked: boolean; publicPackageKey: string | null; publicBadgeTag: string | null }> {
   const now = new Date();
   const updated = await db
     .update(scans)
@@ -170,7 +184,7 @@ export async function revokePublicShare(
       source: scans.source,
       summaryJson: scans.summaryJson,
     });
-  if (updated.length === 0) return { revoked: false, publicPackageKey: null };
+  if (updated.length === 0) return { revoked: false, publicPackageKey: null, publicBadgeTag: null };
 
   await recordScanEvent(db, {
     organizationId: input.organizationId,
@@ -182,6 +196,7 @@ export async function revokePublicShare(
   return {
     revoked: true,
     publicPackageKey: badgeLookupKey(updated[0]),
+    publicBadgeTag: scanDistTag(updated[0].summaryJson),
   };
 }
 
@@ -263,6 +278,7 @@ export async function setThreatFeedListing(
     // Always the key, listing or unlisting: an *un*listing is exactly when the
     // cached badge body goes stale, so the caller needs the entry to purge.
     publicPackageKey: badgeKey,
+    publicBadgeTag: scanDistTag(candidate.summaryJson),
     publicShareToken: row.publicShareToken,
     publicSharedAt: row.publicSharedAt,
     publicFeedListedAt: row.publicFeedListedAt,
@@ -382,12 +398,15 @@ export function threatFeedNextCursor(
  * Ecosystem is filtered in SQL over the persisted provenance snapshot
  * (staged-publish scans carry no snapshot and are npm by construction), so a
  * package that is busy in one ecosystem can never crowd another ecosystem's
- * review out of the bounded page.
+ * review out of the bounded page. The dist-tag is filtered the same way and for
+ * the same reason; `badgeTagMatches` documents why an untagged scan answers only
+ * the default (`latest`) badge.
  */
 export async function listBadgeCandidateScans(
   db: AppDb,
   packageName: string,
   ecosystem: "npm" | "pypi" | "vscode",
+  tag: string = DEFAULT_BADGE_TAG,
   limit = 20,
 ): Promise<SharedScanRow[]> {
   const packageKey = publicPackageLookupKey(ecosystem, packageName);
@@ -396,6 +415,15 @@ export async function listBadgeCandidateScans(
     ecosystem === "npm"
       ? or(sql`${provenanceEcosystem} = 'npm'`, sql`${provenanceEcosystem} IS NULL`)
       : sql`${provenanceEcosystem} = ${ecosystem}`;
+  // Filtered in SQL for the same reason as the ecosystem: an active prerelease
+  // line publishes far more often than the stable one, so a bounded page taken
+  // before the tag filter would be all `rc` rows and the `latest` badge would
+  // read "not reviewed" while a listed stable review sat just past the limit.
+  const distTag = sql`json_extract(${scans.summaryJson}, '$.stagedPublish.tag')`;
+  const tagMatches =
+    tag === DEFAULT_BADGE_TAG
+      ? or(sql`${distTag} = ${tag}`, sql`${distTag} IS NULL`)
+      : sql`${distTag} = ${tag}`;
   // Rank registry-backed scans before applying the bounded page. Otherwise a
   // burst of newer manifest-claimed gate scans could crowd the verified review
   // out of the result set before pickBadgeScan gets a chance to prefer it.
@@ -410,6 +438,7 @@ export async function listBadgeCandidateScans(
         isNotNull(scans.publicFeedListedAt),
         eq(scans.status, "complete"),
         ecosystemMatches,
+        tagMatches,
       ),
     )
     .orderBy(packageIdentityPriority, desc(scans.completedAt), desc(scans.id))

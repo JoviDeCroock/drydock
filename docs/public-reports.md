@@ -76,10 +76,10 @@ together always verifies, which is what matters for the archival use case.
 
 ## Badge endpoint
 
-`GET /public/badge/:ecosystem/:package` (ecosystems: `npm`, `pypi`, `vscode`;
-npm names may contain `@scope/` slashes) returns a
+`GET /public/badge/:ecosystem/:package[?tag=]` (ecosystems: `npm`, `pypi`,
+`vscode`; npm names may contain `@scope/` slashes) returns a
 [shields.io endpoint-badge](https://shields.io/badges/endpoint-badge) payload
-for the package's most recent **feed-listed** review:
+for the most recent **feed-listed** review of that package's release line:
 
 - Not listed / unknown → `not reviewed` (lightgrey). Always `200` so badge
   proxies never render an error.
@@ -97,6 +97,42 @@ The badge is a name-discoverable index, so it takes the same second opt-in as
 the threat feed — a report shared privately by link never becomes queryable by
 package name.
 
+### Release lines (`?tag=`)
+
+A badge sits next to an install command, so it answers for the release that
+command produces: **`?tag=` defaults to `latest`**. Without that, listing a
+prerelease review silently repoints every embedded badge — including the one
+beside `npm i <pkg>` — at a version nobody installs by default, and a package
+cannot carry a stable badge and a prerelease badge at once.
+
+The tag is the dist-tag the release was staged under
+(`summaryJson.stagedPublish.tag`), filtered in SQL for the same reason the
+ecosystem is: an active prerelease line publishes far more often than the stable
+one, so an unfiltered bounded page would be all `rc` rows while a listed stable
+review sat just past the limit.
+
+- `?tag=beta` → only reviews staged under `beta`. The label becomes
+  `drydock (beta)`, so a README carrying several rows can be read apart;
+  `drydock (rc, unverified)` when the pick is also manifest-claimed.
+- A review with **no** tag answers only the default badge. Two populations are
+  untagged — ecosystems without dist-tags (all PyPI and VS Code reviews, all
+  gate scans) and staged scans predating tag capture — and all of them describe
+  the release a consumer installs by default. Admitting them into a `?tag=beta`
+  request would answer a question about the beta line with a review of
+  something else, so on PyPI and VS Code every non-default tag is
+  `not reviewed`.
+- A malformed tag (empty, longer than 64 characters, or containing characters
+  outside npm's URI-safe dist-tag alphabet) is a `400`, not a silent fall back
+  to `latest` — the fallback would answer a typo'd parameter with a badge about
+  a different release line and the embedder would never find out. Valid npm
+  punctuation such as the `~` in `beta~edge` is preserved.
+- Tags are matched exactly, not case-folded, on the same reasoning as npm
+  package names.
+
+Feed entries carry the same `tag` (null when the release was never staged under
+one — never read null as `latest`), so a partner walking feed → badge filters on
+the value the badge itself uses.
+
 **Verified and unverified badges are visibly different.** Among listed
 candidates the newest **registry-verified** review wins (see package identity
 below), so on npm a workflow-gate scan claiming someone else's name cannot
@@ -110,25 +146,31 @@ name, and a badge is read by people who will not open the report behind it.
 
 Embed via
 `https://img.shields.io/endpoint?url=<origin>/public/badge/npm/<package>`
-(URL-encode the badge URL).
+(URL-encode the badge URL), and add `%3Ftag=beta` to the encoded badge URL for a
+prerelease row.
 
 **The share dialog hands maintainers the snippet.** Once a share is feed-listed
 (and the scan's ecosystem resolves — see `scanEcosystem`), the dialog shows
-copy-paste README markdown built by `src/lib/badge-markdown.ts`. The badge
-image always reflects the newest listed review, so the click target is chosen
-to not pin what the badge does not: npm links the evergreen package-only
-`/diff/<name>` page (it resolves the latest published pair on load), while
-PyPI and VS Code — which have no package-only diff form — link the share URL
-the maintainer copied, correct at copy time but version-pinned.
+copy-paste README markdown built by `src/lib/badge-markdown.ts`. The snippet is
+for **the release line the copied scan was staged under**: a scan tagged `rc`
+yields `?tag=rc` and alt text `Drydock review (rc)`, while `latest` and untagged
+scans keep the short untagged form (the endpoint already defaults to `latest`).
+Without that, a maintainer who lists a prerelease review would paste a badge
+that never shows it. The badge image always reflects the newest listed review
+_on that line_, so the click target is chosen to not pin what the badge does
+not: npm links the evergreen package-only `/diff/<name>` page (it resolves the
+latest published pair on load), while PyPI and VS Code — which have no
+package-only diff form — link the share URL the maintainer copied, correct at
+copy time but version-pinned.
 
 ## Threat feed
 
 `GET /public/threat-feed.json` is a discoverable index (schema
 `drydock.threat-feed.v1`, 100 entries per page, newest listings first) meant
 for security partners — Aikido and other ecosystem-intel consumers can poll it.
-Each entry carries package identity, ecosystem, release/artifact risk,
-decision, `totalFindingCount`, timestamps, and a `reportUrl` to the full public
-report.
+Each entry carries package identity, ecosystem, dist-`tag`, release/artifact
+risk, decision, `totalFindingCount`, timestamps, and a `reportUrl` to the full
+public report.
 
 `totalFindingCount` counts deterministic _and_ advisory AI findings. It is
 deliberately not `report.findings.length`: the export routes AI findings
@@ -188,9 +230,13 @@ rather than assuming npm.
 
 Badge and feed responses read through the per-colo Workers cache
 (`caches.default`) and declare `max-age=300`. The cache key is the canonical
-origin plus path, query string ignored, and badge URLs collapse onto their
-package lookup key, so one package has one entry per colo however an embedder
-encoded the name. Case is part of that key for npm — the registry treats
+origin plus path plus — for badges — the resolved `tag`, and badge URLs collapse
+onto their package lookup key, so one package's release line has one entry per
+colo however an embedder encoded the name. Every other query parameter is still
+ignored, so a cache-busting `?_=` cannot force a D1 read-through; the tag
+participates because it is the one parameter that changes the body. A listing
+change purges the entry for the scan's own tag (the default entry when the scan
+has none), not a guessed set of tags. Case is part of that key for npm — the registry treats
 existing names case-sensitively, so `JSONStream` and `jsonstream` are different
 packages and must not share a badge — while PyPI (PEP 503) and VS Code fold, as
 `publicPackageLookupKey` documents. Two consequences: `/badge/npm/React` is its

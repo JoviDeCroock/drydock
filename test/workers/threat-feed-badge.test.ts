@@ -72,6 +72,9 @@ async function seedCompletedScan(
     releaseRisk?: string;
     ecosystem?: "npm" | "pypi" | "vscode";
     source?: "manual" | "workflow_gate";
+    // The dist-tag the release was staged under. Only npm staged-publish scans
+    // carry one; omitted means a review that was never staged under a tag.
+    tag?: string;
     // A gate scan with no provenance snapshot at all: a legacy pre-provenance
     // record, or one whose redaction failed. Its ecosystem is unknowable.
     withoutProvenance?: boolean;
@@ -108,9 +111,11 @@ async function seedCompletedScan(
     status: "complete",
     summary: {
       report: { version: 1, digest: "abc123", digestAlgorithm: "sha256" },
+      ...(!gateEcosystem && options.tag ? { stagedPublish: { tag: options.tag } } : {}),
       ...(gateEcosystem
         ? {
             stagedPublish: {
+              ...(options.tag ? { tag: options.tag } : {}),
               provenance: {
                 ecosystem: gateEcosystem,
                 mode: "workflow_gate",
@@ -163,6 +168,7 @@ interface FeedBody {
     package: string | null;
     version: string | null;
     ecosystem: string | null;
+    tag: string | null;
     packageIdentity: string;
     releaseRisk: string;
     decision: string | null;
@@ -181,9 +187,16 @@ interface FeedBody {
 // the same entry even when the two arrive on different hostnames.
 const CANONICAL_TEST_ORIGIN = new URL(env.BETTER_AUTH_URL as string).origin;
 
+// The badge key varies by dist-tag, so the query has to be carried through:
+// purging with the bare path would clear the `latest` entry while the test
+// asserts on a `?tag=beta` one.
 function coloCacheKey(path: string): Request {
-  const bare = path.split("?")[0];
-  return publicFeedCacheKey(CANONICAL_TEST_ORIGIN, bare.replace(/^\/public/, ""));
+  const [bare, search] = path.split("?");
+  return publicFeedCacheKey(
+    CANONICAL_TEST_ORIGIN,
+    bare.replace(/^\/public/, ""),
+    search ? `?${search}` : "",
+  );
 }
 
 async function purgeColoCache(path: string): Promise<void> {
@@ -212,9 +225,11 @@ async function fetchBadge(
   app: ReturnType<typeof buildTestApp>,
   ecosystem: string,
   name: string,
-  options: { cached?: boolean } = {},
+  options: { cached?: boolean; tag?: string } = {},
 ): Promise<{ status: number; body: BadgeBody }> {
-  const path = `/public/badge/${ecosystem}/${name}`;
+  const path =
+    `/public/badge/${ecosystem}/${name}` +
+    (options.tag === undefined ? "" : `?tag=${encodeURIComponent(options.tag)}`);
   if (!options.cached) await purgeColoCache(path);
   const res = await request(app, path);
   return { status: res.status, body: (await res.json()) as BadgeBody };
@@ -480,6 +495,52 @@ describe("shields badge endpoint", () => {
     });
   });
 
+  test("an approved prerelease stays on its own release line", async () => {
+    // Where the approved-badge state and the tag axis meet: the decision must
+    // not launder a prerelease onto the default badge, and the purge the
+    // decision route fires has to address the line the badge actually occupies.
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const stable = await seedCompletedScan(owner, { packageName, version: "1.0.0", tag: "latest" });
+    await share(app, stable, { threatFeed: true });
+    const rc = await seedCompletedScan(owner, {
+      packageName,
+      version: "2.0.0-rc.0",
+      risk: "medium",
+      releaseRisk: "medium",
+      tag: "rc",
+    });
+    await share(app, rc, { threatFeed: true });
+    // Warm both entries so the purge below has something to invalidate.
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "1.0.0 reviewed · low risk",
+    );
+    expect((await fetchBadge(app, "npm", packageName, { tag: "rc" })).body.message).toBe(
+      "2.0.0-rc.0 reviewed · medium risk",
+    );
+
+    const decide = await request(app, `/api/v1/scans/${rc}/decision`, {
+      method: "POST",
+      body: JSON.stringify({ decision: "publish", reason: "intended changes" }),
+    });
+    expect(decide.status).toBe(200);
+
+    // The rc entry was purged, so even a cached read shows the sign-off — and
+    // it is still labelled as the rc line, not as the package's headline.
+    expect(
+      (await fetchBadge(app, "npm", packageName, { tag: "rc", cached: true })).body,
+    ).toMatchObject({
+      label: "drydock (rc)",
+      message: "2.0.0-rc.0 approved",
+      color: "brightgreen",
+    });
+    // The stable badge is untouched by a decision on another line.
+    expect((await fetchBadge(app, "npm", packageName, { cached: true })).body.message).toBe(
+      "1.0.0 reviewed · low risk",
+    );
+  });
+
   test("an approved manifest-claimed release stays visibly unverified", async () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);
@@ -638,6 +699,201 @@ describe("shields badge endpoint", () => {
     // rather than a limiter bug. Raise both together or neither.
   }, 30_000);
 
+  test("a listed prerelease review never displaces the default badge", async () => {
+    // The regression this exists for: the badge used to be version-agnostic and
+    // resolved to the newest listed review, so listing an rc repointed every
+    // embedded badge — including the one sitting next to `npm i <pkg>` — at a
+    // release nobody installs by default.
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+
+    const stable = await seedCompletedScan(owner, {
+      packageName,
+      version: "10.29.8",
+      tag: "latest",
+    });
+    await share(app, stable, { threatFeed: true });
+    await env.DB.prepare("UPDATE scans SET completed_at = 1 WHERE id = ?").bind(stable).run();
+
+    // Newer in every ordering the query applies, and still not the default.
+    const rc = await seedCompletedScan(owner, {
+      packageName,
+      version: "11.0.0-rc.0",
+      risk: "medium",
+      releaseRisk: "medium",
+      tag: "rc",
+    });
+    await share(app, rc, { threatFeed: true });
+
+    expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+      label: "drydock",
+      message: "10.29.8 reviewed · low risk",
+    });
+    // The prerelease line has its own badge, and its label names the tag so a
+    // README carrying both rows can be read apart.
+    expect((await fetchBadge(app, "npm", packageName, { tag: "rc" })).body).toMatchObject({
+      label: "drydock (rc)",
+      message: "11.0.0-rc.0 reviewed · medium risk",
+    });
+    // An explicit `latest` is the same request as the default.
+    expect((await fetchBadge(app, "npm", packageName, { tag: "latest" })).body.message).toBe(
+      "10.29.8 reviewed · low risk",
+    );
+    // A tag nobody listed is "not reviewed", not the stable review under
+    // another name — but still says which line it answered for.
+    expect((await fetchBadge(app, "npm", packageName, { tag: "next" })).body).toMatchObject({
+      label: "drydock (next)",
+      message: "not reviewed",
+    });
+  });
+
+  test("npm-valid URI-safe punctuation remains addressable as a release line", async () => {
+    // npm accepts dist-tags made from characters encodeURIComponent leaves
+    // intact. Treating `~` as malformed made the persisted non-null tag miss
+    // both the default SQL population and every explicitly queryable line.
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      version: "2.0.0-beta.1",
+      tag: "beta~edge",
+    });
+    await share(app, scanId, { threatFeed: true });
+
+    expect((await fetchBadge(app, "npm", packageName, { tag: "beta~edge" })).body).toMatchObject({
+      label: "drydock (beta~edge)",
+      message: "2.0.0-beta.1 reviewed · low risk",
+    });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+  });
+
+  test("tags do not share a colo cache entry", async () => {
+    // The cache key ignores the query string by design (cache-busting must not
+    // force a D1 read); the tag is the one parameter that changes the body, so
+    // it has to be folded into the key or `?tag=beta` is served the `latest`
+    // body for the rest of the TTL.
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+
+    const stable = await seedCompletedScan(owner, { packageName, version: "1.0.0", tag: "latest" });
+    await share(app, stable, { threatFeed: true });
+    const beta = await seedCompletedScan(owner, {
+      packageName,
+      version: "2.0.0-beta.1",
+      tag: "beta",
+    });
+    await share(app, beta, { threatFeed: true });
+
+    // Warm the default entry first, then read the beta one through the cache.
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "1.0.0 reviewed · low risk",
+    );
+    expect(
+      (await fetchBadge(app, "npm", packageName, { tag: "beta", cached: true })).body.message,
+    ).toBe("2.0.0-beta.1 reviewed · low risk");
+    // Still cached per tag, and still ignoring everything else in the query.
+    const busted = await request(app, `/public/badge/npm/${packageName}?tag=beta&bust=1`);
+    expect(((await busted.json()) as BadgeBody).message).toBe("2.0.0-beta.1 reviewed · low risk");
+
+    // Unlisting the beta review purges the entry it actually occupied, and
+    // leaves the default badge alone.
+    await share(app, beta, { threatFeed: false });
+    expect(
+      (await fetchBadge(app, "npm", packageName, { tag: "beta", cached: true })).body.message,
+    ).toBe("not reviewed");
+    expect((await fetchBadge(app, "npm", packageName, { cached: true })).body.message).toBe(
+      "1.0.0 reviewed · low risk",
+    );
+  });
+
+  test("untagged reviews answer only the default badge", async () => {
+    // Two populations have no dist-tag: ecosystems that have none at all, and
+    // staged scans predating tag capture. Both describe the release a consumer
+    // installs by default, so they must keep working — without answering a
+    // question about some other release line.
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const legacy = await seedCompletedScan(owner, { packageName, version: "4.0.0" });
+    await share(app, legacy, { threatFeed: true });
+
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "4.0.0 reviewed · low risk",
+    );
+    expect((await fetchBadge(app, "npm", packageName, { tag: "beta" })).body.message).toBe(
+      "not reviewed",
+    );
+
+    // Same for an ecosystem with no dist-tag concept at all.
+    const pypiName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const pypi = await seedCompletedScan(owner, {
+      packageName: pypiName,
+      version: "1.2.3",
+      ecosystem: "pypi",
+      source: "workflow_gate",
+    });
+    await share(app, pypi, { threatFeed: true });
+    expect((await fetchBadge(app, "pypi", pypiName)).body.message).toBe(
+      "1.2.3 reviewed · low risk",
+    );
+    expect((await fetchBadge(app, "pypi", pypiName, { tag: "rc" })).body.message).toBe(
+      "not reviewed",
+    );
+  });
+
+  test("a prerelease line cannot crowd the stable review out of the candidate page", async () => {
+    // An active prerelease line publishes far more often than the stable one,
+    // so the tag has to be filtered in SQL: a page taken before the filter
+    // would be all `rc` rows and the default badge would read "not reviewed"
+    // with a listed stable review sitting just past the limit.
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const stable = await seedCompletedScan(owner, { packageName, version: "1.0.0", tag: "latest" });
+    await share(app, stable, { threatFeed: true });
+    await env.DB.prepare("UPDATE scans SET completed_at = 1 WHERE id = ?").bind(stable).run();
+
+    for (let index = 0; index < 21; index += 1) {
+      const rc = await seedCompletedScan(owner, {
+        packageName,
+        version: `2.0.0-rc.${index}`,
+        tag: "rc",
+      });
+      await share(app, rc, { threatFeed: true });
+    }
+
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "1.0.0 reviewed · low risk",
+    );
+  });
+
+  test("a malformed tag is rejected rather than resolved to latest", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, { packageName, version: "1.0.0", tag: "latest" });
+    await share(app, scanId, { threatFeed: true });
+    // Warm the default entry: a malformed tag must not be answered out of it.
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "1.0.0 reviewed · low risk",
+    );
+
+    // Silently falling back would answer a typo'd parameter with a badge about
+    // a different release line, and the embedder would never find out.
+    for (const bad of ["", "   ", "../latest", "beta rc", "a".repeat(65), "‮rtsl"]) {
+      const res = await request(
+        app,
+        `/public/badge/npm/${packageName}?tag=${encodeURIComponent(bad)}`,
+      );
+      expect(res.status).toBe(400);
+      // Badge errors are fetched cross-origin by the same proxies as the 200s.
+      expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    }
+  });
+
   test("badge misses are not written to the colo cache", async () => {
     const app = buildTestApp(null);
     // Every invented name would otherwise add an entry to the same
@@ -774,6 +1030,26 @@ describe("public threat feed", () => {
     expect(feed.entries[stagedIndex]?.packageIdentity).toBe("registry-verified");
     // Listed later → appears first.
     expect(stagedIndex).toBeLessThan(gateIndex);
+  });
+
+  test("feed entries carry the dist-tag, null when the release was never staged under one", async () => {
+    // The tag is the axis the badge is queried on, so a partner walking
+    // feed → badge has to see the same value the badge filters by.
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const tagged = `feed-${crypto.randomUUID().slice(0, 8)}`;
+    const untagged = `feed-${crypto.randomUUID().slice(0, 8)}`;
+    await share(app, await seedCompletedScan(owner, { packageName: tagged, tag: "beta" }), {
+      threatFeed: true,
+    });
+    await share(app, await seedCompletedScan(owner, { packageName: untagged }), {
+      threatFeed: true,
+    });
+
+    const feed = await fetchFeed(app);
+    expect(feed.entries.find((entry) => entry.package === tagged)?.tag).toBe("beta");
+    // Null, never "latest": nothing established a tag for this one.
+    expect(feed.entries.find((entry) => entry.package === untagged)?.tag).toBeNull();
   });
 
   test("a null JSON body shares without touching the listing", async () => {
