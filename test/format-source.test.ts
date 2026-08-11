@@ -30,6 +30,12 @@ function formatJs(source: string): FormattedSource | null {
   return formatted;
 }
 
+function formatJson(source: string): FormattedSource | null {
+  const formatted = formatSource(source, "json");
+  expectTokenStreamPreserved(source, formatted);
+  return formatted;
+}
+
 function lines(formatted: FormattedSource | null): string[] {
   return (formatted?.text ?? "").split("\n");
 }
@@ -38,7 +44,7 @@ describe("formatLanguageFor", () => {
   test("covers the languages whose token boundaries the formatter understands", () => {
     expect(formatLanguageFor("javascript")).toBe("js");
     expect(formatLanguageFor("typescript")).toBe("js");
-    expect(formatLanguageFor("json")).toBe("js");
+    expect(formatLanguageFor("json")).toBe("json");
     expect(formatLanguageFor("css")).toBe("css");
   });
 
@@ -142,6 +148,20 @@ describe("formatSource (javascript)", () => {
       "/x;y{z}/.test(a);",
       "foo();",
     ]);
+  });
+
+  test("recognizes prefixed and decorated TypeScript declarations before a regex", () => {
+    for (const source of [
+      "export default interface Result{value:string}/x;y{z}/.test(a);foo();",
+      "export default enum Result{Value}/x;y{z}/.test(a);foo();",
+      "declare global{interface Result{value:string}}/x;y{z}/.test(a);foo();",
+      "@sealed class Result{}/x;y{z}/.test(a);foo();",
+      "@sealed({deep:true}) class Result{}/x;y{z}/.test(a);foo();",
+    ]) {
+      const formatted = formatJs(source);
+
+      expect(formatted?.text).toContain("/x;y{z}/.test(a);");
+    }
   });
 
   test("keeps regexes whole after labeled and case-clause blocks", () => {
@@ -322,7 +342,7 @@ describe("formatSource (javascript)", () => {
   });
 
   test("re-flows a minified JSON payload", () => {
-    const formatted = formatJs('{"name":"pkg","bin":{"x":"./x.js"},"files":["dist"]}');
+    const formatted = formatJson('{"name":"pkg","bin":{"x":"./x.js"},"files":["dist"]}');
 
     expect(lines(formatted)).toEqual([
       "{",
@@ -330,9 +350,35 @@ describe("formatSource (javascript)", () => {
       '  "bin":{',
       '    "x":"./x.js"',
       "  },",
-      '  "files":["dist"]',
+      '  "files":[',
+      '    "dist"',
+      "  ]",
       "}",
     ]);
+  });
+
+  test("re-flows top-level and nested JSON arrays", () => {
+    const formatted = formatJson('[1,2,{"three":[3,4]}]');
+
+    expect(lines(formatted)).toEqual([
+      "[",
+      "  1,",
+      "  2,",
+      "  {",
+      '    "three":[',
+      "      3,",
+      "      4",
+      "    ]",
+      "  }",
+      "]",
+    ]);
+  });
+
+  test("turns an auto-detected minified JSON array into readable rows", () => {
+    const source = `[${Array.from({ length: 300 }, (_, index) => index).join(",")}]`;
+
+    expect(looksMinified(source)).toBe(true);
+    expect(lines(formatJson(source))).toHaveLength(302);
   });
 
   test("survives truncated samples without dropping the tail", () => {

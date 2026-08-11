@@ -51,6 +51,11 @@ interface BracketState {
   // expression. Remember the bracket depth at which the header started so
   // nested calls/objects do not consume it.
   pendingDeclarationDepth: number | null;
+  // Decorators precede class declarations with an arbitrary expression, so the
+  // token immediately before `class` is not enough to distinguish a declaration
+  // from a class expression. Preserve the statement-level `@` until that class
+  // arrives; nested classes inside decorator arguments live at a deeper depth.
+  pendingDecoratorDepth: number | null;
   // Function/class expressions end in blocks that produce values. Keep every
   // pending depth so a nested expression in a parameter/default/extends clause
   // cannot overwrite the outer body's marker.
@@ -110,8 +115,14 @@ const BLOCK_PRECEDING_KEYWORDS = new Set(["else", "do", "try", "catch", "finally
 // arrow body — `x=>({})` is how an arrow returns an object, so `x=>{` is a block.
 const BLOCK_PRECEDING_PUNCTUATORS = new Set([";", "{", "}", ")", "=>"]);
 
-const TYPE_BLOCK_DECLARATION_KEYWORDS = new Set(["enum", "interface", "module", "namespace"]);
-const DECLARATION_PREFIX_KEYWORDS = new Set(["const", "declare", "export"]);
+const TYPE_BLOCK_DECLARATION_KEYWORDS = new Set([
+  "enum",
+  "global",
+  "interface",
+  "module",
+  "namespace",
+]);
+const DECLARATION_PREFIX_KEYWORDS = new Set(["const", "declare", "default", "export"]);
 const TYPE_ALIAS_PREFIX_KEYWORDS = new Set(["declare", "export"]);
 
 // A line terminator is syntactically significant after these statements. A
@@ -636,6 +647,8 @@ function updateBracketState(
   if (followsModuleDeclaration) clearModuleDeclaration(state);
   if (token.type === "ident") {
     const statementStart = followsModuleDeclaration || canStartStatement(src, prev, state);
+    const decoratedClass =
+      text === "class" && state.pendingDecoratorDepth === state.brackets.length;
     if (state.pendingTypeAliasDepth === state.brackets.length && text !== "type") {
       state.pendingTypeAliasHasName = true;
     }
@@ -667,10 +680,11 @@ function updateBracketState(
       !(prev?.type === "punct" && [".", "?."].includes(jsTokenText(src, prev)))
     ) {
       state.pendingDeclarationDepth = state.brackets.length;
-      if (text === "class" && isClassExpression(src, prev, statementStart)) {
+      if (text === "class" && !decoratedClass && isClassExpression(src, prev, statementStart)) {
         state.pendingValueBodyDepths.push(state.brackets.length);
       }
     }
+    if (text === "class" && decoratedClass) state.pendingDecoratorDepth = null;
     if (
       text === "function" &&
       !(prev?.type === "punct" && [".", "?."].includes(jsTokenText(src, prev)))
@@ -715,6 +729,13 @@ function updateBracketState(
   const followsStatementColon = state.statementColon;
   state.statementColon = false;
 
+  if (
+    text === "@" &&
+    (canStartStatement(src, prev, state) || state.pendingDecoratorDepth === state.brackets.length)
+  ) {
+    state.pendingDecoratorDepth = state.brackets.length;
+  }
+
   if (state.pendingTypeAliasDepth === state.brackets.length) {
     if (text === "=") {
       state.pendingTypeAliasObjectDepth = state.pendingTypeAliasHasName
@@ -746,6 +767,9 @@ function updateBracketState(
     state.pendingValueBodyDepths = state.pendingValueBodyDepths.filter(
       (depth) => depth !== state.brackets.length,
     );
+    if (state.pendingDecoratorDepth === state.brackets.length) {
+      state.pendingDecoratorDepth = null;
+    }
     clearTypeAliasBody(state);
   }
   if (state.pendingTypedBodyDepth === state.brackets.length && text === ";") {
@@ -848,6 +872,7 @@ function createBracketState(): BracketState {
     brackets: [],
     closed: null,
     pendingDeclarationDepth: null,
+    pendingDecoratorDepth: null,
     pendingValueBodyDepths: [],
     pendingTypedBodyDepth: null,
     pendingCaseDepth: null,

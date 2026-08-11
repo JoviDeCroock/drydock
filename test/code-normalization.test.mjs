@@ -92,6 +92,18 @@ describe("normalizeCodeForScanning", () => {
     expect(normalizeCodeForScanning(interfaceSource)).toBe(interfaceSource);
   });
 
+  test("never folds regex contents after prefixed or decorated declarations", () => {
+    for (const source of [
+      "export default interface Result{value:string}/'chi' + 'ld_process'/.test(a)",
+      "export default enum Result{Value}/'chi' + 'ld_process'/.test(a)",
+      "declare global{interface Result{value:string}}/'chi' + 'ld_process'/.test(a)",
+      "@sealed class Result{}/'chi' + 'ld_process'/.test(a)",
+      "@sealed({deep:true}) class Result{}/'chi' + 'ld_process'/.test(a)",
+    ]) {
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
+  });
+
   test("never folds regex contents after ASI-terminated statements or type aliases", () => {
     const debuggerSource = "debugger\n/'chi' + 'ld_process'/.test(a)";
     const typeSource = "type Result={value:string}\n/'chi' + 'ld_process'/.test(a)";

@@ -15,10 +15,10 @@
 //      reordered, or dropped, so the reformatted view can never show the
 //      reviewer something the artifact does not contain. `test/format-source`
 //      asserts the token stream round-trips.
-//   2. Breaks land only after `;`, `{`, `,` and around `}` — positions where a
-//      newline can never change how the engine parses the program (none of them
-//      is an automatic-semicolon-insertion site), so the reformatted text stays
-//      semantically the source it came from.
+//   2. Breaks land only after `;`, `{`, `,` and around container braces/brackets
+//      — positions where a newline can never change how the engine parses the
+//      program (none of them is an automatic-semicolon-insertion site), so the
+//      reformatted text stays semantically the source it came from.
 //   3. It never parses, evaluates, or executes anything: the JS side is a pure
 //      lexer walk (`server/lib/platform/js-lexer.ts`), the CSS side a character
 //      scanner.
@@ -28,7 +28,7 @@
 
 import { jsTokenText, tokenizeJs, type JsToken } from "../../server/lib/platform/js-lexer";
 
-export type FormatLanguage = "js" | "css";
+export type FormatLanguage = "js" | "json" | "css";
 
 export interface FormattedSource {
   text: string;
@@ -58,12 +58,13 @@ const MAX_INDENT_DEPTH = 24;
 // JSX text and SCSS line comments carry whitespace-sensitive syntax that the
 // deliberately small scanners below do not understand. Fail closed for those
 // grammars instead of presenting a transformed view that changes their meaning.
-const JS_LANGS = new Set(["javascript", "typescript", "json"]);
+const JS_LANGS = new Set(["javascript", "typescript"]);
 const CSS_LANGS = new Set(["css"]);
 
 export function formatLanguageFor(lang: string | undefined): FormatLanguage | null {
   if (!lang) return null;
   if (JS_LANGS.has(lang)) return "js";
+  if (lang === "json") return "json";
   if (CSS_LANGS.has(lang)) return "css";
   return null;
 }
@@ -87,7 +88,7 @@ export function looksMinified(text: string): boolean {
  */
 export function formatSource(text: string, language: FormatLanguage): FormattedSource | null {
   if (!text || text.length > FORMAT_MAX_CHARS) return null;
-  const breaks = language === "css" ? cssBreaks(text) : jsBreaks(text);
+  const breaks = language === "css" ? cssBreaks(text) : jsBreaks(text, language === "json");
   if (!breaks.length) return null;
   return applyBreaks(text, breaks);
 }
@@ -178,14 +179,15 @@ const BLOCK_CONTINUATION_KEYWORDS = new Set([
   "while",
 ]);
 
-function jsBreaks(src: string): SourceBreak[] {
+function jsBreaks(src: string, splitArrays: boolean): SourceBreak[] {
   // Comments stay in the significant stream: they are content a reviewer reads,
   // and keeping them means the gap between two consecutive entries is always
   // pure whitespace.
   const tokens = tokenizeJs(src).filter((token) => token.type !== "ws");
   const breaks: SourceBreak[] = [];
   // Open brackets, innermost last. `;` inside `(` is a `for(;;)` separator, and
-  // `,` only earns a line of its own inside an object literal or block.
+  // `,` only earns a line of its own inside an object literal/block, plus arrays
+  // in JSON mode where every comma is a data separator rather than JS syntax.
   const stack: string[] = [];
 
   const push = (at: number, gapStart: number): void => {
@@ -200,31 +202,40 @@ function jsBreaks(src: string): SourceBreak[] {
     if (text === "}" || text === "]" || text === ")") stack.pop();
 
     const previous = tokens[index - 1];
-    if (text === "}" && previous && !isPunctText(src, previous, "{")) {
+    const closesFormattedContainer = text === "}" || (splitArrays && text === "]");
+    const matchingOpen = text === "}" ? "{" : "[";
+    if (closesFormattedContainer && previous && !isPunctText(src, previous, matchingOpen)) {
       push(token.start, previous.end);
     }
 
     if (text === "{" || text === "[" || text === "(") stack.push(text);
 
     if (!next) continue;
-    if (breaksAfter(src, text, stack, next)) push(next.start, token.end);
+    if (breaksAfter(src, text, stack, next, splitArrays)) push(next.start, token.end);
   }
 
   return breaks;
 }
 
-function breaksAfter(src: string, text: string, stack: string[], next: JsToken): boolean {
+function breaksAfter(
+  src: string,
+  text: string,
+  stack: string[],
+  next: JsToken,
+  splitArrays: boolean,
+): boolean {
   // A `//` comment trailing the token it annotates stays with it. It runs to the
   // end of its line, so keeping it in place can never swallow following code.
   if (next.type === "comment" && src[next.start + 1] === "/") return false;
   const top = stack[stack.length - 1];
   if (text === "{") return !isPunctText(src, next, "}");
+  if (splitArrays && text === "[") return !isPunctText(src, next, "]");
   if (text === ";") return top !== "(";
-  if (text === ",") return top === "{";
+  if (text === ",") return top === "{" || (splitArrays && top === "[");
   // After a closing brace, a punctuator is always a continuation of the same
   // expression (`}),`, `}.then(`, `}]`), and so is `else`/`catch`/`finally`/
   // `while`. Anything else starts a new statement and earns a line.
-  if (text === "}") {
+  if (text === "}" || (splitArrays && text === "]")) {
     if (next.type === "punct") return false;
     return !(next.type === "ident" && BLOCK_CONTINUATION_KEYWORDS.has(jsTokenText(src, next)));
   }
