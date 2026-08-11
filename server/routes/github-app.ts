@@ -16,7 +16,7 @@ import {
   optionalWorkerExecutionContext,
   workerExecutionContext,
 } from "../lib/platform/execution-context";
-import { purgePublicFeedCache } from "../lib/public-feed";
+import { purgePublicFeedCache, scanDistTag } from "../lib/public-feed";
 import { recordProductEvent } from "../lib/platform/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import { scanArtifactReadBucket } from "../lib/scan/artifacts";
@@ -619,6 +619,9 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
         packageName: decidedPackage.scan.packageName,
         summaryJson: decidedPackage.scan.summaryJson,
       }),
+      // Gate scans carry no dist-tag today, so this resolves to the default
+      // entry — passed explicitly so it stays correct if they ever do.
+      scanDistTag(decidedPackage.scan.summaryJson),
     );
   }
 

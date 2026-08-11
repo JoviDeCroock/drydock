@@ -38,7 +38,7 @@ import {
   optionalWorkerExecutionContext,
   workerExecutionContext,
 } from "../lib/platform/execution-context";
-import { purgePublicFeedCache } from "../lib/public-feed";
+import { purgePublicFeedCache, scanDistTag } from "../lib/public-feed";
 import {
   badgeLookupKey,
   enablePublicShare,
@@ -306,6 +306,9 @@ scansRoutes.post("/:id/decision", async (c) => {
         packageName: updated.scan.packageName,
         summaryJson: updated.scan.summaryJson,
       }),
+      // The scan's own release line: purging the default entry for an `rc`
+      // review would leave the stale rc badge cached and drop an unrelated one.
+      scanDistTag(updated.scan.summaryJson),
     );
   }
 

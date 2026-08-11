@@ -495,6 +495,52 @@ describe("shields badge endpoint", () => {
     });
   });
 
+  test("an approved prerelease stays on its own release line", async () => {
+    // Where the approved-badge state and the tag axis meet: the decision must
+    // not launder a prerelease onto the default badge, and the purge the
+    // decision route fires has to address the line the badge actually occupies.
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const stable = await seedCompletedScan(owner, { packageName, version: "1.0.0", tag: "latest" });
+    await share(app, stable, { threatFeed: true });
+    const rc = await seedCompletedScan(owner, {
+      packageName,
+      version: "2.0.0-rc.0",
+      risk: "medium",
+      releaseRisk: "medium",
+      tag: "rc",
+    });
+    await share(app, rc, { threatFeed: true });
+    // Warm both entries so the purge below has something to invalidate.
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "1.0.0 reviewed · low risk",
+    );
+    expect((await fetchBadge(app, "npm", packageName, { tag: "rc" })).body.message).toBe(
+      "2.0.0-rc.0 reviewed · medium risk",
+    );
+
+    const decide = await request(app, `/api/v1/scans/${rc}/decision`, {
+      method: "POST",
+      body: JSON.stringify({ decision: "publish", reason: "intended changes" }),
+    });
+    expect(decide.status).toBe(200);
+
+    // The rc entry was purged, so even a cached read shows the sign-off — and
+    // it is still labelled as the rc line, not as the package's headline.
+    expect(
+      (await fetchBadge(app, "npm", packageName, { tag: "rc", cached: true })).body,
+    ).toMatchObject({
+      label: "drydock (rc)",
+      message: "2.0.0-rc.0 approved",
+      color: "brightgreen",
+    });
+    // The stable badge is untouched by a decision on another line.
+    expect((await fetchBadge(app, "npm", packageName, { cached: true })).body.message).toBe(
+      "1.0.0 reviewed · low risk",
+    );
+  });
+
   test("an approved manifest-claimed release stays visibly unverified", async () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);
