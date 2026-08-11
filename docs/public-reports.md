@@ -204,7 +204,10 @@ the downstream `max-age` doesn't already absorb, while every invented name would
 add an entry to the namespace that also holds published-tarball bytes. Cursored
 feed pages (`?after=`) are uncached too, since the key ignores the query.
 
-Revoking a share or unlisting a report purges both entries. **That purge is
+Revoking a share, unlisting a report, or recording a release decision on a
+listed scan purges both entries — a publish → no_publish flip must not leave a
+green "approved" badge serving from the deciding admin's own colo for the full
+TTL. **That purge is
 colo-local and best effort**: `caches.default.delete()` clears the entry in the
 colo that handled the revoking request and nowhere else, so other regions keep
 serving the withdrawn badge until `max-age` expires — and shields.io's own cache

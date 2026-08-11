@@ -79,8 +79,9 @@ export function publicFeedCacheKey(origin: string, routePath: string): Request {
 }
 
 /**
- * Drop the colo-cached badge and threat feed after a share is revoked or a
- * listing is turned off, so the withdrawal is not delayed by the TTL.
+ * Drop the colo-cached badge and threat feed after a share is revoked, a
+ * listing is turned off, or a release decision is recorded on a listed scan,
+ * so the change is not delayed by the TTL.
  *
  * **This is colo-local.** It clears the entries in the colo that served the
  * revoking admin's request and nowhere else; every other region keeps serving

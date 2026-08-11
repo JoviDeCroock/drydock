@@ -465,6 +465,19 @@ describe("shields badge endpoint", () => {
       message: "4.0.0 approved",
       color: "brightgreen",
     });
+
+    // A publish → no_publish flip must not keep serving the cached
+    // "approved" payload: the decision route purges the badge entry, so even
+    // a cached read reflects the reversal immediately in this colo.
+    const reverse = await request(app, `/api/v1/scans/${scanId}/decision`, {
+      method: "POST",
+      body: JSON.stringify({ decision: "no_publish", reason: "compromised" }),
+    });
+    expect(reverse.status).toBe(200);
+    expect((await fetchBadge(app, "npm", packageName, { cached: true })).body).toMatchObject({
+      message: "4.0.0 blocked",
+      color: "red",
+    });
   });
 
   test("an approved manifest-claimed release stays visibly unverified", async () => {
@@ -477,8 +490,9 @@ describe("shields badge endpoint", () => {
       source: "workflow_gate",
     });
     await share(app, scanId, { threatFeed: true });
-    // Gate decisions arrive through the gate flow, not /decision; the badge
-    // reads the persisted row either way, so set the decision directly.
+    // The badge reads the persisted row, not any route: write the decision
+    // directly so the assertion stays independent of which decision flow
+    // (gate or staged) recorded it.
     await env.DB.prepare("UPDATE scans SET decision = 'publish' WHERE id = ?").bind(scanId).run();
     expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
       label: "drydock (unverified)",
