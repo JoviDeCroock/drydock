@@ -35,6 +35,8 @@ describe("tokenizeJs regex vs division", () => {
       "const f=async function(){}/2/b", // async function expression result
       "const f=function(a=function(){}){}/2/b", // nested defaults keep the outer body pending
       "const C=class extends mixin(class{}){}/2/b", // nested class expressions do the same
+      "const C=class extends function(){}{}/2/b", // same-depth function heritage body opens first
+      "const C=class extends class{}{}/2/b", // as does a same-depth class heritage body
       "class C{class={}/2/b}", // a field named `class`, not a nested declaration
       "var o={module,x:{}/2/b}", // declaration-shaped object shorthand
       "a.b/2/c", // property
@@ -119,6 +121,10 @@ describe("tokenizeJs regex vs division", () => {
       "!function(){type T={a:1}\n/x/.test(a)}()",
       "class C{static{function f(){}/x/.test(a)}}",
       "const C=class{static{label:{b()}/x/.test(a)}}",
+      "class C extends function(){}{}/x/.test(a)",
+      "class C extends class{}{}/x/.test(a)",
+      "class C extends function(){}{static{function f(){}/x/.test(a)}}",
+      "class C extends class{}{static{label:{b()}/x/.test(a)}}",
     ]) {
       expect(`${source} -> ${firstSlash(source)}`).toBe(`${source} -> regex`);
     }

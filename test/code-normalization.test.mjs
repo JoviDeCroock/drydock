@@ -110,6 +110,15 @@ describe("normalizeCodeForScanning", () => {
     }
   });
 
+  test("never folds regex contents inside classes with same-depth heritage bodies", () => {
+    for (const source of [
+      "class C extends function(){}{static{function f(){}/'chi' + 'ld_process'/.test(a)}}",
+      "class C extends class{}{static{label:{f()}/'chi' + 'ld_process'/.test(a)}}",
+    ]) {
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
+  });
+
   test("never folds regex contents after ASI-terminated statements or type aliases", () => {
     const debuggerSource = "debugger\n/'chi' + 'ld_process'/.test(a)";
     const typeSource = "type Result={value:string}\n/'chi' + 'ld_process'/.test(a)";

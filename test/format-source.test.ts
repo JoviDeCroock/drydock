@@ -288,6 +288,17 @@ describe("formatSource (javascript)", () => {
     );
   });
 
+  test("keeps class bodies pending past same-depth heritage expression bodies", () => {
+    const source =
+      "class C extends function(){}{static{function f(){}/x;y{z}/.test(a)}}" +
+      "class D extends class{}{static{label:{bar()}/a;b{c}/.test(d)}}";
+    const formatted = formatJs(source);
+
+    expect(formatted?.text).toContain("/x;y{z}/.test(a)");
+    expect(formatted?.text).toContain("/a;b{c}/.test(d)");
+    expectTokenStreamPreserved(source, formatted);
+  });
+
   test("keeps scanning after division by exported expression initializers", () => {
     const formatted = formatJs(
       "export const a={}/2;danger();export const b='text'\n/3;" +

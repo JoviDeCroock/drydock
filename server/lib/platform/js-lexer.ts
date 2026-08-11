@@ -51,6 +51,8 @@ type BracketKind =
   | "object"
   | "bracket";
 
+type PendingBodyKind = "value-block" | "class-block" | "class-value-block";
+
 interface BracketState {
   brackets: BracketKind[];
   closed: BracketKind | null;
@@ -64,14 +66,11 @@ interface BracketState {
   // from a class expression. Preserve the statement-level `@` until that class
   // arrives; nested classes inside decorator arguments live at a deeper depth.
   pendingDecoratorDepth: number | null;
-  // Function/class expressions end in blocks that produce values. Keep every
-  // pending depth so a nested expression in a parameter/default/extends clause
-  // cannot overwrite the outer body's marker.
-  pendingValueBodyCounts: Map<number, number>;
-  // Class bodies need their own bracket kind so `static {}` can open a real
-  // statement block while the class closing brace still retains declaration-
-  // versus-expression semantics for regex-vs-division.
-  pendingClassBodyCounts: Map<number, number>;
+  // Function/class expressions end in blocks that produce values, while class
+  // declarations end in statement blocks. Keep the ordered markers at each
+  // depth: a heritage expression can itself be an unparenthesized function or
+  // class expression, so an aggregate count cannot tell which body opens first.
+  pendingBodies: Map<number, PendingBodyKind[]>;
   // TypeScript permits a return annotation between a function/method's `)` and
   // body. Without remembering the annotation's colon, `(): void {}` looks like
   // an object literal and a following regex is consequently read as division.
@@ -697,11 +696,15 @@ function updateBracketState(
       blockDeclaration &&
       !(prev?.type === "punct" && [".", "?."].includes(jsTokenText(src, prev)))
     ) {
-      state.pendingDeclarationDepth = state.brackets.length;
-      if (text === "class")
-        incrementDepthCount(state.pendingClassBodyCounts, state.brackets.length);
-      if (text === "class" && !decoratedClass && isClassExpression(src, prev, statementStart)) {
-        incrementDepthCount(state.pendingValueBodyCounts, state.brackets.length);
+      if (text === "class") {
+        const classExpression = !decoratedClass && isClassExpression(src, prev, statementStart);
+        pushPendingBody(
+          state.pendingBodies,
+          state.brackets.length,
+          classExpression ? "class-value-block" : "class-block",
+        );
+      } else {
+        state.pendingDeclarationDepth = state.brackets.length;
       }
     }
     if (text === "class" && decoratedClass) state.pendingDecoratorDepth = null;
@@ -710,7 +713,7 @@ function updateBracketState(
       !(prev?.type === "punct" && [".", "?."].includes(jsTokenText(src, prev)))
     ) {
       if (isFunctionExpression(src, prev, beforePrev, state, statementStart)) {
-        incrementDepthCount(state.pendingValueBodyCounts, state.brackets.length);
+        pushPendingBody(state.pendingBodies, state.brackets.length, "value-block");
       }
     }
     const typeAliasDeclaration =
@@ -785,8 +788,7 @@ function updateBracketState(
     state.pendingDeclarationDepth = null;
   }
   if (text === ";") {
-    state.pendingValueBodyCounts.delete(state.brackets.length);
-    state.pendingClassBodyCounts.delete(state.brackets.length);
+    state.pendingBodies.delete(state.brackets.length);
     if (state.pendingDecoratorDepth === state.brackets.length) {
       state.pendingDecoratorDepth = null;
     }
@@ -819,14 +821,14 @@ function updateBracketState(
     ) {
       state.moduleExportClauseDepth = state.brackets.length;
     }
-    const declarationBody = state.pendingDeclarationDepth === state.brackets.length;
-    const pendingValueBodies = state.pendingValueBodyCounts.get(state.brackets.length) ?? 0;
-    const valueBody =
-      pendingValueBodies > 0 &&
-      !(prev?.type === "punct" && TYPE_LITERAL_PRECEDING_PUNCTUATORS.has(jsTokenText(src, prev)));
-    const classBody =
-      (state.pendingClassBodyCounts.get(state.brackets.length) ?? 0) > 0 &&
-      (declarationBody || valueBody);
+    const pendingBody = peekPendingBody(state.pendingBodies, state.brackets.length);
+    const bodyKind =
+      pendingBody &&
+      !(prev?.type === "punct" && TYPE_LITERAL_PRECEDING_PUNCTUATORS.has(jsTokenText(src, prev)))
+        ? pendingBody
+        : null;
+    const declarationBody =
+      bodyKind === null && state.pendingDeclarationDepth === state.brackets.length;
     const typeAliasObject = state.pendingTypeAliasObjectDepth === state.brackets.length;
     const typedBody =
       state.pendingTypedBodyDepth === state.brackets.length &&
@@ -835,27 +837,21 @@ function updateBracketState(
     const staticBlock =
       isIdentText(src, prev, "static") && (top === "class-block" || top === "class-value-block");
     state.brackets.push(
-      classBody
-        ? valueBody
-          ? "class-value-block"
-          : "class-block"
-        : valueBody
-          ? "value-block"
-          : staticBlock ||
-              declarationBody ||
-              typeAliasObject ||
-              typedBody ||
-              followsStatementColon ||
-              followsModuleDeclaration ||
-              opensBlock(src, prev)
-            ? "block"
-            : "object",
+      bodyKind ??
+        (staticBlock ||
+        declarationBody ||
+        typeAliasObject ||
+        typedBody ||
+        followsStatementColon ||
+        followsModuleDeclaration ||
+        opensBlock(src, prev)
+          ? "block"
+          : "object"),
     );
     if (declarationBody) {
       state.pendingDeclarationDepth = null;
     }
-    if (valueBody) decrementDepthCount(state.pendingValueBodyCounts, state.brackets.length - 1);
-    if (classBody) decrementDepthCount(state.pendingClassBodyCounts, state.brackets.length - 1);
+    if (bodyKind) popPendingBody(state.pendingBodies, state.brackets.length - 1);
     if (typeAliasObject) state.pendingTypeAliasObjectDepth = null;
     if (typedBody) state.pendingTypedBodyDepth = null;
   } else if (text === ")" || text === "]" || text === "}") {
@@ -907,8 +903,7 @@ function createBracketState(): BracketState {
     closed: null,
     pendingDeclarationDepth: null,
     pendingDecoratorDepth: null,
-    pendingValueBodyCounts: new Map(),
-    pendingClassBodyCounts: new Map(),
+    pendingBodies: new Map(),
     pendingTypedBodyDepth: null,
     pendingCaseDepth: null,
     conditionalDepths: [],
@@ -1155,14 +1150,27 @@ function isMemberAccess(src: string, token: JsToken | undefined): boolean {
   );
 }
 
-function incrementDepthCount(counts: Map<number, number>, depth: number): void {
-  counts.set(depth, (counts.get(depth) ?? 0) + 1);
+function pushPendingBody(
+  bodiesByDepth: Map<number, PendingBodyKind[]>,
+  depth: number,
+  kind: PendingBodyKind,
+): void {
+  const bodies = bodiesByDepth.get(depth);
+  if (bodies) bodies.push(kind);
+  else bodiesByDepth.set(depth, [kind]);
 }
 
-function decrementDepthCount(counts: Map<number, number>, depth: number): void {
-  const count = counts.get(depth) ?? 0;
-  if (count <= 1) counts.delete(depth);
-  else counts.set(depth, count - 1);
+function peekPendingBody(
+  bodiesByDepth: Map<number, PendingBodyKind[]>,
+  depth: number,
+): PendingBodyKind | undefined {
+  return bodiesByDepth.get(depth)?.at(-1);
+}
+
+function popPendingBody(bodiesByDepth: Map<number, PendingBodyKind[]>, depth: number): void {
+  const bodies = bodiesByDepth.get(depth);
+  bodies?.pop();
+  if (bodies?.length === 0) bodiesByDepth.delete(depth);
 }
 
 // Whether a `{` opens a statement block (`if(a){`, `else{`, `function f(){`) as
