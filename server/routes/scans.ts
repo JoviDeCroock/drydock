@@ -396,6 +396,7 @@ scansRoutes.post("/:id/share", async (c) => {
         optionalWorkerExecutionContext(c),
         canonicalOrigin(c),
         updated.publicPackageKey ?? null,
+        updated.publicBadgeTag ?? null,
       );
       share = updated;
     }
@@ -409,7 +410,7 @@ scansRoutes.delete("/:id/share", async (c) => {
   const { organizationId, role } = await requireActiveOrganizationContext(c, db);
   if (!roleCanManagePublicShares(role)) return c.json({ error: "forbidden" }, 403);
 
-  const { revoked, publicPackageKey } = await revokePublicShare(db, {
+  const { revoked, publicPackageKey, publicBadgeTag } = await revokePublicShare(db, {
     scanId: c.req.param("id"),
     organizationId,
     actorUserId: session.userId,
@@ -418,7 +419,12 @@ scansRoutes.delete("/:id/share", async (c) => {
     const existing = await getScanStatus(db, c.req.param("id"), organizationId);
     if (!existing) return c.json({ error: "not found" }, 404);
   } else {
-    purgePublicFeedCache(optionalWorkerExecutionContext(c), canonicalOrigin(c), publicPackageKey);
+    purgePublicFeedCache(
+      optionalWorkerExecutionContext(c),
+      canonicalOrigin(c),
+      publicPackageKey,
+      publicBadgeTag,
+    );
   }
   return c.json({ revoked });
 });

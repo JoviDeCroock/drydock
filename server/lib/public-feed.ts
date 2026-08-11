@@ -43,13 +43,68 @@ export function publicPackageLookupKey(ecosystem: PublicEcosystem, packageName: 
   return `${ecosystem}:${normalized}`;
 }
 
+/**
+ * The dist-tag a badge request is about. Absent means `latest`: a badge sits in
+ * a README next to an install command, so the release it describes has to be
+ * the one that command installs — not whichever review happened to be listed
+ * most recently. Without this, listing a prerelease review silently repoints
+ * every embedded badge at the prerelease.
+ */
+export const DEFAULT_BADGE_TAG = "latest";
+
+// Conservative subset of what npm accepts as a dist-tag. The value is echoed
+// into a shields label and folded into a cache key, so it is validated at the
+// edge rather than sanitized on the way out.
+const BADGE_TAG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+export function isValidBadgeTag(tag: string): boolean {
+  return BADGE_TAG_RE.test(tag);
+}
+
+/**
+ * The dist-tag a scan was staged under, or null when there isn't one.
+ *
+ * Only npm staged-publish scans carry it (`summaryJson.stagedPublish.tag`) —
+ * the tag is what the publisher asked the registry for. Workflow-gate scans
+ * review a repo-built artifact that has not been staged under any tag, and
+ * neither PyPI nor the VS Code marketplace has dist-tags at all, so those are
+ * always null. Null is not "latest": see `badgeTagMatches`.
+ */
+export function scanDistTag(summaryJson: unknown): string | null {
+  if (summaryJson && typeof summaryJson === "object" && !Array.isArray(summaryJson)) {
+    const stagedPublish = (summaryJson as { stagedPublish?: unknown }).stagedPublish;
+    if (stagedPublish && typeof stagedPublish === "object" && !Array.isArray(stagedPublish)) {
+      const tag = (stagedPublish as { tag?: unknown }).tag;
+      if (typeof tag === "string" && isValidBadgeTag(tag)) return tag;
+    }
+  }
+  return null;
+}
+
+/**
+ * Whether a scan's persisted tag answers a request for `requestedTag`.
+ *
+ * An untagged scan is only eligible for the `latest` badge. Two populations are
+ * untagged: reviews from ecosystems that have no dist-tags, and staged scans
+ * predating tag capture. Both describe the release a consumer would install by
+ * default, so excluding them would blank working badges — while admitting them
+ * into a `?tag=beta` request would answer a question about the beta line with a
+ * review of something else.
+ */
+export function badgeTagMatches(scanTag: string | null, requestedTag: string): boolean {
+  if (scanTag === null) return requestedTag === DEFAULT_BADGE_TAG;
+  return scanTag === requestedTag;
+}
+
 // Colo-cache keys for the two cacheable public surfaces. These live here, next
 // to `publicPackageLookupKey`, rather than in a route module: the write side
 // (the badge/feed GETs) and the purge side (the dashboard's share and listing
 // mutations) are different routes, and a route importing another route is how
 // the two drifted onto different origins in the first place.
-function badgeCacheKey(origin: string, packageKey: string): Request {
-  return new Request(`${origin}/public/badge-key/${encodeURIComponent(packageKey)}`);
+function badgeCacheKey(origin: string, packageKey: string, tag: string): Request {
+  return new Request(
+    `${origin}/public/badge-key/${encodeURIComponent(packageKey)}/${encodeURIComponent(tag)}`,
+  );
 }
 
 function threatFeedCacheKey(origin: string): Request {
@@ -58,10 +113,16 @@ function threatFeedCacheKey(origin: string): Request {
 
 /**
  * Colo-cache key for a cacheable public path. Badge paths collapse to their
- * canonical package key, so every encoding of one package shares one entry and
- * `purgePublicFeedCache` can delete it by key after a revoke or unlist.
+ * canonical package key plus the requested dist-tag, so every encoding of one
+ * package's tag shares one entry and `purgePublicFeedCache` can delete it by
+ * key after a revoke or unlist.
+ *
+ * The tag is the *only* part of the query string that participates. Two badge
+ * URLs that differ only in a tag describe different releases and must never
+ * share a body, while every other query parameter stays a no-op so a
+ * cache-busting `?_=` cannot force a D1 read-through.
  */
-export function publicFeedCacheKey(origin: string, routePath: string): Request {
+export function publicFeedCacheKey(origin: string, routePath: string, search = ""): Request {
   const badge = /^\/badge\/([^/]+)\/(.+)$/.exec(routePath);
   if (badge) {
     const ecosystem = badge[1] as PublicEcosystem;
@@ -72,10 +133,29 @@ export function publicFeedCacheKey(origin: string, routePath: string): Request {
       } catch {
         // Undecodable name: fall through and key on the raw path.
       }
-      return badgeCacheKey(origin, publicPackageLookupKey(ecosystem, name));
+      // The *raw* tag, not the resolved one: a malformed tag is a 400 from the
+      // route, and folding it onto the default key would let the cache answer
+      // it with a `latest` body that was cached before it ever got there.
+      const raw = new URLSearchParams(search).get("tag")?.trim();
+      return badgeCacheKey(
+        origin,
+        publicPackageLookupKey(ecosystem, name),
+        raw || DEFAULT_BADGE_TAG,
+      );
     }
   }
   return new Request(origin + "/public" + routePath);
+}
+
+/**
+ * The tag a badge request resolves to. An absent, blank, or malformed `tag`
+ * resolves to the default rather than erroring here — the route validates and
+ * rejects malformed tags itself, and this must stay total so a cache key always
+ * exists for whatever the route ends up answering.
+ */
+export function resolveBadgeTag(raw: string | null | undefined): string {
+  const tag = raw?.trim();
+  return tag && isValidBadgeTag(tag) ? tag : DEFAULT_BADGE_TAG;
 }
 
 /**
@@ -94,9 +174,18 @@ export function purgePublicFeedCache(
   executionCtx: ExecutionContext | null,
   origin: string,
   publicPackageKey: string | null,
+  // The scan's own dist-tag. Null (no tag persisted) means the scan could only
+  // ever have answered the default badge, so that is the one entry to drop —
+  // guessing a tag set here would leave the real entry cached.
+  badgeTag: string | null = null,
 ): void {
   coloCacheDelete(executionCtx, threatFeedCacheKey(origin));
-  if (publicPackageKey) coloCacheDelete(executionCtx, badgeCacheKey(origin, publicPackageKey));
+  if (publicPackageKey) {
+    coloCacheDelete(
+      executionCtx,
+      badgeCacheKey(origin, publicPackageKey, badgeTag ?? DEFAULT_BADGE_TAG),
+    );
+  }
 }
 
 function provenanceEcosystem(summaryJson: unknown): PublicEcosystem | null {
@@ -180,6 +269,11 @@ export interface ThreatFeedEntry {
   // Null when a gate scan's provenance snapshot never established one — the
   // feed says "unknown" rather than guessing on a partner's behalf.
   ecosystem: PublicEcosystem | null;
+  // The dist-tag the release was staged under, and the axis the badge endpoint
+  // is queried on. Null for reviews that were never staged under one — every
+  // gate scan, every PyPI and VS Code review, and staged scans predating tag
+  // capture. Consumers must not read null as `latest`.
+  tag: string | null;
   packageIdentity: PackageIdentity;
   releaseRisk: string;
   artifactRisk: string;
@@ -205,6 +299,7 @@ export function buildThreatFeedEntry(row: SharedScanRow, origin: string): Threat
     version: row.stagedVersion,
     previousVersion: row.previousVersion,
     ecosystem: scanEcosystem(row.source, row.summaryJson),
+    tag: scanDistTag(row.summaryJson),
     packageIdentity: scanPackageIdentity(row.source),
     releaseRisk: sharedScanReleaseRisk(row),
     artifactRisk: row.risk,
@@ -270,10 +365,17 @@ const RISK_BADGE_COLOR: Record<string, string> = {
  * that exists — so the distinction has to be visible on the badge, not just in
  * the feed entry that a badge viewer never sees.
  */
-function badgeLabel(row: SharedScanRow): string {
-  return scanPackageIdentity(row.source) === "registry-verified"
-    ? BADGE_LABEL
-    : `${BADGE_LABEL} (unverified)`;
+function badgeLabel(row: SharedScanRow | null, tag: string): string {
+  // A non-default tag is named in the label, not just the message: a README
+  // that carries a stable badge and a prerelease badge shows two rows whose
+  // messages are both "<version> reviewed", and the label is the only part a
+  // reader can use to tell which line each row is about. Both qualifiers are
+  // only ever the validated tag or a literal, so nothing here needs escaping.
+  const qualifiers = [
+    ...(tag === DEFAULT_BADGE_TAG ? [] : [tag]),
+    ...(row && scanPackageIdentity(row.source) === "manifest-claimed" ? ["unverified"] : []),
+  ];
+  return qualifiers.length > 0 ? `${BADGE_LABEL} (${qualifiers.join(", ")})` : BADGE_LABEL;
 }
 
 /**
@@ -288,21 +390,24 @@ function badgeLabel(row: SharedScanRow): string {
  * quietly show neutral grey instead. "We don't know" and "nobody reviewed
  * this" have to be distinguishable.
  */
-export function buildUnavailableBadgePayload(): BadgePayload {
+export function buildUnavailableBadgePayload(tag: string = DEFAULT_BADGE_TAG): BadgePayload {
   return {
     schemaVersion: 1,
-    label: BADGE_LABEL,
+    label: badgeLabel(null, tag),
     message: "unavailable",
     color: "lightgrey",
     cacheSeconds: BADGE_UNAVAILABLE_CACHE_SECONDS,
   };
 }
 
-export function buildBadgePayload(row: SharedScanRow | null): BadgePayload {
+export function buildBadgePayload(
+  row: SharedScanRow | null,
+  tag: string = DEFAULT_BADGE_TAG,
+): BadgePayload {
   if (!row) {
     return {
       schemaVersion: 1,
-      label: BADGE_LABEL,
+      label: badgeLabel(null, tag),
       message: "not reviewed",
       color: "lightgrey",
       cacheSeconds: BADGE_CACHE_SECONDS,
@@ -311,7 +416,7 @@ export function buildBadgePayload(row: SharedScanRow | null): BadgePayload {
   if (row.decision === "no_publish") {
     return {
       schemaVersion: 1,
-      label: badgeLabel(row),
+      label: badgeLabel(row, tag),
       message: `${badgeVersion(row.stagedVersion)} blocked`,
       color: "red",
       cacheSeconds: BADGE_CACHE_SECONDS,
@@ -327,7 +432,7 @@ export function buildBadgePayload(row: SharedScanRow | null): BadgePayload {
     // The grade and its findings stay one click away in the report.
     return {
       schemaVersion: 1,
-      label: badgeLabel(row),
+      label: badgeLabel(row, tag),
       message: `${badgeVersion(row.stagedVersion)} approved`,
       // An unverified name claim still never renders clean green.
       color: scanPackageIdentity(row.source) === "registry-verified" ? "brightgreen" : "lightgrey",
@@ -337,7 +442,7 @@ export function buildBadgePayload(row: SharedScanRow | null): BadgePayload {
   const risk = sharedScanReleaseRisk(row);
   return {
     schemaVersion: 1,
-    label: badgeLabel(row),
+    label: badgeLabel(row, tag),
     message: `${badgeVersion(row.stagedVersion)} reviewed · ${risk} risk`,
     // An unverified claim never renders as a clean green pass: the color is the
     // only thing most readers take from a badge.

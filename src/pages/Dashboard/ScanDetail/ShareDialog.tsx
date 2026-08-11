@@ -143,8 +143,8 @@ export function ShareDialog({
               >
                 threat-feed.json
               </a>{" "}
-              index that security partners consume and powers the package&apos;s status badge, not
-              just behind this link.
+              index that security partners consume and powers the status badge for this
+              release&apos;s dist-tag, not just behind this link.
             </span>
           </label>
           {badge ? (

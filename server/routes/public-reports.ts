@@ -14,11 +14,15 @@ import { getScan } from "../db/scans";
 import {
   buildBadgePayload,
   buildThreatFeedEntry,
+  badgeTagMatches,
   buildUnavailableBadgePayload,
+  isValidBadgeTag,
   pickBadgeScan,
   PUBLIC_ECOSYSTEMS,
   publicFeedCacheKey,
   publicPackageNameMax,
+  resolveBadgeTag,
+  scanDistTag,
   scanEcosystem,
   THREAT_FEED_SCHEMA,
   type PublicEcosystem,
@@ -90,7 +94,8 @@ const COLO_CACHE_SKIP_HEADER = "x-drydock-colo-cache-skip";
 
 publicReportsRoutes.use("*", async (c, next) => {
   if (c.req.method !== "GET") return next();
-  const routePath = new URL(c.req.url).pathname.replace(/^\/public/, "");
+  const url = new URL(c.req.url);
+  const routePath = url.pathname.replace(/^\/public/, "");
   if (!COLO_CACHED_PATHS.some((re) => re.test(routePath))) return next();
   if (routePath.startsWith("/threat-feed")) {
     // The feed body embeds report URLs built from canonicalOrigin, which falls
@@ -102,16 +107,17 @@ publicReportsRoutes.use("*", async (c, next) => {
     // Only the first page is cacheable; a cursored page must never be served
     // from, or written into, the entry that page one occupies. Backfill pages
     // are rare by nature — a consumer walks them once to catch up.
-    if (new URL(c.req.url).search) return next();
+    if (url.search) return next();
   }
-  // Key on the *canonical* origin and path only. Everything still cacheable at
-  // this point ignores its query string, so a cache-busting query can't force a
+  // Key on the *canonical* origin, the path, and — for badges — the requested
+  // dist-tag, which is the one query parameter that changes the body. Every
+  // other parameter stays ignored, so a cache-busting query still can't force a
   // D1 read-through, and folding badge URLs onto their lookup key means one
-  // package has one entry per colo however the embedder encoded the name. The
-  // origin has to be canonicalOrigin — the same value purgePublicFeedCache uses
-  // from a *dashboard* request — or a deploy bound to a second hostname
+  // package's tag has one entry per colo however the embedder encoded the name.
+  // The origin has to be canonicalOrigin — the same value purgePublicFeedCache
+  // uses from a *dashboard* request — or a deploy bound to a second hostname
   // (workers.dev, a preview alias) writes entries the purge never visits.
-  const cacheKey = publicFeedCacheKey(canonicalOrigin(c), routePath);
+  const cacheKey = publicFeedCacheKey(canonicalOrigin(c), routePath, url.search);
   const cached = await coloCacheMatch(cacheKey);
   if (cached) return cached;
   await next();
@@ -150,7 +156,9 @@ publicReportsRoutes.use("*", async (c, next) => {
       // would cache for minutes over a review that may say "blocked". Kept out
       // of the colo cache for the same reason.
       if (isBadgeRequest) {
-        return c.json(buildUnavailableBadgePayload(), 200, {
+        // Carry the tag through even here, so a throttled prerelease badge
+        // still identifies which README row it belongs to.
+        return c.json(buildUnavailableBadgePayload(resolveBadgeTag(c.req.query("tag"))), 200, {
           "cache-control": "no-store",
           "access-control-allow-origin": "*",
           "retry-after": String(err.retryAfterSeconds),
@@ -210,7 +218,9 @@ publicReportsRoutes.get("/threat-feed.json", async (c) => {
 const BADGE_ERROR_HEADERS = { "access-control-allow-origin": "*" } as const;
 
 // npm names contain slashes (@scope/name), so the route is a wildcard and the
-// name is everything after the ecosystem segment.
+// name is everything after the ecosystem segment. `?tag=` selects the release
+// line; it defaults to `latest`, because a badge describes the release its
+// README's install command produces.
 publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
   const ecosystem = c.req.param("ecosystem") as PublicEcosystem;
   if (!PUBLIC_ECOSYSTEMS.includes(ecosystem)) {
@@ -228,18 +238,30 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
   if (!packageName || packageName.length > publicPackageNameMax(ecosystem)) {
     return c.json({ error: "invalid package name" }, 400, BADGE_ERROR_HEADERS);
   }
+  // A malformed tag is rejected rather than quietly resolved to `latest`: the
+  // fallback would answer a question about one release line with a badge about
+  // another, and an embedder who typo'd the parameter would never find out.
+  const rawTag = c.req.query("tag")?.trim();
+  if (rawTag !== undefined && !isValidBadgeTag(rawTag)) {
+    return c.json({ error: "invalid tag" }, 400, BADGE_ERROR_HEADERS);
+  }
+  const tag = resolveBadgeTag(rawTag);
 
   const db = createDb(c.env.DB);
   // Feed-listed scans only (a share link alone never makes a scan
   // name-queryable), the SQL pre-filter re-checked through scanEcosystem, and
   // registry-verified identity preferred over manifest claims.
-  const rows = await listBadgeCandidateScans(db, packageName, ecosystem);
+  const rows = await listBadgeCandidateScans(db, packageName, ecosystem, tag);
   const match = pickBadgeScan(
-    rows.filter((row) => scanEcosystem(row.source, row.summaryJson) === ecosystem),
+    rows.filter(
+      (row) =>
+        scanEcosystem(row.source, row.summaryJson) === ecosystem &&
+        badgeTagMatches(scanDistTag(row.summaryJson), tag),
+    ),
   );
   // Always 200: shields renders the payload either way, and "not reviewed"
   // must not read as an error to badge proxies.
-  return c.json(buildBadgePayload(match), 200, {
+  return c.json(buildBadgePayload(match, tag), 200, {
     "cache-control": "public, max-age=300",
     "access-control-allow-origin": "*",
     // Misses stay out of the colo cache. The "not reviewed" body is identical
