@@ -50,6 +50,9 @@ describe("tokenizeJs regex vs division", () => {
       "while(a){continue\nvalue\n/2/b}", // nor a same-line continue label
       "const π=1;π/2/b", // non-ASCII identifiers are still values
       "const 变量=1;变量/2/b", // including non-Latin scripts
+      "export const value={}\n/2/b", // exported object initializer result
+      "export const value=class{}\n/2/b", // exported class-expression result
+      "export const value=function(){}\n/2/b", // exported function-expression result
     ]) {
       expect(`${source} -> ${firstSlash(source)}`).toBe(`${source} -> punct`);
     }
@@ -87,6 +90,8 @@ describe("tokenizeJs regex vs division", () => {
       "while(a){break\n/x/.test(a)}",
       "label:while(a){continue label\n/x/.test(a)}",
       "type Result={value:string}\n/x/.test(a)",
+      "type Result=string\n/x/.test(a)",
+      "type Result={a:string}|{b:string}\n/x/.test(a)",
       "import 'x'\n/x/.test(a)",
       "import { x } from 'x'\n/x/.test(a)",
       "import 'x'\nimport 'y'\n/x/.test(a)",
@@ -108,6 +113,9 @@ describe("tokenizeJs regex vs division", () => {
 
   test("keeps Unicode identifiers in one token", () => {
     expect(kinds("const π=变量𐊧;")).toBe("ident:const ident:π punct:= ident:变量𐊧 punct:;");
+    expect(kinds(String.raw`const \u{61}=valu\u0065;`)).toBe(
+      String.raw`ident:const ident:\u{61} punct:= ident:valu\u0065 punct:;`,
+    );
   });
 
   test("keeps JSON-superset line separators inside quoted strings", () => {

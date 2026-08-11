@@ -77,6 +77,11 @@ interface BracketState {
   pendingTypeAliasDepth: number | null;
   pendingTypeAliasHasName: boolean;
   pendingTypeAliasObjectDepth: number | null;
+  // Once `type Name =` has been seen, remember the declaration until its
+  // terminating line/semicolon. A slash after that line starts a regex even
+  // when the aliased type ends in an identifier or a composite object type.
+  typeAliasBodyDepth: number | null;
+  typeAliasBodySawToken: boolean;
   // Static import/export declarations are statement-shaped even when their last
   // token is a string or `}`. These fields let a slash after their terminating
   // line open a regex without mistaking dynamic import() or export default.
@@ -84,6 +89,10 @@ interface BracketState {
   moduleDeclarationKind: "import" | "export" | null;
   moduleDeclarationSawSource: boolean;
   moduleDeclarationClosedClause: boolean;
+  // Export declarations can also contain object/class/function initializers.
+  // Only a brace opened directly by `export` (or `export type`) is an export
+  // clause whose closing brace terminates the module declaration.
+  moduleExportClauseDepth: number | null;
 }
 
 // Keywords whose parenthesised head is followed by a statement.
@@ -252,6 +261,7 @@ export function tokenizeJs(src: string): JsToken[] {
         lineTerminatorBefore,
         lineTerminatorBeforePrev,
         prevEndsModuleDeclaration,
+        typeAliasEndsBeforeNextToken(state, lineTerminatorBefore),
       )
     ) {
       const start = i;
@@ -267,14 +277,14 @@ export function tokenizeJs(src: string): JsToken[] {
       continue;
     }
 
-    const identifierStart = codePointAt(src, i);
-    if (isIdentStart(identifierStart)) {
+    const identifierStart = scanIdentifierUnit(src, i, true);
+    if (identifierStart) {
       const start = i;
-      i += identifierStart.length;
+      i = identifierStart.end;
       while (i < n) {
-        const part = codePointAt(src, i);
-        if (!isIdentPart(part)) break;
-        i += part.length;
+        const part = scanIdentifierUnit(src, i, false);
+        if (!part) break;
+        i = part.end;
       }
       pushSignificant({ type: "ident", start, end: i });
       continue;
@@ -426,6 +436,7 @@ function scanTemplate(src: string, i: number): number {
         frame.lineTerminatorBefore,
         frame.lineTerminatorBeforePrev,
         frame.prevEndsModuleDeclaration,
+        typeAliasEndsBeforeNextToken(frame.state, frame.lineTerminatorBefore),
       )
     ) {
       const start = j;
@@ -439,14 +450,14 @@ function scanTemplate(src: string, i: number): number {
       pushTemplateExpressionToken(src, frame, { type: "number", start, end: j });
       continue;
     }
-    const identifierStart = codePointAt(src, j);
-    if (isIdentStart(identifierStart)) {
+    const identifierStart = scanIdentifierUnit(src, j, true);
+    if (identifierStart) {
       const start = j;
-      j += identifierStart.length;
+      j = identifierStart.end;
       while (j < n) {
-        const part = codePointAt(src, j);
-        if (!isIdentPart(part)) break;
-        j += part.length;
+        const part = scanIdentifierUnit(src, j, false);
+        if (!part) break;
+        j = part.end;
       }
       pushTemplateExpressionToken(src, frame, { type: "ident", start, end: j });
       continue;
@@ -609,6 +620,14 @@ function updateBracketState(
   lineTerminatorBefore: boolean,
 ): void {
   const text = jsTokenText(src, token);
+  if (
+    state.typeAliasBodyDepth === state.brackets.length &&
+    state.typeAliasBodySawToken &&
+    lineTerminatorBefore &&
+    !continuesTypeAliasAcrossLine(src, token, prev)
+  ) {
+    clearTypeAliasBody(state);
+  }
   const followsModuleDeclaration =
     Boolean(state.moduleDeclarationKind) &&
     lineTerminatorBefore &&
@@ -630,6 +649,7 @@ function updateBracketState(
       state.moduleDeclarationKind = text;
       state.moduleDeclarationSawSource = false;
       state.moduleDeclarationClosedClause = false;
+      state.moduleExportClauseDepth = null;
     } else if (
       state.moduleDeclarationKind === "export" &&
       state.moduleDeclarationDepth === state.brackets.length &&
@@ -667,10 +687,12 @@ function updateBracketState(
       state.pendingTypeAliasDepth = state.brackets.length;
       state.pendingTypeAliasHasName = false;
       state.pendingTypeAliasObjectDepth = null;
+      clearTypeAliasBody(state);
     }
     if (state.pendingTypeAliasObjectDepth === state.brackets.length) {
       state.pendingTypeAliasObjectDepth = null;
     }
+    markTypeAliasBodyToken(state);
     return;
   }
   if (token.type !== "punct") {
@@ -686,6 +708,7 @@ function updateBracketState(
     }
     state.labelCandidate = false;
     state.statementColon = false;
+    markTypeAliasBodyToken(state);
     return;
   }
 
@@ -697,6 +720,8 @@ function updateBracketState(
       state.pendingTypeAliasObjectDepth = state.pendingTypeAliasHasName
         ? state.brackets.length
         : null;
+      state.typeAliasBodyDepth = state.pendingTypeAliasHasName ? state.brackets.length : null;
+      state.typeAliasBodySawToken = false;
       state.pendingTypeAliasDepth = null;
       state.pendingTypeAliasHasName = false;
     } else if (!state.pendingTypeAliasHasName) {
@@ -721,6 +746,7 @@ function updateBracketState(
     state.pendingValueBodyDepths = state.pendingValueBodyDepths.filter(
       (depth) => depth !== state.brackets.length,
     );
+    clearTypeAliasBody(state);
   }
   if (state.pendingTypedBodyDepth === state.brackets.length && text === ";") {
     // A method signature or truncated annotation has no implementation body.
@@ -739,6 +765,14 @@ function updateBracketState(
   } else if (text === "[") {
     state.brackets.push("bracket");
   } else if (text === "{") {
+    if (
+      state.moduleDeclarationKind === "export" &&
+      state.moduleDeclarationDepth === state.brackets.length &&
+      (isIdentText(src, prev, "export") ||
+        (isIdentText(src, prev, "type") && isIdentText(src, beforePrev, "export")))
+    ) {
+      state.moduleExportClauseDepth = state.brackets.length;
+    }
     const declarationBody = state.pendingDeclarationDepth === state.brackets.length;
     const valueBodyIndex = state.pendingValueBodyDepths.lastIndexOf(state.brackets.length);
     const valueBody =
@@ -771,9 +805,12 @@ function updateBracketState(
     if (
       text === "}" &&
       state.moduleDeclarationKind &&
-      state.moduleDeclarationDepth === state.brackets.length
+      state.moduleDeclarationDepth === state.brackets.length &&
+      (state.moduleDeclarationKind === "import" ||
+        state.moduleExportClauseDepth === state.brackets.length)
     ) {
       state.moduleDeclarationClosedClause = true;
+      state.moduleExportClauseDepth = null;
     }
   } else if (
     text === "." &&
@@ -803,6 +840,7 @@ function updateBracketState(
     }
   }
   state.labelCandidate = false;
+  if (text !== "=") markTypeAliasBodyToken(state);
 }
 
 function createBracketState(): BracketState {
@@ -819,11 +857,72 @@ function createBracketState(): BracketState {
     pendingTypeAliasDepth: null,
     pendingTypeAliasHasName: false,
     pendingTypeAliasObjectDepth: null,
+    typeAliasBodyDepth: null,
+    typeAliasBodySawToken: false,
     moduleDeclarationDepth: null,
     moduleDeclarationKind: null,
     moduleDeclarationSawSource: false,
     moduleDeclarationClosedClause: false,
+    moduleExportClauseDepth: null,
   };
+}
+
+function typeAliasEndsBeforeNextToken(state: BracketState, lineTerminatorBefore: boolean): boolean {
+  return (
+    lineTerminatorBefore &&
+    state.typeAliasBodySawToken &&
+    state.typeAliasBodyDepth === state.brackets.length
+  );
+}
+
+const TYPE_ALIAS_LINE_CONTINUATION_PUNCTUATORS = new Set([
+  "|",
+  "&",
+  "[",
+  ".",
+  "<",
+  ">",
+  "?",
+  ":",
+  ",",
+  "(",
+  ")",
+  "{",
+  "}",
+  "=>",
+]);
+
+const TYPE_ALIAS_OPERAND_KEYWORDS = new Set([
+  "extends",
+  "infer",
+  "keyof",
+  "new",
+  "readonly",
+  "typeof",
+]);
+
+function continuesTypeAliasAcrossLine(
+  src: string,
+  token: JsToken,
+  prev: JsToken | undefined,
+): boolean {
+  if (
+    token.type === "punct" &&
+    TYPE_ALIAS_LINE_CONTINUATION_PUNCTUATORS.has(jsTokenText(src, token))
+  ) {
+    return true;
+  }
+  if (token.type === "ident" && jsTokenText(src, token) === "extends") return true;
+  return prev?.type === "ident" && TYPE_ALIAS_OPERAND_KEYWORDS.has(jsTokenText(src, prev));
+}
+
+function markTypeAliasBodyToken(state: BracketState): void {
+  if (state.typeAliasBodyDepth !== null) state.typeAliasBodySawToken = true;
+}
+
+function clearTypeAliasBody(state: BracketState): void {
+  state.typeAliasBodyDepth = null;
+  state.typeAliasBodySawToken = false;
 }
 
 function canStartStatement(src: string, prev: JsToken | undefined, state: BracketState): boolean {
@@ -849,9 +948,11 @@ function regexAllowed(
   lineTerminatorBefore: boolean,
   lineTerminatorBeforePrev: boolean,
   prevEndsModuleDeclaration: boolean,
+  prevEndsTypeAliasDeclaration: boolean,
 ): boolean {
   if (!prev) return true;
   if (lineTerminatorBefore && prevEndsModuleDeclaration) return true;
+  if (prevEndsTypeAliasDeclaration) return true;
   if (prev.type === "punct") {
     const t = jsTokenText(src, prev);
     // `if(a)/re/.test(a)` and `if(a){b()}/re/.test(a)` both continue with a
@@ -945,6 +1046,7 @@ function clearModuleDeclaration(state: BracketState): void {
   state.moduleDeclarationKind = null;
   state.moduleDeclarationSawSource = false;
   state.moduleDeclarationClosedClause = false;
+  state.moduleExportClauseDepth = null;
 }
 
 // `(` of `if (…)`, `for (…)`, `for await (…)`, `while (…)`, `with (…)` — the
@@ -993,6 +1095,47 @@ function isIdentPart(c: string): boolean {
 function codePointAt(src: string, index: number): string {
   const value = src.codePointAt(index);
   return value === undefined ? "" : String.fromCodePoint(value);
+}
+
+interface IdentifierUnit {
+  end: number;
+}
+
+// IdentifierName permits Unicode escapes in both the start and continuation
+// positions. Treat the complete escape as one lexical unit so braces in
+// `\u{...}` can never be mistaken for source blocks by the formatter.
+function scanIdentifierUnit(src: string, index: number, start: boolean): IdentifierUnit | null {
+  const direct = codePointAt(src, index);
+  if (start ? isIdentStart(direct) : isIdentPart(direct)) {
+    return { end: index + direct.length };
+  }
+  if (src[index] !== "\\" || src[index + 1] !== "u") return null;
+  const escaped = scanIdentifierUnicodeEscape(src, index);
+  if (!escaped) return null;
+  if (!(start ? isIdentStart(escaped.value) : isIdentPart(escaped.value))) return null;
+  return { end: escaped.end };
+}
+
+function scanIdentifierUnicodeEscape(
+  src: string,
+  start: number,
+): { end: number; value: string } | null {
+  if (src[start + 2] === "{") {
+    const close = src.indexOf("}", start + 3);
+    if (close === -1) return null;
+    const digits = src.slice(start + 3, close);
+    if (!/^[0-9a-fA-F]+$/.test(digits)) return null;
+    const codePoint = Number.parseInt(digits, 16);
+    if (codePoint > 0x10ffff) return null;
+    return { end: close + 1, value: String.fromCodePoint(codePoint) };
+  }
+  const digits = src.slice(start + 2, start + 6);
+  if (!/^[0-9a-fA-F]{4}$/.test(digits)) return null;
+  return { end: start + 6, value: String.fromCharCode(Number.parseInt(digits, 16)) };
+}
+
+function isIdentText(src: string, token: JsToken | undefined, value: string): boolean {
+  return token?.type === "ident" && jsTokenText(src, token) === value;
 }
 
 function isLineTerminator(c: string | undefined): boolean {

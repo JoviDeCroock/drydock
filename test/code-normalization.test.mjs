@@ -200,6 +200,25 @@ describe("assembled-identifier evasion is caught by the deterministic scanner", 
     expect(findings.some((finding) => finding.ruleId === "code.process-execution")).toBe(true);
   });
 
+  test("a divided exported initializer cannot hide the assembled process sink", () => {
+    const payload =
+      "const p=['chi','ld_pro','cess'].join('');const r=globalThis['re'+'quire'];" +
+      "const cp=r(p);cp['exec'+'Sync']('id')";
+    const staged = [
+      {
+        path: "index.js",
+        size: payload.length,
+        sha256: "index-js",
+        flags: [],
+        textSample: `export const padding={}\n/2;${payload}`,
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(computeRisk(findings)).toBe("high");
+    expect(findings.some((finding) => finding.ruleId === "code.process-execution")).toBe(true);
+  });
+
   test("JSON-superset line separators in strings cannot fabricate process execution", () => {
     const safe = `const text="before\u2028'chi'+'ld_process';after";`;
     const staged = [

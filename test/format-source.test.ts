@@ -164,6 +164,10 @@ describe("formatSource (javascript)", () => {
     const debuggerSource = formatJs("debugger\n/x;y{2}/.test(a);foo();");
     const breakSource = formatJs("label:while(a){break label\n/x;y{2}/.test(a);foo()}");
     const typeSource = formatJs("type Result={value:string}\n/x;y{2}/.test(a);foo();");
+    const scalarTypeSource = formatJs("type Result=string\n/x;y{2}/.test(a);foo();");
+    const unionTypeSource = formatJs(
+      "type Result={value:string}|{error:Error}\n/x;y{2}/.test(a);foo();",
+    );
 
     expect(lines(debuggerSource)).toEqual(["debugger", "/x;y{2}/.test(a);", "foo();"]);
     expect(breakSource?.text).toContain("/x;y{2}/.test(a);");
@@ -174,6 +178,8 @@ describe("formatSource (javascript)", () => {
       "/x;y{2}/.test(a);",
       "foo();",
     ]);
+    expect(lines(scalarTypeSource)).toEqual(["type Result=string", "/x;y{2}/.test(a);", "foo();"]);
+    expect(unionTypeSource?.text).toContain("/x;y{2}/.test(a);");
   });
 
   test("does not mistake division after a Unicode identifier for a regex", () => {
@@ -188,6 +194,16 @@ describe("formatSource (javascript)", () => {
     ]);
   });
 
+  test("never breaks inside a Unicode identifier escape", () => {
+    const formatted = formatJs(String.raw`const \u{61}=1;const valu\u{65}=2;safe();`);
+
+    expect(lines(formatted)).toEqual([
+      String.raw`const \u{61}=1;`,
+      String.raw`const valu\u{65}=2;`,
+      "safe();",
+    ]);
+  });
+
   test("keeps scanning after division by function and class expressions", () => {
     const formatted = formatJs(
       "const a=function(){}/2;danger();const b=class{}/3;const c=async function(){}/4;safe();",
@@ -198,6 +214,21 @@ describe("formatSource (javascript)", () => {
       "danger();",
       "const b=class{}/3;",
       "const c=async function(){}/4;",
+      "safe();",
+    ]);
+  });
+
+  test("keeps scanning after division by exported expression initializers", () => {
+    const formatted = formatJs(
+      "export const a={}/2;danger();export const b=class{}/3;" +
+        "export const c=function(){}/4;safe();",
+    );
+
+    expect(lines(formatted)).toEqual([
+      "export const a={}/2;",
+      "danger();",
+      "export const b=class{}/3;",
+      "export const c=function(){}/4;",
       "safe();",
     ]);
   });
