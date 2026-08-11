@@ -41,7 +41,15 @@ export interface JsToken {
 // object literal's `}` are values, where `/` divides. Without this, `if(a)/x;y/`
 // lexes as a division and everything downstream — folding, line breaking — walks
 // into the middle of a regex literal.
-type BracketKind = "head-paren" | "paren" | "block" | "value-block" | "object" | "bracket";
+type BracketKind =
+  | "head-paren"
+  | "paren"
+  | "block"
+  | "value-block"
+  | "class-block"
+  | "class-value-block"
+  | "object"
+  | "bracket";
 
 interface BracketState {
   brackets: BracketKind[];
@@ -59,7 +67,11 @@ interface BracketState {
   // Function/class expressions end in blocks that produce values. Keep every
   // pending depth so a nested expression in a parameter/default/extends clause
   // cannot overwrite the outer body's marker.
-  pendingValueBodyDepths: number[];
+  pendingValueBodyCounts: Map<number, number>;
+  // Class bodies need their own bracket kind so `static {}` can open a real
+  // statement block while the class closing brace still retains declaration-
+  // versus-expression semantics for regex-vs-division.
+  pendingClassBodyCounts: Map<number, number>;
   // TypeScript permits a return annotation between a function/method's `)` and
   // body. Without remembering the annotation's colon, `(): void {}` looks like
   // an object literal and a following regex is consequently read as division.
@@ -199,6 +211,7 @@ export function tokenizeJs(src: string): JsToken[] {
   const tokens: JsToken[] = [];
   let prev: JsToken | undefined;
   let beforePrev: JsToken | undefined;
+  let beforeBeforePrev: JsToken | undefined;
   let lineTerminatorBefore = false;
   let lineTerminatorBeforePrev = false;
   let prevEndsModuleDeclaration = false;
@@ -208,8 +221,9 @@ export function tokenizeJs(src: string): JsToken[] {
   const state = createBracketState();
 
   const pushSignificant = (token: JsToken): void => {
-    updateBracketState(src, token, prev, beforePrev, state, lineTerminatorBefore);
+    updateBracketState(src, token, prev, beforePrev, beforeBeforePrev, state, lineTerminatorBefore);
     tokens.push(token);
+    beforeBeforePrev = beforePrev;
     beforePrev = prev;
     prev = token;
     lineTerminatorBeforePrev = lineTerminatorBefore;
@@ -350,6 +364,7 @@ interface TemplateExpressionFrame {
   state: BracketState;
   prev?: JsToken;
   beforePrev?: JsToken;
+  beforeBeforePrev?: JsToken;
   lineTerminatorBefore: boolean;
   lineTerminatorBeforePrev: boolean;
   prevEndsModuleDeclaration: boolean;
@@ -500,9 +515,11 @@ function pushTemplateExpressionToken(
     token,
     frame.prev,
     frame.beforePrev,
+    frame.beforeBeforePrev,
     frame.state,
     frame.lineTerminatorBefore,
   );
+  frame.beforeBeforePrev = frame.beforePrev;
   frame.beforePrev = frame.prev;
   frame.prev = token;
   frame.lineTerminatorBeforePrev = frame.lineTerminatorBefore;
@@ -627,6 +644,7 @@ function updateBracketState(
   token: JsToken,
   prev: JsToken | undefined,
   beforePrev: JsToken | undefined,
+  beforeBeforePrev: JsToken | undefined,
   state: BracketState,
   lineTerminatorBefore: boolean,
 ): void {
@@ -680,8 +698,10 @@ function updateBracketState(
       !(prev?.type === "punct" && [".", "?."].includes(jsTokenText(src, prev)))
     ) {
       state.pendingDeclarationDepth = state.brackets.length;
+      if (text === "class")
+        incrementDepthCount(state.pendingClassBodyCounts, state.brackets.length);
       if (text === "class" && !decoratedClass && isClassExpression(src, prev, statementStart)) {
-        state.pendingValueBodyDepths.push(state.brackets.length);
+        incrementDepthCount(state.pendingValueBodyCounts, state.brackets.length);
       }
     }
     if (text === "class" && decoratedClass) state.pendingDecoratorDepth = null;
@@ -690,7 +710,7 @@ function updateBracketState(
       !(prev?.type === "punct" && [".", "?."].includes(jsTokenText(src, prev)))
     ) {
       if (isFunctionExpression(src, prev, beforePrev, state, statementStart)) {
-        state.pendingValueBodyDepths.push(state.brackets.length);
+        incrementDepthCount(state.pendingValueBodyCounts, state.brackets.length);
       }
     }
     const typeAliasDeclaration =
@@ -765,9 +785,8 @@ function updateBracketState(
     state.pendingDeclarationDepth = null;
   }
   if (text === ";") {
-    state.pendingValueBodyDepths = state.pendingValueBodyDepths.filter(
-      (depth) => depth !== state.brackets.length,
-    );
+    state.pendingValueBodyCounts.delete(state.brackets.length);
+    state.pendingClassBodyCounts.delete(state.brackets.length);
     if (state.pendingDecoratorDepth === state.brackets.length) {
       state.pendingDecoratorDepth = null;
     }
@@ -786,7 +805,9 @@ function updateBracketState(
     ) {
       clearModuleDeclaration(state); // dynamic import(...)
     }
-    state.brackets.push(isStatementHead(src, prev, beforePrev) ? "head-paren" : "paren");
+    state.brackets.push(
+      isStatementHead(src, prev, beforePrev, beforeBeforePrev) ? "head-paren" : "paren",
+    );
   } else if (text === "[") {
     state.brackets.push("bracket");
   } else if (text === "{") {
@@ -799,30 +820,42 @@ function updateBracketState(
       state.moduleExportClauseDepth = state.brackets.length;
     }
     const declarationBody = state.pendingDeclarationDepth === state.brackets.length;
-    const valueBodyIndex = state.pendingValueBodyDepths.lastIndexOf(state.brackets.length);
+    const pendingValueBodies = state.pendingValueBodyCounts.get(state.brackets.length) ?? 0;
     const valueBody =
-      valueBodyIndex !== -1 &&
+      pendingValueBodies > 0 &&
       !(prev?.type === "punct" && TYPE_LITERAL_PRECEDING_PUNCTUATORS.has(jsTokenText(src, prev)));
+    const classBody =
+      (state.pendingClassBodyCounts.get(state.brackets.length) ?? 0) > 0 &&
+      (declarationBody || valueBody);
     const typeAliasObject = state.pendingTypeAliasObjectDepth === state.brackets.length;
     const typedBody =
       state.pendingTypedBodyDepth === state.brackets.length &&
       !(prev?.type === "punct" && TYPE_LITERAL_PRECEDING_PUNCTUATORS.has(jsTokenText(src, prev)));
+    const top = state.brackets[state.brackets.length - 1];
+    const staticBlock =
+      isIdentText(src, prev, "static") && (top === "class-block" || top === "class-value-block");
     state.brackets.push(
-      valueBody
-        ? "value-block"
-        : declarationBody ||
-            typeAliasObject ||
-            typedBody ||
-            followsStatementColon ||
-            followsModuleDeclaration ||
-            opensBlock(src, prev)
-          ? "block"
-          : "object",
+      classBody
+        ? valueBody
+          ? "class-value-block"
+          : "class-block"
+        : valueBody
+          ? "value-block"
+          : staticBlock ||
+              declarationBody ||
+              typeAliasObject ||
+              typedBody ||
+              followsStatementColon ||
+              followsModuleDeclaration ||
+              opensBlock(src, prev)
+            ? "block"
+            : "object",
     );
     if (declarationBody) {
       state.pendingDeclarationDepth = null;
     }
-    if (valueBody) state.pendingValueBodyDepths.splice(valueBodyIndex, 1);
+    if (valueBody) decrementDepthCount(state.pendingValueBodyCounts, state.brackets.length - 1);
+    if (classBody) decrementDepthCount(state.pendingClassBodyCounts, state.brackets.length - 1);
     if (typeAliasObject) state.pendingTypeAliasObjectDepth = null;
     if (typedBody) state.pendingTypedBodyDepth = null;
   } else if (text === ")" || text === "]" || text === "}") {
@@ -874,7 +907,8 @@ function createBracketState(): BracketState {
     closed: null,
     pendingDeclarationDepth: null,
     pendingDecoratorDepth: null,
-    pendingValueBodyDepths: [],
+    pendingValueBodyCounts: new Map(),
+    pendingClassBodyCounts: new Map(),
     pendingTypedBodyDepth: null,
     pendingCaseDepth: null,
     conditionalDepths: [],
@@ -957,16 +991,31 @@ function canStartStatement(src: string, prev: JsToken | undefined, state: Bracke
   // expression continues, so `/` divides). Inside it, a function expression's
   // body is the same statement list as a declaration's — and minified bundles
   // are IIFE wrappers, so labels and nested declarations sit directly in one.
-  if (top !== undefined && top !== "block" && top !== "value-block") return false;
+  if (
+    top !== undefined &&
+    top !== "block" &&
+    top !== "value-block" &&
+    top !== "class-block" &&
+    top !== "class-value-block"
+  ) {
+    return false;
+  }
   if (!prev) return true;
   const text = jsTokenText(src, prev);
   if (prev.type === "ident") return text === "else" || text === "do";
   if (prev.type !== "punct") return false;
-  if (text === "{") return top === "block" || top === "value-block";
+  if (text === "{") {
+    return (
+      top === "block" ||
+      top === "value-block" ||
+      top === "class-block" ||
+      top === "class-value-block"
+    );
+  }
   if (text === ";") return true;
   if (text === ":") return state.statementColon;
   if (text === ")") return state.closed === "head-paren";
-  if (text === "}") return state.closed === "block";
+  if (text === "}") return state.closed === "block" || state.closed === "class-block";
   return false;
 }
 
@@ -988,7 +1037,7 @@ function regexAllowed(
     // `if(a)/re/.test(a)` and `if(a){b()}/re/.test(a)` both continue with a
     // statement, so the `/` opens a regex; `f(a)/2` and `({}).x/2` are values.
     if (t === ")") return closed === "head-paren";
-    if (t === "}") return closed === "block";
+    if (t === "}") return closed === "block" || closed === "class-block";
     // Both punctuators may be prefix or postfix, but valid code cannot start a
     // regex operand after the postfix form (`value++/2`, `value--/2`). Treating
     // the slash as division is the conservative reading: it keeps following
@@ -1086,14 +1135,34 @@ function isStatementHead(
   src: string,
   prev: JsToken | undefined,
   beforePrev: JsToken | undefined,
+  beforeBeforePrev: JsToken | undefined,
 ): boolean {
   if (prev?.type !== "ident") return false;
-  if (STATEMENT_HEAD_KEYWORDS.has(jsTokenText(src, prev))) return true;
+  if (STATEMENT_HEAD_KEYWORDS.has(jsTokenText(src, prev))) {
+    return !isMemberAccess(src, beforePrev);
+  }
   return (
     jsTokenText(src, prev) === "await" &&
     beforePrev?.type === "ident" &&
-    jsTokenText(src, beforePrev) === "for"
+    jsTokenText(src, beforePrev) === "for" &&
+    !isMemberAccess(src, beforeBeforePrev)
   );
+}
+
+function isMemberAccess(src: string, token: JsToken | undefined): boolean {
+  return (
+    token?.type === "punct" && (jsTokenText(src, token) === "." || jsTokenText(src, token) === "?.")
+  );
+}
+
+function incrementDepthCount(counts: Map<number, number>, depth: number): void {
+  counts.set(depth, (counts.get(depth) ?? 0) + 1);
+}
+
+function decrementDepthCount(counts: Map<number, number>, depth: number): void {
+  const count = counts.get(depth) ?? 0;
+  if (count <= 1) counts.delete(depth);
+  else counts.set(depth, count - 1);
 }
 
 // Whether a `{` opens a statement block (`if(a){`, `else{`, `function f(){`) as

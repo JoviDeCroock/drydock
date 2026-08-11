@@ -38,6 +38,9 @@ describe("tokenizeJs regex vs division", () => {
       "class C{class={}/2/b}", // a field named `class`, not a nested declaration
       "var o={module,x:{}/2/b}", // declaration-shaped object shorthand
       "a.b/2/c", // property
+      "obj.if(a)/2/b", // keyword-shaped method name
+      "obj?.while(a)/2/b", // optional keyword-shaped method name
+      "obj.for.await(a)/2/b", // property chain that resembles `for await`
       "1/2/3", // numbers
       "i++/2/b", // postfix update result
       "i--/2/b", // postfix update result
@@ -114,6 +117,8 @@ describe("tokenizeJs regex vs division", () => {
       "!function(){if(a){b()}/x/.test(a)}()",
       "var f=function(){interface R{v:string}/x/.test(a)}",
       "!function(){type T={a:1}\n/x/.test(a)}()",
+      "class C{static{function f(){}/x/.test(a)}}",
+      "const C=class{static{label:{b()}/x/.test(a)}}",
     ]) {
       expect(`${source} -> ${firstSlash(source)}`).toBe(`${source} -> regex`);
     }
@@ -172,4 +177,18 @@ describe("tokenizeJs regex vs division", () => {
     expect(() => tokenizeJs(source)).not.toThrow();
     expect(tokenizeJs(source)).toEqual([{ type: "template", start: 0, end: source.length }]);
   });
+
+  test("clears deeply nested pending function bodies in bounded time", () => {
+    // Truncated hostile samples can open many nested function expressions
+    // without ever reaching their bodies. Cleanup must be keyed by depth:
+    // filtering the complete pending list at each closing `);` is quadratic.
+    const depth = 24_000;
+    const source = `x=${"function(".repeat(depth)}x${");".repeat(depth)}`;
+    const start = performance.now();
+
+    const tokens = tokenizeJs(source);
+
+    expect(tokens).toHaveLength(depth * 4 + 3);
+    expect(performance.now() - start).toBeLessThan(1_500);
+  }, 5_000);
 });

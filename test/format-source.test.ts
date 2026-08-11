@@ -260,6 +260,34 @@ describe("formatSource (javascript)", () => {
     ]);
   });
 
+  test("keeps scanning after division by keyword-named member calls", () => {
+    const formatted = formatJs(
+      "const a=obj.if(value)/2;danger();const b=obj?.while(value)/3;safe();",
+    );
+
+    expect(lines(formatted)).toEqual([
+      "const a=obj.if(value)/2;",
+      "danger();",
+      "const b=obj?.while(value)/3;",
+      "safe();",
+    ]);
+  });
+
+  test("recognizes statement lists inside class static blocks", () => {
+    const formatted = formatJs(
+      "class C{static{function f(){}/x;y{z}/.test(a);foo()}}" +
+        "const D=class{static{label:{bar()}/a;b{c}/.test(d)}};safe();",
+    );
+
+    expect(formatted?.text).toContain("/x;y{z}/.test(a);");
+    expect(formatted?.text).toContain("/a;b{c}/.test(d)");
+    expectTokenStreamPreserved(
+      "class C{static{function f(){}/x;y{z}/.test(a);foo()}}" +
+        "const D=class{static{label:{bar()}/a;b{c}/.test(d)}};safe();",
+      formatted,
+    );
+  });
+
   test("keeps scanning after division by exported expression initializers", () => {
     const formatted = formatJs(
       "export const a={}/2;danger();export const b='text'\n/3;" +

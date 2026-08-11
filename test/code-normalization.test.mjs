@@ -147,6 +147,14 @@ describe("normalizeCodeForScanning", () => {
     }
   });
 
+  test("keeps scanning after division by keyword-named member calls", () => {
+    for (const prefix of ["const padding=obj.if(value)/2;", "const padding=obj?.while(value)/2;"]) {
+      const source = `${prefix}const name='chi'+'ld_process';`;
+
+      expect(normalizeCodeForScanning(source)).toContain('const name="child_process";');
+    }
+  });
+
   test("keeps scanning when a line-terminated break is followed by a divided value", () => {
     const source = "while(true){break\nvalue\n/2;const name='chi'+'ld_process';}";
 
@@ -240,6 +248,25 @@ describe("assembled-identifier evasion is caught by the deterministic scanner", 
         sha256: "index-js",
         flags: [],
         textSample: `export const padding={}\n/2;${payload}`,
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(computeRisk(findings)).toBe("high");
+    expect(findings.some((finding) => finding.ruleId === "code.process-execution")).toBe(true);
+  });
+
+  test("a divided keyword-named member call cannot hide the assembled process sink", () => {
+    const payload =
+      "const p=['chi','ld_pro','cess'].join('');const r=globalThis['re'+'quire'];" +
+      "const cp=r(p);cp['exec'+'Sync']('id')";
+    const staged = [
+      {
+        path: "index.js",
+        size: payload.length,
+        sha256: "index-js",
+        flags: [],
+        textSample: `const padding=obj.if(value)/2;${payload}`,
       },
     ];
     const findings = deterministicFindings(staged, createPackageDiff([], staged));
