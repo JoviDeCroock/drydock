@@ -657,13 +657,17 @@ export default function DocsPage() {
               </Prose>
               <CodeBlock name="renovate.json" lang="json">
                 {`{
-  "extends": ["github>JoviDeCroock/drydock//renovate/diff-links"]
+  "extends": [
+    "config:recommended",
+    "github>JoviDeCroock/drydock//renovate/diff-links"
+  ]
 }`}
               </CodeBlock>
               <Prose>
-                Updates without an exact version pair — pins, digests, and some lockfile-only
-                changes — simply omit the link, and update tables with no Drydock link render
-                unchanged.
+                List the preset after your base presets so its column layout wins. Updates without
+                two distinct published versions of one package — pins, digests, replacements, and
+                some lockfile-only changes — omit the link, and columns that end up empty are
+                dropped from the table.
               </Prose>
             </Subsection>
 
@@ -680,6 +684,8 @@ on:
   pull_request:
     types: [opened]
 
+# Dependabot-triggered runs honor this permissions key; the read-only
+# default token does not apply when permissions are set explicitly.
 permissions:
   pull-requests: write
 
