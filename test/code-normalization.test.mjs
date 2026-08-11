@@ -105,6 +105,16 @@ describe("normalizeCodeForScanning", () => {
     }
   });
 
+  test("never folds regex contents after bare variable declarations", () => {
+    for (const source of [
+      "let value\n/'chi' + 'ld_process'/.test(value)",
+      "var first,second\n/'chi' + 'ld_process'/.test(value)",
+      "let { value }\n/'chi' + 'ld_process'/.test(value)",
+    ]) {
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
+  });
+
   test("never folds regex contents after typed or declaration bodies", () => {
     const functionSource = "function f():void{}/'chi' + 'ld_process'/.test(a)";
     const interfaceSource = "interface Result{value:string}/'chi' + 'ld_process'/.test(a)";

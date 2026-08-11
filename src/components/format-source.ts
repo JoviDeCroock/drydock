@@ -38,6 +38,18 @@ export interface FormattedSource {
   sourceLines: number[];
 }
 
+interface FormatAttempt {
+  formatted: FormattedSource | null;
+  // False means the safety checks rejected this source, so a two-sided diff
+  // must not pair it with a reformatted opposite side.
+  accepted: boolean;
+}
+
+export interface FormattedSourcePair {
+  before: FormattedSource | null;
+  after: FormattedSource | null;
+}
+
 // Samples are capped at 128 KiB upstream (SCAN_FILE_SAMPLE_LIMIT); this is the
 // safety valve for anything that arrives larger, since formatting multiplies the
 // line count the line diff downstream has to pair up.
@@ -87,7 +99,30 @@ export function looksMinified(text: string): boolean {
  * A null result means callers should keep rendering the original bytes.
  */
 export function formatSource(text: string, language: FormatLanguage): FormattedSource | null {
-  if (!text || text.length > FORMAT_MAX_CHARS) return null;
+  return attemptFormatSource(text, language).formatted;
+}
+
+/**
+ * Formats a review pair without ever mixing a safely rejected raw side with a
+ * reformatted opposite side. A side with no useful breaks is still accepted:
+ * its raw text is already in the representation the formatter would produce.
+ */
+export function formatSourcePair(
+  beforeText: string,
+  afterText: string,
+  language: FormatLanguage,
+): FormattedSourcePair {
+  const before = attemptFormatSource(beforeText, language);
+  const after = attemptFormatSource(afterText, language);
+  if (beforeText && afterText && (!before.accepted || !after.accepted)) {
+    return { before: null, after: null };
+  }
+  return { before: before.formatted, after: after.formatted };
+}
+
+function attemptFormatSource(text: string, language: FormatLanguage): FormatAttempt {
+  if (!text) return { formatted: null, accepted: true };
+  if (text.length > FORMAT_MAX_CHARS) return { formatted: null, accepted: false };
   const jsTokens = language === "css" ? null : significantJsTokens(text);
   // File extensions are only hints: packages routinely ship JSX in `.js` and
   // occasionally `.ts` files. The small JS lexer cannot preserve whitespace-
@@ -98,18 +133,20 @@ export function formatSource(text: string, language: FormatLanguage): FormattedS
     (language === "js" || language === "ts") &&
     containsUnsupportedJsx(text, jsTokens ?? [], language === "ts")
   ) {
-    return null;
+    return { formatted: null, accepted: false };
   }
   const breaks =
     language === "css" ? cssBreaks(text) : jsBreaks(text, language === "json", jsTokens ?? []);
-  if (!breaks.length) return null;
+  if (!breaks.length) return { formatted: null, accepted: true };
   const formatted = applyBreaks(text, breaks);
   // Lexical goals depend on context. On malformed or clipped hostile input,
   // inserting whitespace can make the lexer reinterpret a later slash even
   // though no non-whitespace character moved. Never expose that reinterpretation
   // to reviewers: a mismatched token stream falls back to the shipped bytes.
-  if (jsTokens && !preservesJsTokenStream(text, jsTokens, formatted.text)) return null;
-  return formatted;
+  if (jsTokens && !preservesJsTokenStream(text, jsTokens, formatted.text)) {
+    return { formatted: null, accepted: false };
+  }
+  return { formatted, accepted: true };
 }
 
 const JSX_PRECEDING_PUNCTUATORS = new Set([

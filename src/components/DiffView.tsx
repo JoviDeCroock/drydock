@@ -12,7 +12,12 @@ import {
 } from "./diff-annotations";
 import { buildDisplaySegments, GAP_EXPAND_STEP, GAP_SHOW_ALL_MAX } from "./diff-hunks";
 import { diffOverviewMarkers, displayOverviewRows, type DiffOverviewMarker } from "./diff-overview";
-import { formatLanguageFor, formatSource, looksMinified, remapFindingLines } from "./format-source";
+import {
+  formatLanguageFor,
+  formatSourcePair,
+  looksMinified,
+  remapFindingLines,
+} from "./format-source";
 import {
   canHighlight,
   ensureHighlighter,
@@ -679,13 +684,12 @@ export function DiffView({
   // in DiffBody because the meta row below has to describe the text that is
   // actually rendered — whether it was reformatted, and whether it still fits the
   // highlight cap once it was.
-  const beforeFormatted = useMemo(
-    () => (reformat ? formatSource(beforeSample, reformat) : null),
-    [beforeSample, reformat],
-  );
-  const afterFormatted = useMemo(
-    () => (reformat ? formatSource(afterSample, reformat) : null),
-    [afterSample, reformat],
+  const { before: beforeFormatted, after: afterFormatted } = useMemo(
+    () =>
+      reformat
+        ? formatSourcePair(beforeSample, afterSample, reformat)
+        : { before: null, after: null },
+    [beforeSample, afterSample, reformat],
   );
   const beforeText = beforeFormatted?.text ?? beforeSample;
   const afterText = afterFormatted?.text ?? afterSample;

@@ -113,6 +113,12 @@ interface BracketState {
   // Only a brace opened directly by `export` (or `export type`) is an export
   // clause whose closing brace terminates the module declaration.
   moduleExportClauseDepth: number | null;
+  // A bare `let`/`var` declarator is complete before a following line-start
+  // regex (`let value\n/re/`). Keep that declaration context distinct from an
+  // initialized declarator, whose value can continue as division across a line.
+  bareVariableDeclarationDepth: number | null;
+  bareVariableDeclarationCanEnd: boolean;
+  variableDeclaratorHasInitializer: boolean;
 }
 
 // Keywords whose parenthesised head is followed by a statement.
@@ -337,6 +343,7 @@ export function tokenizeJs(src: string): JsToken[] {
         lineTerminatorBeforePrev,
         prevEndsModuleDeclaration,
         typeAliasEndsBeforeNextToken(state, lineTerminatorBefore),
+        bareVariableDeclarationEndsBeforeNextToken(state, lineTerminatorBefore),
       )
     ) {
       const start = i;
@@ -513,6 +520,7 @@ function scanTemplate(src: string, i: number): number {
         frame.lineTerminatorBeforePrev,
         frame.prevEndsModuleDeclaration,
         typeAliasEndsBeforeNextToken(frame.state, frame.lineTerminatorBefore),
+        bareVariableDeclarationEndsBeforeNextToken(frame.state, frame.lineTerminatorBefore),
       )
     ) {
       const start = j;
@@ -700,6 +708,12 @@ function updateBracketState(
 ): void {
   const text = jsTokenText(src, token);
   if (
+    bareVariableDeclarationEndsBeforeNextToken(state, lineTerminatorBefore) &&
+    !continuesBareVariableDeclaration(src, token)
+  ) {
+    clearBareVariableDeclaration(state);
+  }
+  if (
     state.typeAliasBodyDepth === state.brackets.length &&
     state.typeAliasBodySawToken &&
     lineTerminatorBefore &&
@@ -721,6 +735,17 @@ function updateBracketState(
         startsStatementAfterLineTerminator(src, prev, state, lineTerminatorBefore));
     const decoratedClass =
       text === "class" && state.pendingDecoratorDepth === state.brackets.length;
+    const bareVariableDeclaration = (text === "let" || text === "var") && statementStart;
+    if (bareVariableDeclaration) {
+      state.bareVariableDeclarationDepth = state.brackets.length;
+      state.bareVariableDeclarationCanEnd = false;
+      state.variableDeclaratorHasInitializer = false;
+    } else if (
+      state.bareVariableDeclarationDepth === state.brackets.length &&
+      !state.bareVariableDeclarationCanEnd
+    ) {
+      state.bareVariableDeclarationCanEnd = true;
+    }
     if (state.pendingTypeAliasDepth === state.brackets.length && text !== "type") {
       state.pendingTypeAliasHasName = true;
     }
@@ -808,6 +833,20 @@ function updateBracketState(
 
   const followsStatementColon = state.statementColon;
   state.statementColon = false;
+
+  if (state.bareVariableDeclarationDepth === state.brackets.length) {
+    if (text === "=") {
+      state.variableDeclaratorHasInitializer = true;
+    } else if (text === ",") {
+      state.bareVariableDeclarationCanEnd = false;
+      state.variableDeclaratorHasInitializer = false;
+    } else if (text === ":" || text === ";") {
+      // Type annotations need the full TypeScript declaration grammar to know
+      // where they end. Leave those opaque rather than guessing here; a
+      // semicolon is already an explicit statement boundary.
+      clearBareVariableDeclaration(state);
+    }
+  }
 
   if (
     text === "@" &&
@@ -924,6 +963,18 @@ function updateBracketState(
   } else if (text === ")" || text === "]" || text === "}") {
     state.closed = state.brackets.pop() ?? null;
     if (
+      state.bareVariableDeclarationDepth !== null &&
+      state.bareVariableDeclarationDepth > state.brackets.length
+    ) {
+      clearBareVariableDeclaration(state);
+    } else if (
+      state.bareVariableDeclarationDepth === state.brackets.length &&
+      !state.variableDeclaratorHasInitializer &&
+      (text === "]" || text === "}")
+    ) {
+      state.bareVariableDeclarationCanEnd = true;
+    }
+    if (
       text === "}" &&
       state.moduleDeclarationKind &&
       state.moduleDeclarationDepth === state.brackets.length &&
@@ -988,7 +1039,32 @@ function createBracketState(): BracketState {
     moduleDeclarationClosedClause: false,
     moduleImportEquals: false,
     moduleExportClauseDepth: null,
+    bareVariableDeclarationDepth: null,
+    bareVariableDeclarationCanEnd: false,
+    variableDeclaratorHasInitializer: false,
   };
+}
+
+function bareVariableDeclarationEndsBeforeNextToken(
+  state: BracketState,
+  lineTerminatorBefore: boolean,
+): boolean {
+  return (
+    lineTerminatorBefore &&
+    state.bareVariableDeclarationDepth === state.brackets.length &&
+    state.bareVariableDeclarationCanEnd &&
+    !state.variableDeclaratorHasInitializer
+  );
+}
+
+function continuesBareVariableDeclaration(src: string, token: JsToken): boolean {
+  return token.type === "punct" && [",", "=", ":"].includes(jsTokenText(src, token));
+}
+
+function clearBareVariableDeclaration(state: BracketState): void {
+  state.bareVariableDeclarationDepth = null;
+  state.bareVariableDeclarationCanEnd = false;
+  state.variableDeclaratorHasInitializer = false;
 }
 
 function typeAliasEndsBeforeNextToken(state: BracketState, lineTerminatorBefore: boolean): boolean {
@@ -1148,10 +1224,12 @@ function regexAllowed(
   lineTerminatorBeforePrev: boolean,
   prevEndsModuleDeclaration: boolean,
   prevEndsTypeAliasDeclaration: boolean,
+  prevEndsBareVariableDeclaration: boolean,
 ): boolean {
   if (!prev) return true;
   if (lineTerminatorBefore && prevEndsModuleDeclaration) return true;
   if (prevEndsTypeAliasDeclaration) return true;
+  if (prevEndsBareVariableDeclaration) return true;
   if (prev.type === "punct") {
     const t = jsTokenText(src, prev);
     // `if(a)/re/.test(a)` and `if(a){b()}/re/.test(a)` both continue with a

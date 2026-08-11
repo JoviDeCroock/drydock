@@ -149,6 +149,10 @@ describe("tokenizeJs regex vs division", () => {
       "call()\ninterface Result{value:string}/x/.test(a)",
       "call()\nimport 'x'\n/x/.test(a)",
       "call()\n@sealed class Result{}/x/.test(a)",
+      "let value\n/x/.test(a)",
+      "var first,second\n/x/.test(a)",
+      "let { value }\n/x/.test(a)",
+      "var [value]\n/x/.test(a)",
     ]) {
       expect(`${source} -> ${firstSlash(source)}`).toBe(`${source} -> regex`);
     }
@@ -156,6 +160,12 @@ describe("tokenizeJs regex vs division", () => {
 
   test("keeps line-broken function and class expressions value-shaped", () => {
     for (const source of ["const f=\nfunction(){}/2/b", "const C=\nclass{}/2/b"]) {
+      expect(`${source} -> ${firstSlash(source)}`).toBe(`${source} -> punct`);
+    }
+  });
+
+  test("keeps division after initialized and subsequent value statements", () => {
+    for (const source of ["let value=padding\n/2/b", "let value\npadding\n/2/b"]) {
       expect(`${source} -> ${firstSlash(source)}`).toBe(`${source} -> punct`);
     }
   });

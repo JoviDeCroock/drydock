@@ -4,6 +4,7 @@ import {
   FORMAT_MAX_CHARS,
   formatLanguageFor,
   formatSource,
+  formatSourcePair,
   looksMinified,
   remapFindingLines,
   type FormattedSource,
@@ -255,6 +256,32 @@ describe("formatSource (javascript)", () => {
 
       expect(formatted?.text).toContain("/x;y{z}/.test(a);");
     }
+  });
+
+  test("keeps regexes whole after bare variable declarations", () => {
+    for (const source of [
+      "let value\n/a;b{2}/.test(value);safe();",
+      "var first,second\n/a;b{2}/.test(value);safe();",
+      "let { value }\n/a;b{2}/.test(value);safe();",
+    ]) {
+      const formatted = formatJs(source);
+
+      expect(formatted?.text).toContain("/a;b{2}/.test(value);");
+    }
+  });
+
+  test("keeps both diff sides raw when either side rejects reformatting", () => {
+    const shared = `const config={a:1,b:2};${"safe();".repeat(90)}`;
+    const pair = formatSourcePair(shared, `${shared}const view=<Widget/>;`, "js");
+
+    expect(pair).toEqual({ before: null, after: null });
+  });
+
+  test("still formats one side when the other already needs no re-flow", () => {
+    const pair = formatSourcePair("const value=1;\n", "const value=1;safe();", "js");
+
+    expect(pair.before).toBeNull();
+    expect(pair.after?.text).toBe("const value=1;\nsafe();");
   });
 
   test("keeps regexes whole after line-terminated statements and type aliases", () => {
