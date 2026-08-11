@@ -135,11 +135,16 @@ describe("normalizeCodeForScanning", () => {
   });
 
   test("never folds regex contents after ASI-terminated statements or type aliases", () => {
-    const debuggerSource = "debugger\n/'chi' + 'ld_process'/.test(a)";
-    const typeSource = "type Result={value:string}\n/'chi' + 'ld_process'/.test(a)";
-
-    expect(normalizeCodeForScanning(debuggerSource)).toBe(debuggerSource);
-    expect(normalizeCodeForScanning(typeSource)).toBe(typeSource);
+    for (const source of [
+      "debugger\n/'chi' + 'ld_process'/.test(a)",
+      "type Result={value:string}\n/'chi' + 'ld_process'/.test(a)",
+      "type Result=A|\nB\n/'chi' + 'ld_process'/.test(a)",
+      "type Result=A&\nB\n/'chi' + 'ld_process'/.test(a)",
+      "type Result=A extends B?\nC:D\n/'chi' + 'ld_process'/.test(a)",
+      "type Result=A extends B?C:\nD\n/'chi' + 'ld_process'/.test(a)",
+    ]) {
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
   });
 
   test("keeps scanning after division by a Unicode identifier", () => {
@@ -189,6 +194,9 @@ describe("normalizeCodeForScanning", () => {
     for (const source of [
       "import 'x'\n/'chi' + 'ld_process'/.test(value)",
       "import { x } from 'x'\n/'chi' + 'ld_process'/.test(value)",
+      "import Foo=require('foo')\n/'chi' + 'ld_process'/.test(value)",
+      "export import Foo=require('foo')\n/'chi' + 'ld_process'/.test(value)",
+      "import Foo=Bar.Baz\n/'chi' + 'ld_process'/.test(value)",
       "const x=1;export { x }\n/'chi' + 'ld_process'/.test(value)",
     ]) {
       expect(normalizeCodeForScanning(source)).toBe(source);

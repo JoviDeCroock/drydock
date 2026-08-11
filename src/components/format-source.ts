@@ -89,11 +89,17 @@ export function looksMinified(text: string): boolean {
 export function formatSource(text: string, language: FormatLanguage): FormattedSource | null {
   if (!text || text.length > FORMAT_MAX_CHARS) return null;
   const jsTokens = language === "css" ? null : significantJsTokens(text);
-  // File extensions are only hints: packages routinely ship JSX in `.js`
-  // files. The small JS lexer cannot preserve whitespace-sensitive JSX text,
-  // so leave any expression-position tag opener opaque even when Shiki chose
-  // the JavaScript grammar for the path.
-  if (language === "js" && containsUnsupportedJsx(text, jsTokens ?? [])) return null;
+  // File extensions are only hints: packages routinely ship JSX in `.js` and
+  // occasionally `.ts` files. The small JS lexer cannot preserve whitespace-
+  // sensitive JSX text, so leave it opaque. TypeScript angle assertions remain
+  // eligible: in TS mode only unambiguous fragments and closing/self-closing
+  // tags trigger the fallback.
+  if (
+    (language === "js" || language === "ts") &&
+    containsUnsupportedJsx(text, jsTokens ?? [], language === "ts")
+  ) {
+    return null;
+  }
   const breaks =
     language === "css" ? cssBreaks(text) : jsBreaks(text, language === "json", jsTokens ?? []);
   if (!breaks.length) return null;
@@ -124,19 +130,21 @@ const JSX_PRECEDING_PUNCTUATORS = new Set([
 ]);
 const JSX_PRECEDING_KEYWORDS = new Set(["await", "case", "default", "return", "throw", "yield"]);
 
-function containsUnsupportedJsx(src: string, tokens: JsToken[]): boolean {
+function containsUnsupportedJsx(
+  src: string,
+  tokens: JsToken[],
+  allowAngleAssertions: boolean,
+): boolean {
   const structuralTokens = tokens.filter((token) => token.type !== "comment");
   for (let index = 0; index < structuralTokens.length - 1; index += 1) {
     const token = structuralTokens[index];
     if (!isPunctText(src, token, "<")) continue;
     const next = structuralTokens[index + 1];
-    // Closing tags are unambiguous even when the opening element followed a
-    // statement head (`if (ready) <Widget />`) rather than an expression-leading
-    // punctuator. A real regex token retains its closing slash, unlike the
-    // lexer's opaque scan of JSX `</tag>`.
-    if (next.type === "regex" && /^\/(?:[\w$.:-]+)?>$/u.test(jsTokenText(src, next))) {
-      return true;
-    }
+    // Fragments are unambiguous. Closing tags can be swallowed into an opaque
+    // regex token by the JS lexer, so inspect the shipped bytes rather than the
+    // guessed token end. Conservatively treating `value</x>y/` as unsupported
+    // only skips re-flow; it can never change the evidence.
+    if (isPunctText(src, next, ">") || looksLikeJsxClosingTag(src, token.end)) return true;
     if (next.type !== "ident" && !isPunctText(src, next, ">")) continue;
     if (next.type === "ident") {
       for (
@@ -154,6 +162,7 @@ function containsUnsupportedJsx(src: string, tokens: JsToken[]): boolean {
         if (isPunctText(src, structuralTokens[cursor], ";")) break;
       }
     }
+    if (allowAngleAssertions) continue;
     const previous = structuralTokens[index - 1];
     if (!previous) return true;
     if (previous.type === "punct" && JSX_PRECEDING_PUNCTUATORS.has(jsTokenText(src, previous))) {
@@ -164,6 +173,16 @@ function containsUnsupportedJsx(src: string, tokens: JsToken[]): boolean {
     }
   }
   return false;
+}
+
+function looksLikeJsxClosingTag(src: string, start: number): boolean {
+  if (src[start] !== "/") return false;
+  let index = start + 1;
+  if (src[index] === ">") return true;
+  if (!/[\w$]/u.test(src[index] ?? "")) return false;
+  index += 1;
+  while (index < src.length && /[\w$.:-]/u.test(src[index])) index += 1;
+  return src[index] === ">";
 }
 
 function significantJsTokens(src: string): JsToken[] {

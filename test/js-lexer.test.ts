@@ -60,6 +60,8 @@ describe("tokenizeJs regex vs division", () => {
       "result.return/2/b", // keyword-shaped property name
       "result?.extends/2/b", // optional keyword-shaped property name
       "typeof x/2/b", // the operand, not the keyword, precedes the slash
+      "import('x')/2/b", // dynamic import result
+      "import.meta.url/2/b", // import.meta member result
       "value\n/2/b", // an ordinary line break does not force ASI
       "while(a){break\nvalue\n/2/b}", // `value` is not a same-line break label
       "while(a){continue\nvalue\n/2/b}", // nor a same-line continue label
@@ -115,8 +117,15 @@ describe("tokenizeJs regex vs division", () => {
       "type Result={value:string}\n/x/.test(a)",
       "type Result=string\n/x/.test(a)",
       "type Result={a:string}|{b:string}\n/x/.test(a)",
+      "type Result=A|\nB\n/x/.test(a)",
+      "type Result=A&\nB\n/x/.test(a)",
+      "type Result=A extends B?\nC:D\n/x/.test(a)",
+      "type Result=A extends B?C:\nD\n/x/.test(a)",
       "import 'x'\n/x/.test(a)",
       "import { x } from 'x'\n/x/.test(a)",
+      "import Foo=require('foo')\n/x/.test(a)",
+      "export import Foo=require('foo')\n/x/.test(a)",
+      "import Foo=Bar.Baz\n/x/.test(a)",
       "import 'x'\nimport 'y'\n/x/.test(a)",
       "const x=1;export { x }\n/x/.test(a)",
       "import 'x'\nclass A{}/x/.test(a)",

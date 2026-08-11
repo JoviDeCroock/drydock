@@ -30,6 +30,12 @@ function formatJs(source: string): FormattedSource | null {
   return formatted;
 }
 
+function formatTs(source: string): FormattedSource | null {
+  const formatted = formatSource(source, "ts");
+  expectTokenStreamPreserved(source, formatted);
+  return formatted;
+}
+
 function formatJson(source: string): FormattedSource | null {
   const formatted = formatSource(source, "json");
   expectTokenStreamPreserved(source, formatted);
@@ -86,6 +92,14 @@ describe("formatSource (javascript)", () => {
     expect(formatSource("const view=<>safe;payload</>;danger();", "js")).toBeNull();
     expect(formatSource("export default <Widget/>;danger();", "js")).toBeNull();
     expect(formatSource("if(ready)<Widget/>;danger();", "js")).toBeNull();
+    expect(formatSource("if(ready)<>safe;payload</>;danger();", "js")).toBeNull();
+    expect(formatSource("for(;;)<Widget>safe;payload</Widget>;danger();", "js")).toBeNull();
+  });
+
+  test("leaves unambiguous JSX shipped under TypeScript extensions opaque", () => {
+    expect(formatSource("const view=<Widget>safe;payload</Widget>;danger();", "ts")).toBeNull();
+    expect(formatSource("const view=<Widget value={x}/>;danger();", "ts")).toBeNull();
+    expect(formatSource("const view=<>safe;payload</>;danger();", "ts")).toBeNull();
   });
 
   test("does not mistake relational expressions for JSX", () => {
@@ -385,6 +399,27 @@ describe("formatSource (javascript)", () => {
 
     expect(bareImport?.text).toContain("/a;b{c}/.test(value);");
     expect(namedExport?.text).toContain("/a;b{c}/.test(value);");
+  });
+
+  test("keeps regex statements after multiline type aliases whole", () => {
+    for (const source of [
+      "type Result=A|\nB\n/a;b{c}/.test(value);safe();",
+      "type Result=A&\nB\n/a;b{c}/.test(value);safe();",
+      "type Result=A extends B?\nC:D\n/a;b{c}/.test(value);safe();",
+      "type Result=A extends B?C:\nD\n/a;b{c}/.test(value);safe();",
+    ]) {
+      expect(formatTs(source)?.text).toContain("/a;b{c}/.test(value);");
+    }
+  });
+
+  test("keeps regex statements after TypeScript import-equals declarations whole", () => {
+    for (const source of [
+      "import Foo=require('foo')\n/a;b{c}/.test(value);safe();",
+      "export import Foo=require('foo')\n/a;b{c}/.test(value);safe();",
+      "import Foo=Bar.Baz\n/a;b{c}/.test(value);safe();",
+    ]) {
+      expect(formatTs(source)?.text).toContain("/a;b{c}/.test(value);");
+    }
   });
 
   test("never breaks inside strings containing JSON-superset line separators", () => {

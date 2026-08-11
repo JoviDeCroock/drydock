@@ -105,6 +105,10 @@ interface BracketState {
   moduleDeclarationKind: "import" | "export" | null;
   moduleDeclarationSawSource: boolean;
   moduleDeclarationClosedClause: boolean;
+  // TypeScript's `import Foo = require("foo")` and `import Foo = Bar.Baz`
+  // declarations end at the RHS value even though they contain a call/member
+  // expression. Keep them distinct from dynamic `import(...)` expressions.
+  moduleImportEquals: boolean;
   // Export declarations can also contain object/class/function initializers.
   // Only a brace opened directly by `export` (or `export type`) is an export
   // clause whose closing brace terminates the module declaration.
@@ -730,6 +734,7 @@ function updateBracketState(
       state.moduleDeclarationKind = text;
       state.moduleDeclarationSawSource = false;
       state.moduleDeclarationClosedClause = false;
+      state.moduleImportEquals = false;
       state.moduleExportClauseDepth = null;
     } else if (
       state.moduleDeclarationKind === "export" &&
@@ -847,6 +852,14 @@ function updateBracketState(
     }
     clearTypeAliasBody(state);
   }
+  if (
+    text === "=" &&
+    state.moduleDeclarationDepth === state.brackets.length &&
+    (state.moduleDeclarationKind === "import" ||
+      (state.moduleDeclarationKind === "export" && isIdentText(src, beforePrev, "import")))
+  ) {
+    state.moduleImportEquals = true;
+  }
   if (state.pendingTypedBodyDepth === state.brackets.length && text === ";") {
     // A method signature or truncated annotation has no implementation body.
     state.pendingTypedBodyDepth = null;
@@ -856,7 +869,8 @@ function updateBracketState(
       state.moduleDeclarationKind === "import" &&
       state.moduleDeclarationDepth === state.brackets.length &&
       !state.moduleDeclarationSawSource &&
-      !state.moduleDeclarationClosedClause
+      !state.moduleDeclarationClosedClause &&
+      isIdentText(src, prev, "import")
     ) {
       clearModuleDeclaration(state); // dynamic import(...)
     }
@@ -924,7 +938,8 @@ function updateBracketState(
     state.moduleDeclarationKind === "import" &&
     state.moduleDeclarationDepth === state.brackets.length &&
     !state.moduleDeclarationSawSource &&
-    !state.moduleDeclarationClosedClause
+    !state.moduleDeclarationClosedClause &&
+    isIdentText(src, prev, "import")
   ) {
     clearModuleDeclaration(state); // import.meta
   } else if (text === ";") {
@@ -971,6 +986,7 @@ function createBracketState(): BracketState {
     moduleDeclarationKind: null,
     moduleDeclarationSawSource: false,
     moduleDeclarationClosedClause: false,
+    moduleImportEquals: false,
     moduleExportClauseDepth: null,
   };
 }
@@ -1009,6 +1025,20 @@ const TYPE_ALIAS_OPERAND_KEYWORDS = new Set([
   "typeof",
 ]);
 
+// These punctuators require another type operand on the following line. If the
+// alias state is cleared after `A |\nB`, the slash after the completed alias is
+// misread as division and both lexer consumers walk into a regex body.
+const TYPE_ALIAS_TRAILING_CONTINUATION_PUNCTUATORS = new Set([
+  "|",
+  "&",
+  "?",
+  ":",
+  ",",
+  ".",
+  "<",
+  "=>",
+]);
+
 function continuesTypeAliasAcrossLine(
   src: string,
   token: JsToken,
@@ -1021,6 +1051,12 @@ function continuesTypeAliasAcrossLine(
     return true;
   }
   if (token.type === "ident" && jsTokenText(src, token) === "extends") return true;
+  if (
+    prev?.type === "punct" &&
+    TYPE_ALIAS_TRAILING_CONTINUATION_PUNCTUATORS.has(jsTokenText(src, prev))
+  ) {
+    return true;
+  }
   return prev?.type === "ident" && TYPE_ALIAS_OPERAND_KEYWORDS.has(jsTokenText(src, prev));
 }
 
@@ -1185,6 +1221,13 @@ function tokenEndsModuleDeclaration(
 ): boolean {
   if (!token || !state.moduleDeclarationKind) return false;
   if (
+    state.moduleImportEquals &&
+    state.moduleDeclarationDepth === state.brackets.length &&
+    (token.type === "ident" || (token.type === "punct" && jsTokenText(src, token) === ")"))
+  ) {
+    return true;
+  }
+  if (
     token.type === "string" &&
     state.moduleDeclarationSawSource &&
     state.moduleDeclarationDepth === state.brackets.length
@@ -1209,6 +1252,7 @@ function clearModuleDeclaration(state: BracketState): void {
   state.moduleDeclarationKind = null;
   state.moduleDeclarationSawSource = false;
   state.moduleDeclarationClosedClause = false;
+  state.moduleImportEquals = false;
   state.moduleExportClauseDepth = null;
 }
 
