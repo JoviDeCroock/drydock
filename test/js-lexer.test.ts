@@ -40,6 +40,9 @@ describe("tokenizeJs regex vs division", () => {
       "result.return/2/b", // keyword-shaped property name
       "result?.extends/2/b", // optional keyword-shaped property name
       "typeof x/2/b", // the operand, not the keyword, precedes the slash
+      "value\n/2/b", // an ordinary line break does not force ASI
+      "const π=1;π/2/b", // non-ASCII identifiers are still values
+      "const 变量=1;变量/2/b", // including non-Latin scripts
     ]) {
       expect(`${source} -> ${firstSlash(source)}`).toBe(`${source} -> punct`);
     }
@@ -71,6 +74,12 @@ describe("tokenizeJs regex vs division", () => {
       "return /x/.test(a)",
       "a=/x/.test(a)",
       "/x/.test(a)",
+      "debugger\n/x/.test(a)",
+      "debugger/*\n*/ /x/.test(a)",
+      "debugger\u2028/x/.test(a)",
+      "while(a){break\n/x/.test(a)}",
+      "label:while(a){continue label\n/x/.test(a)}",
+      "type Result={value:string}\n/x/.test(a)",
     ]) {
       expect(`${source} -> ${firstSlash(source)}`).toBe(`${source} -> regex`);
     }
@@ -82,6 +91,10 @@ describe("tokenizeJs regex vs division", () => {
     expect(kinds("if(a)/x;y{z}/.test(a)")).toBe(
       "ident:if punct:( ident:a punct:) regex:/x;y{z}/ punct:. ident:test punct:( ident:a punct:)",
     );
+  });
+
+  test("keeps Unicode identifiers in one token", () => {
+    expect(kinds("const π=变量𐊧;")).toBe("ident:const ident:π punct:= ident:变量𐊧 punct:;");
   });
 
   test("keeps comments, regexes, and nested templates whole inside interpolation", () => {

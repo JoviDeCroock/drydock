@@ -66,6 +66,13 @@ interface BracketState {
   // object literals and conditional expressions.
   labelCandidate: boolean;
   statementColon: boolean;
+  // Type aliases are declarations even though their right-hand side may end in
+  // a value-shaped token (`type T = string`) or an object-shaped brace. Keep the
+  // declaration depth so an object-type body is classified as a declaration
+  // block rather than an object value.
+  pendingTypeAliasDepth: number | null;
+  pendingTypeAliasHasName: boolean;
+  pendingTypeAliasObjectDepth: number | null;
 }
 
 // Keywords whose parenthesised head is followed by a statement.
@@ -85,6 +92,13 @@ const BLOCK_PRECEDING_PUNCTUATORS = new Set([";", "{", "}", ")", "=>"]);
 
 const TYPE_BLOCK_DECLARATION_KEYWORDS = new Set(["enum", "interface", "module", "namespace"]);
 const DECLARATION_PREFIX_KEYWORDS = new Set(["const", "declare", "export"]);
+const TYPE_ALIAS_PREFIX_KEYWORDS = new Set(["declare", "export"]);
+
+// A line terminator is syntactically significant after these statements. A
+// following slash starts a new regex expression; it cannot continue the prior
+// statement as division. `return`/`yield`/`await` already live in
+// REGEX_PRECEDING_KEYWORDS because they also accept a regex without a newline.
+const LINE_TERMINATED_REGEX_KEYWORDS = new Set(["break", "continue", "debugger"]);
 
 // While a typed body is pending, these punctuators introduce a type literal
 // rather than the implementation body. The pending marker survives that nested
@@ -154,6 +168,7 @@ export function tokenizeJs(src: string): JsToken[] {
   const tokens: JsToken[] = [];
   let prev: JsToken | undefined;
   let beforePrev: JsToken | undefined;
+  let lineTerminatorBefore = false;
   let i = 0;
   // Open brackets, innermost last, and the kind the most recent closer popped.
   // `closed` is only ever read while `prev` is that closer.
@@ -164,6 +179,7 @@ export function tokenizeJs(src: string): JsToken[] {
     tokens.push(token);
     beforePrev = prev;
     prev = token;
+    lineTerminatorBefore = false;
   };
 
   while (i < n) {
@@ -171,7 +187,10 @@ export function tokenizeJs(src: string): JsToken[] {
 
     if (isWhitespace(c)) {
       const start = i;
-      while (i < n && isWhitespace(src[i])) i += 1;
+      while (i < n && isWhitespace(src[i])) {
+        if (isLineTerminator(src[i])) lineTerminatorBefore = true;
+        i += 1;
+      }
       tokens.push({ type: "ws", start, end: i });
       continue;
     }
@@ -179,7 +198,7 @@ export function tokenizeJs(src: string): JsToken[] {
     if (c === "/" && src[i + 1] === "/") {
       const start = i;
       i += 2;
-      while (i < n && src[i] !== "\n") i += 1;
+      while (i < n && !isLineTerminator(src[i])) i += 1;
       tokens.push({ type: "comment", start, end: i });
       continue;
     }
@@ -188,6 +207,7 @@ export function tokenizeJs(src: string): JsToken[] {
       i += 2;
       while (i < n && !(src[i] === "*" && src[i + 1] === "/")) i += 1;
       i = Math.min(n, i + 2);
+      if (containsLineTerminator(src, start, i)) lineTerminatorBefore = true;
       tokens.push({ type: "comment", start, end: i });
       continue;
     }
@@ -207,7 +227,7 @@ export function tokenizeJs(src: string): JsToken[] {
       continue;
     }
 
-    if (c === "/" && regexAllowed(src, prev, beforePrev, state.closed)) {
+    if (c === "/" && regexAllowed(src, prev, beforePrev, state.closed, lineTerminatorBefore)) {
       const start = i;
       i = scanRegex(src, i);
       pushSignificant({ type: "regex", start, end: i });
@@ -221,10 +241,15 @@ export function tokenizeJs(src: string): JsToken[] {
       continue;
     }
 
-    if (isIdentStart(c)) {
+    const identifierStart = codePointAt(src, i);
+    if (isIdentStart(identifierStart)) {
       const start = i;
-      i += 1;
-      while (i < n && isIdentPart(src[i])) i += 1;
+      i += identifierStart.length;
+      while (i < n) {
+        const part = codePointAt(src, i);
+        if (!isIdentPart(part)) break;
+        i += part.length;
+      }
       pushSignificant({ type: "ident", start, end: i });
       continue;
     }
@@ -258,7 +283,7 @@ function scanString(src: string, i: number): { end: number; value: string } {
       j += 1;
       break;
     }
-    if (c === "\n") break; // unterminated single-line string
+    if (isLineTerminator(c)) break; // unterminated single-line string
     value += c;
     j += 1;
   }
@@ -276,6 +301,7 @@ interface TemplateExpressionFrame {
   state: BracketState;
   prev?: JsToken;
   beforePrev?: JsToken;
+  lineTerminatorBefore: boolean;
 }
 
 type TemplateScanFrame = TemplateLiteralFrame | TemplateExpressionFrame;
@@ -310,7 +336,12 @@ function scanTemplate(src: string, i: number): number {
         continue;
       }
       if (c === "$" && src[j + 1] === "{") {
-        frames.push({ kind: "expression", depth: 1, state: createBracketState() });
+        frames.push({
+          kind: "expression",
+          depth: 1,
+          state: createBracketState(),
+          lineTerminatorBefore: false,
+        });
         j += 2;
         continue;
       }
@@ -319,18 +350,21 @@ function scanTemplate(src: string, i: number): number {
     }
 
     if (isWhitespace(c)) {
+      if (isLineTerminator(c)) frame.lineTerminatorBefore = true;
       j += 1;
       continue;
     }
     if (c === "/" && src[j + 1] === "/") {
       j += 2;
-      while (j < n && src[j] !== "\n") j += 1;
+      while (j < n && !isLineTerminator(src[j])) j += 1;
       continue;
     }
     if (c === "/" && src[j + 1] === "*") {
+      const start = j;
       j += 2;
       while (j < n && !(src[j] === "*" && src[j + 1] === "/")) j += 1;
       j = Math.min(n, j + 2);
+      if (containsLineTerminator(src, start, j)) frame.lineTerminatorBefore = true;
       continue;
     }
     if (c === "'" || c === '"') {
@@ -350,7 +384,16 @@ function scanTemplate(src: string, i: number): number {
       j += 1;
       continue;
     }
-    if (c === "/" && regexAllowed(src, frame.prev, frame.beforePrev, frame.state.closed)) {
+    if (
+      c === "/" &&
+      regexAllowed(
+        src,
+        frame.prev,
+        frame.beforePrev,
+        frame.state.closed,
+        frame.lineTerminatorBefore,
+      )
+    ) {
       const start = j;
       j = scanRegex(src, j);
       pushTemplateExpressionToken(src, frame, { type: "regex", start, end: j });
@@ -362,10 +405,15 @@ function scanTemplate(src: string, i: number): number {
       pushTemplateExpressionToken(src, frame, { type: "number", start, end: j });
       continue;
     }
-    if (isIdentStart(c)) {
+    const identifierStart = codePointAt(src, j);
+    if (isIdentStart(identifierStart)) {
       const start = j;
-      j += 1;
-      while (j < n && isIdentPart(src[j])) j += 1;
+      j += identifierStart.length;
+      while (j < n) {
+        const part = codePointAt(src, j);
+        if (!isIdentPart(part)) break;
+        j += part.length;
+      }
       pushTemplateExpressionToken(src, frame, { type: "ident", start, end: j });
       continue;
     }
@@ -394,6 +442,7 @@ function pushTemplateExpressionToken(
   updateBracketState(src, token, frame.prev, frame.beforePrev, frame.state);
   frame.beforePrev = frame.prev;
   frame.prev = token;
+  frame.lineTerminatorBefore = false;
 }
 
 function scanRegex(src: string, i: number): number {
@@ -406,7 +455,7 @@ function scanRegex(src: string, i: number): number {
       j += 2;
       continue;
     }
-    if (c === "\n") return j; // unterminated; bail
+    if (isLineTerminator(c)) return j; // unterminated; bail
     if (c === "[") inClass = true;
     else if (c === "]") inClass = false;
     else if (c === "/" && !inClass) {
@@ -515,6 +564,9 @@ function updateBracketState(
   const text = jsTokenText(src, token);
   if (token.type === "ident") {
     const statementStart = canStartStatement(src, prev, state);
+    if (state.pendingTypeAliasDepth === state.brackets.length && text !== "type") {
+      state.pendingTypeAliasHasName = true;
+    }
     state.labelCandidate = statementStart && text !== "case" && text !== "default";
     state.statementColon = false;
     if ((text === "case" || text === "default") && statementStart) {
@@ -531,9 +583,24 @@ function updateBracketState(
     ) {
       state.pendingDeclarationDepth = state.brackets.length;
     }
+    const typeAliasDeclaration =
+      text === "type" &&
+      (statementStart ||
+        (prev?.type === "ident" && TYPE_ALIAS_PREFIX_KEYWORDS.has(jsTokenText(src, prev))));
+    if (typeAliasDeclaration) {
+      state.pendingTypeAliasDepth = state.brackets.length;
+      state.pendingTypeAliasHasName = false;
+      state.pendingTypeAliasObjectDepth = null;
+    }
+    if (state.pendingTypeAliasObjectDepth === state.brackets.length) {
+      state.pendingTypeAliasObjectDepth = null;
+    }
     return;
   }
   if (token.type !== "punct") {
+    if (state.pendingTypeAliasObjectDepth === state.brackets.length) {
+      state.pendingTypeAliasObjectDepth = null;
+    }
     state.labelCandidate = false;
     state.statementColon = false;
     return;
@@ -541,6 +608,23 @@ function updateBracketState(
 
   const followsStatementColon = state.statementColon;
   state.statementColon = false;
+
+  if (state.pendingTypeAliasDepth === state.brackets.length) {
+    if (text === "=") {
+      state.pendingTypeAliasObjectDepth = state.pendingTypeAliasHasName
+        ? state.brackets.length
+        : null;
+      state.pendingTypeAliasDepth = null;
+      state.pendingTypeAliasHasName = false;
+    } else if (!state.pendingTypeAliasHasName) {
+      // `type.foo`, `type()`, and a `type:` label are ordinary JavaScript, not
+      // aliases. An alias name is always the next significant identifier.
+      state.pendingTypeAliasDepth = null;
+    }
+  }
+  if (state.pendingTypeAliasObjectDepth === state.brackets.length && text !== "=" && text !== "{") {
+    state.pendingTypeAliasObjectDepth = null;
+  }
 
   if (
     state.pendingDeclarationDepth === state.brackets.length &&
@@ -560,15 +644,21 @@ function updateBracketState(
     state.brackets.push("bracket");
   } else if (text === "{") {
     const declarationBody = state.pendingDeclarationDepth === state.brackets.length;
+    const typeAliasObject = state.pendingTypeAliasObjectDepth === state.brackets.length;
     const typedBody =
       state.pendingTypedBodyDepth === state.brackets.length &&
       !(prev?.type === "punct" && TYPE_LITERAL_PRECEDING_PUNCTUATORS.has(jsTokenText(src, prev)));
     state.brackets.push(
-      declarationBody || typedBody || followsStatementColon || opensBlock(src, prev)
+      declarationBody ||
+        typeAliasObject ||
+        typedBody ||
+        followsStatementColon ||
+        opensBlock(src, prev)
         ? "block"
         : "object",
     );
     if (declarationBody) state.pendingDeclarationDepth = null;
+    if (typeAliasObject) state.pendingTypeAliasObjectDepth = null;
     if (typedBody) state.pendingTypedBodyDepth = null;
   } else if (text === ")" || text === "]" || text === "}") {
     state.closed = state.brackets.pop() ?? null;
@@ -602,6 +692,9 @@ function createBracketState(): BracketState {
     conditionalDepths: [],
     labelCandidate: false,
     statementColon: false,
+    pendingTypeAliasDepth: null,
+    pendingTypeAliasHasName: false,
+    pendingTypeAliasObjectDepth: null,
   };
 }
 
@@ -625,6 +718,7 @@ function regexAllowed(
   prev: JsToken | undefined,
   beforePrev: JsToken | undefined,
   closed: BracketKind | null,
+  lineTerminatorBefore: boolean,
 ): boolean {
   if (!prev) return true;
   if (prev.type === "punct") {
@@ -648,6 +742,15 @@ function regexAllowed(
       (jsTokenText(src, beforePrev) === "." || jsTokenText(src, beforePrev) === "?.")
     ) {
       return false;
+    }
+    if (
+      lineTerminatorBefore &&
+      (LINE_TERMINATED_REGEX_KEYWORDS.has(jsTokenText(src, prev)) ||
+        (beforePrev?.type === "ident" &&
+          (jsTokenText(src, beforePrev) === "break" ||
+            jsTokenText(src, beforePrev) === "continue")))
+    ) {
+      return true;
     }
     return REGEX_PRECEDING_KEYWORDS.has(jsTokenText(src, prev));
   }
@@ -681,8 +784,8 @@ function opensBlock(src: string, prev: JsToken | undefined): boolean {
   return false;
 }
 
-function isWhitespace(c: string): boolean {
-  return c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\v" || c === "\f";
+function isWhitespace(c: string | undefined): boolean {
+  return c !== undefined && /^\s$/u.test(c);
 }
 
 function isDigit(c: string | undefined): boolean {
@@ -690,9 +793,25 @@ function isDigit(c: string | undefined): boolean {
 }
 
 function isIdentStart(c: string): boolean {
-  return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_" || c === "$";
+  return c === "_" || c === "$" || /^\p{ID_Start}$/u.test(c);
 }
 
 function isIdentPart(c: string): boolean {
-  return isIdentStart(c) || isDigit(c);
+  return c === "$" || c === "\u200C" || c === "\u200D" || /^\p{ID_Continue}$/u.test(c);
+}
+
+function codePointAt(src: string, index: number): string {
+  const value = src.codePointAt(index);
+  return value === undefined ? "" : String.fromCodePoint(value);
+}
+
+function isLineTerminator(c: string | undefined): boolean {
+  return c === "\n" || c === "\r" || c === "\u2028" || c === "\u2029";
+}
+
+function containsLineTerminator(src: string, start: number, end: number): boolean {
+  for (let index = start; index < end; index += 1) {
+    if (isLineTerminator(src[index])) return true;
+  }
+  return false;
 }

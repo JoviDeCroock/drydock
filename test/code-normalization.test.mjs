@@ -84,6 +84,20 @@ describe("normalizeCodeForScanning", () => {
     expect(normalizeCodeForScanning(interfaceSource)).toBe(interfaceSource);
   });
 
+  test("never folds regex contents after ASI-terminated statements or type aliases", () => {
+    const debuggerSource = "debugger\n/'chi' + 'ld_process'/.test(a)";
+    const typeSource = "type Result={value:string}\n/'chi' + 'ld_process'/.test(a)";
+
+    expect(normalizeCodeForScanning(debuggerSource)).toBe(debuggerSource);
+    expect(normalizeCodeForScanning(typeSource)).toBe(typeSource);
+  });
+
+  test("keeps scanning after division by a Unicode identifier", () => {
+    const source = "const π=1;const ratio=π/2;const name='chi'+'ld_process';";
+
+    expect(normalizeCodeForScanning(source)).toContain('const name="child_process";');
+  });
+
   test("leaves template literals untouched", () => {
     const source = "const t = `${'a' + 'b'}`;";
     expect(normalizeCodeForScanning(source)).toBe(source);

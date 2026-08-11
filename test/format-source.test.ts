@@ -160,6 +160,34 @@ describe("formatSource (javascript)", () => {
     ]);
   });
 
+  test("keeps regexes whole after line-terminated statements and type aliases", () => {
+    const debuggerSource = formatJs("debugger\n/x;y{2}/.test(a);foo();");
+    const breakSource = formatJs("label:while(a){break label\n/x;y{2}/.test(a);foo()}");
+    const typeSource = formatJs("type Result={value:string}\n/x;y{2}/.test(a);foo();");
+
+    expect(lines(debuggerSource)).toEqual(["debugger", "/x;y{2}/.test(a);", "foo();"]);
+    expect(breakSource?.text).toContain("/x;y{2}/.test(a);");
+    expect(lines(typeSource)).toEqual([
+      "type Result={",
+      "  value:string",
+      "}",
+      "/x;y{2}/.test(a);",
+      "foo();",
+    ]);
+  });
+
+  test("does not mistake division after a Unicode identifier for a regex", () => {
+    const formatted = formatJs("const π=1;const q=π/2;danger();const r=/x;y{2}/;foo();");
+
+    expect(lines(formatted)).toEqual([
+      "const π=1;",
+      "const q=π/2;",
+      "danger();",
+      "const r=/x;y{2}/;",
+      "foo();",
+    ]);
+  });
+
   test("keeps expression-leading and statement-position regexes whole", () => {
     const exported = formatJs("export default /a;b{c}/g;foo();");
     const extended = formatJs("class A extends /a;b{c}/.constructor{};foo();");
