@@ -51,6 +51,7 @@ describe("tokenizeJs regex vs division", () => {
       "const π=1;π/2/b", // non-ASCII identifiers are still values
       "const 变量=1;变量/2/b", // including non-Latin scripts
       "export const value={}\n/2/b", // exported object initializer result
+      "export const value='text'\n/2/b", // a string initializer is not a module specifier
       "export const value=class{}\n/2/b", // exported class-expression result
       "export const value=function(){}\n/2/b", // exported function-expression result
       "!function(){}/2/b", // an IIFE wrapper's own closing brace is still a value

@@ -124,6 +124,17 @@ describe("normalizeCodeForScanning", () => {
     expect(normalizeCodeForScanning(source)).toContain('const name="child_process";');
   });
 
+  test("keeps scanning after division by an exported string initializer", () => {
+    const source =
+      "export const padding='safe'\n/2;" +
+      "const p=['chi','ld_pro','cess'].join('');" +
+      "const r=globalThis['re'+'quire'];";
+
+    const normalized = normalizeCodeForScanning(source);
+    expect(normalized).toContain('const p="child_process";');
+    expect(normalized).toContain("const r=globalThis.require;");
+  });
+
   test("keeps scanning after division by function and class expression results", () => {
     for (const prefix of [
       "const padding=function(){} / 2;",

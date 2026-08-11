@@ -713,7 +713,8 @@ function updateBracketState(
     if (
       token.type === "string" &&
       state.moduleDeclarationKind &&
-      state.moduleDeclarationDepth === state.brackets.length
+      state.moduleDeclarationDepth === state.brackets.length &&
+      (isIdentText(src, prev, "import") || isIdentText(src, prev, "from"))
     ) {
       state.moduleDeclarationSawSource = true;
     }

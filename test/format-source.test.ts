@@ -262,15 +262,17 @@ describe("formatSource (javascript)", () => {
 
   test("keeps scanning after division by exported expression initializers", () => {
     const formatted = formatJs(
-      "export const a={}/2;danger();export const b=class{}/3;" +
-        "export const c=function(){}/4;safe();",
+      "export const a={}/2;danger();export const b='text'\n/3;" +
+        "export const c=class{}/4;export const d=function(){}/5;safe();",
     );
 
     expect(lines(formatted)).toEqual([
       "export const a={}/2;",
       "danger();",
-      "export const b=class{}/3;",
-      "export const c=function(){}/4;",
+      "export const b='text'",
+      "/3;",
+      "export const c=class{}/4;",
+      "export const d=function(){}/5;",
       "safe();",
     ]);
   });
