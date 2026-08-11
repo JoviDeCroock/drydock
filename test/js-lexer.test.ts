@@ -28,6 +28,19 @@ describe("tokenizeJs comments", () => {
       "comment:#!/usr/bin/env -S node --conditions={a,b} ident:const ident:value punct:= number:1 punct:;",
     );
   });
+
+  test("keeps Annex B HTML-like line comments opaque", () => {
+    const source = "<!-- fake();{payload}\nsafe();\n  --> fake();{payload}\nsafe();";
+
+    expect(kinds(source)).toBe(
+      "comment:<!-- fake();{payload} ident:safe punct:( punct:) punct:; comment:--> fake();{payload} ident:safe punct:( punct:) punct:;",
+    );
+
+    const interpolation = "const value=`${<!-- fake();{payload}\n1}`;";
+    expect(kinds(interpolation)).toBe(
+      "ident:const ident:value punct:= template:`${<!-- fake();{payload}\n1}` punct:;",
+    );
+  });
 });
 
 describe("tokenizeJs regex vs division", () => {
@@ -73,6 +86,13 @@ describe("tokenizeJs regex vs division", () => {
       "export const value=function(){}\n/2/b", // exported function-expression result
       "!function(){}/2/b", // an IIFE wrapper's own closing brace is still a value
       "const C=class{m(){}}/2/b", // and so is a class expression's, past its members
+      "var of=4;const ratio=of/2/b", // contextual `of` used as a script binding
+      "var await=4;const ratio=await/2/b", // contextual `await` used as a script binding
+      "var yield=4;const ratio=yield/2/b", // contextual `yield` used as a sloppy binding
+      "class C{#await=4;m(){return this.#await/2/b}}", // private names are values too
+      "const f=():void=>{}\nexport default <any>{a:1}/2/b", // typed arrows cannot leak body state
+      "const f=():number=>1\nconst value={a:1}/2/b", // including expression-bodied arrows ending by ASI
+      "let value:Outer<Inner<string>>=factory()\nvalue/2/b", // generic closers can share `=`
     ]) {
       expect(`${source} -> ${firstSlash(source)}`).toBe(`${source} -> punct`);
     }
@@ -90,6 +110,7 @@ describe("tokenizeJs regex vs division", () => {
       "class A{}/x/.test(a)",
       "export default class extends mixin({a:1}){}/x/.test(a)",
       "function f():void{}/x/.test(a)",
+      "function f():()=>void{}/x/.test(a)",
       'function f():{value:string}{return{value:""}}/x/.test(a)',
       "class C{method():Result{}}/x/.test(a)",
       "interface Result{value:string}/x/.test(a)",
@@ -153,6 +174,11 @@ describe("tokenizeJs regex vs division", () => {
       "var first,second\n/x/.test(a)",
       "let { value }\n/x/.test(a)",
       "var [value]\n/x/.test(a)",
+      "let value:string\n/x/.test(a)",
+      "let value:A |\nB\n/x/.test(a)",
+      "declare let value:{nested:string}\n/x/.test(a)",
+      "export let value:string\n/x/.test(a)",
+      "for(const value of /x/.global)",
     ]) {
       expect(`${source} -> ${firstSlash(source)}`).toBe(`${source} -> regex`);
     }

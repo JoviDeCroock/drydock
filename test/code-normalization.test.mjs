@@ -63,6 +63,14 @@ describe("normalizeCodeForScanning", () => {
     expect(normalizeCodeForScanning(block)).toBe(block);
   });
 
+  test("never folds tokens inside Annex B HTML-like comments", () => {
+    const open = "<!-- globalThis['pro' + 'cess'];fake();";
+    const close = "safe();\n--> globalThis['pro' + 'cess'];fake();\nsafe();";
+
+    expect(normalizeCodeForScanning(open)).toBe(open);
+    expect(normalizeCodeForScanning(close)).toBe(close);
+  });
+
   test("never folds tokens inside a hashbang", () => {
     const source = "#!/usr/bin/env -S node --conditions=['chi','ld_process'].join('')\nsafe();";
 
@@ -110,6 +118,17 @@ describe("normalizeCodeForScanning", () => {
       "let value\n/'chi' + 'ld_process'/.test(value)",
       "var first,second\n/'chi' + 'ld_process'/.test(value)",
       "let { value }\n/'chi' + 'ld_process'/.test(value)",
+    ]) {
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
+  });
+
+  test("never folds regex contents after typed variable declarations", () => {
+    for (const source of [
+      "let value:string\n/'chi' + 'ld_process'/.test(value)",
+      "let value:A |\nB\n/'chi' + 'ld_process'/.test(value)",
+      "declare let value:{nested:string}\n/'chi' + 'ld_process'/.test(value)",
+      "export let value:string\n/'chi' + 'ld_process'/.test(value)",
     ]) {
       expect(normalizeCodeForScanning(source)).toBe(source);
     }
@@ -192,6 +211,26 @@ describe("normalizeCodeForScanning", () => {
 
       expect(normalizeCodeForScanning(source)).toContain('const name="child_process";');
     }
+  });
+
+  test("keeps scanning after division by contextual identifier values", () => {
+    for (const prefix of [
+      "var of=4;const padding=of/2;",
+      "var await=4;const padding=await/2;",
+      "var yield=4;const padding=yield/2;",
+      "class C{#await=4;m(){return this.#await/2}};",
+    ]) {
+      const source = `${prefix}const name='chi'+'ld_process';`;
+
+      expect(normalizeCodeForScanning(source)).toContain('const name="child_process";');
+    }
+  });
+
+  test("clears typed-arrow return state before later object division", () => {
+    const source =
+      "const f=():void=>{}\nexport default <any>{a:1}/2;" + "const name='chi'+'ld_process';";
+
+    expect(normalizeCodeForScanning(source)).toContain('const name="child_process";');
   });
 
   test("keeps scanning when a line-terminated break is followed by a divided value", () => {

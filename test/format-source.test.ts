@@ -181,9 +181,15 @@ describe("formatSource (javascript)", () => {
 
   test("recognizes typed function and TypeScript declaration bodies before a regex", () => {
     const functionSource = formatJs("function f():void{}/x;y{z}/.test(a);foo();");
+    const functionTypeSource = formatJs("function f():()=>void{}/x;y{z}/.test(a);foo();");
     const interfaceSource = formatJs("interface Result{value:string}/x;y{z}/.test(a);foo();");
 
     expect(lines(functionSource)).toEqual(["function f():void{}", "/x;y{z}/.test(a);", "foo();"]);
+    expect(lines(functionTypeSource)).toEqual([
+      "function f():()=>void{}",
+      "/x;y{z}/.test(a);",
+      "foo();",
+    ]);
     expect(lines(interfaceSource)).toEqual([
       "interface Result{",
       "  value:string",
@@ -488,6 +494,42 @@ describe("formatSource (javascript)", () => {
     const formatted = formatJs("a();// note ; and { and }\nb();c();");
 
     expect(lines(formatted)).toEqual(["a();// note ; and { and }", "b();", "c();"]);
+  });
+
+  test("never reflows Annex B HTML-like comments as executable code", () => {
+    const open = `<!-- ${"fake();{payload}".repeat(40)}`;
+    const close = `safe();\n  --> ${"fake();{payload}".repeat(40)}\nsafe();danger();`;
+
+    expect(looksMinified(open)).toBe(true);
+    expect(formatJs(open)).toBeNull();
+    expect(formatJs(close)?.text).toBe(
+      `safe();\n  --> ${"fake();{payload}".repeat(40)}\nsafe();\ndanger();`,
+    );
+  });
+
+  test("keeps regexes whole after typed variable declarations", () => {
+    for (const source of [
+      "let value:string\n/a;b{c}/.test(value);safe();",
+      "let value:A |\nB\n/a;b{c}/.test(value);safe();",
+      "declare let value:{nested:string}\n/a;b{c}/.test(value);safe();",
+      "export let value:string\n/a;b{c}/.test(value);safe();",
+    ]) {
+      expect(formatTs(source)?.text).toContain("/a;b{c}/.test(value);");
+    }
+  });
+
+  test("keeps scanning after contextual identifiers and typed arrows divide", () => {
+    for (const source of [
+      "var of=4;const ratio=of/2;danger();safe();",
+      "var await=4;const ratio=await/2;danger();safe();",
+      "var yield=4;const ratio=yield/2;danger();safe();",
+      "const f=():void=>{}\nexport default <any>{a:1}/2;danger();safe();",
+    ]) {
+      const formatted = formatTs(source);
+
+      expect(formatted?.text).toContain("/2;");
+      expect(formatted?.text).toContain("danger();\nsafe();");
+    }
   });
 
   test("keeps a package executable hashbang on its shipped line", () => {

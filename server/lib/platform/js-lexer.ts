@@ -119,6 +119,19 @@ interface BracketState {
   bareVariableDeclarationDepth: number | null;
   bareVariableDeclarationCanEnd: boolean;
   variableDeclaratorHasInitializer: boolean;
+  variableDeclaratorInType: boolean;
+  variableTypeSawToken: boolean;
+  variableTypeAngleDepth: number;
+  // `of` is only an operator inside a for-of head; elsewhere it is an ordinary
+  // IdentifierName and a following slash divides. Keep the active for-head
+  // depths so the spelling alone never decides the lexical goal.
+  forHeadDepths: Set<number>;
+  // `await` and `yield` are valid bindings in script/sloppy contexts. Remember
+  // contextual bindings at their current lexical bracket depth so their uses
+  // remain value-shaped without changing genuine async/generator keywords in a
+  // nested function body.
+  contextualBindingsByDepth: Map<number, Set<string>>;
+  previousContextualIdentifierIsValue: boolean;
 }
 
 // Keywords whose parenthesised head is followed by a statement.
@@ -152,14 +165,17 @@ const TYPE_ALIAS_PREFIX_KEYWORDS = new Set(["declare", "export"]);
 // boundaries handled by `canStartStatement`.
 const LINE_TERMINATED_DECLARATION_KEYWORDS = new Set([
   "class",
+  "const",
   "enum",
   "export",
   "function",
   "import",
   "interface",
+  "let",
   "module",
   "namespace",
   "type",
+  "var",
 ]);
 
 // Prefix/operator keywords whose operand may continue on the following line.
@@ -212,6 +228,8 @@ const REGEX_PRECEDING_KEYWORDS = new Set([
   "await",
 ]);
 
+const CONTEXTUAL_REGEX_KEYWORDS = new Set(["await", "of", "yield"]);
+
 // Multi-character punctuators, longest first, so `++`/`+=` are never mistaken for
 // a binary `+` concat operator and `...`/`?.` stay intact.
 const PUNCTUATORS = [
@@ -259,6 +277,7 @@ export function tokenizeJs(src: string): JsToken[] {
   let lineTerminatorBefore = false;
   let lineTerminatorBeforePrev = false;
   let prevEndsModuleDeclaration = false;
+  let atLineStart = true;
   let i = 0;
   // Open brackets, innermost last, and the kind the most recent closer popped.
   // `closed` is only ever read while `prev` is that closer.
@@ -273,6 +292,7 @@ export function tokenizeJs(src: string): JsToken[] {
     lineTerminatorBeforePrev = lineTerminatorBefore;
     prevEndsModuleDeclaration = tokenEndsModuleDeclaration(src, token, state);
     lineTerminatorBefore = false;
+    atLineStart = false;
   };
 
   while (i < n) {
@@ -287,16 +307,32 @@ export function tokenizeJs(src: string): JsToken[] {
       i += 2;
       while (i < n && !isLineTerminator(src[i])) i += 1;
       tokens.push({ type: "comment", start, end: i });
+      atLineStart = false;
       continue;
     }
 
     if (isWhitespace(c)) {
       const start = i;
       while (i < n && isWhitespace(src[i])) {
-        if (isLineTerminator(src[i])) lineTerminatorBefore = true;
+        if (isLineTerminator(src[i])) {
+          lineTerminatorBefore = true;
+          atLineStart = true;
+        }
         i += 1;
       }
       tokens.push({ type: "ws", start, end: i });
+      continue;
+    }
+
+    // Annex B HTML-like comments are valid in Script source, including inside
+    // template interpolations. If they are exposed as punctuation, the review
+    // formatter can split inert comment text into apparent executable lines.
+    if (src.startsWith("<!--", i) || (atLineStart && src.startsWith("-->", i))) {
+      const start = i;
+      i += src.startsWith("<!--", i) ? 4 : 3;
+      while (i < n && !isLineTerminator(src[i])) i += 1;
+      tokens.push({ type: "comment", start, end: i });
+      atLineStart = false;
       continue;
     }
 
@@ -305,6 +341,7 @@ export function tokenizeJs(src: string): JsToken[] {
       i += 2;
       while (i < n && !isLineTerminator(src[i])) i += 1;
       tokens.push({ type: "comment", start, end: i });
+      atLineStart = false;
       continue;
     }
     if (c === "/" && src[i + 1] === "*") {
@@ -314,6 +351,7 @@ export function tokenizeJs(src: string): JsToken[] {
       i = Math.min(n, i + 2);
       if (containsLineTerminator(src, start, i)) lineTerminatorBefore = true;
       tokens.push({ type: "comment", start, end: i });
+      atLineStart = false;
       continue;
     }
 
@@ -344,6 +382,7 @@ export function tokenizeJs(src: string): JsToken[] {
         prevEndsModuleDeclaration,
         typeAliasEndsBeforeNextToken(state, lineTerminatorBefore),
         bareVariableDeclarationEndsBeforeNextToken(state, lineTerminatorBefore),
+        state.previousContextualIdentifierIsValue,
       )
     ) {
       const start = i;
@@ -425,6 +464,7 @@ interface TemplateExpressionFrame {
   lineTerminatorBefore: boolean;
   lineTerminatorBeforePrev: boolean;
   prevEndsModuleDeclaration: boolean;
+  atLineStart: boolean;
 }
 
 type TemplateScanFrame = TemplateLiteralFrame | TemplateExpressionFrame;
@@ -466,6 +506,7 @@ function scanTemplate(src: string, i: number): number {
           lineTerminatorBefore: false,
           lineTerminatorBeforePrev: false,
           prevEndsModuleDeclaration: false,
+          atLineStart: false,
         });
         j += 2;
         continue;
@@ -475,13 +516,23 @@ function scanTemplate(src: string, i: number): number {
     }
 
     if (isWhitespace(c)) {
-      if (isLineTerminator(c)) frame.lineTerminatorBefore = true;
+      if (isLineTerminator(c)) {
+        frame.lineTerminatorBefore = true;
+        frame.atLineStart = true;
+      }
       j += 1;
+      continue;
+    }
+    if (src.startsWith("<!--", j) || (frame.atLineStart && src.startsWith("-->", j))) {
+      j += src.startsWith("<!--", j) ? 4 : 3;
+      while (j < n && !isLineTerminator(src[j])) j += 1;
+      frame.atLineStart = false;
       continue;
     }
     if (c === "/" && src[j + 1] === "/") {
       j += 2;
       while (j < n && !isLineTerminator(src[j])) j += 1;
+      frame.atLineStart = false;
       continue;
     }
     if (c === "/" && src[j + 1] === "*") {
@@ -490,6 +541,7 @@ function scanTemplate(src: string, i: number): number {
       while (j < n && !(src[j] === "*" && src[j + 1] === "/")) j += 1;
       j = Math.min(n, j + 2);
       if (containsLineTerminator(src, start, j)) frame.lineTerminatorBefore = true;
+      frame.atLineStart = false;
       continue;
     }
     if (c === "'" || c === '"') {
@@ -521,6 +573,7 @@ function scanTemplate(src: string, i: number): number {
         frame.prevEndsModuleDeclaration,
         typeAliasEndsBeforeNextToken(frame.state, frame.lineTerminatorBefore),
         bareVariableDeclarationEndsBeforeNextToken(frame.state, frame.lineTerminatorBefore),
+        frame.state.previousContextualIdentifierIsValue,
       )
     ) {
       const start = j;
@@ -583,6 +636,7 @@ function pushTemplateExpressionToken(
   frame.lineTerminatorBeforePrev = frame.lineTerminatorBefore;
   frame.prevEndsModuleDeclaration = tokenEndsModuleDeclaration(src, token, frame.state);
   frame.lineTerminatorBefore = false;
+  frame.atLineStart = false;
 }
 
 function scanRegex(src: string, i: number): number {
@@ -707,9 +761,10 @@ function updateBracketState(
   lineTerminatorBefore: boolean,
 ): void {
   const text = jsTokenText(src, token);
+  state.previousContextualIdentifierIsValue = false;
   if (
     bareVariableDeclarationEndsBeforeNextToken(state, lineTerminatorBefore) &&
-    !continuesBareVariableDeclaration(src, token)
+    !continuesBareVariableDeclaration(src, token, prev, state)
   ) {
     clearBareVariableDeclaration(state);
   }
@@ -735,17 +790,53 @@ function updateBracketState(
         startsStatementAfterLineTerminator(src, prev, state, lineTerminatorBefore));
     const decoratedClass =
       text === "class" && state.pendingDecoratorDepth === state.brackets.length;
-    const bareVariableDeclaration = (text === "let" || text === "var") && statementStart;
+    const prefixedVariableDeclaration =
+      prev?.type === "ident" &&
+      ["declare", "export"].includes(jsTokenText(src, prev)) &&
+      !isMemberAccess(src, beforePrev);
+    const exportedAmbientVariableDeclaration =
+      prev?.type === "ident" &&
+      jsTokenText(src, prev) === "declare" &&
+      beforePrev?.type === "ident" &&
+      jsTokenText(src, beforePrev) === "export";
+    const bareVariableDeclaration =
+      (text === "let" || text === "var" || text === "const") &&
+      (statementStart || prefixedVariableDeclaration || exportedAmbientVariableDeclaration);
+    if (
+      state.pendingTypedBodyDepth === state.brackets.length &&
+      lineTerminatorBefore &&
+      statementStart
+    ) {
+      // An expression-bodied typed arrow can end by ASI. Do not let its return
+      // annotation make a brace in the next declaration look like its body.
+      state.pendingTypedBodyDepth = null;
+    }
+    const declaresContextualBinding =
+      state.bareVariableDeclarationDepth === state.brackets.length &&
+      !state.bareVariableDeclarationCanEnd &&
+      CONTEXTUAL_REGEX_KEYWORDS.has(text);
+    if (declaresContextualBinding) {
+      const bindings = state.contextualBindingsByDepth.get(state.brackets.length);
+      if (bindings) bindings.add(text);
+      else state.contextualBindingsByDepth.set(state.brackets.length, new Set([text]));
+    }
     if (bareVariableDeclaration) {
       state.bareVariableDeclarationDepth = state.brackets.length;
       state.bareVariableDeclarationCanEnd = false;
       state.variableDeclaratorHasInitializer = false;
+      state.variableDeclaratorInType = false;
+      state.variableTypeSawToken = false;
+      state.variableTypeAngleDepth = 0;
     } else if (
       state.bareVariableDeclarationDepth === state.brackets.length &&
       !state.bareVariableDeclarationCanEnd
     ) {
       state.bareVariableDeclarationCanEnd = true;
     }
+    if (state.variableDeclaratorInType) state.variableTypeSawToken = true;
+    state.previousContextualIdentifierIsValue =
+      (text === "of" && !isForOfOperator(src, prev, state)) ||
+      ((text === "await" || text === "yield") && hasContextualBinding(state, text));
     if (state.pendingTypeAliasDepth === state.brackets.length && text !== "type") {
       state.pendingTypeAliasHasName = true;
     }
@@ -828,6 +919,7 @@ function updateBracketState(
     state.labelCandidate = false;
     state.statementColon = false;
     markTypeAliasBodyToken(state);
+    markVariableTypeToken(state);
     return;
   }
 
@@ -835,15 +927,44 @@ function updateBracketState(
   state.statementColon = false;
 
   if (state.bareVariableDeclarationDepth === state.brackets.length) {
-    if (text === "=") {
+    if (state.variableDeclaratorInType) {
+      if (text === "<") state.variableTypeAngleDepth += 1;
+      else if (text === ">")
+        state.variableTypeAngleDepth = Math.max(0, state.variableTypeAngleDepth - 1);
+      else if (text === ">=")
+        state.variableTypeAngleDepth = Math.max(0, state.variableTypeAngleDepth - 1);
+      else if (text === ">>")
+        state.variableTypeAngleDepth = Math.max(0, state.variableTypeAngleDepth - 2);
+      else if (text === ">>=")
+        state.variableTypeAngleDepth = Math.max(0, state.variableTypeAngleDepth - 2);
+      else if (text === ">>>")
+        state.variableTypeAngleDepth = Math.max(0, state.variableTypeAngleDepth - 3);
+      else if (text === ">>>=")
+        state.variableTypeAngleDepth = Math.max(0, state.variableTypeAngleDepth - 3);
+    }
+    const typeInitializer =
+      state.variableDeclaratorInType &&
+      state.variableTypeAngleDepth === 0 &&
+      ["=", ">=", ">>=", ">>>="].includes(text);
+    if ((text === "=" && !state.variableDeclaratorInType) || typeInitializer) {
       state.variableDeclaratorHasInitializer = true;
-    } else if (text === ",") {
+      state.variableDeclaratorInType = false;
+      state.variableTypeSawToken = false;
+      state.variableTypeAngleDepth = 0;
+    } else if (
+      text === "," &&
+      (!state.variableDeclaratorInType || state.variableTypeAngleDepth === 0)
+    ) {
       state.bareVariableDeclarationCanEnd = false;
       state.variableDeclaratorHasInitializer = false;
-    } else if (text === ":" || text === ";") {
-      // Type annotations need the full TypeScript declaration grammar to know
-      // where they end. Leave those opaque rather than guessing here; a
-      // semicolon is already an explicit statement boundary.
+      state.variableDeclaratorInType = false;
+      state.variableTypeSawToken = false;
+      state.variableTypeAngleDepth = 0;
+    } else if (text === ":" && !state.variableDeclaratorInType) {
+      state.variableDeclaratorInType = true;
+      state.variableTypeSawToken = false;
+      state.variableTypeAngleDepth = 0;
+    } else if (text === ";") {
       clearBareVariableDeclaration(state);
     }
   }
@@ -913,9 +1034,11 @@ function updateBracketState(
     ) {
       clearModuleDeclaration(state); // dynamic import(...)
     }
-    state.brackets.push(
-      isStatementHead(src, prev, beforePrev, beforeBeforePrev) ? "head-paren" : "paren",
-    );
+    const statementHead = isStatementHead(src, prev, beforePrev, beforeBeforePrev);
+    state.brackets.push(statementHead ? "head-paren" : "paren");
+    if (isForStatementHead(src, prev, beforePrev, beforeBeforePrev)) {
+      state.forHeadDepths.add(state.brackets.length);
+    }
   } else if (text === "[") {
     state.brackets.push("bracket");
   } else if (text === "{") {
@@ -960,8 +1083,21 @@ function updateBracketState(
     if (bodyKind) popPendingBody(state.pendingBodies, state.brackets.length - 1);
     if (typeAliasObject) state.pendingTypeAliasObjectDepth = null;
     if (typedBody) state.pendingTypedBodyDepth = null;
+    if (
+      state.pendingTypedBodyDepth === state.brackets.length - 1 &&
+      prev?.type === "punct" &&
+      jsTokenText(src, prev) === "=>"
+    ) {
+      // This is an arrow implementation block, not a declaration body. Consume
+      // the return-annotation marker here; clearing on every `=>` would break a
+      // declaration whose return type is itself a function (`(): () => void {}`).
+      state.pendingTypedBodyDepth = null;
+    }
   } else if (text === ")" || text === "]" || text === "}") {
+    const closedDepth = state.brackets.length;
     state.closed = state.brackets.pop() ?? null;
+    state.forHeadDepths.delete(closedDepth);
+    state.contextualBindingsByDepth.delete(closedDepth);
     if (
       state.bareVariableDeclarationDepth !== null &&
       state.bareVariableDeclarationDepth > state.brackets.length
@@ -1014,6 +1150,9 @@ function updateBracketState(
   }
   state.labelCandidate = false;
   if (text !== "=") markTypeAliasBodyToken(state);
+  if (text !== "=" && text !== "," && text !== ":" && text !== ";") {
+    markVariableTypeToken(state);
+  }
 }
 
 function createBracketState(): BracketState {
@@ -1042,6 +1181,12 @@ function createBracketState(): BracketState {
     bareVariableDeclarationDepth: null,
     bareVariableDeclarationCanEnd: false,
     variableDeclaratorHasInitializer: false,
+    variableDeclaratorInType: false,
+    variableTypeSawToken: false,
+    variableTypeAngleDepth: 0,
+    forHeadDepths: new Set(),
+    contextualBindingsByDepth: new Map(),
+    previousContextualIdentifierIsValue: false,
   };
 }
 
@@ -1053,11 +1198,18 @@ function bareVariableDeclarationEndsBeforeNextToken(
     lineTerminatorBefore &&
     state.bareVariableDeclarationDepth === state.brackets.length &&
     state.bareVariableDeclarationCanEnd &&
-    !state.variableDeclaratorHasInitializer
+    !state.variableDeclaratorHasInitializer &&
+    (!state.variableDeclaratorInType || state.variableTypeSawToken)
   );
 }
 
-function continuesBareVariableDeclaration(src: string, token: JsToken): boolean {
+function continuesBareVariableDeclaration(
+  src: string,
+  token: JsToken,
+  prev: JsToken | undefined,
+  state: BracketState,
+): boolean {
+  if (state.variableDeclaratorInType && continuesTypeAliasAcrossLine(src, token, prev)) return true;
   return token.type === "punct" && [",", "=", ":"].includes(jsTokenText(src, token));
 }
 
@@ -1065,6 +1217,13 @@ function clearBareVariableDeclaration(state: BracketState): void {
   state.bareVariableDeclarationDepth = null;
   state.bareVariableDeclarationCanEnd = false;
   state.variableDeclaratorHasInitializer = false;
+  state.variableDeclaratorInType = false;
+  state.variableTypeSawToken = false;
+  state.variableTypeAngleDepth = 0;
+}
+
+function markVariableTypeToken(state: BracketState): void {
+  if (state.variableDeclaratorInType) state.variableTypeSawToken = true;
 }
 
 function typeAliasEndsBeforeNextToken(state: BracketState, lineTerminatorBefore: boolean): boolean {
@@ -1225,6 +1384,7 @@ function regexAllowed(
   prevEndsModuleDeclaration: boolean,
   prevEndsTypeAliasDeclaration: boolean,
   prevEndsBareVariableDeclaration: boolean,
+  prevContextualIdentifierIsValue: boolean,
 ): boolean {
   if (!prev) return true;
   if (lineTerminatorBefore && prevEndsModuleDeclaration) return true;
@@ -1244,12 +1404,10 @@ function regexAllowed(
     return t !== "]";
   }
   if (prev.type === "ident") {
+    if (prevContextualIdentifierIsValue) return false;
     // Keyword-shaped property names are values (`result.default/2`), not the
     // expression-leading keyword forms (`export default /re/`).
-    if (
-      beforePrev?.type === "punct" &&
-      (jsTokenText(src, beforePrev) === "." || jsTokenText(src, beforePrev) === "?.")
-    ) {
+    if (beforePrev?.type === "punct" && [".", "?.", "#"].includes(jsTokenText(src, beforePrev))) {
       return false;
     }
     if (
@@ -1353,6 +1511,42 @@ function isStatementHead(
     jsTokenText(src, beforePrev) === "for" &&
     !isMemberAccess(src, beforeBeforePrev)
   );
+}
+
+function isForStatementHead(
+  src: string,
+  prev: JsToken | undefined,
+  beforePrev: JsToken | undefined,
+  beforeBeforePrev: JsToken | undefined,
+): boolean {
+  if (isIdentText(src, prev, "for")) return !isMemberAccess(src, beforePrev);
+  return (
+    isIdentText(src, prev, "await") &&
+    isIdentText(src, beforePrev, "for") &&
+    !isMemberAccess(src, beforeBeforePrev)
+  );
+}
+
+function isForOfOperator(src: string, prev: JsToken | undefined, state: BracketState): boolean {
+  if (!state.forHeadDepths.has(state.brackets.length) || !prev) return false;
+  if (prev.type === "ident" && ["const", "let", "var"].includes(jsTokenText(src, prev))) {
+    return false;
+  }
+  if (
+    prev.type === "string" ||
+    prev.type === "template" ||
+    prev.type === "regex" ||
+    prev.type === "number" ||
+    prev.type === "ident"
+  ) {
+    return true;
+  }
+  if (prev.type !== "punct") return false;
+  return [")", "]", "}", "++", "--"].includes(jsTokenText(src, prev));
+}
+
+function hasContextualBinding(state: BracketState, name: string): boolean {
+  return state.contextualBindingsByDepth.get(state.brackets.length)?.has(name) ?? false;
 }
 
 function isMemberAccess(src: string, token: JsToken | undefined): boolean {
