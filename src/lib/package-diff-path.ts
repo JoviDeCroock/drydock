@@ -61,8 +61,9 @@ export function parsePackageDiffCardPath(path: string): DiffSpec | null {
 
 // Package-only form: /diff/<name>. The page resolves the latest published
 // version pair for the package and redirects to the full spec. npm-only:
-// dependency diff links are the only producer of this form, and they are
-// suppressed for ecosystems whose dependencies are not npm packages.
+// its producers — dependency diff links and README badge markdown — emit it
+// solely for npm packages, since the other ecosystems have no package-only
+// diff form to resolve.
 export function packageOnlyDiffPath(packageName: string) {
   return `/diff/${encodePackageName(packageName)}`;
 }
