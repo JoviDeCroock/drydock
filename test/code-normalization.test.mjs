@@ -123,6 +123,37 @@ describe("normalizeCodeForScanning", () => {
     }
   });
 
+  test("never folds regex contents after ambient function declarations", () => {
+    for (const source of [
+      "declare function f():Result\n/'chi' + 'ld_process'/.test(value)",
+      "export declare function f<T>():T\n/'chi' + 'ld_process'/.test(value)",
+    ]) {
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
+  });
+
+  test("a contextual function parameter cannot hide an assembled process sink", () => {
+    for (const name of ["await", "yield"]) {
+      const payload =
+        `function f(${name}){return ${name}/2;` +
+        "const p=['chi','ld_pro','cess'].join('');const r=globalThis['re'+'quire'];" +
+        "const cp=r(p);cp['exec'+'Sync']('id')}";
+      const staged = [
+        {
+          path: "index.js",
+          size: payload.length,
+          sha256: `index-js-${name}`,
+          flags: [],
+          textSample: payload,
+        },
+      ];
+      const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+      expect(normalizeCodeForScanning(payload)).toContain("child_process");
+      expect(findings.some((finding) => finding.ruleId === "code.process-execution")).toBe(true);
+    }
+  });
+
   test("never folds regex contents after typed variable declarations", () => {
     for (const source of [
       "let value:string\n/'chi' + 'ld_process'/.test(value)",

@@ -43,6 +43,7 @@ export interface JsToken {
 // into the middle of a regex literal.
 type BracketKind =
   | "head-paren"
+  | "function-params"
   | "paren"
   | "block"
   | "value-block"
@@ -71,6 +72,18 @@ interface BracketState {
   // depth: a heritage expression can itself be an unparenthesized function or
   // class expression, so an aggregate count cannot tell which body opens first.
   pendingBodies: Map<number, PendingBodyKind[]>;
+  // A traditional function's parameter list is the one place where contextual
+  // `await`/`yield` spellings can introduce bindings before the body exists.
+  // Carry direct parameter bindings across the closing `)` so slash decisions
+  // in the body treat those identifiers as values rather than keywords.
+  pendingFunctionParametersDepth: number | null;
+  pendingFunctionParametersAmbient: boolean;
+  functionParameterBindings: Map<number, Set<string>>;
+  functionParameterAmbientDepths: Set<number>;
+  pendingFunctionBodyBindings: Map<number, Set<string>[]>;
+  // Ambient functions have no implementation body. Their semicolon is optional,
+  // so a line-start slash after the completed signature begins a regex statement.
+  pendingAmbientFunctionDeclarationDepth: number | null;
   // TypeScript permits a return annotation between a function/method's `)` and
   // body. Without remembering the annotation's colon, `(): void {}` looks like
   // an object literal and a following regex is consequently read as division.
@@ -382,6 +395,7 @@ export function tokenizeJs(src: string): JsToken[] {
         prevEndsModuleDeclaration,
         typeAliasEndsBeforeNextToken(state, lineTerminatorBefore),
         bareVariableDeclarationEndsBeforeNextToken(state, lineTerminatorBefore),
+        ambientFunctionDeclarationEndsBeforeNextToken(state, lineTerminatorBefore),
         state.previousContextualIdentifierIsValue,
       )
     ) {
@@ -573,6 +587,7 @@ function scanTemplate(src: string, i: number): number {
         frame.prevEndsModuleDeclaration,
         typeAliasEndsBeforeNextToken(frame.state, frame.lineTerminatorBefore),
         bareVariableDeclarationEndsBeforeNextToken(frame.state, frame.lineTerminatorBefore),
+        ambientFunctionDeclarationEndsBeforeNextToken(frame.state, frame.lineTerminatorBefore),
         frame.state.previousContextualIdentifierIsValue,
       )
     ) {
@@ -762,6 +777,10 @@ function updateBracketState(
 ): void {
   const text = jsTokenText(src, token);
   state.previousContextualIdentifierIsValue = false;
+  if (ambientFunctionDeclarationEndsBeforeToken(src, token, prev, state, lineTerminatorBefore)) {
+    clearAmbientFunctionDeclaration(state);
+    state.pendingTypedBodyDepth = null;
+  }
   if (
     bareVariableDeclarationEndsBeforeNextToken(state, lineTerminatorBefore) &&
     !continuesBareVariableDeclaration(src, token, prev, state)
@@ -819,6 +838,10 @@ function updateBracketState(
       const bindings = state.contextualBindingsByDepth.get(state.brackets.length);
       if (bindings) bindings.add(text);
       else state.contextualBindingsByDepth.set(state.brackets.length, new Set([text]));
+    }
+    const functionParameterDepth = contextualFunctionParameterBindingDepth(src, token, prev, state);
+    if (functionParameterDepth !== null) {
+      state.functionParameterBindings.get(functionParameterDepth)?.add(text);
     }
     if (bareVariableDeclaration) {
       state.bareVariableDeclarationDepth = state.brackets.length;
@@ -884,6 +907,8 @@ function updateBracketState(
       text === "function" &&
       !(prev?.type === "punct" && [".", "?."].includes(jsTokenText(src, prev)))
     ) {
+      state.pendingFunctionParametersDepth = state.brackets.length;
+      state.pendingFunctionParametersAmbient = isIdentText(src, prev, "declare");
       if (isFunctionExpression(src, prev, beforePrev, state, statementStart)) {
         pushPendingBody(state.pendingBodies, state.brackets.length, "value-block");
       }
@@ -1007,6 +1032,11 @@ function updateBracketState(
   }
   if (text === ";") {
     state.pendingBodies.delete(state.brackets.length);
+    popPendingFunctionBodyBindings(state.pendingFunctionBodyBindings, state.brackets.length);
+    if (state.pendingFunctionParametersDepth === state.brackets.length) {
+      clearPendingFunctionParameters(state);
+    }
+    clearAmbientFunctionDeclaration(state);
     if (state.pendingDecoratorDepth === state.brackets.length) {
       state.pendingDecoratorDepth = null;
     }
@@ -1034,8 +1064,19 @@ function updateBracketState(
     ) {
       clearModuleDeclaration(state); // dynamic import(...)
     }
+    const functionParameters = state.pendingFunctionParametersDepth === state.brackets.length;
     const statementHead = isStatementHead(src, prev, beforePrev, beforeBeforePrev);
-    state.brackets.push(statementHead ? "head-paren" : "paren");
+    state.brackets.push(
+      functionParameters ? "function-params" : statementHead ? "head-paren" : "paren",
+    );
+    if (functionParameters) {
+      const parameterDepth = state.brackets.length;
+      state.functionParameterBindings.set(parameterDepth, new Set());
+      if (state.pendingFunctionParametersAmbient) {
+        state.functionParameterAmbientDepths.add(parameterDepth);
+      }
+      clearPendingFunctionParameters(state);
+    }
     if (isForStatementHead(src, prev, beforePrev, beforeBeforePrev)) {
       state.forHeadDepths.add(state.brackets.length);
     }
@@ -1065,18 +1106,26 @@ function updateBracketState(
     const top = state.brackets[state.brackets.length - 1];
     const staticBlock =
       isIdentText(src, prev, "static") && (top === "class-block" || top === "class-value-block");
-    state.brackets.push(
+    const openedKind =
       bodyKind ??
-        (staticBlock ||
-        declarationBody ||
-        typeAliasObject ||
-        typedBody ||
-        followsStatementColon ||
-        followsModuleDeclaration ||
-        opensBlock(src, prev)
-          ? "block"
-          : "object"),
-    );
+      (staticBlock ||
+      declarationBody ||
+      typeAliasObject ||
+      typedBody ||
+      followsStatementColon ||
+      followsModuleDeclaration ||
+      opensBlock(src, prev)
+        ? "block"
+        : "object");
+    state.brackets.push(openedKind);
+    if (openedKind === "block" || openedKind === "value-block") {
+      const bindings = popPendingFunctionBodyBindings(
+        state.pendingFunctionBodyBindings,
+        state.brackets.length - 1,
+      );
+      if (bindings?.size) state.contextualBindingsByDepth.set(state.brackets.length, bindings);
+      clearAmbientFunctionDeclaration(state);
+    }
     if (declarationBody) {
       state.pendingDeclarationDepth = null;
     }
@@ -1095,9 +1144,30 @@ function updateBracketState(
     }
   } else if (text === ")" || text === "]" || text === "}") {
     const closedDepth = state.brackets.length;
+    const closingFunctionParameters =
+      text === ")" && state.brackets[state.brackets.length - 1] === "function-params";
+    const functionParameterBindings = closingFunctionParameters
+      ? state.functionParameterBindings.get(closedDepth)
+      : undefined;
+    const ambientFunctionParameters =
+      closingFunctionParameters && state.functionParameterAmbientDepths.has(closedDepth);
     state.closed = state.brackets.pop() ?? null;
     state.forHeadDepths.delete(closedDepth);
     state.contextualBindingsByDepth.delete(closedDepth);
+    if (closingFunctionParameters) {
+      state.functionParameterBindings.delete(closedDepth);
+      state.functionParameterAmbientDepths.delete(closedDepth);
+      if (functionParameterBindings?.size && !ambientFunctionParameters) {
+        pushPendingFunctionBodyBindings(
+          state.pendingFunctionBodyBindings,
+          state.brackets.length,
+          functionParameterBindings,
+        );
+      }
+      if (ambientFunctionParameters) {
+        state.pendingAmbientFunctionDeclarationDepth = state.brackets.length;
+      }
+    }
     if (
       state.bareVariableDeclarationDepth !== null &&
       state.bareVariableDeclarationDepth > state.brackets.length
@@ -1134,6 +1204,9 @@ function updateBracketState(
   } else if (text === "?") {
     state.conditionalDepths.push(state.brackets.length);
   } else if (text === ":") {
+    if (state.pendingFunctionParametersDepth === state.brackets.length) {
+      clearPendingFunctionParameters(state);
+    }
     const conditionalDepth = state.conditionalDepths[state.conditionalDepths.length - 1];
     if (conditionalDepth === state.brackets.length) {
       state.conditionalDepths.pop();
@@ -1143,7 +1216,7 @@ function updateBracketState(
     } else if (
       prev?.type === "punct" &&
       jsTokenText(src, prev) === ")" &&
-      state.closed === "paren"
+      (state.closed === "paren" || state.closed === "function-params")
     ) {
       state.pendingTypedBodyDepth = state.brackets.length;
     }
@@ -1162,6 +1235,12 @@ function createBracketState(): BracketState {
     pendingDeclarationDepth: null,
     pendingDecoratorDepth: null,
     pendingBodies: new Map(),
+    pendingFunctionParametersDepth: null,
+    pendingFunctionParametersAmbient: false,
+    functionParameterBindings: new Map(),
+    functionParameterAmbientDepths: new Set(),
+    pendingFunctionBodyBindings: new Map(),
+    pendingAmbientFunctionDeclarationDepth: null,
     pendingTypedBodyDepth: null,
     pendingCaseDepth: null,
     conditionalDepths: [],
@@ -1201,6 +1280,69 @@ function bareVariableDeclarationEndsBeforeNextToken(
     !state.variableDeclaratorHasInitializer &&
     (!state.variableDeclaratorInType || state.variableTypeSawToken)
   );
+}
+
+function clearPendingFunctionParameters(state: BracketState): void {
+  state.pendingFunctionParametersDepth = null;
+  state.pendingFunctionParametersAmbient = false;
+}
+
+function contextualFunctionParameterBindingDepth(
+  src: string,
+  token: JsToken,
+  prev: JsToken | undefined,
+  state: BracketState,
+): number | null {
+  const text = jsTokenText(src, token);
+  if (!CONTEXTUAL_REGEX_KEYWORDS.has(text)) return null;
+  const depth = state.brackets.lastIndexOf("function-params") + 1;
+  if (depth === 0 || depth !== state.brackets.length) return null;
+  if (prev?.type !== "punct") return null;
+  return ["(", ",", "..."].includes(jsTokenText(src, prev)) ? depth : null;
+}
+
+function pushPendingFunctionBodyBindings(
+  bindingsByDepth: Map<number, Set<string>[]>,
+  depth: number,
+  bindings: Set<string>,
+): void {
+  const pending = bindingsByDepth.get(depth);
+  if (pending) pending.push(bindings);
+  else bindingsByDepth.set(depth, [bindings]);
+}
+
+function popPendingFunctionBodyBindings(
+  bindingsByDepth: Map<number, Set<string>[]>,
+  depth: number,
+): Set<string> | undefined {
+  const pending = bindingsByDepth.get(depth);
+  const bindings = pending?.pop();
+  if (pending?.length === 0) bindingsByDepth.delete(depth);
+  return bindings;
+}
+
+function ambientFunctionDeclarationEndsBeforeNextToken(
+  state: BracketState,
+  lineTerminatorBefore: boolean,
+): boolean {
+  return (
+    lineTerminatorBefore && state.pendingAmbientFunctionDeclarationDepth === state.brackets.length
+  );
+}
+
+function ambientFunctionDeclarationEndsBeforeToken(
+  src: string,
+  token: JsToken,
+  prev: JsToken | undefined,
+  state: BracketState,
+  lineTerminatorBefore: boolean,
+): boolean {
+  if (!ambientFunctionDeclarationEndsBeforeNextToken(state, lineTerminatorBefore)) return false;
+  return !continuesTypeAliasAcrossLine(src, token, prev);
+}
+
+function clearAmbientFunctionDeclaration(state: BracketState): void {
+  state.pendingAmbientFunctionDeclarationDepth = null;
 }
 
 function continuesBareVariableDeclaration(
@@ -1384,12 +1526,14 @@ function regexAllowed(
   prevEndsModuleDeclaration: boolean,
   prevEndsTypeAliasDeclaration: boolean,
   prevEndsBareVariableDeclaration: boolean,
+  prevEndsAmbientFunctionDeclaration: boolean,
   prevContextualIdentifierIsValue: boolean,
 ): boolean {
   if (!prev) return true;
   if (lineTerminatorBefore && prevEndsModuleDeclaration) return true;
   if (prevEndsTypeAliasDeclaration) return true;
   if (prevEndsBareVariableDeclaration) return true;
+  if (prevEndsAmbientFunctionDeclaration) return true;
   if (prev.type === "punct") {
     const t = jsTokenText(src, prev);
     // `if(a)/re/.test(a)` and `if(a){b()}/re/.test(a)` both continue with a

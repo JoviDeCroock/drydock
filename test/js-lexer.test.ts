@@ -89,6 +89,8 @@ describe("tokenizeJs regex vs division", () => {
       "var of=4;const ratio=of/2/b", // contextual `of` used as a script binding
       "var await=4;const ratio=await/2/b", // contextual `await` used as a script binding
       "var yield=4;const ratio=yield/2/b", // contextual `yield` used as a sloppy binding
+      "function f(await){return await/2/b}", // contextual name used as an ordinary parameter
+      "function f(yield){return yield/2/b}", // likewise in a non-generator function
       "class C{#await=4;m(){return this.#await/2/b}}", // private names are values too
       "const f=():void=>{}\nexport default <any>{a:1}/2/b", // typed arrows cannot leak body state
       "const f=():number=>1\nconst value={a:1}/2/b", // including expression-bodied arrows ending by ASI
@@ -178,6 +180,8 @@ describe("tokenizeJs regex vs division", () => {
       "let value:A |\nB\n/x/.test(a)",
       "declare let value:{nested:string}\n/x/.test(a)",
       "export let value:string\n/x/.test(a)",
+      "declare function f():Result\n/x/.test(a)",
+      "export declare function f<T>():T\n/x/.test(a)",
       "for(const value of /x/.global)",
     ]) {
       expect(`${source} -> ${firstSlash(source)}`).toBe(`${source} -> regex`);

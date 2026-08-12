@@ -361,6 +361,23 @@ describe("formatSource (javascript)", () => {
     ]);
   });
 
+  test("keeps contextual function parameters value-shaped inside their body", () => {
+    for (const name of ["await", "yield"]) {
+      const formatted = formatJs(
+        `function f(${name}){return ${name}/2;danger();const re=/a;b{c}/;safe();}`,
+      );
+
+      expect(lines(formatted)).toEqual([
+        `function f(${name}){`,
+        `  return ${name}/2;`,
+        "  danger();",
+        "  const re=/a;b{c}/;",
+        "  safe();",
+        "}",
+      ]);
+    }
+  });
+
   test("recognizes statement lists inside class static blocks", () => {
     const formatted = formatJs(
       "class C{static{function f(){}/x;y{z}/.test(a);foo()}}" +
@@ -450,6 +467,15 @@ describe("formatSource (javascript)", () => {
       "import Foo=require('foo')\n/a;b{c}/.test(value);safe();",
       "export import Foo=require('foo')\n/a;b{c}/.test(value);safe();",
       "import Foo=Bar.Baz\n/a;b{c}/.test(value);safe();",
+    ]) {
+      expect(formatTs(source)?.text).toContain("/a;b{c}/.test(value);");
+    }
+  });
+
+  test("keeps regex statements after semicolonless ambient functions whole", () => {
+    for (const source of [
+      "declare function f():Result\n/a;b{c}/.test(value);safe();",
+      "export declare function f<T>():T\n/a;b{c}/.test(value);safe();",
     ]) {
       expect(formatTs(source)?.text).toContain("/a;b{c}/.test(value);");
     }
