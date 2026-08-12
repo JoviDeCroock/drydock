@@ -378,6 +378,32 @@ describe("formatSource (javascript)", () => {
     }
   });
 
+  test("keeps contextual bindings value-shaped across ordinary function forms and scopes", () => {
+    for (const source of [
+      "function f({await}){if(flag){return await/2;const re=/a;b{c}/;safe()}}",
+      "const f=(await)=>{return await/2;const re=/a;b{c}/;safe()}",
+      "class C{m(await){return await/2;const re=/a;b{c}/;safe()}}",
+      "const o={m(await){return await/2;const re=/a;b{c}/;safe()}}",
+      "const {await}=value;await/2;const re=/a;b{c}/;safe()",
+      "try{}catch(await){await/2;const re=/a;b{c}/;safe()}",
+    ]) {
+      const formatted = formatJs(source);
+
+      expect(formatted?.text).toContain("await/2;");
+      expect(formatted?.text).toContain("const re=/a;b{c}/;");
+    }
+  });
+
+  test("restores await and yield keyword roles in nested async and generator functions", () => {
+    for (const source of [
+      "function outer(await){async function inner(){return await /a;b{c}/;safe()}}",
+      "function outer(yield){function* inner(){return yield /a;b{c}/;safe()}}",
+      "const f=async()=>await /a;b{c}/;safe()",
+    ]) {
+      expect(formatJs(source)?.text).toContain("/a;b{c}/");
+    }
+  });
+
   test("recognizes statement lists inside class static blocks", () => {
     const formatted = formatJs(
       "class C{static{function f(){}/x;y{z}/.test(a);foo()}}" +

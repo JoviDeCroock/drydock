@@ -91,6 +91,15 @@ describe("tokenizeJs regex vs division", () => {
       "var yield=4;const ratio=yield/2/b", // contextual `yield` used as a sloppy binding
       "function f(await){return await/2/b}", // contextual name used as an ordinary parameter
       "function f(yield){return yield/2/b}", // likewise in a non-generator function
+      "function f({await}){if(flag){return await/2/b}}", // destructured params survive nested blocks
+      "const f=(await)=>await/2/b", // ordinary arrow parameters are values too
+      "class C{m(await){return await/2/b}}", // as are ordinary method parameters
+      "const o={m(await){return await/2/b}}", // including object methods
+      "const {await}=value;await/2/b", // destructured lexical bindings stay visible
+      "const {await,await:alias}=value;await/2/b", // property keys cannot erase a prior binding
+      "try{}catch(await){await/2/b}", // catch bindings scope over their body
+      "try{}catch({await,await:alias}){await/2/b}", // including mixed shorthand/key patterns
+      "async function outer(){function inner(){return await/2/b}}", // ordinary nested functions reset async context
       "class C{#await=4;m(){return this.#await/2/b}}", // private names are values too
       "const f=():void=>{}\nexport default <any>{a:1}/2/b", // typed arrows cannot leak body state
       "const f=():number=>1\nconst value={a:1}/2/b", // including expression-bodied arrows ending by ASI
@@ -113,6 +122,11 @@ describe("tokenizeJs regex vs division", () => {
       "export default class extends mixin({a:1}){}/x/.test(a)",
       "function f():void{}/x/.test(a)",
       "function f():()=>void{}/x/.test(a)",
+      "function outer(await){async function inner(){return await /x/}}",
+      "function outer(yield){function* inner(){return yield /x/}}",
+      "const f=async()=>await /x/",
+      "class C{async f(){return await /x/}}",
+      "class C{*f(){return yield /x/}}",
       'function f():{value:string}{return{value:""}}/x/.test(a)',
       "class C{method():Result{}}/x/.test(a)",
       "interface Result{value:string}/x/.test(a)",

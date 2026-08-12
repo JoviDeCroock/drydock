@@ -132,12 +132,26 @@ describe("normalizeCodeForScanning", () => {
     }
   });
 
-  test("a contextual function parameter cannot hide an assembled process sink", () => {
-    for (const name of ["await", "yield"]) {
-      const payload =
-        `function f(${name}){return ${name}/2;` +
+  test("contextual bindings cannot hide an assembled process sink", () => {
+    const wrappers = [
+      ["direct-await", "await", (body) => `function f(await){${body}}`],
+      ["direct-yield", "yield", (body) => `function f(yield){${body}}`],
+      ["destructured-param", "await", (body) => `function f({await}){${body}}`],
+      ["nested-block", "await", (body) => `function f(await){if(flag){${body}}}`],
+      ["arrow", "await", (body) => `const f=(await)=>{${body}}`],
+      ["class-method", "await", (body) => `class C{m(await){${body}}}`],
+      ["object-method", "await", (body) => `const o={m(await){${body}}}`],
+      ["destructured-variable", "await", (body) => `const {await}=value;${body}`],
+      ["destructured-variable-key", "await", (body) => `const {await,await:alias}=value;${body}`],
+      ["catch", "await", (body) => `try{}catch(await){${body}}`],
+      ["catch-key", "await", (body) => `try{}catch({await,await:alias}){${body}}`],
+    ];
+    for (const [name, contextual, wrap] of wrappers) {
+      const body =
+        `${contextual}/2;` +
         "const p=['chi','ld_pro','cess'].join('');const r=globalThis['re'+'quire'];" +
-        "const cp=r(p);cp['exec'+'Sync']('id')}";
+        "const cp=r(p);cp['exec'+'Sync']('id')";
+      const payload = wrap(body);
       const staged = [
         {
           path: "index.js",
