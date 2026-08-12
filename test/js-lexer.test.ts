@@ -95,6 +95,10 @@ describe("tokenizeJs regex vs division", () => {
       "const f=(await)=>await/2/b", // ordinary arrow parameters are values too
       "class C{m(await){return await/2/b}}", // as are ordinary method parameters
       "const o={m(await){return await/2/b}}", // including object methods
+      "async function outer(){const o={[key](){return await/2/b}}}", // computed methods reset an outer async mode
+      "async function outer(){class C{method<T>(){return await/2/b}}}", // as do generic methods
+      "const o={x:async[key](arg),y:()=>{return await/2/b}}", // computed calls are not methods
+      "var await=4;const f=async()=>0\nif(flag) await/2/b", // concise-arrow mode ends at ASI
       "const {await}=value;await/2/b", // destructured lexical bindings stay visible
       "const {await,await:alias}=value;await/2/b", // property keys cannot erase a prior binding
       "try{}catch(await){await/2/b}", // catch bindings scope over their body
@@ -127,6 +131,11 @@ describe("tokenizeJs regex vs division", () => {
       "const f=async()=>await /x/",
       "class C{async f(){return await /x/}}",
       "class C{*f(){return yield /x/}}",
+      "function outer(){const o={async [key](){return await /x/}}}",
+      "function outer(){class C{async method<T>(){return await /x/}}}",
+      "function outer(){class C{static *[key](){return yield /x/}}}",
+      "function outer(){const f=async <T>(value:T)=>await /x/}",
+      "async function outer(){const f=()=>0\nreturn await /x/}",
       'function f():{value:string}{return{value:""}}/x/.test(a)',
       "class C{method():Result{}}/x/.test(a)",
       "interface Result{value:string}/x/.test(a)",

@@ -73,6 +73,17 @@ interface PendingContextualBindingCandidate {
   name: string;
 }
 
+interface PendingMethodHead {
+  depth: number;
+  mode: ContextualKeywordMode;
+  genericDepth: number;
+}
+
+interface PendingAsyncArrowTypeParameters {
+  depth: number;
+  genericDepth: number;
+}
+
 interface BracketState {
   brackets: BracketKind[];
   closed: BracketKind | null;
@@ -110,6 +121,14 @@ interface BracketState {
   lastClosedParen: { depth: number; async: boolean } | null;
   pendingArrowBody: PendingArrowBody | null;
   expressionFunctionModes: ExpressionFunctionMode[];
+  // Computed and generic method names do not leave the method name immediately
+  // before `(`. Carry their mode across `]` / `<...>` so the body still creates
+  // a fresh await/yield scope rather than inheriting its containing function.
+  computedMethodModes: Map<number, ContextualKeywordMode>;
+  pendingMethodHead: PendingMethodHead | null;
+  // Likewise, `async <T>(value) => ...` has a type-parameter list between the
+  // async prefix and parameter list. Remember it until the parameter `(` opens.
+  pendingAsyncArrowTypeParameters: PendingAsyncArrowTypeParameters | null;
   catchParameterBindings: Map<number, Set<string>>;
   pendingCatchBodyBindings: { depth: number; bindings: Set<string> } | null;
   bindingPatternKinds: Map<number, "object" | "array" | "computed">;
@@ -809,8 +828,27 @@ function updateBracketState(
   lineTerminatorBefore: boolean,
 ): void {
   const text = jsTokenText(src, token);
+  if (expressionFunctionModeEndsBeforeToken(src, token, prev, state, lineTerminatorBefore)) {
+    clearExpressionFunctionModesAtDepth(state, state.brackets.length);
+  }
   activatePendingExpressionFunctionMode(state, text);
   resolvePendingContextualBindingCandidate(state, text);
+  const pendingMethodMode = methodModeForCurrentToken(
+    src,
+    token,
+    prev,
+    beforePrev,
+    beforeBeforePrev,
+    state,
+  );
+  const asyncGenericArrowParameters = asyncGenericArrowParametersForCurrentToken(
+    src,
+    token,
+    prev,
+    beforePrev,
+    state,
+    lineTerminatorBefore,
+  );
   state.previousContextualIdentifierIsValue = false;
   if (ambientFunctionDeclarationEndsBeforeToken(src, token, prev, state, lineTerminatorBefore)) {
     clearAmbientFunctionDeclaration(state);
@@ -1140,7 +1178,8 @@ function updateBracketState(
     ) {
       clearModuleDeclaration(state); // dynamic import(...)
     }
-    const methodMode = contextualMethodMode(src, prev, beforePrev, beforeBeforePrev, state);
+    const methodMode =
+      pendingMethodMode ?? contextualMethodMode(src, prev, beforePrev, beforeBeforePrev, state);
     const catchParameters = isIdentText(src, prev, "catch") && !isMemberAccess(src, beforePrev);
     const functionParameters =
       state.pendingFunctionParametersDepth === state.brackets.length || methodMode !== null;
@@ -1156,7 +1195,8 @@ function updateBracketState(
     );
     state.parenAsyncPrefixes.set(
       state.brackets.length,
-      isIdentText(src, prev, "async") && !containsLineTerminator(src, prev!.end, token.start),
+      asyncGenericArrowParameters ||
+        (isIdentText(src, prev, "async") && !containsLineTerminator(src, prev!.end, token.start)),
     );
     if (functionParameters) {
       const parameterDepth = state.brackets.length;
@@ -1175,8 +1215,19 @@ function updateBracketState(
       state.forHeadDepths.add(state.brackets.length);
     }
   } else if (text === "[") {
+    const computedMethodMode = contextualComputedMethodMode(
+      src,
+      prev,
+      beforePrev,
+      beforeBeforePrev,
+      state,
+      lineTerminatorBefore,
+    );
     const bindingPatternKind = bindingPatternKindForOpen(src, text, prev, state);
     state.brackets.push("bracket");
+    if (computedMethodMode) {
+      state.computedMethodModes.set(state.brackets.length, computedMethodMode);
+    }
     if (bindingPatternKind) {
       state.bindingPatternKinds.set(state.brackets.length, bindingPatternKind);
     }
@@ -1265,6 +1316,8 @@ function updateBracketState(
     }
   } else if (text === ")" || text === "]" || text === "}") {
     const closedDepth = state.brackets.length;
+    const computedMethodMode =
+      text === "]" ? state.computedMethodModes.get(closedDepth) : undefined;
     const closingFunctionParameters =
       text === ")" && state.brackets[state.brackets.length - 1] === "function-params";
     const functionParameterBindings = closingFunctionParameters
@@ -1283,6 +1336,7 @@ function updateBracketState(
     state.forHeadDepths.delete(closedDepth);
     state.contextualBindingsByDepth.delete(closedDepth);
     state.bindingPatternKinds.delete(closedDepth);
+    state.computedMethodModes.delete(closedDepth);
     if (state.activeFunctionModeDepths.at(-1) === closedDepth) {
       state.activeFunctionModeDepths.pop();
     }
@@ -1318,6 +1372,13 @@ function updateBracketState(
     }
     if (text === ")") {
       state.lastClosedParen = { depth: state.brackets.length, async: closedParenAsync };
+    }
+    if (computedMethodMode) {
+      state.pendingMethodHead = {
+        depth: state.brackets.length,
+        mode: computedMethodMode,
+        genericDepth: 0,
+      };
     }
     if (
       state.bareVariableDeclarationDepth !== null &&
@@ -1415,6 +1476,9 @@ function createBracketState(): BracketState {
     lastClosedParen: null,
     pendingArrowBody: null,
     expressionFunctionModes: [],
+    computedMethodModes: new Map(),
+    pendingMethodHead: null,
+    pendingAsyncArrowTypeParameters: null,
     catchParameterBindings: new Map(),
     pendingCatchBodyBindings: null,
     bindingPatternKinds: new Map(),
@@ -1512,6 +1576,155 @@ function contextualMethodMode(
     !containsLineTerminator(src, beforeBeforePrev.end, beforePrev!.start);
   const asyncMethod = directAsync || generatorAsync;
   return { awaitIsKeyword: asyncMethod, yieldIsKeyword: generator };
+}
+
+function contextualComputedMethodMode(
+  src: string,
+  prev: JsToken | undefined,
+  beforePrev: JsToken | undefined,
+  beforeBeforePrev: JsToken | undefined,
+  state: BracketState,
+  lineTerminatorBefore: boolean,
+): ContextualKeywordMode | null {
+  const top = state.brackets[state.brackets.length - 1];
+  if (top !== "object" && top !== "class-block" && top !== "class-value-block") return null;
+  const prefix = prev ? jsTokenText(src, prev) : "";
+  const memberBoundary = (candidate: JsToken | undefined): boolean =>
+    candidate?.type === "punct" && ["{", "}", ",", ";"].includes(jsTokenText(src, candidate));
+  const memberModifier = (candidate: JsToken | undefined): boolean =>
+    candidate?.type === "ident" &&
+    [
+      "abstract",
+      "async",
+      "declare",
+      "override",
+      "private",
+      "protected",
+      "public",
+      "readonly",
+      "static",
+    ].includes(jsTokenText(src, candidate));
+  if (memberBoundary(prev)) {
+    return ordinaryFunctionMode();
+  }
+  if (prefix === "*") {
+    const validGeneratorPrefix =
+      memberBoundary(beforePrev) ||
+      (memberModifier(beforePrev) &&
+        (memberBoundary(beforeBeforePrev) || memberModifier(beforeBeforePrev)));
+    if (!validGeneratorPrefix) return null;
+    const asyncGenerator =
+      isIdentText(src, beforePrev, "async") &&
+      !containsLineTerminator(src, beforePrev!.end, prev!.start);
+    return { awaitIsKeyword: asyncGenerator, yieldIsKeyword: true };
+  }
+  if (
+    prev?.type === "ident" &&
+    [
+      "abstract",
+      "async",
+      "get",
+      "override",
+      "private",
+      "protected",
+      "public",
+      "set",
+      "static",
+    ].includes(prefix)
+  ) {
+    if (!memberBoundary(beforePrev) && !memberModifier(beforePrev)) return null;
+    if (prefix === "async" && lineTerminatorBefore) return null;
+    return { awaitIsKeyword: prefix === "async", yieldIsKeyword: false };
+  }
+  return null;
+}
+
+function methodModeForCurrentToken(
+  src: string,
+  token: JsToken,
+  prev: JsToken | undefined,
+  beforePrev: JsToken | undefined,
+  beforeBeforePrev: JsToken | undefined,
+  state: BracketState,
+): ContextualKeywordMode | null {
+  const text = jsTokenText(src, token);
+  const pending = state.pendingMethodHead;
+  if (pending) {
+    if (state.brackets.length < pending.depth) {
+      state.pendingMethodHead = null;
+      return null;
+    }
+    if (pending.genericDepth > 0) {
+      pending.genericDepth += genericAngleDelta(text);
+      if (pending.genericDepth < 0) state.pendingMethodHead = null;
+      return null;
+    }
+    if (pending.depth === state.brackets.length && text === "(") {
+      state.pendingMethodHead = null;
+      return pending.mode;
+    }
+    if (pending.depth === state.brackets.length && text === "<") {
+      pending.genericDepth = 1;
+      return null;
+    }
+    state.pendingMethodHead = null;
+  }
+  if (text !== "<") return null;
+  const mode = contextualMethodMode(src, prev, beforePrev, beforeBeforePrev, state);
+  if (mode) {
+    state.pendingMethodHead = {
+      depth: state.brackets.length,
+      mode,
+      genericDepth: 1,
+    };
+  }
+  return null;
+}
+
+function asyncGenericArrowParametersForCurrentToken(
+  src: string,
+  token: JsToken,
+  prev: JsToken | undefined,
+  beforePrev: JsToken | undefined,
+  state: BracketState,
+  lineTerminatorBefore: boolean,
+): boolean {
+  const text = jsTokenText(src, token);
+  const pending = state.pendingAsyncArrowTypeParameters;
+  if (pending) {
+    if (state.brackets.length < pending.depth) {
+      state.pendingAsyncArrowTypeParameters = null;
+      return false;
+    }
+    if (pending.genericDepth > 0) {
+      pending.genericDepth += genericAngleDelta(text);
+      if (pending.genericDepth < 0) state.pendingAsyncArrowTypeParameters = null;
+      return false;
+    }
+    if (pending.depth === state.brackets.length && text === "(") {
+      state.pendingAsyncArrowTypeParameters = null;
+      return true;
+    }
+    state.pendingAsyncArrowTypeParameters = null;
+  }
+  if (
+    text === "<" &&
+    isIdentText(src, prev, "async") &&
+    !isMemberAccess(src, beforePrev) &&
+    !lineTerminatorBefore
+  ) {
+    state.pendingAsyncArrowTypeParameters = {
+      depth: state.brackets.length,
+      genericDepth: 1,
+    };
+  }
+  return false;
+}
+
+function genericAngleDelta(text: string): number {
+  if (text === "<") return 1;
+  if (text.startsWith(">")) return -Math.min(3, text.match(/^>+/)?.[0].length ?? 0);
+  return 0;
 }
 
 function contextualBindingFollows(prev: JsToken | undefined, src: string): boolean {
@@ -1694,6 +1907,29 @@ function activatePendingExpressionFunctionMode(state: BracketState, tokenText: s
   if (!pending || pending.depth !== state.brackets.length || tokenText === "{") return;
   state.expressionFunctionModes.push(pending);
   state.pendingArrowBody = null;
+}
+
+const EXPRESSION_ARROW_CONTINUATION_IDENTIFIERS = new Set(["as", "in", "instanceof", "satisfies"]);
+
+function expressionFunctionModeEndsBeforeToken(
+  src: string,
+  token: JsToken,
+  prev: JsToken | undefined,
+  state: BracketState,
+  lineTerminatorBefore: boolean,
+): boolean {
+  if (
+    !lineTerminatorBefore ||
+    !state.expressionFunctionModes.some((mode) => mode.depth === state.brackets.length) ||
+    !startsStatementAfterLineTerminator(src, prev, state, true)
+  ) {
+    return false;
+  }
+  if (token.type === "ident") {
+    return !EXPRESSION_ARROW_CONTINUATION_IDENTIFIERS.has(jsTokenText(src, token));
+  }
+  if (token.type === "string" || token.type === "number") return true;
+  return token.type === "punct" && ["{", "@"].includes(jsTokenText(src, token));
 }
 
 function clearExpressionFunctionModesAtDepth(state: BracketState, depth: number): void {

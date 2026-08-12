@@ -141,6 +141,13 @@ describe("normalizeCodeForScanning", () => {
       ["arrow", "await", (body) => `const f=(await)=>{${body}}`],
       ["class-method", "await", (body) => `class C{m(await){${body}}}`],
       ["object-method", "await", (body) => `const o={m(await){${body}}}`],
+      ["computed-method", "await", (body) => `async function outer(){const o={[key](){${body}}}}`],
+      [
+        "generic-method",
+        "await",
+        (body) => `async function outer(){class C{method<T>(){${body}}}}`,
+      ],
+      ["arrow-asi", "await", (body) => `var await=4;const f=async()=>0\nif(flag){${body}}`],
       ["destructured-variable", "await", (body) => `const {await}=value;${body}`],
       ["destructured-variable-key", "await", (body) => `const {await,await:alias}=value;${body}`],
       ["catch", "await", (body) => `try{}catch(await){${body}}`],
@@ -165,6 +172,17 @@ describe("normalizeCodeForScanning", () => {
 
       expect(normalizeCodeForScanning(payload)).toContain("child_process");
       expect(findings.some((finding) => finding.ruleId === "code.process-execution")).toBe(true);
+    }
+  });
+
+  test("never folds regex contents in computed, generic, or post-ASI function contexts", () => {
+    for (const source of [
+      "function outer(){const o={async [key](){await /'chi' + 'ld_process'/.test(value)}}}",
+      "function outer(){class C{async method<T>(){await /'chi' + 'ld_process'/.test(value)}}}",
+      "function outer(){const f=async <T>()=>await /'chi' + 'ld_process'/.test(value)}",
+      "async function outer(){const f=()=>0\nreturn await /'chi' + 'ld_process'/.test(value)}",
+    ]) {
+      expect(normalizeCodeForScanning(source)).toBe(source);
     }
   });
 

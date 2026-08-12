@@ -404,6 +404,45 @@ describe("formatSource (javascript)", () => {
     }
   });
 
+  test("resets contextual modes for computed and generic methods", () => {
+    for (const source of [
+      "async function outer(){const o={[key](){return await/2;const re=/a;b{c}/;safe()}}}",
+      "async function outer(){class C{method<T>(){return await/2;const re=/a;b{c}/;safe()}}}",
+      "const o={x:async[key](arg),y:()=>{return await/2;const re=/a;b{c}/;safe()}}",
+    ]) {
+      const formatted = formatJs(source);
+
+      expect(formatted?.text).toContain("return await/2;");
+      expect(formatted?.text).toContain("const re=/a;b{c}/;");
+    }
+  });
+
+  test("recognizes async and generator modes across computed and generic method heads", () => {
+    for (const source of [
+      "function outer(){const o={async [key](){return await /a;b{c}/;safe()}}}",
+      "function outer(){class C{async method<T>(){return await /a;b{c}/;safe()}}}",
+      "function outer(){const o={*[key](){return yield /a;b{c}/;safe()}}}",
+      "function outer(){class C{static *[key](){return yield /a;b{c}/;safe()}}}",
+    ]) {
+      expect(formatJs(source)?.text).toContain("/a;b{c}/");
+    }
+  });
+
+  test("tracks async generic arrows and expires concise-arrow modes at ASI", () => {
+    for (const source of [
+      "function outer(){const f=async <T>(value:T)=>await /a;b{c}/;safe()}",
+      "async function outer(){const f=()=>0\nreturn await /a;b{c}/;safe()}",
+    ]) {
+      expect(formatJs(source)?.text).toContain("/a;b{c}/");
+    }
+
+    const division = formatJs(
+      "var await=4;const f=async()=>0\nif(flag) await/2;const re=/a;b{c}/;safe()",
+    );
+    expect(division?.text).toContain("if(flag) await/2;");
+    expect(division?.text).toContain("const re=/a;b{c}/;");
+  });
+
   test("recognizes statement lists inside class static blocks", () => {
     const formatted = formatJs(
       "class C{static{function f(){}/x;y{z}/.test(a);foo()}}" +
