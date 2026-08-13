@@ -16,6 +16,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`architecture.md`](./architecture.md) — Worker, sandbox, adapters, storage, org model, and API shape.
 - [`workflow-gates.md`](./workflow-gates.md) — GitHub Environment gate flow for PyPI, npm, and VS Code workflow-gated releases.
 - [`diff-baseline.md`](./diff-baseline.md) — default previous-version comparison strategy.
+- [`atpm-public-diff.md`](./atpm-public-diff.md) — the atpm ecosystem on `/diff`: AT Protocol resolution (handle → DID → PDS → record → blob), why it does not go through atpm.dev, the host policy that bounds publisher-named egress, and the record-vs-tarball findings.
 - [`intent-envelope.md`](./intent-envelope.md) — advisory source-binding tiers (attested / declared / absent) persisted with every scan.
 - [`artifact-storage.md`](./artifact-storage.md) — D1/R2 report and artifact persistence.
 - [`public-reports.md`](./public-reports.md) — public share links, signed report attestations, badges, and the threat feed.

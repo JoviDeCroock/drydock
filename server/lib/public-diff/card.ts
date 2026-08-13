@@ -1,3 +1,5 @@
+import type { DiffEcosystem } from "../../../src/lib/package-diff-path";
+
 // Builds the share card SVG for a public package diff. Pure string work: no
 // network, no wasm, no environment access, so the layout is unit-testable
 // without a rasterizer.
@@ -41,6 +43,15 @@ export const OG_FONT_ASSETS = {
 const PAD_X = 72;
 const CONTENT_WIDTH = OG_CARD_WIDTH - PAD_X * 2;
 
+// The card's kicker, per ecosystem. Deliberately not `ECOSYSTEM_LABELS`
+// uppercased: this reads as a sentence about where the release lives, and atpm
+// releases do not live in a registry at all.
+const REGISTRY_LABELS: Partial<Record<DiffEcosystem, string>> = {
+  npm: "NPM PACKAGE DIFF",
+  pypi: "PYPI PACKAGE DIFF",
+  atpm: "ATPM PACKAGE DIFF",
+};
+
 export type OgRiskLevel = "low" | "medium" | "high" | "critical";
 
 export interface OgCardStats {
@@ -53,7 +64,7 @@ export interface OgCardStats {
 }
 
 export interface OgCardInput {
-  ecosystem: "npm" | "pypi";
+  ecosystem: DiffEcosystem;
   packageName: string;
   fromVersion: string;
   toVersion: string;
@@ -235,7 +246,7 @@ export function renderOgCardSvg(input: OgCardInput): string {
     [34, 30, 26, 22, 18],
     true,
   );
-  const registryLabel = input.ecosystem === "pypi" ? "PYPI PACKAGE DIFF" : "NPM PACKAGE DIFF";
+  const registryLabel = REGISTRY_LABELS[input.ecosystem] ?? "NPM PACKAGE DIFF";
 
   const body = input.stats
     ? [

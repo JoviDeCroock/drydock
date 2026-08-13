@@ -19,7 +19,7 @@ import type { Bindings, Variables } from "../types";
 // Anonymous by design: these endpoints serve only data derived from public
 // registry artifacts and public pkg.pr.new preview tarballs (no organization
 // resources, no credentials, no D1 persistence) and are the marketing-facing
-// "diff any npm or PyPI package" surface. Abuse control is per-IP rate limiting
+// "diff any npm, PyPI, or atpm package" surface. Abuse control is per-IP rate limiting
 // plus the KV cache for immutable version pairs; the sandbox's archive caps
 // bound the work a request can ask for. Everything else under /api/* keeps
 // requiring a Better Auth session.
@@ -28,8 +28,8 @@ export const publicDiffRoutes = new Hono<{ Bindings: Bindings; Variables: Variab
 type PublicDiffContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 
 // A custom NPM_REGISTRY signals a private/self-hosted deployment, so the whole
-// anonymous surface stays off there — including PyPI, which would otherwise
-// still reach out to the public internet from a private install.
+// anonymous surface stays off there — including PyPI and atpm, which would
+// otherwise still reach out to the public internet from a private install.
 publicDiffRoutes.use("*", async (c, next) => {
   const configuredRegistry = (c.env.NPM_REGISTRY || PUBLIC_NPM_REGISTRY).replace(/\/+$/, "");
   if (configuredRegistry !== PUBLIC_NPM_REGISTRY) {
@@ -267,6 +267,7 @@ publicDiffRoutes.get("/", async (c) => {
       risk: payload.risk,
       textSamplesOmitted: payload.textSamplesOmitted ?? false,
       notices: payload.notices ?? [],
+      provenance: payload.provenance ?? [],
       cachedAt: payload.cachedAt,
     },
     200,

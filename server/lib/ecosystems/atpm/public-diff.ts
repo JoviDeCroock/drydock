@@ -1,0 +1,251 @@
+import { atpmRecordFindings } from "./findings";
+import {
+  isValidAtpmPackageName,
+  normalizeAtpmPackageName,
+  parseAtpmPackageName,
+  resolveAtpmRepoIdentity,
+  type AtpmPackageRef,
+  type AtpmRepoIdentity,
+} from "./identity";
+import {
+  ATPM_PACKAGE_COLLECTION,
+  ATPM_RULES_VERSION,
+  atpmBlobUrl,
+  fetchAtpmPackageRecord,
+  listAtpmVersions,
+  requireAtpmVersion,
+  type AtpmPackage,
+  type AtpmVersion,
+} from "./record";
+import { buildNpmFindings } from "../npm/findings";
+import {
+  computeCompareMetadataCacheKey,
+  readCompareMetadataCache,
+  writeCompareMetadataCache,
+} from "../../compare-cache";
+import { publicDiffDownloadError } from "../../public-diff/download";
+import { PublicDiffError } from "../../public-diff/error";
+import type {
+  PublicDiffAcquiredSources,
+  PublicDiffAdapter,
+  PublicDiffProvenanceEntry,
+} from "../../public-diff/types";
+import { DETERMINISTIC_RULES_VERSION } from "../../review";
+import {
+  downloadInSandbox,
+  SANDBOX_MAX_STREAM_TAR_BYTES,
+  type DownloadResult,
+} from "../../sandbox";
+
+/**
+ * atpm's public-diff capability — the anonymous `/diff` surface for packages
+ * published to the AT Protocol.
+ *
+ * There is no registry here to fetch from. `registryUrl` names the protocol
+ * rather than a host, because a diff of two atpm versions may touch a different
+ * set of hosts for every package: the publisher's own domain or the PLC
+ * directory for identity, and the publisher's PDS for the record and the bytes.
+ * See `./identity.ts` for why none of that goes through atpm.dev.
+ *
+ * A version is otherwise an ordinary npm tarball, so it runs the npm rule set
+ * unchanged and adds only the checks that atpm's split of metadata-from-artifact
+ * makes possible (`./findings.ts`).
+ */
+const ATPM_PROTOCOL = "at://";
+
+const PUBLIC_CACHE_SCOPE = "atpm-public";
+
+export const atpmPublicDiff: PublicDiffAdapter = {
+  ecosystem: "atpm",
+  registryUrl: ATPM_PROTOCOL,
+  rulesVersionSegment: `${DETERMINISTIC_RULES_VERSION}+atpm-${ATPM_RULES_VERSION}`,
+  payloadVersion: "v1",
+
+  isValidPackageName: isValidAtpmPackageName,
+  normalizePackageName: normalizeAtpmPackageName,
+  // Versions come from the record's own `version` strings. atpm packages are npm
+  // packages, so this matches the npm version grammar; there is no preview form.
+  isValidVersion: (version) => /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(version),
+  cacheTag: (packageName) => `public-diff:atpm:${packageName}`,
+
+  async listVersions(env, ctx, packageName) {
+    const { pkg } = await loadAtpmPackage(env, ctx, packageName);
+    const { versions, suggested } = listAtpmVersions(pkg);
+    return { packageName: normalizeAtpmPackageName(packageName), versions, suggested };
+  },
+
+  async acquire(env, ctx, input) {
+    const { ref, identity, pkg } = await loadAtpmPackage(env, ctx, input.packageName);
+    const from = requireAtpmVersion(pkg, input.fromVersion);
+    const to = requireAtpmVersion(pkg, input.toVersion);
+
+    const [fromArchive, toArchive] = await Promise.all([
+      downloadAtpmBlob(env, ctx, identity, from),
+      downloadAtpmBlob(env, ctx, identity, to),
+    ]);
+
+    return {
+      from: { files: fromArchive.files, packageJson: fromArchive.packageJson ?? null },
+      to: { files: toArchive.files, packageJson: toArchive.packageJson ?? null },
+      provenance: resolutionTrail(ref, identity),
+      buildFindings: (fileDiff, manifestDiff) => [
+        // The artifact is an npm tarball, so it gets the npm rule set verbatim.
+        // `details` stays null: those findings describe an npm stage record,
+        // which has no counterpart here — the atpm equivalent is below.
+        ...buildNpmFindings({
+          staged: {
+            files: toArchive.files,
+            manifest: toArchive.packageJson ?? null,
+            suspiciousTarEntries: toArchive.suspiciousEntries,
+          },
+          details: null,
+          fileDiff,
+          manifestDiff,
+          stagedManifestText:
+            toArchive.files.find((file) => file.path === "package.json")?.textSample ?? null,
+        }),
+        ...atpmRecordFindings({
+          entry: to,
+          manifest: toArchive.packageJson ?? null,
+          archiveSha1: toArchive.archiveSha1 ?? null,
+          recordName: ref.name,
+        }),
+      ],
+    } satisfies PublicDiffAcquiredSources;
+  },
+};
+
+interface LoadedAtpmPackage {
+  ref: AtpmPackageRef;
+  identity: AtpmRepoIdentity;
+  pkg: AtpmPackage;
+}
+
+/**
+ * Resolve a package name all the way to its record.
+ *
+ * Both halves are cached under the shared compare-metadata TTL (minutes), which
+ * is the right bound for each: identity resolution is several round trips to
+ * DNS, a directory, and a web server before any package data is read, and the
+ * record is one object whose freshness only matters for the version list — the
+ * computed diff for a given pair is cached separately and keyed by content.
+ */
+async function loadAtpmPackage(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  packageName: string,
+): Promise<LoadedAtpmPackage> {
+  const ref = parseAtpmPackageName(packageName);
+  if (!ref) throw new PublicDiffError("invalid package name", 400);
+
+  const identity = await resolveIdentityCached(env, ctx, ref);
+  const pkg = await fetchRecordCached(env, ctx, ref, identity);
+  return { ref, identity, pkg };
+}
+
+async function resolveIdentityCached(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  ref: AtpmPackageRef,
+): Promise<AtpmRepoIdentity> {
+  // Keyed by the authority, not the package: every package a publisher ships
+  // resolves through the same identity.
+  const authority =
+    ref.authority.kind === "handle" ? `@${ref.authority.handle}` : ref.authority.did;
+  const key = await computeCompareMetadataCacheKey({
+    registryUrl: ATPM_PROTOCOL,
+    packageName: authority,
+    cacheScope: `${PUBLIC_CACHE_SCOPE}-identity`,
+  });
+  const cached = await readCompareMetadataCache<AtpmRepoIdentity>(env, key);
+  if (cached) return cached;
+
+  const identity = await resolveAtpmRepoIdentity(ref);
+  await writeCompareMetadataCache(env, ctx, key, identity);
+  return identity;
+}
+
+async function fetchRecordCached(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  ref: AtpmPackageRef,
+  identity: AtpmRepoIdentity,
+): Promise<AtpmPackage> {
+  // Keyed by DID rather than by the name as typed, so the handle form and the
+  // DID form of one package share a single cached record.
+  const key = await computeCompareMetadataCacheKey({
+    registryUrl: ATPM_PROTOCOL,
+    packageName: `${identity.did}/${ref.name}`,
+    cacheScope: `${PUBLIC_CACHE_SCOPE}-record`,
+  });
+  const cached = await readCompareMetadataCache<AtpmPackage>(env, key);
+  if (cached) return cached;
+
+  const pkg = await fetchAtpmPackageRecord(identity, ref.name);
+  await writeCompareMetadataCache(env, ctx, key, pkg);
+  return pkg;
+}
+
+/**
+ * The chain of independent authorities this diff actually went through, shown
+ * on the page. On npm this would be noise — there is one registry and everyone
+ * knows its name — but here it is the answer to "who says these are the bytes",
+ * and every step is separately checkable by the reader.
+ */
+function resolutionTrail(
+  ref: AtpmPackageRef,
+  identity: AtpmRepoIdentity,
+): PublicDiffProvenanceEntry[] {
+  const trail: PublicDiffProvenanceEntry[] = [];
+  if (identity.handle) {
+    trail.push({
+      label: "Handle",
+      value: `@${identity.handle}`,
+      detail: identity.handleMethod === "dns" ? "DNS TXT" : "/.well-known/atproto-did",
+    });
+  }
+  trail.push({
+    label: "DID",
+    value: identity.did,
+    detail: identity.did.startsWith("did:plc:") ? "plc.directory" : "did:web",
+  });
+  trail.push({ label: "PDS", value: new URL(identity.pds).host });
+  // The full AT-URI, so a reader can paste it into any atproto client and read
+  // the same record this diff was built from.
+  trail.push({
+    label: "Record",
+    value: `${ATPM_PROTOCOL}${identity.did}/${ATPM_PACKAGE_COLLECTION}/${ref.name}`,
+  });
+  return trail;
+}
+
+/**
+ * Fetch and parse one version's tarball.
+ *
+ * The bytes go straight to the credentials-free sandbox with the blob URL pinned
+ * as the single allowed egress, exactly as PyPI's public path does. Nothing in
+ * this flow ever holds an npm token, so there is no credential the sandbox could
+ * leak even if the archive were malicious.
+ */
+async function downloadAtpmBlob(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  identity: AtpmRepoIdentity,
+  entry: AtpmVersion,
+): Promise<DownloadResult> {
+  // The record advertises the blob's size, so an oversized release can be
+  // refused before a byte is fetched instead of after the sandbox gives up.
+  if (entry.size !== null && entry.size > SANDBOX_MAX_STREAM_TAR_BYTES) {
+    throw new PublicDiffError("release artifact exceeds the public diff size limit", 413);
+  }
+  const url = atpmBlobUrl(identity, entry.cid);
+  try {
+    return await downloadInSandbox(env, ctx, {
+      tarballUrl: url,
+      archiveFormat: "tgz",
+      publicArtifactUrls: [url],
+    });
+  } catch (err) {
+    throw publicDiffDownloadError(err);
+  }
+}

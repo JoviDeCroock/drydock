@@ -3,7 +3,7 @@ import { getPublicDiffAdapter } from "../ecosystems";
 import { coloCache } from "../platform/http";
 import { parsePkgPrNewUrl } from "../../../src/lib/pkg-pr-new";
 import { PublicDiffError } from "./error";
-import type { PublicDiffAdapter, PublicDiffInput } from "./types";
+import type { PublicDiffAdapter, PublicDiffInput, PublicDiffProvenanceEntry } from "./types";
 import {
   annotateFindingsWithDiffStatus,
   createPackageDiff,
@@ -65,6 +65,9 @@ export interface PublicPackageDiff {
   // Coverage caveats from acquisition (e.g. a PyPI artifact kind omitted from
   // both sides because it exceeded a sandbox cap). Rendered as a banner.
   notices?: string[];
+  // How the reviewed bytes were located, for ecosystems where that is a chain
+  // of independent authorities rather than a single registry (atpm).
+  provenance?: PublicDiffProvenanceEntry[];
   cachedAt: string;
 }
 
@@ -151,6 +154,7 @@ export async function loadPublicPackageDiff(
     findings,
     risk,
     ...(sources.notices?.length ? { notices: sources.notices } : {}),
+    ...(sources.provenance?.length ? { provenance: sources.provenance } : {}),
     cachedAt: new Date().toISOString(),
   };
   await writePublicDiffCache(env, cacheKey, payload, {

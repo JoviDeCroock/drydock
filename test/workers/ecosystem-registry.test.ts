@@ -33,6 +33,9 @@ describe("ecosystem capability registry", () => {
       pypi: { staged: false, gate: true, publicDiff: true },
       // VS Code is gate-only: no Marketplace staging, not on /diff.
       vscode: { staged: false, gate: true, publicDiff: false },
+      // atpm is public-diff-only: releases live in the publisher's own AT
+      // Protocol repository, which Drydock reads but cannot stage or gate.
+      atpm: { staged: false, gate: false, publicDiff: true },
     });
   });
 
@@ -48,7 +51,7 @@ describe("ecosystem capability registry", () => {
 
   test("capability listings match the declared modules", () => {
     expect(supportedWorkflowGateEcosystems().sort()).toEqual(["npm", "pypi", "vscode"]);
-    expect(supportedPublicDiffEcosystems().sort()).toEqual(["npm", "pypi"]);
+    expect(supportedPublicDiffEcosystems().sort()).toEqual(["atpm", "npm", "pypi"]);
     expect(supportedStagedEcosystems()).toEqual(["npm"]);
   });
 

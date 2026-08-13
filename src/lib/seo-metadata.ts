@@ -67,9 +67,9 @@ export function packageDiffSeo(
 ): PageSeoMetadata {
   if (!packageName || !fromVersion || !toVersion) {
     return {
-      title: "Diff any npm or PyPI package | Drydock",
+      title: "Diff any npm, PyPI, or atpm package | Drydock",
       description:
-        "Compare two published versions of any npm package or PyPI project file by file, with deterministic supply-chain findings pinned to the diff. No account required.",
+        "Compare two published versions of any npm package, PyPI project, or atpm package file by file, with deterministic supply-chain findings pinned to the diff. No account required.",
       path: "/diff",
     };
   }

@@ -8,6 +8,26 @@ export interface PublicDiffAcquiredSide {
 }
 
 /**
+ * One step in how the reviewed bytes were located, rendered on the page as a
+ * plain label/value list.
+ *
+ * Optional and empty for the ecosystems that do not need it: on npm or PyPI the
+ * answer is "the registry", which is already the page's premise. It exists for
+ * ecosystems where locating a release is itself a chain of independent
+ * authorities a reader may want to check — atpm resolves a handle through DNS,
+ * a DID through a directory, and the bytes from the publisher's own server.
+ *
+ * Values are rendered as text, never as links: every one of them is derived from
+ * data the party under review controls.
+ */
+export interface PublicDiffProvenanceEntry {
+  label: string;
+  value: string;
+  /** Which mechanism produced this step, e.g. `DNS TXT`. */
+  detail?: string;
+}
+
+/**
  * What an ecosystem hands back after fetching both sides. The orchestrator in
  * `public-diff/index.ts` owns diffing, redaction, risk, and caching so every
  * ecosystem shares one assembly path; the adapter only knows how to get the
@@ -21,6 +41,8 @@ export interface PublicDiffAcquiredSources {
   codePatternSet?: CodePatternSet;
   /** Coverage caveats to render as a banner (e.g. an omitted artifact kind). */
   notices?: string[];
+  /** How the bytes were located, when that is not simply "the registry". */
+  provenance?: PublicDiffProvenanceEntry[];
 }
 
 export interface PublicDiffInput {

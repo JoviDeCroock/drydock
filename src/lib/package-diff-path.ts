@@ -4,7 +4,7 @@ import {
   unusualDependencySpecKind,
 } from "../../server/lib/review/dependency-specs";
 
-export type DiffEcosystem = "npm" | "pypi";
+export type DiffEcosystem = "npm" | "pypi" | "atpm";
 
 export interface DiffSpec {
   ecosystem: DiffEcosystem;
@@ -16,22 +16,44 @@ export interface DiffSpec {
 function encodePackageName(packageName: string): string {
   return packageName
     .split("/")
-    .map((segment) => encodeURIComponent(segment).replace(/^%40/, "@"))
+    .map((segment) =>
+      encodeURIComponent(segment)
+        .replace(/^%40/, "@")
+        // Both are legal unencoded in a path segment (RFC 3986 pchar), and both
+        // appear in ordinary names — `@scope` on npm, `did:plc:` on atpm — so
+        // escaping them would only make every such URL unreadable.
+        .replace(/%3A/g, ":"),
+    )
     .join("/");
 }
 
+// How many path segments a package name occupies, per ecosystem. This is what
+// makes the prefixed and un-prefixed forms unambiguous, so it is stated once
+// here and read by both the builder and the parser.
+//
+// PyPI project names are always one segment. atpm names are always two — either
+// `@handle/name` or `did:plc:.../name` — because every atpm package is published
+// under a publisher identity. npm is the variable one: one segment unscoped, two
+// when scoped, which the parser detects from the leading `@`.
+//
+// Every ecosystem except npm needs an entry: `packageDiffPath` prefixes anything
+// that is not npm, and only the ecosystems listed here are parsed back. The
+// round-trip test in `test/package-diff-path.test.mjs` covers each one.
+const NAME_SEGMENTS: Partial<Record<DiffEcosystem, number>> = { pypi: 1, atpm: 2 };
+
 // npm keeps the historical un-prefixed form (/diff/<name>/<from>/<to>) so
-// existing links and indexed pages keep resolving; PyPI diffs live under
-// /diff/pypi/<project>/<from>/<to>. The forms cannot collide: an npm package
-// literally named "pypi" still parses as npm because its path has one fewer
-// segment than the prefixed PyPI form.
+// existing links and indexed pages keep resolving; every other ecosystem is
+// prefixed (/diff/pypi/<project>/..., /diff/atpm/@<handle>/<name>/...). The
+// forms cannot collide: an npm package literally named "pypi" or "atpm" still
+// parses as npm, because its path carries a different number of segments than
+// the prefixed form of the same length.
 export function packageDiffPath(
   ecosystem: DiffEcosystem,
   packageName: string,
   fromVersion: string,
   toVersion: string,
 ) {
-  const prefix = ecosystem === "pypi" ? "/diff/pypi" : "/diff";
+  const prefix = ecosystem === "npm" ? "/diff" : `/diff/${ecosystem}`;
   return `${prefix}/${encodePackageName(packageName)}/${encodeURIComponent(fromVersion)}/${encodeURIComponent(toVersion)}`;
 }
 
@@ -84,20 +106,15 @@ function diffPathSegments(path: string): string[] | null {
 }
 
 // /diff/<name>/<from>/<to> for npm, where a scoped <name> spans two path
-// segments (/diff/@scope/pkg/1.0.0/1.1.0); /diff/pypi/<project>/<from>/<to>
-// for PyPI. Anything else (including bare /diff) is the landing or
-// package-only form.
+// segments (/diff/@scope/pkg/1.0.0/1.1.0); /diff/<ecosystem>/<name>/<from>/<to>
+// for every other ecosystem, with <name> spanning that ecosystem's fixed
+// segment count (see NAME_SEGMENTS). Anything else (including bare /diff) is
+// the landing or package-only form.
 export function parseDiffSpec(path: string): DiffSpec | null {
   const segments = diffPathSegments(path);
   if (!segments || !segments.length) return null;
-  if (segments[0] === "pypi" && segments.length === 4) {
-    return {
-      ecosystem: "pypi",
-      packageName: segments[1],
-      fromVersion: segments[2],
-      toVersion: segments[3],
-    };
-  }
+  const prefixed = parsePrefixedDiffSpec(segments);
+  if (prefixed) return prefixed;
   const nameSegmentCount = segments[0].startsWith("@") ? 2 : 1;
   if (segments.length !== nameSegmentCount + 2) return null;
   return {
@@ -106,6 +123,23 @@ export function parseDiffSpec(path: string): DiffSpec | null {
     fromVersion: segments[nameSegmentCount],
     toVersion: segments[nameSegmentCount + 1],
   };
+}
+
+// The /diff/<ecosystem>/... forms. Returns null — falling through to the npm
+// reading — for anything that is not an exact match, so an npm package named
+// after an ecosystem keeps resolving as itself.
+function parsePrefixedDiffSpec(segments: string[]): DiffSpec | null {
+  for (const [ecosystem, nameSegments] of Object.entries(NAME_SEGMENTS)) {
+    if (segments[0] !== ecosystem || !nameSegments) continue;
+    if (segments.length !== nameSegments + 3) continue;
+    return {
+      ecosystem: ecosystem as DiffEcosystem,
+      packageName: segments.slice(1, 1 + nameSegments).join("/"),
+      fromVersion: segments[1 + nameSegments],
+      toVersion: segments[2 + nameSegments],
+    };
+  }
+  return null;
 }
 
 // /diff/<name> with no versions (two segments for a scoped name). Returns the

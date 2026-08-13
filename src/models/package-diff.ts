@@ -33,6 +33,9 @@ export interface PublicDiffResponse {
   // Coverage caveats (e.g. an artifact kind omitted because it exceeded a
   // sandbox cap); rendered as a banner above the diff.
   notices: string[];
+  // How the reviewed bytes were located, when that is a chain of independent
+  // authorities rather than a single registry (atpm). Empty elsewhere.
+  provenance: Array<{ label: string; value: string; detail?: string }>;
   cachedAt: string;
 }
 
@@ -140,9 +143,9 @@ function diffQuery(
 }
 
 // npm requests keep their historical parameter-free URLs so long-lived colo
-// cache entries stay valid; only PyPI adds the ecosystem parameter.
+// cache entries stay valid; every other ecosystem names itself.
 function ecosystemQuery(ecosystem: DiffEcosystem): string {
-  return ecosystem === "pypi" ? "&ecosystem=pypi" : "";
+  return ecosystem === "npm" ? "" : `&ecosystem=${ecosystem}`;
 }
 
 // One model instance per (package, from, to) page view; the page remounts the

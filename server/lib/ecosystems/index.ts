@@ -1,3 +1,4 @@
+import { atpmPublicDiff } from "./atpm/public-diff";
 import { npmAdapter } from "./npm";
 import { npmPublicDiff } from "./npm/public-diff";
 import { npmWorkflowGateAdapter } from "./npm/workflow-gate";
@@ -22,6 +23,8 @@ import type { PublicDiffAdapter } from "../public-diff/types";
  *    adapter; releases reach review through a workflow gate.
  *  - VS Code is gate-only today: the Marketplace has no staging concept and the
  *    public diff surface does not cover extensions.
+ *  - atpm is public-diff-only: releases live in the publisher's own AT Protocol
+ *    repository, which Drydock reads but has no gate on and no stage API for.
  */
 const ECOSYSTEM_MODULES: Record<EcosystemId, EcosystemModule> = {
   npm: {
@@ -41,6 +44,11 @@ const ECOSYSTEM_MODULES: Record<EcosystemId, EcosystemModule> = {
     id: "vscode",
     label: ECOSYSTEM_LABELS.vscode,
     gate: vscodeWorkflowGateAdapter,
+  },
+  atpm: {
+    id: "atpm",
+    label: ECOSYSTEM_LABELS.atpm,
+    publicDiff: atpmPublicDiff,
   },
 };
 
