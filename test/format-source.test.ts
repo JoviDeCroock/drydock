@@ -443,6 +443,19 @@ describe("formatSource (javascript)", () => {
     expect(division?.text).toContain("const re=/a;b{c}/;");
   });
 
+  test("restores ordinary contextual modes after unrelated async syntax", () => {
+    for (const source of [
+      "var await=4;async(value);const f=()=>await/2;const re=/a;b{c}/;safe()",
+      "var await=4;const f=flag?async()=>0:await/2;const re=/a;b{c}/;safe()",
+      "var await=4;async function outer(){class C{async\n[key](){return await/2;const re=/a;b{c}/;safe()}}}",
+    ]) {
+      const formatted = formatJs(source);
+
+      expect(formatted?.text).toContain("await/2;");
+      expect(formatted?.text).toContain("const re=/a;b{c}/;");
+    }
+  });
+
   test("recognizes statement lists inside class static blocks", () => {
     const formatted = formatJs(
       "class C{static{function f(){}/x;y{z}/.test(a);foo()}}" +

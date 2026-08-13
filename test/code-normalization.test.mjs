@@ -186,6 +186,19 @@ describe("normalizeCodeForScanning", () => {
     }
   });
 
+  test("keeps scanning after contextual divisions following unrelated async syntax", () => {
+    const payload = "const p=['chi','ld_pro','cess'].join('');";
+    for (const [prefix, suffix] of [
+      ["var await=4;async(value);const f=()=>await/2;", ""],
+      ["var await=4;const f=flag?async()=>0:await/2;", ""],
+      ["var await=4;async function outer(){class C{async\n[key](){return await/2;", "}}}"],
+    ]) {
+      const normalized = normalizeCodeForScanning(`${prefix}${payload}${suffix}`);
+
+      expect(normalized).toContain('const p="child_process";');
+    }
+  });
+
   test("never folds regex contents after typed variable declarations", () => {
     for (const source of [
       "let value:string\n/'chi' + 'ld_process'/.test(value)",

@@ -99,6 +99,9 @@ describe("tokenizeJs regex vs division", () => {
       "async function outer(){class C{method<T>(){return await/2/b}}}", // as do generic methods
       "const o={x:async[key](arg),y:()=>{return await/2/b}}", // computed calls are not methods
       "var await=4;const f=async()=>0\nif(flag) await/2/b", // concise-arrow mode ends at ASI
+      "var await=4;async(value);const f=()=>await/2/b", // a prior async call cannot make a later arrow async
+      "var await=4;const f=flag?async()=>0:await/2/b", // a conditional alternate restores its outer mode
+      "var await=4;async function outer(){class C{async\n[key](){return await/2/b}}}", // ASI makes this an ordinary computed method
       "const {await}=value;await/2/b", // destructured lexical bindings stay visible
       "const {await,await:alias}=value;await/2/b", // property keys cannot erase a prior binding
       "try{}catch(await){await/2/b}", // catch bindings scope over their body

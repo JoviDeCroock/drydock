@@ -84,6 +84,11 @@ interface PendingAsyncArrowTypeParameters {
   genericDepth: number;
 }
 
+interface ConditionalContext {
+  depth: number;
+  expressionFunctionModeCount: number;
+}
+
 interface BracketState {
   brackets: BracketKind[];
   closed: BracketKind | null;
@@ -144,7 +149,10 @@ interface BracketState {
   // before its terminating `:`. Keep the switch-block depth so that colon can
   // be distinguished from an object property or conditional-expression colon.
   pendingCaseDepth: number | null;
-  conditionalDepths: number[];
+  // A concise arrow in a conditional consequent ends at the matching `:`. Keep
+  // the mode-stack size from `?` so colon can discard only functions that began
+  // inside that consequent while retaining an enclosing concise arrow.
+  conditionalDepths: ConditionalContext[];
   // Whether the immediately preceding identifier can be a statement label, and
   // whether the immediately preceding colon ended a label/case clause. These
   // are the contexts where `{` opens a block even though `:` is also used by
@@ -1416,14 +1424,20 @@ function updateBracketState(
   } else if (text === ",") {
     clearExpressionFunctionModesAtDepth(state, state.brackets.length);
   } else if (text === "?") {
-    state.conditionalDepths.push(state.brackets.length);
+    state.conditionalDepths.push({
+      depth: state.brackets.length,
+      expressionFunctionModeCount: state.expressionFunctionModes.length,
+    });
   } else if (text === ":") {
     if (state.pendingFunctionParametersDepth === state.brackets.length) {
       clearPendingFunctionParameters(state);
     }
-    const conditionalDepth = state.conditionalDepths[state.conditionalDepths.length - 1];
-    if (conditionalDepth === state.brackets.length) {
+    const conditional = state.conditionalDepths[state.conditionalDepths.length - 1];
+    if (conditional?.depth === state.brackets.length) {
       state.conditionalDepths.pop();
+      if (state.expressionFunctionModes.length > conditional.expressionFunctionModeCount) {
+        state.expressionFunctionModes.length = conditional.expressionFunctionModeCount;
+      }
     } else if (state.labelCandidate || state.pendingCaseDepth === state.brackets.length) {
       state.statementColon = true;
       state.pendingCaseDepth = null;
@@ -1442,7 +1456,10 @@ function updateBracketState(
       (isIdentText(src, beforePrev, "async") &&
         prev !== undefined &&
         !containsLineTerminator(src, beforePrev!.end, prev.start)) ||
-      (state.lastClosedParen?.depth === state.brackets.length && state.lastClosedParen.async);
+      (prev?.type === "punct" &&
+        jsTokenText(src, prev) === ")" &&
+        state.lastClosedParen?.depth === state.brackets.length &&
+        state.lastClosedParen.async);
     state.pendingArrowBody = {
       depth: state.brackets.length,
       mode: { awaitIsKeyword: Boolean(asyncArrow), yieldIsKeyword: false },
@@ -1633,7 +1650,12 @@ function contextualComputedMethodMode(
     ].includes(prefix)
   ) {
     if (!memberBoundary(beforePrev) && !memberModifier(beforePrev)) return null;
-    if (prefix === "async" && lineTerminatorBefore) return null;
+    if (prefix === "async" && lineTerminatorBefore) {
+      // In a class, ASI turns `async\n[key](){}` into an `async` field followed
+      // by an ordinary computed method. The method still needs its own mode so
+      // it does not inherit await/yield roles from its containing function.
+      return top === "class-block" || top === "class-value-block" ? ordinaryFunctionMode() : null;
+    }
     return { awaitIsKeyword: prefix === "async", yieldIsKeyword: false };
   }
   return null;
