@@ -152,6 +152,22 @@ describe("normalizeCodeForScanning", () => {
       ["destructured-variable-key", "await", (body) => `const {await,await:alias}=value;${body}`],
       ["catch", "await", (body) => `try{}catch(await){${body}}`],
       ["catch-key", "await", (body) => `try{}catch({await,await:alias}){${body}}`],
+      ["template", "await", (body) => `function f(await){const value=\`${"${await/2}"}\`;${body}}`],
+      [
+        "parameter-initializer",
+        "await",
+        (body) => `async function outer(){function inner(value=await/2){${body}}}`,
+      ],
+      [
+        "class-field",
+        "await",
+        (body) => `async function outer(){class C{x=await/2;y=()=>{${body}}}}`,
+      ],
+      ["for-binding", "await", (body) => `for(let await of values){${body}}`],
+      ["for-destructuring", "await", (body) => `for(const {await} of values){${body}}`],
+      ["var-through-block", "await", (body) => `{var await=4}${body}`],
+      ["function-name", "await", (body) => `function await(){}${body}`],
+      ["class-name", "yield", (body) => `class yield{}${body}`],
     ];
     for (const [name, contextual, wrap] of wrappers) {
       const body =
@@ -181,6 +197,8 @@ describe("normalizeCodeForScanning", () => {
       "function outer(){class C{async method<T>(){await /'chi' + 'ld_process'/.test(value)}}}",
       "function outer(){const f=async <T>()=>await /'chi' + 'ld_process'/.test(value)}",
       "async function outer(){const f=()=>0\nreturn await /'chi' + 'ld_process'/.test(value)}",
+      "class C{async #method(){return await /'chi' + 'ld_process'/.test(value)}}",
+      "class C{*#method(){return yield /'chi' + 'ld_process'/.test(value)}}",
     ]) {
       expect(normalizeCodeForScanning(source)).toBe(source);
     }

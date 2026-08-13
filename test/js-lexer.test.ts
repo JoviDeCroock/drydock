@@ -107,6 +107,13 @@ describe("tokenizeJs regex vs division", () => {
       "try{}catch(await){await/2/b}", // catch bindings scope over their body
       "try{}catch({await,await:alias}){await/2/b}", // including mixed shorthand/key patterns
       "async function outer(){function inner(){return await/2/b}}", // ordinary nested functions reset async context
+      "async function outer(){function inner(x=await/2/b){}}", // including their parameter initializers
+      "async function outer(){class C{x=await/2/b}}", // instance fields reset an enclosing async context
+      "for(let await of xs){await/2/b}", // lexical for-head bindings scope over a braced body
+      "for(const {await} of xs)await/2/b", // and over a concise body
+      "{var await=4}await/2/b", // var bindings survive a nested statement block
+      "function await(){}await/2/b", // declaration names bind in the containing scope
+      "class yield{}yield/2/b", // including contextual class names in sloppy scripts
       "class C{#await=4;m(){return this.#await/2/b}}", // private names are values too
       "const f=():void=>{}\nexport default <any>{a:1}/2/b", // typed arrows cannot leak body state
       "const f=():number=>1\nconst value={a:1}/2/b", // including expression-bodied arrows ending by ASI
@@ -134,6 +141,9 @@ describe("tokenizeJs regex vs division", () => {
       "const f=async()=>await /x/",
       "class C{async f(){return await /x/}}",
       "class C{*f(){return yield /x/}}",
+      "class C{async #f(){return await /x/}}",
+      "class C{*#f(){return yield /x/}}",
+      "class C{static async *#f(){return yield /x/}}",
       "function outer(){const o={async [key](){return await /x/}}}",
       "function outer(){class C{async method<T>(){return await /x/}}}",
       "function outer(){class C{static *[key](){return yield /x/}}}",
@@ -263,6 +273,16 @@ describe("tokenizeJs regex vs division", () => {
     expect(commentTemplate && jsTokenText(comment, commentTemplate)).toBe(
       "`${/* } and ` */ `inner;{x}`}`",
     );
+  });
+
+  test("inherits contextual modes and bindings inside template interpolations", () => {
+    for (const source of [
+      "function f(await){const value=`${await/2}`;const re=/x/}",
+      "function f(yield){const value=`${yield/2}`;const re=/x/}",
+    ]) {
+      expect(kinds(source)).toContain("template:");
+      expect(kinds(source)).toContain("regex:/x/");
+    }
   });
 
   test("scans unbalanced brackets to EOF instead of throwing", () => {

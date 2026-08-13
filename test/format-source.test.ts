@@ -394,6 +394,24 @@ describe("formatSource (javascript)", () => {
     }
   });
 
+  test("keeps contextual scope boundaries intact across templates, parameters, loops, and declarations", () => {
+    for (const source of [
+      "function f(await){const value=`${await/2}`;const re=/a;b{c}/;safe()}",
+      "async function outer(){function inner(value=await/2){const re=/a;b{c}/;safe()}}",
+      "async function outer(){class C{value=await/2;re=/a;b{c}/;safe()}}",
+      "for(let await of values){await/2;const re=/a;b{c}/;safe()}",
+      "for(const {await} of values)await/2;const re=/a;b{c}/;safe()",
+      "{var await=4}await/2;const re=/a;b{c}/;safe()",
+      "function await(){}await/2;const re=/a;b{c}/;safe()",
+      "class yield{}yield/2;const re=/a;b{c}/;safe()",
+    ]) {
+      const formatted = formatJs(source);
+
+      expect(formatted?.text).toContain("/2");
+      expect(formatted?.text).toContain("/a;b{c}/;");
+    }
+  });
+
   test("restores await and yield keyword roles in nested async and generator functions", () => {
     for (const source of [
       "function outer(await){async function inner(){return await /a;b{c}/;safe()}}",
@@ -425,6 +443,16 @@ describe("formatSource (javascript)", () => {
       "function outer(){class C{static *[key](){return yield /a;b{c}/;safe()}}}",
     ]) {
       expect(formatJs(source)?.text).toContain("/a;b{c}/");
+    }
+  });
+
+  test("recognizes async and generator modes on private methods", () => {
+    for (const source of [
+      "class C{async #method(){return await /a;b{c}/;safe()}}",
+      "class C{*#method(){return yield /a;b{c}/;safe()}}",
+      "class C{static async *#method(){return yield /a;b{c}/;safe()}}",
+    ]) {
+      expect(formatJs(source)?.text).toContain("/a;b{c}/;");
     }
   });
 
