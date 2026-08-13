@@ -115,6 +115,63 @@ export function evaluateNpmStageGatewayRequest(
   return { allowed: false, credentialed: false, kind: "blocked" };
 }
 
+/**
+ * How far a pinned public artifact may be redirected. A CDN hop or a trailing-
+ * slash canonicalization is one; anything longer is a chain worth refusing.
+ */
+const MAX_PINNED_ARTIFACT_REDIRECTS = 3;
+
+/**
+ * Follow redirects for a pinned public artifact without letting them leave the
+ * origin the policy admitted.
+ *
+ * `publicArtifactUrls` says "this exact URL, and nothing else" — but the runtime
+ * follows 3xx responses transparently, so upstream could answer the pinned URL
+ * with a redirect and have the sandbox fetch an entirely different host that no
+ * policy ever saw. That matters most for atpm, whose artifact host is a PDS
+ * named by the DID document of the party under review (the parent Worker checks
+ * that host against a public-host policy before pinning it, and a redirect would
+ * route straight around the check); PyPI's pinned host is fixed, so the same
+ * rule costs it nothing.
+ *
+ * Same-origin redirects stay allowed because the origin is exactly what was
+ * vetted; only leaving it is refused. Credentialed npm requests do not come
+ * through here — their redirect behavior is unchanged, so a registry that moves
+ * a staged tarball to a CDN keeps working.
+ */
+async function fetchPinnedArtifact(request: Request): Promise<Response> {
+  const pinnedOrigin = new URL(request.url).origin;
+  let current = new Request(request, { redirect: "manual" });
+
+  for (let hop = 0; ; hop++) {
+    const response = await fetch(current);
+    if (response.status < 300 || response.status >= 400) return response;
+
+    const location = response.headers.get("location");
+    // The redirect body is never the artifact; drop it rather than leaving a
+    // stream open while the hop is decided.
+    await response.body?.cancel();
+    if (!location || hop >= MAX_PINNED_ARTIFACT_REDIRECTS) {
+      return new Response("blocked by stage gateway", { status: 403 });
+    }
+
+    let target: URL;
+    try {
+      target = new URL(location, current.url);
+    } catch {
+      return new Response("blocked by stage gateway", { status: 403 });
+    }
+    if (target.origin !== pinnedOrigin) {
+      return new Response("blocked by stage gateway", { status: 403 });
+    }
+    current = new Request(target.toString(), {
+      method: "GET",
+      headers: current.headers,
+      redirect: "manual",
+    });
+  }
+}
+
 export class NpmStageGateway extends WorkerEntrypoint<Cloudflare.Env, NpmStageGatewayProps> {
   async fetch(request: Request): Promise<Response> {
     const registry =
@@ -135,6 +192,9 @@ export class NpmStageGateway extends WorkerEntrypoint<Cloudflare.Env, NpmStageGa
     if (token && policy.credentialed) forwarded.headers.set("authorization", `Bearer ${token}`);
     forwarded.headers.set("user-agent", "staged-publish-review/0.3");
 
+    // A pinned artifact URL means the origin was vetted; keep redirects inside
+    // it. Credentialed registry requests keep the runtime's default handling.
+    if (policy.kind === "public-artifact") return fetchPinnedArtifact(forwarded);
     return fetch(forwarded);
   }
 }
