@@ -171,6 +171,14 @@ describe("formatSource (javascript)", () => {
     expect(lines(formatted)).toEqual(['const s=`${/}/.test(x) ? `inner;{x}` : "x"}`;', "foo();"]);
   });
 
+  test("keeps HTML close comments after multiline block comments opaque", () => {
+    const source = "const state={a:1};/* note\n*/--> fake();{payload}\nsafe();";
+    const formatted = formatJs(source);
+
+    expect(formatted?.text).toContain("/* note\n*/--> fake();{payload}");
+    expect(formatted?.text).not.toContain("--> fake();\n");
+  });
+
   test("recognizes class and bindingless catch bodies before a regex statement", () => {
     const classSource = formatJs("class A{}/x;y{z}/.test(a);foo();");
     const catchSource = formatJs("try{}catch{}/x;y{z}/.test(a);foo();");

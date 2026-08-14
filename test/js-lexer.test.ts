@@ -41,6 +41,19 @@ describe("tokenizeJs comments", () => {
       "ident:const ident:value punct:= template:`${<!-- fake();{payload}\n1}` punct:;",
     );
   });
+
+  test("keeps HTML close comments opaque after multiline block comments", () => {
+    const source = "safe();\n/* note\n*/--> fake();{payload}\nsafe();";
+
+    expect(kinds(source)).toBe(
+      "ident:safe punct:( punct:) punct:; comment:/* note\n*/ comment:--> fake();{payload} ident:safe punct:( punct:) punct:;",
+    );
+
+    const interpolation = "const value=`${/* note\n*/--> ` fake\n1}`;safe();";
+    expect(kinds(interpolation)).toBe(
+      "ident:const ident:value punct:= template:`${/* note\n*/--> ` fake\n1}` punct:; ident:safe punct:( punct:) punct:;",
+    );
+  });
 });
 
 describe("tokenizeJs regex vs division", () => {

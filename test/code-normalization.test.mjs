@@ -66,9 +66,35 @@ describe("normalizeCodeForScanning", () => {
   test("never folds tokens inside Annex B HTML-like comments", () => {
     const open = "<!-- globalThis['pro' + 'cess'];fake();";
     const close = "safe();\n--> globalThis['pro' + 'cess'];fake();\nsafe();";
+    const closeAfterBlock = "safe();\n/* note\n*/--> globalThis['pro' + 'cess'];fake();\nsafe();";
 
     expect(normalizeCodeForScanning(open)).toBe(open);
     expect(normalizeCodeForScanning(close)).toBe(close);
+    expect(normalizeCodeForScanning(closeAfterBlock)).toBe(closeAfterBlock);
+  });
+
+  test("keeps scanning after close comments inside template interpolations", () => {
+    const prefix = "const value=`${/* note\n*/--> ` inert\n1}`;";
+    const payload =
+      "const p=['chi','ld_pro','cess'].join('');" +
+      "const r=globalThis['re'+'quire'];const cp=r(p);cp['exec'+'Sync']('id');";
+    const source = prefix + payload;
+    const staged = [
+      {
+        path: "index.js",
+        size: source.length,
+        sha256: "index-js-close-comment",
+        flags: [],
+        textSample: source,
+      },
+    ];
+
+    expect(normalizeCodeForScanning(source)).toContain('const p="child_process";');
+    expect(
+      deterministicFindings(staged, createPackageDiff([], staged)).some(
+        (finding) => finding.ruleId === "code.process-execution",
+      ),
+    ).toBe(true);
   });
 
   test("never folds tokens inside a hashbang", () => {

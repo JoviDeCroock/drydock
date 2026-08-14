@@ -440,7 +440,10 @@ export function tokenizeJs(src: string): JsToken[] {
       i = Math.min(n, i + 2);
       if (containsLineTerminator(src, start, i)) lineTerminatorBefore = true;
       tokens.push({ type: "comment", start, end: i });
-      atLineStart = false;
+      // Annex B permits `-->` after a line terminator hidden inside a block
+      // comment. Keep that close-comment eligibility even though `*/` itself
+      // appears later on the physical line.
+      atLineStart = lineTerminatorBefore;
       continue;
     }
 
@@ -632,7 +635,9 @@ function scanTemplate(src: string, i: number, parentState: BracketState): number
       while (j < n && !(src[j] === "*" && src[j + 1] === "/")) j += 1;
       j = Math.min(n, j + 2);
       if (containsLineTerminator(src, start, j)) frame.lineTerminatorBefore = true;
-      frame.atLineStart = false;
+      // Match the top-level Annex B handling: a multiline block comment keeps
+      // a following `-->` comment-shaped inside template interpolation too.
+      frame.atLineStart = frame.lineTerminatorBefore;
       continue;
     }
     if (c === "'" || c === '"') {
