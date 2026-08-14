@@ -63,9 +63,313 @@ describe("normalizeCodeForScanning", () => {
     expect(normalizeCodeForScanning(block)).toBe(block);
   });
 
+  test("never folds tokens inside Annex B HTML-like comments", () => {
+    const open = "<!-- globalThis['pro' + 'cess'];fake();";
+    const close = "safe();\n--> globalThis['pro' + 'cess'];fake();\nsafe();";
+    const closeAfterBlock = "safe();\n/* note\n*/--> globalThis['pro' + 'cess'];fake();\nsafe();";
+
+    expect(normalizeCodeForScanning(open)).toBe(open);
+    expect(normalizeCodeForScanning(close)).toBe(close);
+    expect(normalizeCodeForScanning(closeAfterBlock)).toBe(closeAfterBlock);
+  });
+
+  test("keeps scanning after close comments inside template interpolations", () => {
+    const prefix = "const value=`${/* note\n*/--> ` inert\n1}`;";
+    const payload =
+      "const p=['chi','ld_pro','cess'].join('');" +
+      "const r=globalThis['re'+'quire'];const cp=r(p);cp['exec'+'Sync']('id');";
+    const source = prefix + payload;
+    const staged = [
+      {
+        path: "index.js",
+        size: source.length,
+        sha256: "index-js-close-comment",
+        flags: [],
+        textSample: source,
+      },
+    ];
+
+    expect(normalizeCodeForScanning(source)).toContain('const p="child_process";');
+    expect(
+      deterministicFindings(staged, createPackageDiff([], staged)).some(
+        (finding) => finding.ruleId === "code.process-execution",
+      ),
+    ).toBe(true);
+  });
+
+  test("never folds tokens inside a hashbang", () => {
+    const source = "#!/usr/bin/env -S node --conditions=['chi','ld_process'].join('')\nsafe();";
+
+    expect(normalizeCodeForScanning(source)).toBe(source);
+  });
+
   test("never folds tokens inside a regex literal", () => {
     const source = "const re = /'a' + 'b'/;";
     expect(normalizeCodeForScanning(source)).toBe(source);
+  });
+
+  test("never folds inside strings containing JSON-superset line separators", () => {
+    for (const separator of ["\u2028", "\u2029"]) {
+      const source = `const text="before${separator}'chi'+'ld_process';after";`;
+
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
+  });
+
+  test("never folds regex contents after labeled or case-clause blocks", () => {
+    const labelSource = "label:{foo()}/'chi' + 'ld_process'/.test(a)";
+    const caseSource = "switch(a){case 1:{foo()}/'chi' + 'ld_process'/.test(a)}";
+
+    expect(normalizeCodeForScanning(labelSource)).toBe(labelSource);
+    expect(normalizeCodeForScanning(caseSource)).toBe(caseSource);
+  });
+
+  test("never folds regex contents after labeled blocks inside IIFE wrappers", () => {
+    const source = "!function(){e:{foo()}/'chi' + 'ld_process'/.test(a)}()";
+
+    expect(normalizeCodeForScanning(source)).toBe(source);
+  });
+
+  test("never folds regex contents after semicolonless declarations", () => {
+    for (const source of [
+      "call()\nfunction f(){}/'chi' + 'ld_process'/.test(a)",
+      "const value=1\nclass A{}/'chi' + 'ld_process'/.test(a)",
+    ]) {
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
+  });
+
+  test("never folds regex contents after bare variable declarations", () => {
+    for (const source of [
+      "let value\n/'chi' + 'ld_process'/.test(value)",
+      "var first,second\n/'chi' + 'ld_process'/.test(value)",
+      "let { value }\n/'chi' + 'ld_process'/.test(value)",
+    ]) {
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
+  });
+
+  test("never folds regex contents after ambient function declarations", () => {
+    for (const source of [
+      "declare function f():Result\n/'chi' + 'ld_process'/.test(value)",
+      "export declare function f<T>():T\n/'chi' + 'ld_process'/.test(value)",
+    ]) {
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
+  });
+
+  test("contextual bindings cannot hide an assembled process sink", () => {
+    const wrappers = [
+      ["direct-await", "await", (body) => `function f(await){${body}}`],
+      ["direct-yield", "yield", (body) => `function f(yield){${body}}`],
+      ["destructured-param", "await", (body) => `function f({await}){${body}}`],
+      ["nested-block", "await", (body) => `function f(await){if(flag){${body}}}`],
+      ["arrow", "await", (body) => `const f=(await)=>{${body}}`],
+      ["class-method", "await", (body) => `class C{m(await){${body}}}`],
+      ["object-method", "await", (body) => `const o={m(await){${body}}}`],
+      ["computed-method", "await", (body) => `async function outer(){const o={[key](){${body}}}}`],
+      [
+        "generic-method",
+        "await",
+        (body) => `async function outer(){class C{method<T>(){${body}}}}`,
+      ],
+      ["arrow-asi", "await", (body) => `var await=4;const f=async()=>0\nif(flag){${body}}`],
+      ["destructured-variable", "await", (body) => `const {await}=value;${body}`],
+      ["destructured-variable-key", "await", (body) => `const {await,await:alias}=value;${body}`],
+      ["catch", "await", (body) => `try{}catch(await){${body}}`],
+      ["catch-key", "await", (body) => `try{}catch({await,await:alias}){${body}}`],
+      ["template", "await", (body) => `function f(await){const value=\`${"${await/2}"}\`;${body}}`],
+      [
+        "parameter-initializer",
+        "await",
+        (body) => `async function outer(){function inner(value=await/2){${body}}}`,
+      ],
+      [
+        "class-field",
+        "await",
+        (body) => `async function outer(){class C{x=await/2;y=()=>{${body}}}}`,
+      ],
+      ["for-binding", "await", (body) => `for(let await of values){${body}}`],
+      ["for-destructuring", "await", (body) => `for(const {await} of values){${body}}`],
+      ["var-through-block", "await", (body) => `{var await=4}${body}`],
+      ["function-name", "await", (body) => `function await(){}${body}`],
+      ["class-name", "yield", (body) => `class yield{}${body}`],
+    ];
+    for (const [name, contextual, wrap] of wrappers) {
+      const body =
+        `${contextual}/2;` +
+        "const p=['chi','ld_pro','cess'].join('');const r=globalThis['re'+'quire'];" +
+        "const cp=r(p);cp['exec'+'Sync']('id')";
+      const payload = wrap(body);
+      const staged = [
+        {
+          path: "index.js",
+          size: payload.length,
+          sha256: `index-js-${name}`,
+          flags: [],
+          textSample: payload,
+        },
+      ];
+      const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+      expect(normalizeCodeForScanning(payload)).toContain("child_process");
+      expect(findings.some((finding) => finding.ruleId === "code.process-execution")).toBe(true);
+    }
+  });
+
+  test("never folds regex contents in computed, generic, or post-ASI function contexts", () => {
+    for (const source of [
+      "function outer(){const o={async [key](){await /'chi' + 'ld_process'/.test(value)}}}",
+      "function outer(){class C{async method<T>(){await /'chi' + 'ld_process'/.test(value)}}}",
+      "function outer(){const f=async <T>()=>await /'chi' + 'ld_process'/.test(value)}",
+      "async function outer(){const f=()=>0\nreturn await /'chi' + 'ld_process'/.test(value)}",
+      "class C{async #method(){return await /'chi' + 'ld_process'/.test(value)}}",
+      "class C{*#method(){return yield /'chi' + 'ld_process'/.test(value)}}",
+    ]) {
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
+  });
+
+  test("keeps scanning after contextual divisions following unrelated async syntax", () => {
+    const payload = "const p=['chi','ld_pro','cess'].join('');";
+    for (const [prefix, suffix] of [
+      ["var await=4;async(value);const f=()=>await/2;", ""],
+      ["var await=4;const f=flag?async()=>0:await/2;", ""],
+      ["var await=4;async function outer(){class C{async\n[key](){return await/2;", "}}}"],
+    ]) {
+      const normalized = normalizeCodeForScanning(`${prefix}${payload}${suffix}`);
+
+      expect(normalized).toContain('const p="child_process";');
+    }
+  });
+
+  test("never folds regex contents after typed variable declarations", () => {
+    for (const source of [
+      "let value:string\n/'chi' + 'ld_process'/.test(value)",
+      "let value:A |\nB\n/'chi' + 'ld_process'/.test(value)",
+      "declare let value:{nested:string}\n/'chi' + 'ld_process'/.test(value)",
+      "export let value:string\n/'chi' + 'ld_process'/.test(value)",
+    ]) {
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
+  });
+
+  test("never folds regex contents after typed or declaration bodies", () => {
+    const functionSource = "function f():void{}/'chi' + 'ld_process'/.test(a)";
+    const interfaceSource = "interface Result{value:string}/'chi' + 'ld_process'/.test(a)";
+
+    expect(normalizeCodeForScanning(functionSource)).toBe(functionSource);
+    expect(normalizeCodeForScanning(interfaceSource)).toBe(interfaceSource);
+  });
+
+  test("never folds regex contents after prefixed or decorated declarations", () => {
+    for (const source of [
+      "export default interface Result{value:string}/'chi' + 'ld_process'/.test(a)",
+      "export default enum Result{Value}/'chi' + 'ld_process'/.test(a)",
+      "declare global{interface Result{value:string}}/'chi' + 'ld_process'/.test(a)",
+      "@sealed class Result{}/'chi' + 'ld_process'/.test(a)",
+      "@sealed({deep:true}) class Result{}/'chi' + 'ld_process'/.test(a)",
+    ]) {
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
+  });
+
+  test("never folds regex contents inside classes with same-depth heritage bodies", () => {
+    for (const source of [
+      "class C extends function(){}{static{function f(){}/'chi' + 'ld_process'/.test(a)}}",
+      "class C extends class{}{static{label:{f()}/'chi' + 'ld_process'/.test(a)}}",
+    ]) {
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
+  });
+
+  test("never folds regex contents after ASI-terminated statements or type aliases", () => {
+    for (const source of [
+      "debugger\n/'chi' + 'ld_process'/.test(a)",
+      "type Result={value:string}\n/'chi' + 'ld_process'/.test(a)",
+      "type Result=A|\nB\n/'chi' + 'ld_process'/.test(a)",
+      "type Result=A&\nB\n/'chi' + 'ld_process'/.test(a)",
+      "type Result=A extends B?\nC:D\n/'chi' + 'ld_process'/.test(a)",
+      "type Result=A extends B?C:\nD\n/'chi' + 'ld_process'/.test(a)",
+    ]) {
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
+  });
+
+  test("keeps scanning after division by a Unicode identifier", () => {
+    const source = "const π=1;const ratio=π/2;const name='chi'+'ld_process';";
+
+    expect(normalizeCodeForScanning(source)).toContain('const name="child_process";');
+  });
+
+  test("keeps scanning after division by an exported string initializer", () => {
+    const source =
+      "export const padding='safe'\n/2;" +
+      "const p=['chi','ld_pro','cess'].join('');" +
+      "const r=globalThis['re'+'quire'];";
+
+    const normalized = normalizeCodeForScanning(source);
+    expect(normalized).toContain('const p="child_process";');
+    expect(normalized).toContain("const r=globalThis.require;");
+  });
+
+  test("keeps scanning after division by function and class expression results", () => {
+    for (const prefix of [
+      "const padding=function(){} / 2;",
+      "const padding=class{} / 2;",
+      "const padding=async function(){} / 2;",
+    ]) {
+      const source = `${prefix}const name='chi'+'ld_process';`;
+
+      expect(normalizeCodeForScanning(source)).toContain('const name="child_process";');
+    }
+  });
+
+  test("keeps scanning after division by keyword-named member calls", () => {
+    for (const prefix of ["const padding=obj.if(value)/2;", "const padding=obj?.while(value)/2;"]) {
+      const source = `${prefix}const name='chi'+'ld_process';`;
+
+      expect(normalizeCodeForScanning(source)).toContain('const name="child_process";');
+    }
+  });
+
+  test("keeps scanning after division by contextual identifier values", () => {
+    for (const prefix of [
+      "var of=4;const padding=of/2;",
+      "var await=4;const padding=await/2;",
+      "var yield=4;const padding=yield/2;",
+      "class C{#await=4;m(){return this.#await/2}};",
+    ]) {
+      const source = `${prefix}const name='chi'+'ld_process';`;
+
+      expect(normalizeCodeForScanning(source)).toContain('const name="child_process";');
+    }
+  });
+
+  test("clears typed-arrow return state before later object division", () => {
+    const source =
+      "const f=():void=>{}\nexport default <any>{a:1}/2;" + "const name='chi'+'ld_process';";
+
+    expect(normalizeCodeForScanning(source)).toContain('const name="child_process";');
+  });
+
+  test("keeps scanning when a line-terminated break is followed by a divided value", () => {
+    const source = "while(true){break\nvalue\n/2;const name='chi'+'ld_process';}";
+
+    expect(normalizeCodeForScanning(source)).toContain('const name="child_process";');
+  });
+
+  test("never folds inside regex statements after static module declarations", () => {
+    for (const source of [
+      "import 'x'\n/'chi' + 'ld_process'/.test(value)",
+      "import { x } from 'x'\n/'chi' + 'ld_process'/.test(value)",
+      "import Foo=require('foo')\n/'chi' + 'ld_process'/.test(value)",
+      "export import Foo=require('foo')\n/'chi' + 'ld_process'/.test(value)",
+      "import Foo=Bar.Baz\n/'chi' + 'ld_process'/.test(value)",
+      "const x=1;export { x }\n/'chi' + 'ld_process'/.test(value)",
+    ]) {
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
   });
 
   test("leaves template literals untouched", () => {
@@ -113,5 +417,78 @@ describe("assembled-identifier evasion is caught by the deterministic scanner", 
 
     expect(computeRisk(findings)).toBe("high");
     expect(findings.some((f) => f.ruleId === "code.process-execution")).toBe(true);
+  });
+
+  test("a divided function expression cannot hide the assembled process sink", () => {
+    const payload =
+      "const p=['chi','ld_pro','cess'].join('');const r=globalThis['re'+'quire'];" +
+      "const cp=r(p);cp['exec'+'Sync']('id')";
+    const staged = [
+      {
+        path: "index.js",
+        size: payload.length,
+        sha256: "index-js",
+        flags: [],
+        textSample: `const padding=function(){} / 2;${payload}`,
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(computeRisk(findings)).toBe("high");
+    expect(findings.some((finding) => finding.ruleId === "code.process-execution")).toBe(true);
+  });
+
+  test("a divided exported initializer cannot hide the assembled process sink", () => {
+    const payload =
+      "const p=['chi','ld_pro','cess'].join('');const r=globalThis['re'+'quire'];" +
+      "const cp=r(p);cp['exec'+'Sync']('id')";
+    const staged = [
+      {
+        path: "index.js",
+        size: payload.length,
+        sha256: "index-js",
+        flags: [],
+        textSample: `export const padding={}\n/2;${payload}`,
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(computeRisk(findings)).toBe("high");
+    expect(findings.some((finding) => finding.ruleId === "code.process-execution")).toBe(true);
+  });
+
+  test("a divided keyword-named member call cannot hide the assembled process sink", () => {
+    const payload =
+      "const p=['chi','ld_pro','cess'].join('');const r=globalThis['re'+'quire'];" +
+      "const cp=r(p);cp['exec'+'Sync']('id')";
+    const staged = [
+      {
+        path: "index.js",
+        size: payload.length,
+        sha256: "index-js",
+        flags: [],
+        textSample: `const padding=obj.if(value)/2;${payload}`,
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(computeRisk(findings)).toBe("high");
+    expect(findings.some((finding) => finding.ruleId === "code.process-execution")).toBe(true);
+  });
+
+  test("JSON-superset line separators in strings cannot fabricate process execution", () => {
+    const safe = `const text="before\u2028'chi'+'ld_process';after";`;
+    const staged = [
+      {
+        path: "index.js",
+        size: safe.length,
+        sha256: "index-js",
+        flags: [],
+        textSample: safe,
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings.some((finding) => finding.ruleId === "code.process-execution")).toBe(false);
   });
 });

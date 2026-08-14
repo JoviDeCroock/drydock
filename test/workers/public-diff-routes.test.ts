@@ -29,6 +29,36 @@ async function publicDiffFetchWithEnv(
   return res;
 }
 
+// server/db/rate-limit.ts counts into fixed wall-clock buckets (`Math.floor(now
+// / windowMs)`), so a request sequence that straddles a bucket boundary gets a
+// fresh budget partway through and the request that should have been rejected is
+// allowed instead. 31 requests against a 60s window cross a boundary roughly once
+// in a hundred runs — often enough to have turned CI red on an unrelated commit.
+const RATE_LIMIT_ATTEMPTS = 5;
+
+// Spends `limit` requests, then fires one the limiter must reject. An attempt
+// whose budget reset underneath it is retried on a fresh IP — the retry starts
+// just after the boundary that spoiled the last one, so it has a whole window to
+// itself. The final attempt is returned whatever happened, so a limiter that
+// genuinely stopped rejecting still fails the assertions at the call site rather
+// than being retried into a false green.
+async function exhaustRateLimit(
+  ipPrefix: string,
+  limit: number,
+  fill: (ip: string) => Promise<Response>,
+  probe: (ip: string) => Promise<Response> = fill,
+): Promise<{ ip: string; allowed: Response[]; limited: Response }> {
+  let last: { ip: string; allowed: Response[]; limited: Response } | undefined;
+  for (let attempt = 0; attempt < RATE_LIMIT_ATTEMPTS; attempt += 1) {
+    const ip = `${ipPrefix}.${attempt}`;
+    const allowed: Response[] = [];
+    for (let i = 0; i < limit; i += 1) allowed.push(await fill(ip));
+    last = { ip, allowed, limited: await probe(ip) };
+    if (last.limited.status === 429) return last;
+  }
+  return last!;
+}
+
 describe("public package-diff routes", () => {
   test("is disabled when the deployment uses a custom registry", async () => {
     const customRegistryEnv = {
@@ -194,29 +224,25 @@ describe("public package-diff routes", () => {
   });
 
   test("diff endpoint rate-limits by IP", async () => {
-    const ip = "10.99.0.1";
     // Limit is 10/min; validation failures still consume the budget because the
     // limiter runs first (invalid requests are the cheapest to abuse).
-    for (let i = 0; i < 10; i++) {
-      const res = await publicDiffFetch("/api/public/v1/package-diff?package=!x!", ip);
-      expect(res.status).toBe(400);
-    }
-    const limited = await publicDiffFetch("/api/public/v1/package-diff?package=!x!", ip);
+    const { allowed, limited } = await exhaustRateLimit("10.99.0", 10, (ip) =>
+      publicDiffFetch("/api/public/v1/package-diff?package=!x!", ip),
+    );
+    expect(allowed.map((res) => res.status)).toEqual(Array(10).fill(400));
     expect(limited.status).toBe(429);
     expect(limited.headers.get("retry-after")).toBeTruthy();
 
     // A different IP keeps its own budget.
-    const other = await publicDiffFetch("/api/public/v1/package-diff?package=!x!", "10.99.0.2");
+    const other = await publicDiffFetch("/api/public/v1/package-diff?package=!x!", "10.99.9.1");
     expect(other.status).toBe(400);
   });
 
   test("versions endpoint rate-limits by IP independently of the diff endpoint", async () => {
-    const ip = "10.99.1.1";
-    for (let i = 0; i < 30; i++) {
-      const res = await publicDiffFetch("/api/public/v1/package-diff/versions?package=!x!", ip);
-      expect(res.status).toBe(400);
-    }
-    const limited = await publicDiffFetch("/api/public/v1/package-diff/versions?package=!x!", ip);
+    const { ip, allowed, limited } = await exhaustRateLimit("10.99.1", 30, (address) =>
+      publicDiffFetch("/api/public/v1/package-diff/versions?package=!x!", address),
+    );
+    expect(allowed.map((res) => res.status)).toEqual(Array(30).fill(400));
     expect(limited.status).toBe(429);
 
     // The same IP is not blocked on the diff bucket by versions traffic.
@@ -225,16 +251,17 @@ describe("public package-diff routes", () => {
   });
 
   test("file cache misses share the expensive diff computation budget", async () => {
-    const ip = "10.99.2.1";
-    for (let i = 0; i < 10; i++) {
-      const res = await publicDiffFetch("/api/public/v1/package-diff?package=!x!", ip);
-      expect(res.status).toBe(400);
-    }
-
-    const limited = await publicDiffFetch(
-      "/api/public/v1/package-diff/file?package=left-pad&from=1.0.0&to=1.0.1&path=index.js",
-      ip,
+    const { allowed, limited } = await exhaustRateLimit(
+      "10.99.2",
+      10,
+      (ip) => publicDiffFetch("/api/public/v1/package-diff?package=!x!", ip),
+      (ip) =>
+        publicDiffFetch(
+          "/api/public/v1/package-diff/file?package=left-pad&from=1.0.0&to=1.0.1&path=index.js",
+          ip,
+        ),
     );
+    expect(allowed.map((res) => res.status)).toEqual(Array(10).fill(400));
     expect(limited.status).toBe(429);
   });
 });

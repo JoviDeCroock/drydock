@@ -14,7 +14,7 @@
   - `lib/workflow-gates/` — shared GitHub Environment gate plumbing only; ecosystem gate adapters live in `lib/ecosystems/<id>/workflow-gate.ts`. When one ecosystem needs extra behavior here, add an optional method to `WorkflowGateAdapter` instead of branching on the ecosystem name.
   - `lib/auth/` — Better Auth wiring, ownership, roles, active organization, invitation tokens, audit-event allowlist.
   - `lib/notify/` — outbound messaging: notification fan-out, Slack, email.
-  - `lib/platform/` — domain-free infrastructure: HTTP helpers, errors, fetch retry, JSON canonicalization, text utils, crypto, secret box, security headers, observability.
+  - `lib/platform/` — domain-free infrastructure: HTTP helpers, errors, fetch retry, JSON canonicalization, text utils, the non-executing JS lexer, crypto, secret box, security headers, observability.
   - `db/` — Drizzle schema and persistence helpers for scans, findings, artifacts, workflow gates, and Better Auth.
 - `src/` — Preact UI. `index.tsx` mounts `preact-iso`; `models/` re-use `server/` types; `features/` holds code shared by more than one page (a page must never import from another page's directory).
 - `drizzle/` — D1 migrations generated from `server/db/schema.ts`.
