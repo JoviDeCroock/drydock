@@ -26,7 +26,12 @@
 // Every output line records the source line it came from, so deterministic
 // findings stay pinned to real evidence (`remapFindingLines`).
 
-import { jsTokenText, tokenizeJs, type JsToken } from "../../server/lib/platform/js-lexer";
+import {
+  jsTokenText,
+  tokenizeJs,
+  type JsSourceGoal,
+  type JsToken,
+} from "../../server/lib/platform/js-lexer";
 
 export type FormatLanguage = "js" | "ts" | "json" | "css";
 
@@ -81,6 +86,16 @@ export function formatLanguageFor(lang: string | undefined): FormatLanguage | nu
   return null;
 }
 
+export function sourceGoalForPath(path: string): JsSourceGoal | undefined {
+  const base = path.split("/").pop() ?? path;
+  const dot = base.lastIndexOf(".");
+  if (dot <= 0) return undefined;
+  const extension = base.slice(dot + 1).toLowerCase();
+  if (extension === "cjs" || extension === "cts") return "script";
+  if (extension === "mjs" || extension === "mts") return "module";
+  return undefined;
+}
+
 export function looksMinified(text: string): boolean {
   if (text.length < MINIFIED_LINE_CHARS) return false;
   let lineStart = 0;
@@ -98,8 +113,12 @@ export function looksMinified(text: string): boolean {
  * source is too large to re-flow, or it already breaks at every point we would).
  * A null result means callers should keep rendering the original bytes.
  */
-export function formatSource(text: string, language: FormatLanguage): FormattedSource | null {
-  return attemptFormatSource(text, language).formatted;
+export function formatSource(
+  text: string,
+  language: FormatLanguage,
+  sourceGoal?: JsSourceGoal,
+): FormattedSource | null {
+  return attemptFormatSource(text, language, sourceGoal).formatted;
 }
 
 /**
@@ -111,19 +130,24 @@ export function formatSourcePair(
   beforeText: string,
   afterText: string,
   language: FormatLanguage,
+  sourceGoal?: JsSourceGoal,
 ): FormattedSourcePair {
-  const before = attemptFormatSource(beforeText, language);
-  const after = attemptFormatSource(afterText, language);
+  const before = attemptFormatSource(beforeText, language, sourceGoal);
+  const after = attemptFormatSource(afterText, language, sourceGoal);
   if (beforeText && afterText && (!before.accepted || !after.accepted)) {
     return { before: null, after: null };
   }
   return { before: before.formatted, after: after.formatted };
 }
 
-function attemptFormatSource(text: string, language: FormatLanguage): FormatAttempt {
+function attemptFormatSource(
+  text: string,
+  language: FormatLanguage,
+  sourceGoal?: JsSourceGoal,
+): FormatAttempt {
   if (!text) return { formatted: null, accepted: true };
   if (text.length > FORMAT_MAX_CHARS) return { formatted: null, accepted: false };
-  const jsTokens = language === "css" ? null : significantJsTokens(text);
+  const jsTokens = language === "css" ? null : significantJsTokens(text, sourceGoal);
   // File extensions are only hints: packages routinely ship JSX in `.js` and
   // occasionally `.ts` files. The small JS lexer cannot preserve whitespace-
   // sensitive JSX text, so leave it opaque. TypeScript angle assertions remain
@@ -143,7 +167,7 @@ function attemptFormatSource(text: string, language: FormatLanguage): FormatAtte
   // inserting whitespace can make the lexer reinterpret a later slash even
   // though no non-whitespace character moved. Never expose that reinterpretation
   // to reviewers: a mismatched token stream falls back to the shipped bytes.
-  if (jsTokens && !preservesJsTokenStream(text, jsTokens, formatted.text)) {
+  if (jsTokens && !preservesJsTokenStream(text, jsTokens, formatted.text, sourceGoal)) {
     return { formatted: null, accepted: false };
   }
   return { formatted, accepted: true };
@@ -222,12 +246,17 @@ function looksLikeJsxClosingTag(src: string, start: number): boolean {
   return src[index] === ">";
 }
 
-function significantJsTokens(src: string): JsToken[] {
-  return tokenizeJs(src).filter((token) => token.type !== "ws");
+function significantJsTokens(src: string, sourceGoal?: JsSourceGoal): JsToken[] {
+  return tokenizeJs(src, { sourceGoal }).filter((token) => token.type !== "ws");
 }
 
-function preservesJsTokenStream(src: string, tokens: JsToken[], formatted: string): boolean {
-  const formattedTokens = significantJsTokens(formatted);
+function preservesJsTokenStream(
+  src: string,
+  tokens: JsToken[],
+  formatted: string,
+  sourceGoal?: JsSourceGoal,
+): boolean {
+  const formattedTokens = significantJsTokens(formatted, sourceGoal);
   if (tokens.length !== formattedTokens.length) return false;
   for (let index = 0; index < tokens.length; index += 1) {
     if (jsTokenText(src, tokens[index]) !== jsTokenText(formatted, formattedTokens[index])) {
@@ -471,7 +500,12 @@ function skipCssString(src: string, start: number): number {
 
 function skipCssUrl(src: string, start: number): number {
   let index = start;
-  while (index < src.length && src[index] !== ")" && src[index] !== "\n") {
+  while (index < src.length && src[index] !== ")") {
+    if (src[index] === "/" && src[index + 1] === "*") {
+      const close = src.indexOf("*/", index + 2);
+      index = close === -1 ? src.length : close + 2;
+      continue;
+    }
     if (src[index] === "\\") {
       index = scanCssEscape(src, index).end;
       continue;

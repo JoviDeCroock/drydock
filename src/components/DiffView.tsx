@@ -17,6 +17,7 @@ import {
   formatSourcePair,
   looksMinified,
   remapFindingLines,
+  sourceGoalForPath,
 } from "./format-source";
 import {
   canHighlight,
@@ -663,6 +664,7 @@ export function DiffView({
   const hashLines = diffHashLines(before, after, beforeLabel, afterLabel);
 
   const formatLang = formatLanguageFor(langForPath(path));
+  const sourceGoal = sourceGoalForPath(path);
   const reformattable =
     formatLang !== null && !binary && !contentSkipped && Boolean(beforeSample || afterSample);
   // Minified samples arrive reformatted. A one-line bundle is the case this
@@ -687,9 +689,9 @@ export function DiffView({
   const { before: beforeFormatted, after: afterFormatted } = useMemo(
     () =>
       reformat
-        ? formatSourcePair(beforeSample, afterSample, reformat)
+        ? formatSourcePair(beforeSample, afterSample, reformat, sourceGoal)
         : { before: null, after: null },
-    [beforeSample, afterSample, reformat],
+    [beforeSample, afterSample, reformat, sourceGoal],
   );
   const beforeText = beforeFormatted?.text ?? beforeSample;
   const afterText = afterFormatted?.text ?? afterSample;

@@ -57,6 +57,19 @@ describe("tokenizeJs comments", () => {
 });
 
 describe("tokenizeJs regex vs division", () => {
+  test("treats top-level contextual identifiers as values for Script source", () => {
+    for (const source of ["await/2;const re=/x/", "yield/2;const re=/x/"]) {
+      const slashes = tokenizeJs(source, { sourceGoal: "script" }).filter(
+        (token) => token.type === "regex" || jsTokenText(source, token) === "/",
+      );
+
+      expect(slashes.map((token) => `${token.type}:${jsTokenText(source, token)}`)).toEqual([
+        "punct:/",
+        "regex:/x/",
+      ]);
+    }
+  });
+
   test("reads a slash after a value as division", () => {
     for (const source of [
       "f(a)/2/b", // call result

@@ -34,6 +34,12 @@ export interface JsToken {
   value?: string;
 }
 
+export type JsSourceGoal = "script" | "module";
+
+export interface TokenizeJsOptions {
+  sourceGoal?: JsSourceGoal;
+}
+
 // Bracket kinds, tracked so the regex-vs-division decision can see past the
 // single preceding token. `)` and `}` are the two closers whose meaning depends
 // on what they closed: `if(a)` and a statement block are followed by a
@@ -357,7 +363,7 @@ const PUNCTUATORS = [
   ">>",
 ];
 
-export function tokenizeJs(src: string): JsToken[] {
+export function tokenizeJs(src: string, options: TokenizeJsOptions = {}): JsToken[] {
   const n = src.length;
   const tokens: JsToken[] = [];
   let prev: JsToken | undefined;
@@ -371,6 +377,13 @@ export function tokenizeJs(src: string): JsToken[] {
   // Open brackets, innermost last, and the kind the most recent closer popped.
   // `closed` is only ever read while `prev` is that closer.
   const state = createBracketState();
+  if (options.sourceGoal === "script") {
+    // At Script top level, `await` and `yield` are identifier-shaped just as
+    // they are in an ordinary function. Module source keeps the existing
+    // keyword-shaped fallback; callers that cannot prove a goal omit it.
+    state.functionBodyModes.set(0, ordinaryFunctionMode());
+    state.activeFunctionModeDepths.push(0);
+  }
 
   const pushSignificant = (token: JsToken): void => {
     updateBracketState(src, token, prev, beforePrev, beforeBeforePrev, state, lineTerminatorBefore);

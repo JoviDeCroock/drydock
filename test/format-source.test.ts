@@ -7,6 +7,7 @@ import {
   formatSourcePair,
   looksMinified,
   remapFindingLines,
+  sourceGoalForPath,
   type FormattedSource,
 } from "../src/components/format-source";
 import { jsTokenText, tokenizeJs } from "../server/lib/platform/js-lexer";
@@ -66,6 +67,16 @@ describe("formatLanguageFor", () => {
   });
 });
 
+describe("sourceGoalForPath", () => {
+  test("recognizes unambiguous JavaScript and TypeScript source goals", () => {
+    expect(sourceGoalForPath("dist/index.cjs")).toBe("script");
+    expect(sourceGoalForPath("dist/index.cts")).toBe("script");
+    expect(sourceGoalForPath("dist/index.mjs")).toBe("module");
+    expect(sourceGoalForPath("dist/index.mts")).toBe("module");
+    expect(sourceGoalForPath("dist/index.js")).toBeUndefined();
+  });
+});
+
 describe("looksMinified", () => {
   test("flags a single enormous line", () => {
     expect(looksMinified(`const a=${"x".repeat(600)};`)).toBe(true);
@@ -83,6 +94,20 @@ describe("looksMinified", () => {
 });
 
 describe("formatSource (javascript)", () => {
+  test("re-flows top-level contextual identifier divisions in Script source", () => {
+    for (const contextual of ["await", "yield"]) {
+      const source = `${contextual}/2;danger();const re=/x;y{2}/;safe();`;
+      const formatted = formatSource(source, "js", "script");
+
+      expect(lines(formatted)).toEqual([
+        `${contextual}/2;`,
+        "danger();",
+        "const re=/x;y{2}/;",
+        "safe();",
+      ]);
+    }
+  });
+
   test("leaves JSX shipped under JavaScript extensions opaque", () => {
     const longText = "safe;payload".repeat(50);
     const element = `const view=<div>${longText}</div>;danger();`;
@@ -754,6 +779,19 @@ describe("formatSource (javascript)", () => {
 });
 
 describe("formatSource (css)", () => {
+  test("keeps multiline unquoted url() payloads opaque", () => {
+    const source = ".a{background:url(\ndata:image/svg+xml;base64,AAAA);color:red}";
+    const formatted = formatSource(source, "css");
+
+    expect(lines(formatted)).toEqual([
+      ".a{",
+      "  background:url(",
+      "data:image/svg+xml;base64,AAAA);",
+      "  color:red",
+      "}",
+    ]);
+  });
+
   test("breaks rules and declarations apart", () => {
     const formatted = formatSource(".a{color:red;margin:0}.b{padding:0}", "css");
 
