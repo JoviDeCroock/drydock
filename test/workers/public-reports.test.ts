@@ -418,14 +418,20 @@ describe("public report sharing", () => {
 
     // retry-after has to be reachable from script, or a throttled verifier
     // cannot back off and just hot-loops.
-    const ip = `10.1.0.${Math.floor(Math.random() * 200) + 1}`;
-    const headers = { "cf-connecting-ip": ip };
     let throttled: Response | null = null;
-    for (let i = 0; i < 125; i += 1) {
-      const res = await request(app, `/public/reports/${"D".repeat(43)}`, { headers });
-      if (res.status === 429) {
-        throttled = res;
-        break;
+    // The limiter uses fixed wall-clock buckets. If this loop straddles the
+    // minute boundary, retry from a fresh address just after that boundary so
+    // the next attempt gets a complete window; a broken limiter still fails
+    // after the bounded attempts rather than being retried forever.
+    for (let attempt = 0; attempt < 5 && !throttled; attempt += 1) {
+      const ip = `10.1.${attempt}.${Math.floor(Math.random() * 200) + 1}`;
+      const headers = { "cf-connecting-ip": ip };
+      for (let i = 0; i <= 120; i += 1) {
+        const res = await request(app, `/public/reports/${"D".repeat(43)}`, { headers });
+        if (res.status === 429) {
+          throttled = res;
+          break;
+        }
       }
     }
     expect(throttled).not.toBeNull();

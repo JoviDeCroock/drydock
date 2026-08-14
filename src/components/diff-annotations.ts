@@ -7,6 +7,11 @@ export interface DiffFinding {
   id: string;
   severity: string;
   line?: number | null;
+  // Set only while the reformat view is on (`remapFindingLines`): `line` then
+  // holds the row in the reformatted view, and this holds the line the rule
+  // actually fired on in the shipped artifact. The caption names this one — a
+  // reviewer taking a line number back to the package must get the real one.
+  sourceLine?: number | null;
   ruleId?: string | null;
   reason: string;
   evidence?: string | null;
@@ -44,10 +49,14 @@ export function maxSeverity(a: string | null, b: string | null): string | null {
 
 // The mono caption above a pinned finding: `ruleId · line N`. Either part may be
 // absent; returns null when neither is present so the caption can be skipped.
-export function annotationLabel(finding: Pick<DiffFinding, "ruleId" | "line">): string | null {
+// The line is always the artifact's own line, never the reformatted view's row.
+export function annotationLabel(
+  finding: Pick<DiffFinding, "ruleId" | "line" | "sourceLine">,
+): string | null {
   const parts: string[] = [];
   if (finding.ruleId) parts.push(finding.ruleId);
-  if (typeof finding.line === "number") parts.push(`line ${finding.line}`);
+  const line = finding.sourceLine ?? finding.line;
+  if (typeof line === "number") parts.push(`line ${line}`);
   return parts.length ? parts.join(" · ") : null;
 }
 
