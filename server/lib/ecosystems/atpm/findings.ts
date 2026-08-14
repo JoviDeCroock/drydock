@@ -30,6 +30,8 @@ export function atpmRecordFindings(args: {
   archiveSha1: string | null;
   /** The record key this version was resolved under — the unscoped package name. */
   recordName: string;
+  /** Full package name proven by handle verification, when one is available. */
+  expectedPackageName: string | null;
 }): Finding[] {
   return [...digestFindings(args.entry, args.archiveSha1), ...manifestFindings(args)];
 }
@@ -56,12 +58,25 @@ function manifestFindings(args: {
   entry: AtpmVersion;
   manifest: PackageJsonSummary | null;
   recordName: string;
+  expectedPackageName: string | null;
 }): Finding[] {
   const { entry, manifest } = args;
   if (!manifest) return [];
   const mismatches: string[] = [];
   if (entry.declaredName && manifest.name && entry.declaredName !== manifest.name) {
     mismatches.push(`record meta.name ${entry.declaredName} != package.json name ${manifest.name}`);
+  }
+  if (args.expectedPackageName) {
+    if (entry.declaredName && entry.declaredName !== args.expectedPackageName) {
+      mismatches.push(
+        `record meta.name ${entry.declaredName} is not published as ${args.expectedPackageName}`,
+      );
+    }
+    if (manifest.name && manifest.name !== args.expectedPackageName) {
+      mismatches.push(
+        `package.json name ${manifest.name} is not published as ${args.expectedPackageName}`,
+      );
+    }
   }
   // `entry.version` is the key a client resolves a release by; `meta.version` is
   // what that same client is handed as the manifest. Both must agree with the
@@ -74,15 +89,18 @@ function manifestFindings(args: {
       mismatches.push(`record ${label} ${declared} != package.json version ${manifest.version}`);
     }
   }
-  // Compared against the record key, not the requested package name: the same
-  // package is addressable as `@handle/name` and as `did:plc:.../name`, so only
-  // the unscoped half is a stable thing to compare. A tarball whose manifest
-  // names a different package installs as that other package.
-  const unscoped = manifest.name?.includes("/")
-    ? manifest.name.slice(manifest.name.lastIndexOf("/") + 1)
-    : manifest.name;
-  if (unscoped && unscoped !== args.recordName) {
-    mismatches.push(`package.json name ${manifest.name} is not published as "${args.recordName}"`);
+  // A DID-only lookup has no verified handle to supply the full npm scope. It
+  // can still bind the unscoped half to the record key. Handle-addressed and
+  // reverse-verified lookups take the stronger full-name branch above.
+  if (!args.expectedPackageName) {
+    const unscoped = manifest.name?.includes("/")
+      ? manifest.name.slice(manifest.name.lastIndexOf("/") + 1)
+      : manifest.name;
+    if (unscoped && unscoped !== args.recordName) {
+      mismatches.push(
+        `package.json name ${manifest.name} is not published as "${args.recordName}"`,
+      );
+    }
   }
   if (!mismatches.length) return [];
   return [

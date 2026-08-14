@@ -111,6 +111,15 @@ describe("package-diff share card route", () => {
     expect(res.headers.get("cache-tag")).toBe("public-diff:pypi:requests");
   });
 
+  test("does not cache a mutable atpm card beyond the pair lifetime", async () => {
+    const res = await cardFetch(
+      "/og/diff/atpm/did:plc:twegdcgytckr5cxm57gyruxa/counter/0.0.14-ttl/0.0.15-ttl/card.png",
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("public, max-age=300, s-maxage=300");
+  });
+
   test("falls back to the static card when the fonts cannot be loaded", async () => {
     const brokenAssets = {
       ...env,

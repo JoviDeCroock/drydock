@@ -14,9 +14,8 @@ import { apiFetch, errorMessage } from "./api";
 export interface PublicDiffVersionsResponse {
   ecosystem: DiffEcosystem;
   packageName: string;
-  // Set when the canonical name is the stable spelling rather than the readable
-  // one — an atpm package is canonically `did:plc:.../name` so links cannot rot,
-  // and displays as `@handle/name`. Null elsewhere.
+  // Set when an atpm package's canonical DID spelling differs from its readable
+  // verified `@handle/name`. Null elsewhere.
   displayName: string | null;
   versions: Array<{ version: string; distTags: string[]; publishedAt?: string }>;
   suggested: { from: string; to: string } | null;
@@ -88,7 +87,7 @@ export function getPublicDiffVersions(
     if (!result.suggested) return evictIfCurrent();
     // Also file the answer under the canonical name the response came back
     // with. The landing form asks by whatever was typed and then routes to the
-    // canonical spelling — an atpm handle resolves to a DID-pinned name — so
+    // canonical spelling — an atpm handle resolves to its DID form — so
     // without this the page it lands on always re-fetches what was just loaded.
     const canonicalKey = `${ecosystem}:${result.packageName}`;
     if (canonicalKey !== cacheKey && !versionsCache.has(canonicalKey)) {

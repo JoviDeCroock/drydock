@@ -57,6 +57,8 @@ const ATPM_PROTOCOL = "at://";
 
 const PUBLIC_CACHE_SCOPE = "atpm-public";
 const ATPM_PAIR_CACHE_TTL_SECONDS = 5 * 60;
+const DID_WEB_NOTICE =
+  "This publisher uses did:web, whose control follows the domain. The canonical URL pins the current DID spelling but cannot permanently pin publisher ownership.";
 
 export const atpmPublicDiff: PublicDiffAdapter = {
   ecosystem: "atpm",
@@ -96,6 +98,7 @@ export const atpmPublicDiff: PublicDiffAdapter = {
       from: { files: fromArchive.files, packageJson: fromArchive.packageJson ?? null },
       to: { files: toArchive.files, packageJson: toArchive.packageJson ?? null },
       provenance: resolutionTrail(ref, identity),
+      ...(identity.did.startsWith("did:web:") ? { notices: [DID_WEB_NOTICE] } : {}),
       ...(displayName ? { displayName } : {}),
       buildFindings: (fileDiff, manifestDiff) => [
         // The artifact is an npm tarball, so it gets the npm rule set verbatim.
@@ -118,6 +121,7 @@ export const atpmPublicDiff: PublicDiffAdapter = {
           manifest: toArchive.packageJson ?? null,
           archiveSha1: toArchive.archiveSha1 ?? null,
           recordName: ref.name,
+          expectedPackageName: identity.handle ? `@${identity.handle}/${ref.name}` : null,
         }),
       ],
     } satisfies PublicDiffAcquiredSources;
@@ -202,7 +206,9 @@ async function fetchRecordCached(
   const key = await computeCompareMetadataCacheKey({
     registryUrl: ATPM_PROTOCOL,
     packageName: `${identity.did}/${ref.name}`,
-    cacheScope: `${PUBLIC_CACHE_SCOPE}-record`,
+    // Parsing is part of the trust boundary. A rules bump must not revive a
+    // record reduced under older ambiguity or validation semantics.
+    cacheScope: `${PUBLIC_CACHE_SCOPE}-record-${ATPM_RULES_VERSION}`,
   });
   const cached = await readCompareMetadataCache<AtpmPackage>(env, key);
   if (cached) return cached;
@@ -216,9 +222,10 @@ async function fetchRecordCached(
  * The two names a resolved atpm package has.
  *
  * Canonical is always the DID form, whichever way the request spelled it, so
- * that is what `/diff` redirects to and what ends up in a shared URL: a DID is
- * permanent, while a handle is rented and can move to another account — a
- * handle-form link would then quietly start describing a different package.
+ * that is what `/diff` redirects to and what ends up in a shared URL. This
+ * prevents ordinary handle reassignment from silently changing the package a
+ * link addresses. `did:web` remains domain-bound, so those pages disclose that
+ * their publisher ownership is not permanently pinned.
  *
  * Display is the `@handle/name` form, present only when this resolution proved
  * the handle in both directions. It is what the page shows, so pinning the

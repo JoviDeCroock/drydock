@@ -109,6 +109,11 @@ function cardCacheKey(requestUrl: string, spec: CardSpec): Request {
   return new Request(new URL(path, requestUrl), { method: "GET" });
 }
 
+function cardCacheControl(adapter: PublicDiffAdapter): string {
+  if (!adapter.cacheTtlSeconds) return CARD_CACHE_CONTROL;
+  return `public, max-age=${Math.min(3600, adapter.cacheTtlSeconds)}, s-maxage=${Math.min(86400, adapter.cacheTtlSeconds)}`;
+}
+
 function highestSeverityRisk(payload: PublicPackageDiff): OgRiskLevel {
   const risk = payload.risk.releaseRisk;
   return risk === "critical" || risk === "high" || risk === "medium" ? risk : "low";
@@ -241,7 +246,7 @@ ogRoutes.get("/diff/*", async (c) => {
     headers: {
       "content-type": "image/png",
       "content-length": String(png.byteLength),
-      "cache-control": CARD_CACHE_CONTROL,
+      "cache-control": cardCacheControl(spec.adapter),
       "cache-tag": spec.adapter.cacheTag(spec.packageName),
       "x-og-card-size": `${OG_CARD_WIDTH}x${OG_CARD_HEIGHT}`,
       "x-og-card-stats": stats ? "cached" : "unavailable",

@@ -80,9 +80,19 @@ describe("canonical domain routing", () => {
 
   test("serves package-specific metadata with the generated diff shell", async () => {
     diffAssetRequests.length = 0;
+    let cacheReads = 0;
+    const requestEnv = {
+      ...diffAssetEnv,
+      COMPARE_CACHE: {
+        get: async () => {
+          cacheReads++;
+          return null;
+        },
+      } as unknown as KVNamespace,
+    } satisfies Cloudflare.Env;
     const res = await fetchWorker(
       "https://drydock.org/diff/@preact/signals/1.0.0/2.0.0?utm_source=share",
-      diffAssetEnv,
+      requestEnv,
     );
     const html = await res.text();
 
@@ -91,21 +101,21 @@ describe("canonical domain routing", () => {
     expect(html).toContain('content="https://drydock.org/diff/@preact/signals/1.0.0/2.0.0"');
     expect(html).toContain('href="https://drydock.org/diff/@preact/signals/1.0.0/2.0.0"');
     expect(html).toContain("File-by-file diff of @preact/signals between 1.0.0 and 2.0.0");
+    expect(cacheReads).toBe(0);
   });
 
   test("uses a verified atpm handle from the cached DID-pinned diff metadata", async () => {
     const didName = "did:plc:twegdcgytckr5cxm57gyruxa/counter";
     const fromVersion = "0.0.14-meta-test";
     const toVersion = "0.0.15-meta-test";
+    let metadataKey = "";
     const metadataEnv = {
       ...diffAssetEnv,
       COMPARE_CACHE: {
-        get: async () => ({
-          ecosystem: "atpm",
-          fromVersion,
-          toVersion,
-          displayName: "@ebey.dev/counter",
-        }),
+        get: async (key: string) => {
+          metadataKey = key;
+          return { displayName: "@ebey.dev/counter" };
+        },
       } as unknown as KVNamespace,
     } satisfies Cloudflare.Env;
 
@@ -121,6 +131,7 @@ describe("canonical domain routing", () => {
     expect(html).toContain(`File-by-file diff of @ebey.dev/counter between ${fromVersion}`);
     expect(html).toContain(`Drydock package diff card for @ebey.dev/counter ${fromVersion}`);
     expect(html).toContain(`/diff/atpm/${didName}/${fromVersion}/${toVersion}`);
+    expect(metadataKey).toMatch(/:display-metadata$/);
   });
 
   test("swaps in the per-diff share card, replacing the site-wide image", async () => {

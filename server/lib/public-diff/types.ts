@@ -66,16 +66,17 @@ interface PublicDiffVersion {
 export interface PublicDiffVersionListing {
   /**
    * Canonical package name, and the one `/diff` links and redirects to. An
-   * ecosystem that has more than one spelling picks the *stable* one here, even
-   * if it is not the prettiest: this is what ends up in shared URLs.
+   * ecosystem that has more than one spelling picks the canonical one here,
+   * even if it is not the prettiest: this is what ends up in shared URLs.
    */
   packageName: string;
   /**
    * How to render `packageName` for a reader, when the canonical spelling is not
    * the one a human would recognize. atpm sets this: the canonical name pins the
-   * publisher's DID so a link cannot rot when a handle moves, while the display
-   * name is the `@handle/name` form the package is actually known by. Only ever
-   * a name this resolution verified — never a claim taken at face value.
+   * publisher's DID so ordinary handle reassignment cannot redirect it, while
+   * the display name is the `@handle/name` form the package is actually known
+   * by. Only ever a name this resolution verified — never a claim taken at face
+   * value. `did:web` is still domain-bound and is disclosed separately.
    */
   displayName?: string;
   versions: PublicDiffVersion[];

@@ -27,7 +27,7 @@ export const ATPM_PACKAGE_COLLECTION = "dev.atpm.alpha.package";
  * the pruned shape or the version-selection rules change, so a cached diff
  * computed under the old reading cannot be served.
  */
-export const ATPM_RULES_VERSION = "1";
+export const ATPM_RULES_VERSION = "2";
 
 const RECORD_TIMEOUT_MS = 10_000;
 
@@ -112,9 +112,10 @@ export async function fetchAtpmPackageRecord(
 }
 
 /**
- * Reduce a raw record value. Returns null only when the value is not an atpm
- * package record at all; individual malformed version entries are dropped, since
- * one unreadable release must not hide every other version of the package.
+ * Reduce a raw record value. Individual malformed version entries are dropped,
+ * since one unreadable release must not hide every other version of the package.
+ * Duplicate readable versions invalidate the record: choosing either entry
+ * would let review and installation disagree about which blob that version names.
  */
 export function parseAtpmPackageRecord(value: unknown): AtpmPackage | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -123,9 +124,13 @@ export function parseAtpmPackageRecord(value: unknown): AtpmPackage | null {
   if (!Array.isArray(record.versions)) return null;
 
   const versions: AtpmVersion[] = [];
+  const seenVersions = new Set<string>();
   for (const entry of record.versions) {
     const parsed = parseVersionEntry(entry);
-    if (parsed) versions.push(parsed);
+    if (!parsed) continue;
+    if (seenVersions.has(parsed.version)) return null;
+    seenVersions.add(parsed.version);
+    versions.push(parsed);
   }
 
   const tags: Record<string, string> = {};
@@ -258,11 +263,9 @@ export function listAtpmVersions(pkg: AtpmPackage): {
     tagsByVersion.set(target, list);
   }
 
-  // A record may list the same version more than once; the picker must show it
-  // once, and `requireAtpmVersion` resolves it to the first entry either way.
   const byVersion = new Map<string, AtpmVersion>();
   for (const entry of pkg.versions) {
-    if (!byVersion.has(entry.version)) byVersion.set(entry.version, entry);
+    byVersion.set(entry.version, entry);
   }
   const versions = [...byVersion.values()]
     .sort((a, b) => compareSemver(b.version, a.version))

@@ -11,6 +11,7 @@ import {
   type PublicPackageDiff,
 } from "../../server/lib/public-diff";
 import { PYPI_RULES_VERSION } from "../../server/lib/ecosystems/pypi/types";
+import { writePublicDiffDisplayName } from "../../server/lib/public-diff/display-metadata";
 import { DETERMINISTIC_RULES_VERSION } from "../../server/lib/review";
 
 function payload(textSample = "export const value = 1;\n"): PublicPackageDiff {
@@ -95,6 +96,33 @@ describe("public diff cache", () => {
 
     expect(cached?.packageName).toBe("cache-test-package");
     expect(cached?.toFiles[0]?.textSample).toContain("export const value");
+  });
+
+  test("stores display metadata separately with the pair's cache lifetime", async () => {
+    let pending: Promise<unknown> | undefined;
+    let write: { key: string; value: string; options: { expirationTtl?: number } } | undefined;
+    const cacheEnv = {
+      ...env,
+      COMPARE_CACHE: {
+        put: async (key: string, value: string, options: { expirationTtl?: number }) => {
+          write = { key, value, options };
+        },
+      },
+    } as unknown as Cloudflare.Env;
+    const ctx = {
+      waitUntil(value: Promise<unknown>) {
+        pending = value;
+      },
+    } as ExecutionContext;
+
+    writePublicDiffDisplayName(cacheEnv, ctx, "pair-key", "@ebey.dev/counter", 300);
+    await pending;
+
+    expect(write).toEqual({
+      key: "pair-key:display-metadata",
+      value: JSON.stringify({ displayName: "@ebey.dev/counter" }),
+      options: { expirationTtl: 300 },
+    });
   });
 
   test("uses UTF-8 bytes when deciding whether to omit samples", () => {

@@ -9,6 +9,8 @@ overrides:
   "@esbuild-kit/core-utils>esbuild": 0.25.12
   # Vite's PostCSS range otherwise resolves to versions with source-map path traversal advisories.
   postcss: ^8.5.23
+  # PostCSS 8 still accepts nanoid 3; keep every transitive copy above GHSA-mwcw-c2x4-8c55.
+  "nanoid@<3.3.18": 3.3.18
   ws: 8.21.0
   # AI SDK 6 permits vulnerable Undici 7 releases; keep the patched cache,
   # retry, cookie, and header handling until its dependency floor catches up.

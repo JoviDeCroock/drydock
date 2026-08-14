@@ -41,11 +41,13 @@ A DID-addressed lookup has no handle to check, so it proves the document's own c
 /diff/atpm/did:plc:twegdcgytckr5cxm57gyruxa/counter/0.0.14/0.0.15
 ```
 
-Typing `@ebey.dev/counter` into the form resolves the handle and redirects there, so a link is a permalink by construction rather than by the linker remembering to prefer a DID. A direct handle-form detail URL does the same resolution before loading either artifact and replaces itself with the DID form. A handle is a rented name — it can move to another account, and a handle-form URL would otherwise quietly start describing a different package. The DID cannot move.
+Typing `@ebey.dev/counter` into the form resolves the handle and redirects there, so a link uses the canonical identity spelling rather than relying on the linker to prefer a DID. A direct handle-form detail URL does the same resolution before loading either artifact and replaces itself with the DID form. A handle is a rented name — it can move to another account, and a handle-form URL would otherwise quietly start describing a different package.
+
+The guarantee depends on the DID method. A `did:plc` identifier is independent of the display handle. A `did:web` identifier is the publisher's domain written as a DID, so control can move when domain ownership changes. Drydock still canonicalizes `did:web` packages to their DID spelling, but displays a notice that the URL cannot permanently pin publisher ownership.
 
 Handle-form URLs still resolve, for anything already linked and for hand-typed convenience.
 
-Pinning the identity does not cost the reader the name they know it by. Because a DID-addressed lookup reverse-verifies the document's claimed handle, the page, its title, and its share card all render `@ebey.dev/counter` while the URL stays DID-pinned. That is what `displayName` on the public-diff payload and version listing is for; it is set only from a handle this resolution proved, so a package whose handle does not verify shows its DID and nothing else.
+Using the canonical identity does not cost the reader the name they know it by. Because a DID-addressed lookup reverse-verifies the document's claimed handle, the page, its title, and its share card all render `@ebey.dev/counter` while the URL keeps the DID form. That is what `displayName` on the public-diff payload and version listing is for; it is set only from a handle this resolution proved, so a package whose handle does not verify shows its DID and nothing else.
 
 Handles fold to lowercase; the record key never does, because atproto record keys are case-sensitive and folding them would let two distinct records share one cache entry.
 
@@ -56,7 +58,9 @@ An atpm version is an ordinary npm tarball, so it runs the npm deterministic rul
 atpm also splits apart two things npm keeps together. `meta` in the record is a manifest the publisher wrote; the blob is the artifact that installs. A client reads the former and runs the latter. `server/lib/ecosystems/atpm/findings.ts` checks them against each other:
 
 - `stage.tarball-digest-mismatch` — the blob's SHA-1 (computed by the sandbox over the wire bytes) disagrees with the record's `dist.shasum`. Fails to silent, never to "mismatch", when either digest is absent.
-- `stage.metadata-mismatch` — the record's `meta.name` / `meta.version` / version key disagrees with the tarball's `package.json`, or the manifest's unscoped name is not the record key it was published under.
+- `stage.metadata-mismatch` — the record's `meta.name` / `meta.version` / version key disagrees with the tarball's `package.json`. When a handle is verified, both names must equal the full `@handle/record-key` package name; a DID-only lookup falls back to comparing the manifest's unscoped name with the record key.
+
+A readable version string may occur only once in a package record. Drydock rejects a record with duplicate versions rather than choosing whichever blob happens to appear first; otherwise review and an installing App View could select different artifacts for the same version.
 
 The blob CID is independently re-verified. The sandbox computes SHA-256 over the complete archive wire bytes alongside SHA-1, and the parent Worker requires it to equal the digest encoded by the CIDv1 raw/sha2-256 address before the diff can proceed. A missing digest, malformed CID, truncated response, or PDS substitution fails the request; the record-level finding above then covers the separate npm `dist.shasum` claim.
 
@@ -70,7 +74,7 @@ A self-hosted PDS on a non-default port is the one legitimate shape this rejects
 
 Redirects cannot route around that policy. Parent-Worker identity and record fetches disable automatic redirects, follow at most three hops, and validate every resolved target through `assertPublicHttpsUrl` before fetching it. Redirects off the pinned blob URL are stricter: `NpmStageGateway` resolves them itself (`fetchPinnedArtifact` in `server/lib/sandbox.ts`), follows only same-origin hops, and refuses anything that leaves the vetted origin. Credentialed npm requests are untouched and keep the runtime's own redirect handling, so a registry that moves a staged tarball to a CDN keeps working.
 
-Computed atpm pairs have a five-minute lifetime rather than the registry-backed 30-day default. Blob bytes are immutable once CID-pinned, but the repository record that maps a version to a CID, the DID document's PDS location, and the reverse-verified display handle are mutable; the short lifetime bounds stale mappings and provenance across both KV and colo caches.
+Computed atpm pairs have a five-minute lifetime rather than the registry-backed 30-day default. Blob bytes are immutable once CID-pinned, but the repository record that maps a version to a CID, the DID document's PDS location, and the reverse-verified display handle are mutable; the short lifetime bounds stale mappings and provenance across both KV and colo caches. Share cards use the same five-minute ceiling. Server-rendered HTML reads the verified display name from a separate small KV value, so it never fetches and parses the full cached diff merely to build a title.
 
 ## What is not built
 

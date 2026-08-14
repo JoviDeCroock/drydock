@@ -175,6 +175,15 @@ describe("parseAtpmPackageRecord", () => {
     expect(parseAtpmPackageRecord({ $type: "app.bsky.feed.post", versions: [] })).toBeNull();
     expect(parseAtpmPackageRecord({ $type: "dev.atpm.alpha.package" })).toBeNull();
   });
+
+  test("rejects duplicate readable versions rather than choosing one blob", () => {
+    expect(
+      parseAtpmPackageRecord({
+        ...RECORD,
+        versions: [versionEntry("1.0.0", CID_A), versionEntry("1.0.0", CID_B)],
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("isValidAtpmVersion", () => {
@@ -197,11 +206,10 @@ describe("listAtpmVersions", () => {
       versionEntry("3.0.0-rc.1", CID_B),
       versionEntry("2.0.0", CID_A),
       versionEntry("1.9.0", CID_B),
-      versionEntry("2.0.0", CID_A),
     ],
   }) as AtpmPackage;
 
-  test("orders newest-first by semver and dedupes", () => {
+  test("orders newest-first by semver", () => {
     expect(listAtpmVersions(pkg).versions.map((entry) => entry.version)).toEqual([
       "3.0.0-rc.1",
       "2.0.0",
@@ -302,6 +310,7 @@ describe("atpmRecordFindings", () => {
         manifest,
         archiveSha1: "53dde734249b5c8de540b4f86254273caa000ec5",
         recordName: "counter",
+        expectedPackageName: "@ebey.dev/counter",
       }),
     ).toEqual([]);
   });
@@ -312,6 +321,7 @@ describe("atpmRecordFindings", () => {
       manifest,
       archiveSha1: "f".repeat(40),
       recordName: "counter",
+      expectedPackageName: "@ebey.dev/counter",
     });
     expect(findings).toHaveLength(1);
     expect(findings[0].ruleId).toBe("stage.tarball-digest-mismatch");
@@ -327,10 +337,17 @@ describe("atpmRecordFindings", () => {
         manifest,
         archiveSha1: "f".repeat(40),
         recordName: "counter",
+        expectedPackageName: "@ebey.dev/counter",
       }),
     ).toEqual([]);
     expect(
-      atpmRecordFindings({ entry, manifest, archiveSha1: null, recordName: "counter" }),
+      atpmRecordFindings({
+        entry,
+        manifest,
+        archiveSha1: null,
+        recordName: "counter",
+        expectedPackageName: "@ebey.dev/counter",
+      }),
     ).toEqual([]);
   });
 
@@ -340,6 +357,7 @@ describe("atpmRecordFindings", () => {
       manifest: { name: "left-pad", version: "9.9.9" },
       archiveSha1: null,
       recordName: "counter",
+      expectedPackageName: "@ebey.dev/counter",
     });
     expect(findings).toHaveLength(1);
     expect(findings[0].ruleId).toBe("stage.metadata-mismatch");
@@ -347,12 +365,15 @@ describe("atpmRecordFindings", () => {
     expect(findings[0].evidence).toContain("9.9.9");
   });
 
-  test("compares the manifest name against the record key, not the requested spelling", () => {
-    // The same package is addressable as @handle/name and as did:plc:.../name,
-    // so only the unscoped half is a stable thing to compare — otherwise every
-    // DID-addressed diff would report a false mismatch.
+  test("falls back to the record key when no handle was verified", () => {
     expect(
-      atpmRecordFindings({ entry, manifest, archiveSha1: null, recordName: "counter" }),
+      atpmRecordFindings({
+        entry,
+        manifest,
+        archiveSha1: null,
+        recordName: "counter",
+        expectedPackageName: null,
+      }),
     ).toEqual([]);
     expect(
       atpmRecordFindings({
@@ -360,8 +381,24 @@ describe("atpmRecordFindings", () => {
         manifest: { name: "@someone.else/other", version: "1.0.0" },
         archiveSha1: null,
         recordName: "counter",
+        expectedPackageName: null,
       }),
     ).toHaveLength(1);
+  });
+
+  test("binds both metadata names to the full verified handle scope", () => {
+    const attackerName = "@attacker.example/counter";
+    const findings = atpmRecordFindings({
+      entry: { ...entry, declaredName: attackerName },
+      manifest: { name: attackerName, version: "1.0.0" },
+      archiveSha1: null,
+      recordName: "counter",
+      expectedPackageName: "@ebey.dev/counter",
+    });
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].evidence).toContain("record meta.name @attacker.example/counter");
+    expect(findings[0].evidence).toContain("package.json name @attacker.example/counter");
   });
 });
 
@@ -432,6 +469,20 @@ describe("resolveAtpmRepoIdentity", () => {
     ).rejects.toThrow(/does not verify/);
   });
 
+  test("refuses a requested handle that appears only as a secondary alias", async () => {
+    stubFetch({
+      "https://cloudflare-dns.com/dns-query": dnsAnswer,
+      "https://plc.directory/": () =>
+        Response.json({
+          ...didDocument,
+          alsoKnownAs: ["at://primary.example", "at://ebey.dev"],
+        }),
+    });
+    await expect(
+      resolveAtpmRepoIdentity(parseAtpmPackageName("@ebey.dev/counter")!),
+    ).rejects.toThrow(/does not verify/);
+  });
+
   test("refuses a DID document that describes a different subject", async () => {
     stubFetch({
       "https://cloudflare-dns.com/dns-query": dnsAnswer,
@@ -480,7 +531,7 @@ describe("resolveAtpmRepoIdentity", () => {
   });
 
   test("a DID-addressed lookup proves the document's claimed handle in reverse", async () => {
-    // The permalink form is DID-addressed, so without this the page would have
+    // The canonical form is DID-addressed, so without this the page would have
     // no handle to show. `alsoKnownAs` is written by the DID's own controller,
     // so it is resolved back and kept only when it returns this same DID.
     stubFetch({

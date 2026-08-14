@@ -3,6 +3,7 @@ import { getPublicDiffAdapter } from "../ecosystems";
 import { coloCache } from "../platform/http";
 import { parsePkgPrNewUrl } from "../../../src/lib/pkg-pr-new";
 import { PublicDiffError } from "./error";
+import { writePublicDiffDisplayName } from "./display-metadata";
 import type { PublicDiffAdapter, PublicDiffInput, PublicDiffProvenanceEntry } from "./types";
 import {
   annotateFindingsWithDiffStatus,
@@ -68,8 +69,8 @@ export interface PublicPackageDiff {
   // How the reviewed bytes were located, for ecosystems where that is a chain
   // of independent authorities rather than a single registry (atpm).
   provenance?: PublicDiffProvenanceEntry[];
-  // Human-facing spelling of `packageName`, when the canonical one is stable
-  // rather than readable (an atpm DID-pinned name). See PublicDiffVersionListing.
+  // Human-facing spelling of `packageName`, when the canonical one is an atpm
+  // DID rather than the readable verified handle. See PublicDiffVersionListing.
   displayName?: string;
   cachedAt: string;
 }
@@ -161,9 +162,9 @@ export async function loadPublicPackageDiff(
     ...(sources.displayName ? { displayName: sources.displayName } : {}),
     cachedAt: new Date().toISOString(),
   };
-  await writePublicDiffCache(env, cacheKey, payload, {
-    ttlSeconds: payloadCacheTtlSeconds(payload),
-  });
+  const ttlSeconds = payloadCacheTtlSeconds(payload);
+  writePublicDiffDisplayName(env, ctx, cacheKey, payload.displayName, ttlSeconds);
+  await writePublicDiffCache(env, cacheKey, payload, { ttlSeconds });
   return payload;
 }
 

@@ -1,6 +1,7 @@
 import { parseDiffPackage, parseDiffSpec } from "../../../src/lib/package-diff-path";
 import { getPublicDiffAdapter } from "../ecosystems";
-import { computePublicDiffCacheKey, readPublicDiffCache } from ".";
+import { computePublicDiffCacheKey } from ".";
+import { readPublicDiffDisplayName } from "./display-metadata";
 import {
   OG_CARD_IMAGE_HEIGHT,
   OG_CARD_IMAGE_WIDTH,
@@ -79,6 +80,9 @@ async function readCachedDisplayName(
   env: Cloudflare.Env,
   spec: NonNullable<ReturnType<typeof parseDiffSpec>>,
 ): Promise<string | undefined> {
+  // npm and PyPI canonical names are already human-facing. Only atpm has a
+  // separate verified handle, so no other detail page should touch KV here.
+  if (spec.ecosystem !== "atpm") return undefined;
   const adapter = getPublicDiffAdapter(spec.ecosystem);
   if (!adapter) return undefined;
   try {
@@ -89,7 +93,7 @@ async function readCachedDisplayName(
       toVersion: spec.toVersion,
       registryUrl: adapter.registryUrl,
     });
-    return (await readPublicDiffCache(env, key))?.displayName;
+    return await readPublicDiffDisplayName(env, key);
   } catch {
     // HTML metadata must remain available on a cold or unavailable cache; the
     // canonical DID spelling from the path is the safe fallback.

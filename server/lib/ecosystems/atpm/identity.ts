@@ -332,7 +332,7 @@ function verifyRequestedHandle(
  * it points at this same DID, which is the same bidirectional standard a
  * handle-addressed lookup is held to.
  *
- * The payoff is that a DID-addressed URL — the permalink form `/diff` redirects
+ * The payoff is that a DID-addressed URL — the canonical form `/diff` redirects
  * to — can still be presented as `@handle/name` rather than as a raw DID.
  *
  * Only the document's first well-formed handle claim is checked. It is the
@@ -465,7 +465,9 @@ async function fetchDidDocument(did: string): Promise<DidDocument> {
 }
 
 function claimsHandle(document: DidDocument, handle: string): boolean {
-  return claimedHandles(document).includes(handle);
+  // The atproto identity rules use the first valid at:// entry as the primary
+  // handle. A secondary alias cannot verify a requested handle.
+  return claimedHandles(document)[0] === handle;
 }
 
 /**

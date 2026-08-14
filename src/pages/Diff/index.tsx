@@ -84,7 +84,7 @@ function AtpmDiffCanonicalizer({ spec }: { spec: DiffSpec }) {
       (versions) => {
         if (cancelled) return;
         if (versions.packageName === spec.packageName) {
-          error.value = "This package did not resolve to a stable publisher DID.";
+          error.value = "This package did not resolve to a canonical publisher DID.";
           return;
         }
         location.route(
@@ -121,7 +121,7 @@ function AtpmDiffCanonicalizer({ spec }: { spec: DiffSpec }) {
           fallback={
             <LoadingState
               title="Pinning publisher identity"
-              detail="resolving the package handle to its stable DID"
+              detail="resolving the package handle to its canonical DID"
             />
           }
         >
@@ -359,9 +359,9 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
   const loading = model.loading.value;
   const error = model.error.value;
   const versions = model.versions.value;
-  // The URL carries the canonical name, which for atpm is DID-pinned so links
-  // cannot rot. Show the readable spelling once the response supplies one; until
-  // then the URL's own name is the only name there is.
+  // The URL carries the canonical name, which for atpm uses the publisher DID.
+  // Show the readable spelling once the response supplies one; until then the
+  // URL's own name is the only name there is.
   const shownName = diff?.displayName ?? versions?.displayName ?? packageName;
   const changedCount = diff ? diff.diff.filter((entry) => entry.status !== "unchanged").length : 0;
   const hasFindings = Boolean(diff?.findings.length);

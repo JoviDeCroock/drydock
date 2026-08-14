@@ -64,9 +64,9 @@ export function packageDiffSeo(
   fromVersion?: string,
   toVersion?: string,
   ecosystem: DiffEcosystem = "npm",
-  // Readable spelling, when the canonical name is the stable one rather than the
-  // recognizable one (an atpm DID-pinned name). The canonical name still builds
-  // the path — only the human-facing strings use this.
+  // Readable spelling, when an atpm package's canonical DID form differs from
+  // its recognizable verified handle. The canonical name still builds the path
+  // — only the human-facing strings use this.
   displayName?: string,
 ): PageSeoMetadata {
   if (!packageName || !fromVersion || !toVersion) {
