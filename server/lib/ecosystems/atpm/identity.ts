@@ -223,14 +223,17 @@ export interface AtpmRepoIdentity {
   /** Origin of the publisher's PDS, e.g. `https://shiitake.us-east.host.bsky.network`. */
   pds: string;
   /**
-   * The handle, only when this resolution proved it: the caller named it and the
-   * DID document confirmed it in `alsoKnownAs`. A DID-addressed lookup leaves
-   * this null rather than repeating the document's unverified claim.
+   * The handle, only ever set when this resolution proved it in both directions:
+   * the handle resolves to this DID, and the DID document claims that handle
+   * back. Null when the account has no verifiable handle, in which case the DID
+   * is the only name for it.
    */
   handle: string | null;
   /** Which mechanism produced the DID, for the resolution trail shown on /diff. */
-  handleMethod: "dns" | "well-known" | null;
+  handleMethod: HandleMethod | null;
 }
+
+type HandleMethod = "dns" | "well-known";
 
 export async function resolveAtpmRepoIdentity(ref: AtpmPackageRef): Promise<AtpmRepoIdentity> {
   const resolved =
@@ -242,33 +245,85 @@ export async function resolveAtpmRepoIdentity(ref: AtpmPackageRef): Promise<Atpm
   const pds = pdsEndpoint(document);
   if (!pds) throw new PublicDiffError("DID document declares no atproto PDS", 502);
 
-  // Bidirectional verification, required by the atproto identity spec: a handle
-  // is only that account's handle if the account claims it back. Without this a
-  // domain could point `_atproto` at anyone's DID and serve their packages under
-  // its own name.
-  if (ref.authority.kind === "handle" && !claimsHandle(document, ref.authority.handle)) {
+  const verified =
+    ref.authority.kind === "handle"
+      ? verifyRequestedHandle(document, ref.authority.handle, resolved.method)
+      : // A DID-addressed lookup has no handle to check, so the document's own
+        // claim is checked instead — see verifyClaimedHandle for why that costs
+        // an extra lookup rather than being taken at face value.
+        await verifyClaimedHandle(document, resolved.did);
+
+  return {
+    did: resolved.did,
+    pds: assertPublicHttpsUrl(pds, "PDS endpoint").origin,
+    handle: verified?.handle ?? null,
+    handleMethod: verified?.method ?? null,
+  };
+}
+
+/**
+ * Bidirectional verification, required by the atproto identity spec: a handle is
+ * only that account's handle if the account claims it back. Without this a domain
+ * could point `_atproto` at anyone's DID and serve their packages under its own
+ * name, so a document that does not claim the handle back fails the request
+ * rather than quietly downgrading to the DID.
+ */
+function verifyRequestedHandle(
+  document: DidDocument,
+  handle: string,
+  method: HandleMethod | null,
+): { handle: string; method: HandleMethod | null } {
+  if (!claimsHandle(document, handle)) {
     throw new PublicDiffError(
       "handle does not verify: the DID document does not claim it back",
       502,
     );
   }
-
-  return {
-    did: resolved.did,
-    pds: assertPublicHttpsUrl(pds, "PDS endpoint").origin,
-    handle: ref.authority.kind === "handle" ? ref.authority.handle : null,
-    handleMethod: resolved.method,
-  };
+  return { handle, method };
 }
 
-async function resolveHandle(
+/**
+ * Resolve the handle a DID document claims, and prove it independently.
+ *
+ * `alsoKnownAs` is written by the DID's controller, so on its own it is an
+ * assertion, not a fact — a repository could claim any handle it liked. This
+ * resolves the claimed handle back through DNS/well-known and keeps it only if
+ * it points at this same DID, which is the same bidirectional standard a
+ * handle-addressed lookup is held to.
+ *
+ * The payoff is that a DID-addressed URL — the permalink form `/diff` redirects
+ * to — can still be presented as `@handle/name` rather than as a raw DID.
+ *
+ * Only the document's first well-formed handle claim is checked. It is the
+ * primary handle by convention, and resolving every entry would let a document
+ * with a long `alsoKnownAs` list turn one page view into many lookups. A failure
+ * here is not an error: the caller falls back to the DID.
+ */
+async function verifyClaimedHandle(
+  document: DidDocument,
+  did: string,
+): Promise<{ handle: string; method: HandleMethod } | null> {
+  const claimed = claimedHandles(document)[0];
+  if (!claimed) return null;
+  const resolved = await tryResolveHandle(claimed);
+  if (!resolved || resolved.did !== did) return null;
+  return { handle: claimed, method: resolved.method };
+}
+
+async function resolveHandle(handle: string): Promise<{ did: string; method: HandleMethod }> {
+  const resolved = await tryResolveHandle(handle);
+  if (resolved) return resolved;
+  throw new PublicDiffError(`handle ${handle} does not resolve to an atproto DID`, 404);
+}
+
+async function tryResolveHandle(
   handle: string,
-): Promise<{ did: string; method: "dns" | "well-known" }> {
+): Promise<{ did: string; method: HandleMethod } | null> {
   const fromDns = await resolveHandleViaDns(handle);
   if (fromDns) return { did: fromDns, method: "dns" };
   const fromWellKnown = await resolveHandleViaWellKnown(handle);
   if (fromWellKnown) return { did: fromWellKnown, method: "well-known" };
-  throw new PublicDiffError(`handle ${handle} does not resolve to an atproto DID`, 404);
+  return null;
 }
 
 interface DohAnswer {
@@ -369,8 +424,26 @@ async function fetchDidDocument(did: string): Promise<DidDocument> {
 }
 
 function claimsHandle(document: DidDocument, handle: string): boolean {
+  return claimedHandles(document).includes(handle);
+}
+
+/**
+ * The `at://` handles a DID document claims, in document order, normalized and
+ * filtered to ones that could actually be resolved. These are claims, not facts;
+ * every caller either checks them against a handle it was given or proves them
+ * with a reverse lookup.
+ */
+function claimedHandles(document: DidDocument): string[] {
   const aka = Array.isArray(document.alsoKnownAs) ? document.alsoKnownAs : [];
-  return aka.some((entry) => typeof entry === "string" && entry.toLowerCase() === `at://${handle}`);
+  const handles: string[] = [];
+  for (const entry of aka) {
+    if (typeof entry !== "string") continue;
+    const lower = entry.toLowerCase();
+    if (!lower.startsWith("at://")) continue;
+    const handle = normalizeHandle(lower.slice("at://".length));
+    if (handle && !handles.includes(handle)) handles.push(handle);
+  }
+  return handles;
 }
 
 function pdsEndpoint(document: DidDocument): string | null {

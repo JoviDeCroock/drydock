@@ -14,6 +14,10 @@ import { apiFetch, errorMessage } from "./api";
 export interface PublicDiffVersionsResponse {
   ecosystem: DiffEcosystem;
   packageName: string;
+  // Set when the canonical name is the stable spelling rather than the readable
+  // one — an atpm package is canonically `did:plc:.../name` so links cannot rot,
+  // and displays as `@handle/name`. Null elsewhere.
+  displayName: string | null;
   versions: Array<{ version: string; distTags: string[]; publishedAt?: string }>;
   suggested: { from: string; to: string } | null;
 }
@@ -36,6 +40,8 @@ export interface PublicDiffResponse {
   // How the reviewed bytes were located, when that is a chain of independent
   // authorities rather than a single registry (atpm). Empty elsewhere.
   provenance: Array<{ label: string; value: string; detail?: string }>;
+  // Readable spelling of `packageName`; see PublicDiffVersionsResponse.
+  displayName: string | null;
   cachedAt: string;
 }
 
@@ -79,7 +85,15 @@ export function getPublicDiffVersions(
     if (versionsCache.get(cacheKey) === entry) versionsCache.delete(cacheKey);
   };
   value.then((result) => {
-    if (!result.suggested) evictIfCurrent();
+    if (!result.suggested) return evictIfCurrent();
+    // Also file the answer under the canonical name the response came back
+    // with. The landing form asks by whatever was typed and then routes to the
+    // canonical spelling — an atpm handle resolves to a DID-pinned name — so
+    // without this the page it lands on always re-fetches what was just loaded.
+    const canonicalKey = `${ecosystem}:${result.packageName}`;
+    if (canonicalKey !== cacheKey && !versionsCache.has(canonicalKey)) {
+      versionsCache.set(canonicalKey, { at: entry.at, value });
+    }
   }, evictIfCurrent);
   return value;
 }

@@ -68,6 +68,9 @@ export interface PublicPackageDiff {
   // How the reviewed bytes were located, for ecosystems where that is a chain
   // of independent authorities rather than a single registry (atpm).
   provenance?: PublicDiffProvenanceEntry[];
+  // Human-facing spelling of `packageName`, when the canonical one is stable
+  // rather than readable (an atpm DID-pinned name). See PublicDiffVersionListing.
+  displayName?: string;
   cachedAt: string;
 }
 
@@ -155,6 +158,7 @@ export async function loadPublicPackageDiff(
     risk,
     ...(sources.notices?.length ? { notices: sources.notices } : {}),
     ...(sources.provenance?.length ? { provenance: sources.provenance } : {}),
+    ...(sources.displayName ? { displayName: sources.displayName } : {}),
     cachedAt: new Date().toISOString(),
   };
   await writePublicDiffCache(env, cacheKey, payload, {

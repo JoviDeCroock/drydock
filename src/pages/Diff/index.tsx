@@ -297,6 +297,10 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
   const loading = model.loading.value;
   const error = model.error.value;
   const versions = model.versions.value;
+  // The URL carries the canonical name, which for atpm is DID-pinned so links
+  // cannot rot. Show the readable spelling once the response supplies one; until
+  // then the URL's own name is the only name there is.
+  const shownName = diff?.displayName ?? versions?.displayName ?? packageName;
   const changedCount = diff ? diff.diff.filter((entry) => entry.status !== "unchanged").length : 0;
   const hasFindings = Boolean(diff?.findings.length);
   // Preview sides (pkg.pr.new URLs) get short labels; registry versions pass
@@ -315,11 +319,13 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
 
   return (
     <PageShell headerActions={<MarketingHeaderActions authed={authed} />} feedbackPosition="end">
-      <PageSeo metadata={packageDiffSeo(packageName, fromVersion, toVersion, ecosystem)} />
+      <PageSeo
+        metadata={packageDiffSeo(packageName, fromVersion, toVersion, ecosystem, shownName)}
+      />
       <section class="flex flex-col gap-3 border-t border-border pt-6">
         <Eyebrow tone="accent">Public package diff</Eyebrow>
         <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 break-all">
-          {packageName}
+          {shownName}
         </h1>
         <MonoDetail
           parts={[

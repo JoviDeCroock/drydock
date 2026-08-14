@@ -43,6 +43,8 @@ export interface PublicDiffAcquiredSources {
   notices?: string[];
   /** How the bytes were located, when that is not simply "the registry". */
   provenance?: PublicDiffProvenanceEntry[];
+  /** Friendlier spelling of the package name; see PublicDiffVersionListing. */
+  displayName?: string;
 }
 
 export interface PublicDiffInput {
@@ -62,8 +64,20 @@ interface PublicDiffVersion {
 }
 
 export interface PublicDiffVersionListing {
-  /** Canonical package name as the registry spells it. */
+  /**
+   * Canonical package name, and the one `/diff` links and redirects to. An
+   * ecosystem that has more than one spelling picks the *stable* one here, even
+   * if it is not the prettiest: this is what ends up in shared URLs.
+   */
   packageName: string;
+  /**
+   * How to render `packageName` for a reader, when the canonical spelling is not
+   * the one a human would recognize. atpm sets this: the canonical name pins the
+   * publisher's DID so a link cannot rot when a handle moves, while the display
+   * name is the `@handle/name` form the package is actually known by. Only ever
+   * a name this resolution verified — never a claim taken at face value.
+   */
+  displayName?: string;
   versions: PublicDiffVersion[];
   suggested: { from: string; to: string } | null;
 }

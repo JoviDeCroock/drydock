@@ -59,7 +59,10 @@ export const atpmPublicDiff: PublicDiffAdapter = {
   ecosystem: "atpm",
   registryUrl: ATPM_PROTOCOL,
   rulesVersionSegment: `${DETERMINISTIC_RULES_VERSION}+atpm-${ATPM_RULES_VERSION}`,
-  payloadVersion: "v1",
+  // v2: payloads carry the readable `@handle/name` display spelling alongside
+  // the DID-pinned canonical name. v1 entries have no display name, so a
+  // DID-addressed page would render its raw DID as the heading.
+  payloadVersion: "v2",
 
   isValidPackageName: isValidAtpmPackageName,
   normalizePackageName: normalizeAtpmPackageName,
@@ -69,9 +72,9 @@ export const atpmPublicDiff: PublicDiffAdapter = {
   cacheTag: (packageName) => `public-diff:atpm:${packageName}`,
 
   async listVersions(env, ctx, packageName) {
-    const { pkg } = await loadAtpmPackage(env, ctx, packageName);
+    const { ref, identity, pkg } = await loadAtpmPackage(env, ctx, packageName);
     const { versions, suggested } = listAtpmVersions(pkg);
-    return { packageName: normalizeAtpmPackageName(packageName), versions, suggested };
+    return { ...canonicalNames(ref, identity), versions, suggested };
   },
 
   async acquire(env, ctx, input) {
@@ -84,10 +87,12 @@ export const atpmPublicDiff: PublicDiffAdapter = {
       downloadAtpmBlob(env, ctx, identity, to),
     ]);
 
+    const { displayName } = canonicalNames(ref, identity);
     return {
       from: { files: fromArchive.files, packageJson: fromArchive.packageJson ?? null },
       to: { files: toArchive.files, packageJson: toArchive.packageJson ?? null },
       provenance: resolutionTrail(ref, identity),
+      ...(displayName ? { displayName } : {}),
       buildFindings: (fileDiff, manifestDiff) => [
         // The artifact is an npm tarball, so it gets the npm rule set verbatim.
         // `details` stays null: those findings describe an npm stage record,
@@ -152,17 +157,33 @@ async function resolveIdentityCached(
   // resolves through the same identity.
   const authority =
     ref.authority.kind === "handle" ? `@${ref.authority.handle}` : ref.authority.did;
-  const key = await computeCompareMetadataCacheKey({
-    registryUrl: ATPM_PROTOCOL,
-    packageName: authority,
-    cacheScope: `${PUBLIC_CACHE_SCOPE}-identity`,
-  });
+  const key = await identityCacheKey(authority);
   const cached = await readCompareMetadataCache<AtpmRepoIdentity>(env, key);
   if (cached) return cached;
 
   const identity = await resolveAtpmRepoIdentity(ref);
-  await writeCompareMetadataCache(env, ctx, key, identity);
+  const writes = [writeCompareMetadataCache(env, ctx, key, identity)];
+  // Store the same result under the DID too. Typing a handle into /diff
+  // redirects to the DID form, which would otherwise miss this cache and redo
+  // the whole chain — including the reverse handle lookup that a DID-addressed
+  // resolution needs and this one already did in the forward direction.
+  if (ref.authority.kind === "handle") {
+    writes.push(
+      identityCacheKey(identity.did).then((didKey) =>
+        writeCompareMetadataCache(env, ctx, didKey, identity),
+      ),
+    );
+  }
+  await Promise.all(writes);
   return identity;
+}
+
+function identityCacheKey(authority: string): Promise<string> {
+  return computeCompareMetadataCacheKey({
+    registryUrl: ATPM_PROTOCOL,
+    packageName: authority,
+    cacheScope: `${PUBLIC_CACHE_SCOPE}-identity`,
+  });
 }
 
 async function fetchRecordCached(
@@ -184,6 +205,28 @@ async function fetchRecordCached(
   const pkg = await fetchAtpmPackageRecord(identity, ref.name);
   await writeCompareMetadataCache(env, ctx, key, pkg);
   return pkg;
+}
+
+/**
+ * The two names a resolved atpm package has.
+ *
+ * Canonical is always the DID form, whichever way the request spelled it, so
+ * that is what `/diff` redirects to and what ends up in a shared URL: a DID is
+ * permanent, while a handle is rented and can move to another account — a
+ * handle-form link would then quietly start describing a different package.
+ *
+ * Display is the `@handle/name` form, present only when this resolution proved
+ * the handle in both directions. It is what the page shows, so pinning the
+ * identity in the URL does not cost the reader a name they recognize.
+ */
+function canonicalNames(
+  ref: AtpmPackageRef,
+  identity: AtpmRepoIdentity,
+): { packageName: string; displayName?: string } {
+  return {
+    packageName: `${identity.did}/${ref.name}`,
+    ...(identity.handle ? { displayName: `@${identity.handle}/${ref.name}` } : {}),
+  };
 }
 
 /**

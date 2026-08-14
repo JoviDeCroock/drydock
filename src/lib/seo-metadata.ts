@@ -64,6 +64,10 @@ export function packageDiffSeo(
   fromVersion?: string,
   toVersion?: string,
   ecosystem: DiffEcosystem = "npm",
+  // Readable spelling, when the canonical name is the stable one rather than the
+  // recognizable one (an atpm DID-pinned name). The canonical name still builds
+  // the path — only the human-facing strings use this.
+  displayName?: string,
 ): PageSeoMetadata {
   if (!packageName || !fromVersion || !toVersion) {
     return {
@@ -77,9 +81,10 @@ export function packageDiffSeo(
   // keeps the raw spec values.
   const fromLabel = diffRefLabel(fromVersion);
   const toLabel = diffRefLabel(toVersion);
+  const shownName = displayName || packageName;
   return {
-    title: `${packageName} ${fromLabel} → ${toLabel} | Drydock package diff`,
-    description: `File-by-file diff of ${packageName} between ${fromLabel} and ${toLabel}, with deterministic supply-chain findings pinned to changed lines.`,
+    title: `${shownName} ${fromLabel} → ${toLabel} | Drydock package diff`,
+    description: `File-by-file diff of ${shownName} between ${fromLabel} and ${toLabel}, with deterministic supply-chain findings pinned to changed lines.`,
     path: packageDiffPath(ecosystem, packageName, fromVersion, toVersion),
   };
 }

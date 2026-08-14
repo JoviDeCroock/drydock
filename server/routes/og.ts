@@ -140,7 +140,16 @@ function cardStats(payload: PublicPackageDiff): OgCardStats {
 // A miss is the normal cold state, not an error: the card still names the
 // package and version pair, and the numbers appear once someone has actually
 // opened the diff and warmed the cache.
-async function readCachedStats(c: OgContext, spec: CardSpec): Promise<OgCardStats | undefined> {
+//
+// The cached payload is also where a readable package name comes from. An atpm
+// card path spells the DID-pinned canonical name, because that is what a shared
+// link carries; the payload knows the `@handle/name` the package is recognized
+// by, so a warm card can use it. A cold card falls back to the path's own name
+// rather than resolving anything — this route must never trigger network work.
+async function readCachedCardData(
+  c: OgContext,
+  spec: CardSpec,
+): Promise<{ stats?: OgCardStats; displayName?: string }> {
   try {
     const key = await computePublicDiffCacheKey({
       ecosystem: spec.adapter.ecosystem,
@@ -150,9 +159,13 @@ async function readCachedStats(c: OgContext, spec: CardSpec): Promise<OgCardStat
       registryUrl: spec.adapter.registryUrl,
     });
     const cached = await readPublicDiffCache(c.env, key);
-    return cached ? cardStats(cached) : undefined;
+    if (!cached) return {};
+    return {
+      stats: cardStats(cached),
+      ...(cached.displayName ? { displayName: cached.displayName } : {}),
+    };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -203,10 +216,10 @@ ogRoutes.get("/diff/*", async (c) => {
     throw err;
   }
 
-  const stats = await readCachedStats(c, spec);
+  const { stats, displayName } = await readCachedCardData(c, spec);
   const svg = renderOgCardSvg({
     ecosystem: spec.ecosystem,
-    packageName: spec.packageName,
+    packageName: displayName ?? spec.packageName,
     fromVersion: diffRefLabel(spec.fromVersion),
     toVersion: diffRefLabel(spec.toVersion),
     stats,

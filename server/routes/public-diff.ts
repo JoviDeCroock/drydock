@@ -214,6 +214,7 @@ publicDiffRoutes.get("/versions", async (c) => {
     {
       ecosystem: adapter.ecosystem,
       packageName: listing.packageName,
+      displayName: listing.displayName ?? null,
       versions: listing.versions,
       suggested: listing.suggested,
     },
@@ -268,6 +269,7 @@ publicDiffRoutes.get("/", async (c) => {
       textSamplesOmitted: payload.textSamplesOmitted ?? false,
       notices: payload.notices ?? [],
       provenance: payload.provenance ?? [],
+      displayName: payload.displayName ?? null,
       cachedAt: payload.cachedAt,
     },
     200,

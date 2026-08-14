@@ -427,19 +427,57 @@ describe("resolveAtpmRepoIdentity", () => {
     ).rejects.toThrow(PublicDiffError);
   });
 
-  test("a DID-addressed lookup skips handle resolution and claims no handle", async () => {
-    const calls = stubFetch({ "https://plc.directory/": plcAnswer });
+  test("a DID-addressed lookup proves the document's claimed handle in reverse", async () => {
+    // The permalink form is DID-addressed, so without this the page would have
+    // no handle to show. `alsoKnownAs` is written by the DID's own controller,
+    // so it is resolved back and kept only when it returns this same DID.
+    stubFetch({
+      "https://plc.directory/": plcAnswer,
+      "https://cloudflare-dns.com/dns-query": dnsAnswer,
+    });
     await expect(resolveAtpmRepoIdentity(parseAtpmPackageName(`${DID}/counter`)!)).resolves.toEqual(
-      {
-        did: DID,
-        pds: PDS,
-        // The document's own alsoKnownAs is a claim this resolution did not
-        // verify, so it is not repeated as fact.
-        handle: null,
-        handleMethod: null,
-      },
+      { did: DID, pds: PDS, handle: "ebey.dev", handleMethod: "dns" },
     );
-    expect(calls.every((url) => url.startsWith("https://plc.directory/"))).toBe(true);
+  });
+
+  test("drops a claimed handle that resolves to somebody else", async () => {
+    // A repository claiming a handle it does not control must not borrow that
+    // name on the page; the DID stands on its own instead.
+    stubFetch({
+      "https://plc.directory/": plcAnswer,
+      "https://cloudflare-dns.com/dns-query": () =>
+        Response.json({ Answer: [{ type: 16, data: '"did=did:plc:aaaaaaaaaaaaaaaaaaaaaaaa"' }] }),
+    });
+    await expect(
+      resolveAtpmRepoIdentity(parseAtpmPackageName(`${DID}/counter`)!),
+    ).resolves.toMatchObject({ did: DID, handle: null, handleMethod: null });
+  });
+
+  test("falls back to the DID when the document claims no handle at all", async () => {
+    stubFetch({
+      "https://plc.directory/": () => Response.json({ ...didDocument, alsoKnownAs: [] }),
+    });
+    await expect(
+      resolveAtpmRepoIdentity(parseAtpmPackageName(`${DID}/counter`)!),
+    ).resolves.toMatchObject({ did: DID, handle: null });
+  });
+
+  test("checks only the first claimed handle, so a long alsoKnownAs is not a fan-out", async () => {
+    const calls = stubFetch({
+      "https://plc.directory/": () =>
+        Response.json({
+          ...didDocument,
+          alsoKnownAs: ["at://a.example", "at://b.example", "at://c.example"],
+        }),
+      "https://cloudflare-dns.com/dns-query": () => Response.json({ Answer: [] }),
+      "https://a.example/.well-known/atproto-did": () => new Response("did:plc:nope"),
+    });
+    await expect(
+      resolveAtpmRepoIdentity(parseAtpmPackageName(`${DID}/counter`)!),
+    ).resolves.toMatchObject({ handle: null });
+    expect(calls.filter((url) => url.includes("b.example") || url.includes("c.example"))).toEqual(
+      [],
+    );
   });
 
   test("treats two conflicting DNS claims as no claim at all", async () => {

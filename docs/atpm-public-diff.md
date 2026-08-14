@@ -31,16 +31,21 @@ Two checks are load-bearing:
 - **Bidirectional handle verification.** A handle is only that account's handle if the DID document claims it back in `alsoKnownAs`. Without it, any domain could point `_atproto` at someone else's DID and serve their packages under its own name.
 - **Subject match.** A DID document must have `id` equal to the DID it was fetched for. `did:web` in particular is just a file on a web server.
 
-A DID-addressed lookup reports no handle at all rather than repeating the document's `alsoKnownAs` claim, which that lookup did not verify.
+A DID-addressed lookup has no handle to check, so it proves the document's own claim instead: the first `at://` entry in `alsoKnownAs` is resolved back through DNS/well-known and kept only if it returns that same DID. Same bidirectional standard, opposite direction. A claim that does not verify is dropped rather than displayed, and only the first entry is checked so a long `alsoKnownAs` cannot turn one page view into many lookups.
 
 ## Addressing
 
-Both forms name the same package and both work everywhere a package name is accepted:
+`/diff` canonicalizes to the **DID form**, and that is what a shared link carries:
 
-- `@<handle>/<name>` — the npm name, e.g. `@ebey.dev/counter`. `/diff/atpm/@ebey.dev/counter/0.0.14/0.0.15`.
-- `did:plc:<id>/<name>` or `did:web:<domain>/<name>` — identity-pinned, and what atpm.dev's own package pages use. `/diff/atpm/did:plc:twegdcgytckr5cxm57gyruxa/counter/0.0.14/0.0.15`.
+```
+/diff/atpm/did:plc:twegdcgytckr5cxm57gyruxa/counter/0.0.14/0.0.15
+```
 
-Prefer the DID form for links minted by a tool that already knows the publisher. A handle is a rented name: it can move to another account, and a handle-addressed diff follows the name to wherever it points now. Version-pair results are cached for 30 days keyed on the name as addressed, so a handle transfer can leave a previously-computed handle-form pair describing the old account for up to that long. The DID form has no such window. (Identity and record lookups themselves are cached for minutes, not days, so version listings track a transfer promptly.)
+Typing `@ebey.dev/counter` into the form resolves the handle and redirects there, so a link is a permalink by construction rather than by the linker remembering to prefer a DID. A handle is a rented name — it can move to another account, and a handle-form URL would then quietly start describing a different package, including for the 30 days a computed version pair stays cached. The DID cannot move.
+
+Handle-form URLs still resolve, for anything already linked and for hand-typed convenience.
+
+Pinning the identity does not cost the reader the name they know it by. Because a DID-addressed lookup reverse-verifies the document's claimed handle, the page, its title, and its share card all render `@ebey.dev/counter` while the URL stays DID-pinned. That is what `displayName` on the public-diff payload and version listing is for; it is set only from a handle this resolution proved, so a package whose handle does not verify shows its DID and nothing else.
 
 Handles fold to lowercase; the record key never does, because atproto record keys are case-sensitive and folding them would let two distinct records share one cache entry.
 
