@@ -2,9 +2,9 @@ import {
   assertPublicHttpsUrl,
   BLOB_CID_RE,
   readBoundedJson,
+  reliablePublicHttpsFetch,
   type AtpmRepoIdentity,
 } from "./identity";
-import { reliableFetch } from "../../platform/reliable-fetch";
 import { PublicDiffError } from "../../public-diff/error";
 import { compareSemver } from "../npm/registry";
 
@@ -35,6 +35,14 @@ const RECORD_TIMEOUT_MS = 10_000;
 // fail rather than truncate: a body this size means the PDS is not serving what
 // the protocol says it serves.
 const MAX_RECORD_BYTES = 4 * 1024 * 1024;
+
+// atpm versions are npm versions. Keep the record parser and request adapter on
+// one predicate so `/versions` never advertises a value the diff route rejects.
+const ATPM_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
+
+export function isValidAtpmVersion(version: string): boolean {
+  return ATPM_VERSION_RE.test(version);
+}
 
 /** One version, reduced to the fields a diff and its integrity checks need. */
 export interface AtpmVersion {
@@ -79,7 +87,7 @@ export async function fetchAtpmPackageRecord(
 
   let response: Response;
   try {
-    response = await reliableFetch(url.toString(), {
+    response = await reliablePublicHttpsFetch(url.toString(), "PDS endpoint", {
       headers: new Headers({ accept: "application/json" }),
       timeoutMs: RECORD_TIMEOUT_MS,
     });
@@ -134,7 +142,7 @@ function parseVersionEntry(entry: unknown): AtpmVersion | null {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
   const value = entry as Record<string, unknown>;
   const version = typeof value.version === "string" ? value.version : null;
-  if (!version) return null;
+  if (!version || !isValidAtpmVersion(version)) return null;
 
   const blob = value.blob as { ref?: { $link?: unknown }; size?: unknown; mimeType?: unknown };
   const cid = typeof blob?.ref?.$link === "string" ? blob.ref.$link : null;
@@ -172,6 +180,57 @@ export function atpmBlobUrl(identity: AtpmRepoIdentity, cid: string): string {
   url.searchParams.set("did", identity.did);
   url.searchParams.set("cid", cid);
   return assertPublicHttpsUrl(url.toString(), "blob endpoint").toString();
+}
+
+/**
+ * Bind bytes returned by `getBlob` to the CID named by the package record.
+ *
+ * atproto blobs use CIDv1 with the raw codec and a SHA-256 multihash. The PDS
+ * is still an HTTP server controlled by the party under review, so the request
+ * parameter alone is not proof that the response body hashes to that address.
+ */
+export function assertAtpmBlobDigest(cid: string, archiveSha256: string | null): void {
+  const expected = rawSha256FromCid(cid);
+  if (!expected || !archiveSha256 || archiveSha256.toLowerCase() !== expected) {
+    throw new PublicDiffError("blob bytes do not match their content address", 502);
+  }
+}
+
+function rawSha256FromCid(cid: string): string | null {
+  const bytes = decodeBase32(cid.slice(1));
+  // CIDv1, raw codec, sha2-256 multihash, 32-byte digest.
+  if (
+    !bytes ||
+    bytes.length !== 36 ||
+    bytes[0] !== 0x01 ||
+    bytes[1] !== 0x55 ||
+    bytes[2] !== 0x12 ||
+    bytes[3] !== 0x20
+  ) {
+    return null;
+  }
+  return [...bytes.subarray(4)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function decodeBase32(value: string): Uint8Array | null {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz234567";
+  const output: number[] = [];
+  let bits = 0;
+  let buffer = 0;
+  for (const char of value) {
+    const digit = alphabet.indexOf(char);
+    if (digit < 0) return null;
+    buffer = (buffer << 5) | digit;
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      output.push((buffer >>> bits) & 0xff);
+      buffer &= (1 << bits) - 1;
+    }
+  }
+  // Canonical base32 has no non-zero padding bits.
+  if (buffer !== 0) return null;
+  return new Uint8Array(output);
 }
 
 export interface AtpmVersionListEntry {
@@ -213,7 +272,10 @@ export function listAtpmVersions(pkg: AtpmPackage): {
       ...(entry.createdAt ? { publishedAt: entry.createdAt } : {}),
     }));
 
-  const latest = pkg.tags.latest ?? versions[0]?.version ?? null;
+  // `tags` is an untyped publisher-written object. A stale or malformed latest
+  // target must not produce a suggested URL that immediately 404s.
+  const taggedLatest = pkg.tags.latest;
+  const latest = taggedLatest && byVersion.has(taggedLatest) ? taggedLatest : versions[0]?.version;
   const previous = latest
     ? (versions.find(
         (entry) => entry.version !== latest && compareSemver(entry.version, latest) < 0,

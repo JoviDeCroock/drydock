@@ -10,8 +10,10 @@ import {
 import {
   ATPM_PACKAGE_COLLECTION,
   ATPM_RULES_VERSION,
+  assertAtpmBlobDigest,
   atpmBlobUrl,
   fetchAtpmPackageRecord,
+  isValidAtpmVersion,
   listAtpmVersions,
   requireAtpmVersion,
   type AtpmPackage,
@@ -54,21 +56,23 @@ import {
 const ATPM_PROTOCOL = "at://";
 
 const PUBLIC_CACHE_SCOPE = "atpm-public";
+const ATPM_PAIR_CACHE_TTL_SECONDS = 5 * 60;
 
 export const atpmPublicDiff: PublicDiffAdapter = {
   ecosystem: "atpm",
   registryUrl: ATPM_PROTOCOL,
   rulesVersionSegment: `${DETERMINISTIC_RULES_VERSION}+atpm-${ATPM_RULES_VERSION}`,
-  // v2: payloads carry the readable `@handle/name` display spelling alongside
-  // the DID-pinned canonical name. v1 entries have no display name, so a
-  // DID-addressed page would render its raw DID as the heading.
-  payloadVersion: "v2",
+  // v3: atpm pairs use a bounded cache lifetime because an AT repository record,
+  // its PDS location, and its verified display handle may all change. Old v2
+  // entries were written with the registry-default 30-day lifetime.
+  payloadVersion: "v3",
+  cacheTtlSeconds: ATPM_PAIR_CACHE_TTL_SECONDS,
 
   isValidPackageName: isValidAtpmPackageName,
   normalizePackageName: normalizeAtpmPackageName,
-  // Versions come from the record's own `version` strings. atpm packages are npm
-  // packages, so this matches the npm version grammar; there is no preview form.
-  isValidVersion: (version) => /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(version),
+  // Versions come from the record's own strings and use npm's grammar; the
+  // shared predicate also filters the version listing before it reaches the UI.
+  isValidVersion: isValidAtpmVersion,
   cacheTag: (packageName) => `public-diff:atpm:${packageName}`,
 
   async listVersions(env, ctx, packageName) {
@@ -132,8 +136,9 @@ interface LoadedAtpmPackage {
  * Both halves are cached under the shared compare-metadata TTL (minutes), which
  * is the right bound for each: identity resolution is several round trips to
  * DNS, a directory, and a web server before any package data is read, and the
- * record is one object whose freshness only matters for the version list — the
- * computed diff for a given pair is cached separately and keyed by content.
+ * record is one mutable object whose version-to-CID mapping, verified handle,
+ * and PDS location can change. Computed atpm pairs therefore use the same
+ * five-minute freshness bound instead of the registry-default 30 days.
  */
 async function loadAtpmPackage(
   env: Cloudflare.Env,
@@ -282,8 +287,9 @@ async function downloadAtpmBlob(
     throw new PublicDiffError("release artifact exceeds the public diff size limit", 413);
   }
   const url = atpmBlobUrl(identity, entry.cid);
+  let archive: DownloadResult;
   try {
-    return await downloadInSandbox(env, ctx, {
+    archive = await downloadInSandbox(env, ctx, {
       tarballUrl: url,
       archiveFormat: "tgz",
       publicArtifactUrls: [url],
@@ -291,4 +297,6 @@ async function downloadAtpmBlob(
   } catch (err) {
     throw publicDiffDownloadError(err);
   }
+  assertAtpmBlobDigest(entry.cid, archive.archiveSha256 ?? null);
+  return archive;
 }

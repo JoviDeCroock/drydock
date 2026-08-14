@@ -93,6 +93,36 @@ describe("canonical domain routing", () => {
     expect(html).toContain("File-by-file diff of @preact/signals between 1.0.0 and 2.0.0");
   });
 
+  test("uses a verified atpm handle from the cached DID-pinned diff metadata", async () => {
+    const didName = "did:plc:twegdcgytckr5cxm57gyruxa/counter";
+    const fromVersion = "0.0.14-meta-test";
+    const toVersion = "0.0.15-meta-test";
+    const metadataEnv = {
+      ...diffAssetEnv,
+      COMPARE_CACHE: {
+        get: async () => ({
+          ecosystem: "atpm",
+          fromVersion,
+          toVersion,
+          displayName: "@ebey.dev/counter",
+        }),
+      } as unknown as KVNamespace,
+    } satisfies Cloudflare.Env;
+
+    const res = await fetchWorker(
+      `https://drydock.org/diff/atpm/${didName}/${fromVersion}/${toVersion}`,
+      metadataEnv,
+    );
+    const html = await res.text();
+
+    expect(html).toContain(
+      `<title>@ebey.dev/counter ${fromVersion} → ${toVersion} | Drydock package diff</title>`,
+    );
+    expect(html).toContain(`File-by-file diff of @ebey.dev/counter between ${fromVersion}`);
+    expect(html).toContain(`Drydock package diff card for @ebey.dev/counter ${fromVersion}`);
+    expect(html).toContain(`/diff/atpm/${didName}/${fromVersion}/${toVersion}`);
+  });
+
   test("swaps in the per-diff share card, replacing the site-wide image", async () => {
     // Every shared diff otherwise unfurls with one identical image, so a reader
     // cannot tell which package a link is about without opening it.

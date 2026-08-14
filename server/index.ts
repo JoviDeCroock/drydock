@@ -327,7 +327,7 @@ app.route("/api/v1/audit-events", auditRoutes);
 app.notFound(async (c) => {
   if (!isServerOwnedPath(c.req.path) && c.env.ASSETS) {
     const response = await c.env.ASSETS.fetch(assetFallbackRequest(c.req.raw));
-    return rewritePackageDiffMetadata(response, c.req.path);
+    return rewritePackageDiffMetadata(response, c.req.path, c.env);
   }
   return c.json({ error: "not found" }, 404);
 });

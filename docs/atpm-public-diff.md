@@ -41,7 +41,7 @@ A DID-addressed lookup has no handle to check, so it proves the document's own c
 /diff/atpm/did:plc:twegdcgytckr5cxm57gyruxa/counter/0.0.14/0.0.15
 ```
 
-Typing `@ebey.dev/counter` into the form resolves the handle and redirects there, so a link is a permalink by construction rather than by the linker remembering to prefer a DID. A handle is a rented name — it can move to another account, and a handle-form URL would then quietly start describing a different package, including for the 30 days a computed version pair stays cached. The DID cannot move.
+Typing `@ebey.dev/counter` into the form resolves the handle and redirects there, so a link is a permalink by construction rather than by the linker remembering to prefer a DID. A direct handle-form detail URL does the same resolution before loading either artifact and replaces itself with the DID form. A handle is a rented name — it can move to another account, and a handle-form URL would otherwise quietly start describing a different package. The DID cannot move.
 
 Handle-form URLs still resolve, for anything already linked and for hand-typed convenience.
 
@@ -58,7 +58,7 @@ atpm also splits apart two things npm keeps together. `meta` in the record is a 
 - `stage.tarball-digest-mismatch` — the blob's SHA-1 (computed by the sandbox over the wire bytes) disagrees with the record's `dist.shasum`. Fails to silent, never to "mismatch", when either digest is absent.
 - `stage.metadata-mismatch` — the record's `meta.name` / `meta.version` / version key disagrees with the tarball's `package.json`, or the manifest's unscoped name is not the record key it was published under.
 
-The blob CID is not re-verified: it is the address the bytes were fetched by, so a PDS cannot substitute them without the request failing. What these findings cover is the layer above, where the record makes claims the CID does not bind.
+The blob CID is independently re-verified. The sandbox computes SHA-256 over the complete archive wire bytes alongside SHA-1, and the parent Worker requires it to equal the digest encoded by the CIDv1 raw/sha2-256 address before the diff can proceed. A missing digest, malformed CID, truncated response, or PDS substitution fails the request; the record-level finding above then covers the separate npm `dist.shasum` claim.
 
 `meta.dist.tarball` is never followed. It is a publisher-written string in publisher-written data, and following it would let a record name any host on the internet as the source of the bytes Drydock then presents as that package's release. The blob URL is rebuilt from the resolved PDS and the CID.
 
@@ -68,7 +68,9 @@ The atpm path is the only public-diff egress whose hosts are chosen by the party
 
 A self-hosted PDS on a non-default port is the one legitimate shape this rejects. That is deliberate: allowing an arbitrary port would turn a DID document into a port prober, and atproto PDS endpoints are served on 443.
 
-Redirects off the pinned blob URL are refused. `publicArtifactUrls` pins one exact URL, but the runtime follows 3xx transparently, so a hostile PDS could have answered the pinned request with a redirect to a host the policy never saw. `NpmStageGateway` now resolves redirects for pinned artifacts itself (`fetchPinnedArtifact` in `server/lib/sandbox.ts`): same-origin hops are followed — the origin is exactly what was vetted — and anything leaving it is a 403, with the chain bounded at three hops. Credentialed npm requests are untouched and keep the runtime's own redirect handling, so a registry that moves a staged tarball to a CDN keeps working.
+Redirects cannot route around that policy. Parent-Worker identity and record fetches disable automatic redirects, follow at most three hops, and validate every resolved target through `assertPublicHttpsUrl` before fetching it. Redirects off the pinned blob URL are stricter: `NpmStageGateway` resolves them itself (`fetchPinnedArtifact` in `server/lib/sandbox.ts`), follows only same-origin hops, and refuses anything that leaves the vetted origin. Credentialed npm requests are untouched and keep the runtime's own redirect handling, so a registry that moves a staged tarball to a CDN keeps working.
+
+Computed atpm pairs have a five-minute lifetime rather than the registry-backed 30-day default. Blob bytes are immutable once CID-pinned, but the repository record that maps a version to a CID, the DID document's PDS location, and the reverse-verified display handle are mutable; the short lifetime bounds stale mappings and provenance across both KV and colo caches.
 
 ## What is not built
 

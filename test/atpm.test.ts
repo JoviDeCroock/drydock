@@ -8,7 +8,9 @@ import {
   resolveAtpmRepoIdentity,
 } from "../server/lib/ecosystems/atpm/identity";
 import {
+  assertAtpmBlobDigest,
   atpmBlobUrl,
+  isValidAtpmVersion,
   listAtpmVersions,
   parseAtpmPackageRecord,
   requireAtpmVersion,
@@ -158,6 +160,8 @@ describe("parseAtpmPackageRecord", () => {
         ...RECORD.versions,
         { version: "0.0.13" }, // no blob: describes a release, does not contain one
         { version: "0.0.12", blob: { ref: { $link: "../../etc/passwd" } } },
+        versionEntry("bad/version", CID_A),
+        versionEntry(`1.${"0".repeat(128)}`, CID_A),
         { blob: { ref: { $link: CID_A } } }, // no version
         "nonsense",
       ],
@@ -170,6 +174,15 @@ describe("parseAtpmPackageRecord", () => {
     expect(parseAtpmPackageRecord([])).toBeNull();
     expect(parseAtpmPackageRecord({ $type: "app.bsky.feed.post", versions: [] })).toBeNull();
     expect(parseAtpmPackageRecord({ $type: "dev.atpm.alpha.package" })).toBeNull();
+  });
+});
+
+describe("isValidAtpmVersion", () => {
+  test("accepts registry version strings and rejects path/control shapes", () => {
+    expect(isValidAtpmVersion("3.0.0-rc.1+build.4")).toBe(true);
+    expect(isValidAtpmVersion("bad/version")).toBe(false);
+    expect(isValidAtpmVersion("line\nbreak")).toBe(false);
+    expect(isValidAtpmVersion(`1.${"0".repeat(128)}`)).toBe(false);
   });
 });
 
@@ -217,6 +230,16 @@ describe("listAtpmVersions", () => {
     }) as AtpmPackage;
     expect(listAtpmVersions(single).suggested).toBeNull();
   });
+
+  test("ignores a latest tag that does not name an available release", () => {
+    const staleLatest = parseAtpmPackageRecord({
+      ...RECORD,
+      tags: { latest: "9.9.9" },
+      versions: [versionEntry("2.0.0", CID_A), versionEntry("1.9.1", CID_B)],
+    }) as AtpmPackage;
+
+    expect(listAtpmVersions(staleLatest).suggested).toEqual({ from: "1.9.1", to: "2.0.0" });
+  });
 });
 
 describe("requireAtpmVersion", () => {
@@ -243,6 +266,19 @@ describe("atpmBlobUrl", () => {
     for (const cid of ["../../etc/passwd", "QmLegacyBase58", "bafkrei!!", ""]) {
       expect(() => atpmBlobUrl(identity, cid), cid).toThrow(PublicDiffError);
     }
+  });
+});
+
+describe("assertAtpmBlobDigest", () => {
+  test("accepts only bytes whose SHA-256 matches the blob CID", () => {
+    expect(() =>
+      assertAtpmBlobDigest(
+        CID_A,
+        "31cf2eccfa41882de3e99311cfdbc3e9818f149e3bc63140eec1c46acc24da0b",
+      ),
+    ).not.toThrow();
+    expect(() => assertAtpmBlobDigest(CID_A, "0".repeat(64))).toThrow(PublicDiffError);
+    expect(() => assertAtpmBlobDigest(CID_A, null)).toThrow(PublicDiffError);
   });
 });
 
@@ -425,6 +461,22 @@ describe("resolveAtpmRepoIdentity", () => {
     await expect(
       resolveAtpmRepoIdentity(parseAtpmPackageName("@ebey.dev/counter")!),
     ).rejects.toThrow(PublicDiffError);
+  });
+
+  test("refuses a redirect from a public resolver to a private target", async () => {
+    const calls = stubFetch({
+      "https://cloudflare-dns.com/dns-query": dnsAnswer,
+      "https://plc.directory/": () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: "http://169.254.169.254/latest" },
+        }),
+    });
+
+    await expect(
+      resolveAtpmRepoIdentity(parseAtpmPackageName("@ebey.dev/counter")!),
+    ).rejects.toThrow(PublicDiffError);
+    expect(calls).not.toContain("http://169.254.169.254/latest");
   });
 
   test("a DID-addressed lookup proves the document's claimed handle in reverse", async () => {

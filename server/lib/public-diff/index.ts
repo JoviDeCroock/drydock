@@ -381,11 +381,14 @@ async function writePublicDiffColoCache(
 }
 
 // Re-warms of the colo cache must not outlive the KV entry's own bound for
-// mutable preview pairs.
+// mutable preview pairs or an adapter's mutable resolution metadata.
 function payloadCacheTtlSeconds(payload: PublicPackageDiff): number {
-  return parsePkgPrNewUrl(payload.fromVersion) || parsePkgPrNewUrl(payload.toVersion)
-    ? PREVIEW_CACHE_TTL_SECONDS
-    : CACHE_TTL_SECONDS;
+  const adapterTtl = getPublicDiffAdapter(payload.ecosystem)?.cacheTtlSeconds ?? CACHE_TTL_SECONDS;
+  const pairTtl =
+    parsePkgPrNewUrl(payload.fromVersion) || parsePkgPrNewUrl(payload.toVersion)
+      ? PREVIEW_CACHE_TTL_SECONDS
+      : CACHE_TTL_SECONDS;
+  return Math.min(adapterTtl, pairTtl);
 }
 
 // Counted rather than encoded: the strings measured here are the whole cache

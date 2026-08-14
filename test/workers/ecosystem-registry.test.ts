@@ -61,6 +61,12 @@ describe("ecosystem capability registry", () => {
     expect(getStagedAdapter("npm")).toBe(getEcosystem("npm")?.staged);
   });
 
+  test("bounds atpm computed pairs to its mutable resolution lifetime", () => {
+    const adapter = getPublicDiffAdapter("atpm");
+    expect(adapter?.payloadVersion).toBe("v3");
+    expect(adapter?.cacheTtlSeconds).toBe(5 * 60);
+  });
+
   test("a missing capability fails closed rather than falling back", () => {
     // PyPI has no staged adapter; asking for one must throw, not silently
     // resolve to another ecosystem's reviewer.

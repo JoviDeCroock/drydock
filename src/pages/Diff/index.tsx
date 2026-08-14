@@ -54,6 +54,9 @@ export default function DiffPage() {
   const location = useLocation();
   const spec = parseDiffSpec(location.path);
   if (spec) {
+    if (spec.ecosystem === "atpm" && spec.packageName.startsWith("@")) {
+      return <AtpmDiffCanonicalizer key={spec.packageName} spec={spec} />;
+    }
     return (
       <PackageDiffView
         key={`${spec.ecosystem}:${spec.packageName}@${spec.fromVersion}..${spec.toVersion}`}
@@ -68,6 +71,65 @@ export default function DiffPage() {
   const packageName = parseDiffPackage(location.path);
   if (packageName) return <DiffPackageResolver key={packageName} packageName={packageName} />;
   return <DiffLanding />;
+}
+
+function AtpmDiffCanonicalizer({ spec }: { spec: DiffSpec }) {
+  const authed = useAuthedSession();
+  const location = useLocation();
+  const error = useSignal<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getPublicDiffVersions("atpm", spec.packageName).then(
+      (versions) => {
+        if (cancelled) return;
+        if (versions.packageName === spec.packageName) {
+          error.value = "This package did not resolve to a stable publisher DID.";
+          return;
+        }
+        location.route(
+          packageDiffPath("atpm", versions.packageName, spec.fromVersion, spec.toVersion),
+          true,
+        );
+      },
+      (err) => {
+        if (!cancelled) error.value = errorMessage(err);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [spec.packageName, spec.fromVersion, spec.toVersion]);
+
+  return (
+    <PageShell headerActions={<MarketingHeaderActions authed={authed} />} feedbackPosition="end">
+      <PageSeo
+        metadata={packageDiffSeo(
+          spec.packageName,
+          spec.fromVersion,
+          spec.toVersion,
+          spec.ecosystem,
+        )}
+      />
+      <section class="flex flex-col gap-4 border-t border-border pt-6">
+        <Eyebrow tone="accent">Public package diff</Eyebrow>
+        <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 break-all">
+          {spec.packageName}
+        </h1>
+        <Show
+          when={error}
+          fallback={
+            <LoadingState
+              title="Pinning publisher identity"
+              detail="resolving the package handle to its stable DID"
+            />
+          }
+        >
+          {(message) => <Alert tone="critical">{message}</Alert>}
+        </Show>
+      </section>
+    </PageShell>
+  );
 }
 
 function DiffPackageResolver({ packageName }: { packageName: string }) {

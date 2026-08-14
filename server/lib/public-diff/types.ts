@@ -109,6 +109,11 @@ export interface PublicDiffAdapter {
   readonly rulesVersionSegment: string;
   /** Payload-shape version; bump when the cached payload shape changes. */
   readonly payloadVersion: string;
+  /**
+   * Maximum computed-pair cache lifetime when release identity is mutable.
+   * Omit for registry versions whose artifact mapping is immutable.
+   */
+  readonly cacheTtlSeconds?: number;
 
   isValidPackageName(name: string): boolean;
   /**

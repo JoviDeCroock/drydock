@@ -270,7 +270,8 @@ export function createDigester(algorithm) {
 // renderTarParserSource.
 export function digestArchiveStream(body, maxBytes, algorithm) {
   const reader = body.getReader();
-  const digester = createDigester(algorithm || "SHA-1");
+  const algorithms = Array.isArray(algorithm) ? algorithm : [algorithm || "SHA-1"];
+  const digesters = algorithms.map((name) => ({ name, digester: createDigester(name) }));
   const limit = Number.isFinite(maxBytes) ? maxBytes : Infinity;
   let total = 0;
   let capped = false;
@@ -303,7 +304,7 @@ export function digestArchiveStream(body, maxBytes, algorithm) {
       capped = true;
       return;
     }
-    await digester.update(value);
+    await Promise.all(digesters.map(({ digester }) => digester.update(value)));
   }
 
   async function drain() {
@@ -378,7 +379,10 @@ export function digestArchiveStream(body, maxBytes, algorithm) {
       if (aborted) return null;
       if (!sawEof && !broken && !capped) await startDrain();
       if (aborted || broken || capped || !sawEof) return null;
-      return digester.finalize();
+      const values = await Promise.all(
+        digesters.map(async ({ name, digester }) => [name, await digester.finalize()]),
+      );
+      return Array.isArray(algorithm) ? Object.fromEntries(values) : values[0][1];
     },
     // A failed parse has no review to bind, so cancel the source instead of
     // draining hostile bytes for a digest the caller will discard.

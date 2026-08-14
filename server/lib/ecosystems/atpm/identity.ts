@@ -34,6 +34,11 @@ const PLC_DIRECTORY = "https://plc.directory";
 const HANDLE_RESOLUTION_TIMEOUT_MS = 5_000;
 const DID_DOCUMENT_TIMEOUT_MS = 8_000;
 
+// Every URL on this path is attacker-influenced, including redirect targets.
+// Three hops accommodates ordinary canonicalization/CDN routing without turning
+// one anonymous lookup into an unbounded chain.
+const MAX_PUBLIC_HTTPS_REDIRECTS = 3;
+
 // Identity documents are small. A publisher-controlled endpoint that streams
 // megabytes must not be able to occupy the parent Worker, so every read below is
 // bounded and the excess is a hard failure rather than a truncated parse.
@@ -217,6 +222,42 @@ export function assertPublicHttpsUrl(value: string, what: string): URL {
   return url;
 }
 
+/**
+ * Fetch a public HTTPS resource while applying the host policy to every hop.
+ *
+ * `fetch()` follows redirects by default, which would validate only the first
+ * URL and let a publisher-controlled endpoint redirect the parent Worker to an
+ * internal hostname, literal address, insecure scheme, or probing port. Keep
+ * redirects manual and rebuild each request only after the target passes the
+ * same policy as the original URL.
+ */
+export async function reliablePublicHttpsFetch(
+  value: string,
+  what: string,
+  options: Parameters<typeof reliableFetch>[1] = {},
+): Promise<Response> {
+  let current = assertPublicHttpsUrl(value, what);
+
+  for (let hop = 0; ; hop++) {
+    const response = await reliableFetch(current.toString(), { ...options, redirect: "manual" });
+    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+
+    const location = response.headers.get("location");
+    await response.body?.cancel();
+    if (!location || hop >= MAX_PUBLIC_HTTPS_REDIRECTS) {
+      throw new PublicDiffError(`${what} redirected too many times`, 502);
+    }
+
+    let target: string;
+    try {
+      target = new URL(location, current).toString();
+    } catch {
+      throw new PublicDiffError(`${what} returned an invalid redirect`, 502);
+    }
+    current = assertPublicHttpsUrl(target, `${what} redirect`);
+  }
+}
+
 /** A publisher's identity, resolved far enough to fetch their records. */
 export interface AtpmRepoIdentity {
   did: string;
@@ -341,7 +382,7 @@ async function resolveHandleViaDns(handle: string): Promise<string | null> {
 
   let payload: DohAnswer;
   try {
-    const response = await reliableFetch(url.toString(), {
+    const response = await reliablePublicHttpsFetch(url.toString(), "DNS resolver", {
       headers: new Headers({ accept: "application/dns-json" }),
       timeoutMs: HANDLE_RESOLUTION_TIMEOUT_MS,
     });
@@ -375,7 +416,7 @@ async function resolveHandleViaWellKnown(handle: string): Promise<string | null>
     // inside the try so that if the two ever disagree, this method reports "no
     // claim" and the caller still 404s the handle — not a 502 from a fallback.
     const url = assertPublicHttpsUrl(`https://${handle}/.well-known/atproto-did`, "handle host");
-    const response = await reliableFetch(url.toString(), {
+    const response = await reliablePublicHttpsFetch(url.toString(), "handle host", {
       headers: new Headers({ accept: "text/plain" }),
       timeoutMs: HANDLE_RESOLUTION_TIMEOUT_MS,
     });
@@ -401,7 +442,7 @@ async function fetchDidDocument(did: string): Promise<DidDocument> {
 
   let response: Response;
   try {
-    response = await reliableFetch(url, {
+    response = await reliablePublicHttpsFetch(url, "DID document host", {
       headers: new Headers({ accept: "application/json" }),
       timeoutMs: DID_DOCUMENT_TIMEOUT_MS,
     });
