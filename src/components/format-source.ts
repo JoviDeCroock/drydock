@@ -148,6 +148,26 @@ function attemptFormatSource(
   if (!text) return { formatted: null, accepted: true };
   if (text.length > FORMAT_MAX_CHARS) return { formatted: null, accepted: false };
   const jsTokens = language === "css" ? null : significantJsTokens(text, sourceGoal);
+  let alternateGoalTokens: JsToken[] | null = null;
+  if (
+    jsTokens !== null &&
+    sourceGoal === undefined &&
+    (language === "js" || language === "ts") &&
+    containsGoalSensitiveKeyword(text, jsTokens)
+  ) {
+    alternateGoalTokens = significantJsTokens(text, "script");
+  }
+  // `.js` and `.ts` do not identify whether top-level `await` / `yield` are
+  // keywords or identifiers. If Script and Module goals disagree, choosing one
+  // would let a slash that is division in the shipped program swallow executable
+  // bytes into a fake regex token (or vice versa). Keep the raw evidence instead.
+  if (
+    jsTokens &&
+    alternateGoalTokens &&
+    !sameJsTokenStream(text, jsTokens, text, alternateGoalTokens)
+  ) {
+    return { formatted: null, accepted: false };
+  }
   // File extensions are only hints: packages routinely ship JSX in `.js` and
   // occasionally `.ts` files. The small JS lexer cannot preserve whitespace-
   // sensitive JSX text, so leave it opaque. TypeScript angle assertions remain
@@ -167,8 +187,16 @@ function attemptFormatSource(
   // inserting whitespace can make the lexer reinterpret a later slash even
   // though no non-whitespace character moved. Never expose that reinterpretation
   // to reviewers: a mismatched token stream falls back to the shipped bytes.
-  if (jsTokens && !preservesJsTokenStream(text, jsTokens, formatted.text, sourceGoal)) {
-    return { formatted: null, accepted: false };
+  if (jsTokens) {
+    if (!preservesJsTokenStream(text, jsTokens, formatted.text, sourceGoal)) {
+      return { formatted: null, accepted: false };
+    }
+    if (
+      alternateGoalTokens &&
+      !preservesJsTokenStream(text, alternateGoalTokens, formatted.text, "script")
+    ) {
+      return { formatted: null, accepted: false };
+    }
   }
   return { formatted, accepted: true };
 }
@@ -250,6 +278,14 @@ function significantJsTokens(src: string, sourceGoal?: JsSourceGoal): JsToken[] 
   return tokenizeJs(src, { sourceGoal }).filter((token) => token.type !== "ws");
 }
 
+function containsGoalSensitiveKeyword(src: string, tokens: JsToken[]): boolean {
+  return tokens.some(
+    (token) =>
+      token.type === "ident" &&
+      (jsTokenText(src, token) === "await" || jsTokenText(src, token) === "yield"),
+  );
+}
+
 function preservesJsTokenStream(
   src: string,
   tokens: JsToken[],
@@ -257,9 +293,21 @@ function preservesJsTokenStream(
   sourceGoal?: JsSourceGoal,
 ): boolean {
   const formattedTokens = significantJsTokens(formatted, sourceGoal);
-  if (tokens.length !== formattedTokens.length) return false;
-  for (let index = 0; index < tokens.length; index += 1) {
-    if (jsTokenText(src, tokens[index]) !== jsTokenText(formatted, formattedTokens[index])) {
+  return sameJsTokenStream(src, tokens, formatted, formattedTokens);
+}
+
+function sameJsTokenStream(
+  leftSource: string,
+  leftTokens: JsToken[],
+  rightSource: string,
+  rightTokens: JsToken[],
+): boolean {
+  if (leftTokens.length !== rightTokens.length) return false;
+  for (let index = 0; index < leftTokens.length; index += 1) {
+    if (
+      leftTokens[index].type !== rightTokens[index].type ||
+      jsTokenText(leftSource, leftTokens[index]) !== jsTokenText(rightSource, rightTokens[index])
+    ) {
       return false;
     }
   }

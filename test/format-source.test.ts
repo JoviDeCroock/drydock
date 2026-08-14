@@ -108,6 +108,26 @@ describe("formatSource (javascript)", () => {
     }
   });
 
+  test("fails closed when an ambiguous source goal changes slash boundaries", () => {
+    for (const language of ["js", "ts"] as const) {
+      for (const contextual of ["await", "yield"]) {
+        const source = `${contextual}/2;danger();const re=/x;y{2}/;safe();`;
+
+        expect(formatSource(source, language)).toBeNull();
+        expect(formatSourcePair(source, "const safe=1;done();", language)).toEqual({
+          before: null,
+          after: null,
+        });
+      }
+    }
+  });
+
+  test("keeps an explicit Module goal eligible when contextual keywords open expressions", () => {
+    const formatted = formatSource("await /x;y{2}/;safe();", "js", "module");
+
+    expect(lines(formatted)).toEqual(["await /x;y{2}/;", "safe();"]);
+  });
+
   test("leaves JSX shipped under JavaScript extensions opaque", () => {
     const longText = "safe;payload".repeat(50);
     const element = `const view=<div>${longText}</div>;danger();`;
