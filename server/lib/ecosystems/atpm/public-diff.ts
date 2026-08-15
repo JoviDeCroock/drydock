@@ -121,7 +121,6 @@ export const atpmPublicDiff: PublicDiffAdapter = {
           manifest: toArchive.packageJson ?? null,
           archiveSha1: toArchive.archiveSha1 ?? null,
           recordName: ref.name,
-          expectedPackageName: identity.handle ? `@${identity.handle}/${ref.name}` : null,
         }),
       ],
     } satisfies PublicDiffAcquiredSources;

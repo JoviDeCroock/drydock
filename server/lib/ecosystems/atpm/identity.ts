@@ -166,8 +166,8 @@ function normalizeDid(input: string): string | null {
  * A DID document names its own PDS, so "which host do we call" is data supplied
  * by the party under review. This blocks the shapes that turn that into a probe
  * of something that is not on the public internet: literal addresses (which skip
- * public DNS entirely), loopback and internal suffixes, and single-label names
- * that resolve through a private search domain.
+ * public DNS entirely), loopback and protocol-reserved suffixes, and
+ * single-label names that resolve through a private search domain.
  */
 function isPublicHostname(hostname: string): boolean {
   const host = hostname.toLowerCase();
@@ -185,10 +185,17 @@ function isPublicHostname(hostname: string): boolean {
   return !RESERVED_TLDS.has(tld);
 }
 
-// Suffixes that resolve inside a network rather than on the public internet.
+// atproto-reserved and local-use suffixes cannot identify a public PDS or
+// handle. Keep the protocol list even where URL fetches would ordinarily fail:
+// rejection must happen before attacker-chosen resolution or redirects.
 const RESERVED_TLDS = new Set([
+  "alt",
+  "arpa",
+  "example",
+  "invalid",
   "local",
   "localhost",
+  "onion",
   "internal",
   "intranet",
   "home",
@@ -296,7 +303,7 @@ export async function resolveAtpmRepoIdentity(ref: AtpmPackageRef): Promise<Atpm
 
   return {
     did: resolved.did,
-    pds: assertPublicHttpsUrl(pds, "PDS endpoint").origin,
+    pds: assertAtprotoPdsEndpoint(pds),
     handle: verified?.handle ?? null,
     handleMethod: verified?.method ?? null,
   };
@@ -497,11 +504,27 @@ function pdsEndpoint(document: DidDocument): string | null {
     // The fragment identifies the service; a document may carry several, and
     // only `#atproto_pds` holds the repository.
     const id = typeof entry.id === "string" ? entry.id : "";
-    if (!id.endsWith("#atproto_pds")) continue;
+    if (id !== "#atproto_pds" && id !== `${document.id}#atproto_pds`) continue;
     if (entry.type !== "AtprotoPersonalDataServer") continue;
     if (typeof entry.serviceEndpoint === "string") return entry.serviceEndpoint;
   }
   return null;
+}
+
+/**
+ * atproto PDS service endpoints are origins, not URL prefixes. Reject extra
+ * components instead of silently discarding them with `.origin`, which could
+ * make the repository fetch a different endpoint than the DID document named.
+ */
+function assertAtprotoPdsEndpoint(value: string): string {
+  const url = assertPublicHttpsUrl(value, "PDS endpoint");
+  if (url.href !== `${url.origin}/`) {
+    throw new PublicDiffError(
+      "PDS endpoint must be an origin without a path, query, or fragment",
+      502,
+    );
+  }
+  return url.origin;
 }
 
 /**

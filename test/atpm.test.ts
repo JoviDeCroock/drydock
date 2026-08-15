@@ -92,6 +92,11 @@ describe("parseAtpmPackageName", () => {
       // public resolution path.
       "@alice.test/counter",
       "@pds.local/counter",
+      "@publisher.alt/counter",
+      "@publisher.arpa/counter",
+      "@publisher.example/counter",
+      "@publisher.invalid/counter",
+      "@publisher.onion/counter",
       "",
     ]) {
       expect(parseAtpmPackageName(name), name).toBeNull();
@@ -122,6 +127,11 @@ describe("assertPublicHttpsUrl", () => {
       "https://localhost",
       "https://pds.local",
       "https://pds.internal",
+      "https://pds.alt",
+      "https://pds.arpa",
+      "https://pds.example",
+      "https://pds.invalid",
+      "https://pds.onion",
       "https://metadata", // single-label: resolves via a private search domain
       "https://example.com:9200", // port probing
       "https://user:pass@example.com",
@@ -163,6 +173,22 @@ describe("parseAtpmPackageRecord", () => {
         versionEntry("bad/version", CID_A),
         versionEntry(`1.${"0".repeat(128)}`, CID_A),
         { blob: { ref: { $link: CID_A } } }, // no version
+        { ...versionEntry("0.0.11", CID_A), createdAt: undefined },
+        { ...versionEntry("0.0.10", CID_A), meta: undefined },
+        { ...versionEntry("0.0.9", CID_A), meta: "not a manifest" },
+        { ...versionEntry("0.0.8", CID_A), meta: {} },
+        {
+          ...versionEntry("0.0.7", CID_A),
+          blob: { ref: { $link: CID_A }, size: 604, mimeType: "application/gzip" },
+        },
+        {
+          ...versionEntry("0.0.6", CID_A),
+          blob: { $type: "blob", ref: { $link: CID_A }, size: -1, mimeType: "application/gzip" },
+        },
+        {
+          ...versionEntry("0.0.5", CID_A),
+          blob: { $type: "blob", ref: { $link: CID_A }, size: 604, mimeType: "" },
+        },
         "nonsense",
       ],
     });
@@ -172,8 +198,13 @@ describe("parseAtpmPackageRecord", () => {
   test("rejects values that are not an atpm package record", () => {
     expect(parseAtpmPackageRecord(null)).toBeNull();
     expect(parseAtpmPackageRecord([])).toBeNull();
+    expect(parseAtpmPackageRecord({ ...RECORD, $type: undefined })).toBeNull();
     expect(parseAtpmPackageRecord({ $type: "app.bsky.feed.post", versions: [] })).toBeNull();
     expect(parseAtpmPackageRecord({ $type: "dev.atpm.alpha.package" })).toBeNull();
+    expect(parseAtpmPackageRecord({ ...RECORD, createdAt: undefined })).toBeNull();
+    expect(parseAtpmPackageRecord({ ...RECORD, createdAt: "not-a-datetime" })).toBeNull();
+    expect(parseAtpmPackageRecord({ ...RECORD, tags: undefined })).toBeNull();
+    expect(parseAtpmPackageRecord({ ...RECORD, tags: [] })).toBeNull();
   });
 
   test("rejects duplicate readable versions rather than choosing one blob", () => {
@@ -296,7 +327,7 @@ describe("atpmRecordFindings", () => {
     cid: CID_A,
     size: 604,
     mimeType: "application/gzip",
-    createdAt: null,
+    createdAt: "2026-08-13T06:28:24.000Z",
     declaredName: "@ebey.dev/counter",
     declaredVersion: "1.0.0",
     declaredShasum: "53dde734249b5c8de540b4f86254273caa000ec5",
@@ -310,7 +341,6 @@ describe("atpmRecordFindings", () => {
         manifest,
         archiveSha1: "53dde734249b5c8de540b4f86254273caa000ec5",
         recordName: "counter",
-        expectedPackageName: "@ebey.dev/counter",
       }),
     ).toEqual([]);
   });
@@ -321,7 +351,6 @@ describe("atpmRecordFindings", () => {
       manifest,
       archiveSha1: "f".repeat(40),
       recordName: "counter",
-      expectedPackageName: "@ebey.dev/counter",
     });
     expect(findings).toHaveLength(1);
     expect(findings[0].ruleId).toBe("stage.tarball-digest-mismatch");
@@ -337,7 +366,6 @@ describe("atpmRecordFindings", () => {
         manifest,
         archiveSha1: "f".repeat(40),
         recordName: "counter",
-        expectedPackageName: "@ebey.dev/counter",
       }),
     ).toEqual([]);
     expect(
@@ -346,7 +374,6 @@ describe("atpmRecordFindings", () => {
         manifest,
         archiveSha1: null,
         recordName: "counter",
-        expectedPackageName: "@ebey.dev/counter",
       }),
     ).toEqual([]);
   });
@@ -357,7 +384,6 @@ describe("atpmRecordFindings", () => {
       manifest: { name: "left-pad", version: "9.9.9" },
       archiveSha1: null,
       recordName: "counter",
-      expectedPackageName: "@ebey.dev/counter",
     });
     expect(findings).toHaveLength(1);
     expect(findings[0].ruleId).toBe("stage.metadata-mismatch");
@@ -365,14 +391,13 @@ describe("atpmRecordFindings", () => {
     expect(findings[0].evidence).toContain("9.9.9");
   });
 
-  test("falls back to the record key when no handle was verified", () => {
+  test("binds package names to the stable record key", () => {
     expect(
       atpmRecordFindings({
         entry,
         manifest,
         archiveSha1: null,
         recordName: "counter",
-        expectedPackageName: null,
       }),
     ).toEqual([]);
     expect(
@@ -381,24 +406,34 @@ describe("atpmRecordFindings", () => {
         manifest: { name: "@someone.else/other", version: "1.0.0" },
         archiveSha1: null,
         recordName: "counter",
-        expectedPackageName: null,
       }),
     ).toHaveLength(1);
   });
 
-  test("binds both metadata names to the full verified handle scope", () => {
-    const attackerName = "@attacker.example/counter";
+  test("does not compare historical release names with the publisher's current handle", () => {
+    const historicalName = "@old-handle.example/counter";
+    expect(
+      atpmRecordFindings({
+        entry: { ...entry, declaredName: historicalName },
+        manifest: { name: historicalName, version: "1.0.0" },
+        archiveSha1: null,
+        recordName: "counter",
+      }),
+    ).toEqual([]);
+  });
+
+  test("binds both metadata names to the record key", () => {
+    const wrongName = "@ebey.dev/not-counter";
     const findings = atpmRecordFindings({
-      entry: { ...entry, declaredName: attackerName },
-      manifest: { name: attackerName, version: "1.0.0" },
+      entry: { ...entry, declaredName: wrongName },
+      manifest: { name: wrongName, version: "1.0.0" },
       archiveSha1: null,
       recordName: "counter",
-      expectedPackageName: "@ebey.dev/counter",
     });
 
     expect(findings).toHaveLength(1);
-    expect(findings[0].evidence).toContain("record meta.name @attacker.example/counter");
-    expect(findings[0].evidence).toContain("package.json name @attacker.example/counter");
+    expect(findings[0].evidence).toContain("record meta.name @ebey.dev/not-counter");
+    expect(findings[0].evidence).toContain("package.json name @ebey.dev/not-counter");
   });
 });
 
@@ -475,7 +510,7 @@ describe("resolveAtpmRepoIdentity", () => {
       "https://plc.directory/": () =>
         Response.json({
           ...didDocument,
-          alsoKnownAs: ["at://primary.example", "at://ebey.dev"],
+          alsoKnownAs: ["at://primary.dev", "at://ebey.dev"],
         }),
     });
     await expect(
@@ -512,6 +547,75 @@ describe("resolveAtpmRepoIdentity", () => {
     await expect(
       resolveAtpmRepoIdentity(parseAtpmPackageName("@ebey.dev/counter")!),
     ).rejects.toThrow(PublicDiffError);
+  });
+
+  test("refuses PDS service endpoints with URL components beyond the origin", async () => {
+    for (const serviceEndpoint of [
+      `${PDS}/tenant`,
+      `${PDS}?tenant=one`,
+      `${PDS}#tenant`,
+      `${PDS}?`,
+      `${PDS}#`,
+    ]) {
+      stubFetch({
+        "https://cloudflare-dns.com/dns-query": dnsAnswer,
+        "https://plc.directory/": () =>
+          Response.json({
+            ...didDocument,
+            service: [
+              {
+                id: "#atproto_pds",
+                type: "AtprotoPersonalDataServer",
+                serviceEndpoint,
+              },
+            ],
+          }),
+      });
+      await expect(
+        resolveAtpmRepoIdentity(parseAtpmPackageName("@ebey.dev/counter")!),
+        serviceEndpoint,
+      ).rejects.toThrow(/must be an origin/);
+    }
+  });
+
+  test("accepts a fully qualified atproto PDS service id", async () => {
+    stubFetch({
+      "https://cloudflare-dns.com/dns-query": dnsAnswer,
+      "https://plc.directory/": () =>
+        Response.json({
+          ...didDocument,
+          service: [
+            {
+              id: `${DID}#atproto_pds`,
+              type: "AtprotoPersonalDataServer",
+              serviceEndpoint: PDS,
+            },
+          ],
+        }),
+    });
+    await expect(
+      resolveAtpmRepoIdentity(parseAtpmPackageName("@ebey.dev/counter")!),
+    ).resolves.toMatchObject({ pds: PDS });
+  });
+
+  test("ignores a service id that merely ends with the PDS fragment", async () => {
+    stubFetch({
+      "https://cloudflare-dns.com/dns-query": dnsAnswer,
+      "https://plc.directory/": () =>
+        Response.json({
+          ...didDocument,
+          service: [
+            {
+              id: "https://attacker.example#atproto_pds",
+              type: "AtprotoPersonalDataServer",
+              serviceEndpoint: PDS,
+            },
+          ],
+        }),
+    });
+    await expect(
+      resolveAtpmRepoIdentity(parseAtpmPackageName("@ebey.dev/counter")!),
+    ).rejects.toThrow(/declares no atproto PDS/);
   });
 
   test("refuses a redirect from a public resolver to a private target", async () => {

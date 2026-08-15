@@ -16,13 +16,13 @@ The exchange is that Drydock now depends on the lexicon rather than on an HTTP A
 
 Every hop is a protocol mechanism, verified in `server/lib/ecosystems/atpm/identity.ts` and `record.ts`:
 
-| Step             | Mechanism                                                                                          | Authority                                    |
-| ---------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| Handle → DID     | DNS TXT `_atproto.<handle>` over DoH, falling back to `https://<handle>/.well-known/atproto-did`   | DNS, or the publisher's web server           |
-| DID → document   | `https://plc.directory/<did>` for `did:plc`, `https://<domain>/.well-known/did.json` for `did:web` | The PLC directory, or the publisher's domain |
-| Document → PDS   | `service[]` entry with an `#atproto_pds` id and type `AtprotoPersonalDataServer`                   | The DID's controller                         |
-| PDS → record     | `com.atproto.repo.getRecord`, collection `dev.atpm.alpha.package`, rkey = unscoped name            | The publisher's PDS                          |
-| Record → tarball | `com.atproto.sync.getBlob` at the version entry's blob CID                                         | Content address                              |
+| Step             | Mechanism                                                                                                         | Authority                                    |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| Handle → DID     | DNS TXT `_atproto.<handle>` over DoH, falling back to `https://<handle>/.well-known/atproto-did`                  | DNS, or the publisher's web server           |
+| DID → document   | `https://plc.directory/<did>` for `did:plc`, `https://<domain>/.well-known/did.json` for `did:web`                | The PLC directory, or the publisher's domain |
+| Document → PDS   | `service[]` entry with the exact relative or DID-qualified `#atproto_pds` id and type `AtprotoPersonalDataServer` | The DID's controller                         |
+| PDS → record     | `com.atproto.repo.getRecord`, collection `dev.atpm.alpha.package`, rkey = unscoped name                           | The publisher's PDS                          |
+| Record → tarball | `com.atproto.sync.getBlob` at the version entry's blob CID                                                        | Content address                              |
 
 Workers have no DNS resolver, so the TXT lookup goes over DNS-over-HTTPS through Cloudflare's public resolver. That is infrastructure for the lookup, not a party to the naming: it answers the same query any resolver would, and a wrong answer still has to survive the bidirectional check below.
 
@@ -58,9 +58,9 @@ An atpm version is an ordinary npm tarball, so it runs the npm deterministic rul
 atpm also splits apart two things npm keeps together. `meta` in the record is a manifest the publisher wrote; the blob is the artifact that installs. A client reads the former and runs the latter. `server/lib/ecosystems/atpm/findings.ts` checks them against each other:
 
 - `stage.tarball-digest-mismatch` — the blob's SHA-1 (computed by the sandbox over the wire bytes) disagrees with the record's `dist.shasum`. Fails to silent, never to "mismatch", when either digest is absent.
-- `stage.metadata-mismatch` — the record's `meta.name` / `meta.version` / version key disagrees with the tarball's `package.json`. When a handle is verified, both names must equal the full `@handle/record-key` package name; a DID-only lookup falls back to comparing the manifest's unscoped name with the record key.
+- `stage.metadata-mismatch` — the record's `meta.name` / `meta.version` / version key disagrees with the tarball's `package.json`. Both package-name claims must also use the stable record key as their unscoped name. Their scope is compared with each other, not with the publisher's current verified handle: a historical release may legitimately retain the handle that was current when it was published.
 
-A readable version string may occur only once in a package record. Drydock rejects a record with duplicate versions rather than choosing whichever blob happens to appear first; otherwise review and an installing App View could select different artifacts for the same version.
+The parser validates the record's required lexicon shape before pruning it. Each retained version must carry its timestamp, object-shaped manifest metadata with package name and version claims, and a complete generic blob reference (CID, non-negative integer size, and MIME type). Malformed individual versions are dropped so they do not hide valid releases; a readable version string may occur only once. Drydock rejects a record with duplicate versions rather than choosing whichever blob happens to appear first; otherwise review and an installing App View could select different artifacts for the same version.
 
 The blob CID is independently re-verified. The sandbox computes SHA-256 over the complete archive wire bytes alongside SHA-1, and the parent Worker requires it to equal the digest encoded by the CIDv1 raw/sha2-256 address before the diff can proceed. A missing digest, malformed CID, truncated response, or PDS substitution fails the request; the record-level finding above then covers the separate npm `dist.shasum` claim.
 
@@ -68,7 +68,7 @@ The blob CID is independently re-verified. The sandbox computes SHA-256 over the
 
 ## Host policy
 
-The atpm path is the only public-diff egress whose hosts are chosen by the party under review. `assertPublicHttpsUrl` gates every one: https only, no embedded credentials, default port only, no IPv4/IPv6 literals, no loopback, no reserved internal suffixes, no single-label hostnames. Identity documents read under a 256 KiB ceiling and package records under 4 MiB. Nothing on this path holds credentials of any kind. See [`security-model.md`](./security-model.md).
+The atpm path is the only public-diff egress whose hosts are chosen by the party under review. `assertPublicHttpsUrl` gates every one: https only, no embedded credentials, default port only, no IPv4/IPv6 literals, no loopback, no single-label hostnames, and no atproto-reserved or local-use suffixes (`.alt`, `.arpa`, `.example`, `.invalid`, `.local`, `.localhost`, `.onion`, `.test`, and the additional private-network suffixes in the implementation). A PDS service endpoint must be an origin with no path, query, or fragment; extra components are rejected rather than silently stripped. Identity documents read under a 256 KiB ceiling and package records under 4 MiB. Nothing on this path holds credentials of any kind. See [`security-model.md`](./security-model.md).
 
 A self-hosted PDS on a non-default port is the one legitimate shape this rejects. That is deliberate: allowing an arbitrary port would turn a DID document into a port prober, and atproto PDS endpoints are served on 443.
 
@@ -93,6 +93,7 @@ at://did:plc:twegdcgytckr5cxm57gyruxa/dev.atpm.alpha.package/counter    (@ebey.d
 ```jsonc
 {
   "$type": "dev.atpm.alpha.package",
+  "createdAt": "2026-01-01T00:00:00.000Z",
   "tags": { "latest": "0.0.15" },
   "versions": [
     {
@@ -114,4 +115,4 @@ at://did:plc:twegdcgytckr5cxm57gyruxa/dev.atpm.alpha.package/counter    (@ebey.d
 }
 ```
 
-Everything outside the fields above — the readme, the Sigstore attestation bundle, the rest of the npm manifest — is dropped at parse time. It is the bulk of a real record (~50 KB raw versus ~4 KB kept for this package) and none of it is read.
+Everything outside the validated shape and retained fields above — the readme, the Sigstore attestation bundle, the rest of the npm manifest — is dropped at parse time. It is the bulk of a real record (~50 KB raw versus ~4 KB kept for this package) and none of it is read.

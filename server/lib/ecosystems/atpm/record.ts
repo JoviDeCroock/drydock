@@ -27,7 +27,7 @@ export const ATPM_PACKAGE_COLLECTION = "dev.atpm.alpha.package";
  * the pruned shape or the version-selection rules change, so a cached diff
  * computed under the old reading cannot be served.
  */
-export const ATPM_RULES_VERSION = "2";
+export const ATPM_RULES_VERSION = "3";
 
 const RECORD_TIMEOUT_MS = 10_000;
 
@@ -118,9 +118,11 @@ export async function fetchAtpmPackageRecord(
  * would let review and installation disagree about which blob that version names.
  */
 export function parseAtpmPackageRecord(value: unknown): AtpmPackage | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (!isRecord(value)) return null;
   const record = value as Record<string, unknown>;
-  if (record.$type !== undefined && record.$type !== ATPM_PACKAGE_COLLECTION) return null;
+  if (record.$type !== ATPM_PACKAGE_COLLECTION) return null;
+  if (!isAtpmDatetime(record.createdAt)) return null;
+  if (!isRecord(record.tags)) return null;
   if (!Array.isArray(record.versions)) return null;
 
   const versions: AtpmVersion[] = [];
@@ -134,39 +136,57 @@ export function parseAtpmPackageRecord(value: unknown): AtpmPackage | null {
   }
 
   const tags: Record<string, string> = {};
-  const rawTags = record.tags;
-  if (rawTags && typeof rawTags === "object" && !Array.isArray(rawTags)) {
-    for (const [tag, target] of Object.entries(rawTags as Record<string, unknown>)) {
-      if (typeof target === "string" && target) tags[tag] = target;
-    }
+  for (const [tag, target] of Object.entries(record.tags)) {
+    if (typeof target === "string" && target) tags[tag] = target;
   }
   return { tags, versions };
 }
 
 function parseVersionEntry(entry: unknown): AtpmVersion | null {
-  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  if (!isRecord(entry)) return null;
   const value = entry as Record<string, unknown>;
   const version = typeof value.version === "string" ? value.version : null;
   if (!version || !isValidAtpmVersion(version)) return null;
 
-  const blob = value.blob as { ref?: { $link?: unknown }; size?: unknown; mimeType?: unknown };
-  const cid = typeof blob?.ref?.$link === "string" ? blob.ref.$link : null;
+  if (!isAtpmDatetime(value.createdAt)) return null;
+  if (!isRecord(value.meta)) return null;
+  const meta = value.meta;
+  if (typeof meta.name !== "string" || !meta.name) return null;
+  if (typeof meta.version !== "string" || !meta.version) return null;
+
+  if (!isRecord(value.blob)) return null;
+  const blob = value.blob;
+  if (blob.$type !== "blob" || !isRecord(blob.ref)) return null;
+  const cid = typeof blob.ref.$link === "string" ? blob.ref.$link : null;
   // Without a blob there is nothing to diff — the record would only describe a
   // release, not contain one.
   if (!cid || !BLOB_CID_RE.test(cid)) return null;
+  if (!Number.isInteger(blob.size) || (blob.size as number) < 0) return null;
+  if (typeof blob.mimeType !== "string" || !blob.mimeType) return null;
 
-  const meta = (value.meta ?? {}) as Record<string, unknown>;
-  const dist = (meta.dist ?? {}) as Record<string, unknown>;
+  const dist = isRecord(meta.dist) ? meta.dist : {};
   return {
     version,
     cid,
-    size: typeof blob.size === "number" && blob.size >= 0 ? blob.size : null,
-    mimeType: typeof blob.mimeType === "string" ? blob.mimeType : null,
-    createdAt: typeof value.createdAt === "string" ? value.createdAt : null,
-    declaredName: typeof meta.name === "string" ? meta.name : null,
-    declaredVersion: typeof meta.version === "string" ? meta.version : null,
+    size: blob.size as number,
+    mimeType: blob.mimeType,
+    createdAt: value.createdAt,
+    declaredName: meta.name,
+    declaredVersion: meta.version,
     declaredShasum: typeof dist.shasum === "string" ? dist.shasum : null,
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isAtpmDatetime(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
+    Number.isFinite(Date.parse(value))
+  );
 }
 
 /**
