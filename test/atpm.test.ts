@@ -8,7 +8,9 @@ import {
   resolveAtpmRepoIdentity,
 } from "../server/lib/ecosystems/atpm/identity";
 import {
+  assertAtpmArchiveIntegrity,
   assertAtpmBlobDigest,
+  assertAtpmTarballUrl,
   atpmBlobUrl,
   isValidAtpmVersion,
   listAtpmVersions,
@@ -24,6 +26,9 @@ const DID = "did:plc:twegdcgytckr5cxm57gyruxa";
 const PDS = "https://shiitake.us-east.host.bsky.network";
 const CID_A = "bafkreibrz4xmz6sbraw6h2mtchh5xq7jqghrjhr3yyyub3wbyrvmyjg2bm";
 const CID_B = "bafkreigjbauo4x6rqpuxkksb2fmsldns47tlbb3lgvxqxypqc4wdes5gvu";
+const SHA512_A = "11".repeat(64);
+const INTEGRITY_A =
+  "sha512-EREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREQ==";
 
 function versionEntry(version: string, cid: string, extra: Record<string, unknown> = {}) {
   return {
@@ -39,6 +44,7 @@ function versionEntry(version: string, cid: string, extra: Record<string, unknow
       readme: "x".repeat(4096),
       dist: {
         shasum: "53dde734249b5c8de540b4f86254273caa000ec5",
+        integrity: INTEGRITY_A,
         tarball: `${PDS}/xrpc/com.atproto.sync.getBlob?did=${DID}&cid=${cid}`,
         attestations: { provenance: { dsseEnvelope: { payload: "y".repeat(4096) } } },
       },
@@ -156,6 +162,8 @@ describe("parseAtpmPackageRecord", () => {
       declaredName: "@ebey.dev/counter",
       declaredVersion: "0.0.15",
       declaredShasum: "53dde734249b5c8de540b4f86254273caa000ec5",
+      declaredTarball: `${PDS}/xrpc/com.atproto.sync.getBlob?did=${DID}&cid=${CID_A}`,
+      declaredIntegrity: INTEGRITY_A,
     });
     // The readme and the attestation bundle are the bulk of a real record and
     // are never read, so they must not reach the cache.
@@ -318,8 +326,35 @@ describe("atpmBlobUrl", () => {
   });
 
   test("rejects a CID that is not a canonical base32 CIDv1", () => {
-    for (const cid of ["../../etc/passwd", "QmLegacyBase58", "bafkrei!!", ""]) {
+    for (const cid of ["../../etc/passwd", "QmLegacyBase58", "bafkrei!!", `${CID_A}a`, ""]) {
       expect(() => atpmBlobUrl(identity, cid), cid).toThrow(PublicDiffError);
+    }
+  });
+});
+
+describe("assertAtpmTarballUrl", () => {
+  const identity = { did: DID, pds: PDS, handle: "ebey.dev", handleMethod: "dns" as const };
+  const entry = parseAtpmPackageRecord(RECORD)!.versions[0];
+  const expected = atpmBlobUrl(identity, CID_A);
+
+  test("accepts the install URL only when it names the reviewed DID and CID", () => {
+    // The record fixture uses an unescaped DID and the reconstructed URL uses
+    // URLSearchParams escaping; semantic equality must not depend on spelling.
+    expect(() => assertAtpmTarballUrl(entry, expected)).not.toThrow();
+  });
+
+  test("rejects install endpoints that could serve different bytes", () => {
+    for (const declaredTarball of [
+      null,
+      `https://attacker.example/xrpc/com.atproto.sync.getBlob?did=${DID}&cid=${CID_A}`,
+      `${PDS}/xrpc/com.atproto.sync.getBlob?did=${DID}&cid=${CID_B}`,
+      `${PDS}/xrpc/com.atproto.sync.getBlob?did=${DID}&cid=${CID_A}&alt=1`,
+      `${PDS}/xrpc/com.atproto.sync.getBlob?did=${DID}&cid=${CID_A}#fragment`,
+    ]) {
+      expect(
+        () => assertAtpmTarballUrl({ ...entry, declaredTarball }, expected),
+        String(declaredTarball),
+      ).toThrow(PublicDiffError);
     }
   });
 });
@@ -337,6 +372,22 @@ describe("assertAtpmBlobDigest", () => {
   });
 });
 
+describe("assertAtpmArchiveIntegrity", () => {
+  test("accepts a matching SHA-512 digest and any matching member of an SRI set", () => {
+    expect(() => assertAtpmArchiveIntegrity(INTEGRITY_A, SHA512_A)).not.toThrow();
+    expect(() =>
+      assertAtpmArchiveIntegrity(`sha512-${"IiIi".repeat(21)}Ig== ${INTEGRITY_A}`, SHA512_A),
+    ).not.toThrow();
+    expect(() => assertAtpmArchiveIntegrity(null, null)).not.toThrow();
+  });
+
+  test("fails closed for mismatched, missing, or unreadable SHA-512 integrity", () => {
+    expect(() => assertAtpmArchiveIntegrity(INTEGRITY_A, "22".repeat(64))).toThrow(PublicDiffError);
+    expect(() => assertAtpmArchiveIntegrity(INTEGRITY_A, null)).toThrow(PublicDiffError);
+    expect(() => assertAtpmArchiveIntegrity("sha256-deadbeef", SHA512_A)).toThrow(PublicDiffError);
+  });
+});
+
 describe("atpmRecordFindings", () => {
   const entry = {
     version: "1.0.0",
@@ -347,6 +398,8 @@ describe("atpmRecordFindings", () => {
     declaredName: "@ebey.dev/counter",
     declaredVersion: "1.0.0",
     declaredShasum: "53dde734249b5c8de540b4f86254273caa000ec5",
+    declaredTarball: `${PDS}/xrpc/com.atproto.sync.getBlob?did=${DID}&cid=${CID_A}`,
+    declaredIntegrity: INTEGRITY_A,
   };
   const manifest = { name: "@ebey.dev/counter", version: "1.0.0" };
 
@@ -405,6 +458,20 @@ describe("atpmRecordFindings", () => {
     expect(findings[0].ruleId).toBe("stage.metadata-mismatch");
     expect(findings[0].evidence).toContain("left-pad");
     expect(findings[0].evidence).toContain("9.9.9");
+  });
+
+  test("flags a missing or malformed tarball manifest without throwing", () => {
+    for (const manifest of [null, {}, { name: { hostile: true }, version: "1.0.0" }]) {
+      const findings = atpmRecordFindings({
+        entry,
+        manifest: manifest as never,
+        archiveSha1: null,
+        recordName: "counter",
+      });
+      expect(findings).toHaveLength(1);
+      expect(findings[0].ruleId).toBe("stage.metadata-mismatch");
+      expect(findings[0].severity).toBe("critical");
+    }
   });
 
   test("binds package names to the stable record key", () => {

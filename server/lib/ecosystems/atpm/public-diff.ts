@@ -11,7 +11,9 @@ import {
 import {
   ATPM_PACKAGE_COLLECTION,
   ATPM_RULES_VERSION,
+  assertAtpmArchiveIntegrity,
   assertAtpmBlobDigest,
+  assertAtpmTarballUrl,
   atpmBlobUrl,
   fetchAtpmPackageRecord,
   isValidAtpmVersion,
@@ -294,6 +296,7 @@ async function downloadAtpmBlob(
     throw new PublicDiffError("release artifact exceeds the public diff size limit", 413);
   }
   const url = atpmBlobUrl(identity, entry.cid);
+  assertAtpmTarballUrl(entry, url);
   let archive: DownloadResult;
   try {
     archive = await downloadInSandbox(env, ctx, {
@@ -305,5 +308,6 @@ async function downloadAtpmBlob(
     throw publicDiffDownloadError(err);
   }
   assertAtpmBlobDigest(entry.cid, archive.archiveSha256 ?? null);
+  assertAtpmArchiveIntegrity(entry.declaredIntegrity, archive.archiveSha512 ?? null);
   return archive;
 }

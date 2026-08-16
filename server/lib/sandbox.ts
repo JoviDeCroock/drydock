@@ -213,6 +213,8 @@ export interface DownloadResult {
   archiveSha1?: string | null;
   /** SHA-256 of the same complete wire stream, used for content-addressed blobs. */
   archiveSha256?: string | null;
+  /** SHA-512 of the same complete wire stream, used for npm-compatible SRI. */
+  archiveSha512?: string | null;
 }
 
 export interface DownloadOptions {
@@ -485,7 +487,7 @@ export default {
     // *decompressed* bytes), so verification covers every archive the sandbox is
     // willing to review instead of switching itself off above 1/10th of it.
     if (!res.body) return json({ error: "archive download failed", status: 400 }, 400);
-    const archive = digestArchiveStream(res.body, maxStreamTarBytes, ["SHA-1", "SHA-256"]);
+    const archive = digestArchiveStream(res.body, maxStreamTarBytes, ["SHA-1", "SHA-256", "SHA-512"]);
     if (archiveFormat === "vsix") {
       // VSIX zips are packed by yazl (via vsce), whose streamed entries carry
       // their sizes in data descriptors — only the central directory (what
@@ -518,7 +520,7 @@ export default {
         return json({ error: reason, status }, status);
       }
       const archiveDigests = await archive.digest();
-      return json({ files, packageJson: null, suspiciousEntries, archiveSha1: archiveDigests?.["SHA-1"] || null, archiveSha256: archiveDigests?.["SHA-256"] || null });
+      return json({ files, packageJson: null, suspiciousEntries, archiveSha1: archiveDigests?.["SHA-1"] || null, archiveSha256: archiveDigests?.["SHA-256"] || null, archiveSha512: archiveDigests?.["SHA-512"] || null });
     }
     if (archiveFormat === "zip") {
       let files;
@@ -537,7 +539,7 @@ export default {
         return json({ error: reason, status }, status);
       }
       const archiveDigests = await archive.digest();
-      return json({ files, packageJson: null, suspiciousEntries, archiveSha1: archiveDigests?.["SHA-1"] || null, archiveSha256: archiveDigests?.["SHA-256"] || null });
+      return json({ files, packageJson: null, suspiciousEntries, archiveSha1: archiveDigests?.["SHA-1"] || null, archiveSha256: archiveDigests?.["SHA-256"] || null, archiveSha512: archiveDigests?.["SHA-512"] || null });
     }
 
     let files;
@@ -561,7 +563,7 @@ export default {
     }
     const packageJson = parsePackageJson(files);
     const archiveDigests = await archive.digest();
-    return json({ files, packageJson, suspiciousEntries, archiveSha1: archiveDigests?.["SHA-1"] || null, archiveSha256: archiveDigests?.["SHA-256"] || null });
+    return json({ files, packageJson, suspiciousEntries, archiveSha1: archiveDigests?.["SHA-1"] || null, archiveSha256: archiveDigests?.["SHA-256"] || null, archiveSha512: archiveDigests?.["SHA-512"] || null });
   },
 };
 

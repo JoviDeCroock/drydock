@@ -59,8 +59,8 @@ const HANDLE_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 const DID_PLC_RE = /^did:plc:[a-z2-7]{24}$/;
 
-/** Blob CIDs as atproto renders them in JSON: CIDv1 in canonical base32. */
-export const BLOB_CID_RE = /^b[a-z2-7]{20,255}$/;
+/** Raw SHA-256 blob CIDs as atproto renders them: 36 bytes in canonical base32. */
+export const BLOB_CID_RE = /^b[a-z2-7]{58}$/;
 
 /**
  * Who a package name says publishes it. A handle is a rented name that must be
@@ -358,7 +358,7 @@ async function verifyClaimedHandle(
   document: DidDocument,
   did: string,
 ): Promise<{ handle: string; method: HandleMethod } | null> {
-  const claimed = claimedHandles(document)[0];
+  const claimed = claimedHandle(document);
   if (!claimed) return null;
   const resolved = await tryResolveHandle(claimed);
   if (!resolved || resolved.did !== did) return null;
@@ -489,26 +489,24 @@ async function fetchDidDocument(did: string): Promise<DidDocument> {
 function claimsHandle(document: DidDocument, handle: string): boolean {
   // The atproto identity rules use the first valid at:// entry as the primary
   // handle. A secondary alias cannot verify a requested handle.
-  return claimedHandles(document)[0] === handle;
+  return claimedHandle(document) === handle;
 }
 
 /**
- * The `at://` handles a DID document claims, in document order, normalized and
- * filtered to ones that could actually be resolved. These are claims, not facts;
- * every caller either checks them against a handle it was given or proves them
- * with a reverse lookup.
+ * The first resolvable `at://` handle a DID document claims. This is only a
+ * claim, not a fact; every caller either checks it against a handle it was given
+ * or proves it with a reverse lookup.
  */
-function claimedHandles(document: DidDocument): string[] {
+function claimedHandle(document: DidDocument): string | null {
   const aka = Array.isArray(document.alsoKnownAs) ? document.alsoKnownAs : [];
-  const handles: string[] = [];
   for (const entry of aka) {
     if (typeof entry !== "string") continue;
     const lower = entry.toLowerCase();
     if (!lower.startsWith("at://")) continue;
     const handle = normalizeHandle(lower.slice("at://".length));
-    if (handle && !handles.includes(handle)) handles.push(handle);
+    if (handle) return handle;
   }
-  return handles;
+  return null;
 }
 
 function pdsEndpoint(document: DidDocument): string | null {

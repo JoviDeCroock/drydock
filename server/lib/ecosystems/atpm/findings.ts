@@ -58,10 +58,25 @@ function manifestFindings(args: {
   recordName: string;
 }): Finding[] {
   const { entry, manifest } = args;
-  if (!manifest) return [];
   const mismatches: string[] = [];
-  if (entry.declaredName && manifest.name && entry.declaredName !== manifest.name) {
-    mismatches.push(`record meta.name ${entry.declaredName} != package.json name ${manifest.name}`);
+  if (!manifest) {
+    mismatches.push("tarball has no readable package.json");
+    return metadataMismatchFinding(mismatches);
+  }
+
+  // `PackageJsonSummary` describes values produced by our parser, but cached or
+  // adversarial runtime data can still violate that TypeScript-only boundary.
+  // Narrow before comparing or using string methods.
+  const rawManifest = manifest as Record<string, unknown>;
+  const manifestName =
+    typeof rawManifest.name === "string" && rawManifest.name ? rawManifest.name : null;
+  const manifestVersion =
+    typeof rawManifest.version === "string" && rawManifest.version ? rawManifest.version : null;
+  if (!manifestName) mismatches.push("tarball package.json has no readable name");
+  if (!manifestVersion) mismatches.push("tarball package.json has no readable version");
+
+  if (entry.declaredName && manifestName && entry.declaredName !== manifestName) {
+    mismatches.push(`record meta.name ${entry.declaredName} != package.json name ${manifestName}`);
   }
   // `entry.version` is the key a client resolves a release by; `meta.version` is
   // what that same client is handed as the manifest. Both must agree with the
@@ -70,8 +85,8 @@ function manifestFindings(args: {
     ["version", entry.version],
     ["meta.version", entry.declaredVersion],
   ] as const) {
-    if (declared && manifest.version && declared !== manifest.version) {
-      mismatches.push(`record ${label} ${declared} != package.json version ${manifest.version}`);
+    if (declared && manifestVersion && declared !== manifestVersion) {
+      mismatches.push(`record ${label} ${declared} != package.json version ${manifestVersion}`);
     }
   }
   // A handle is mutable, so the current verified handle cannot authenticate the
@@ -80,7 +95,7 @@ function manifestFindings(args: {
   // to agree exactly with each other above.
   for (const [label, packageName] of [
     ["record meta.name", entry.declaredName],
-    ["package.json name", manifest.name],
+    ["package.json name", manifestName],
   ] as const) {
     const unscoped = packageName?.includes("/")
       ? packageName.slice(packageName.lastIndexOf("/") + 1)
@@ -91,6 +106,10 @@ function manifestFindings(args: {
       );
     }
   }
+  return metadataMismatchFinding(mismatches);
+}
+
+function metadataMismatchFinding(mismatches: string[]): Finding[] {
   if (!mismatches.length) return [];
   return [
     {

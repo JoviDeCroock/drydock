@@ -28,7 +28,7 @@ const ATPM_PACKAGE_VERSION_TYPE = `${ATPM_PACKAGE_COLLECTION}#package`;
  * the pruned shape or the version-selection rules change, so a cached diff
  * computed under the old reading cannot be served.
  */
-export const ATPM_RULES_VERSION = "5";
+export const ATPM_RULES_VERSION = "6";
 
 const RECORD_TIMEOUT_MS = 10_000;
 
@@ -59,6 +59,10 @@ export interface AtpmVersion {
   declaredVersion: string | null;
   /** SHA-1 the record claims for the tarball (npm's `dist.shasum`). */
   declaredShasum: string | null;
+  /** Install URL the record exposes through the npm-compatible App View. */
+  declaredTarball: string | null;
+  /** SRI digest npm clients use to authenticate the installed tarball. */
+  declaredIntegrity: string | null;
 }
 
 export interface AtpmPackage {
@@ -181,6 +185,8 @@ function parseVersionEntry(entry: unknown): AtpmVersion | null {
     declaredName: meta.name,
     declaredVersion: meta.version,
     declaredShasum: typeof dist.shasum === "string" ? dist.shasum : null,
+    declaredTarball: typeof dist.tarball === "string" ? dist.tarball : null,
+    declaredIntegrity: typeof dist.integrity === "string" ? dist.integrity : null,
   };
 }
 
@@ -225,6 +231,70 @@ export function assertAtpmBlobDigest(cid: string, archiveSha256: string | null):
   const expected = rawSha256FromCid(cid);
   if (!expected || !archiveSha256 || archiveSha256.toLowerCase() !== expected) {
     throw new PublicDiffError("blob bytes do not match their content address", 502);
+  }
+}
+
+/**
+ * Require the install URL exposed by the App View to identify the same blob
+ * Drydock reviews. Query ordering and percent-encoding may differ, but the
+ * endpoint, DID, and CID must be exact and no extra parameters are accepted.
+ */
+export function assertAtpmTarballUrl(entry: AtpmVersion, expectedUrl: string): void {
+  let declared: URL;
+  try {
+    declared = new URL(entry.declaredTarball ?? "");
+  } catch {
+    throw new PublicDiffError("package record has no readable dist.tarball URL", 502);
+  }
+  const expected = new URL(expectedUrl);
+  const parameters = [...declared.searchParams];
+  if (
+    declared.protocol !== "https:" ||
+    declared.username !== "" ||
+    declared.password !== "" ||
+    declared.origin !== expected.origin ||
+    declared.pathname !== expected.pathname ||
+    declared.hash !== "" ||
+    parameters.length !== 2 ||
+    declared.searchParams.getAll("did").length !== 1 ||
+    declared.searchParams.get("did") !== expected.searchParams.get("did") ||
+    declared.searchParams.getAll("cid").length !== 1 ||
+    declared.searchParams.get("cid") !== expected.searchParams.get("cid")
+  ) {
+    throw new PublicDiffError("dist.tarball does not identify the reviewed blob", 502);
+  }
+}
+
+/** Require npm's declared SHA-512 SRI, when present, to match the reviewed bytes. */
+export function assertAtpmArchiveIntegrity(
+  integrity: string | null,
+  archiveSha512: string | null,
+): void {
+  if (integrity === null) return;
+  const declaredDigests = integrity
+    .trim()
+    .split(/\s+/)
+    .map(sha512HexFromIntegrityToken)
+    .filter((digest): digest is string => digest !== null);
+  if (!declaredDigests.length) {
+    throw new PublicDiffError("package record has no readable SHA-512 dist.integrity", 502);
+  }
+  if (!archiveSha512 || !declaredDigests.some((digest) => digest === archiveSha512.toLowerCase())) {
+    throw new PublicDiffError("blob bytes do not match dist.integrity", 502);
+  }
+}
+
+function sha512HexFromIntegrityToken(token: string): string | null {
+  const metadata = token.split("?", 1)[0];
+  if (!metadata.startsWith("sha512-")) return null;
+  try {
+    const bytes = Uint8Array.from(atob(metadata.slice("sha512-".length)), (char) =>
+      char.charCodeAt(0),
+    );
+    if (bytes.length !== 64) return null;
+    return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  } catch {
+    return null;
   }
 }
 

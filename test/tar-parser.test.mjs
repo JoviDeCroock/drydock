@@ -1272,6 +1272,11 @@ describe("digestArchiveStream", () => {
     return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
   }
 
+  async function sha512Hex(bytes) {
+    const digest = await crypto.subtle.digest("SHA-512", bytes);
+    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
   // A body whose reader rejects overlapping reads the way workerd's does.
   // `digestArchiveStream` only ever calls getReader(), so this stands in for a
   // real stream without node's more permissive queueing hiding the bug.
@@ -1316,12 +1321,17 @@ describe("digestArchiveStream", () => {
 
   test("can bind one archive to multiple registry digest algorithms", async () => {
     const bytes = new Uint8Array(4096).fill(7);
-    const archive = tarParser.digestArchiveStream(streamOf(bytes), CAP, ["SHA-1", "SHA-256"]);
+    const archive = tarParser.digestArchiveStream(streamOf(bytes), CAP, [
+      "SHA-1",
+      "SHA-256",
+      "SHA-512",
+    ]);
     await new Response(archive.body).arrayBuffer();
 
     expect(await archive.digest()).toEqual({
       "SHA-1": await sha1Hex(bytes),
       "SHA-256": await sha256Hex(bytes),
+      "SHA-512": await sha512Hex(bytes),
     });
   });
 
