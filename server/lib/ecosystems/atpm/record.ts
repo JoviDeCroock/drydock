@@ -28,7 +28,7 @@ const ATPM_PACKAGE_VERSION_TYPE = `${ATPM_PACKAGE_COLLECTION}#package`;
  * the pruned shape or the version-selection rules change, so a cached diff
  * computed under the old reading cannot be served.
  */
-export const ATPM_RULES_VERSION = "6";
+export const ATPM_RULES_VERSION = "7";
 
 const RECORD_TIMEOUT_MS = 10_000;
 
@@ -176,6 +176,9 @@ function parseVersionEntry(entry: unknown): AtpmVersion | null {
   if (typeof blob.mimeType !== "string" || !blob.mimeType) return null;
 
   const dist = isRecord(meta.dist) ? meta.dist : {};
+  // Absence is allowed for legacy records, but a present value must retain its
+  // type so malformed SRI cannot be reduced to the same state as no claim.
+  if (dist.integrity !== undefined && typeof dist.integrity !== "string") return null;
   return {
     version,
     cid,

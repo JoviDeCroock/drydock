@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { atpmRecordFindings } from "../server/lib/ecosystems/atpm/findings";
+import {
+  assertAtpmBaselineMetadata,
+  atpmRecordFindings,
+} from "../server/lib/ecosystems/atpm/findings";
 import {
   assertPublicHttpsUrl,
   isValidAtpmPackageName,
@@ -198,6 +201,7 @@ describe("parseAtpmPackageRecord", () => {
           ...versionEntry("0.0.5", CID_A),
           blob: { $type: "blob", ref: { $link: CID_A }, size: 604, mimeType: "" },
         },
+        versionEntry("0.0.4", CID_A, { dist: { integrity: { hostile: true } } }),
         "nonsense",
       ],
     });
@@ -412,6 +416,26 @@ describe("atpmRecordFindings", () => {
         recordName: "counter",
       }),
     ).toEqual([]);
+  });
+
+  test("requires the baseline manifest to authenticate the selected version", () => {
+    expect(() =>
+      assertAtpmBaselineMetadata({ entry, manifest, recordName: "counter" }),
+    ).not.toThrow();
+
+    for (const baselineManifest of [
+      null,
+      { name: "@ebey.dev/other", version: "1.0.0" },
+      { name: "@ebey.dev/counter", version: "9.9.9" },
+    ]) {
+      expect(() =>
+        assertAtpmBaselineMetadata({
+          entry,
+          manifest: baselineManifest,
+          recordName: "counter",
+        }),
+      ).toThrow(PublicDiffError);
+    }
   });
 
   test("flags a tarball that does not hash to the digest the record declares", () => {

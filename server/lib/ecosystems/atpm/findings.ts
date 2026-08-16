@@ -6,6 +6,7 @@ import {
   type Finding,
   type PackageJsonSummary,
 } from "../../review";
+import { PublicDiffError } from "../../public-diff/error";
 
 /**
  * Findings that only exist because of how atpm stores a release.
@@ -34,6 +35,20 @@ export function atpmRecordFindings(args: {
   return [...digestFindings(args.entry, args.archiveSha1), ...manifestFindings(args)];
 }
 
+/**
+ * A baseline mismatch cannot be represented as a target finding: continuing
+ * would label the left side with a version its tarball does not authenticate.
+ */
+export function assertAtpmBaselineMetadata(args: {
+  entry: AtpmVersion;
+  manifest: PackageJsonSummary | null;
+  recordName: string;
+}): void {
+  if (manifestMismatches(args).length) {
+    throw new PublicDiffError("baseline package metadata does not match its tarball", 502);
+  }
+}
+
 function digestFindings(entry: AtpmVersion, archiveSha1: string | null): Finding[] {
   // Fails to "unverified" on a missing digest on either side; only a genuine
   // two-sided disagreement produces a finding.
@@ -57,11 +72,19 @@ function manifestFindings(args: {
   manifest: PackageJsonSummary | null;
   recordName: string;
 }): Finding[] {
+  return metadataMismatchFinding(manifestMismatches(args));
+}
+
+function manifestMismatches(args: {
+  entry: AtpmVersion;
+  manifest: PackageJsonSummary | null;
+  recordName: string;
+}): string[] {
   const { entry, manifest } = args;
   const mismatches: string[] = [];
   if (!manifest) {
     mismatches.push("tarball has no readable package.json");
-    return metadataMismatchFinding(mismatches);
+    return mismatches;
   }
 
   // `PackageJsonSummary` describes values produced by our parser, but cached or
@@ -106,7 +129,7 @@ function manifestFindings(args: {
       );
     }
   }
-  return metadataMismatchFinding(mismatches);
+  return mismatches;
 }
 
 function metadataMismatchFinding(mismatches: string[]): Finding[] {

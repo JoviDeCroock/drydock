@@ -35,8 +35,8 @@ function requirePublicDiffAdapter(ecosystem: string): PublicDiffAdapter {
   return adapter;
 }
 
-// Anonymous, credential-free diff of two published versions of an npm package
-// or PyPI project — or, on npm, of a pkg.pr.new preview tarball against a
+// Anonymous, credential-free diff of two published versions of an npm, PyPI,
+// or atpm package — or, on npm, of a pkg.pr.new preview tarball against a
 // published version (fromVersion / toVersion may each be a validated
 // pkg.pr.new URL). Reuses the scan pipeline's pure phases (package diff,
 // deterministic rules, diff-status annotation, risk breakdown) over published

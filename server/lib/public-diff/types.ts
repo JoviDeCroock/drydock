@@ -93,12 +93,12 @@ export interface PublicDiffVersionListing {
  * those was a place a third ecosystem would have had to be threaded through by
  * hand.
  *
- * Implementations must stay credential-free: they may only read public registry
+ * Implementations must stay credential-free: they may only read public release
  * data, and nothing they return is persisted to D1.
  */
 export interface PublicDiffAdapter {
   readonly ecosystem: string;
-  /** Canonical public registry base URL for this ecosystem. */
+  /** Canonical public source or protocol identifier for this ecosystem. */
   readonly registryUrl: string;
 
   /**

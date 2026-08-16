@@ -1,4 +1,4 @@
-import { atpmRecordFindings } from "./findings";
+import { assertAtpmBaselineMetadata, atpmRecordFindings } from "./findings";
 import {
   ATPM_IDENTITY_RULES_VERSION,
   isValidAtpmPackageName,
@@ -95,6 +95,12 @@ export const atpmPublicDiff: PublicDiffAdapter = {
       downloadAtpmBlob(env, ctx, identity, from),
       downloadAtpmBlob(env, ctx, identity, to),
     ]);
+
+    assertAtpmBaselineMetadata({
+      entry: from,
+      manifest: fromArchive.packageJson ?? null,
+      recordName: ref.name,
+    });
 
     const { displayName } = canonicalNames(ref, identity);
     return {

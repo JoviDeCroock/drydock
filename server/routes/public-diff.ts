@@ -17,7 +17,7 @@ import type { PublicDiffAdapter } from "../lib/public-diff/types";
 import type { Bindings, Variables } from "../types";
 
 // Anonymous by design: these endpoints serve only data derived from public
-// registry artifacts and public pkg.pr.new preview tarballs (no organization
+// release artifacts and public pkg.pr.new preview tarballs (no organization
 // resources, no credentials, no D1 persistence) and are the marketing-facing
 // "diff any npm, PyPI, or atpm package" surface. Abuse control is per-IP rate limiting
 // plus the KV cache for immutable version pairs; the sandbox's archive caps
