@@ -27,6 +27,22 @@ export const publicDiffRoutes = new Hono<{ Bindings: Bindings; Variables: Variab
 
 type PublicDiffContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 
+const VERSION_LIST_CACHE_TTL_SECONDS = 5 * 60;
+const VERSION_LIST_STALE_TTL_SECONDS = 10 * 60;
+
+export function publicDiffVersionCacheControl(adapter: PublicDiffAdapter): string {
+  const maxAge = Math.min(
+    VERSION_LIST_CACHE_TTL_SECONDS,
+    adapter.cacheTtlSeconds ?? VERSION_LIST_CACHE_TTL_SECONDS,
+  );
+  // Mutable identity metadata must stop being served when its adapter-defined
+  // lifetime ends. Registry listings keep the existing stale revalidation
+  // window because their package identity does not move between publishers.
+  return adapter.cacheTtlSeconds !== undefined
+    ? `public, max-age=${maxAge}`
+    : `public, max-age=${maxAge}, stale-while-revalidate=${VERSION_LIST_STALE_TTL_SECONDS}`;
+}
+
 // A custom NPM_REGISTRY signals a private/self-hosted deployment, so the whole
 // anonymous surface stays off there — including PyPI and atpm, which would
 // otherwise still reach out to the public internet from a private install.
@@ -220,7 +236,7 @@ publicDiffRoutes.get("/versions", async (c) => {
     },
     200,
     {
-      "cache-control": "public, max-age=300, stale-while-revalidate=600",
+      "cache-control": publicDiffVersionCacheControl(adapter),
       "cache-tag": adapter.cacheTag(packageName),
     },
   );

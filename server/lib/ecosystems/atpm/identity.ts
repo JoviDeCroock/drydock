@@ -368,7 +368,10 @@ async function tryResolveHandle(
   handle: string,
 ): Promise<{ did: string; method: HandleMethod } | null> {
   const fromDns = await resolveHandleViaDns(handle);
-  if (fromDns) return { did: fromDns, method: "dns" };
+  if (fromDns.status === "resolved") return { did: fromDns.did, method: "dns" };
+  // Conflicting DNS claims are an invalid identity state, not an absent claim.
+  // Do not let the well-known fallback choose one side of the ambiguity.
+  if (fromDns.status === "ambiguous") return null;
   const fromWellKnown = await resolveHandleViaWellKnown(handle);
   if (fromWellKnown) return { did: fromWellKnown, method: "well-known" };
   return null;
@@ -382,7 +385,12 @@ interface DohAnswer {
 // not handle claims and must be ignored rather than parsed.
 const DNS_TYPE_TXT = 16;
 
-async function resolveHandleViaDns(handle: string): Promise<string | null> {
+type DnsHandleResolution =
+  | { status: "resolved"; did: string }
+  | { status: "not-found" }
+  | { status: "ambiguous" };
+
+async function resolveHandleViaDns(handle: string): Promise<DnsHandleResolution> {
   const url = new URL(DOH_RESOLVER);
   url.searchParams.set("name", `_atproto.${handle}`);
   url.searchParams.set("type", "TXT");
@@ -393,15 +401,15 @@ async function resolveHandleViaDns(handle: string): Promise<string | null> {
       headers: new Headers({ accept: "application/dns-json" }),
       timeoutMs: HANDLE_RESOLUTION_TIMEOUT_MS,
     });
-    if (!response.ok) return null;
+    if (!response.ok) return { status: "not-found" };
     payload = (await readBoundedJson<DohAnswer>(response)) ?? {};
   } catch {
     // A DNS failure is not a resolution failure — the well-known method is an
     // equally valid way to prove the same handle.
-    return null;
+    return { status: "not-found" };
   }
 
-  const dids: string[] = [];
+  const dids = new Set<string>();
   for (const answer of payload.Answer ?? []) {
     if (answer.type !== DNS_TYPE_TXT || typeof answer.data !== "string") continue;
     // DoH renders TXT strings quoted, and a long record arrives as several
@@ -409,11 +417,11 @@ async function resolveHandleViaDns(handle: string): Promise<string | null> {
     const text = answer.data.replace(/"\s+"/g, "").replace(/^"|"$/g, "");
     if (!text.startsWith("did=")) continue;
     const did = normalizeDid(text.slice("did=".length).trim());
-    if (did) dids.push(did);
+    if (did) dids.add(did);
   }
-  // More than one claim is ambiguous, and picking either would be a guess about
-  // which account owns the handle. The spec calls this invalid; so do we.
-  return dids.length === 1 ? dids[0] : null;
+  if (dids.size > 1) return { status: "ambiguous" };
+  const [did] = dids;
+  return did ? { status: "resolved", did } : { status: "not-found" };
 }
 
 async function resolveHandleViaWellKnown(handle: string): Promise<string | null> {

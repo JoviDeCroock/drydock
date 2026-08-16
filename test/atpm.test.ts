@@ -27,7 +27,7 @@ const CID_B = "bafkreigjbauo4x6rqpuxkksb2fmsldns47tlbb3lgvxqxypqc4wdes5gvu";
 
 function versionEntry(version: string, cid: string, extra: Record<string, unknown> = {}) {
   return {
-    $type: "dev.atpm.alpha.package#version",
+    $type: "dev.atpm.alpha.package#package",
     version,
     createdAt: "2026-08-13T06:28:24.000Z",
     blob: { $type: "blob", ref: { $link: cid }, size: 604, mimeType: "application/gzip" },
@@ -177,6 +177,7 @@ describe("parseAtpmPackageRecord", () => {
         { ...versionEntry("0.0.10", CID_A), meta: undefined },
         { ...versionEntry("0.0.9", CID_A), meta: "not a manifest" },
         { ...versionEntry("0.0.8", CID_A), meta: {} },
+        { ...versionEntry("0.0.75", CID_A), $type: "app.bsky.feed.post" },
         {
           ...versionEntry("0.0.7", CID_A),
           blob: { ref: { $link: CID_A }, size: 604, mimeType: "application/gzip" },
@@ -687,8 +688,8 @@ describe("resolveAtpmRepoIdentity", () => {
     );
   });
 
-  test("treats two conflicting DNS claims as no claim at all", async () => {
-    stubFetch({
+  test("does not fall back to well-known when DNS claims conflict", async () => {
+    const calls = stubFetch({
       "https://cloudflare-dns.com/dns-query": () =>
         Response.json({
           Answer: [
@@ -696,13 +697,15 @@ describe("resolveAtpmRepoIdentity", () => {
             { type: 16, data: '"did=did:plc:aaaaaaaaaaaaaaaaaaaaaaaa"' },
           ],
         }),
+      // This would verify successfully if the ambiguous DNS result were
+      // collapsed into the same state as an absent DNS claim.
+      "https://ebey.dev/.well-known/atproto-did": () => new Response(DID),
       "https://plc.directory/": plcAnswer,
     });
-    // No well-known record either, so the whole resolution fails rather than
-    // guessing which account owns the handle.
     await expect(
       resolveAtpmRepoIdentity(parseAtpmPackageName("@ebey.dev/counter")!),
     ).rejects.toThrow(/does not resolve/);
+    expect(calls.some((url) => url.includes("/.well-known/atproto-did"))).toBe(false);
   });
 
   test("resolves did:web through the domain's own web server", async () => {

@@ -11,6 +11,7 @@ import {
   supportedWorkflowGateEcosystems,
   UnsupportedEcosystemError,
 } from "../../server/lib/ecosystems";
+import { publicDiffVersionCacheControl } from "../../server/routes/public-diff";
 
 // The registry is the single answer to "how can a release of this kind reach
 // Drydock?". These assertions pin the capability matrix so adding or removing a
@@ -65,6 +66,10 @@ describe("ecosystem capability registry", () => {
     const adapter = getPublicDiffAdapter("atpm");
     expect(adapter?.payloadVersion).toBe("v3");
     expect(adapter?.cacheTtlSeconds).toBe(5 * 60);
+    expect(publicDiffVersionCacheControl(adapter!)).toBe("public, max-age=300");
+    expect(publicDiffVersionCacheControl(getPublicDiffAdapter("npm")!)).toBe(
+      "public, max-age=300, stale-while-revalidate=600",
+    );
   });
 
   test("a missing capability fails closed rather than falling back", () => {
