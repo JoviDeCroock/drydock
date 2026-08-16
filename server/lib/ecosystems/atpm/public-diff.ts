@@ -1,5 +1,6 @@
 import { atpmRecordFindings } from "./findings";
 import {
+  ATPM_IDENTITY_RULES_VERSION,
   isValidAtpmPackageName,
   normalizeAtpmPackageName,
   parseAtpmPackageName,
@@ -63,7 +64,7 @@ const DID_WEB_NOTICE =
 export const atpmPublicDiff: PublicDiffAdapter = {
   ecosystem: "atpm",
   registryUrl: ATPM_PROTOCOL,
-  rulesVersionSegment: `${DETERMINISTIC_RULES_VERSION}+atpm-${ATPM_RULES_VERSION}`,
+  rulesVersionSegment: `${DETERMINISTIC_RULES_VERSION}+atpm-${ATPM_RULES_VERSION}+identity-${ATPM_IDENTITY_RULES_VERSION}`,
   // v3: atpm pairs use a bounded cache lifetime because an AT repository record,
   // its PDS location, and its verified display handle may all change. Old v2
   // entries were written with the registry-default 30-day lifetime.
@@ -190,7 +191,7 @@ function identityCacheKey(authority: string): Promise<string> {
   return computeCompareMetadataCacheKey({
     registryUrl: ATPM_PROTOCOL,
     packageName: authority,
-    cacheScope: `${PUBLIC_CACHE_SCOPE}-identity`,
+    cacheScope: `${PUBLIC_CACHE_SCOPE}-identity-${ATPM_IDENTITY_RULES_VERSION}`,
   });
 }
 

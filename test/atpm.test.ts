@@ -208,13 +208,28 @@ describe("parseAtpmPackageRecord", () => {
     expect(parseAtpmPackageRecord({ ...RECORD, tags: [] })).toBeNull();
   });
 
-  test("rejects duplicate readable versions rather than choosing one blob", () => {
+  test("rejects duplicate versions rather than choosing one blob", () => {
     expect(
       parseAtpmPackageRecord({
         ...RECORD,
         versions: [versionEntry("1.0.0", CID_A), versionEntry("1.0.0", CID_B)],
       }),
     ).toBeNull();
+  });
+
+  test("rejects a duplicate version even when one entry is otherwise malformed", () => {
+    const malformed = {
+      ...versionEntry("1.0.0", CID_B),
+      // An attacker-controlled PDS can return a value an App View still reduces
+      // to `meta`, even though Drydock correctly refuses its blob shape.
+      blob: { $type: "not-a-blob", ref: { $link: CID_B }, size: 604, mimeType: "application/gzip" },
+    };
+    for (const versions of [
+      [versionEntry("1.0.0", CID_A), malformed],
+      [malformed, versionEntry("1.0.0", CID_A)],
+    ]) {
+      expect(parseAtpmPackageRecord({ ...RECORD, versions })).toBeNull();
+    }
   });
 });
 

@@ -65,6 +65,7 @@ describe("ecosystem capability registry", () => {
   test("bounds atpm computed pairs to its mutable resolution lifetime", () => {
     const adapter = getPublicDiffAdapter("atpm");
     expect(adapter?.payloadVersion).toBe("v3");
+    expect(adapter?.rulesVersionSegment).toContain("identity-2");
     expect(adapter?.cacheTtlSeconds).toBe(5 * 60);
     expect(publicDiffVersionCacheControl(adapter!)).toBe("public, max-age=300");
     expect(publicDiffVersionCacheControl(getPublicDiffAdapter("npm")!)).toBe(

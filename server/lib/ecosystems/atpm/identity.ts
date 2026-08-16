@@ -34,6 +34,13 @@ const PLC_DIRECTORY = "https://plc.directory";
 const HANDLE_RESOLUTION_TIMEOUT_MS = 5_000;
 const DID_DOCUMENT_TIMEOUT_MS = 8_000;
 
+/**
+ * Cache-identity segment for this module's resolution and validation rules.
+ * Bump whenever an identity accepted by an older deployment would be rejected
+ * now, so cached trust decisions cannot cross that deployment boundary.
+ */
+export const ATPM_IDENTITY_RULES_VERSION = "2";
+
 // Every URL on this path is attacker-influenced, including redirect targets.
 // Three hops accommodates ordinary canonicalization/CDN routing without turning
 // one anonymous lookup into an unbounded chain.

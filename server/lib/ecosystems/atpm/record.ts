@@ -28,7 +28,7 @@ const ATPM_PACKAGE_VERSION_TYPE = `${ATPM_PACKAGE_COLLECTION}#package`;
  * the pruned shape or the version-selection rules change, so a cached diff
  * computed under the old reading cannot be served.
  */
-export const ATPM_RULES_VERSION = "4";
+export const ATPM_RULES_VERSION = "5";
 
 const RECORD_TIMEOUT_MS = 10_000;
 
@@ -115,8 +115,10 @@ export async function fetchAtpmPackageRecord(
 /**
  * Reduce a raw record value. Individual malformed version entries are dropped,
  * since one unreadable release must not hide every other version of the package.
- * Duplicate readable versions invalidate the record: choosing either entry
- * would let review and installation disagree about which blob that version names.
+ * Duplicate syntactically valid version keys invalidate the record, even when
+ * one entry is otherwise malformed: an App View may still use that entry's
+ * metadata, so pruning it before duplicate detection could make review and
+ * installation disagree about which artifact the version names.
  */
 export function parseAtpmPackageRecord(value: unknown): AtpmPackage | null {
   if (!isRecord(value)) return null;
@@ -129,10 +131,13 @@ export function parseAtpmPackageRecord(value: unknown): AtpmPackage | null {
   const versions: AtpmVersion[] = [];
   const seenVersions = new Set<string>();
   for (const entry of record.versions) {
+    const rawVersion = isRecord(entry) && typeof entry.version === "string" ? entry.version : null;
+    if (rawVersion && isValidAtpmVersion(rawVersion)) {
+      if (seenVersions.has(rawVersion)) return null;
+      seenVersions.add(rawVersion);
+    }
     const parsed = parseVersionEntry(entry);
     if (!parsed) continue;
-    if (seenVersions.has(parsed.version)) return null;
-    seenVersions.add(parsed.version);
     versions.push(parsed);
   }
 
